@@ -1,24 +1,164 @@
 import Foundation
 
 enum NativePluginSkillSnapshotLoader {
+    static let protocolVersion = 2
     private static let maximumInstructionsBytes = 256 * 1024
     private static let maximumResourceBytes = 1024 * 1024
     private static let maximumTotalResourceBytes = 4 * 1024 * 1024
     private static let maximumResourceCount = 256
 
-    static func prepareBody(
+    static func prepareV2Body(
         record: NativeInstalledPluginRecord,
         componentKey: String,
-        skillKeys: [String],
-        expectedContentSHA256: String?,
+        expectedSnapshot: NativeJSONValue,
         runID: String,
         adapterSessionID: String,
         now: Date = Date(),
         fileManager: FileManager = .default
     ) throws -> NativeJSONValue {
-        guard expectedContentSHA256 == nil
-                || expectedContentSHA256 == record.artifactSHA256 else {
-            throw NativePluginRuntimeError.invalidRequest("Plugin Skill 组件快照与已安装 Release 不匹配")
+        let validated = try validatedV2Snapshot(
+            record: record,
+            componentKey: componentKey,
+            expectedSnapshot: expectedSnapshot,
+            fileManager: fileManager
+        )
+        let sessionSHA256 = try NativePluginHash.canonicalSHA256(.object([
+            "protocol_version": .number(Double(protocolVersion)),
+            "run_id": .string(runID),
+            "adapter_session_id": .string(adapterSessionID),
+            "plugin_id": .string(record.pluginID),
+            "release_id": .string(record.releaseID),
+            "component_key": .string(componentKey),
+            "snapshot_sha256": .string(validated.snapshotSHA256),
+        ]))
+        return .object([
+            "protocol_version": .number(Double(protocolVersion)),
+            "run_id": .string(runID),
+            "plugin_id": .string(record.pluginID),
+            "release_id": .string(record.releaseID),
+            "version": .string(record.version),
+            "artifact_sha256": .string(record.artifactSHA256),
+            "component_key": .string(componentKey),
+            "skills": .array([validated.catalogSnapshot]),
+            "commands": .array([]),
+            "agents": .array([]),
+            "operations": .array([
+                .string("skill_activate"),
+                .string("skill_read_resource"),
+            ]),
+            "adapter_session_id": .string(adapterSessionID),
+            "session_sha256": .string(sessionSHA256),
+            "expires_at": .number(Double(Int(now.addingTimeInterval(8 * 24 * 60 * 60).timeIntervalSince1970))),
+        ])
+    }
+
+    static func activateV2(
+        record: NativeInstalledPluginRecord,
+        componentKey: String,
+        expectedSnapshot: NativeJSONValue,
+        fileManager: FileManager = .default
+    ) throws -> NativeJSONValue {
+        let validated = try validatedV2Snapshot(
+            record: record,
+            componentKey: componentKey,
+            expectedSnapshot: expectedSnapshot,
+            fileManager: fileManager
+        )
+        guard let instructions = String(data: validated.skillData, encoding: .utf8) else {
+            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 指令不是 UTF-8 文本")
+        }
+        return .object([
+            "skill_id": .string(componentKey),
+            "instructions": .string(instructions),
+            "instructions_sha256": .string(validated.instructionsSHA256),
+            "resource_manifest_sha256": .string(validated.resourceManifestSHA256),
+            "snapshot_sha256": .string(validated.snapshotSHA256),
+            "resources": .array(validated.resources),
+        ])
+    }
+
+    static func readV2Resource(
+        record: NativeInstalledPluginRecord,
+        componentKey: String,
+        expectedSnapshot: NativeJSONValue,
+        relativePath: String,
+        offset: Int,
+        maximumCharacters: Int,
+        fileManager: FileManager = .default
+    ) throws -> NativeJSONValue {
+        let validated = try validatedV2Snapshot(
+            record: record,
+            componentKey: componentKey,
+            expectedSnapshot: expectedSnapshot,
+            fileManager: fileManager
+        )
+        let normalizedPath = try normalizedRelativePath(relativePath)
+        guard normalizedPath != "SKILL.md",
+              let descriptor = validated.resources.first(where: {
+                  $0.jsonObject?["relative_path"]?.jsonString == normalizedPath
+              }),
+              let descriptorObject = descriptor.jsonObject else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin Skill 资源不在固定快照中")
+        }
+        let kind = descriptorObject["kind"]?.jsonString ?? "other"
+        guard kind == "reference" || kind == "schema" || kind == "other" else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin Skill 资源不是可读取的文本资源")
+        }
+        let resourceURL = validated.collectionURL
+            .appendingPathComponent(normalizedPath, isDirectory: false)
+            .standardizedFileURL
+        let data = try readRegularFile(
+            resourceURL,
+            beneath: validated.installationURL,
+            maximumBytes: maximumResourceBytes,
+            fileManager: fileManager
+        )
+        guard NativePluginHash.sha256(data) == descriptorObject["sha256"]?.jsonString else {
+            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 资源哈希与固定快照不匹配")
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin Skill 文本资源不是 UTF-8")
+        }
+        let characters = Array(text)
+        guard offset >= 0, offset <= characters.count else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin Skill 资源 offset 无效")
+        }
+        let limit = min(max(maximumCharacters, 1), 64_000)
+        let end = min(offset + limit, characters.count)
+        return .object([
+            "skill_id": .string(componentKey),
+            "relative_path": .string(normalizedPath),
+            "sha256": descriptorObject["sha256"] ?? .null,
+            "content": .string(String(characters[offset..<end])),
+            "offset": .number(Double(offset)),
+            "next_offset": end < characters.count ? .number(Double(end)) : .null,
+            "truncated": .bool(end < characters.count),
+        ])
+    }
+
+    private struct ValidatedV2Snapshot {
+        var installationURL: URL
+        var collectionURL: URL
+        var skillData: Data
+        var instructionsSHA256: String
+        var resourceManifestSHA256: String
+        var snapshotSHA256: String
+        var resources: [NativeJSONValue]
+        var catalogSnapshot: NativeJSONValue
+    }
+
+    private static func validatedV2Snapshot(
+        record: NativeInstalledPluginRecord,
+        componentKey: String,
+        expectedSnapshot: NativeJSONValue,
+        fileManager: FileManager
+    ) throws -> ValidatedV2Snapshot {
+        let expected = try expectedSnapshot.requireObject()
+        guard expected["protocol_version"]?.jsonNumber == Double(protocolVersion),
+              try expected.requireString("skill_id") == componentKey,
+              let metadata = expected["metadata"],
+              let expectedResources = expected["resources"]?.jsonArray else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin Skill v2 固定快照无效")
         }
         let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .standardizedFileURL
@@ -39,162 +179,71 @@ enum NativePluginSkillSnapshotLoader {
             throw NativePluginRuntimeError.invalidManifest("没有找到对应的 Plugin Skill 组件")
         }
         let relativeCollectionPath = try normalizedRelativePath(matchingSkill.path)
+        let relativeSkillPath = relativeCollectionPath + "/SKILL.md"
+        guard try expected.requireString("relative_skill_path") == relativeSkillPath else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin Skill 路径与固定快照不匹配")
+        }
         let collectionURL = installationURL
             .appendingPathComponent(relativeCollectionPath, isDirectory: true)
             .standardizedFileURL
         try validateDirectory(collectionURL, beneath: installationURL, fileManager: fileManager)
-        let skillURL = collectionURL.appendingPathComponent("SKILL.md", isDirectory: false)
         let skillData = try readRegularFile(
-            skillURL,
+            collectionURL.appendingPathComponent("SKILL.md", isDirectory: false),
             beneath: installationURL,
             maximumBytes: maximumInstructionsBytes,
             fileManager: fileManager
         )
-        guard var instructions = String(data: skillData, encoding: .utf8) else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 指令不是 UTF-8 文本")
+        let instructionsSHA256 = NativePluginHash.sha256(skillData)
+        guard try expected.requireString("instructions_sha256") == instructionsSHA256 else {
+            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 指令哈希与固定快照不匹配")
         }
-        instructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !instructions.isEmpty else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 指令为空")
-        }
-        let fallbackName = collectionURL.lastPathComponent
-        let metadata = try parseFrontmatter(instructions, fallbackName: fallbackName)
-        let normalizedSkillKeys = Array(Set(skillKeys.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty })).sorted()
-        guard normalizedSkillKeys == [metadata.name], metadata.name == componentKey else {
-            throw NativePluginRuntimeError.invalidRequest("Plugin Skill 选择与组件身份不匹配")
-        }
-
-        let resources = try resourceDescriptors(
+        let resources = try resourceDescriptorsV2(
             collectionURL: collectionURL,
             installationURL: installationURL,
             fileManager: fileManager
         )
-        let relativeSkillPath = relativeCollectionPath + "/SKILL.md"
-        let instructionsSHA256 = NativePluginHash.sha256(Data(instructions.utf8))
-        var snapshotPayload = """
-        chatos.plugin.skill.snapshot.v1
-        \(record.pluginID)
-        \(record.releaseID)
-        \(record.version)
-        \(record.artifactSHA256)
-        \(componentKey)
-        \(relativeSkillPath)
-        \(instructionsSHA256)
-        """
-        for resource in resources {
-            let object = try resource.requireObject()
-            snapshotPayload += "\n\(try object.requireString("relative_path")):\(try object.requireString("sha256"))"
+        guard resources == expectedResources else {
+            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 资源目录与固定快照不匹配")
         }
-        let snapshotSHA256 = NativePluginHash.sha256(Data(snapshotPayload.utf8))
-        let skillSnapshot: NativeJSONValue = .object([
-            "plugin_id": .string(record.pluginID),
-            "release_id": .string(record.releaseID),
-            "version": .string(record.version),
-            "artifact_sha256": .string(record.artifactSHA256),
-            "component_key": .string(componentKey),
-            "skill_key": .string(metadata.name),
+        let resourceManifestSHA256 = try NativePluginHash.canonicalSHA256(.array(resources))
+        guard try expected.requireString("resource_manifest_sha256") == resourceManifestSHA256 else {
+            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 资源摘要与固定快照不匹配")
+        }
+        let snapshotPayload: NativeJSONValue = .object([
+            "protocol_version": .number(Double(protocolVersion)),
+            "skill_id": .string(componentKey),
             "relative_skill_path": .string(relativeSkillPath),
+            "metadata": metadata,
             "instructions_sha256": .string(instructionsSHA256),
-            "snapshot_sha256": .string(snapshotSHA256),
-            "metadata": .object([
-                "name": .string(metadata.name),
-                "description": metadata.description.map(NativeJSONValue.string) ?? .null,
-                "disable_model_invocation": .bool(metadata.disableModelInvocation),
-            ]),
-            "instructions": .string(instructions),
+            "resource_manifest_sha256": .string(resourceManifestSHA256),
+        ])
+        let snapshotSHA256 = try NativePluginHash.canonicalSHA256(snapshotPayload)
+        guard try expected.requireString("snapshot_sha256") == snapshotSHA256 else {
+            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 内容摘要与固定快照不匹配")
+        }
+        let catalogSnapshot: NativeJSONValue = .object([
+            "protocol_version": .number(Double(protocolVersion)),
+            "skill_id": .string(componentKey),
+            "relative_skill_path": .string(relativeSkillPath),
+            "metadata": metadata,
+            "instructions_sha256": .string(instructionsSHA256),
+            "resource_manifest_sha256": .string(resourceManifestSHA256),
             "resources": .array(resources),
-        ])
-        let sessionSHA256 = try NativePluginHash.canonicalSHA256(.object([
-            "run_id": .string(runID),
-            "adapter_session_id": .string(adapterSessionID),
-            "plugin_id": .string(record.pluginID),
-            "release_id": .string(record.releaseID),
-            "component_key": .string(componentKey),
             "snapshot_sha256": .string(snapshotSHA256),
-        ]))
-        let expiresAt = Int(now.addingTimeInterval(8 * 24 * 60 * 60).timeIntervalSince1970)
-        return .object([
-            "run_id": .string(runID),
-            "plugin_id": .string(record.pluginID),
-            "release_id": .string(record.releaseID),
-            "version": .string(record.version),
-            "artifact_sha256": .string(record.artifactSHA256),
-            "component_key": .string(componentKey),
-            "skills": .array([skillSnapshot]),
-            "commands": .array([]),
-            "agents": .array([]),
-            "operations": .array([.string("load_skill_resource")]),
-            "adapter_session_id": .string(adapterSessionID),
-            "session_sha256": .string(sessionSHA256),
-            "expires_at": .number(Double(expiresAt)),
         ])
-    }
-
-    private struct SkillMetadata {
-        var name: String
-        var description: String?
-        var disableModelInvocation: Bool
-    }
-
-    private static func parseFrontmatter(
-        _ instructions: String,
-        fallbackName: String
-    ) throws -> SkillMetadata {
-        var metadata = SkillMetadata(
-            name: fallbackName,
-            description: nil,
-            disableModelInvocation: false
+        return ValidatedV2Snapshot(
+            installationURL: installationURL,
+            collectionURL: collectionURL,
+            skillData: skillData,
+            instructionsSHA256: instructionsSHA256,
+            resourceManifestSHA256: resourceManifestSHA256,
+            snapshotSHA256: snapshotSHA256,
+            resources: resources,
+            catalogSnapshot: catalogSnapshot
         )
-        let normalized = instructions.replacingOccurrences(of: "\r\n", with: "\n")
-        if normalized.hasPrefix("---\n"),
-           let end = normalized.dropFirst(4).range(of: "\n---\n") {
-            let frontmatter = normalized.dropFirst(4)[..<end.lowerBound]
-            for rawLine in frontmatter.split(separator: "\n", omittingEmptySubsequences: false) {
-                let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !line.isEmpty, !line.hasPrefix("#"),
-                      let separator = line.firstIndex(of: ":") else { continue }
-                let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
-                var value = line[line.index(after: separator)...]
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if value.count >= 2,
-                   (value.hasPrefix("\"") && value.hasSuffix("\""))
-                    || (value.hasPrefix("'") && value.hasSuffix("'")) {
-                    value.removeFirst()
-                    value.removeLast()
-                }
-                switch key {
-                case "name" where !value.isEmpty:
-                    metadata.name = value
-                case "description" where !value.isEmpty:
-                    metadata.description = value
-                case "disable-model-invocation":
-                    guard value == "true" || value == "false" || value.isEmpty else {
-                        throw NativePluginRuntimeError.invalidManifest(
-                            "Plugin Skill disable-model-invocation 必须是布尔值"
-                        )
-                    }
-                    metadata.disableModelInvocation = value == "true"
-                default:
-                    break
-                }
-            }
-        }
-        guard !metadata.name.isEmpty,
-              metadata.name.count <= 128,
-              metadata.name.utf8.allSatisfy({ byte in
-                  byte.isLowercaseASCII || byte.isNumberASCII || byte == 45 || byte == 95
-              }) else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill name 格式无效")
-        }
-        guard metadata.description?.utf8.count ?? 0 <= 4096 else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill description 过长")
-        }
-        return metadata
     }
 
-    private static func resourceDescriptors(
+    private static func resourceDescriptorsV2(
         collectionURL: URL,
         installationURL: URL,
         fileManager: FileManager
@@ -228,13 +277,13 @@ enum NativePluginSkillSnapshotLoader {
                 throw NativePluginRuntimeError.invalidManifest("Plugin Skill 资源总大小过大")
             }
             let relativePath = String(
-                fileURL.standardizedFileURL.path.dropFirst(installationURL.path.count + 1)
+                fileURL.standardizedFileURL.path.dropFirst(collectionURL.path.count + 1)
             )
             resources.append(.object([
                 "relative_path": .string(relativePath),
                 "sha256": .string(NativePluginHash.sha256(data)),
                 "size_bytes": .number(Double(data.count)),
-                "kind": .string(resourceKind(relativePath)),
+                "kind": .string(resourceKindV2(relativePath)),
             ]))
         }
         return resources.sorted {
@@ -243,19 +292,17 @@ enum NativePluginSkillSnapshotLoader {
         }
     }
 
-    private static func resourceKind(_ relativePath: String) -> String {
-        let root = relativePath.split(separator: "/").first.map(String.init) ?? ""
-        switch root {
-        case "skills": return relativePath.hasSuffix("/SKILL.md") ? "skill_instructions" : "reference"
+    private static func resourceKindV2(_ relativePath: String) -> String {
+        switch relativePath.split(separator: "/").first.map(String.init) ?? "" {
         case "references": return "reference"
         case "scripts": return "script"
         case "assets": return "asset"
-        case "schemas": return "schema"
-        case "binaries": return "binary"
-        case "licenses": return "license"
-        default: return "other_text"
+        case _ where relativePath.hasSuffix(".json") || relativePath.hasSuffix(".schema.json"):
+            return "schema"
+        default: return "other"
         }
     }
+
 
     private static func validateDirectory(
         _ directoryURL: URL,
@@ -329,9 +376,4 @@ enum NativePluginSkillSnapshotLoader {
         if value.isEmpty { value = fallback }
         return index > 0 && value == fallback ? "\(value)-\(index + 1)" : value
     }
-}
-
-private extension UInt8 {
-    var isLowercaseASCII: Bool { self >= 97 && self <= 122 }
-    var isNumberASCII: Bool { self >= 48 && self <= 57 }
 }

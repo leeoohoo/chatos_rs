@@ -124,11 +124,12 @@ actor NativePluginStdioClient {
         )
     }
 
-    /// Executes a non-essential MCP call without invalidating the whole plugin
+    /// Executes a cancellable MCP call without invalidating the whole plugin
     /// process when the call misses its deadline. The MCP cancellation
     /// notification lets compliant servers release any per-session resources,
     /// while a late response from a server that ignores cancellation is safely
-    /// discarded.
+    /// discarded. Use this only for MCP servers whose cancellation behavior is
+    /// controlled and verified by ChatOS.
     func callToolBestEffort(
         name: String,
         arguments: NativeJSONValue,

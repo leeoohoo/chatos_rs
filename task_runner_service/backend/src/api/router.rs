@@ -25,10 +25,6 @@ use super::mcp::{
     list_task_capability_catalog, mcp_entrypoint, mcp_management_ask_user_prompt,
     mcp_management_ask_user_start, mcp_management_entrypoint, preview_mcp_prompt,
 };
-use super::models::{
-    get_model_config, list_model_catalog, list_model_config_usage, list_model_configs,
-    preview_model_catalog, test_model_config,
-};
 use super::projects::{
     create_project, delete_project, get_project, import_chatos_project, list_project_tasks,
     list_projects, sync_get_project, sync_list_projects, update_project,
@@ -122,15 +118,6 @@ pub fn build_public_router(state: AppState) -> Router {
             "/api/tasks/{id}/memory/summarize",
             post(summarize_task_memory),
         )
-        .route("/api/model-configs", get(list_model_configs))
-        .route(
-            "/api/model-configs/catalog/preview",
-            post(preview_model_catalog),
-        )
-        .route("/api/model-configs/{id}", get(get_model_config))
-        .route("/api/model-configs/{id}/models", get(list_model_catalog))
-        .route("/api/model-configs/{id}/test", post(test_model_config))
-        .route("/api/model-configs/usage", get(list_model_config_usage))
         .route("/api/runs", get(list_runs))
         .route("/api/runs/summaries", get(list_run_summaries))
         .route("/api/runs/page", get(list_runs_page))

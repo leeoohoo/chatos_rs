@@ -376,6 +376,7 @@ mod tests {
                     release_id: release.id.clone(),
                     component,
                     content_sha256: "c".repeat(64),
+                    skill: None,
                 })
                 .collect(),
             auth_connection_ids: vec!["oauth-workspace".to_string(), "oauth-workspace".to_string()],

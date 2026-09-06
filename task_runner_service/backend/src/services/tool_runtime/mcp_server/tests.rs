@@ -4,8 +4,7 @@
 use super::chatos_async_planner;
 use super::support::{
     agent_tool_allowed, create_task_schema, enrich_tool_schemas_with_model_configs,
-    filter_model_configs_for_user, model_configs_for_user, model_visible_to_user,
-    update_task_schema,
+    filter_model_configs_for_user, model_visible_to_user, update_task_schema,
 };
 use super::{CreateTaskArgs, McpRequestContext, McpToolProfile, TaskRunnerMcpService};
 use crate::ask_user_prompt_service::AskUserPromptService;

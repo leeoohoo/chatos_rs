@@ -17,8 +17,9 @@ Implemented:
   authentication, explicit per-tab sharing, task-owned native Chrome tab groups, opaque
   identifiers, and `chrome.debugger` routing.
 - Opaque browser, tab, CDP-session, element-reference, and artifact identifiers.
-- Session/tab, navigation, snapshot/find, click/type/fill, key/scroll/wait, screenshot, and raw CDP
-  tools.
+- Session/tab, navigation, snapshot/find, virtual-mouse click/type/fill, key/scroll/wait,
+  screenshot, and raw CDP tools. Automated clicks move a visible in-page cursor and use native CDP
+  mouse move/press/release events instead of synthetic DOM `click()` calls.
 - Bounded sequence-based Console, Network, WebSocket, and supported raw CDP event subscriptions.
 - Sensitive network header/body redaction, HAR 1.2 artifact export, and request lookup.
 - Safe request routing limited to `abort` and fixed `mock_json` responses.
@@ -28,11 +29,12 @@ Implemented:
   and cleanup on close.
 - Cross-platform npm launcher and Manifest v3 development package.
 
-Remaining production distribution step:
+Production distribution:
 
-- Publish Chatos Browser Bridge in the Chrome Web Store, then rebuild the Browser MCP Release with
-  that store-assigned extension ID. Until that ID is embedded, existing-Chrome mode is a development
-  setup; managed-browser mode and the ChatOS Marketplace package remain independently usable.
+- [Chatos Browser Bridge](https://chromewebstore.google.com/detail/jooaepjckiofmpldinopgdgddcoaofil)
+  is published in the Chrome Web Store. Release builds embed its fixed extension ID
+  `jooaepjckiofmpldinopgdgddcoaofil`; the local staging script uses the same ID by default while
+  still allowing an explicit development-extension override.
 
 See [the Chinese user installation guide](docs/user-installation-guide.zh-CN.md) for the complete
 first-run, update, troubleshooting, and publisher checklist.
@@ -49,6 +51,12 @@ cd ../extension && npm test
 ```
 
 MCP mode writes only JSON-RPC messages to stdout. Diagnostics and logs go to stderr.
+
+## Default browser behavior
+
+`browser_session_open` does not expose a browser-mode choice to the model. ChatOS connects to the
+user's existing Google Chrome through the Browser Bridge after one-time authorization, and falls
+back to an isolated managed browser while that authorization is unavailable.
 
 ## Run with an existing Chrome profile
 
@@ -76,6 +84,7 @@ title. Tabs created by the task join that group automatically. Explicitly shared
 never moved into it. Closing the browser session preserves and collapses the task group for review
 while removing those tabs from the next task's control catalog.
 
-Production builds compile the fixed Chrome Web Store extension ID into the Browser MCP binary.
-The MCP-owned Bridge creates a fresh, single-use credential for every MCP process and cleans it up
-when the process exits. `CHATOS_BROWSER_BRIDGE_*` remains only as an explicit development override.
+Production and local staged builds compile the fixed Chrome Web Store extension ID into the Browser
+MCP binary. The MCP-owned Bridge creates a fresh, single-use credential for every MCP process and
+cleans it up when the process exits. `CHATOS_BROWSER_EXTENSION_ID` can still override the store ID
+for unpacked-extension development; `CHATOS_BROWSER_BRIDGE_*` remains an explicit bridge override.

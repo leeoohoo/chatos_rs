@@ -19,6 +19,7 @@ export interface LoginPayload {
 
 const request = createJsonApiClient({
   baseUrl: '/api/admin/user-service',
+  timeoutMs: 30_000,
   getAuthToken,
   onUnauthorized: clearAuthToken,
   readSuccessResponse: (response) => response.json(),

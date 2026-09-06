@@ -11,8 +11,18 @@ export interface DiagramSummary {
   updatedAt: string;
 }
 
+export interface DiagramRuntimeContext {
+  kind: string;
+  shared: boolean;
+  chatosProjectId?: string;
+  chatosProjectName?: string;
+  workspaceId?: string;
+  defaultProjectId?: string;
+}
+
 interface Repository {
   mode: 'server' | 'local';
+  runtimeContext(): Promise<DiagramRuntimeContext>;
   list(): Promise<DiagramSummary[]>;
   listProjects(): Promise<DiagramProjectSummary[]>;
   readProject(projectId: string): Promise<DiagramProject>;
@@ -48,6 +58,10 @@ function summary(document: DiagramDocument): DiagramSummary {
 
 class LocalRepository implements Repository {
   readonly mode = 'local' as const;
+
+  async runtimeContext(): Promise<DiagramRuntimeContext> {
+    return { kind: 'device', shared: true };
+  }
 
   async list(): Promise<DiagramSummary[]> {
     const ids = JSON.parse(localStorage.getItem(localIndexKey) ?? '[]') as string[];
@@ -129,6 +143,22 @@ class LocalRepository implements Repository {
     localStorage.removeItem(`${localDocumentPrefix}${documentId}`);
     const ids = JSON.parse(localStorage.getItem(localIndexKey) ?? '[]') as string[];
     localStorage.setItem(localIndexKey, JSON.stringify(ids.filter((id) => id !== documentId)));
+    const projectIds = JSON.parse(localStorage.getItem(localProjectIndexKey) ?? '[]') as string[];
+    for (const projectId of projectIds) {
+      const raw = localStorage.getItem(`${localProjectPrefix}${projectId}`);
+      if (!raw) continue;
+      try {
+        const project = JSON.parse(raw) as DiagramProject;
+        if (!project.diagramIds.includes(documentId)) continue;
+        await this.persistProject({
+          ...project,
+          diagramIds: project.diagramIds.filter((id) => id !== documentId),
+          updatedAt: new Date().toISOString()
+        });
+      } catch {
+        // Ignore malformed unrelated projects while deleting a document.
+      }
+    }
   }
 
   private async persist(document: DiagramDocument): Promise<void> {
@@ -152,6 +182,12 @@ class LocalRepository implements Repository {
 
 class ServerRepository implements Repository {
   readonly mode = 'server' as const;
+
+  async runtimeContext(): Promise<DiagramRuntimeContext> {
+    const response = await fetch('/api/context', { cache: 'no-store' });
+    if (!response.ok) return { kind: 'device', shared: true };
+    return response.json() as Promise<DiagramRuntimeContext>;
+  }
 
   async list(): Promise<DiagramSummary[]> {
     const response = await fetch('/api/documents', { cache: 'no-store' });

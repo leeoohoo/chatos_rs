@@ -3,18 +3,10 @@ import SwiftUI
 
 struct RemoteTerminalWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
-    @StateObject private var viewModel: RemoteTerminalWorkspaceViewModel
+    @ObservedObject private var viewModel: RemoteTerminalWorkspaceViewModel
 
-    init(
-        connection: RemoteConnection,
-        service: any RemoteTerminalCommandServicing
-    ) {
-        _viewModel = StateObject(
-            wrappedValue: RemoteTerminalWorkspaceViewModel(
-                connection: connection,
-                service: service
-            )
-        )
+    init(viewModel: RemoteTerminalWorkspaceViewModel) {
+        self.viewModel = viewModel
     }
 
     var body: some View {
@@ -61,7 +53,7 @@ struct RemoteTerminalWorkspaceView: View {
 }
 
 @MainActor
-private final class RemoteTerminalWorkspaceViewModel: ObservableObject {
+final class RemoteTerminalWorkspaceViewModel: ObservableObject {
     enum ConnectionState {
         case ready
         case connected

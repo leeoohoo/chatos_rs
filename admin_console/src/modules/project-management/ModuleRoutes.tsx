@@ -1,8 +1,9 @@
+import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
-import { ConfigPage } from './pages/ConfigPage';
-import { ProjectDetailPage } from './pages/ProjectDetailPage';
-import { ProjectsPage } from './pages/ProjectsPage';
+const ConfigPage = lazy(() => import('./pages/ConfigPage').then((module) => ({ default: module.ConfigPage })));
+const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then((module) => ({ default: module.ProjectDetailPage })));
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then((module) => ({ default: module.ProjectsPage })));
 
 export default function ProjectManagementModuleRoutes() {
   return (

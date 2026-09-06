@@ -4,12 +4,20 @@ import ChatOSCore
 import AppKit
 import Combine
 import Foundation
+import OSLog
 import SwiftUI
 
 @MainActor
 final class AppModel: ObservableObject {
+    private static let pluginApplicationLogger = Logger(
+        subsystem: "com.chatos.swift-client",
+        category: "PluginApplication"
+    )
+
     @Published var selection: SidebarSelection?
     @Published var projectTab: ProjectWorkspaceTab = .messages
+    @Published var isNotepadPresented = false
+    @Published var navigationSplitVisibility: NavigationSplitViewVisibility = .all
     @Published var interfaceLanguage = ChatOSLanguage(normalizing: UserDefaults.standard.string(
         forKey: "ChatOS.interfaceLanguage"
     )) {
@@ -70,6 +78,7 @@ final class AppModel: ObservableObject {
     let localConnectorControl: LocalConnectorControlCenterViewModel
     let visualSessionStore = VisualSessionPresentationStore()
     let petPreferences = PetPreferencesStore()
+    let petDefaultFileHandlerPrompt = PetDefaultFileHandlerPromptController()
     let petOverlayStore = PetOverlayStore()
     let globalUtilityPreferences = GlobalUtilityPreferencesStore()
     private(set) lazy var globalUtilityCoordinator = GlobalUtilityCoordinator(
@@ -103,6 +112,7 @@ final class AppModel: ObservableObject {
     let workspaceResourceCreationService: ChatOSWorkspaceResourceCreationService
     let remoteConnectionService: NativeRemoteConnectionService
     let remoteFileService: NativeRemoteFileService
+    let remoteConnectionWorkspaceStore: RemoteConnectionWorkspaceStore
     let projectFilesystemService: NativeProjectFilesystemService
     let projectCodeNavigationService: NativeProjectCodeNavigationService
     let projectGitService: NativeProjectGitService
@@ -122,6 +132,8 @@ final class AppModel: ObservableObject {
     private var authenticatedUserID: String?
     private var isApplyingLanguagePreferences = false
     private var languagePreferencesSaveTask: Task<Void, Never>?
+    var mainWindowPresentationHandler: (() -> Void)?
+    var settingsWindowPresentationHandler: (() -> Void)?
 
     init() {
         let credentialStore = KeychainCredentialStore()
@@ -157,8 +169,13 @@ final class AppModel: ObservableObject {
         self.conversationService = conversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.workspaceResourceCreationService = ChatOSWorkspaceResourceCreationService(client: apiClient)
+        let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService
-        self.remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
+        self.remoteFileService = remoteFileService
+        self.remoteConnectionWorkspaceStore = RemoteConnectionWorkspaceStore(
+            terminalService: remoteConnectionService,
+            fileService: remoteFileService
+        )
         self.projectFilesystemService = NativeProjectFilesystemService(connector: localConnectorService)
         self.projectCodeNavigationService = NativeProjectCodeNavigationService(connector: localConnectorService)
         self.projectGitService = NativeProjectGitService(connector: localConnectorService)
@@ -271,6 +288,12 @@ final class AppModel: ObservableObject {
         interfaceLanguage == .english ? english : chinese
     }
 
+    func toggleNavigationSidebar() {
+        navigationSplitVisibility = navigationSplitVisibility == .detailOnly
+            ? .all
+            : .detailOnly
+    }
+
     func startPetOverlayIfNeeded() {
         guard petOverlayCoordinator == nil else { return }
         petOverlayCoordinator = PetOverlayCoordinator(
@@ -280,17 +303,50 @@ final class AppModel: ObservableObject {
         )
     }
 
+    func openPetFile(
+        path: String,
+        targetLine: Int? = nil,
+        mode: PetFileOpenMode = .preview,
+        access: PetFileAccess = .workspace
+    ) {
+        startPetOverlayIfNeeded()
+        if !petPreferences.isEnabled {
+            petPreferences.isEnabled = true
+        }
+        petOverlayCoordinator?.openFile(PetFileOpenRequest(
+            path: path,
+            targetLine: targetLine,
+            mode: mode,
+            access: access
+        ))
+    }
+
+    func openUserSelectedPetFiles(_ urls: [URL]) {
+        for url in urls where url.isFileURL {
+            openPetFile(
+                path: url.standardizedFileURL.path,
+                access: .userSelectedLocal
+            )
+        }
+    }
+
+    @discardableResult
+    func openPetFileLink(_ url: URL, projectRootPath: String?) -> Bool {
+        guard let resolved = PetFileLinkResolver.resolve(
+            url,
+            projectRootPath: projectRootPath
+        ) else { return false }
+        openPetFile(path: resolved.path, targetLine: resolved.targetLine)
+        return true
+    }
+
     func startGlobalUtilitiesIfNeeded() {
         globalUtilityCoordinator.start()
     }
 
     func openPetActivity(_ activity: PetActivity?) {
         if activity?.source == .localApproval {
-            requestConnectorSettings(.approvals)
-            NSApp.activate(ignoringOtherApps: true)
-            if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-                _ = NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-            }
+            openGlobalSearchSettings(tab: .approvals)
             return
         }
 
@@ -325,11 +381,7 @@ final class AppModel: ObservableObject {
             )
         }
 
-        NSApp.activate(ignoringOtherApps: true)
-        let mainWindow = NSApp.windows.first {
-            !($0 is NSPanel) && $0.title == "ChatOS"
-        }
-        mainWindow?.makeKeyAndOrderFront(nil)
+        showMainWindow()
     }
 
     func openGlobalSearchProject(_ projectID: String) {
@@ -349,6 +401,10 @@ final class AppModel: ObservableObject {
         if let tab {
             requestConnectorSettings(tab)
         }
+        if let settingsWindowPresentationHandler {
+            settingsWindowPresentationHandler()
+            return
+        }
         NSApp.activate(ignoringOtherApps: true)
         if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
             _ = NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
@@ -356,6 +412,10 @@ final class AppModel: ObservableObject {
     }
 
     private func showMainWindow() {
+        if let mainWindowPresentationHandler {
+            mainWindowPresentationHandler()
+            return
+        }
         NSApp.activate(ignoringOtherApps: true)
         let mainWindow = NSApp.windows.first {
             !($0 is NSPanel) && $0.title == "ChatOS"
@@ -662,11 +722,74 @@ final class AppModel: ObservableObject {
         _ application: LocalConnectorPluginApplication,
         context: LocalConnectorPluginApplicationContext? = nil
     ) async throws -> LocalConnectorPluginApplicationLaunch {
-        try await localConnectorService.launchPluginApplication(
-            pluginID: application.pluginID,
-            componentKey: application.componentKey,
-            context: context
-        )
+        do {
+            return try await localConnectorService.launchPluginApplication(
+                pluginID: application.pluginID,
+                componentKey: application.componentKey,
+                context: context
+            )
+        } catch NativeConnectorError.workspaceUnavailable {
+            let projectID = context?.projectID ?? "none"
+            Self.pluginApplicationLogger.notice(
+                "Plugin 应用工作区暂不可用，刷新状态后重试：plugin=\(application.id, privacy: .public), project=\(projectID, privacy: .private(mask: .hash))"
+            )
+
+            let refreshedContext = await refreshPluginApplicationLaunchContext(context)
+            do {
+                return try await localConnectorService.launchPluginApplication(
+                    pluginID: application.pluginID,
+                    componentKey: application.componentKey,
+                    context: refreshedContext
+                )
+            } catch NativeConnectorError.workspaceUnavailable {
+                guard PluginApplicationLaunchRecovery.allowsProjectOnlyFallback(application),
+                      let fallbackContext = PluginApplicationLaunchRecovery.projectOnlyContext(
+                          refreshedContext ?? context
+                      ) else {
+                    Self.pluginApplicationLogger.error(
+                        "Plugin 应用刷新后仍找不到工作区：plugin=\(application.id, privacy: .public), project=\(projectID, privacy: .private(mask: .hash))"
+                    )
+                    throw NativeConnectorError.workspaceUnavailable
+                }
+                Self.pluginApplicationLogger.warning(
+                    "Plugin 应用降级为仅项目上下文启动：plugin=\(application.id, privacy: .public), project=\(projectID, privacy: .private(mask: .hash))"
+                )
+                return try await localConnectorService.launchPluginApplication(
+                    pluginID: application.pluginID,
+                    componentKey: application.componentKey,
+                    context: fallbackContext
+                )
+            }
+        }
+    }
+
+    private func refreshPluginApplicationLaunchContext(
+        _ context: LocalConnectorPluginApplicationContext?
+    ) async -> LocalConnectorPluginApplicationContext? {
+        // fetchStatus asks the native connector to restore/import its local
+        // workspace registry before the project URI is resolved again.
+        _ = try? await localConnectorService.fetchStatus()
+
+        guard context?.projectID?.pluginLaunchValue != nil else { return context }
+        do {
+            let snapshot = try await workspaceService.fetchWorkspace()
+            await projectRunService.updateProjects(snapshot.projects)
+            workspaceProjects = snapshot.projects
+            workspaceContacts = snapshot.contacts
+            let resources = WorkspaceResourceResolver.resolve(snapshot)
+            contacts = resources.contacts
+            projects = resources.projects
+            reconcileSelection()
+            return PluginApplicationLaunchRecovery.refreshedContext(
+                context,
+                projects: snapshot.projects
+            )
+        } catch {
+            Self.pluginApplicationLogger.error(
+                "刷新 Plugin 应用项目上下文失败：\(error.localizedDescription, privacy: .public)"
+            )
+            return context
+        }
     }
 
     private func reconcilePluginApplicationSelection() {
@@ -718,6 +841,7 @@ final class AppModel: ObservableObject {
             workspaceProjects = []
             workspaceContacts = []
             remoteConnections = []
+            remoteConnectionWorkspaceStore.removeAllWorkspaces()
             pluginApplicationsLoadGeneration += 1
             pluginApplications = []
             isPluginApplicationsLoading = false
@@ -944,6 +1068,7 @@ final class AppModel: ObservableObject {
     }
 
     func registerRemoteConnection(_ connection: RemoteConnection) {
+        remoteConnectionWorkspaceStore.removeWorkspace(for: connection.id)
         if let index = remoteConnections.firstIndex(where: { $0.id == connection.id }) {
             remoteConnections[index] = connection
         } else {
@@ -955,6 +1080,7 @@ final class AppModel: ObservableObject {
 
     func deleteRemoteConnection(id: String) async throws {
         try await remoteConnectionService.deleteConnection(id: id)
+        remoteConnectionWorkspaceStore.removeWorkspace(for: id)
         remoteConnections.removeAll(where: { $0.id == id })
         if selection == .remote(id) {
             selection = projects.first.map { .project($0.id) }
@@ -980,8 +1106,10 @@ final class AppModel: ObservableObject {
         switch selection {
         case let .project(id):
             let conversationID = projects.first(where: { $0.id == id })?.conversationID
-            projectConversation = conversationID.map {
-                conversation(for: $0, allowsPlanMode: true)
+            projectConversation = conversationID.map { conversationID in
+                let conversation = conversation(for: conversationID, allowsPlanMode: true)
+                conversation.activate()
+                return conversation
             }
             contactConversation = nil
             if conversationID == nil {
@@ -989,8 +1117,10 @@ final class AppModel: ObservableObject {
             }
         case let .contact(id):
             let conversationID = contacts.first(where: { $0.id == id })?.conversationID
-            contactConversation = conversationID.map {
-                conversation(for: $0, allowsPlanMode: false)
+            contactConversation = conversationID.map { conversationID in
+                let conversation = conversation(for: conversationID, allowsPlanMode: false)
+                conversation.activate()
+                return conversation
             }
             projectConversation = nil
         default:
@@ -1045,7 +1175,9 @@ final class AppModel: ObservableObject {
         }
         projectConversationPreparationErrors[projectID] = nil
         if selection == .project(projectID) {
-            projectConversation = conversation(for: conversationID, allowsPlanMode: true)
+            let conversation = conversation(for: conversationID, allowsPlanMode: true)
+            conversation.activate()
+            projectConversation = conversation
         }
     }
 

@@ -12,6 +12,7 @@ impl PluginComponentProvider {
         request_timeout: std::time::Duration,
         internal_secret: Option<String>,
         response_limit_bytes: usize,
+        skill_attestations: std::sync::Arc<super::SkillActivationAttestationService>,
     ) -> Result<Self, String> {
         let base_url = base_url.into();
         let parsed = reqwest::Url::parse(base_url.as_str())
@@ -27,6 +28,7 @@ impl PluginComponentProvider {
                 .filter(|value| !value.is_empty()),
             request_timeout,
             response_limit_bytes,
+            skill_attestations,
         })
     }
 

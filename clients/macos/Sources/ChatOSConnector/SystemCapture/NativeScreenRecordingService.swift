@@ -75,8 +75,7 @@ public actor NativeScreenRecordingService {
     public func start(
         target: NativeScreenRecordingTarget,
         outputURL: URL,
-        capturesSystemAudio: Bool,
-        excludedWindowIDs: [CGWindowID] = []
+        capturesSystemAudio: Bool
     ) async throws {
         guard stream == nil else { throw NativeScreenRecordingError.alreadyRecording }
         guard NativeSystemPermissionService.hasScreenCaptureAccess else {
@@ -95,10 +94,9 @@ public actor NativeScreenRecordingService {
             guard let display = content.displays.first(where: { $0.displayID == target.nativeID }) else {
                 throw NativeScreenRecordingError.targetUnavailable
             }
-            let excludedWindows = content.windows.filter {
-                excludedWindowIDs.contains($0.windowID)
-            }
-            filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
+            // Record the display exactly as it is composited, including ChatOS
+            // floating windows such as the pet, dialogs, and recording controls.
+            filter = SCContentFilter(display: display, excludingWindows: [])
             width = max(2, display.width - display.width % 2)
             height = max(2, display.height - display.height % 2)
         case .window:
@@ -133,7 +131,7 @@ public actor NativeScreenRecordingService {
         configuration.capturesAudio = capturesSystemAudio
         configuration.sampleRate = 48_000
         configuration.channelCount = 2
-        configuration.excludesCurrentProcessAudio = true
+        configuration.excludesCurrentProcessAudio = false
 
         let delegate = ScreenRecordingStreamDelegate()
         let stream = SCStream(filter: filter, configuration: configuration, delegate: delegate)

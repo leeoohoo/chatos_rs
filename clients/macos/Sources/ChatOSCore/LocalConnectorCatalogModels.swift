@@ -66,11 +66,14 @@ public struct LocalConnectorSandboxSettings: Codable, Sendable, Equatable {
 
 public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var pluginID: String
+    public var packageName: String?
+    public var pluginKey: String?
     public var displayName: String
     public var description: String
     public var category: String
     public var publisher: String
     public var latestVersion: String
+    public var installedVersion: String?
     public var installed: Bool
     public var updateAvailable: Bool
     public var installAvailable: Bool
@@ -82,11 +85,14 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
 
     public init(
         pluginID: String,
+        packageName: String? = nil,
+        pluginKey: String? = nil,
         displayName: String,
         description: String,
         category: String,
         publisher: String,
         latestVersion: String,
+        installedVersion: String? = nil,
         installed: Bool,
         updateAvailable: Bool,
         installAvailable: Bool,
@@ -95,11 +101,14 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         permissions: [LocalConnectorPluginPermission] = []
     ) {
         self.pluginID = pluginID
+        self.packageName = packageName
+        self.pluginKey = pluginKey
         self.displayName = displayName
         self.description = description
         self.category = category
         self.publisher = publisher
         self.latestVersion = latestVersion
+        self.installedVersion = installedVersion
         self.installed = installed
         self.updateAvailable = updateAvailable
         self.installAvailable = installAvailable

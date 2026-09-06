@@ -24,6 +24,57 @@ use crate::{BrowserBackend, BrowserBackendFactory};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(15);
+const VIRTUAL_CURSOR_ID: &str = "__chatos_virtual_mouse__";
+const VIRTUAL_CURSOR_MOVE_MS: u64 = 280;
+const VIRTUAL_CURSOR_CLICK_HOLD_MS: u64 = 240;
+const VIRTUAL_CURSOR_MARKUP: &str = r##"<style>
+  :host { color-scheme: light; }
+  .halo {
+    position:absolute; left:-13px; top:-13px; width:26px; height:26px;
+    border-radius:999px;
+    background:radial-gradient(circle,rgba(59,130,246,.24) 0%,rgba(59,130,246,.08) 48%,transparent 72%);
+    filter:blur(.4px);
+  }
+  .pointer {
+    position:absolute; left:-3px; top:-3px; width:31px; height:38px;
+    transform-origin:5px 5px;
+    filter:drop-shadow(0 1px 1px rgba(15,23,42,.35)) drop-shadow(0 5px 9px rgba(15,23,42,.28));
+    transition:transform 150ms cubic-bezier(.2,.8,.2,1),filter 150ms ease;
+  }
+  .pointer.pressed {
+    transform:scale(.9) rotate(-2deg);
+    filter:drop-shadow(0 1px 1px rgba(15,23,42,.28)) drop-shadow(0 3px 5px rgba(15,23,42,.24));
+  }
+  .pulse {
+    position:absolute; left:-18px; top:-18px; width:36px; height:36px;
+    border:2px solid rgba(37,99,235,.9); border-radius:999px;
+    opacity:0; transform:scale(.28);
+    box-shadow:0 0 0 5px rgba(255,255,255,.82),0 0 18px rgba(37,99,235,.34);
+  }
+  .pulse::after {
+    content:''; position:absolute; inset:6px; border-radius:inherit;
+    background:rgba(59,130,246,.2);
+  }
+  .pulse.active { animation:chatos-click 620ms cubic-bezier(.16,1,.3,1); }
+  @keyframes chatos-click {
+    0% { opacity:.98; transform:scale(.28); }
+    55% { opacity:.5; }
+    100% { opacity:0; transform:scale(1.55); }
+  }
+</style>
+<span class="halo"></span>
+<svg class="pointer" viewBox="0 0 31 38" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <defs>
+    <linearGradient id="chatos-cursor-fill" x1="4" y1="3" x2="23" y2="31" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60A5FA"/>
+      <stop offset=".48" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+  </defs>
+  <path d="M3.2 2.8v25.4l6.55-5.76 4.72 11.07 5.14-2.2-4.67-10.82h9.92L3.2 2.8Z" fill="url(#chatos-cursor-fill)" stroke="white" stroke-width="2.4" stroke-linejoin="round"/>
+  <path d="m9.75 22.44 4.72 11.07 2.57-1.1-4.73-10.98" fill="rgba(15,23,42,.18)"/>
+</svg>
+<span class="pulse"></span>"##;
 const SNAPSHOT_SCRIPT: &str = r#"(() => {
   const selectorFor = (el) => {
     if (el.id && CSS.escape) return `#${CSS.escape(el.id)}`;
@@ -147,6 +198,7 @@ struct BrowserSession {
     downloads: HashMap<String, DownloadState>,
     used_file_grants: HashSet<String>,
     element_refs: HashMap<String, ElementReference>,
+    virtual_cursor_scripts: HashMap<String, String>,
     ref_generation: u64,
 }
 
@@ -240,6 +292,7 @@ impl BrowserRuntime {
             downloads: HashMap::new(),
             used_file_grants: HashSet::new(),
             element_refs: HashMap::new(),
+            virtual_cursor_scripts: HashMap::new(),
             ref_generation: 0,
         };
         let summary = session.summary(&browser_session_id);
@@ -478,12 +531,127 @@ impl BrowserRuntime {
         let (backend, backend_session_id, selector) =
             self.resolve_ref(browser_session_id, reference).await?;
         let selector = serde_json::to_string(&selector).unwrap();
-        evaluate_value(
+        let point = evaluate_value(
             backend.as_ref(),
             &backend_session_id,
-            &format!("(() => {{ const el = document.querySelector({selector}); if (!el) throw new Error('element not found'); el.scrollIntoView({{block:'center'}}); el.click(); return true; }})()"),
+            &virtual_cursor_move_script(&selector),
         )
-        .await
+        .await?;
+        let x = point.get("x").and_then(Value::as_f64).ok_or_else(|| {
+            CoreError::Backend("click target did not return an x coordinate".into())
+        })?;
+        let y = point.get("y").and_then(Value::as_f64).ok_or_else(|| {
+            CoreError::Backend("click target did not return a y coordinate".into())
+        })?;
+
+        // Register the last cursor position before dispatching the click so a
+        // navigation caused by mouseReleased recreates the same cursor in the
+        // next document instead of making it appear to vanish.
+        let _ = self
+            .persist_virtual_cursor(
+                browser_session_id,
+                backend.as_ref(),
+                &backend_session_id,
+                x,
+                y,
+            )
+            .await;
+
+        backend
+            .send_command(
+                Some(&backend_session_id),
+                "Input.dispatchMouseEvent",
+                json!({
+                    "type": "mouseMoved",
+                    "x": x,
+                    "y": y,
+                    "button": "none",
+                    "buttons": 0,
+                    "pointerType": "mouse"
+                }),
+                COMMAND_TIMEOUT,
+            )
+            .await?;
+        backend
+            .send_command(
+                Some(&backend_session_id),
+                "Input.dispatchMouseEvent",
+                json!({
+                    "type": "mousePressed",
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "buttons": 1,
+                    "clickCount": 1,
+                    "pointerType": "mouse"
+                }),
+                COMMAND_TIMEOUT,
+            )
+            .await?;
+        let _ = evaluate_value(
+            backend.as_ref(),
+            &backend_session_id,
+            &virtual_cursor_pulse_script(),
+        )
+        .await;
+        // Keep the pressed cursor visible before mouseReleased triggers a
+        // navigation and destroys the current page overlay.
+        tokio::time::sleep(Duration::from_millis(VIRTUAL_CURSOR_CLICK_HOLD_MS)).await;
+        backend
+            .send_command(
+                Some(&backend_session_id),
+                "Input.dispatchMouseEvent",
+                json!({
+                    "type": "mouseReleased",
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "buttons": 0,
+                    "clickCount": 1,
+                    "pointerType": "mouse"
+                }),
+                COMMAND_TIMEOUT,
+            )
+            .await?;
+        Ok(Value::Bool(true))
+    }
+
+    async fn persist_virtual_cursor(
+        &self,
+        browser_session_id: &str,
+        backend: &dyn BrowserBackend,
+        backend_session_id: &BackendSessionId,
+        x: f64,
+        y: f64,
+    ) -> CoreResult<()> {
+        let response = backend
+            .send_command(
+                Some(backend_session_id),
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({"source": virtual_cursor_restore_script(x, y)}),
+                COMMAND_TIMEOUT,
+            )
+            .await?;
+        let Some(identifier) = response.get("identifier").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        let session = self.session(browser_session_id).await?;
+        let previous = session
+            .lock()
+            .await
+            .virtual_cursor_scripts
+            .insert(backend_session_id.0.clone(), identifier.to_owned());
+        if let Some(previous) = previous {
+            let _ = backend
+                .send_command(
+                    Some(backend_session_id),
+                    "Page.removeScriptToEvaluateOnNewDocument",
+                    json!({"identifier": previous}),
+                    COMMAND_TIMEOUT,
+                )
+                .await;
+        }
+        Ok(())
     }
 
     pub async fn type_text(
@@ -1370,6 +1538,152 @@ async fn evaluate_value(
         .pointer("/result/value")
         .cloned()
         .unwrap_or(Value::Null))
+}
+
+fn virtual_cursor_move_script(selector: &str) -> String {
+    format!(
+        r##"(async () => {{
+  const el = document.querySelector({selector});
+  if (!el) throw new Error('element not found');
+  el.scrollIntoView({{block:'center', inline:'center'}});
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) throw new Error('element is not visible');
+  const x = Math.max(0, Math.min(innerWidth - 1, rect.left + rect.width / 2));
+  const y = Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2));
+  const id = {cursor_id};
+  let host = document.getElementById(id);
+  if (host && host.dataset.chatosVirtualMouse !== 'true') {{
+    host.remove();
+    host = null;
+  }}
+  if (!host) {{
+    host = document.createElement('div');
+    host.id = id;
+    host.dataset.chatosVirtualMouse = 'true';
+    host.setAttribute('aria-hidden', 'true');
+    Object.assign(host.style, {{
+      position: 'fixed', left: '0', top: '0', width: '1px', height: '1px',
+      pointerEvents: 'none', zIndex: '2147483647', opacity: '1',
+      willChange: 'transform', transition: 'transform {move_ms}ms cubic-bezier(.2,.8,.2,1)'
+    }});
+    const root = host.attachShadow ? host.attachShadow({{mode:'open'}}) : host;
+    root.innerHTML = {markup};
+    (document.documentElement || document.body).appendChild(host);
+    const startX = Math.max(0, innerWidth / 2);
+    const startY = Math.max(0, innerHeight / 2);
+    host.style.transition = 'none';
+    host.style.transform = `translate3d(${{startX}}px, ${{startY}}px, 0)`;
+    host.getBoundingClientRect();
+    host.style.transition = 'transform {move_ms}ms cubic-bezier(.2,.8,.2,1)';
+  }}
+  host.style.opacity = '1';
+  host.style.transform = `translate3d(${{x}}px, ${{y}}px, 0)`;
+  host.dataset.x = String(x);
+  host.dataset.y = String(y);
+  await new Promise(resolve => setTimeout(resolve, {move_wait_ms}));
+  return {{x, y}};
+}})()"##,
+        selector = selector,
+        cursor_id = serde_json::to_string(VIRTUAL_CURSOR_ID).unwrap(),
+        markup = serde_json::to_string(VIRTUAL_CURSOR_MARKUP).unwrap(),
+        move_ms = VIRTUAL_CURSOR_MOVE_MS,
+        move_wait_ms = VIRTUAL_CURSOR_MOVE_MS + 30,
+    )
+}
+
+fn virtual_cursor_restore_script(x: f64, y: f64) -> String {
+    format!(
+        r##"(() => {{
+  const mount = () => {{
+    const id = {cursor_id};
+    let host = document.getElementById(id);
+    if (host && host.dataset.chatosVirtualMouse !== 'true') {{
+      host.remove();
+      host = null;
+    }}
+    if (!host) {{
+      host = document.createElement('div');
+      host.id = id;
+      host.dataset.chatosVirtualMouse = 'true';
+      host.setAttribute('aria-hidden', 'true');
+      Object.assign(host.style, {{
+        position:'fixed', left:'0', top:'0', width:'1px', height:'1px',
+        pointerEvents:'none', zIndex:'2147483647', opacity:'1',
+        willChange:'transform', transition:'none'
+      }});
+      const root = host.attachShadow ? host.attachShadow({{mode:'open'}}) : host;
+      root.innerHTML = {markup};
+      (document.documentElement || document.body).appendChild(host);
+    }}
+    const x = Math.max(0, Math.min(innerWidth - 1, {x}));
+    const y = Math.max(0, Math.min(innerHeight - 1, {y}));
+    host.style.transform = `translate3d(${{x}}px, ${{y}}px, 0)`;
+    host.dataset.x = String(x);
+    host.dataset.y = String(y);
+  }};
+  if (document.documentElement) mount();
+  else addEventListener('DOMContentLoaded', mount, {{once:true}});
+}})()"##,
+        cursor_id = serde_json::to_string(VIRTUAL_CURSOR_ID).unwrap(),
+        markup = serde_json::to_string(VIRTUAL_CURSOR_MARKUP).unwrap(),
+        x = x,
+        y = y,
+    )
+}
+
+fn virtual_cursor_pulse_script() -> String {
+    format!(
+        r#"(() => {{
+  const host = document.getElementById({cursor_id});
+  if (!host || !host.shadowRoot) return false;
+  const pulse = host.shadowRoot.querySelector('.pulse');
+  const pointer = host.shadowRoot.querySelector('.pointer');
+  if (!pulse || !pointer) return false;
+  pulse.classList.remove('active');
+  pointer.classList.remove('pressed');
+  void pulse.offsetWidth;
+  pulse.classList.add('active');
+  pointer.classList.add('pressed');
+  setTimeout(() => pointer.classList.remove('pressed'), 180);
+  return true;
+}})()"#,
+        cursor_id = serde_json::to_string(VIRTUAL_CURSOR_ID).unwrap()
+    )
+}
+
+#[cfg(test)]
+mod virtual_cursor_tests {
+    use super::*;
+
+    #[test]
+    fn cursor_script_targets_the_element_and_draws_an_overlay() {
+        let script = virtual_cursor_move_script("\"#submit\"");
+        assert!(script.contains("document.querySelector(\"#submit\")"));
+        assert!(script.contains(VIRTUAL_CURSOR_ID));
+        assert!(script.contains("attachShadow"));
+        assert!(script.contains("transform 280ms"));
+        assert!(script.contains("animation:chatos-click 620ms"));
+        assert!(script.contains("linearGradient"));
+        assert!(script.contains("return {x, y}"));
+    }
+
+    #[test]
+    fn cursor_restore_script_keeps_the_last_position_across_navigation() {
+        let script = virtual_cursor_restore_script(320.5, 180.25);
+        assert!(script.contains(VIRTUAL_CURSOR_ID));
+        assert!(script.contains("DOMContentLoaded"));
+        assert!(script.contains("320.5"));
+        assert!(script.contains("180.25"));
+        assert!(script.contains("transition:'none'"));
+    }
+
+    #[test]
+    fn cursor_pulse_uses_the_owned_shadow_root() {
+        let script = virtual_cursor_pulse_script();
+        assert!(script.contains(VIRTUAL_CURSOR_ID));
+        assert!(script.contains("querySelector('.pulse')"));
+    }
 }
 
 async fn read_title(

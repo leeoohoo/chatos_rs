@@ -48,7 +48,13 @@ impl PluginRouteDispatcher {
             ),
             McpProviderKind::PluginLocal if self.components.supports(route) => Some(
                 self.components
-                    .call_tool(snapshot, route, original_tool_name, arguments)
+                    .call_tool(
+                        snapshot,
+                        route,
+                        original_tool_name,
+                        arguments,
+                        invocation_id,
+                    )
                     .await,
             ),
             _ => None,

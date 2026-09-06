@@ -340,6 +340,7 @@ fn signed_catalog_fixture() -> SignedCatalogFixture {
             release_id: release.id.clone(),
             component,
             content_sha256: "b".repeat(64),
+            skill: None,
         })
         .collect();
     let mut document = PluginCatalogDocument {

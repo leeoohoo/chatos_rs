@@ -31,6 +31,7 @@ struct TaskRunnerLifecycleHook {
     store: crate::store::AppStore,
     run_id: String,
     expected_acceptance_criteria: Vec<String>,
+    mcp_runtime_session: Option<chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle>,
 }
 
 impl TaskRunnerLifecycleHook {
@@ -41,6 +42,7 @@ impl TaskRunnerLifecycleHook {
         store: crate::store::AppStore,
         run_id: String,
         expected_acceptance_criteria: Vec<String>,
+        mcp_runtime_session: Option<chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle>,
     ) -> Self {
         Self {
             finalization: TaskFinalizationLifecycleHook::new(max_iterations),
@@ -50,6 +52,7 @@ impl TaskRunnerLifecycleHook {
             store,
             run_id,
             expected_acceptance_criteria,
+            mcp_runtime_session,
         }
     }
 
@@ -98,6 +101,19 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
         if context.reason == TASK_OUTCOME_REPORT_REQUIRED_REASON {
             return Ok(RuntimeBeforeModelRequest::unchanged());
         }
+        let protected_skill_items = match self.mcp_runtime_session.as_ref() {
+            Some(session) => {
+                session
+                    .routes()
+                    .await
+                    .map_err(|error| {
+                        format!("load protected Plugin Skill context failed: {error}")
+                    })?
+                    .protected_skill_instruction_items
+            }
+            None => Vec::new(),
+        };
+        let iteration_input = context.input.to_string();
         let iteration = context.iteration;
         let mut before = self.finalization.before_model_request(context).await?;
         if !before.tools_enabled {
@@ -120,6 +136,11 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
                 &confirmed_project_paths,
             ));
         }
+        before.input_items.extend(
+            protected_skill_items
+                .into_iter()
+                .filter(|item| !protected_skill_item_is_already_present(item, &iteration_input)),
+        );
         Ok(before)
     }
 
@@ -182,6 +203,12 @@ impl TaskRunnerLifecycleHook {
             .await?;
         event.map(ai_reported_task_outcome_from_event).transpose()
     }
+}
+
+fn protected_skill_item_is_already_present(item: &Value, current_input: &str) -> bool {
+    item.pointer("/_meta/chatos~1protectedSkillActivationRef")
+        .and_then(Value::as_str)
+        .is_some_and(|activation_ref| current_input.contains(activation_ref))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -420,6 +447,7 @@ impl RunService {
         review_policy: TaskExecutionReviewPolicy,
         effective_workspace_dir: &str,
         expected_acceptance_criteria: Vec<String>,
+        mcp_runtime_session: chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle,
     ) -> RuntimeExecutionState {
         let path_redactor = crate::services::path_redaction::WorkspacePathRedactor::for_workspace(
             self.config.default_workspace_dir.as_str(),
@@ -456,6 +484,7 @@ impl RunService {
                 self.store.clone(),
                 run.id.clone(),
                 expected_acceptance_criteria,
+                Some(mcp_runtime_session),
             ))))
             .with_callbacks(callbacks)
             .with_abort_token(Some(abort_token))

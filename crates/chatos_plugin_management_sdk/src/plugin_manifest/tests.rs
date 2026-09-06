@@ -66,6 +66,45 @@ fn parses_schema_v3_npm_stdio_mcp() {
 }
 
 #[test]
+fn omits_absent_runtime_context_from_canonical_manifest() {
+    let raw = manifest_with_mcp(json!({
+        "type": "stdio",
+        "bin": "open-computer-use",
+        "args": ["mcp"]
+    }));
+    let manifest = parse_plugin_manifest(raw.as_str()).expect("schema-v3 manifest");
+
+    assert!(manifest.runtime_context.is_none());
+    let canonical = serde_json::to_value(&manifest).expect("canonical manifest");
+    assert!(canonical.get("runtimeContext").is_none());
+}
+
+#[test]
+fn preserves_published_manifest_hashes() {
+    let fixtures = [
+        (
+            include_str!("../../../../plugins/computer-use/chatos.plugin.json"),
+            "0238257797138f3c7bceb8ac697d087ab4ca6d7467216a57f8c211ff15f00d2a",
+            false,
+        ),
+        (
+            include_str!("../../../../plugins/document/chatos.plugin.json"),
+            "b09510774c58d9bed8fd5debe2c2f377b5f3ffb0d0af7ee50c068d56a7c6c9dd",
+            true,
+        ),
+    ];
+
+    for (raw, expected_hash, expects_runtime_context) in fixtures {
+        let manifest = parse_plugin_manifest(raw).expect("published manifest");
+        assert_eq!(manifest.runtime_context.is_some(), expects_runtime_context);
+        assert_eq!(
+            normalized_plugin_manifest_sha256(&manifest).expect("manifest hash"),
+            expected_hash
+        );
+    }
+}
+
+#[test]
 fn infers_stdio_transport_from_bin() {
     let raw = manifest_with_mcp(json!({"bin": "open-computer-use", "args": ["mcp"]}));
     let manifest = parse_plugin_manifest(raw.as_str()).expect("inferred stdio manifest");

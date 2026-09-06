@@ -54,6 +54,8 @@ export async function renderOfficeDocumentStack(
       'screenshot',
       '--page',
       `1-${maximumPages}`,
+      '--grid',
+      '1',
       '--out',
       outputPath,
       '--screenshot-width',

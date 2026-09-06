@@ -1,47 +1,26 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_ai_runtime::{
-    build_responses_text_input, run_compatible_prompt_with, select_preferred_response_text,
-    AiRequestHandler, SimplePromptOptions,
-};
-use tracing::{info, warn};
-use uuid::Uuid;
+use tracing::warn;
 
-use crate::models::{
-    now_rfc3339, ChatosSyncedModelConfigRequest, CreateModelConfigRequest, ModelCatalogResponse,
-    ModelConfigRecord, ModelConfigTestResponse, ModelConfigUsageRecord, PreviewModelCatalogRequest,
-    TestModelConfigRequest, UpdateModelConfigRequest,
-};
+use crate::models::ModelConfigRecord;
+#[cfg(test)]
+use crate::models::{now_rfc3339, ChatosSyncedModelConfigRequest};
 use crate::store::AppStore;
 
+use super::model_catalog::normalize_model_config_record;
+#[cfg(test)]
 use super::model_catalog::{
-    fetch_model_catalog_for_record, normalize_model_base_url_input, normalize_model_config_record,
     normalize_model_prompt_vendor_input, normalize_model_provider_input,
     normalize_model_thinking_level_input,
 };
-use super::{normalized_optional, validate_required, ModelConfigService};
-
-mod catalog;
-mod mutation;
-mod testing;
+use super::ModelConfigService;
+#[cfg(test)]
+use super::{normalized_optional, validate_required};
 
 impl ModelConfigService {
     pub(crate) fn new(store: AppStore) -> Self {
         Self { store }
-    }
-
-    async fn first_task_using_model_config(
-        &self,
-        model_config_id: &str,
-    ) -> Result<Option<String>, String> {
-        Ok(self
-            .store
-            .list_tasks()
-            .await?
-            .into_iter()
-            .find(|task| task.default_model_config_id.as_deref() == Some(model_config_id))
-            .map(|task| task.id))
     }
 
     async fn normalized_model_config_by_id(
@@ -80,6 +59,7 @@ impl ModelConfigService {
         self.normalized_model_config_by_id(id).await
     }
 
+    #[cfg(test)]
     pub async fn upsert_chatos_model_config(
         &self,
         input: ChatosSyncedModelConfigRequest,
@@ -165,13 +145,5 @@ impl ModelConfigService {
             updated_at: now,
         };
         self.store.save_model_config(record).await
-    }
-
-    pub async fn delete_model_config(&self, id: &str) -> Result<bool, String> {
-        self.store.delete_model_config(id).await
-    }
-
-    pub async fn usage_stats(&self) -> Result<Vec<ModelConfigUsageRecord>, String> {
-        self.store.list_model_config_usage().await
     }
 }

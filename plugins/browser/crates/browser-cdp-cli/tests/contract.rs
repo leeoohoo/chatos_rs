@@ -92,7 +92,7 @@ fn tools_list_works_before_initialize_for_host_migration() {
 }
 
 #[test]
-fn chrome_extension_mode_uses_the_authenticated_local_bridge() {
+fn default_mode_uses_the_authenticated_existing_chrome_bridge() {
     let (endpoint, bridge) = serve_bridge();
     let mut child = Command::new(env!("CARGO_BIN_EXE_chatos-browser-cdp"))
         .arg("mcp")
@@ -115,7 +115,7 @@ fn chrome_extension_mode_uses_the_authenticated_local_bridge() {
             "method":"tools/call",
             "params":{
                 "name":"browser_session_open",
-                "arguments":{"mode":"chrome_extension"}
+                "arguments":{}
             }
         }),
     );
@@ -217,7 +217,7 @@ fn chrome_extension_mode_uses_the_authenticated_local_bridge() {
 }
 
 #[test]
-fn chrome_extension_mode_fails_closed_without_owned_or_development_bridge() {
+fn default_existing_chrome_mode_fails_closed_without_an_available_bridge() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_chatos-browser-cdp"))
         .arg("mcp")
         .env_remove("CHATOS_BROWSER_BRIDGE_ENDPOINT")
@@ -239,7 +239,7 @@ fn chrome_extension_mode_fails_closed_without_owned_or_development_bridge() {
             "method":"tools/call",
             "params":{
                 "name":"browser_session_open",
-                "arguments":{"mode":"chrome_extension"}
+                "arguments":{}
             }
         }),
     );

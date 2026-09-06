@@ -46,6 +46,6 @@ pub struct PluginManifest {
     pub dependencies: PluginDependencySpec,
     #[serde(default)]
     pub permissions: Vec<PluginPermissionRequirement>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_context: Option<PluginRuntimeContext>,
 }

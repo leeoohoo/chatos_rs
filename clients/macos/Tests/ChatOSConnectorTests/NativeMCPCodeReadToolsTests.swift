@@ -50,6 +50,40 @@ struct NativeMCPCodeReadToolsTests {
     }
 
     @Test
+    func presentsAProjectFileInThePetWorkbench() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let file = fixture.root.appendingPathComponent("preview.png")
+        try Data([0, 1, 2, 3]).write(to: file)
+        let received = PetPresentationNotificationBox()
+        let token = NotificationCenter.default.addObserver(
+            forName: .chatOSPetOpenFileRequested,
+            object: nil,
+            queue: nil
+        ) { notification in
+            received.store(notification.object as? PetFilePresentationRequest)
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let result = try fixture.tools().call(
+            name: "open_file_in_pet",
+            arguments: [
+                "path": .string("preview.png"),
+                "line": .number(12),
+                "mode": .string("edit"),
+            ]
+        ).object()
+
+        #expect(result.bool("presented") == true)
+        #expect(result.string("path") == file.path)
+        #expect(received.value == PetFilePresentationRequest(
+            path: file.path,
+            targetLine: 12,
+            prefersEditing: true
+        ))
+    }
+
+    @Test
     func defaultToolRootScopesRelativeToolPaths() throws {
         let fixture = try Fixture()
         defer { fixture.dispose() }
@@ -245,6 +279,11 @@ private extension Dictionary where Key == String, Value == NativeJSONValue {
         return value
     }
 
+    func bool(_ key: String) -> Bool? {
+        guard case let .bool(value)? = self[key] else { return nil }
+        return value
+    }
+
     func array(_ key: String) throws -> [NativeJSONValue] {
         guard case let .array(value)? = self[key] else { throw TestError.invalidShape }
         return value
@@ -253,4 +292,17 @@ private extension Dictionary where Key == String, Value == NativeJSONValue {
 
 private enum TestError: Error {
     case invalidShape
+}
+
+private final class PetPresentationNotificationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: PetFilePresentationRequest?
+
+    var value: PetFilePresentationRequest? {
+        lock.withLock { storedValue }
+    }
+
+    func store(_ value: PetFilePresentationRequest?) {
+        lock.withLock { storedValue = value }
+    }
 }

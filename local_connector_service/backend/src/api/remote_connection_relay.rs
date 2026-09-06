@@ -312,7 +312,11 @@ async fn handle_remote_terminal_socket(
 
     let subscription = match state
         .relay
-        .subscribe_terminal_session(terminal_session_id.as_str())
+        .subscribe_terminal_session_for(
+            terminal_session_id.as_str(),
+            owner_user_id.as_str(),
+            device_id.as_str(),
+        )
         .await
     {
         Ok(subscription) => subscription,

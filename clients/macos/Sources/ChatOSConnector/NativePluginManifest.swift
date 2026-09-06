@@ -78,8 +78,10 @@ enum NativePluginManifestLoader {
         let pluginHash = Self.sha256(record.pluginID)
         let releaseHash = Self.sha256(record.releaseID)
         let sessionHash = Self.sha256(adapterSessionID)
+        let userHash = Self.sha256(ownerUserID)
         let visualSessionURL = runtimeRootURL
-            .appendingPathComponent("visual-sessions", isDirectory: true)
+            .appendingPathComponent("visual-sessions/users", isDirectory: true)
+            .appendingPathComponent(userHash, isDirectory: true)
             .appendingPathComponent(pluginHash, isDirectory: true)
             .appendingPathComponent(releaseHash, isDirectory: true)
             .appendingPathComponent(sessionHash, isDirectory: true)
@@ -99,8 +101,14 @@ enum NativePluginManifestLoader {
         )
         let dataURL = runtimeContext.dataURL
         let cacheURL = runtimeContext.cacheURL
-        let artifactURL = runtimeRootURL.appendingPathComponent("artifacts/\(sessionHash)", isDirectory: true)
-        let grantURL = runtimeRootURL.appendingPathComponent("file-grants/\(sessionHash)", isDirectory: true)
+        let artifactURL = runtimeRootURL
+            .appendingPathComponent("artifacts/users", isDirectory: true)
+            .appendingPathComponent(userHash, isDirectory: true)
+            .appendingPathComponent(sessionHash, isDirectory: true)
+        let grantURL = runtimeRootURL
+            .appendingPathComponent("file-grants/users", isDirectory: true)
+            .appendingPathComponent(userHash, isDirectory: true)
+            .appendingPathComponent(sessionHash, isDirectory: true)
         for directory in [visualSessionURL, dataURL, cacheURL, artifactURL, grantURL] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
@@ -130,15 +138,12 @@ enum NativePluginManifestLoader {
         ], uniquingKeysWith: { _, runtime in runtime })
         environment.merge(runtimeContext.environment, uniquingKeysWith: { _, runtime in runtime })
 #if os(macOS)
-        if manifest.name == "open-computer-use", server.bin == "open-computer-use",
-           let applicationSupportURL = FileManager.default.urls(
-               for: .applicationSupportDirectory,
-               in: .userDomainMask
-           ).first {
-            environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"] = applicationSupportURL
-                .appendingPathComponent("Open Computer Use", isDirectory: true)
-                .appendingPathComponent("runtime", isDirectory: true)
+        if manifest.name == "open-computer-use", server.bin == "open-computer-use" {
+            let managedAppRoot = dataURL
+                .appendingPathComponent("managed-app", isDirectory: true)
                 .path
+            environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"] = managedAppRoot
+            environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"] = managedAppRoot
         }
 #endif
         return .init(

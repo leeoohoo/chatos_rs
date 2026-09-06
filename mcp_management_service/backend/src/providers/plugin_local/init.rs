@@ -12,6 +12,7 @@ impl PluginLocalProvider {
         request_timeout: std::time::Duration,
         internal_secret: Option<String>,
         response_limit_bytes: usize,
+        skill_attestations: std::sync::Arc<super::SkillActivationAttestationService>,
     ) -> Result<Self, String> {
         let base_url = base_url.into();
         let parsed = reqwest::Url::parse(base_url.as_str())
@@ -29,6 +30,7 @@ impl PluginLocalProvider {
             response_limit_bytes,
             recovered_bindings: Default::default(),
             recovery_lock: Default::default(),
+            skill_attestations,
         })
     }
 

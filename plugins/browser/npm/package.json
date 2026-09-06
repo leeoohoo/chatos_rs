@@ -1,6 +1,6 @@
 {
   "name": "chatos-browser-cdp",
-  "version": "0.1.7",
+  "version": "0.1.12",
   "description": "Full Chrome DevTools Protocol browser control MCP for Chatos.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/chatos-ai/chatos-browser-cdp",
@@ -36,6 +36,8 @@
   ],
   "scripts": {
     "sbom": "node ../scripts/generate-sbom.mjs",
-    "test": "node --test test/*.test.js"
+    "sync:skills": "node ../scripts/sync-skills.mjs",
+    "test": "npm run sync:skills && node --test test/*.test.js",
+    "prepack": "npm run sync:skills"
   }
 }

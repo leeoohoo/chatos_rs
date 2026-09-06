@@ -48,14 +48,16 @@ struct RemoteConnectionDetailView: View {
                     switch selectedTab {
                     case .terminal:
                         RemoteTerminalWorkspaceView(
-                            connection: connection,
-                            service: model.remoteConnectionService
+                            viewModel: model.remoteConnectionWorkspaceStore
+                                .terminalWorkspace(for: connection)
                         )
+                        .id(connection.id)
                     case .files:
                         RemoteSFTPWorkspaceView(
-                            connectionID: connection.id,
-                            service: model.remoteFileService
+                            viewModel: model.remoteConnectionWorkspaceStore
+                                .fileWorkspace(for: connection.id)
                         )
+                        .id(connection.id)
                     case .details:
                         ScrollView {
                             connectionDetails(connection)

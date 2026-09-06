@@ -36,6 +36,7 @@ fn plugin_runtime_binding() -> PluginMcpRuntimeBinding {
         tool_blocklist: Vec::new(),
         required: true,
         allow_writes: false,
+        allow_device_fallback: false,
     }
 }
 

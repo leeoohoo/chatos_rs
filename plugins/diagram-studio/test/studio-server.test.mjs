@@ -15,7 +15,10 @@ test('studio command serves the packaged UI and persists blank project diagrams'
       ...process.env,
       DIAGRAM_STUDIO_HOST: '127.0.0.1',
       DIAGRAM_STUDIO_PORT: String(port),
-      DIAGRAM_STUDIO_DATA_DIR: root
+      DIAGRAM_STUDIO_DATA_DIR: root,
+      CHATOS_CONTEXT_SCOPE: 'project',
+      CHATOS_PROJECT_ID: 'project-relay',
+      CHATOS_PROJECT_NAME: 'relay'
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -30,6 +33,18 @@ test('studio command serves the packaged UI and persists blank project diagrams'
     const health = await fetch(`${base}/api/health`).then((response) => response.json());
     assert.equal(health.ok, true);
     assert.equal(health.dataDirectory, root);
+
+    const context = await fetch(`${base}/api/context`).then((response) => response.json());
+    assert.equal(context.kind, 'project');
+    assert.equal(context.shared, false);
+    assert.equal(context.chatosProjectId, 'project-relay');
+    assert.equal(context.chatosProjectName, 'relay');
+    assert.match(context.defaultProjectId, /^project-/);
+
+    const initialProjects = await fetch(`${base}/api/projects`).then((response) => response.json());
+    assert.equal(initialProjects.items.length, 1);
+    assert.equal(initialProjects.items[0].projectId, context.defaultProjectId);
+    assert.equal(initialProjects.items[0].name, 'relay');
 
     const project = await fetch(`${base}/api/projects`, {
       method: 'POST',

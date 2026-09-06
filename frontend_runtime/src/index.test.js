@@ -307,3 +307,32 @@ test('JSON client supports service-specific success readers', async () => {
   });
   assert.deepEqual(await request('/api/value'), { wrapped: { ok: true } });
 });
+
+test('JSON client aborts requests that exceed the configured timeout', async () => {
+  const request = createJsonApiClient({
+    timeoutMs: 5,
+    fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => {
+        reject(new DOMException('aborted', 'AbortError'));
+      }, { once: true });
+    }),
+  });
+
+  await assert.rejects(() => request('/api/slow'), /Request timed out after 5ms/);
+});
+
+test('JSON client preserves caller initiated aborts', async () => {
+  const controller = new AbortController();
+  const request = createJsonApiClient({
+    timeoutMs: 1_000,
+    fetchImpl: async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => {
+        reject(new DOMException('aborted', 'AbortError'));
+      }, { once: true });
+    }),
+  });
+
+  const pending = request('/api/cancelled', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(() => pending, (error) => error.name === 'AbortError');
+});

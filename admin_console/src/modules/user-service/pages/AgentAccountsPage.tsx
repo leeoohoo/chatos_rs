@@ -22,13 +22,14 @@ import type { ColumnsType } from 'antd/es/table';
 import { EditOutlined, KeyOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
+import { useAdminAuth } from '../../../app/auth/AuthProvider';
 import { api } from '../api/client';
 import type {
   AgentAccountListItem,
   CreateAgentAccountPayload,
   ResetAgentPasswordPayload,
   UpdateAgentAccountPayload,
-  UserSummaryRecord,
+  UserOptionRecord,
 } from '../types';
 
 type AgentFormValues = {
@@ -45,6 +46,7 @@ type ResetPasswordValues = {
 
 export function AgentAccountsPage() {
   const { message } = App.useApp();
+  const { user: currentUser } = useAdminAuth();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentAccountListItem | null>(null);
@@ -52,22 +54,22 @@ export function AgentAccountsPage() {
   const [form] = Form.useForm<AgentFormValues>();
   const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
 
-  const currentUserQuery = useQuery({
-    queryKey: ['user-service', 'current-user'],
-    queryFn: () => api.currentUser(),
-  });
   const usersQuery = useQuery({
-    queryKey: ['user-service', 'users'],
-    queryFn: () => api.listUsers(),
+    queryKey: ['user-service', 'user-options'],
+    queryFn: () => api.listUserOptions(),
+    enabled: currentUser.role === 'super_admin' && drawerOpen,
   });
   const agentsQuery = useQuery({
     queryKey: ['user-service', 'agent-accounts'],
     queryFn: () => api.listAgentAccounts(),
   });
 
-  const currentUser = currentUserQuery.data?.user;
-  const isSuperAdmin = currentUser?.role === 'super_admin';
-  const userOptions = (usersQuery.data || []).map((item: UserSummaryRecord) => ({
+  const isSuperAdmin = currentUser.role === 'super_admin';
+  const availableUsers = new Map<string, UserOptionRecord>([
+    [currentUser.id, currentUser],
+    ...(usersQuery.data || []).map((item): [string, UserOptionRecord] => [item.id, item]),
+  ]);
+  const userOptions = [...availableUsers.values()].map((item) => ({
     label: `${item.display_name || item.username} (${item.username})`,
     value: item.id,
   }));
@@ -178,7 +180,7 @@ export function AgentAccountsPage() {
     form.resetFields();
     form.setFieldsValue({
       enabled: true,
-      owner_user_id: currentUser?.id,
+      owner_user_id: currentUser.id,
     });
     setDrawerOpen(true);
   }
@@ -333,6 +335,7 @@ export function AgentAccountsPage() {
             <Select
               disabled={!isSuperAdmin}
               options={userOptions}
+              loading={usersQuery.isLoading}
               placeholder="选择真实用户"
             />
           </Form.Item>

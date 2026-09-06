@@ -14,6 +14,7 @@ use crate::runtime::{
     RuntimeSessionCloseStore, RuntimeSessionStore, RuntimeToolBatchStore,
 };
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
+use std::sync::Arc;
 use std::time::Duration;
 
 // Local Connector MCP calls use the same platform-wide two-hour execution
@@ -49,6 +50,8 @@ pub struct AppState {
     pub plugin_management_client: PluginManagementClient,
     pub project_context_client: ProjectContextClient,
     pub providers: ProviderDispatcher,
+    pub(crate) skill_attestations:
+        Arc<crate::providers::plugin_components::SkillActivationAttestationService>,
     pub runtime_grants: RuntimeGrantService,
     pub runtime_sessions: RuntimeSessionStore,
     pub runtime_session_closes: RuntimeSessionCloseStore,
@@ -79,6 +82,18 @@ impl AppState {
             config.project_service_base_url.clone(),
             config.project_service_internal_api_secret.clone(),
         )?;
+        let skill_attestations = Arc::new(match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => {
+                crate::providers::plugin_components::SkillActivationAttestationService::connect(
+                    config.runtime_grant_secret.as_str(),
+                    database_url,
+                )
+                .await?
+            }
+            None => crate::providers::plugin_components::SkillActivationAttestationService::new(
+                config.runtime_grant_secret.as_str(),
+            )?,
+        });
         let providers = ProviderDispatcher::new(
             config.project_service_http_client.clone(),
             config.project_service_base_url.clone(),
@@ -109,6 +124,7 @@ impl AppState {
                 ),
                 response_limit_bytes: config.provider_response_limit_bytes,
             },
+            skill_attestations.clone(),
         )?;
         let runtime_sessions = match config.runtime_session_database_url.as_deref() {
             Some(database_url) => {
@@ -162,6 +178,7 @@ impl AppState {
             plugin_management_client,
             project_context_client,
             providers,
+            skill_attestations,
             runtime_sessions,
             runtime_session_closes,
             runtime_execution_scopes,

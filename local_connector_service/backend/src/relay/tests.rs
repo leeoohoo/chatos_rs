@@ -320,7 +320,7 @@ async fn real_valkey_routes_commands_responses_and_terminal_events_across_instan
         .is_none());
 
     let terminal_subscription = relay_a
-        .subscribe_terminal_session("terminal-1")
+        .subscribe_terminal_session_for("terminal-1", "owner-1", "device-1")
         .await
         .expect("subscribe remote terminal session");
     let terminal_subscription_id = terminal_subscription.id;
@@ -754,6 +754,107 @@ async fn plugin_response_completes_pending_relay_request() {
         assert_eq!(response.status, 200);
         assert_eq!(response.body["action"].as_str(), Some(action));
     }
+}
+
+#[tokio::test]
+async fn relay_response_requires_the_original_connector_session() {
+    let relay = ConnectorRelay::default();
+    let (outbound, mut inbound) = mpsc::channel(1);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+    let dispatch = {
+        let relay = relay.clone();
+        tokio::spawn(async move {
+            relay
+                .dispatch(
+                    relay_request("request-source-bound"),
+                    Duration::from_secs(1),
+                )
+                .await
+        })
+    };
+    inbound.recv().await.expect("relay request");
+    let response = r#"{"type":"plugin_prepare_response","request_id":"request-source-bound","status":200,"body":{"adapter_session_id":"adapter-1"}}"#;
+    let wrong_source = RelaySessionIdentity {
+        owner_user_id: "owner-2".to_string(),
+        device_id: "device-2".to_string(),
+        session_id: "session-2".to_string(),
+    };
+    let error = relay
+        .handle_inbound_text_from(wrong_source, response)
+        .await
+        .expect_err("another connector session must not complete the request");
+    assert!(error.contains("source does not match"));
+    assert_eq!(relay.stats().await.pending_relay_requests, 1);
+
+    assert!(relay
+        .handle_inbound_text_from(
+            RelaySessionIdentity {
+                owner_user_id: "owner-1".to_string(),
+                device_id: "device-1".to_string(),
+                session_id: "session-1".to_string(),
+            },
+            response,
+        )
+        .await
+        .expect("original connector response"));
+    dispatch
+        .await
+        .expect("dispatch task")
+        .expect("bound response");
+}
+
+#[tokio::test]
+async fn terminal_event_requires_the_subscribed_connector_session() {
+    let relay = ConnectorRelay::default();
+    let (outbound, _inbound) = mpsc::channel(1);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+    let subscription = relay
+        .subscribe_terminal_session_for("terminal-source-bound", "owner-1", "device-1")
+        .await
+        .expect("terminal subscription");
+    let event = r#"{"type":"terminal_output","terminal_session_id":"terminal-source-bound","data":"hello"}"#;
+    let error = relay
+        .handle_inbound_text_from(
+            RelaySessionIdentity {
+                owner_user_id: "owner-2".to_string(),
+                device_id: "device-2".to_string(),
+                session_id: "session-2".to_string(),
+            },
+            event,
+        )
+        .await
+        .expect_err("another connector session must not publish terminal output");
+    assert!(error.contains("source does not match"));
+
+    assert!(relay
+        .handle_inbound_text_from(
+            RelaySessionIdentity {
+                owner_user_id: "owner-1".to_string(),
+                device_id: "device-1".to_string(),
+                session_id: "session-1".to_string(),
+            },
+            event,
+        )
+        .await
+        .expect("original connector terminal event"));
+    relay
+        .drop_terminal_subscription("terminal-source-bound", subscription.id.as_str())
+        .await
+        .expect("drop terminal subscription");
 }
 
 #[tokio::test]

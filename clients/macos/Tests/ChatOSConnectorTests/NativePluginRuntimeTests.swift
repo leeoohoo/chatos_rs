@@ -24,7 +24,7 @@ struct NativePluginRuntimeTests {
         let launcher = binDirectory.appendingPathComponent("demo-app")
         let script = #"""
         #!/bin/sh
-        exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end("Plugin application ready")}).listen(port,"127.0.0.1")'
+        exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end(process.env.CHATOS_PLUGIN_RELEASE_ID)}).listen(port,"127.0.0.1")'
         """#
         try Data(script.utf8).write(to: launcher)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
@@ -89,10 +89,31 @@ struct NativePluginRuntimeTests {
             )
         )
         let body = try await URLSession.shared.data(from: launch.url).0
-        #expect(String(decoding: body, as: UTF8.self) == "Plugin application ready")
+        #expect(String(decoding: body, as: UTF8.self) == "release-demo")
         #expect(FileManager.default.fileExists(
             atPath: runtimeRoot.appendingPathComponent("data", isDirectory: true).path
         ))
+
+        var updatedRecord = record
+        updatedRecord.releaseID = "release-demo-2"
+        updatedRecord.artifactSHA256 = String(repeating: "b", count: 64)
+        let updatedLaunch = try await runtime.launch(
+            record: updatedRecord,
+            manifest: manifest,
+            contribution: manifest.ui[0],
+            runtimeRootURL: runtimeRoot,
+            application: application,
+            hostContext: .init(
+                ownerUserID: "user-1",
+                deviceID: "device-1",
+                workspaceID: nil,
+                workspaceRoot: nil,
+                projectID: nil,
+                projectName: nil
+            )
+        )
+        let updatedBody = try await URLSession.shared.data(from: updatedLaunch.url).0
+        #expect(String(decoding: updatedBody, as: UTF8.self) == "release-demo-2")
         await runtime.stopAll()
     }
 
@@ -296,21 +317,49 @@ struct NativePluginRuntimeTests {
     }
 
     @Test
-    func browserSessionApprovalSummaryExplainsIsolationInsteadOfOnlyHashingArguments() {
+    func browserSessionApprovalSummaryExplainsExistingChromeInsteadOfOnlyHashingArguments() {
         let summary = NativeLocalConnectorService.safeArgumentSummary(
             toolName: "browser_session_open",
             arguments: .object([
-                "mode": .string("managed"),
-                "headless": .bool(true),
-                "persistent_profile": .bool(false),
+                "mode": .string("chrome_extension"),
+                "session_name": .string("今日 AI 新闻"),
             ])
         )
 
-        #expect(summary.contains("隔离浏览器会话"))
-        #expect(summary.contains("模式 managed"))
-        #expect(summary.contains("Headless 是"))
-        #expect(summary.contains("持久化浏览器资料 否"))
+        #expect(summary.contains("用户现有的 Google Chrome"))
+        #expect(summary.contains("今日 AI 新闻"))
+        #expect(summary.contains("原生标签组"))
         #expect(!summary.contains("内容摘要"))
+    }
+
+    @Test
+    func browserSessionOpenBuildsPairedChromeExecutionRequestFromVerifiedState() {
+        let arguments = NativeLocalConnectorService.browserSessionArguments(
+            arguments: .object([
+                "mode": .string("managed"),
+                "headless": .bool(true),
+                "persistent_profile": .bool(true),
+            ]),
+            relayBody: ["task_title": .string("今日 AI 新闻")],
+            browserExtensionPaired: true
+        )
+
+        #expect(arguments.jsonObject?["mode"]?.jsonString == "chrome_extension")
+        #expect(arguments.jsonObject?["headless"] == nil)
+        #expect(arguments.jsonObject?["persistent_profile"] == nil)
+        #expect(arguments.jsonObject?["session_name"]?.jsonString == "今日 AI 新闻")
+    }
+
+    @Test
+    func browserSessionOpenBuildsManagedFallbackExecutionRequestWithoutPairing() {
+        let arguments = NativeLocalConnectorService.browserSessionArguments(
+            arguments: .object(["mode": .string("chrome_extension")]),
+            relayBody: ["task_title": .string("首次使用")],
+            browserExtensionPaired: false
+        )
+
+        #expect(arguments.jsonObject?["mode"]?.jsonString == "managed")
+        #expect(arguments.jsonObject?["session_name"]?.jsonString == "首次使用")
     }
 
     @Test
@@ -340,14 +389,14 @@ struct NativePluginRuntimeTests {
     }
 
     @Test
-    func browserSessionPermissionDescriptionStatesExistingChromeIsNotReused() {
+    func browserSessionPermissionDescriptionStatesExistingChromeIsUsed() {
         let description = NativeLocalConnectorService.permissionDescription(
             toolName: "browser_session_open",
-            requiredPermissions: ["browser.managed.launch"]
+            requiredPermissions: ["browser.chrome.attach"]
         )
 
-        #expect(description.contains("不连接用户现有 Chrome"))
-        #expect(description.contains("browser.managed.launch"))
+        #expect(description.contains("用户已配对的 Google Chrome"))
+        #expect(description.contains("browser.chrome.attach"))
     }
 
     @Test
@@ -401,6 +450,10 @@ struct NativePluginRuntimeTests {
         try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
         try Data("---\nname: fixture-skill\ndescription: Fixture skill.\n---\n".utf8)
             .write(to: skill.appendingPathComponent("SKILL.md"))
+        let ui = root.appendingPathComponent("ui", isDirectory: true)
+        try FileManager.default.createDirectory(at: ui, withIntermediateDirectories: true)
+        try Data("<html><body>Fixture</body></html>".utf8)
+            .write(to: ui.appendingPathComponent("index.html"))
         try Data("""
         {
           "schemaVersion": 3,
@@ -410,6 +463,12 @@ struct NativePluginRuntimeTests {
           "mcpServers": {
             "fixture-mcp": {"type": "stdio", "bin": "fixture", "args": []}
           },
+          "ui": [{
+            "componentKey": "fixture-workbench",
+            "source": "./ui/index.html",
+            "surface": "workbench",
+            "runtime": {"type": "local_http", "bin": "fixture", "args": ["studio"]}
+          }],
           "permissions": [
             {"permission": "process.spawn", "required": true, "components": ["fixture-mcp"]},
             {"permission": "workspace.read", "required": true, "components": ["fixture-mcp"]}
@@ -451,6 +510,13 @@ struct NativePluginRuntimeTests {
                 lastError: nil,
                 lastCheckedAt: "1970-01-01T00:00:00Z"
             ),
+            GatewayPluginComponentStatus(
+                componentKey: "fixture-workbench",
+                kind: "ui_contribution",
+                availabilityStatus: "ready",
+                lastError: nil,
+                lastCheckedAt: "1970-01-01T00:00:00Z"
+            ),
         ])
 
         let payload = try JSONEncoder().encode(
@@ -462,6 +528,7 @@ struct NativePluginRuntimeTests {
         let statuses = try #require(items[0]["component_statuses"] as? [[String: Any]])
         #expect(statuses[0]["kind"] as? String == "skill_collection")
         #expect(statuses[1]["kind"] as? String == "mcp_server")
+        #expect(statuses[2]["kind"] as? String == "ui_contribution")
     }
 
     @Test("installation status fails closed when a declared Skill is missing")
@@ -510,26 +577,25 @@ struct NativePluginRuntimeTests {
         #expect(item.componentStatuses.first?.lastError == "Plugin Skill 目录不存在")
     }
 
-    @Test("plugin relay prepares a signed Skill component without launching it as an MCP server")
-    func pluginSkillPrepareSnapshot() throws {
+    @Test("plugin Skill v2 separates catalog, activation and resource reads")
+    func pluginSkillV2ProgressiveLoading() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let skill = root.appendingPathComponent("skills/fixture-skill", isDirectory: true)
         let references = skill.appendingPathComponent("references", isDirectory: true)
         try FileManager.default.createDirectory(at: references, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        try Data("""
+        let instructions = Data("""
         ---
         name: fixture-skill
         description: Fixture Skill instructions.
         ---
-
         # Fixture Skill
-
-        Read [guide.md](references/guide.md) when more detail is needed.
-        """.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
-        try Data("# Guide\n\nUse fresh screenshots.\n".utf8)
-            .write(to: references.appendingPathComponent("guide.md"))
+        Read the guide only when needed.
+        """.utf8)
+        let guide = Data("# Guide\nUse fresh screenshots.\n".utf8)
+        try instructions.write(to: skill.appendingPathComponent("SKILL.md"))
+        try guide.write(to: references.appendingPathComponent("guide.md"))
         try Data("""
         {
           "schemaVersion": 3,
@@ -539,42 +605,86 @@ struct NativePluginRuntimeTests {
           "mcpServers": {}
         }
         """.utf8).write(to: root.appendingPathComponent("chatos.plugin.json"))
-        let artifactSHA256 = String(repeating: "a", count: 64)
+        let resource: NativeJSONValue = .object([
+            "relative_path": .string("references/guide.md"),
+            "kind": .string("reference"),
+            "size_bytes": .number(Double(guide.count)),
+            "sha256": .string(NativePluginHash.sha256(guide)),
+        ])
+        let resourceManifestSHA256 = try NativePluginHash.canonicalSHA256(.array([resource]))
+        let metadata: NativeJSONValue = .object([
+            "name": .string("fixture-skill"),
+            "description": .string("Fixture Skill instructions."),
+            "role": .string("leaf"),
+            "activation_policy": .string("model_or_user"),
+            "context_mode": .string("inline"),
+            "required_skills": .array([]),
+            "related_skills": .array([]),
+            "extra": .object([:]),
+        ])
+        let instructionsSHA256 = NativePluginHash.sha256(instructions)
+        let snapshotSHA256 = try NativePluginHash.canonicalSHA256(.object([
+            "protocol_version": .number(2),
+            "skill_id": .string("fixture-skill"),
+            "relative_skill_path": .string("skills/fixture-skill/SKILL.md"),
+            "metadata": metadata,
+            "instructions_sha256": .string(instructionsSHA256),
+            "resource_manifest_sha256": .string(resourceManifestSHA256),
+        ]))
+        let expectedSnapshot: NativeJSONValue = .object([
+            "protocol_version": .number(2),
+            "skill_id": .string("fixture-skill"),
+            "relative_skill_path": .string("skills/fixture-skill/SKILL.md"),
+            "metadata": metadata,
+            "instructions_sha256": .string(instructionsSHA256),
+            "resource_manifest_sha256": .string(resourceManifestSHA256),
+            "resources": .array([resource]),
+            "snapshot_sha256": .string(snapshotSHA256),
+        ])
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: root.path,
+            installedAt: "2026-09-04T00:00:00Z"
+        )
 
-        let body = try NativePluginSkillSnapshotLoader.prepareBody(
-            record: .init(
-                pluginID: "plugin-1",
-                releaseID: "release-1",
-                version: "1.0.0",
-                artifactSHA256: artifactSHA256,
-                installationPath: root.path,
-                installedAt: "2026-08-27T00:00:00Z"
-            ),
+        let prepared = try NativePluginSkillSnapshotLoader.prepareV2Body(
+            record: record,
             componentKey: "fixture-skill",
-            skillKeys: ["fixture-skill"],
-            expectedContentSHA256: artifactSHA256,
+            expectedSnapshot: expectedSnapshot,
             runID: "run-1",
             adapterSessionID: "adapter-1",
             now: Date(timeIntervalSince1970: 0)
         )
+        let preparedObject = try prepared.requireObject()
+        #expect(try preparedObject.requireStringArray("operations") == [
+            "skill_activate", "skill_read_resource",
+        ])
+        let catalog = try #require(preparedObject["skills"]?.jsonArray?.first?.jsonObject)
+        #expect(catalog["instructions"] == nil)
 
-        let object = try body.requireObject()
-        #expect(try object.requireString("component_key") == "fixture-skill")
-        #expect(try object.requireStringArray("operations") == ["load_skill_resource"])
-        #expect(try object.requireString("session_sha256").count == 64)
-        let skills = try #require(object["skills"]?.jsonArray)
-        #expect(skills.count == 1)
-        let snapshot = try skills[0].requireObject()
-        #expect(try snapshot.requireString("skill_key") == "fixture-skill")
-        #expect(try snapshot.requireString("instructions").contains("Read [guide.md]"))
-        #expect(try snapshot.requireString("instructions_sha256").count == 64)
-        #expect(try snapshot.requireString("snapshot_sha256").count == 64)
-        let resources = try #require(snapshot["resources"]?.jsonArray)
-        #expect(resources.count == 1)
-        #expect(
-            try resources[0].requireObject().requireString("relative_path")
-                == "skills/fixture-skill/references/guide.md"
+        let activated = try NativePluginSkillSnapshotLoader.activateV2(
+            record: record,
+            componentKey: "fixture-skill",
+            expectedSnapshot: expectedSnapshot
         )
+        #expect(try activated.requireObject().requireString("instructions").contains("# Fixture Skill"))
+
+        let resourceRead = try NativePluginSkillSnapshotLoader.readV2Resource(
+            record: record,
+            componentKey: "fixture-skill",
+            expectedSnapshot: expectedSnapshot,
+            relativePath: "references/guide.md",
+            offset: 0,
+            maximumCharacters: 8
+        )
+        let resourceObject = try resourceRead.requireObject()
+        let expectedPage = String(String(decoding: guide, as: UTF8.self).prefix(8))
+        let actualPage = try #require(resourceObject["content"]?.jsonString)
+        #expect(actualPage == expectedPage)
+        #expect(resourceObject["truncated"]?.jsonBool == true)
     }
 
     @Test("installation status fails closed when executable is missing")
@@ -652,12 +762,45 @@ struct NativePluginRuntimeTests {
             permissionSnapshot: ["process.spawn"],
             runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
         )
+        let otherUserLaunch = try NativePluginManifestLoader.prepare(
+            record: .init(
+                pluginID: "plugin-1",
+                releaseID: "release-1",
+                version: "0.3.42",
+                artifactSHA256: String(repeating: "a", count: 64),
+                installationPath: installation.path,
+                installedAt: "2026-08-26T00:00:00Z"
+            ),
+            componentKey: "computer-use",
+            serverKey: nil,
+            adapterSessionID: "adapter-1",
+            ownerUserID: "user-2",
+            deviceID: "device-1",
+            workspaceRoot: root,
+            permissionSnapshot: ["process.spawn"],
+            runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
+        )
 
         #expect(launch.executableURL == launcher.standardizedFileURL)
         #expect(launch.arguments == ["mcp"])
         #expect(launch.environment["CHATOS_WORKSPACE"] == root.path)
+        for key in [
+            "CHATOS_PLUGIN_VISUAL_SESSION_DIR",
+            "CHATOS_PLUGIN_ARTIFACT_DIR",
+            "CHATOS_PLUGIN_FILE_GRANT_DIR",
+        ] {
+            #expect(launch.environment[key] != otherUserLaunch.environment[key])
+            #expect(launch.environment[key]?.contains("/users/") == true)
+        }
 #if os(macOS)
-        #expect(launch.environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"]?.hasSuffix("/Open Computer Use/runtime") == true)
+        let managedAppRoot = launch.environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"]
+        #expect(managedAppRoot?.contains("/data/users/") == true)
+        #expect(managedAppRoot?.hasSuffix("/managed-app") == true)
+        #expect(launch.environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"] == managedAppRoot)
+        #expect(
+            managedAppRoot
+                != otherUserLaunch.environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"]
+        )
 #endif
     }
 
@@ -1111,6 +1254,93 @@ struct NativePluginRuntimeTests {
         #expect(screenshotCall.split(separator: "\n").count == 1)
         #expect(screenshotCall.contains("\"full_page\":false"))
         #expect(!screenshotCall.contains("browser_session_id"))
+        let status = try await store.call(
+            adapterSessionID: identity.adapterSessionID,
+            invocationID: "status-1",
+            toolName: "browser_session_status",
+            arguments: .object([:]),
+            timeout: .seconds(1)
+        )
+        #expect(status.jsonObject?["structuredContent"]?.jsonObject?["state"]?.jsonString == "open")
+        await store.terminateAll()
+    }
+
+    @Test("a timed-out Browser CDP tool keeps the MCP process available for recovery")
+    func browserToolTimeoutKeepsPluginSessionAlive() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let script = root.appendingPathComponent("fixture.zsh")
+        try """
+        while IFS= read -r line; do
+          if [[ "$line" == *'tools/list'* ]]; then
+            echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"browser_wait"},{"name":"browser_session_status"}]}}'
+          elif [[ "$line" == *'"name":"browser_wait"'* ]]; then
+            : # Deliberately leave the request pending until the host cancels it.
+          elif [[ "$line" == *'"name":"browser_session_status"'* ]]; then
+            echo '{"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"text","text":"open"}],"structuredContent":{"state":"open"}}}'
+          elif [[ "$line" == *'initialize'* ]]; then
+            echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}}}}'
+          fi
+        done
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {"schemaVersion":3,"name":"fixture","version":"1.0.0","mcpServers":{"browser-cdp":{"type":"stdio","bin":"fixture","args":[]}}}
+            """.utf8)
+        )
+        let launch = NativePreparedPluginLaunch(
+            manifest: manifest,
+            componentKey: "browser-cdp",
+            server: manifest.mcpServers["browser-cdp"]!,
+            executableURL: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: [script.path],
+            environment: [:],
+            installationURL: root,
+            visualSessionURL: root.appendingPathComponent("visual"),
+            artifactURL: root.appendingPathComponent("artifacts"),
+            displayName: "Browser fixture"
+        )
+        let client = NativePluginStdioClient(launch: launch)
+        try await client.start()
+        let initialized = try await client.initialize()
+        let store = NativePluginRuntimeStore()
+        let identity = NativePluginRuntimeStore.Identity(
+            runID: "run-1",
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            componentKey: "browser-cdp",
+            adapterSessionID: "adapter-1"
+        )
+        await store.insert(
+            identity: identity,
+            client: client,
+            tools: initialized.tools,
+            permissionSnapshot: [],
+            displayName: "Browser fixture",
+            visualSessionURL: launch.visualSessionURL,
+            artifactURL: launch.artifactURL,
+            projectRootURL: nil,
+            workspaceID: nil
+        )
+
+        do {
+            _ = try await store.call(
+                adapterSessionID: identity.adapterSessionID,
+                invocationID: "wait-1",
+                toolName: "browser_wait",
+                arguments: .object([:]),
+                timeout: .milliseconds(100)
+            )
+            Issue.record("Expected the browser call to time out")
+        } catch let error as NativePluginRuntimeError {
+            #expect(error.errorDescription == NativePluginRuntimeError.timeout.errorDescription)
+        }
+
         let status = try await store.call(
             adapterSessionID: identity.adapterSessionID,
             invocationID: "status-1",

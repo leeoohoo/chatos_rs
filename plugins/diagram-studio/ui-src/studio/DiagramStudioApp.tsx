@@ -22,7 +22,7 @@ import { toPng, toSvg } from 'html-to-image';
 import type { DiagramDocument, DiagramEdge, DiagramKind, DiagramNode, DiagramProject, DiagramProjectSummary } from '../../src/schema';
 import { layoutDiagram } from '../../src/layout';
 import { nextNodeZIndex, reorderNodeLayers, type NodeLayerAction } from '../../src/layers';
-import { detectPlantUmlDiagramKind, diagramToPlantUml, plantUmlToDiagram } from '../../src/plantuml';
+import { detectPlantUmlDiagramKind, diagramToPlantUml, hasEmbeddedDiagramLayout, plantUmlToDiagram } from '../../src/plantuml';
 import {
   parseSequenceActivationHandle,
   parseSequenceSlot,
@@ -41,9 +41,10 @@ import { Inspector } from './Inspector';
 import { Icon } from './Icons';
 
 const nodeTypes = { diagramNode: DiagramNodeView, laneNode: LaneNodeView };
-const edgeTypes = { sequenceMessage: SequenceMessageEdge };
+const edgeTypes = { sequenceMessage: SequenceMessageEdge, smartOrthogonal: SmartOrthogonalEdge };
 
 type Repository = Awaited<ReturnType<typeof createRepository>>;
+type DeleteDocumentTarget = Pick<DiagramSummary, 'documentId' | 'title'>;
 
 export function DiagramStudioApp() {
   const reactFlow = useReactFlow();
@@ -74,6 +75,8 @@ export function DiagramStudioApp() {
   const [newProjectName, setNewProjectName] = useState('');
   const [newDiagramName, setNewDiagramName] = useState('');
   const [homeConfirmVisible, setHomeConfirmVisible] = useState(false);
+  const [deleteDocumentTarget, setDeleteDocumentTarget] = useState<DeleteDocumentTarget>();
+  const [isDeletingDocument, setIsDeletingDocument] = useState(false);
   const [exportVisible, setExportVisible] = useState(false);
   const [plantUmlVisible, setPlantUmlVisible] = useState(false);
   const [plantUmlSource, setPlantUmlSource] = useState('');
@@ -96,8 +99,15 @@ export function DiagramStudioApp() {
       const repo = await createRepository();
       setRepository(repo);
       const items = await repo.list();
+      const projectItems = await repo.listProjects();
       setDocuments(items);
-      setProjects(await repo.listProjects());
+      setProjects(projectItems);
+      const runtimeContext = await repo.runtimeContext();
+      if (runtimeContext.defaultProjectId) {
+        const project = await repo.readProject(runtimeContext.defaultProjectId);
+        setActiveProject(project);
+        setHomeVisible(false);
+      }
       setIsReady(true);
     })().catch((error) => {
       setIsReady(true);
@@ -254,6 +264,40 @@ export function DiagramStudioApp() {
       window.setTimeout(() => reactFlow.fitView({ padding: 0.16, duration: 320 }), 60);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function requestDeleteDocument(target: DeleteDocumentTarget) {
+    setDeleteDocumentTarget(target);
+    setLibraryVisible(false);
+  }
+
+  async function deleteRequestedDocument() {
+    if (!repository || !deleteDocumentTarget || isDeletingDocument) return;
+    const target = deleteDocumentTarget;
+    const deletingCurrent = document?.documentId === target.documentId;
+    setIsDeletingDocument(true);
+    try {
+      await repository.remove(target.documentId);
+      if (activeProject) setActiveProject(await repository.readProject(activeProject.projectId));
+      await Promise.all([refreshDocuments(repository), refreshProjects(repository)]);
+      if (deletingCurrent) {
+        setDocument(undefined);
+        setPersistedRevision(0);
+        setDirty(false);
+        setPast([]);
+        setFuture([]);
+        setSelectedNodeIds(new Set());
+        setSelectedEdgeId(undefined);
+        setPlantUmlVisible(false);
+        setExportVisible(false);
+      }
+      setDeleteDocumentTarget(undefined);
+      showToast(`已删除“${target.title}”`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsDeletingDocument(false);
     }
   }
 
@@ -655,14 +699,14 @@ export function DiagramStudioApp() {
     }
   }
 
-  function applyPlantUmlSource() {
+  async function applyPlantUmlSource() {
     if (!document) return;
     if (!supportsPlantUml(document.kind)) {
       setPlantUmlError('当前图形类型尚未接入 PlantUML 双向转换。');
       return;
     }
     try {
-      const next = plantUmlToDiagram(plantUmlSource, {
+      const imported = plantUmlToDiagram(plantUmlSource, {
         documentId: document.documentId,
         title: document.title,
         revision: document.revision,
@@ -670,6 +714,9 @@ export function DiagramStudioApp() {
         updatedAt: document.updatedAt,
         kind: document.kind
       });
+      const next = hasEmbeddedDiagramLayout(plantUmlSource)
+        ? imported
+        : await layoutDiagram(imported, document.kind === 'flowchart' || document.kind === 'swimlane' ? 'DOWN' : 'RIGHT');
       commit(next);
       setPlantUmlError(undefined);
       setPlantUmlVisible(false);
@@ -714,7 +761,7 @@ export function DiagramStudioApp() {
         const detectedKind = detectPlantUmlDiagramKind(text);
         const fallbackTitle = file.name.replace(/\.(puml|plantuml|pu)$/i, '').trim() || `导入的${kindLabel(detectedKind)}`;
         const seed = await repository.createInProject(activeProject.projectId, detectedKind, fallbackTitle);
-        const imported = plantUmlToDiagram(text, {
+        const parsed = plantUmlToDiagram(text, {
           documentId: seed.documentId,
           title: fallbackTitle,
           revision: seed.revision,
@@ -722,6 +769,9 @@ export function DiagramStudioApp() {
           updatedAt: seed.updatedAt,
           kind: detectedKind
         });
+        const imported = hasEmbeddedDiagramLayout(text)
+          ? parsed
+          : await layoutDiagram(parsed, detectedKind === 'flowchart' || detectedKind === 'swimlane' ? 'DOWN' : 'RIGHT');
         openResolvedDocument(imported);
         setDirty(true);
         await saveImported(repository, imported, seed.revision);
@@ -773,8 +823,11 @@ export function DiagramStudioApp() {
       ? { width: node.width ?? 1120, height: node.height ?? 180 }
       : { width: node.width ?? defaultNodeSize(node).width, height: node.height ?? defaultNodeSize(node).height }
   })) ?? [], [document?.nodes, selectedNodeIds]);
-  const flowEdges = useMemo(() => document?.edges.map((edge) => {
+  const flowEdges = useMemo(() => document?.edges.map((edge, edgeIndex) => {
     const isSequence = document.kind === 'sequence';
+    const useSmartRouting = (document.kind === 'architecture' || document.kind === 'topology')
+      && edge.type !== 'straight'
+      && edge.type !== 'bezier';
     const isReturnMessage = isSequence && (edge.data?.lineStyle === 'dashed' || edge.data?.dashed);
     const marker = {
       type: isReturnMessage ? MarkerType.Arrow : MarkerType.ArrowClosed,
@@ -786,17 +839,31 @@ export function DiagramStudioApp() {
     const baseStrokeWidth = edge.data?.strokeWidth ?? (isSequence ? 1.4 : 1.7);
     return {
       ...edge,
-      type: isSequence ? 'sequenceMessage' : edge.type,
-      data: isSequence ? {
-        ...edge.data,
-        onVerticalMoveStart: beginSequenceEdgeMove,
-        onVerticalMove: moveSequenceEdge,
-        onVerticalMoveEnd: finishSequenceEdgeMove,
-        onSelect: (edgeId: string) => {
-          setSelectedNodeIds(new Set());
-          setSelectedEdgeId(edgeId);
-        }
-      } : edge.data,
+      type: isSequence ? 'sequenceMessage' : useSmartRouting ? 'smartOrthogonal' : edge.type,
+      data: isSequence
+        ? {
+            ...edge.data,
+            onVerticalMoveStart: beginSequenceEdgeMove,
+            onVerticalMove: moveSequenceEdge,
+            onVerticalMoveEnd: finishSequenceEdgeMove,
+            onSelect: (edgeId: string) => {
+              setSelectedNodeIds(new Set());
+              setSelectedEdgeId(edgeId);
+            }
+          }
+        : useSmartRouting
+          ? {
+              ...edge.data,
+              routingOffset: (edgeIndex % 13 - 6) * 9,
+              routingObstacles: document.nodes
+                .filter((node) => node.id !== edge.source && node.id !== edge.target && node.data.shape !== 'container' && node.data.shape !== 'lane')
+                .map((node) => {
+                  const position = absoluteNodePosition(document.nodes, node);
+                  const size = defaultNodeSize(node);
+                  return { x: position.x, y: position.y, width: node.width ?? size.width, height: node.height ?? size.height };
+                })
+            }
+          : edge.data,
       selected: edge.id === selectedEdgeId,
       markerStart: edge.data?.startMarker === 'arrow' ? marker : undefined,
       markerEnd: edge.data?.endMarker === 'none' ? undefined : marker,
@@ -813,7 +880,9 @@ export function DiagramStudioApp() {
         strokeLinecap: 'round'
       },
       labelStyle: { fill: '#465267', fontSize: edge.data?.fontSize ?? 13, fontWeight: 600 },
-      labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.95 }
+      labelBgStyle: { fill: 'var(--surface-solid)', fillOpacity: 0.98 },
+      labelBgPadding: [7, 5],
+      labelBgBorderRadius: 6
     };
   }) ?? [], [document?.edges, document?.kind, document?.nodes, selectedEdgeId]);
 
@@ -852,6 +921,17 @@ export function DiagramStudioApp() {
         ))}
       </div>
       <p className="sheet-footnote">只设置图形类型，不会自动生成任何节点、文字或连线。</p>
+    </section>
+  </div>;
+
+  const deleteDocumentSheet = deleteDocumentTarget && <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !isDeletingDocument) setDeleteDocumentTarget(undefined); }}>
+    <section className="confirm-sheet" role="alertdialog" aria-modal="true" aria-labelledby="delete-document-title">
+      <span className="confirm-icon destructive"><Icon name="trash" /></span>
+      <div><strong id="delete-document-title">删除图形？</strong><p>“{deleteDocumentTarget.title}”将从当前项目中永久删除，此操作无法撤销。{document?.documentId === deleteDocumentTarget.documentId && dirty ? ' 未保存的修改也会一并丢失。' : ''}</p></div>
+      <div className="confirm-actions">
+        <button className="toolbar-button" disabled={isDeletingDocument} onClick={() => setDeleteDocumentTarget(undefined)}>取消</button>
+        <button className="toolbar-button destructive-primary" disabled={isDeletingDocument} onClick={() => void deleteRequestedDocument()}><Icon name="trash" />{isDeletingDocument ? '正在删除…' : '删除图形'}</button>
+      </div>
     </section>
   </div>;
 
@@ -911,17 +991,21 @@ export function DiagramStudioApp() {
         </section>
         <section className="projects-section">
           <div className="projects-heading"><div><h2>项目图形</h2><span>{activeProjectDocuments.length} 张</span></div></div>
-          {activeProjectDocuments.length > 0 ? <div className="diagram-grid">{activeProjectDocuments.map((item) => <button className="diagram-card" key={item.documentId} onClick={() => void openDocument(item.documentId)} aria-label={`打开图形 ${item.title}`}>
-            <span className={`project-card-icon kind-${item.kind}`}><Icon name={kindIcon(item.kind)} /></span>
-            <span className="project-card-copy"><strong>{item.title}</strong><small><b>{kindLabel(item.kind)}</b> · {item.nodeCount} 个节点 · {item.edgeCount} 条连线</small></span>
-            <span className="project-card-date">{formatUpdatedAt(item.updatedAt)}</span>
-            <Icon name="chevron" className="project-card-chevron" />
-          </button>)}</div> : <div className="empty-projects">
+          {activeProjectDocuments.length > 0 ? <div className="diagram-grid">{activeProjectDocuments.map((item) => <div className="diagram-card" key={item.documentId}>
+            <button className="diagram-card-open" onClick={() => void openDocument(item.documentId)} aria-label={`打开图形 ${item.title}`}>
+              <span className={`project-card-icon kind-${item.kind}`}><Icon name={kindIcon(item.kind)} /></span>
+              <span className="project-card-copy"><strong>{item.title}</strong><small><b>{kindLabel(item.kind)}</b> · {item.nodeCount} 个节点 · {item.edgeCount} 条连线</small></span>
+              <span className="project-card-date">{formatUpdatedAt(item.updatedAt)}</span>
+              <Icon name="chevron" className="project-card-chevron" />
+            </button>
+            <button className="diagram-card-delete" onClick={() => requestDeleteDocument(item)} aria-label={`删除图形 ${item.title}`} title="删除图形"><Icon name="trash" /></button>
+          </div>)}</div> : <div className="empty-projects">
             <span><Icon name="architecture" /></span><strong>这个项目还没有图形</strong><p>先创建一张图，并为它单独命名。</p><button className="toolbar-button primary" onClick={openNewDiagramSheet}><Icon name="plus" />新建图形</button>
           </div>}
         </section>
       </main>
       {newDiagramSheet}
+      {deleteDocumentSheet}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
@@ -950,6 +1034,7 @@ export function DiagramStudioApp() {
           <button className="toolbar-button" onClick={() => void autoLayout()}><Icon name="layout" />自动布局</button>
           {supportsPlantUml(document.kind) && <button className={`toolbar-button ${plantUmlVisible ? 'active' : ''}`} onClick={openPlantUmlEditor}><Icon name="document" />PlantUML</button>}
           <button className="toolbar-button primary" disabled={!dirty || isSaving} onClick={() => void save()}><Icon name="save" />保存</button>
+          <button className="icon-button destructive-icon" onClick={() => requestDeleteDocument(document)} aria-label="删除当前图形" title="删除当前图形"><Icon name="trash" /></button>
           <div className="export-anchor">
             <button className="toolbar-button" onClick={() => setExportVisible(!exportVisible)}><Icon name="export" />导出<Icon name="chevron" className="chevron" /></button>
             {exportVisible && <div className="popover-menu export-menu">
@@ -981,10 +1066,11 @@ export function DiagramStudioApp() {
           onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
           onDrop={onCanvasDrop}
           onPaneClick={() => { setSelectedNodeIds(new Set()); setSelectedEdgeId(undefined); }}
-          selectionOnDrag
+          selectionOnDrag={false}
           selectionMode={SelectionMode.Partial}
+          selectionKeyCode="Shift"
           multiSelectionKeyCode="Shift"
-          panOnDrag={[1, 2]}
+          panOnDrag={[0, 1, 2]}
           minZoom={0.15}
           maxZoom={2.5}
           fitView
@@ -998,6 +1084,7 @@ export function DiagramStudioApp() {
           <MiniMap className="apple-minimap" pannable zoomable nodeColor={(node) => (node.data as unknown as DiagramNode['data'])?.color ?? '#7D8797'} />
           <Controls className="apple-controls" showInteractive={false} />
           <div className="canvas-status">
+            <span>拖动空白移动画布 · Shift 拖动框选</span><i />
             <span>{kindLabel(document.kind)}</span><i />
             <span>{document.nodes.filter((node) => node.type !== 'laneNode').length} 个节点</span><i />
             <span>{document.edges.length} 条连线</span>
@@ -1010,10 +1097,13 @@ export function DiagramStudioApp() {
       {libraryVisible && <div className="library-popover popover-menu">
         <div className="popover-heading"><strong>{`${activeProject?.name ?? ''} · 图形`}</strong><button className="icon-button subtle" onClick={() => setLibraryVisible(false)}><Icon name="close" /></button></div>
         <div className="document-list">
-          {activeProjectDocuments.map((item) => <button key={item.documentId} className={item.documentId === document.documentId ? 'active' : ''} onClick={() => void openDocument(item.documentId)}>
-            <span className="document-kind-icon"><Icon name={kindIcon(item.kind)} /></span>
-            <span><strong>{item.title}</strong><small>{kindLabel(item.kind)} · {item.nodeCount} 个节点 · v{item.revision}</small></span>
-          </button>)}
+          {activeProjectDocuments.map((item) => <div key={item.documentId} className={`document-list-item ${item.documentId === document.documentId ? 'active' : ''}`}>
+            <button className="document-list-open" onClick={() => void openDocument(item.documentId)}>
+              <span className="document-kind-icon"><Icon name={kindIcon(item.kind)} /></span>
+              <span><strong>{item.title}</strong><small>{kindLabel(item.kind)} · {item.nodeCount} 个节点 · v{item.revision}</small></span>
+            </button>
+            <button className="document-list-delete" onClick={() => requestDeleteDocument(item)} aria-label={`删除图形 ${item.title}`} title="删除图形"><Icon name="trash" /></button>
+          </div>)}
         </div>
         <div className="popover-footer">
           <button onClick={() => importInputRef.current?.click()}><Icon name="folder" />导入 JSON 或 PlantUML</button>
@@ -1058,6 +1148,8 @@ export function DiagramStudioApp() {
           </div>
         </section>
       </div>}
+
+      {deleteDocumentSheet}
 
       {toast && <div className="toast">{toast}</div>}
     </div>
@@ -1128,6 +1220,7 @@ function defaultNodeSize(node: DiagramNode): { width: number; height: number } {
   if (node.data.shape === 'lifeline') return { width: 160, height: 560 };
   if (node.data.shape === 'activation') return { width: 14, height: 120 };
   if (node.data.shape === 'fragment') return { width: 620, height: 220 };
+  if (node.data.shape === 'container') return { width: 300, height: 180 };
   if (node.data.shape === 'lane') return { width: 900, height: 180 };
   if (node.data.icon && node.data.showLabel === false) return { width: 58, height: 58 };
   if (node.data.shape === 'text') return { width: 120, height: 34 };
@@ -1222,6 +1315,162 @@ function closestSequenceHandleAtY(
     return closestActivationHandle(node, nodes, current?.side ?? 'left', connectionY);
   }
   return currentHandle;
+}
+
+type RoutingPoint = { x: number; y: number };
+type RoutingObstacle = RoutingPoint & { width: number; height: number };
+type SmartEdgeRuntimeData = DiagramEdge['data'] & {
+  routingObstacles?: RoutingObstacle[];
+  routingOffset?: number;
+};
+
+function SmartOrthogonalEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerStart,
+  markerEnd,
+  style,
+  label,
+  labelStyle,
+  labelBgStyle,
+  labelBgPadding,
+  labelBgBorderRadius,
+  interactionWidth,
+  data
+}: EdgeProps) {
+  const runtime = data as SmartEdgeRuntimeData | undefined;
+  const points = routeOrthogonalEdge(
+    { x: sourceX, y: sourceY },
+    { x: targetX, y: targetY },
+    String(sourcePosition),
+    String(targetPosition),
+    runtime?.routingObstacles ?? [],
+    runtime?.routingOffset ?? 0
+  );
+  const path = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+  const labelPoint = routeLabelPoint(points);
+  return <BaseEdge
+    id={id}
+    path={path}
+    labelX={labelPoint.x}
+    labelY={labelPoint.y}
+    markerStart={markerStart}
+    markerEnd={markerEnd}
+    style={style}
+    label={label}
+    labelStyle={labelStyle}
+    labelBgStyle={labelBgStyle}
+    labelBgPadding={labelBgPadding}
+    labelBgBorderRadius={labelBgBorderRadius}
+    interactionWidth={interactionWidth}
+  />;
+}
+
+function routeOrthogonalEdge(
+  source: RoutingPoint,
+  target: RoutingPoint,
+  sourcePosition: string,
+  targetPosition: string,
+  obstacles: RoutingObstacle[],
+  laneOffset: number
+): RoutingPoint[] {
+  const clearance = 18;
+  const expanded = obstacles.map((obstacle) => ({
+    x: obstacle.x - clearance,
+    y: obstacle.y - clearance,
+    width: obstacle.width + clearance * 2,
+    height: obstacle.height + clearance * 2
+  }));
+  const sourceStub = routingStub(source, sourcePosition, 24);
+  const targetStub = routingStub(target, targetPosition, 24);
+  const xCandidates = uniqueNumbers([
+    (sourceStub.x + targetStub.x) / 2 + laneOffset,
+    ...expanded.flatMap((obstacle) => [obstacle.x - 12 + laneOffset, obstacle.x + obstacle.width + 12 + laneOffset])
+  ]);
+  const yCandidates = uniqueNumbers([
+    (sourceStub.y + targetStub.y) / 2 + laneOffset,
+    ...expanded.flatMap((obstacle) => [obstacle.y - 12 + laneOffset, obstacle.y + obstacle.height + 12 + laneOffset])
+  ]);
+  const candidates: RoutingPoint[][] = [
+    ...xCandidates.map((x) => [source, sourceStub, { x, y: sourceStub.y }, { x, y: targetStub.y }, targetStub, target]),
+    ...yCandidates.map((y) => [source, sourceStub, { x: sourceStub.x, y }, { x: targetStub.x, y }, targetStub, target])
+  ].map(simplifyRoute);
+  return candidates.sort((left, right) => routeScore(left, expanded) - routeScore(right, expanded))[0] ?? [source, target];
+}
+
+function routingStub(point: RoutingPoint, position: string, distance: number): RoutingPoint {
+  switch (position.toLowerCase()) {
+    case 'left': return { x: point.x - distance, y: point.y };
+    case 'top': return { x: point.x, y: point.y - distance };
+    case 'bottom': return { x: point.x, y: point.y + distance };
+    default: return { x: point.x + distance, y: point.y };
+  }
+}
+
+function uniqueNumbers(values: number[]): number[] {
+  const seen = new Set<number>();
+  return values.filter((value) => {
+    const rounded = Math.round(value * 2) / 2;
+    if (seen.has(rounded)) return false;
+    seen.add(rounded);
+    return true;
+  });
+}
+
+function simplifyRoute(points: RoutingPoint[]): RoutingPoint[] {
+  const deduplicated = points.filter((point, index) => index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y);
+  return deduplicated.filter((point, index) => {
+    if (index === 0 || index === deduplicated.length - 1) return true;
+    const previous = deduplicated[index - 1];
+    const next = deduplicated[index + 1];
+    return !((previous.x === point.x && point.x === next.x) || (previous.y === point.y && point.y === next.y));
+  });
+}
+
+function routeScore(points: RoutingPoint[], obstacles: RoutingObstacle[]): number {
+  let length = 0;
+  let intersections = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    length += Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+    intersections += obstacles.filter((obstacle) => segmentIntersectsObstacle(start, end, obstacle)).length;
+  }
+  return intersections * 1_000_000 + length + Math.max(0, points.length - 2) * 28;
+}
+
+function segmentIntersectsObstacle(start: RoutingPoint, end: RoutingPoint, obstacle: RoutingObstacle): boolean {
+  const right = obstacle.x + obstacle.width;
+  const bottom = obstacle.y + obstacle.height;
+  if (start.x === end.x) {
+    return start.x > obstacle.x && start.x < right
+      && Math.max(Math.min(start.y, end.y), obstacle.y) < Math.min(Math.max(start.y, end.y), bottom);
+  }
+  if (start.y === end.y) {
+    return start.y > obstacle.y && start.y < bottom
+      && Math.max(Math.min(start.x, end.x), obstacle.x) < Math.min(Math.max(start.x, end.x), right);
+  }
+  return true;
+}
+
+function routeLabelPoint(points: RoutingPoint[]): RoutingPoint {
+  let best = { x: (points[0]?.x ?? 0), y: (points[0]?.y ?? 0), length: -1, horizontal: false };
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    const horizontal = start.y === end.y;
+    const length = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+    const weightedLength = horizontal ? length + 10_000 : length;
+    const bestWeightedLength = best.horizontal ? best.length + 10_000 : best.length;
+    if (weightedLength <= bestWeightedLength) continue;
+    best = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2, length, horizontal };
+  }
+  return { x: best.x, y: best.y - (best.horizontal ? 10 : 0) };
 }
 
 type SequenceMessageRuntimeData = DiagramEdge['data'] & {

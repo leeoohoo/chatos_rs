@@ -187,6 +187,7 @@ mod tests {
             tool_blocklist: Vec::new(),
             required: true,
             allow_writes: true,
+            allow_device_fallback: false,
         };
         let binding = PluginLocalProviderBinding {
             runtime,

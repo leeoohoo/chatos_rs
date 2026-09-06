@@ -25,6 +25,8 @@ interface ProjectDetailTabsProps {
   showArchived: boolean;
   onShowArchivedChange: (value: boolean) => void;
   onRefresh: () => void;
+  activeTab: string;
+  onActiveTabChange: (activeTab: string) => void;
   profileForm: FormInstance<UpsertProjectProfilePayload>;
   profileBackground?: string;
   profileIntroduction?: string;
@@ -82,6 +84,8 @@ export function ProjectDetailTabs({
   showArchived,
   onShowArchivedChange,
   onRefresh,
+  activeTab,
+  onActiveTabChange,
   profileForm,
   profileBackground,
   profileIntroduction,
@@ -129,6 +133,8 @@ export function ProjectDetailTabs({
       </div>
 
       <Tabs
+        activeKey={activeTab}
+        onChange={onActiveTabChange}
         items={[
           {
             key: 'overview',

@@ -39,9 +39,7 @@ final class LongScreenshotCaptureController {
                 while !Task.isCancelled, !self.isFinishing {
                     try await Task.sleep(for: .milliseconds(420))
                     try Task.checkCancellation()
-                    let frame = try await self.captureService.capture(
-                        region: self.captureRegionExcludingControls()
-                    )
+                    let frame = try await self.captureService.capture(region: self.selection.captureRegion)
                     try Task.checkCancellation()
                     let result = try await self.composer.append(frame)
                     self.handle(result)
@@ -180,18 +178,6 @@ final class LongScreenshotCaptureController {
                 "Overlap not found; scroll more slowly · \(totalHeight) px"
             )
         }
-    }
-
-    private func captureRegionExcludingControls() -> NativeScreenCaptureRegion {
-        let additionalWindows = controlPanel.map { [$0] } ?? []
-        return NativeScreenCaptureRegion(
-            displayID: selection.captureRegion.displayID,
-            sourceRect: selection.captureRegion.sourceRect,
-            outputSize: selection.captureRegion.outputSize,
-            excludedWindowIDs: ScreenshotWindowExclusion.visibleOverlayWindowIDs(
-                additionalWindows: additionalWindows
-            )
-        )
     }
 
     private func panelOrigin(for size: NSSize) -> NSPoint {

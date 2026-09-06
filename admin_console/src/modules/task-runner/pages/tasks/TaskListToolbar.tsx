@@ -30,6 +30,7 @@ type TaskListToolbarProps = {
   statusFilterOptions: SegmentedProps['options'];
   onKeywordFilterChange: (value: string) => void;
   onTagFilterChange: (value?: string) => void;
+  onTagDropdownOpen: () => void;
   onModelFilterChange: (value?: string) => void;
   onProjectFilterChange: (value?: string) => void;
   onStatusFilterChange: (value: 'all' | TaskStatus) => void;
@@ -51,6 +52,7 @@ export function TaskListToolbar({
   statusFilterOptions,
   onKeywordFilterChange,
   onTagFilterChange,
+  onTagDropdownOpen,
   onModelFilterChange,
   onProjectFilterChange,
   onStatusFilterChange,
@@ -82,6 +84,9 @@ export function TaskListToolbar({
           value={tagFilter}
           options={tagOptions}
           onChange={onTagFilterChange}
+          onOpenChange={(open) => {
+            if (open) onTagDropdownOpen();
+          }}
         />
         <Select
           allowClear

@@ -5,7 +5,7 @@ import { PlusOutlined, RocketOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 
 import { api } from '../api/client';
 import { CompactId, DateTimeCell } from '../components/DisplayCells';
@@ -13,7 +13,8 @@ import { EnabledTag } from '../components/Tags';
 import { useI18n } from '../i18n/I18nProvider';
 import type { PluginCatalogListItem, PluginRuntimeTarget } from '../pluginTypes';
 import type { CurrentUser } from '../types';
-import { PluginPublishWizard } from './catalogForm/PluginPublishWizard';
+
+const PluginPublishWizard = lazy(() => import('./catalogForm/PluginPublishWizard').then((module) => ({ default: module.PluginPublishWizard })));
 
 interface PluginCatalogAdminPageProps {
   user: CurrentUser;
@@ -53,21 +54,32 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12);
   const isAdmin = user.role === 'super_admin';
   const pluginsQuery = useQuery({
-    queryKey: ['plugin-management', 'admin-plugins'],
-    queryFn: () => api.listAdminPlugins({ limit: 500 }),
+    queryKey: ['plugin-management', 'admin-plugins', page, pageSize],
+    queryFn: () => api.listAdminPlugins({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    }),
     enabled: isAdmin,
+    placeholderData: (previousData) => previousData,
   });
   const marketplacesQuery = useQuery({
     queryKey: ['plugin-management', 'plugin-marketplaces'],
     queryFn: api.listPluginMarketplaces,
-    enabled: isAdmin,
+    enabled: isAdmin && modalOpen,
   });
   const publishersQuery = useQuery({
     queryKey: ['plugin-management', 'plugin-publishers', 'admin'],
     queryFn: () => api.listAdminPluginPublishers({ limit: 500 }),
-    enabled: isAdmin,
+    enabled: isAdmin && modalOpen,
+  });
+  const wizardPluginsQuery = useQuery({
+    queryKey: ['plugin-management', 'admin-plugins', 'publish-wizard'],
+    queryFn: () => api.listAdminPlugins({ limit: 500 }),
+    enabled: isAdmin && modalOpen,
   });
   const columns = useMemo<ColumnsType<PluginCatalogListItem>>(
     () => [
@@ -176,11 +188,21 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
         dataSource={pluginsQuery.data?.items || []}
         loading={pluginsQuery.isLoading}
         scroll={{ x: 1450 }}
-        pagination={{ pageSize: 12 }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: pluginsQuery.data?.total || 0,
+          showSizeChanger: true,
+          onChange: (nextPage, nextPageSize) => {
+            setPage(nextPageSize === pageSize ? nextPage : 1);
+            setPageSize(nextPageSize);
+          },
+        }}
       />
-      <PluginPublishWizard
+      {modalOpen ? <Suspense fallback={null}><PluginPublishWizard
         open={modalOpen}
         marketplaces={marketplacesQuery.data?.items || []}
+        plugins={wizardPluginsQuery.data?.items || []}
         publishers={publishersQuery.data?.items || []}
         onClose={() => setModalOpen(false)}
         onPublished={(result) => {
@@ -188,7 +210,7 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
           queryClient.invalidateQueries({ queryKey: ['plugin-management', 'plugin-releases', result.catalog.id] });
           onOpenReleases(result.catalog.id);
         }}
-      />
+      /></Suspense> : null}
     </div>
   );
 }

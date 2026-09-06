@@ -14,7 +14,7 @@ pub enum BrowserMode {
 
 impl Default for BrowserMode {
     fn default() -> Self {
-        Self::Managed
+        Self::ChromeExtension
     }
 }
 
@@ -33,6 +33,17 @@ pub struct OpenBrowserRequest {
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_request_defaults_to_the_users_chrome() {
+        let request: OpenBrowserRequest = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(request.mode, BrowserMode::ChromeExtension);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

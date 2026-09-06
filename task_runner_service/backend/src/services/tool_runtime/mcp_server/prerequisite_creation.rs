@@ -411,20 +411,6 @@ impl TaskRunnerMcpService {
                 None
             };
             let prerequisite_task_ids = request.prerequisite_task_ids.clone().unwrap_or_default();
-            if matches!(
-                tool_profile,
-                McpToolProfile::ChatosAsyncPlanner
-                    | McpToolProfile::ProjectRequirementExecutionPlanner
-            ) {
-                if let Some(default_model_config_id) = request_context
-                    .default_model_config_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    request.default_model_config_id = Some(default_model_config_id.to_string());
-                }
-            }
             self.ensure_mcp_default_model_config(&mut request, current_user)
                 .await?;
             if tool_profile == McpToolProfile::ChatosAsyncPlanner {

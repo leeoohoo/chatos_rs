@@ -62,6 +62,95 @@ api ..> events : Publish
   assert.ok(document.edges.some((edge) => edge.data.lineStyle === 'dashed'));
 });
 
+test('PlantUML packages become real architecture boundaries with contained components', () => {
+  const source = `@startuml
+title 分层架构
+actor "用户" as user
+package "客户端" as client {
+  component "桌面应用" as desktop
+}
+package "应用层" as application {
+  interface "API Gateway" as api
+  component "任务服务" as tasks
+}
+package "数据层" as data {
+  database "PostgreSQL" as db
+}
+user --> desktop : 使用
+desktop --> api : HTTPS
+api --> tasks : RPC
+tasks --> db : SQL
+@enduml`;
+  const ir = parsePlantUmlStructural(source);
+  assert.equal(ir.nodes.filter((node) => node.container).length, 3);
+  assert.equal(ir.nodes.find((node) => node.alias === 'desktop').parentAlias, 'client');
+  assert.equal(ir.nodes.find((node) => node.alias === 'tasks').parentAlias, 'application');
+
+  const document = plantUmlToDiagram(source, { documentId: 'grouped-architecture', kind: 'architecture' });
+  const containers = document.nodes.filter((node) => node.data.shape === 'container');
+  assert.equal(containers.length, 3);
+  assert.ok(containers.every((node) => node.type === 'laneNode' && (node.width ?? 0) >= 280));
+  const desktop = document.nodes.find((node) => node.data.plantUmlId === 'desktop');
+  const client = document.nodes.find((node) => node.data.plantUmlId === 'client');
+  assert.equal(desktop.parentId, client.id);
+  assert.equal(desktop.extent, 'parent');
+
+  const exported = diagramToPlantUml(document);
+  assert.match(exported, /package "客户端" as client \{/);
+  assert.match(exported, /\s+component "桌面应用" as desktop/);
+});
+
+test('non-ASCII packages without explicit aliases remain distinct architecture boundaries', () => {
+  const source = `@startuml
+left to right direction
+package "客户端" {
+  component "Web 管理端" as web
+}
+package "接入层" {
+  component "API 网关" as gateway
+}
+package "业务服务层" {
+  component "订单服务" as orders
+}
+package "数据与基础设施" {
+  database "PostgreSQL" as db
+}
+web --> gateway
+gateway --> orders
+orders --> db
+@enduml`;
+
+  const ir = parsePlantUmlStructural(source);
+  const containers = ir.nodes.filter((node) => node.container);
+  assert.equal(containers.length, 4);
+  assert.equal(new Set(containers.map((node) => node.alias)).size, 4);
+
+  const document = plantUmlToDiagram(source, { documentId: 'implicit-non-ascii-groups', kind: 'architecture' });
+  const visualContainers = document.nodes.filter((node) => node.data.shape === 'container');
+  assert.deepEqual(
+    visualContainers.map((node) => node.data.label),
+    ['客户端', '接入层', '业务服务层', '数据与基础设施']
+  );
+  assert.ok(visualContainers.every((container) => document.nodes.filter((node) => node.parentId === container.id).length === 1));
+});
+
+test('implicit aliases with the same ASCII fragment do not merge non-ASCII groups', () => {
+  const source = `@startuml
+package "领域 API 层" {
+  component "Order API" as order_api
+}
+package "外部 API 层" {
+  component "Partner API" as partner_api
+}
+order_api --> partner_api
+@enduml`;
+
+  const ir = parsePlantUmlStructural(source);
+  const containers = ir.nodes.filter((node) => node.container);
+  assert.equal(containers.length, 2);
+  assert.equal(new Set(containers.map((node) => node.alias)).size, 2);
+});
+
 test('topology diagrams round-trip through PlantUML Deployment Diagram with exact canvas state', () => {
   const original = createTemplate('topology');
   const source = diagramToPlantUml(original);
@@ -155,13 +244,63 @@ end
   const document = plantUmlToDiagram(source, { documentId: 'sequence-import' });
   assert.equal(document.title, '登录认证');
   assert.equal(document.nodes.filter((node) => node.data.shape === 'lifeline').length, 4);
-  assert.equal(document.nodes.filter((node) => node.data.shape === 'activation').length, 2);
+  assert.equal(document.nodes.filter((node) => node.data.shape === 'activation').length, 3);
   assert.ok(document.nodes.filter((node) => node.data.shape === 'activation').every((node) => node.parentId && node.extent === 'parent'));
   assert.equal(document.nodes.filter((node) => node.data.shape === 'fragment').length, 1);
+  assert.equal(document.nodes.find((node) => node.data.shape === 'fragment').data.fillColor, 'transparent');
   assert.equal(document.edges.length, 6);
   assert.ok(document.edges.every((edge) => edge.type === 'straight'));
   assert.ok(document.edges.every((edge) => edge.sourceHandle && edge.targetHandle));
   assert.ok(document.edges.some((edge) => edge.data.lineStyle === 'dashed'));
+});
+
+test('partial explicit sequence activations are preserved while missing synchronous callees are inferred', () => {
+  const source = `@startuml
+participant Caller
+participant Relay
+participant Worker
+Caller -> Relay: dispatch
+activate Relay
+Relay -> Worker: execute
+Worker --> Relay: result
+Relay --> Caller: complete
+deactivate Relay
+@enduml`;
+
+  const document = plantUmlToDiagram(source, { documentId: 'sequence-partial-activations' });
+  const lifelines = new Map(document.nodes
+    .filter((node) => node.data.shape === 'lifeline')
+    .map((node) => [node.id, node.data.plantUmlId]));
+  const activationOwners = document.nodes
+    .filter((node) => node.data.shape === 'activation')
+    .map((node) => lifelines.get(node.parentId))
+    .sort();
+
+  assert.deepEqual(activationOwners, ['Relay', 'Worker']);
+});
+
+test('sequence activation inference does not duplicate covered calls or activate asynchronous notifications', () => {
+  const source = `@startuml
+participant Client
+participant Service
+participant Events
+Client -> Service: request
+activate Service
+Service ->> Events: publish
+Events -->> Service: accepted
+Service --> Client: response
+deactivate Service
+@enduml`;
+
+  const document = plantUmlToDiagram(source, { documentId: 'sequence-async-activations' });
+  const activationNodes = document.nodes.filter((node) => node.data.shape === 'activation');
+  assert.equal(activationNodes.length, 1);
+  assert.equal(document.edges.find((edge) => edge.label === 'publish').data.plantUmlType, 'async-message');
+  assert.equal(document.edges.find((edge) => edge.label === 'accepted').data.plantUmlType, 'async-message');
+
+  const roundTrip = diagramToPlantUml(document);
+  assert.match(roundTrip, /Service ->> Events: publish/);
+  assert.match(roundTrip, /Events -->> Service: accepted/);
 });
 
 test('editing generated PlantUML rebuilds semantics instead of restoring stale layout metadata', () => {

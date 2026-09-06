@@ -52,9 +52,27 @@ fn model_config_selection_schema(model_configs: &[&ModelConfigRecord]) -> Value 
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
+            let mut capability_labels = Vec::new();
+            if model.supports_images {
+                capability_labels.push("images");
+            }
+            if model.supports_reasoning {
+                capability_labels.push("reasoning");
+            }
+            if model.supports_responses {
+                capability_labels.push("responses");
+            }
+            let capability_suffix = if capability_labels.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", capability_labels.join(", "))
+            };
             let title = match usage {
-                Some(usage) => format!("{} / {} — {}", model.name, model.model, usage),
-                None => format!("{} / {}", model.name, model.model),
+                Some(usage) => format!(
+                    "{} / {}{} — user task purpose: {}",
+                    model.name, model.model, capability_suffix, usage
+                ),
+                None => format!("{} / {}{}", model.name, model.model, capability_suffix),
             };
             json!({
                 "const": model.id,
@@ -73,7 +91,7 @@ fn model_config_selection_schema(model_configs: &[&ModelConfigRecord]) -> Value 
     let mut schema = json!({
         "type": "string",
         "minLength": 1,
-        "description": "Select exactly one enabled Task Runner execution model for this task. Match the model usage scenario to the task objective. Omit this field only when Task Runner should choose automatically."
+        "description": "ChatOS must choose one enabled model for this task. Prefer the user's task-purpose description when present. If it is blank, infer the best model from the task, model identity, and capabilities using your own model knowledge. Task Runner only validates and executes this explicit choice."
     });
     if !ids.is_empty() {
         schema["enum"] = Value::Array(ids);

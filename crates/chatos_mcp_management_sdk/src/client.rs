@@ -60,6 +60,12 @@ impl McpManagementRuntimeSessionHandle {
         self.session_id.as_str()
     }
 
+    pub async fn routes(&self) -> Result<RuntimeSessionRoutesResponse, McpManagementClientError> {
+        self.client
+            .runtime_session_routes(self.session_id.as_str())
+            .await
+    }
+
     pub async fn close(self) -> Result<CloseRuntimeSessionResponse, McpManagementClientError> {
         self.client
             .close_runtime_session(self.session_id.as_str())

@@ -285,6 +285,7 @@ private enum ProjectDirectorySidebarMode: String, Hashable {
 }
 
 private struct ProjectFileTreeRow: View {
+    @EnvironmentObject private var model: AppModel
     let item: ProjectDirectoryViewModel.VisibleEntry
     let isSelected: Bool
     let action: () -> Void
@@ -312,6 +313,24 @@ private struct ProjectFileTreeRow: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 5)
+        .contextMenu {
+            if !item.entry.isDirectory {
+                Button(
+                    model.localized("在宠物中查看", english: "View in Pet"),
+                    systemImage: "pawprint.fill"
+                ) {
+                    model.openPetFile(path: item.entry.path)
+                }
+                if item.entry.isWritable {
+                    Button(
+                        model.localized("在宠物中编辑", english: "Edit in Pet"),
+                        systemImage: "pencil"
+                    ) {
+                        model.openPetFile(path: item.entry.path, mode: .edit)
+                    }
+                }
+            }
+        }
     }
 
     private var fileIcon: String {

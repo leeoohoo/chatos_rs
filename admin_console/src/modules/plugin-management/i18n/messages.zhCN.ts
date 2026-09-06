@@ -246,6 +246,7 @@ export const zhCNMessages: Record<string, string> = {
   'pluginPublish.preview': '发布预览',
   'pluginPublish.packageBins': 'MCP 可执行入口',
   'pluginPublish.permissions': '权限声明',
+  'pluginPublish.existingCatalogPolicyPreserved': '这是已有 Plugin 的新 Release。可见性、精选状态和已审核许可将沿用目录当前设置，不会被发布表单重置。',
   'pluginPublish.publish': '确认发布',
   'pluginPublish.published': 'Plugin 已上架，可以由客户端安装',
   'pluginAudit.title': '审计诊断',

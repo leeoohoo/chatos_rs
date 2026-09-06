@@ -76,6 +76,10 @@ final class PetOverlayCoordinator {
         refreshTask?.cancel()
     }
 
+    func openFile(_ request: PetFileOpenRequest) {
+        windowController.openFile(request)
+    }
+
     private func bind(model: AppModel) {
         Publishers.CombineLatest(
             model.authentication.$phase.removeDuplicates(),
@@ -121,6 +125,18 @@ final class PetOverlayCoordinator {
             .filter { !$0 }
             .receive(on: RunLoop.main)
             .sink { [weak store] _ in store?.removeCompletionActivities() }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .chatOSPetOpenFileRequested)
+            .compactMap { $0.object as? PetFilePresentationRequest }
+            .receive(on: RunLoop.main)
+            .sink { [weak model] request in
+                model?.openPetFile(
+                    path: request.path,
+                    targetLine: request.targetLine,
+                    mode: request.prefersEditing ? .edit : .preview
+                )
+            }
             .store(in: &cancellables)
     }
 

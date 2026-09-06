@@ -254,6 +254,7 @@ fn task_runner_lifecycle_hook_for_test(run_id: &str) -> TaskRunnerLifecycleHook 
         crate::store::AppStore::InMemory(crate::store::InMemoryStore::new(sender)),
         run_id.to_string(),
         Vec::new(),
+        None,
     )
 }
 
@@ -265,6 +266,24 @@ fn runtime_iteration_context(reason: &str) -> RuntimeIterationContext {
         reason: reason.to_string(),
         input: Value::Null,
     }
+}
+
+#[test]
+fn protected_skill_context_is_reinjected_only_when_activation_is_absent() {
+    let item = json!({
+        "type": "message",
+        "role": "system",
+        "_meta": {"chatos/protectedSkillActivationRef": "SA-router"},
+        "content": [{"type": "input_text", "text": "router rules"}]
+    });
+    assert!(!protected_skill_item_is_already_present(
+        &item,
+        "previous model input"
+    ));
+    assert!(protected_skill_item_is_already_present(
+        &item,
+        "tool result activation_ref SA-router"
+    ));
 }
 
 #[test]

@@ -4,8 +4,8 @@
 use serde_json::Value;
 
 use crate::models::{
-    now_rfc3339, CreateTaskRequest, ModelConfigRecord, TaskScheduleConfig, TaskScheduleMode,
-    TaskStatus, UpdateTaskRequest,
+    now_rfc3339, CreateTaskRequest, TaskScheduleConfig, TaskScheduleMode, TaskStatus,
+    UpdateTaskRequest,
 };
 
 use super::support::{remove_tool_schema_property, set_schema_required_fields};

@@ -3,10 +3,7 @@
 
 use super::*;
 
-pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(
-    tools: &mut [Value],
-    _model_configs: &[ModelConfigRecord],
-) {
+pub(in crate::mcp_server) fn enrich_tool_schemas_for_async_planner(tools: &mut [Value]) {
     for tool in tools {
         match tool.get("name").and_then(Value::as_str) {
             Some("create_task") => {

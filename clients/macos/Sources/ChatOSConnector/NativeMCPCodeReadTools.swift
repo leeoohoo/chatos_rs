@@ -87,6 +87,20 @@ struct NativeMCPCodeReadTools: Sendable {
                 ],
                 required: ["query"]
             ),
+            definition(
+                name: "open_file_in_pet",
+                description: "仅当用户明确要求打开、查看或编辑某个项目文件时使用。在桌面宠物头顶的文件台中打开文件；支持文本、代码和图片。",
+                properties: [
+                    "path": .object(["type": .string("string")]),
+                    "line": .object(["type": .string("integer"), "minimum": .number(1)]),
+                    "mode": .object([
+                        "type": .string("string"),
+                        "enum": .array([.string("preview"), .string("edit")]),
+                        "default": .string("preview"),
+                    ]),
+                ],
+                required: ["path"]
+            ),
         ]
     }
 
@@ -114,9 +128,38 @@ struct NativeMCPCodeReadTools: Sendable {
                 mapped["pattern"] = .string(query)
             }
             return try searchText(mapped)
+        case "open_file_in_pet":
+            return try presentFile(arguments)
         default:
             throw NativeMCPCodeReadError.unsupportedTool(name)
         }
+    }
+
+    private func presentFile(_ arguments: [String: NativeJSONValue]) throws -> NativeJSONValue {
+        let path = try normalizedToolPath(requiredString(arguments, "path"))
+        let url = try filesystem.resolveExistingURL(path)
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+        guard values.isRegularFile == true else { throw NativeMCPCodeReadError.notFile }
+        let requestedLine = arguments.number("line").map { max(1, Int($0)) }
+        let mode = arguments.string("mode") ?? "preview"
+        guard mode == "preview" || mode == "edit" else {
+            throw NativeMCPCodeReadError.invalidArguments("mode 必须是 preview 或 edit")
+        }
+        let request = PetFilePresentationRequest(
+            path: url.path,
+            targetLine: requestedLine,
+            prefersEditing: mode == "edit"
+        )
+        NotificationCenter.default.post(
+            name: .chatOSPetOpenFileRequested,
+            object: request
+        )
+        return .object([
+            "presented": .bool(true),
+            "path": .string(url.path),
+            "line": requestedLine.map { .number(Double($0)) } ?? .null,
+            "mode": .string(mode),
+        ])
     }
 
     private func readFile(_ arguments: [String: NativeJSONValue]) throws -> NativeJSONValue {

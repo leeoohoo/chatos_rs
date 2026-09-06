@@ -385,6 +385,8 @@ pub struct RuntimeSessionRoutesResponse {
     #[serde(default)]
     pub plugin_instruction_items: Vec<serde_json::Value>,
     #[serde(default)]
+    pub protected_skill_instruction_items: Vec<serde_json::Value>,
+    #[serde(default)]
     pub mcp_command_queue: String,
     #[serde(default)]
     pub mcp_server_url: String,

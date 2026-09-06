@@ -96,6 +96,11 @@ final class ConversationSessionViewModel: ObservableObject {
         refreshLatest(isAutomaticRetry: false)
     }
 
+    func activate() {
+        refreshLatest()
+        startRealtime()
+    }
+
     private func refreshLatest(isAutomaticRetry: Bool) {
         guard let remoteService else { return }
         guard !isRefreshing else {
@@ -406,7 +411,7 @@ final class ConversationSessionViewModel: ObservableObject {
                             in: .whitespacesAndNewlines
                         ).nonEmptyValue ?? "AI 处理失败，请检查模型配置后重试。"
                         self.refreshLatest()
-                    case .persisted, .completed, .cancelled:
+                    case .reconcile, .persisted, .completed, .cancelled:
                         self.refreshLatest()
                     case .started, .updated, .unknown:
                         break

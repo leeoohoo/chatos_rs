@@ -26,20 +26,6 @@ pub(in crate::providers::plugin_components) fn plugin_command_result(
     ))
 }
 
-pub(in crate::providers::plugin_components) fn plugin_skill_result_from_local_snapshot(
-    immutable: &PluginToolComponentRuntimeBinding,
-    skill: &Value,
-) -> Result<Value, ProviderCallError> {
-    let instructions = required_value_text(skill, "instructions")?;
-    Ok(plugin_instruction_result(
-        immutable,
-        "Plugin Skill",
-        instructions,
-        None,
-        Some(skill),
-    ))
-}
-
 pub(in crate::providers::plugin_components) fn plugin_agent_result(
     immutable: &PluginToolComponentRuntimeBinding,
     agent: &Value,

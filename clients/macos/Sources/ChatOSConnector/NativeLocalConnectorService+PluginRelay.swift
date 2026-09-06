@@ -94,16 +94,36 @@ extension NativeLocalConnectorService {
               record.artifactSHA256 == artifactSHA256.lowercased() else {
             throw NativePluginRuntimeError.invalidRequest("Plugin 未安装、已停用或 Release 不匹配")
         }
+        if componentKey == "browser-cdp" {
+            await browserExtensionPairingRuntime.stop()
+        }
         let adapterSessionID = UUID().uuidString.lowercased()
         let skillKeys = try body.optionalStringArray("skill_keys")
         if !skillKeys.isEmpty {
-            let prepared = try NativePluginSkillSnapshotLoader.prepareBody(
+            guard body["skill_runtime_protocol"]?.jsonNumber
+                    == Double(NativePluginSkillSnapshotLoader.protocolVersion),
+                  skillKeys == [componentKey],
+                  let expectedSnapshot = body["skill_snapshot"] else {
+                throw NativePluginRuntimeError.invalidRequest("Plugin Skill 只支持 v2 固定快照协议")
+            }
+            let prepared = try NativePluginSkillSnapshotLoader.prepareV2Body(
                 record: record,
                 componentKey: componentKey,
-                skillKeys: skillKeys,
-                expectedContentSHA256: body["content_sha256"]?.jsonString,
+                expectedSnapshot: expectedSnapshot,
                 runID: runID,
                 adapterSessionID: adapterSessionID
+            )
+            pluginSkillRuntimeSessions[adapterSessionID] = .init(
+                runID: runID,
+                pluginID: pluginID,
+                releaseID: releaseID,
+                artifactSHA256: artifactSHA256.lowercased(),
+                componentKey: componentKey,
+                adapterSessionID: adapterSessionID,
+                workspaceID: scope.workspaceID,
+                projectID: projectID,
+                expectedSnapshot: expectedSnapshot,
+                expiresAt: Date().addingTimeInterval(8 * 24 * 60 * 60)
             )
             return .init(
                 type: "plugin_prepare_response",
@@ -228,8 +248,23 @@ extension NativeLocalConnectorService {
         let adapterSessionID = try body.requireString("adapter_session_id")
         let invocationID = try body.requireString("invocation_id")
         let operation = try body.requireString("operation")
-        let toolName = try body.requireString("tool_name")
         let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
+        if operation == "skill_activate" || operation == "skill_read_resource" {
+            return try executePluginSkill(
+                request: request,
+                scope: scope,
+                body: body,
+                pluginID: pluginID,
+                releaseID: releaseID,
+                artifactSHA256: artifactSHA256,
+                componentKey: componentKey,
+                adapterSessionID: adapterSessionID,
+                invocationID: invocationID,
+                operation: operation,
+                projectID: projectID
+            )
+        }
+        let toolName = try body.requireString("tool_name")
         guard operation == "mcp_tools_call" else {
             throw NativePluginRuntimeError.invalidRequest("不支持这个 Plugin 操作")
         }
@@ -269,9 +304,13 @@ extension NativeLocalConnectorService {
         )
         var toolArguments = body["arguments"] ?? .object([:])
         if toolName == "browser_session_open" {
+            let browserExtensionPaired = (try? await isBrowserExtensionPaired(
+                pluginID: pluginID
+            )) == true
             toolArguments = Self.browserSessionArguments(
                 arguments: toolArguments,
-                relayBody: body
+                relayBody: body,
+                browserExtensionPaired: browserExtensionPaired
             )
         }
         let requiredPermissions = policy.requiredPermissions(for: toolArguments)
@@ -345,6 +384,75 @@ extension NativeLocalConnectorService {
         )
     }
 
+    private func executePluginSkill(
+        request: NativeRelayRequest,
+        scope: NativePluginRelayScope,
+        body: [String: NativeJSONValue],
+        pluginID: String,
+        releaseID: String,
+        artifactSHA256: String,
+        componentKey: String,
+        adapterSessionID: String,
+        invocationID: String,
+        operation: String,
+        projectID: String?
+    ) throws -> NativeRelayResponse {
+        guard let session = pluginSkillRuntimeSessions[adapterSessionID] else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin Skill 会话不存在或已经结束")
+        }
+        try session.validate(
+            pluginID: pluginID,
+            releaseID: releaseID,
+            artifactSHA256: artifactSHA256,
+            componentKey: componentKey,
+            workspaceID: scope.workspaceID,
+            projectID: projectID
+        )
+        guard state.pluginPreferences[pluginID] ?? true,
+              let record = state.installedPluginRecords?[pluginID],
+              record.releaseID == releaseID,
+              record.artifactSHA256 == artifactSHA256.lowercased() else {
+            throw NativePluginRuntimeError.invalidRequest("Plugin 未安装、已停用或 Release 不匹配")
+        }
+        let result: NativeJSONValue
+        switch operation {
+        case "skill_activate":
+            result = try NativePluginSkillSnapshotLoader.activateV2(
+                record: record,
+                componentKey: componentKey,
+                expectedSnapshot: session.expectedSnapshot
+            )
+        case "skill_read_resource":
+            let arguments = try (body["arguments"] ?? .object([:])).requireObject()
+            result = try NativePluginSkillSnapshotLoader.readV2Resource(
+                record: record,
+                componentKey: componentKey,
+                expectedSnapshot: session.expectedSnapshot,
+                relativePath: try arguments.requireString("relative_path"),
+                offset: Int(arguments["offset"]?.jsonNumber ?? 0),
+                maximumCharacters: Int(arguments["max_chars"]?.jsonNumber ?? 32_000)
+            )
+        default:
+            throw NativePluginRuntimeError.invalidRequest("不支持这个 Plugin Skill 操作")
+        }
+        return .init(
+            type: "plugin_execute_response",
+            requestID: request.requestID,
+            status: 200,
+            body: .object([
+                "plugin_id": .string(pluginID),
+                "release_id": .string(releaseID),
+                "version": .string(record.version),
+                "artifact_sha256": .string(record.artifactSHA256),
+                "component_key": .string(componentKey),
+                "invocation_id": .string(invocationID),
+                "adapter_session_id": .string(adapterSessionID),
+                "operation": .string(operation),
+                "result": result,
+            ])
+        )
+    }
+
     private func cancelPlugin(
         _ request: NativeRelayRequest,
         scope: NativePluginRelayScope
@@ -354,6 +462,19 @@ extension NativeLocalConnectorService {
         let adapterSessionID = try body.requireString("adapter_session_id")
         let invocationID = body["invocation_id"]?.jsonString?.nonEmptyTrimmed
         let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
+        if pluginSkillRuntimeSessions.removeValue(forKey: adapterSessionID) != nil {
+            return .init(
+                type: "plugin_cancel_response",
+                requestID: request.requestID,
+                status: 200,
+                body: .object([
+                    "run_id": .string(runID),
+                    "adapter_session_id": .string(adapterSessionID),
+                    "invocation_id": .string(invocationID ?? ""),
+                    "status": .string("closed"),
+                ])
+            )
+        }
         try await pluginRuntimeStore.validateScopeIfPresent(
             adapterSessionID: adapterSessionID,
             workspaceID: scope.workspaceID,
@@ -408,11 +529,11 @@ extension NativeLocalConnectorService {
     ) -> String {
         if toolName == "browser_session_open" {
             let object = arguments.jsonObject ?? [:]
-            let mode = object["mode"]?.jsonString ?? "managed"
-            let headless = object["headless"]?.jsonBool ?? true
-            let persistentProfile = object["persistent_profile"]?.jsonBool ?? false
             let sessionName = object["session_name"]?.jsonString ?? "ChatOS Browser"
-            return "启动隔离浏览器会话：任务 \(sessionName)，模式 \(mode)，Headless \(headless ? "是" : "否")，持久化浏览器资料 \(persistentProfile ? "是" : "否")。"
+            if object["mode"]?.jsonString == "chrome_extension" {
+                return "连接用户现有的 Google Chrome：任务 \(sessionName)，新建页面进入同名原生标签组。"
+            }
+            return "当前 Chrome 尚未授权，自动使用 ChatOS 隔离浏览器：任务 \(sessionName)。"
         }
         if toolName == "browser_cdp_attach" {
             return "为当前隔离浏览器中的指定标签页建立临时 CDP 会话；浏览器会话 ID 与标签页 ID 均为 ChatOS 生成的不透明标识。"
@@ -437,21 +558,29 @@ extension NativeLocalConnectorService {
 
     static func browserSessionArguments(
         arguments: NativeJSONValue,
-        relayBody: [String: NativeJSONValue]
+        relayBody: [String: NativeJSONValue],
+        browserExtensionPaired: Bool = true
     ) -> NativeJSONValue {
-        guard var object = arguments.jsonObject else { return arguments }
-        if object["session_name"]?.jsonString?.nonEmptyTrimmed != nil {
-            return arguments
+        let requestedObject = arguments.jsonObject ?? [:]
+        // Only session_name belongs to the public tool contract. Execution-only
+        // browser settings are rebuilt from verified local state instead of being
+        // accepted from the tool call.
+        var object: [String: NativeJSONValue] = [:]
+        if let sessionName = requestedObject["session_name"]?.jsonString?.nonEmptyTrimmed {
+            object["session_name"] = .string(String(sessionName.prefix(80)))
         }
-        let title = relayBody["task_title"]?.jsonString?.nonEmptyTrimmed
-            ?? relayBody["task_id"]?.jsonString?.nonEmptyTrimmed.map {
-                "ChatOS · \(String($0.prefix(12)))"
-            }
-            ?? relayBody["task_run_id"]?.jsonString?.nonEmptyTrimmed.map {
-                "ChatOS · \(String($0.prefix(12)))"
-            }
-            ?? "ChatOS Browser"
-        object["session_name"] = .string(String(title.prefix(80)))
+        object["mode"] = .string(browserExtensionPaired ? "chrome_extension" : "managed")
+        if object["session_name"]?.jsonString?.nonEmptyTrimmed == nil {
+            let title = relayBody["task_title"]?.jsonString?.nonEmptyTrimmed
+                ?? relayBody["task_id"]?.jsonString?.nonEmptyTrimmed.map {
+                    "ChatOS · \(String($0.prefix(12)))"
+                }
+                ?? relayBody["task_run_id"]?.jsonString?.nonEmptyTrimmed.map {
+                    "ChatOS · \(String($0.prefix(12)))"
+                }
+                ?? "ChatOS Browser"
+            object["session_name"] = .string(String(title.prefix(80)))
+        }
         return .object(object)
     }
 
@@ -461,7 +590,10 @@ extension NativeLocalConnectorService {
     ) -> String {
         let permissions = requiredPermissions.sorted().joined(separator: ", ")
         if toolName == "browser_session_open" {
-            return "启动由 ChatOS 管理的隔离 Chrome 会话；不连接用户现有 Chrome，也不复用用户浏览器资料。所需权限：\(permissions)"
+            if requiredPermissions.contains("browser.managed.launch") {
+                return "Chrome 扩展尚未授权，自动启动 ChatOS 隔离浏览器。所需权限：\(permissions)"
+            }
+            return "连接用户已配对的 Google Chrome；任务新建页面会进入同名原生标签组。所需权限：\(permissions)"
         }
         if toolName.hasPrefix("browser_cdp_") {
             return "仅操作当前 ChatOS 隔离浏览器会话中的临时 CDP 连接。所需权限：\(permissions)"

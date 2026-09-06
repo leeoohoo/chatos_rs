@@ -9,8 +9,7 @@ use crate::models::{
 
 use super::chatos_async_planner::require_chatos_async_source_context;
 use super::support::{
-    effective_owner_user_id, enabled_model_configs_for_user, ensure_task_owner,
-    model_visible_to_user, reusable_chatos_async_task, select_model_config_id_for_task,
+    effective_owner_user_id, ensure_task_owner, model_visible_to_user, reusable_chatos_async_task,
 };
 use super::{McpRequestContext, McpToolProfile, TaskRunnerMcpService};
 
@@ -301,23 +300,10 @@ impl TaskRunnerMcpService {
             return Ok(());
         }
 
-        let models = self.model_config_service.list_model_configs().await?;
-        let models = enabled_model_configs_for_user(models, current_user);
-        let tags = input.tags.as_deref().unwrap_or(&[]);
-        let Some(model_config_id) = select_model_config_id_for_task(
-            models.as_slice(),
-            input.title.as_str(),
-            input.objective.as_str(),
-            input.description.as_deref(),
-            tags,
-        ) else {
-            return Err(
-                "当前用户没有启用中的 Task 模型配置，请先在 Chatos 的 Task 模型设置里启用至少一个模型"
-                    .to_string(),
-            );
-        };
-        input.default_model_config_id = Some(model_config_id);
-        Ok(())
+        Err(
+            "task model is required: inherit the selected model from the caller context or provide an explicit model override; automatic model guessing is disabled"
+                .to_string(),
+        )
     }
 }
 

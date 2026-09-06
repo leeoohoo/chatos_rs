@@ -86,10 +86,15 @@ impl AppStore {
     pub async fn list_ask_user_prompt_task_counts(
         &self,
         status: Option<AskUserPromptStatus>,
+        task_ids: Option<&[String]>,
     ) -> Result<Vec<AskUserPromptTaskCountRecord>, String> {
         match self {
-            Self::InMemory(store) => Ok(store.list_ask_user_prompt_task_counts(status)),
-            Self::Mongo(store) => store.list_ask_user_prompt_task_counts(status).await,
+            Self::InMemory(store) => Ok(store.list_ask_user_prompt_task_counts(status, task_ids)),
+            Self::Mongo(store) => {
+                store
+                    .list_ask_user_prompt_task_counts(status, task_ids)
+                    .await
+            }
         }
     }
 }

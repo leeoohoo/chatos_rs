@@ -49,6 +49,8 @@ pub(super) fn materialize_plugin_tool_components(
             || snapshot.release_id != release.id
             || snapshot.component != *component
             || !is_lower_sha256(snapshot.content_sha256.as_str())
+            || (component.kind == PluginComponentKind::SkillCollection && snapshot.skill.is_none())
+            || (component.kind != PluginComponentKind::SkillCollection && snapshot.skill.is_some())
         {
             return Err(format!(
                 "immutable Plugin tool component snapshot is mismatched: {}:{}",
@@ -70,7 +72,11 @@ pub(super) fn materialize_plugin_tool_components(
             && permission_snapshot
                 .iter()
                 .any(|permission| permission == "workspace.write");
-        let required = plugin.binding.required || component.required;
+        // Skill components are package-integrity declarations, not eagerly required
+        // runtime tools. A single Runtime Session skill host publishes the generic
+        // activation tools after every allowed Skill has been prepared.
+        let required = component.kind != PluginComponentKind::SkillCollection
+            && (plugin.binding.required || component.required);
         let binding = PluginToolComponentRuntimeBinding {
             provider_ref: provider_ref.clone(),
             resource_id: resource_id.clone(),
@@ -81,6 +87,7 @@ pub(super) fn materialize_plugin_tool_components(
             normalized_manifest_sha256: manifest_sha256.clone(),
             component: component.clone(),
             component_content_sha256: snapshot.content_sha256.clone(),
+            skill_snapshot: snapshot.skill.clone(),
             installation_device_id: plugin
                 .installation
                 .as_ref()
@@ -168,8 +175,11 @@ mod tests {
     use super::*;
     use chatos_agent::SystemAgentKey;
     use chatos_plugin_management_sdk::{
-        parse_plugin_manifest, plugin_component_descriptors, PluginAvailabilityStatus,
-        PluginComponentSnapshot, PluginComponentStatus, ResolvedPluginComponent,
+        parse_plugin_manifest, plugin_component_descriptors, plugin_skill_snapshot_sha256,
+        skill_resource_manifest_sha256, PackagedSkillMetadata, PluginAvailabilityStatus,
+        PluginComponentSnapshot, PluginComponentStatus, PluginSkillComponentSnapshot,
+        ResolvedPluginComponent, SkillActivationPolicy, SkillContextMode, SkillRole,
+        SKILL_RUNTIME_PROTOCOL_VERSION,
     };
 
     const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
@@ -222,11 +232,49 @@ mod tests {
             .collect();
         plugin.component_snapshots = components
             .into_iter()
-            .map(|component| PluginComponentSnapshot {
-                plugin_id: plugin.catalog.id.clone(),
-                release_id: release.id.clone(),
-                component,
-                content_sha256: "c".repeat(64),
+            .map(|component| {
+                let skill = (component.kind == PluginComponentKind::SkillCollection).then(|| {
+                    let metadata = PackagedSkillMetadata {
+                        name: component.component_key.clone(),
+                        description: format!("{} test skill", component.component_key),
+                        role: SkillRole::Leaf,
+                        activation_policy: SkillActivationPolicy::ModelOrUser,
+                        context_mode: SkillContextMode::Inline,
+                        required_skills: Vec::new(),
+                        related_skills: Vec::new(),
+                        max_output_chars: None,
+                        extra: Default::default(),
+                    };
+                    let instructions_sha256 = "a".repeat(64);
+                    let resource_manifest_sha256 =
+                        skill_resource_manifest_sha256(&[]).expect("hash empty resource manifest");
+                    let relative_skill_path = format!("skills/{}", component.component_key);
+                    let snapshot_sha256 = plugin_skill_snapshot_sha256(
+                        component.component_key.as_str(),
+                        relative_skill_path.as_str(),
+                        &metadata,
+                        instructions_sha256.as_str(),
+                        resource_manifest_sha256.as_str(),
+                    )
+                    .expect("hash Skill snapshot");
+                    PluginSkillComponentSnapshot {
+                        protocol_version: SKILL_RUNTIME_PROTOCOL_VERSION,
+                        skill_id: component.component_key.clone(),
+                        relative_skill_path,
+                        metadata,
+                        instructions_sha256,
+                        resource_manifest_sha256,
+                        resources: Vec::new(),
+                        snapshot_sha256,
+                    }
+                });
+                PluginComponentSnapshot {
+                    plugin_id: plugin.catalog.id.clone(),
+                    release_id: release.id.clone(),
+                    component,
+                    content_sha256: "c".repeat(64),
+                    skill,
+                }
             })
             .collect();
         plugin
@@ -260,7 +308,7 @@ mod tests {
         assert!(result.plugin_bindings.is_empty());
         assert_eq!(result.plugin_tool_component_bindings.len(), 1);
         let resource = &result.resources[0];
-        assert!(resource.required);
+        assert!(!resource.required);
         assert!(resource.allow_writes);
         let binding = result
             .plugin_tool_component_bindings

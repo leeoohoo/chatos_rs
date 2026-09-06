@@ -22,7 +22,9 @@ import type {
   UserModelConfigRecord,
   UserModelProviderRecord,
   UserModelSettingsRecord,
+  UserOptionRecord,
   UserSummaryRecord,
+  UserSummaryPageResponse,
   InviteCodeRecord,
 } from '../types';
 
@@ -55,6 +57,7 @@ export function buildApiUrl(path: string): string {
 
 const rawRequest = createJsonApiClient({
   baseUrl: API_BASE_URL,
+  timeoutMs: 30_000,
   getAuthToken,
   onUnauthorized: clearAuthToken,
   readErrorMessage: async (response) => {
@@ -80,6 +83,9 @@ export const api = {
   currentUser: () => request<CurrentUserResponse>('/api/auth/me'),
   getSystemConfig: () => request<SystemConfigResponse>('/api/system/config'),
   listUsers: () => request<UserSummaryRecord[]>('/api/users'),
+  listUserOptions: () => request<UserOptionRecord[]>('/api/users/options'),
+  listUsersPage: (limit: number, offset: number) =>
+    request<UserSummaryPageResponse>(`/api/users/page?limit=${limit}&offset=${offset}`),
   listInviteCodes: () => request<InviteCodeRecord[]>('/api/invite-codes'),
   createInviteCode: (payload: CreateInviteCodePayload) =>
     request<CreateInviteCodeResponse>('/api/invite-codes', {

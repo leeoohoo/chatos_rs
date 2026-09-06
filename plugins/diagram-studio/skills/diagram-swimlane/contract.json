@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "guideId": "diagram-swimlane",
+  "guideVersion": "1.0.0",
+  "kind": "swimlane",
+  "defaultMode": "collaboration",
+  "modes": {
+    "collaboration": { "qualityProfile": "balanced", "maxPrimaryItems": 24, "maxEdges": 28, "maxStructureItems": 6, "minStructureItems": 2 }
+  },
+  "checklist": [
+    "single_collaboration_scenario",
+    "lanes_represent_real_ownership",
+    "handoffs_are_explicit",
+    "decisions_have_named_outcomes",
+    "independent_scenarios_are_split",
+    "code_evidence_is_mapped"
+  ]
+}

@@ -15,7 +15,7 @@ struct ProjectMessagesView: View {
                 ConversationTimelineView(
                     conversation: conversation,
                     title: "\(projectName) · \(contactName)",
-                    showsTaskState: true
+                    projectRootPath: model.workspaceProject(id: projectID)?.rootPath
                 )
                 .frame(minWidth: 620)
             } else if model.isPreparingProjectConversation(projectID: projectID) {
@@ -75,8 +75,7 @@ struct ContactConversationView: View {
             if let conversation = model.contactConversation {
                 ConversationTimelineView(
                     conversation: conversation,
-                    title: contactName,
-                    showsTaskState: false
+                    title: contactName
                 )
             } else {
                 ContentUnavailableView(

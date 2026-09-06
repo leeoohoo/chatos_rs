@@ -48,7 +48,7 @@ export function DataSectionContainer(props: DataSectionContainerProps) {
 
     const loadTenantLabels = async () => {
       try {
-        const users = await userServiceApi.listUsers();
+        const users = await userServiceApi.listUserOptions(tenantIds);
         if (cancelled) {
           return;
         }

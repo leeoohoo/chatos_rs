@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { api } from '../../api/client';
+import { api as userServiceApi } from '../../../user-service/api/client';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   TaskProjectRecord,
@@ -43,6 +44,7 @@ type UseTasksPageDataParams = {
   mcpPreviewTask: TaskRecord | null;
   batchRunTaskIds: string[];
   editingTaskId?: string;
+  taskIndexEnabled: boolean;
 };
 
 function normalizeProjectId(value?: string | null) {
@@ -89,6 +91,7 @@ export function useTasksPageData({
   mcpPreviewTask,
   batchRunTaskIds,
   editingTaskId,
+  taskIndexEnabled,
 }: UseTasksPageDataParams) {
   const scheduleModeLabels = useMemo(
     () =>
@@ -146,6 +149,7 @@ export function useTasksPageData({
   const taskIndexQuery = useQuery({
     queryKey: ['task-runner', 'task-index'],
     queryFn: api.getTaskIndex,
+    enabled: taskIndexEnabled || Boolean(detailTaskId) || Boolean(editingTaskId),
   });
   const selectedTaskQuery = useQuery({
     queryKey: ['task-runner', 'task', detailTaskId],
@@ -196,16 +200,24 @@ export function useTasksPageData({
     enabled: Boolean(detailTaskId),
   });
   const modelsQuery = useQuery({
-    queryKey: ['task-runner', 'model-configs'],
-    queryFn: api.listModelConfigs,
+    queryKey: ['user-service', 'model-configs', 'current-user'],
+    queryFn: () => userServiceApi.listModelConfigs(),
   });
   const projectsQuery = useQuery({
     queryKey: ['task-runner', 'task-projects', 'active'],
     queryFn: () => api.listProjects('active'),
   });
+  const visibleTaskIds = useMemo(
+    () => (tasksQuery.data?.items || []).map((task) => task.id),
+    [tasksQuery.data?.items],
+  );
   const pendingPromptTaskCountsQuery = useQuery({
-    queryKey: ['task-runner', 'prompt-task-counts', 'pending'],
-    queryFn: () => api.listPromptTaskCounts({ status: 'pending' }),
+    queryKey: ['task-runner', 'prompt-task-counts', 'pending', visibleTaskIds],
+    queryFn: () => api.listPromptTaskCounts({
+      status: 'pending',
+      taskIds: visibleTaskIds,
+    }),
+    enabled: visibleTaskIds.length > 0,
   });
   const taskMemoryContextQuery = useQuery({
     queryKey: ['task-runner', 'task-memory-context', memoryTask?.id],
@@ -250,7 +262,7 @@ export function useTasksPageData({
   const modelOptions = useMemo(
     () =>
       (modelsQuery.data || [])
-        .filter((model) => model.enabled)
+        .filter((model) => model.enabled && model.task_enabled)
         .map((model) => ({
           label: taskModelOptionLabel(model, t),
           value: model.id,
@@ -261,7 +273,7 @@ export function useTasksPageData({
   const modelNameMap = useMemo(() => {
     const map = new Map<string, string>();
     (modelsQuery.data || []).forEach((model) => {
-      map.set(model.id, model.name);
+      map.set(model.id, model.name || model.model_name);
     });
     return map;
   }, [modelsQuery.data]);

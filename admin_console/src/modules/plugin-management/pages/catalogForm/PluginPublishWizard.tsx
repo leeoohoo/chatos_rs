@@ -25,26 +25,31 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api/client';
 import { useI18n } from '../../i18n/I18nProvider';
 import type {
+  PluginCatalogListItem,
   PluginMarketplaceRecord,
   PluginPackageAnalysis,
   PluginPublisherRecord,
   PublishUploadedPluginResponse,
 } from '../../pluginTypes';
+import { findExistingCatalogPublishDefaults } from './pluginPublishDefaults';
+import type { ExistingCatalogPublishDefaults } from './pluginPublishDefaults';
 
 interface Props {
   open: boolean;
   marketplaces: PluginMarketplaceRecord[];
+  plugins: PluginCatalogListItem[];
   publishers: PluginPublisherRecord[];
   onClose: () => void;
   onPublished: (result: PublishUploadedPluginResponse) => void;
 }
 
-export function PluginPublishWizard({ open, marketplaces, publishers, onClose, onPublished }: Props) {
+export function PluginPublishWizard({ open, marketplaces, plugins, publishers, onClose, onPublished }: Props) {
   const { t } = useI18n();
   const [form] = Form.useForm();
   const [packageFiles, setPackageFiles] = useState<UploadFile[]>([]);
   const [manifestFiles, setManifestFiles] = useState<UploadFile[]>([]);
   const [analysis, setAnalysis] = useState<PluginPackageAnalysis | null>(null);
+  const [existingCatalogDefaults, setExistingCatalogDefaults] = useState<ExistingCatalogPublishDefaults | null>(null);
   const selectedMarketplace = Form.useWatch('marketplace_id', form);
   const selectedPublisherId = Form.useWatch('publisher_id', form);
   const eligiblePublishers = useMemo(
@@ -59,6 +64,7 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
 
   useEffect(() => {
     if (!open) return;
+    setExistingCatalogDefaults(null);
     const marketplaceId = marketplaces.find((item) =>
       item.enabled && item.trust_level === 'trusted' && item.source_kind === 'admin_registry')?.id;
     form.setFieldsValue({
@@ -82,12 +88,22 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
     },
     onSuccess: (result) => {
       setAnalysis(result);
-      const suggestedPublisherId = suggestPublisherId(result);
+      const existingDefaults = findExistingCatalogPublishDefaults(
+        plugins,
+        form.getFieldValue('marketplace_id'),
+        result.manifest.name,
+      );
+      setExistingCatalogDefaults(existingDefaults);
+      const suggestedPublisherId = existingDefaults?.publisherId || suggestPublisherId(result);
       const existingPublisher = eligiblePublishers.find(
         (publisher) => publisher.publisher_id === suggestedPublisherId,
       );
       form.setFieldsValue({
-        license_id: result.manifest.license || 'NOASSERTION',
+        visibility: existingDefaults?.visibility || 'public',
+        featured: existingDefaults?.featured || false,
+        license_id: existingDefaults?.licenseId || result.manifest.license || 'NOASSERTION',
+        license_url: existingDefaults?.licenseUrl || '',
+        redistributable: existingDefaults?.redistributable || false,
         publisher_id: suggestedPublisherId,
         publisher_name: existingPublisher?.name || result.manifest.author.name,
         publisher_website: existingPublisher?.website || result.manifest.author.url || '',
@@ -127,6 +143,7 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
     setPackageFiles([]);
     setManifestFiles([]);
     setAnalysis(null);
+    setExistingCatalogDefaults(null);
     onClose();
   };
 
@@ -155,7 +172,7 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
               options={marketplaces
                 .filter((item) => item.enabled && item.trust_level === 'trusted' && item.source_kind === 'admin_registry')
                 .map((item) => ({ value: item.id, label: `${item.name} · ${item.id}` }))}
-              onChange={() => setAnalysis(null)}
+              onChange={() => { setAnalysis(null); setExistingCatalogDefaults(null); }}
             />
           </Form.Item>
         </div>
@@ -166,7 +183,11 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
               maxCount={1}
               beforeUpload={() => false}
               fileList={packageFiles}
-              onChange={({ fileList }) => { setPackageFiles(fileList.slice(-1)); setAnalysis(null); }}
+              onChange={({ fileList }) => {
+                setPackageFiles(fileList.slice(-1));
+                setAnalysis(null);
+                setExistingCatalogDefaults(null);
+              }}
             >
               <p className="ant-upload-drag-icon"><InboxOutlined /></p>
               <p>{t('pluginPublish.packageDrop')}</p>
@@ -178,7 +199,11 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
               maxCount={1}
               beforeUpload={() => false}
               fileList={manifestFiles}
-              onChange={({ fileList }) => { setManifestFiles(fileList.slice(-1)); setAnalysis(null); }}
+              onChange={({ fileList }) => {
+                setManifestFiles(fileList.slice(-1));
+                setAnalysis(null);
+                setExistingCatalogDefaults(null);
+              }}
             >
               <p className="ant-upload-drag-icon"><InboxOutlined /></p>
               <p>{t('pluginPublish.manifestDrop')}</p>
@@ -259,21 +284,32 @@ export function PluginPublishWizard({ open, marketplaces, publishers, onClose, o
                 <Select options={['stable', 'beta', 'canary'].map((value) => ({ value, label: value }))} />
               </Form.Item>
               <Form.Item name="visibility" label={t('table.visibility')} rules={[{ required: true }]}>
-                <Select options={['public', 'private'].map((value) => ({ value, label: t(`visibility.${value}`) }))} />
+                <Select
+                  disabled={existingCatalogDefaults !== null}
+                  options={['public', 'private'].map((value) => ({ value, label: t(`visibility.${value}`) }))}
+                />
               </Form.Item>
               <Form.Item name="license_id" label={t('pluginCatalog.licenseId')} rules={[{ required: true }]}>
-                <Input />
+                <Input disabled={existingCatalogDefaults !== null} />
               </Form.Item>
               <Form.Item name="license_url" label={t('pluginCatalog.licenseUrl')}>
-                <Input placeholder="https://..." />
+                <Input disabled={existingCatalogDefaults !== null} placeholder="https://..." />
               </Form.Item>
             </div>
+            {existingCatalogDefaults ? (
+              <Alert
+                type="info"
+                showIcon
+                message={t('pluginPublish.existingCatalogPolicyPreserved')}
+                style={{ marginBottom: 16 }}
+              />
+            ) : null}
             <div className="form-grid">
               <Form.Item name="redistributable" label={t('pluginCatalog.redistributable')} valuePropName="checked">
-                <Switch />
+                <Switch disabled={existingCatalogDefaults !== null} />
               </Form.Item>
               <Form.Item name="featured" label={t('pluginCatalog.featured')} valuePropName="checked">
-                <Switch />
+                <Switch disabled={existingCatalogDefaults !== null} />
               </Form.Item>
             </div>
           </>

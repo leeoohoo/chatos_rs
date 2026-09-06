@@ -328,6 +328,7 @@ impl AppStore {
             };
             predicates.push(doc! {
                 "$or": [
+                    doc! { "id": { "$regex": regex.clone() } },
                     doc! { "name": { "$regex": regex.clone() } },
                     doc! { "display_name": { "$regex": regex.clone() } },
                     doc! { "description": { "$regex": regex.clone() } },

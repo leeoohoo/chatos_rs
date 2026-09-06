@@ -15,6 +15,7 @@ impl InMemoryStore {
         self.inner.read().model_configs.get(id).cloned()
     }
 
+    #[cfg(test)]
     pub(in crate::store) fn save_model_config(
         &self,
         model: ModelConfigRecord,
@@ -26,19 +27,6 @@ impl InMemoryStore {
 
     pub(in crate::store) fn get_runtime_settings(&self) -> Option<RuntimeSettingsRecord> {
         self.inner.read().runtime_settings.clone()
-    }
-
-    pub(in crate::store) fn delete_model_config(&self, id: &str) -> bool {
-        let mut data = self.inner.write();
-        let deleted = data.model_configs.remove(id).is_some();
-        if deleted {
-            for task in data.tasks.values_mut() {
-                if task.default_model_config_id.as_deref() == Some(id) {
-                    task.default_model_config_id = None;
-                }
-            }
-        }
-        deleted
     }
 
     pub(in crate::store) fn list_task_projects(&self) -> Vec<TaskProjectRecord> {
@@ -60,38 +48,5 @@ impl InMemoryStore {
         data.task_projects
             .insert(project.id.clone(), project.clone());
         project
-    }
-
-    pub(in crate::store) fn list_model_config_usage(&self) -> Vec<ModelConfigUsageRecord> {
-        let data = self.inner.read();
-        let mut usage = BTreeMap::<String, ModelConfigUsageRecord>::new();
-
-        for task in data.tasks.values() {
-            let Some(model_config_id) = task.default_model_config_id.clone() else {
-                continue;
-            };
-            let entry = usage
-                .entry(model_config_id.clone())
-                .or_insert(ModelConfigUsageRecord {
-                    model_config_id,
-                    task_count: 0,
-                    run_count: 0,
-                });
-            entry.task_count += 1;
-        }
-
-        for run in data.runs.values() {
-            let entry =
-                usage
-                    .entry(run.model_config_id.clone())
-                    .or_insert(ModelConfigUsageRecord {
-                        model_config_id: run.model_config_id.clone(),
-                        task_count: 0,
-                        run_count: 0,
-                    });
-            entry.run_count += 1;
-        }
-
-        usage.into_values().collect()
     }
 }

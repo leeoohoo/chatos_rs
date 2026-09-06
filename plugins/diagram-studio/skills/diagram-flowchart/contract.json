@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "guideId": "diagram-flowchart",
+  "guideVersion": "1.0.0",
+  "kind": "flowchart",
+  "defaultMode": "business-process",
+  "modes": {
+    "business-process": { "qualityProfile": "balanced", "maxPrimaryItems": 24, "maxEdges": 28, "minStructureItems": 1 }
+  },
+  "checklist": [
+    "single_business_outcome",
+    "start_and_terminal_states_are_clear",
+    "decisions_have_named_outcomes",
+    "failure_and_retry_paths_are_bounded",
+    "independent_processes_are_split",
+    "code_evidence_is_mapped"
+  ]
+}

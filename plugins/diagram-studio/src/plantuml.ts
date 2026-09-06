@@ -38,6 +38,7 @@ export interface PlantUmlSequenceMessage {
   target: string;
   label: string;
   dashed: boolean;
+  async?: boolean;
 }
 
 export interface PlantUmlSequenceFragment {
@@ -63,6 +64,10 @@ export interface PlantUmlImportOptions {
   createdAt?: string;
   updatedAt?: string;
   kind?: DiagramKind;
+}
+
+export function hasEmbeddedDiagramLayout(source: string): boolean {
+  return source.replaceAll('\r\n', '\n').split('\n').some((line) => line.startsWith(layoutPrefix));
 }
 
 interface LayoutPayload {
@@ -114,6 +119,7 @@ function sequenceDiagramToPlantUml(document: DiagramDocument): string {
         target,
         label: edge.label ?? edge.data?.relation ?? '',
         dashed: edge.data?.lineStyle === 'dashed' || edge.data?.dashed === true,
+        async: edge.data?.plantUmlType === 'async-message',
         y: edgeEndpointY(document.nodes, edge),
         edge
       }];
@@ -122,7 +128,7 @@ function sequenceDiagramToPlantUml(document: DiagramDocument): string {
 
   const events: Array<{ y: number; priority: number; line: string }> = [];
   for (const message of messages) {
-    const arrow = message.dashed ? '-->' : '->';
+    const arrow = message.async ? (message.dashed ? '-->>' : '->>') : (message.dashed ? '-->' : '->');
     events.push({
       y: message.y,
       priority: 10,
@@ -346,14 +352,7 @@ function plantUmlSequenceToDiagram(source: string, options: PlantUmlImportOption
   });
   const participantByAlias = new Map(ir.participants.map((participant, index) => [participant.alias, participantNodes[index]]));
 
-  const activationRanges = [...ir.activations];
-  if (activationRanges.length === 0) {
-    ir.messages.forEach((message, index) => {
-      if (message.dashed) return;
-      const responseIndex = ir.messages.findIndex((candidate, candidateIndex) => candidateIndex > index && candidate.dashed && candidate.source === message.target);
-      activationRanges.push({ alias: message.target, startMessage: index, endMessage: responseIndex >= 0 ? responseIndex : index });
-    });
-  }
+  const activationRanges = inferMissingSequenceActivations(ir.messages, ir.activations);
   const activationNodes = activationRanges.flatMap((activation, index): DiagramNode[] => {
     const owner = participantByAlias.get(activation.alias);
     if (!owner) return [];
@@ -367,7 +366,7 @@ function plantUmlSequenceToDiagram(source: string, options: PlantUmlImportOption
       extent: 'parent',
       position: { x: 73, y: startY - owner.position.y },
       width: 14,
-      height: Math.max(72, endY - startY + 30),
+      height: Math.max(44, endY - startY + 30),
       zIndex: 20 + index,
       data: {
         label: `${owner.data.label}激活`,
@@ -410,7 +409,8 @@ function plantUmlSequenceToDiagram(source: string, options: PlantUmlImportOption
         endMarker: 'arrow',
         strokeWidth: 1.4,
         color: '#77839A',
-        plantUmlId: `message-${index + 1}`
+        plantUmlId: `message-${index + 1}`,
+        plantUmlType: message.async ? 'async-message' : 'message'
       }
     }];
   });
@@ -431,7 +431,7 @@ function plantUmlSequenceToDiagram(source: string, options: PlantUmlImportOption
         shape: 'fragment',
         showLabel: true,
         color: '#667085',
-        fillColor: '#FFFFFF',
+        fillColor: 'transparent',
         plantUmlId: `fragment-${index + 1}`,
         plantUmlType: fragment.kind
       }
@@ -485,6 +485,8 @@ export interface PlantUmlStructuralNode {
   alias: string;
   label: string;
   type: string;
+  parentAlias?: string;
+  container?: boolean;
 }
 
 export interface PlantUmlStructuralEdge {
@@ -721,6 +723,7 @@ export function parsePlantUmlStructural(source: string): PlantUmlStructuralIr {
   const opaqueBlocks: string[] = [];
   const nodeByAlias = new Map<string, PlantUmlStructuralNode>();
   const aliasByReference = new Map<string, string>();
+  const groupStack: string[] = [];
   let title: string | undefined;
 
   const addNode = (node: PlantUmlStructuralNode) => {
@@ -752,9 +755,20 @@ export function parsePlantUmlStructural(source: string): PlantUmlStructuralIr {
       title = unquote(line.slice(6).trim());
       continue;
     }
+    if (line === '}') {
+      if (groupStack.length > 0) groupStack.pop();
+      else opaqueBlocks.push(originalLine);
+      continue;
+    }
     const declaration = parseStructuralDeclaration(line);
     if (declaration) {
-      addNode(declaration);
+      const opensGroup = /\{\s*$/.test(line);
+      const alias = addNode({
+        ...declaration,
+        parentAlias: groupStack[groupStack.length - 1],
+        container: opensGroup
+      });
+      if (opensGroup) groupStack.push(alias);
       continue;
     }
     const edge = parseStructuralEdge(line);
@@ -762,7 +776,7 @@ export function parsePlantUmlStructural(source: string): PlantUmlStructuralIr {
       edges.push({ ...edge, source: ensureEndpoint(edge.source), target: ensureEndpoint(edge.target) });
       continue;
     }
-    if (line === '}' || /^(left to right direction|top to bottom direction|skinparam|!theme|scale|header|footer|legend|caption)\b/i.test(line)) {
+    if (/^(left to right direction|top to bottom direction|skinparam|!theme|scale|header|footer|legend|caption)\b/i.test(line)) {
       opaqueBlocks.push(originalLine);
       continue;
     }
@@ -779,12 +793,26 @@ function structuralDiagramToPlantUml(document: DiagramDocument, dialect: 'compon
     const rightPosition = absolutePosition(document.nodes, right);
     return leftPosition.x - rightPosition.x || leftPosition.y - rightPosition.y;
   });
+  const childrenByParent = new Map<string | undefined, DiagramNode[]>();
   for (const node of orderedNodes) {
-    const alias = aliases.get(node.id);
-    if (!alias) continue;
-    const keyword = structuralKeyword(node, dialect);
-    lines.push(`${keyword} "${escapeQuoted(node.data.label)}" as ${alias}`);
+    const siblings = childrenByParent.get(node.parentId) ?? [];
+    siblings.push(node);
+    childrenByParent.set(node.parentId, siblings);
   }
+  const emitNode = (node: DiagramNode, indent = '') => {
+    const alias = aliases.get(node.id);
+    if (!alias) return;
+    const children = childrenByParent.get(node.id) ?? [];
+    const keyword = structuralKeyword(node, dialect);
+    if (node.data.shape === 'container' || children.length > 0) {
+      lines.push(`${indent}${keyword} "${escapeQuoted(node.data.label)}" as ${alias} {`);
+      for (const child of children) emitNode(child, `${indent}  `);
+      lines.push(`${indent}}`);
+      return;
+    }
+    lines.push(`${indent}${keyword} "${escapeQuoted(node.data.label)}" as ${alias}`);
+  };
+  for (const node of childrenByParent.get(undefined) ?? []) emitNode(node);
   if (document.edges.length) lines.push('');
   for (const edge of document.edges) {
     const source = aliases.get(edge.source);
@@ -831,33 +859,37 @@ function plantUmlStructuralToDiagram(source: string, options: PlantUmlImportOpti
     return restored;
   }
 
-  const ranks = structuralRanks(ir.nodes, ir.edges);
   const idByAlias = new Map(ir.nodes.map((node, index) => [node.alias, safeIdentifier('node', node.alias, index)]));
   const visualNodes = ir.nodes.map((node, index): DiagramNode => {
     const appearance = structuralAppearance(node.type, kind);
-    const rank = ranks.get(node.alias) ?? 0;
-    const sameRank = ir.nodes.filter((candidate) => (ranks.get(candidate.alias) ?? 0) === rank);
-    const rankIndex = sameRank.findIndex((candidate) => candidate.alias === node.alias);
+    const parentId = node.parentAlias ? idByAlias.get(node.parentAlias) : undefined;
+    const isContainer = node.container === true;
+    const visualLineCount = node.label.split(/\r?\n/).reduce((count, line) => count + Math.max(1, Math.ceil([...line].length / 22)), 0);
     return {
       id: idByAlias.get(node.alias)!,
-      type: 'diagramNode',
-      position: { x: 60 + rank * 280, y: 70 + rankIndex * 145 },
-      width: 200,
-      height: 88,
-      zIndex: 2 + index,
+      type: isContainer ? 'laneNode' : 'diagramNode',
+      parentId,
+      extent: parentId ? 'parent' : undefined,
+      position: { x: 0, y: 0 },
+      width: isContainer ? 300 : 220,
+      height: isContainer ? 180 : Math.max(92, 52 + visualLineCount * 18),
+      zIndex: isContainer ? 0 : 2 + index,
       data: {
         label: node.label,
-        category: appearance.category,
-        shape: appearance.shape,
-        icon: appearance.icon,
+        category: isContainer ? 'external' : appearance.category,
+        shape: isContainer ? 'container' : appearance.shape,
+        icon: isContainer ? 'cluster' : appearance.icon,
         showLabel: true,
         color: appearance.color,
-        fillColor: appearance.fill,
+        fillColor: isContainer ? 'rgba(125, 135, 151, 0.035)' : 'transparent',
+        borderColor: isContainer ? '#9AA4B2' : appearance.color,
+        borderStyle: isContainer ? 'dashed' : 'solid',
         plantUmlId: node.alias,
         plantUmlType: node.type
       }
     };
   });
+  layoutStructuralNodes(ir.nodes, ir.edges, visualNodes, idByAlias);
   const visualById = new Map(visualNodes.map((node) => [node.id, node]));
   const edges = ir.edges.flatMap((edge, index): DiagramEdge[] => {
     const sourceId = idByAlias.get(edge.source);
@@ -1085,6 +1117,143 @@ function structuralAppearance(type: string, kind: 'architecture' | 'topology'): 
   }
 }
 
+function layoutStructuralNodes(
+  nodes: PlantUmlStructuralNode[],
+  edges: PlantUmlStructuralEdge[],
+  visualNodes: DiagramNode[],
+  idByAlias: Map<string, string>
+): void {
+  const semanticByAlias = new Map(nodes.map((node) => [node.alias, node]));
+  const visualByAlias = new Map(nodes.map((node, index) => [node.alias, visualNodes[index]]));
+  const childrenByParent = new Map<string, PlantUmlStructuralNode[]>();
+  for (const node of nodes) {
+    if (!node.parentAlias) continue;
+    const children = childrenByParent.get(node.parentAlias) ?? [];
+    children.push(node);
+    childrenByParent.set(node.parentAlias, children);
+  }
+
+  const depth = (node: PlantUmlStructuralNode) => {
+    let result = 0;
+    let current = node;
+    const seen = new Set<string>();
+    while (current.parentAlias && !seen.has(current.parentAlias)) {
+      seen.add(current.parentAlias);
+      result += 1;
+      const parent = semanticByAlias.get(current.parentAlias);
+      if (!parent) break;
+      current = parent;
+    }
+    return result;
+  };
+
+  const containers = nodes
+    .filter((node) => node.container)
+    .sort((left, right) => depth(right) - depth(left));
+  for (const container of containers) {
+    const children = childrenByParent.get(container.alias) ?? [];
+    const visualContainer = visualByAlias.get(container.alias);
+    if (!visualContainer) continue;
+    if (children.length === 0) {
+      visualContainer.width = 280;
+      visualContainer.height = 150;
+      continue;
+    }
+    const directChild = (alias: string): string | undefined => {
+      let current = semanticByAlias.get(alias);
+      const seen = new Set<string>();
+      while (current?.parentAlias && !seen.has(current.alias)) {
+        seen.add(current.alias);
+        if (current.parentAlias === container.alias) return current.alias;
+        current = semanticByAlias.get(current.parentAlias);
+      }
+      return undefined;
+    };
+    const seenChildEdges = new Set<string>();
+    const childEdges = edges.flatMap((edge): PlantUmlStructuralEdge[] => {
+      const source = directChild(edge.source);
+      const target = directChild(edge.target);
+      if (!source || !target || source === target) return [];
+      const key = `${source}\u0000${target}`;
+      if (seenChildEdges.has(key)) return [];
+      seenChildEdges.add(key);
+      return [{ ...edge, source, target }];
+    });
+    const childRanks = structuralRanks(children, childEdges);
+    const ranks = [...new Set(children.map((child) => childRanks.get(child.alias) ?? 0))].sort((left, right) => left - right);
+    let x = 34;
+    let y = 70;
+    let rowHeight = 0;
+    let contentRight = 34;
+    let contentBottom = 70;
+    const maximumRowWidth = 1540;
+    for (const rank of ranks) {
+      const column = children.filter((child) => (childRanks.get(child.alias) ?? 0) === rank);
+      const columnWidth = Math.max(200, ...column.map((child) => visualByAlias.get(child.alias)?.width ?? 200));
+      const columnHeight = column.reduce((height, child, index) => height + (visualByAlias.get(child.alias)?.height ?? 88) + (index > 0 ? 58 : 0), 0);
+      if (x > 34 && x + columnWidth > maximumRowWidth) {
+        x = 34;
+        y += rowHeight + 90;
+        rowHeight = 0;
+      }
+      let childY = y;
+      for (const child of column) {
+        const visualChild = visualByAlias.get(child.alias);
+        if (!visualChild) continue;
+        visualChild.parentId = idByAlias.get(container.alias);
+        visualChild.extent = 'parent';
+        visualChild.position = { x, y: childY };
+        childY += (visualChild.height ?? 88) + 58;
+      }
+      rowHeight = Math.max(rowHeight, columnHeight);
+      contentRight = Math.max(contentRight, x + columnWidth);
+      contentBottom = Math.max(contentBottom, y + columnHeight);
+      x += columnWidth + 76;
+    }
+    visualContainer.width = Math.max(300, contentRight + 34);
+    visualContainer.height = Math.max(170, contentBottom + 34);
+  }
+
+  const topAlias = (alias: string): string => {
+    let current = semanticByAlias.get(alias);
+    const seen = new Set<string>();
+    while (current?.parentAlias && !seen.has(current.parentAlias)) {
+      seen.add(current.parentAlias);
+      const parent = semanticByAlias.get(current.parentAlias);
+      if (!parent) break;
+      current = parent;
+    }
+    return current?.alias ?? alias;
+  };
+  const topNodes = nodes.filter((node) => !node.parentAlias);
+  const topEdges: PlantUmlStructuralEdge[] = [];
+  const seenTopEdges = new Set<string>();
+  for (const edge of edges) {
+    const source = topAlias(edge.source);
+    const target = topAlias(edge.target);
+    if (source === target) continue;
+    const key = `${source}\u0000${target}`;
+    if (seenTopEdges.has(key)) continue;
+    seenTopEdges.add(key);
+    topEdges.push({ ...edge, source, target });
+  }
+  const topRanks = structuralRanks(topNodes, topEdges);
+  const rankValues = [...new Set(topNodes.map((node) => topRanks.get(node.alias) ?? 0))].sort((left, right) => left - right);
+  let rankX = 60;
+  for (const rank of rankValues) {
+    const column = topNodes.filter((node) => (topRanks.get(node.alias) ?? 0) === rank);
+    const columnWidth = Math.max(200, ...column.map((node) => visualByAlias.get(node.alias)?.width ?? 200));
+    let y = 60;
+    for (const node of column) {
+      const visualNode = visualByAlias.get(node.alias);
+      if (!visualNode) continue;
+      visualNode.position = { x: rankX, y };
+      y += (visualNode.height ?? 88) + 110;
+    }
+    rankX += columnWidth + 160;
+  }
+}
+
 function structuralRanks(nodes: PlantUmlStructuralNode[], edges: PlantUmlStructuralEdge[]): Map<string, number> {
   const ranks = new Map(nodes.map((node) => [node.alias, 0]));
   const incoming = new Map(nodes.map((node) => [node.alias, 0]));
@@ -1104,6 +1273,20 @@ function structuralRanks(nodes: PlantUmlStructuralNode[], edges: PlantUmlStructu
       ranks.set(target, Math.max(ranks.get(target) ?? 0, (ranks.get(current) ?? 0) + 1));
       incoming.set(target, Math.max(0, (incoming.get(target) ?? 0) - 1));
       if ((incoming.get(target) ?? 0) === 0) queue.push(target);
+    }
+  }
+  for (const node of nodes) {
+    if (visited.has(node.alias)) continue;
+    const cycleQueue = [node.alias];
+    visited.add(node.alias);
+    while (cycleQueue.length) {
+      const current = cycleQueue.shift()!;
+      for (const target of outgoing.get(current) ?? []) {
+        if (visited.has(target)) continue;
+        ranks.set(target, Math.max(ranks.get(target) ?? 0, (ranks.get(current) ?? 0) + 1));
+        visited.add(target);
+        cycleQueue.push(target);
+      }
     }
   }
   return ranks;
@@ -1195,8 +1378,43 @@ function parseMessage(line: string): PlantUmlSequenceMessage | undefined {
     source: reverse ? right : left,
     target: reverse ? left : right,
     label: (match[4] ?? '').replaceAll('\\n', '\n'),
-    dashed: match[2].includes('--')
+    dashed: match[2].includes('--'),
+    async: match[2].includes('>>') || match[2].includes('<<')
   };
+}
+
+function inferMissingSequenceActivations(
+  messages: PlantUmlSequenceMessage[],
+  explicitActivations: PlantUmlSequenceIr['activations']
+): PlantUmlSequenceIr['activations'] {
+  const ranges = explicitActivations.map((activation) => ({ ...activation }));
+
+  messages.forEach((message, index) => {
+    // Dashed arrows are returns, while open-arrow messages are asynchronous and
+    // do not transfer synchronous control to the receiver.
+    if (message.dashed || message.async) return;
+    if (ranges.some((range) => range.alias === message.target && range.startMessage <= index && range.endMessage >= index)) return;
+
+    const responseIndex = messages.findIndex((candidate, candidateIndex) => (
+      candidateIndex > index
+      && candidate.dashed
+      && !candidate.async
+      && candidate.source === message.target
+      && candidate.target === message.source
+    ));
+    let endMessage = responseIndex >= 0 ? responseIndex : index;
+
+    // An activation beginning inside this call owns the rest of that interval.
+    // Stop immediately before it instead of rendering overlapping bars.
+    const nextRange = ranges
+      .filter((range) => range.alias === message.target && range.startMessage > index && range.startMessage <= endMessage)
+      .sort((left, right) => left.startMessage - right.startMessage)[0];
+    if (nextRange) endMessage = Math.max(index, nextRange.startMessage - 1);
+
+    ranges.push({ alias: message.target, startMessage: index, endMessage });
+  });
+
+  return ranges.sort((left, right) => left.startMessage - right.startMessage || left.endMessage - right.endMessage || left.alias.localeCompare(right.alias));
 }
 
 function participantAppearance(type: string): { category: DiagramNodeCategory; icon: DiagramNodeIcon; color: string; fill: string } {
@@ -1344,9 +1562,20 @@ function safeIdentifier(prefix: string, value: string, index: number): string {
 }
 
 function sanitizeAlias(value: string): string {
-  const normalized = value.normalize('NFKD').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
-  const withPrefix = /^[A-Za-z_]/.test(normalized) ? normalized : `participant_${normalized}`;
-  return (withPrefix || 'participant').slice(0, 96);
+  const canonical = value.normalize('NFKD');
+  const normalized = canonical.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  const readable = /^[A-Za-z_]/.test(normalized)
+    ? normalized
+    : normalized
+      ? `node_${normalized}`
+      : 'node';
+  // PlantUML permits declarations such as `package "客户端" {` without an explicit
+  // alias. A purely ASCII sanitizer used to collapse every non-Latin label to the
+  // same `participant_` identifier, silently merging otherwise unrelated packages.
+  // Keep generated aliases readable, but add a stable suffix whenever transliteration
+  // discards non-ASCII content so distinct labels remain distinct across imports.
+  const suffix = /[^\x00-\x7F]/.test(canonical) ? `_${stableHash(value)}` : '';
+  return `${readable.slice(0, Math.max(1, 96 - suffix.length))}${suffix}`;
 }
 
 function singleLine(value: string): string {
@@ -1358,7 +1587,7 @@ function escapeQuoted(value: string): string {
 }
 
 function unescapeQuoted(value: string): string {
-  return value.replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+  return value.replaceAll('\\"', '"').replaceAll('\\\\', '\\').replaceAll('\\n', '\n');
 }
 
 function unquote(value: string): string {

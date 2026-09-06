@@ -72,7 +72,7 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn('retired_sandbox_mtls="$release_dir/docker/secrets/sandbox-manager-mtls"', deploy)
         self.assertIn('rm -rf -- "$retired_sandbox_mtls"', deploy)
 
-    def test_full_cloud_deploy_preserves_all_services_scope_across_ssh(self) -> None:
+    def test_full_cloud_deploy_runs_in_remote_background(self) -> None:
         deploy = (ROOT / "scripts/deploy-production.sh").read_text()
         self.assertIn(
             'remote_deploy_services_arg="${DEPLOY_SERVICES_CSV:-__CHATOS_ALL_SERVICES__}"',
@@ -82,7 +82,18 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
             'if [[ "$deploy_services_arg" == "__CHATOS_ALL_SERVICES__" ]]; then',
             deploy,
         )
-        self.assertIn("[ERROR] remote deployment failed before completion", deploy)
+        self.assertIn("nohup setsid bash -c", deploy)
+        self.assertIn('trap "" HUP', deploy)
+        self.assertIn('kill -TERM -- "-$active_pid"', deploy)
+        self.assertIn("previous deployment stopped; starting the new deployment", deploy)
+        self.assertIn('9>&9 </dev/null >> "$log_file" 2>&1 &', deploy)
+        self.assertIn('printf \'%s\\n\' "$deployment_pid" > "$pid_file"', deploy)
+        self.assertIn("deployment is running in the server background", deploy)
+
+        online = (ROOT / "scripts/deploy-online.sh").read_text()
+        self.assertIn('local target="${1:-deploy}"', online)
+        self.assertIn('exec tail -n 200 -F "$log_file"', online)
+        self.assertIn("the server deployment will continue", online)
 
 
 if __name__ == "__main__":

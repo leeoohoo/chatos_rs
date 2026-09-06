@@ -18,6 +18,7 @@ impl AppStore {
         }
     }
 
+    #[cfg(test)]
     pub async fn save_model_config(
         &self,
         model: ModelConfigRecord,
@@ -32,13 +33,6 @@ impl AppStore {
         match self {
             Self::InMemory(store) => Ok(store.get_runtime_settings()),
             Self::Mongo(store) => store.get_runtime_settings().await,
-        }
-    }
-
-    pub async fn delete_model_config(&self, id: &str) -> Result<bool, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.delete_model_config(id)),
-            Self::Mongo(store) => store.delete_model_config(id).await,
         }
     }
 
@@ -63,13 +57,6 @@ impl AppStore {
         match self {
             Self::InMemory(store) => Ok(store.save_task_project(project)),
             Self::Mongo(store) => store.save_task_project(project).await,
-        }
-    }
-
-    pub async fn list_model_config_usage(&self) -> Result<Vec<ModelConfigUsageRecord>, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.list_model_config_usage()),
-            Self::Mongo(store) => store.list_model_config_usage().await,
         }
     }
 }

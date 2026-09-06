@@ -3,6 +3,8 @@ export type DiagramKind = 'architecture' | 'flowchart' | 'swimlane' | 'topology'
 export interface DiagramProject {
   schemaVersion: 1;
   projectId: string;
+  scopeKey?: string;
+  isScopeDefault?: boolean;
   name: string;
   description?: string;
   createdAt: string;
@@ -29,7 +31,8 @@ export type DiagramNodeShape =
   | 'lane'
   | 'lifeline'
   | 'activation'
-  | 'fragment';
+  | 'fragment'
+  | 'container';
 export type DiagramNodeIcon =
   | 'user'
   | 'terminal'
@@ -113,6 +116,7 @@ export interface DiagramEdgeData extends Record<string, unknown> {
   color?: string;
   fontSize?: number;
   plantUmlId?: string;
+  plantUmlType?: string;
 }
 
 export interface DiagramEdge {
@@ -146,6 +150,7 @@ export interface PlantUmlNotation {
 export interface DiagramDocument {
   schemaVersion: 1;
   documentId: string;
+  artifactKey?: string;
   revision: number;
   kind: DiagramKind;
   title: string;
@@ -157,6 +162,15 @@ export interface DiagramDocument {
   viewport: DiagramViewport;
   notation?: PlantUmlNotation;
   metadata?: Record<string, string>;
+  generationProvenance?: {
+    guideId: string;
+    guideVersion: string;
+    guideHash: string;
+    planHash: string;
+    permitId: string;
+    qualityProfile: string;
+    generatedAt: string;
+  };
 }
 
 export type DiagramPatchOperation =
@@ -183,6 +197,12 @@ export function assertDiagramProject(value: unknown): asserts value is DiagramPr
   if (project.schemaVersion !== 1) throw new Error('Unsupported project schema version.');
   if (typeof project.projectId !== 'string') throw new Error('Project projectId is required.');
   assertIdentifier(project.projectId, 'projectId');
+  if (project.scopeKey !== undefined && (typeof project.scopeKey !== 'string' || !/^[a-f0-9]{64}$/.test(project.scopeKey))) {
+    throw new Error('Project scopeKey must be a SHA-256 fingerprint.');
+  }
+  if (project.isScopeDefault !== undefined && typeof project.isScopeDefault !== 'boolean') {
+    throw new Error('Project isScopeDefault must be a boolean.');
+  }
   if (typeof project.name !== 'string' || project.name.trim().length === 0 || project.name.length > 240) {
     throw new Error('Project name must contain 1 to 240 characters.');
   }
@@ -209,6 +229,10 @@ export function assertDiagramDocument(value: unknown): asserts value is DiagramD
   if (document.schemaVersion !== 1) throw new Error('Unsupported diagram schema version.');
   if (typeof document.documentId !== 'string') throw new Error('Diagram documentId is required.');
   assertIdentifier(document.documentId, 'documentId');
+  if (document.artifactKey !== undefined) {
+    if (typeof document.artifactKey !== 'string') throw new Error('Diagram artifactKey must be a string.');
+    assertIdentifier(document.artifactKey, 'artifactKey');
+  }
   if (!['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'].includes(document.kind ?? '')) {
     throw new Error('Diagram kind is invalid.');
   }
@@ -234,6 +258,28 @@ export function assertDiagramDocument(value: unknown): asserts value is DiagramD
     }
     if (document.notation.opaqueBlocks !== undefined && (!Array.isArray(document.notation.opaqueBlocks) || document.notation.opaqueBlocks.some((item) => typeof item !== 'string'))) {
       throw new Error('Diagram PlantUML opaque blocks are invalid.');
+    }
+  }
+  if (document.generationProvenance) {
+    const provenance = document.generationProvenance;
+    for (const [label, item] of Object.entries({
+      guideId: provenance.guideId,
+      guideVersion: provenance.guideVersion,
+      guideHash: provenance.guideHash,
+      planHash: provenance.planHash,
+      permitId: provenance.permitId,
+      qualityProfile: provenance.qualityProfile,
+      generatedAt: provenance.generatedAt
+    })) {
+      if (typeof item !== 'string' || item.length === 0 || item.length > 256) {
+        throw new Error(`Diagram generation provenance ${label} is invalid.`);
+      }
+    }
+    if (!/^[a-f0-9]{64}$/.test(provenance.guideHash) || !/^[a-f0-9]{64}$/.test(provenance.planHash)) {
+      throw new Error('Diagram generation provenance hashes are invalid.');
+    }
+    if (!Number.isFinite(Date.parse(provenance.generatedAt))) {
+      throw new Error('Diagram generation provenance generatedAt is invalid.');
     }
   }
   const nodeIds = new Set<string>();
@@ -310,6 +356,7 @@ export function applyDiagramPatch(
 export function diagramSummary(document: DiagramDocument) {
   return {
     documentId: document.documentId,
+    artifactKey: document.artifactKey,
     revision: document.revision,
     kind: document.kind,
     title: document.title,

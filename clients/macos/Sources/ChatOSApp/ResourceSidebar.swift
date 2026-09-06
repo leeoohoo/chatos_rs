@@ -158,7 +158,7 @@ struct ResourceSidebar: View {
         .listStyle(.sidebar)
         .navigationTitle("ChatOS")
         .toolbar {
-            ToolbarItem(placement: .automatic) {
+            ToolbarItemGroup(placement: .navigation) {
                 Button(
                     model.localized("刷新资源", english: "Refresh Resources"),
                     systemImage: "arrow.clockwise",
@@ -166,8 +166,7 @@ struct ResourceSidebar: View {
                 )
                     .labelStyle(.iconOnly)
                     .disabled(model.isWorkspaceLoading)
-            }
-            ToolbarItem(placement: .primaryAction) {
+
                 Menu {
                     Button(model.localized("新建项目", english: "New Project"), systemImage: "folder.badge.plus") {
                         creationSheet = .project
@@ -183,8 +182,15 @@ struct ResourceSidebar: View {
                     Image(systemName: "plus")
                 }
                 .help(model.localized("新建资源", english: "New Resource"))
+
+                Button(action: model.toggleNavigationSidebar) {
+                    Image(systemName: "sidebar.left")
+                }
+                .labelStyle(.iconOnly)
+                .help(model.localized("显示或隐藏边栏", english: "Show or Hide Sidebar"))
             }
         }
+        .toolbar(removing: .sidebarToggle)
         .sheet(item: $creationSheet) { sheet in
             switch sheet {
             case .project:

@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "name": "chatos-browser-cdp",
-  "version": "0.1.7",
-  "description": "Operate managed Chromium sessions or an explicitly connected Chrome browser through the Chrome DevTools Protocol.",
+  "version": "0.1.12",
+  "description": "Control the user's paired Google Chrome automatically, with an isolated Chromium fallback before authorization, through the Chrome DevTools Protocol.",
   "author": {
     "name": "Chatos",
     "url": "https://github.com/chatos-ai"
@@ -12,7 +12,7 @@
   "license": "Apache-2.0",
   "keywords": ["browser", "chrome", "cdp", "automation", "mcp"],
   "mcpServers": {
-    "browser-cdp": {
+    "browser-cdp-mcp": {
       "type": "stdio",
       "bin": "chatos-browser-cdp",
       "requiresExclusiveExecution": true,
@@ -21,17 +21,23 @@
     }
   },
   "skills": [
-    "./skills/browser-cdp-workflow"
+    "./skills/browser-cdp",
+    "./skills/browser-navigation",
+    "./skills/browser-interaction",
+    "./skills/browser-observation-verification",
+    "./skills/browser-network-debugging",
+    "./skills/browser-file-transfer"
   ],
   "interface": {
     "displayName": "Browser CDP",
     "shortDescription": "Full browser control through Chrome DevTools Protocol",
-    "longDescription": "Launch an isolated managed Chrome browser or connect to an explicitly paired existing Chrome session. Existing-Chrome mode also requires the Chatos Browser Bridge Chrome extension and one explicit first connection; later restarts reconnect automatically. Supports high-level browser automation and raw CDP commands with local permission enforcement.",
+    "longDescription": "Automatically use the user's paired Google Chrome, including a visible virtual mouse for automated clicks and task-named native tab groups. Before the Chatos Browser Bridge extension has completed its one-time authorization, ChatOS automatically falls back to an isolated managed browser; later restarts reconnect without asking the model or user to choose a mode.",
     "developerName": "Chatos",
     "category": "Developer Tools",
     "capabilities": [
-      "Managed browser sessions",
       "Existing Chrome connection",
+      "Visible virtual mouse",
+      "Managed browser sessions",
       "Task-owned native Chrome tab groups",
       "Page interaction",
       "Network inspection",
@@ -39,7 +45,8 @@
     ],
     "websiteURL": "https://github.com/chatos-ai/chatos-browser-cdp",
     "defaultPrompt": [
-      "Users describe browsing goals, not tool sequences; automatically open or reuse a Browser CDP session. The MCP process binds it internally, so never provide, request, copy, guess, or reconstruct browser_session_id in later tool arguments.",
+      "Users describe browsing goals, not tool sequences. Call browser_session_open; its input has no mode, headless, or persistent_profile fields. ChatOS uses the user's paired Google Chrome and a task-named native tab group after authorization, and automatically falls back to an isolated browser before authorization. The MCP process binds the session internally, so never provide, request, copy, guess, or reconstruct browser_session_id in later tool arguments.",
+      "Before navigating, read the actual top-level mode returned by browser_session_open: chrome_extension means the user's Google Chrome; managed means the isolated fallback. If reusing a session or uncertain, read mode from browser_session_status instead of guessing.",
       "After navigation or page changes, inspect a fresh snapshot before interacting and use only current element refs.",
       "Verify meaningful actions with a fresh snapshot or session-status read, and recover once from a timed-out navigation before reporting failure."
     ],
@@ -54,55 +61,55 @@
       "permission": "process.spawn",
       "required": true,
       "reason": "Launch the installed Browser CDP stdio MCP executable.",
-      "components": ["browser-cdp"]
+      "components": ["browser-cdp-mcp"]
     },
     {
       "permission": "browser.managed.launch",
       "required": true,
       "reason": "Launch an isolated local Chrome or Chromium process.",
-      "components": ["browser-cdp"]
+      "components": ["browser-cdp-mcp"]
     },
     {
       "permission": "browser.page.read",
       "required": true,
       "reason": "Read page structure, accessibility snapshots and visible content.",
-      "components": ["browser-cdp"]
+      "components": ["browser-cdp-mcp"]
     },
     {
       "permission": "browser.page.control",
       "required": true,
       "reason": "Navigate, click, type, scroll and control browser tabs.",
-      "components": ["browser-cdp"]
+      "components": ["browser-cdp-mcp"]
     },
     {
       "permission": "browser.chrome.attach",
       "required": false,
       "reason": "Connect to an explicitly paired existing Chrome browser through the Chatos Browser Bridge extension.",
-      "components": ["browser-cdp"]
+      "components": ["browser-cdp-mcp"]
     },
     {
       "permission": "browser.network.observe",
       "required": false,
       "reason": "Inspect console, network, WebSocket and HAR activity.",
-      "components": ["browser-cdp"]
+      "components": ["browser-cdp-mcp"]
     },
     {
       "permission": "browser.network.intercept",
       "required": false,
       "reason": "Abort or mock explicitly selected network requests.",
-      "components": ["browser-cdp"]
+      "components": ["browser-cdp-mcp"]
     },
     {
       "permission": "browser.file.transfer",
       "required": false,
       "reason": "Upload user-selected files and expose downloaded files as managed artifacts.",
-      "components": ["browser-cdp"]
+      "components": ["browser-cdp-mcp"]
     },
     {
       "permission": "browser.cdp.raw",
       "required": false,
       "reason": "Execute explicitly approved raw Chrome DevTools Protocol commands.",
-      "components": ["browser-cdp"]
+      "components": ["browser-cdp-mcp"]
     }
   ]
 }

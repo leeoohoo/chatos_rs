@@ -4,20 +4,16 @@ import {
   Button,
   Card,
   Col,
-  Descriptions,
   Empty,
   Form,
   Input,
   InputNumber,
-  List,
   Modal,
   Row,
   Select,
   Space,
   Spin,
-  Statistic,
   Switch,
-  Table,
   Tabs,
   Tag,
   Typography,
@@ -27,11 +23,9 @@ import {
   SaveOutlined,
 } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import dayjs from 'dayjs';
 import { api } from './api';
 import type {
   ConfigDefinition,
-  ConfigRelease,
   ConfigValue,
 } from './types';
 
@@ -76,52 +70,6 @@ function configAreaLabel(key: string) {
 function configCategoryLabel(category: string) {
   const [, ...rest] = category.split('/').map((part) => part.trim());
   return rest.length > 0 ? rest.join(' / ') : category;
-}
-
-export function Dashboard({ environment }: { environment: string }) {
-  const effective = useQuery({
-    queryKey: ['config-center', 'effective', environment],
-    queryFn: () => api.effective(environment),
-  });
-  const releases = useQuery({
-    queryKey: ['config-center', 'releases', environment],
-    queryFn: () => api.releases(environment),
-  });
-  const instances = useQuery({ queryKey: ['config-center', 'instances'], queryFn: api.instances });
-  const matching = instances.data?.filter((item) => item.environment === environment) || [];
-  return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Row gutter={16}>
-        <Col span={6}><Card><Statistic title="当前 Revision" value={effective.data?.revision || 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="已发布版本" value={releases.data?.length || 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="在线实例记录" value={matching.length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="待重启实例" value={matching.filter((item) => item.pending_restart_keys.length > 0).length} /></Card></Col>
-      </Row>
-      <Card title="当前配置">
-        <Descriptions column={2}>
-          <Descriptions.Item label="环境">{environment}</Descriptions.Item>
-          <Descriptions.Item label="Release ID">{effective.data?.release_id || '-'}</Descriptions.Item>
-          <Descriptions.Item label="配置数量">{Object.keys(effective.data?.values || {}).length}</Descriptions.Item>
-          <Descriptions.Item label="状态"><Tag color="green">已发布</Tag></Descriptions.Item>
-        </Descriptions>
-      </Card>
-      <Card title="最近发布">
-        <List
-          dataSource={(releases.data || []).slice(0, 6)}
-          locale={{ emptyText: <Empty description="暂无发布记录" /> }}
-          renderItem={(release) => (
-            <List.Item>
-              <List.Item.Meta
-                title={<Space><Tag color="blue">r{release.revision}</Tag>{release.publish_message}</Space>}
-                description={dayjs(release.published_at || release.created_at).format('YYYY-MM-DD HH:mm:ss')}
-              />
-              <Tag color={release.status === 'published' ? 'green' : 'red'}>{release.status}</Tag>
-            </List.Item>
-          )}
-        />
-      </Card>
-    </Space>
-  );
 }
 
 export function ConfigEditor({ environment }: { environment: string }) {
@@ -506,95 +454,5 @@ function ConfigInput({
       value={typeof value === 'string' ? value : ''}
       onChange={(event) => onChange(event.target.value)}
     />
-  );
-}
-
-export function ReleaseHistory({ environment }: { environment: string }) {
-  const { message, modal } = AntdApp.useApp();
-  const queryClient = useQueryClient();
-  const releases = useQuery({
-    queryKey: ['config-center', 'releases', environment],
-    queryFn: () => api.releases(environment),
-  });
-  const rollback = useMutation({
-    mutationFn: (release: ConfigRelease) => api.rollback(environment, release.id),
-    onSuccess: async (release) => {
-      message.success(`已回滚并生成 Revision ${release.revision}`);
-      await queryClient.invalidateQueries();
-    },
-    onError: (error: Error) => message.error(error.message),
-  });
-  return (
-    <Card>
-      <Table
-        rowKey="id"
-        loading={releases.isLoading}
-        dataSource={releases.data || []}
-        columns={[
-          { title: 'Revision', dataIndex: 'revision', render: (value) => <Tag color="blue">r{value}</Tag> },
-          { title: '状态', dataIndex: 'status', render: (value) => <Tag color={value === 'published' ? 'green' : 'red'}>{value}</Tag> },
-          { title: '说明', dataIndex: 'publish_message' },
-          { title: '变更', dataIndex: 'changed_keys', render: (values: string[]) => values.length },
-          { title: '发布时间', dataIndex: 'published_at', render: (value) => value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-' },
-          {
-            title: '操作',
-            render: (_, release: ConfigRelease) => (
-              <Button
-                size="small"
-                onClick={() => modal.confirm({
-                  title: `回滚到 Revision ${release.revision}？`,
-                  content: '回滚会创建一个新的发布版本，不会删除历史记录。',
-                  onOk: () => rollback.mutateAsync(release),
-                })}
-              >
-                回滚
-              </Button>
-            ),
-          },
-        ]}
-      />
-    </Card>
-  );
-}
-
-export function Instances() {
-  const query = useQuery({ queryKey: ['config-center', 'instances'], queryFn: api.instances, refetchInterval: 10000 });
-  return (
-    <Card>
-      <Table
-        rowKey="id"
-        loading={query.isLoading}
-        dataSource={query.data || []}
-        columns={[
-          { title: '环境', dataIndex: 'environment' },
-          { title: '服务', dataIndex: 'service_name' },
-          { title: '实例', dataIndex: 'service_id' },
-          { title: 'Revision', dataIndex: 'effective_revision' },
-          { title: '状态', render: (_, item) => item.stale ? <Tag color="orange">stale</Tag> : <Tag color="green">active</Tag> },
-          { title: '待重启 Key', dataIndex: 'pending_restart_keys', render: (values: string[]) => values.join(', ') || '-' },
-          { title: '最后心跳', dataIndex: 'last_seen_at', render: (value) => dayjs(value).format('YYYY-MM-DD HH:mm:ss') },
-        ]}
-      />
-    </Card>
-  );
-}
-
-export function AuditLog() {
-  const query = useQuery({ queryKey: ['config-center', 'audit'], queryFn: api.audit });
-  return (
-    <Card>
-      <Table
-        rowKey="id"
-        loading={query.isLoading}
-        dataSource={query.data || []}
-        columns={[
-          { title: '时间', dataIndex: 'created_at', render: (value) => dayjs(value).format('YYYY-MM-DD HH:mm:ss') },
-          { title: '环境', dataIndex: 'environment', render: (value) => value || '-' },
-          { title: '动作', dataIndex: 'action' },
-          { title: '操作者', dataIndex: 'actor_display_name' },
-          { title: '变更 Key', dataIndex: 'changed_keys', render: (values: string[]) => values.join(', ') || '-' },
-        ]}
-      />
-    </Card>
   );
 }

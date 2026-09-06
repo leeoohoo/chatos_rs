@@ -110,6 +110,8 @@ extension NativeLocalConnectorService {
             }
             return .init(
                 pluginID: id,
+                packageName: source.catalog.name,
+                pluginKey: source.catalog.pluginKey,
                 displayName: installedManifest?.interface?.displayName
                     ?? source.catalog.displayName
                     ?? source.catalog.name
@@ -120,8 +122,12 @@ extension NativeLocalConnectorService {
                     ?? source.catalog.interface?.developerName
                     ?? "ChatOS",
                 latestVersion: source.release.version ?? source.release.id,
+                installedVersion: installedRecord?.version,
                 installed: installed,
-                updateAvailable: installedRecord.map { $0.version != source.release.version } ?? false,
+                updateAvailable: Self.pluginUpdateAvailable(
+                    installed: installedRecord,
+                    release: source.release
+                ),
                 installAvailable: source.release.artifactSHA256 != nil
                     && source.release.npmPackage != nil,
                 enabled: state.pluginPreferences[id] ?? source.preference?.enabled ?? true,
@@ -129,6 +135,25 @@ extension NativeLocalConnectorService {
                 permissions: permissions
             )
         }
+    }
+
+    static func pluginUpdateAvailable(
+        installed: NativeInstalledPluginRecord?,
+        release: GatewayPluginReleaseDTO
+    ) -> Bool {
+        guard let installed else { return false }
+        guard installed.releaseID != release.id else { return false }
+        guard let latestVersion = normalizedPluginVersion(release.version) else { return false }
+        let latestArtifact = release.artifactSHA256?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalizedPluginVersion(installed.version) != latestVersion
+            || latestArtifact.map { installed.artifactSHA256 != $0 } == true
+    }
+
+    private static func normalizedPluginVersion(_ value: String?) -> String? {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized?.isEmpty == false ? normalized : nil
     }
 
     public func installPlugin(id: String) async throws {
@@ -147,7 +172,66 @@ extension NativeLocalConnectorService {
         try? await publishPluginInstallationStatus()
     }
 
+    public func startBrowserExtensionPairing(pluginID: String) async throws {
+        guard state.pluginPreferences[pluginID] ?? true,
+              let record = state.installedPluginRecords?[pluginID],
+              let ownerUserID = state.user?.id,
+              let deviceID = state.deviceID else {
+            throw NativeConnectorError.pluginInstallation("Browser CDP 尚未安装或设备尚未配对")
+        }
+        let manifest = try installedPluginManifest(record: record)
+        guard manifest.name == "chatos-browser-cdp",
+              manifest.mcpServers["browser-cdp"] != nil else {
+            throw NativeConnectorError.pluginInstallation("当前 Plugin 不是可连接 Chrome 的 Browser CDP")
+        }
+        let launch = try NativePluginManifestLoader.prepare(
+            record: record,
+            componentKey: "browser-cdp",
+            serverKey: "browser-cdp",
+            adapterSessionID: "browser-extension-pairing-\(UUID().uuidString.lowercased())",
+            ownerUserID: ownerUserID,
+            deviceID: deviceID,
+            workspaceRoot: nil,
+            permissionSnapshot: Set(manifest.permissions.map(\.permission)),
+            runtimeRootURL: pluginRuntimeRootURL
+        )
+        try await browserExtensionPairingRuntime.start(launch: launch)
+    }
+
+    public func isBrowserExtensionPaired(pluginID: String) async throws -> Bool {
+        guard let record = state.installedPluginRecords?[pluginID],
+              let ownerUserID = state.user?.id,
+              let deviceID = state.deviceID else {
+            return false
+        }
+        let manifest = try installedPluginManifest(record: record)
+        guard manifest.name == "chatos-browser-cdp",
+              manifest.mcpServers["browser-cdp"] != nil else {
+            return false
+        }
+        let runtimeContext = try NativePluginRuntimeContextResolver.resolve(
+            manifest: manifest,
+            componentKey: "browser-cdp",
+            runtimeRootURL: pluginRuntimeRootURL,
+            pluginID: record.pluginID,
+            host: .init(
+                ownerUserID: ownerUserID,
+                deviceID: deviceID,
+                workspaceID: nil,
+                workspaceRoot: nil,
+                projectID: nil,
+                projectName: nil
+            )
+        )
+        return NativeBrowserExtensionPairingStatus.isPaired(
+            at: runtimeContext.dataURL
+                .appendingPathComponent("browser-bridge", isDirectory: true)
+                .appendingPathComponent("extension-pairing.json")
+        )
+    }
+
     public func uninstallPlugin(id: String) async throws {
+        await browserExtensionPairingRuntime.stop()
         await pluginApplicationRuntime.stop(pluginID: id)
         try pluginInstaller.uninstall(pluginID: id)
         state.installedPluginIDs.remove(id)
@@ -167,6 +251,7 @@ extension NativeLocalConnectorService {
         )
         state.pluginPreferences[id] = enabled
         if !enabled {
+            await browserExtensionPairingRuntime.stop()
             await pluginApplicationRuntime.stop(pluginID: id)
         }
         try stateStore.save(state)

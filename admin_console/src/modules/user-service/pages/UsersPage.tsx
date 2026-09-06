@@ -24,6 +24,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { EditOutlined, PlusOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 
+import { useAdminAuth } from '../../../app/auth/AuthProvider';
 import { api } from '../api/client';
 import type {
   CreateInviteCodePayload,
@@ -55,26 +56,25 @@ type InviteCodeFormValues = {
 
 export function UsersPage() {
   const { message } = App.useApp();
+  const { user: currentUser } = useAdminAuth();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserSummaryRecord | null>(null);
   const [harnessProvisionUser, setHarnessProvisionUser] = useState<UserSummaryRecord | null>(null);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [form] = Form.useForm<UserFormValues>();
   const [harnessForm] = Form.useForm<HarnessProvisionFormValues>();
   const [inviteForm] = Form.useForm<InviteCodeFormValues>();
 
-  const currentUserQuery = useQuery({
-    queryKey: ['user-service', 'current-user'],
-    queryFn: () => api.currentUser(),
-  });
   const usersQuery = useQuery({
-    queryKey: ['user-service', 'users'],
-    queryFn: () => api.listUsers(),
+    queryKey: ['user-service', 'users', page, pageSize],
+    queryFn: () => api.listUsersPage(pageSize, (page - 1) * pageSize),
+    placeholderData: (previousData) => previousData,
   });
 
-  const currentUser = currentUserQuery.data?.user;
-  const isSuperAdmin = currentUser?.role === 'super_admin';
+  const isSuperAdmin = currentUser.role === 'super_admin';
 
   const inviteCodesQuery = useQuery({
     queryKey: ['user-service', 'invite-codes'],
@@ -98,10 +98,7 @@ export function UsersPage() {
     onSuccess: async () => {
       message.success('用户已更新');
       closeDrawer();
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['user-service', 'users'] }),
-        queryClient.invalidateQueries({ queryKey: ['user-service', 'current-user'] }),
-      ]);
+      await queryClient.invalidateQueries({ queryKey: ['user-service', 'users'] });
     },
     onError: showError,
   });
@@ -466,9 +463,18 @@ export function UsersPage() {
       <Table<UserSummaryRecord>
         rowKey="id"
         columns={columns}
-        dataSource={usersQuery.data || []}
+        dataSource={usersQuery.data?.items || []}
         loading={usersQuery.isLoading}
-        pagination={{ pageSize: 10, showSizeChanger: true }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: usersQuery.data?.total || 0,
+          showSizeChanger: true,
+          onChange: (nextPage, nextPageSize) => {
+            setPage(nextPageSize === pageSize ? nextPage : 1);
+            setPageSize(nextPageSize);
+          },
+        }}
         locale={{
           emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无用户" />,
         }}

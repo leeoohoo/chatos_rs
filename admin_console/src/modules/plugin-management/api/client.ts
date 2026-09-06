@@ -72,6 +72,7 @@ function buildApiUrl(path: string): string {
 
 const rawRequest = createJsonApiClient({
   baseUrl: API_BASE_URL,
+  timeoutMs: 30_000,
   getAuthToken,
   onUnauthorized: clearAuthToken,
 });

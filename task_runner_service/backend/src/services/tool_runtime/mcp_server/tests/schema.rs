@@ -378,28 +378,6 @@ fn create_task_args_reject_ai_plugin_device_workspace_and_selection() {
 }
 
 #[test]
-fn admin_mcp_model_list_exposes_all_enabled_cloud_models() {
-    let current_user = admin_user("user-1");
-    let models = vec![
-        model_config("own-enabled", "user-1", true),
-        model_config("other-enabled", "user-2", true),
-        model_config("own-disabled", "user-1", false),
-    ];
-
-    let visible = model_configs_for_user(models, &current_user);
-
-    assert_eq!(visible.len(), 2);
-    assert_eq!(
-        visible[0].get("id").and_then(|value| value.as_str()),
-        Some("own-enabled")
-    );
-    assert_eq!(
-        visible[0].get("api_key").and_then(|value| value.as_str()),
-        Some("")
-    );
-}
-
-#[test]
 fn admin_mcp_tool_schema_exposes_all_enabled_cloud_model_choices() {
     let current_user = admin_user("user-1");
     let models = vec![
@@ -434,7 +412,60 @@ fn admin_mcp_tool_schema_exposes_all_enabled_cloud_model_choices() {
     assert!(choices[0]
         .get("title")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|value| value.contains("own-enabled")));
+        .is_some_and(|value| {
+            value.contains("user task purpose: own-enabled usage") && value.contains("responses")
+        }));
+}
+
+#[test]
+fn blank_user_task_purpose_keeps_model_available_for_ai_selection() {
+    let current_user = agent_user("user-1");
+    let mut model = model_config("model-a", "user-1", true);
+    model.usage_scenario = None;
+    let mut tools = vec![json!({
+        "name": "create_task",
+        "inputSchema": create_task_schema(),
+    })];
+
+    enrich_tool_schemas_with_model_configs(
+        &mut tools,
+        &filter_model_configs_for_user(vec![model], &current_user),
+    );
+
+    assert_eq!(
+        tools[0].pointer("/inputSchema/properties/default_model_config_id/enum/0"),
+        Some(&json!("model-a"))
+    );
+    let schema = tools[0]
+        .pointer("/inputSchema/properties/default_model_config_id")
+        .expect("model schema");
+    assert!(schema
+        .get("description")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.contains("using your own model knowledge")));
+    assert!(schema
+        .pointer("/oneOf/0/title")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.contains("user task purpose")));
+}
+
+#[tokio::test]
+async fn task_creation_without_ai_or_caller_model_fails_instead_of_guessing() {
+    let (service, _, _) = test_mcp_service().await;
+    let error = service
+        .call_tool(
+            "create_task",
+            json!({
+                "title": "task without model",
+                "objective": "verify explicit model selection",
+            }),
+            &agent_user("user-1"),
+            &McpRequestContext::default(),
+        )
+        .await
+        .expect_err("missing model must fail closed");
+
+    assert!(error.contains("automatic model guessing is disabled"));
 }
 
 #[test]
@@ -671,7 +702,7 @@ fn async_planner_schema_requires_explicit_agent_capability_selection() {
         "inputSchema": create_task_schema(),
     })];
 
-    chatos_async_planner::enrich_tool_schemas_for_async_planner(&mut tools, &[]);
+    chatos_async_planner::enrich_tool_schemas_for_async_planner(&mut tools);
 
     let input_schema = tools[0].get("inputSchema").expect("input schema");
     assert!(input_schema.get("anyOf").is_none());
@@ -712,7 +743,7 @@ fn async_planner_batch_schema_requires_explicit_agent_capability_selection() {
         "inputSchema": super::super::support::create_tasks_with_prerequisites_schema(),
     })];
 
-    chatos_async_planner::enrich_tool_schemas_for_async_planner(&mut tools, &[]);
+    chatos_async_planner::enrich_tool_schemas_for_async_planner(&mut tools);
 
     let input_schema = tools[0].get("inputSchema").expect("input schema");
     assert!(input_schema
@@ -760,7 +791,7 @@ fn async_planner_update_schema_does_not_expose_mcp_configuration() {
         }),
     })];
 
-    chatos_async_planner::enrich_tool_schemas_for_async_planner(&mut tools, &[]);
+    chatos_async_planner::enrich_tool_schemas_for_async_planner(&mut tools);
 
     let input_schema = tools[0].get("inputSchema").expect("input schema");
     let properties = input_schema

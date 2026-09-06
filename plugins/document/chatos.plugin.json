@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-document-mcp",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "description": "Inspect, validate, render, and safely operate Word, Excel, PowerPoint, and PDF files inside a bound ChatOS workspace.",
   "author": {
     "name": "Chatos"
@@ -14,6 +14,21 @@
       "args": ["mcp"],
       "env": {}
     }
+  },
+  "skills": [
+    "./skills/document",
+    "./skills/document-word",
+    "./skills/document-spreadsheet",
+    "./skills/document-presentation",
+    "./skills/document-pdf"
+  ],
+  "runtimeContext": {
+    "scope": "workspace",
+    "components": ["document-mcp"],
+    "required": [],
+    "optional": ["workspace.id", "workspace.root"],
+    "storageIsolation": "plugin",
+    "missingContext": "device"
   },
   "interface": {
     "displayName": "Document Tools",

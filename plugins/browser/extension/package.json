@@ -1,6 +1,6 @@
 {
   "name": "chatos-browser-bridge-extension",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "package": "node scripts/package.mjs",
-    "test": "node --check src/background.js && node --check src/bridge.js && node --check src/controller.js && node --check popup/popup.js && node --test test/*.test.js && node scripts/build.mjs",
+    "test": "node --check src/background.js && node --check src/bridge.js && node --check src/controller.js && node --check popup/popup.js && node --check onboarding/onboarding.js && node --test test/*.test.js && node scripts/build.mjs",
     "test:chrome": "node scripts/build.mjs && node scripts/verify-chrome.mjs"
   }
 }

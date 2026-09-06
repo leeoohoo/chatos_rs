@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -16,7 +13,7 @@ use axum::{Extension, Json};
 use chatos_plugin_management_sdk::{
     verify_plugin_release_signature, PluginInstallSource, PluginInstallSourceList,
     PluginReleaseVerificationContext, UpdateUserPluginPreferenceRequest,
-    UpdateUserPluginPreferenceResponse,
+    UpdateUserPluginPreferenceResponse, PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY,
 };
 use futures::StreamExt;
 use reqwest::redirect::Policy;
@@ -108,18 +105,26 @@ pub(super) async fn proxy_plugin_release_artifact(
     ensure_source_preference_identity(&source, user.effective_owner_user_id())?;
     verify_install_source_signature(&source)?;
     let url = validate_artifact_url(source.release.artifact_ref.as_str())?;
-    let client = build_artifact_client(&url).await?;
-    let upstream = client
-        .get(url)
-        .header(
-            reqwest::header::ACCEPT,
-            "application/gzip, application/octet-stream",
-        )
-        .send()
-        .await
-        .map_err(|error| {
-            ApiError::bad_gateway(format!("Plugin artifact request failed: {error}"))
-        })?;
+    let upstream = if source.marketplace.source_kind == PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY {
+        state
+            .plugin_management_client
+            .download_plugin_artifact_for_service(source.release.artifact_sha256.as_str())
+            .await
+            .map_err(plugin_management_error)?
+    } else {
+        let client = build_artifact_client(&url).await?;
+        client
+            .get(url)
+            .header(
+                reqwest::header::ACCEPT,
+                "application/gzip, application/octet-stream",
+            )
+            .send()
+            .await
+            .map_err(|error| {
+                ApiError::bad_gateway(format!("Plugin artifact request failed: {error}"))
+            })?
+    };
     if upstream.status() != reqwest::StatusCode::OK {
         return Err(ApiError::bad_gateway(format!(
             "Plugin artifact source returned status {}",
@@ -132,26 +137,9 @@ pub(super) async fn proxy_plugin_release_artifact(
             "Plugin artifact exceeds the proxy download size limit",
         ));
     }
-
-    let downloaded = Arc::new(AtomicU64::new(0));
-    let stream_counter = downloaded.clone();
-    let stream = upstream.bytes_stream().map(move |chunk| match chunk {
-        Ok(chunk) => {
-            let chunk_len = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
-            let previous = stream_counter.fetch_add(chunk_len, Ordering::Relaxed);
-            if previous.saturating_add(chunk_len) > MAX_PLUGIN_ARTIFACT_BYTES {
-                Err(io::Error::other(
-                    "Plugin artifact exceeded the proxy download size limit",
-                ))
-            } else {
-                Ok(chunk)
-            }
-        }
-        Err(error) => Err(io::Error::other(format!(
-            "read Plugin artifact response failed: {error}"
-        ))),
-    });
-    let mut response = Response::builder()
+    let artifact = read_artifact_with_limit(upstream).await?;
+    let artifact_length = artifact.len();
+    let response = Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/gzip")
         .header(
@@ -165,13 +153,34 @@ pub(super) async fn proxy_plugin_release_artifact(
         .header(
             "x-chatos-plugin-artifact-sha256",
             header_value(source.release.artifact_sha256.as_str())?,
-        );
-    if let Some(content_length) = content_length {
-        response = response.header(CONTENT_LENGTH, content_length);
-    }
+        )
+        .header(CONTENT_LENGTH, artifact_length);
     response
-        .body(Body::from_stream(stream))
+        .body(Body::from(artifact))
         .map_err(|error| ApiError::internal(format!("build Plugin artifact proxy failed: {error}")))
+}
+
+async fn read_artifact_with_limit(upstream: reqwest::Response) -> Result<Vec<u8>, ApiError> {
+    let mut artifact = Vec::with_capacity(
+        upstream
+            .content_length()
+            .and_then(|length| usize::try_from(length).ok())
+            .unwrap_or_default(),
+    );
+    let mut stream = upstream.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            ApiError::bad_gateway(format!("read Plugin artifact response failed: {error}"))
+        })?;
+        let next_size = artifact.len().saturating_add(chunk.len());
+        if u64::try_from(next_size).unwrap_or(u64::MAX) > MAX_PLUGIN_ARTIFACT_BYTES {
+            return Err(ApiError::bad_gateway(
+                "Plugin artifact exceeded the proxy download size limit",
+            ));
+        }
+        artifact.extend_from_slice(&chunk);
+    }
+    Ok(artifact)
 }
 
 fn ensure_source_preference_identity(

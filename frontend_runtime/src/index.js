@@ -168,6 +168,7 @@ export function createJsonApiClient(options = {}) {
     getAuthToken = () => null,
     onUnauthorized,
     fetchImpl = globalThis.fetch,
+    timeoutMs = 0,
     readErrorMessage = readApiErrorMessage,
     createResponseError,
     readSuccessResponse = readJsonResponse,
@@ -188,22 +189,70 @@ export function createJsonApiClient(options = {}) {
       headers.set('Authorization', `Bearer ${token}`);
     }
 
-    const response = await fetchImpl(buildApiUrl(baseUrl, path), {
-      ...init,
-      headers,
-    });
-    if (!response.ok) {
-      const error = createResponseError
-        ? await createResponseError(response)
-        : new Error(await readErrorMessage(response));
-      if (response.status === 401) {
-        onUnauthorized?.();
+    const requestAbort = createRequestAbort(init.signal, timeoutMs);
+    try {
+      const response = await fetchImpl(buildApiUrl(baseUrl, path), {
+        ...init,
+        headers,
+        signal: requestAbort.signal,
+      });
+      if (!response.ok) {
+        const error = createResponseError
+          ? await createResponseError(response)
+          : new Error(await readErrorMessage(response));
+        if (response.status === 401) {
+          onUnauthorized?.();
+        }
+        throw error;
+      }
+      if (response.status === 204) {
+        return undefined;
+      }
+      return await readSuccessResponse(response);
+    } catch (error) {
+      if (requestAbort.didTimeout()) {
+        throw new Error(`Request timed out after ${requestAbort.timeoutMs}ms`);
       }
       throw error;
+    } finally {
+      requestAbort.cleanup();
     }
-    if (response.status === 204) {
-      return undefined;
-    }
-    return readSuccessResponse(response);
+  };
+}
+
+function createRequestAbort(inputSignal, timeoutMs) {
+  const normalizedTimeout = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 0;
+  if (!inputSignal && normalizedTimeout === 0) {
+    return {
+      signal: undefined,
+      timeoutMs: normalizedTimeout,
+      didTimeout: () => false,
+      cleanup: () => undefined,
+    };
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromInput = () => controller.abort(inputSignal?.reason);
+  if (inputSignal?.aborted) {
+    abortFromInput();
+  } else {
+    inputSignal?.addEventListener('abort', abortFromInput, { once: true });
+  }
+  const timer = normalizedTimeout > 0
+    ? globalThis.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, normalizedTimeout)
+    : undefined;
+
+  return {
+    signal: controller.signal,
+    timeoutMs: normalizedTimeout,
+    didTimeout: () => timedOut,
+    cleanup: () => {
+      if (timer !== undefined) globalThis.clearTimeout(timer);
+      inputSignal?.removeEventListener('abort', abortFromInput);
+    },
   };
 }

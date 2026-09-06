@@ -203,11 +203,25 @@ actor NativePluginRuntimeStore {
             }
         }
         do {
-            let result = try await client.callTool(
-                name: toolName,
-                arguments: arguments,
-                timeout: timeout
-            )
+            let result: NativeJSONValue
+            if isBrowser {
+                // Browser CDP is a ChatOS-controlled MCP server that handles
+                // notifications/cancelled by aborting the in-flight task. A
+                // slow page must fail only that invocation; terminating the
+                // whole stdio process makes every later status/retry call fail
+                // with processUnavailable.
+                result = try await client.callToolBestEffort(
+                    name: toolName,
+                    arguments: arguments,
+                    timeout: timeout
+                )
+            } else {
+                result = try await client.callTool(
+                    name: toolName,
+                    arguments: arguments,
+                    timeout: timeout
+                )
+            }
             if isBrowser {
                 await refreshBrowserVisual(
                     adapterSessionID: adapterSessionID,

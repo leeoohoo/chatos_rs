@@ -23,28 +23,58 @@ export function PluginReleasesPage({ user, initialPluginId }: PluginReleasesPage
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [pluginId, setPluginId] = useState(initialPluginId || '');
+  const [pluginSearchInput, setPluginSearchInput] = useState(initialPluginId || '');
+  const [pluginSearch, setPluginSearch] = useState(initialPluginId || '');
+  const [selectedPluginOption, setSelectedPluginOption] = useState<{
+    value: string;
+    label: string;
+  }>();
   const [detail, setDetail] = useState<PluginReleaseRecord | null>(null);
   const isAdmin = user.role === 'super_admin';
   useEffect(() => {
     if (initialPluginId) {
       setPluginId(initialPluginId);
+      setPluginSearchInput(initialPluginId);
+      setPluginSearch(initialPluginId);
     }
   }, [initialPluginId]);
-  const pluginsQuery = useQuery({
-    queryKey: ['plugin-management', 'admin-plugins'],
-    queryFn: () => api.listAdminPlugins({ limit: 500 }),
-    enabled: isAdmin,
-  });
   useEffect(() => {
-    if (!pluginId && pluginsQuery.data?.items[0]?.id) {
-      setPluginId(pluginsQuery.data.items[0].id);
-    }
-  }, [pluginId, pluginsQuery.data]);
+    const timer = window.setTimeout(() => setPluginSearch(pluginSearchInput.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [pluginSearchInput]);
+  const pluginsQuery = useQuery({
+    queryKey: ['plugin-management', 'admin-plugins', 'release-selector', pluginSearch],
+    queryFn: () => api.listAdminPlugins({
+      limit: 20,
+      q: pluginSearch || undefined,
+    }),
+    enabled: isAdmin,
+    placeholderData: (previousData) => previousData,
+  });
   const releasesQuery = useQuery({
     queryKey: ['plugin-management', 'plugin-releases', pluginId],
     queryFn: () => api.listPluginReleases(pluginId),
     enabled: isAdmin && Boolean(pluginId),
   });
+  const pluginOptions = useMemo(() => {
+    const options = (pluginsQuery.data?.items || []).map((plugin) => ({
+      value: plugin.id,
+      label: `${plugin.display_name} (${plugin.name})`,
+    }));
+    if (selectedPluginOption && !options.some((option) => option.value === selectedPluginOption.value)) {
+      options.unshift(selectedPluginOption);
+    }
+    return options;
+  }, [pluginsQuery.data, selectedPluginOption]);
+  useEffect(() => {
+    const selected = pluginsQuery.data?.items.find((plugin) => plugin.id === pluginId);
+    if (selected) {
+      setSelectedPluginOption({
+        value: selected.id,
+        label: `${selected.display_name} (${selected.name})`,
+      });
+    }
+  }, [pluginId, pluginsQuery.data]);
   const revokeMutation = useMutation({
     mutationFn: api.revokePluginRelease,
     onSuccess: () => {
@@ -141,15 +171,19 @@ export function PluginReleasesPage({ user, initialPluginId }: PluginReleasesPage
           <Typography.Text type="secondary">{t('pluginRelease.description')}</Typography.Text>
           <Select
             showSearch
-            optionFilterProp="label"
+            filterOption={false}
             value={pluginId || undefined}
             placeholder={t('pluginRelease.selectPlugin')}
             style={{ width: 360 }}
-            options={(pluginsQuery.data?.items || []).map((plugin) => ({
-              value: plugin.id,
-              label: `${plugin.display_name} (${plugin.name})`,
-            }))}
-            onChange={setPluginId}
+            options={pluginOptions}
+            onChange={(value, option) => {
+              setPluginId(value);
+              if (option && !Array.isArray(option)) {
+                setSelectedPluginOption({ value, label: String(option.label || value) });
+              }
+            }}
+            onSearch={setPluginSearchInput}
+            loading={pluginsQuery.isFetching}
           />
         </Space>
       </div>

@@ -4,7 +4,7 @@ import SwiftUI
 
 struct RemoteSFTPWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
-    @StateObject private var viewModel: RemoteSFTPViewModel
+    @ObservedObject private var viewModel: RemoteSFTPViewModel
     @State private var overwriteAction: RemoteSFTPOverwriteAction?
     @State private var showingCreateDirectory = false
     @State private var newDirectoryName = ""
@@ -12,10 +12,8 @@ struct RemoteSFTPWorkspaceView: View {
     @State private var renamedEntryName = ""
     @State private var showingDeleteConfirmation = false
 
-    init(connectionID: String, service: any RemoteFileServicing) {
-        _viewModel = StateObject(
-            wrappedValue: RemoteSFTPViewModel(connectionID: connectionID, service: service)
-        )
+    init(viewModel: RemoteSFTPViewModel) {
+        self.viewModel = viewModel
     }
 
     var body: some View {
@@ -33,7 +31,7 @@ struct RemoteSFTPWorkspaceView: View {
         .background(AppPalette.canvas)
         .task {
             viewModel.interfaceLanguage = model.interfaceLanguage
-            await viewModel.load()
+            await viewModel.loadIfNeeded()
         }
         .onChange(of: model.interfaceLanguage) { _, language in
             viewModel.interfaceLanguage = language

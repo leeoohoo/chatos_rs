@@ -33,7 +33,6 @@ type RunListTableProps = {
   onPageChange: (page: number, pageSize: number) => void;
   onOpenDetail: (runId: string) => void;
   onOpenTask: (taskId: string) => void;
-  onOpenModel: (modelConfigId: string) => void;
   onCancel: (runId: string) => void;
   onRetry: (runId: string) => void;
 };
@@ -51,7 +50,6 @@ export function RunListTable({
   onPageChange,
   onOpenDetail,
   onOpenTask,
-  onOpenModel,
   onCancel,
   onRetry,
 }: RunListTableProps) {
@@ -94,16 +92,7 @@ export function RunListTable({
       title: t('runs.column.modelConfig'),
       dataIndex: 'model_config_id',
       width: 220,
-      render: (value: string) => (
-        <Button
-          type="link"
-          size="small"
-          style={{ paddingInline: 0 }}
-          onClick={() => onOpenModel(value)}
-        >
-          {modelNameMap.get(value) || value}
-        </Button>
-      ),
+      render: (value: string) => <Typography.Text>{modelNameMap.get(value) || value}</Typography.Text>,
     },
     {
       title: t('runs.column.startedAt'),

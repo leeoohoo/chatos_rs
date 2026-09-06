@@ -1,57 +1,92 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, App, Button, Card, Empty, Form, Select, Space, Table, Typography } from 'antd';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  Col,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  Row,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Typography,
+} from 'antd';
+import { PlusOutlined, ReloadOutlined, RobotOutlined, SaveOutlined } from '@ant-design/icons';
 
+import { useAdminAuth } from '../../../app/auth/AuthProvider';
 import { api } from '../api/client';
 import type {
   UserModelConfigRecord,
   UserModelProviderRecord,
-  UserSummaryRecord,
+  UserOptionRecord,
 } from '../types';
-import { ModelProviderDrawer } from './models/ModelProviderDrawer';
 import {
   ALL_USERS_SCOPE,
   buildCreateProviderPayload,
-  buildModelColumns,
   buildProviderColumns,
   buildUpdateProviderPayload,
   defaultPromptVendor,
+  ModelCapabilityTags,
   type ProviderFormValues,
+  userLabel,
 } from './models/modelPageUtils';
+
+const ModelProviderDrawer = lazy(() => import('./models/ModelProviderDrawer').then((module) => ({ default: module.ModelProviderDrawer })));
+
+type ModelTaskPreferencesDraft = {
+  task_enabled: boolean;
+  task_usage_scenario: string;
+  task_thinking_level?: string;
+  temperature?: number;
+  max_output_tokens?: number;
+};
+
+const TASK_THINKING_LEVEL_OPTIONS = [
+  { label: '默认', value: '' },
+  { label: 'none', value: 'none' },
+  { label: 'auto', value: 'auto' },
+  { label: 'minimal', value: 'minimal' },
+  { label: 'low', value: 'low' },
+  { label: 'medium', value: 'medium' },
+  { label: 'high', value: 'high' },
+  { label: 'xhigh', value: 'xhigh' },
+  { label: 'max', value: 'max' },
+];
 
 export function ModelsPage() {
   const { message } = App.useApp();
+  const { user: currentUser } = useAdminAuth();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<UserModelProviderRecord | null>(null);
-  const [selectedUserId, setSelectedUserId] = useState<string>();
+  const [selectedUserId, setSelectedUserId] = useState<string | undefined>(currentUser.id);
+  const [userOptionsRequested, setUserOptionsRequested] = useState(false);
+  const [modelTaskDrafts, setModelTaskDrafts] = useState<
+    Record<string, ModelTaskPreferencesDraft>
+  >({});
   const [form] = Form.useForm<ProviderFormValues>();
 
-  const currentUserQuery = useQuery({
-    queryKey: ['user-service', 'current-user'],
-    queryFn: () => api.currentUser(),
-  });
   const usersQuery = useQuery({
-    queryKey: ['user-service', 'users'],
-    queryFn: () => api.listUsers(),
+    queryKey: ['user-service', 'user-options'],
+    queryFn: () => api.listUserOptions(),
+    enabled: currentUser.role === 'super_admin' && userOptionsRequested,
   });
 
-  const currentUser = currentUserQuery.data?.user;
-  const isSuperAdmin = currentUser?.role === 'super_admin';
-
-  useEffect(() => {
-    if (!isSuperAdmin && !selectedUserId && currentUser?.id) {
-      setSelectedUserId(currentUser.id);
-    }
-  }, [currentUser?.id, isSuperAdmin, selectedUserId]);
+  const isSuperAdmin = currentUser.role === 'super_admin';
 
   const scopedUserId = selectedUserId;
   const scopedQueryKey = scopedUserId || ALL_USERS_SCOPE;
-  const canLoadModelData = Boolean(currentUser) && (isSuperAdmin || Boolean(scopedUserId));
+  const canLoadModelData = isSuperAdmin || Boolean(scopedUserId);
 
   const providersQuery = useQuery({
     queryKey: ['user-service', 'model-providers', scopedQueryKey],
@@ -64,6 +99,13 @@ export function ModelsPage() {
     queryFn: () => api.listModelConfigs(scopedUserId),
     enabled: canLoadModelData,
   });
+
+  useEffect(() => {
+    const nextDrafts = Object.fromEntries(
+      (modelConfigsQuery.data || []).map((model) => [model.id, taskPreferencesDraft(model)]),
+    );
+    setModelTaskDrafts(nextDrafts);
+  }, [modelConfigsQuery.data]);
 
   const modelSettingsQuery = useQuery({
     queryKey: ['user-service', 'model-settings', selectedUserId],
@@ -104,9 +146,17 @@ export function ModelsPage() {
     onError: showError,
   });
 
-  const updateModelEnabledMutation = useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api.updateModelConfig(id, { enabled }),
+  const updateModelTaskPreferencesMutation = useMutation({
+    mutationFn: ({ id, draft }: { id: string; draft: ModelTaskPreferencesDraft }) =>
+      api.updateModelConfig(id, {
+        task_enabled: draft.task_enabled,
+        task_usage_scenario: draft.task_usage_scenario.trim(),
+        task_thinking_level: draft.task_thinking_level || '',
+        temperature: draft.temperature,
+        clear_temperature: draft.temperature == null,
+        max_output_tokens: draft.max_output_tokens,
+        clear_max_output_tokens: draft.max_output_tokens == null,
+      }),
     onSuccess: async (result) => {
       showWarnings(result.sync_warnings);
       queryClient.setQueriesData<UserModelConfigRecord[]>(
@@ -114,7 +164,11 @@ export function ModelsPage() {
         (items) =>
           items?.map((item) => (item.id === result.id ? { ...item, ...result } : item)),
       );
-      message.success(result.enabled ? 'Model enabled' : 'Model disabled');
+      setModelTaskDrafts((current) => ({
+        ...current,
+        [result.id]: taskPreferencesDraft(result),
+      }));
+      message.success('任务模型偏好已保存');
       await queryClient.invalidateQueries({ queryKey: ['user-service', 'model-configs'] });
     },
     onError: showError,
@@ -144,12 +198,17 @@ export function ModelsPage() {
   });
 
   const userOptions = useMemo(
-    () =>
-      (usersQuery.data || []).map((item: UserSummaryRecord) => ({
+    () => {
+      const users = new Map<string, UserOptionRecord>([
+        [currentUser.id, currentUser],
+        ...(usersQuery.data || []).map((item): [string, UserOptionRecord] => [item.id, item]),
+      ]);
+      return [...users.values()].map((item) => ({
         label: `${item.display_name || item.username} (${item.username})`,
         value: item.id,
-      })),
-    [usersQuery.data],
+      }));
+    },
+    [currentUser, usersQuery.data],
   );
 
   const currentProviders = providersQuery.data || [];
@@ -168,24 +227,6 @@ export function ModelsPage() {
       }),
     [deleteProviderMutation, refreshProviderMutation, usersQuery.data],
   );
-  const modelColumns = useMemo(
-    () =>
-      buildModelColumns({
-        users: usersQuery.data,
-        updatingModelId: updateModelEnabledMutation.isPending
-          ? updateModelEnabledMutation.variables?.id
-          : undefined,
-        onEnabledChange: (record, enabled) =>
-          updateModelEnabledMutation.mutate({ id: record.id, enabled }),
-      }),
-    [
-      updateModelEnabledMutation.isPending,
-      updateModelEnabledMutation.mutate,
-      updateModelEnabledMutation.variables?.id,
-      usersQuery.data,
-    ],
-  );
-
   function showWarnings(warnings?: string[]) {
     if (!warnings || warnings.length === 0) {
       return;
@@ -268,6 +309,25 @@ export function ModelsPage() {
     );
   }
 
+  function updateModelTaskDraft(
+    modelId: string,
+    patch: Partial<ModelTaskPreferencesDraft>,
+  ) {
+    setModelTaskDrafts((current) => {
+      const model = currentConfigs.find((item) => item.id === modelId);
+      if (!model) {
+        return current;
+      }
+      return {
+        ...current,
+        [modelId]: {
+          ...(current[modelId] || taskPreferencesDraft(model)),
+          ...patch,
+        },
+      };
+    });
+  }
+
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <div
@@ -294,6 +354,12 @@ export function ModelsPage() {
               value={selectedUserId || ALL_USERS_SCOPE}
               options={[{ label: 'All users', value: ALL_USERS_SCOPE }, ...userOptions]}
               onChange={(value) => setSelectedUserId(value === ALL_USERS_SCOPE ? undefined : value)}
+              onOpenChange={(open) => {
+                if (open) {
+                  setUserOptionsRequested(true);
+                }
+              }}
+              loading={usersQuery.isLoading}
               style={{ width: 280 }}
               placeholder="Select owner user"
             />
@@ -387,20 +453,136 @@ export function ModelsPage() {
         </Space>
       </Card>
 
-      <Card title="Imported Concrete Models">
-        <Table<UserModelConfigRecord>
-          rowKey="id"
-          columns={modelColumns}
-          dataSource={currentConfigs}
-          loading={modelConfigsQuery.isLoading}
-          pagination={{ pageSize: 10, showSizeChanger: true }}
-          locale={{
-            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No imported model" />,
-          }}
-        />
+      <Card
+        title="任务模型偏好"
+        extra={
+          <Typography.Text type="secondary">
+            用途可不填；ChatOS AI 会结合模型能力和自己的经验选择。
+          </Typography.Text>
+        }
+      >
+        {modelConfigsQuery.isLoading ? (
+          <Typography.Text type="secondary">正在加载模型…</Typography.Text>
+        ) : currentConfigs.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无已导入模型" />
+        ) : (
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            {currentConfigs.map((model) => {
+              const draft = modelTaskDrafts[model.id] || taskPreferencesDraft(model);
+              const saving =
+                updateModelTaskPreferencesMutation.isPending &&
+                updateModelTaskPreferencesMutation.variables?.id === model.id;
+              return (
+                <Card
+                  key={model.id}
+                  size="small"
+                  title={
+                    <Space size="middle">
+                      <RobotOutlined style={{ color: '#1677ff', fontSize: 20 }} />
+                      <Space direction="vertical" size={0}>
+                        <Typography.Text strong>{model.name}</Typography.Text>
+                        <Typography.Text type="secondary">
+                          {model.provider} · {model.model_name}
+                        </Typography.Text>
+                      </Space>
+                    </Space>
+                  }
+                  extra={
+                    <Space size="middle" wrap>
+                      {isSuperAdmin && !selectedUserId ? (
+                        <Tag>{userLabel(usersQuery.data, model.owner_user_id)}</Tag>
+                      ) : null}
+                      {!model.enabled ? <Tag color="warning">模型已停用</Tag> : null}
+                      <ModelCapabilityTags record={model} showEnabled={false} />
+                      <Typography.Text>用于任务</Typography.Text>
+                      <Switch
+                        checked={draft.task_enabled}
+                        onChange={(taskEnabled) =>
+                          updateModelTaskDraft(model.id, { task_enabled: taskEnabled })
+                        }
+                      />
+                      <Button
+                        type="primary"
+                        size="small"
+                        icon={<SaveOutlined />}
+                        loading={saving}
+                        onClick={() =>
+                          updateModelTaskPreferencesMutation.mutate({ id: model.id, draft })
+                        }
+                      >
+                        保存
+                      </Button>
+                    </Space>
+                  }
+                >
+                  <Row gutter={[16, 12]} align="bottom">
+                    <Col xs={24} lg={8}>
+                      <Typography.Text type="secondary">任务用途</Typography.Text>
+                      <Input
+                        value={draft.task_usage_scenario}
+                        placeholder="例如：代码实现、分析、视觉理解"
+                        maxLength={500}
+                        onChange={(event) =>
+                          updateModelTaskDraft(model.id, {
+                            task_usage_scenario: event.target.value,
+                          })
+                        }
+                      />
+                    </Col>
+                    <Col xs={24} sm={8} lg={5}>
+                      <Typography.Text type="secondary">默认 Thinking</Typography.Text>
+                      <Select
+                        value={draft.task_thinking_level || ''}
+                        options={TASK_THINKING_LEVEL_OPTIONS}
+                        style={{ width: '100%' }}
+                        onChange={(taskThinkingLevel) =>
+                          updateModelTaskDraft(model.id, {
+                            task_thinking_level: taskThinkingLevel || undefined,
+                          })
+                        }
+                      />
+                    </Col>
+                    <Col xs={24} sm={8} lg={4}>
+                      <Typography.Text type="secondary">Temperature</Typography.Text>
+                      <InputNumber
+                        value={draft.temperature}
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        precision={2}
+                        placeholder="默认"
+                        style={{ width: '100%' }}
+                        onChange={(temperature) =>
+                          updateModelTaskDraft(model.id, {
+                            temperature: temperature ?? undefined,
+                          })
+                        }
+                      />
+                    </Col>
+                    <Col xs={24} sm={8} lg={4}>
+                      <Typography.Text type="secondary">Max Tokens</Typography.Text>
+                      <InputNumber
+                        value={draft.max_output_tokens}
+                        min={1}
+                        precision={0}
+                        placeholder="默认"
+                        style={{ width: '100%' }}
+                        onChange={(maxOutputTokens) =>
+                          updateModelTaskDraft(model.id, {
+                            max_output_tokens: maxOutputTokens ?? undefined,
+                          })
+                        }
+                      />
+                    </Col>
+                  </Row>
+                </Card>
+              );
+            })}
+          </Space>
+        )}
       </Card>
 
-      <ModelProviderDrawer
+      {drawerOpen ? <Suspense fallback={null}><ModelProviderDrawer
         open={drawerOpen}
         editingProvider={editingProvider}
         isSuperAdmin={isSuperAdmin}
@@ -409,7 +591,17 @@ export function ModelsPage() {
         saveLoading={createProviderMutation.isPending || updateProviderMutation.isPending}
         onClose={closeDrawer}
         onSubmit={submit}
-      />
+      /></Suspense> : null}
     </Space>
   );
+}
+
+function taskPreferencesDraft(model: UserModelConfigRecord): ModelTaskPreferencesDraft {
+  return {
+    task_enabled: model.task_enabled,
+    task_usage_scenario: model.task_usage_scenario || '',
+    task_thinking_level: model.task_thinking_level || undefined,
+    temperature: model.temperature ?? undefined,
+    max_output_tokens: model.max_output_tokens ?? undefined,
+  };
 }

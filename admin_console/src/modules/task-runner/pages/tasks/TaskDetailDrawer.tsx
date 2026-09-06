@@ -69,7 +69,6 @@ type TaskDetailDrawerProps = {
   onPreviewMcpPrompt: (task: TaskRecord) => void;
   onOpenRunHistory: (taskId: string, runId?: string) => void;
   onOpenPrompts: (taskId: string, promptId?: string) => void;
-  onOpenModel: (modelId: string) => void;
   onOpenDetail: (task: TaskRecord) => void;
 };
 
@@ -102,7 +101,6 @@ export function TaskDetailDrawer({
   onPreviewMcpPrompt,
   onOpenRunHistory,
   onOpenPrompts,
-  onOpenModel,
   onOpenDetail,
 }: TaskDetailDrawerProps) {
 
@@ -174,15 +172,10 @@ export function TaskDetailDrawer({
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.defaultModel')}>
               {task.default_model_config_id ? (
-                <Button
-                  type="link"
-                  size="small"
-                  style={{ paddingInline: 0 }}
-                  onClick={() => onOpenModel(task.default_model_config_id!)}
-                >
+                <Typography.Text>
                   {modelLabelMap.get(task.default_model_config_id) ||
                     task.default_model_config_id}
-                </Button>
+                </Typography.Text>
               ) : (
                 t('tasks.modelUnbound')
               )}

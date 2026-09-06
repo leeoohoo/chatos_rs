@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::HashMap;
+
 use chrono::Utc;
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, to_document, Bson};
@@ -14,8 +16,8 @@ use crate::config::AppConfig;
 use crate::models::{
     AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, InviteCodePublicRecord,
     InviteCodeRecord, LocalConnectorAuthTicketRecord, RegistrationEmailCodeRecord,
-    UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord, UserRecord,
-    UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
+    UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord, UserOptionRecord,
+    UserRecord, UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
 };
 
 mod model_configs;
@@ -42,6 +44,13 @@ struct RevokedTokenRecord {
     expires_at_unix: i64,
 }
 
+#[derive(Debug, Deserialize)]
+struct OwnerAgentCount {
+    #[serde(rename = "_id")]
+    owner_user_id: String,
+    count: i64,
+}
+
 impl AppStore {
     pub fn new(db: Database) -> Self {
         Self {
@@ -59,14 +68,20 @@ impl AppStore {
     }
 
     pub async fn initialize(&self) -> Result<(), String> {
+        self.create_unique_index(&self.users, "id").await?;
         self.create_unique_index(&self.users, "username").await?;
+        self.create_unique_index(&self.agent_accounts, "id").await?;
         self.create_unique_index(&self.agent_accounts, "username")
             .await?;
         self.create_unique_index(&self.revoked_tokens, "jti")
             .await?;
         self.create_index(&self.agent_accounts, "owner_user_id")
             .await?;
+        self.create_unique_index(&self.user_model_configs, "id")
+            .await?;
         self.create_index(&self.user_model_configs, "owner_user_id")
+            .await?;
+        self.create_unique_index(&self.user_model_providers, "id")
             .await?;
         self.create_index(&self.user_model_providers, "owner_user_id")
             .await?;
@@ -80,11 +95,15 @@ impl AppStore {
             .await?;
         self.create_unique_index(&self.invite_codes, "code_hash")
             .await?;
+        self.create_unique_index(&self.invite_codes, "id").await?;
         self.create_index(&self.invite_codes, "created_at").await?;
+        self.create_unique_index(&self.local_connector_auth_tickets, "id")
+            .await?;
         self.create_unique_index(&self.local_connector_auth_tickets, "ticket_hash")
             .await?;
         self.create_index(&self.local_connector_auth_tickets, "expires_at_unix")
             .await?;
+        self.cleanup_expired_revocations().await?;
         Ok(())
     }
 
@@ -179,20 +198,142 @@ impl AppStore {
         let options = FindOptions::builder()
             .sort(doc! { "updated_at": -1, "created_at": -1 })
             .build();
-        let users: Vec<UserRecord> = self
-            .users
+        let users = self.load_users(options).await?;
+        self.user_summaries_from_records(users).await
+    }
+
+    pub async fn list_user_options(
+        &self,
+        user_ids: Option<&[String]>,
+    ) -> Result<Vec<UserOptionRecord>, String> {
+        if user_ids.is_some_and(|ids| ids.is_empty()) {
+            return Ok(Vec::new());
+        }
+        let filter = user_ids.map(|ids| doc! { "id": { "$in": ids } });
+        let options = FindOptions::builder()
+            .sort(doc! { "username": 1 })
+            .projection(doc! {
+                "_id": 0,
+                "id": 1,
+                "username": 1,
+                "display_name": 1,
+            })
+            .build();
+        self.users
+            .clone_with_type::<UserOptionRecord>()
+            .find(filter, options)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn list_users_summary_page(
+        &self,
+        limit: i64,
+        offset: u64,
+    ) -> Result<UserSummaryPageResponse, String> {
+        let options = FindOptions::builder()
+            .sort(doc! { "updated_at": -1, "created_at": -1 })
+            .limit(Some(limit))
+            .skip(Some(offset))
+            .build();
+        let (users, total) = tokio::try_join!(self.load_users(options), async {
+            self.users
+                .count_documents(None, None)
+                .await
+                .map_err(|err| err.to_string())
+        },)?;
+        Ok(UserSummaryPageResponse {
+            items: self.user_summaries_from_records(users).await?,
+            total,
+        })
+    }
+
+    async fn load_users(&self, options: FindOptions) -> Result<Vec<UserRecord>, String> {
+        self.users
             .find(None, options)
             .await
             .map_err(|err| err.to_string())?
             .try_collect()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| err.to_string())
+    }
 
-        let mut summaries = Vec::with_capacity(users.len());
-        for user in users {
-            summaries.push(self.user_summary_from_record(user).await?);
+    async fn user_summaries_from_records(
+        &self,
+        users: Vec<UserRecord>,
+    ) -> Result<Vec<UserSummaryRecord>, String> {
+        if users.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(summaries)
+        let user_ids = users.iter().map(|user| user.id.clone()).collect::<Vec<_>>();
+        let (mut agent_counts, mut harness_by_user) = tokio::try_join!(
+            self.agent_counts_for_user_ids(&user_ids),
+            self.harness_by_user_ids(&user_ids),
+        )?;
+
+        Ok(users
+            .into_iter()
+            .map(|user| UserSummaryRecord {
+                agent_count: agent_counts.remove(&user.id).unwrap_or(0),
+                harness_provisioning: harness_by_user.remove(&user.id).map(Into::into),
+                id: user.id,
+                username: user.username,
+                display_name: user.display_name,
+                role: user.role,
+                enabled: user.enabled,
+                created_at: user.created_at,
+                updated_at: user.updated_at,
+                last_login_at: user.last_login_at,
+            })
+            .collect())
+    }
+
+    async fn agent_counts_for_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> Result<HashMap<String, i64>, String> {
+        let agent_count_documents: Vec<mongodb::bson::Document> = self
+            .agent_accounts
+            .aggregate(
+                vec![
+                    doc! { "$match": { "owner_user_id": { "$in": user_ids.to_vec() } } },
+                    doc! { "$group": { "_id": "$owner_user_id", "count": { "$sum": 1_i64 } } },
+                ],
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut agent_counts = HashMap::with_capacity(agent_count_documents.len());
+        for document in agent_count_documents {
+            let count: OwnerAgentCount =
+                mongodb::bson::from_document(document).map_err(|err| err.to_string())?;
+            agent_counts.insert(count.owner_user_id, count.count);
+        }
+        Ok(agent_counts)
+    }
+
+    async fn harness_by_user_ids(
+        &self,
+        user_ids: &[String],
+    ) -> Result<HashMap<String, HarnessProvisioningRecord>, String> {
+        let harness_records: Vec<HarnessProvisioningRecord> = self
+            .harness_provisioning
+            .find(doc! { "user_id": { "$in": user_ids.to_vec() } }, None)
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(harness_records
+            .into_iter()
+            .map(|record| (record.user_id.clone(), record))
+            .collect())
     }
 
     pub async fn get_user_summary(&self, id: &str) -> Result<Option<UserSummaryRecord>, String> {
@@ -295,9 +436,20 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
 
+        let owner_ids = agents
+            .iter()
+            .map(|agent| agent.owner_user_id.clone())
+            .collect::<Vec<_>>();
+        let owners = self
+            .list_user_options(Some(&owner_ids))
+            .await?
+            .into_iter()
+            .map(|owner| (owner.id.clone(), owner))
+            .collect::<HashMap<_, _>>();
+
         let mut items = Vec::with_capacity(agents.len());
         for agent in agents {
-            let Some(owner) = self.find_user_by_id(agent.owner_user_id.as_str()).await? else {
+            let Some(owner) = owners.get(agent.owner_user_id.as_str()) else {
                 continue;
             };
             items.push(AgentAccountListItem {
@@ -305,8 +457,8 @@ impl AppStore {
                 username: agent.username,
                 display_name: agent.display_name,
                 owner_user_id: agent.owner_user_id,
-                owner_username: owner.username,
-                owner_display_name: owner.display_name,
+                owner_username: owner.username.clone(),
+                owner_display_name: owner.display_name.clone(),
                 enabled: agent.enabled,
                 created_at: agent.created_at,
                 updated_at: agent.updated_at,
@@ -387,10 +539,10 @@ impl AppStore {
     }
 
     pub async fn is_token_revoked(&self, jti: &str) -> Result<bool, String> {
-        self.cleanup_expired_revocations().await?;
+        let now = Utc::now().timestamp();
         let value = self
             .revoked_tokens
-            .find_one(doc! { "jti": jti }, None)
+            .find_one(doc! { "jti": jti, "expires_at_unix": { "$gt": now } }, None)
             .await
             .map_err(|err| err.to_string())?;
         Ok(value.is_some())

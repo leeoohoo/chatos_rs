@@ -2,12 +2,14 @@ const status = document.querySelector('#status');
 const statusDot = document.querySelector('#status-dot');
 const connectButton = document.querySelector('#connect');
 const shareButton = document.querySelector('#share');
+const guideButton = document.querySelector('#guide');
 const disconnectButton = document.querySelector('#disconnect');
 const targets = document.querySelector('#targets');
 const error = document.querySelector('#error');
 
 connectButton.addEventListener('click', () => runAction('connect'));
 shareButton.addEventListener('click', () => runAction('share_current_tab'));
+guideButton.addEventListener('click', () => runAction('open_onboarding'));
 disconnectButton.addEventListener('click', () => runAction('disconnect'));
 
 void refresh();
@@ -40,6 +42,7 @@ function applyResponse(response) {
   statusDot.classList.toggle('connected', state.connected);
   connectButton.disabled = state.connected;
   shareButton.disabled = !state.connected;
+  guideButton.disabled = false;
   disconnectButton.disabled = !state.connected;
   renderTargets(state.targets ?? []);
 }
@@ -72,6 +75,7 @@ function setBusy(busy) {
     connectButton.disabled = true;
     shareButton.disabled = true;
     disconnectButton.disabled = true;
+    guideButton.disabled = true;
   }
 }
 

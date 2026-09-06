@@ -369,7 +369,6 @@ export function RunsPage() {
             setSearchParams(next);
           }}
           onOpenTask={(taskId) => navigate(`/task-runner/tasks?task_id=${encodeURIComponent(taskId)}`)}
-          onOpenModel={(modelId) => navigate(`/task-runner/models?model_id=${encodeURIComponent(modelId)}`)}
           onCancel={(runId) => cancelRunMutation.mutate(runId)}
           onRetry={(runId) => retryRunMutation.mutate(runId)}
         />
@@ -406,7 +405,6 @@ export function RunsPage() {
           setRunChanges(null);
         }}
         onOpenTask={(taskId) => navigate(`/task-runner/tasks?task_id=${encodeURIComponent(taskId)}`)}
-        onOpenModel={(modelId) => navigate(`/task-runner/models?model_id=${encodeURIComponent(modelId)}`)}
         onCancel={(runId) => cancelRunMutation.mutate(runId)}
         onRetry={(runId) => retryRunMutation.mutate(runId)}
         onRetryIntegration={(runId) => retryRunIntegrationMutation.mutate(runId)}

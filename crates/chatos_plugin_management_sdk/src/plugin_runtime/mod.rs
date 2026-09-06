@@ -21,6 +21,9 @@ pub use components::{
 };
 pub use ui_artifacts::*;
 
+pub const PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY: &str = "admin_registry";
+pub const PLUGIN_MARKETPLACE_SOURCE_OFFICIAL_REGISTRY: &str = "official_registry";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginInstallStatus {
@@ -284,6 +287,8 @@ pub struct PluginComponentSnapshot {
     pub release_id: String,
     pub component: PluginComponentDescriptor,
     pub content_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<crate::skill_runtime::PluginSkillComponentSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

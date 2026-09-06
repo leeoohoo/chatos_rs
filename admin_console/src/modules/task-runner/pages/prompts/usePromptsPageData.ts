@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { api } from '../../api/client';
+import { api as userServiceApi } from '../../../user-service/api/client';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
   RunSummaryRecord,
@@ -58,8 +59,8 @@ export function usePromptsPageData({
       }),
   });
   const modelsQuery = useQuery({
-    queryKey: ['task-runner', 'model-configs'],
-    queryFn: api.listModelConfigs,
+    queryKey: ['user-service', 'model-configs', 'current-user'],
+    queryFn: () => userServiceApi.listModelConfigs(),
   });
   const selectedPromptQuery = useQuery({
     queryKey: ['task-runner', 'prompt', routePromptId],

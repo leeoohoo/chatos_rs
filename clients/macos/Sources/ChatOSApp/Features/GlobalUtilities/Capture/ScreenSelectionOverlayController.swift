@@ -195,17 +195,13 @@ final class ScreenSelectionOverlayController {
             height: globalRect.height
         )
         let scale = screen.backingScaleFactor
-        let selectionOverlayWindowIDs = windows.compactMap { window in
-            window.windowNumber > 0 ? CGWindowID(window.windowNumber) : nil
-        }
         let captureRegion = NativeScreenCaptureRegion(
             displayID: CGDirectDisplayID(displayID.uint32Value),
             sourceRect: sourceRect,
             outputSize: CGSize(
                 width: globalRect.width * scale,
                 height: globalRect.height * scale
-            ),
-            excludedWindowIDs: selectionOverlayWindowIDs
+            )
         )
         let result = ScreenSelection(
             screen: screen,

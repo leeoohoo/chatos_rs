@@ -28,7 +28,9 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let mcpCodeWriteStore = NativeMCPCodeWriteStore()
     let mcpTerminalStore = NativeMCPTerminalStore()
     let pluginRuntimeStore = NativePluginRuntimeStore()
+    var pluginSkillRuntimeSessions: [String: NativePluginSkillRuntimeSession] = [:]
     let pluginApplicationRuntime = NativePluginApplicationRuntime()
+    let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
@@ -127,6 +129,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         }
         await stopGatewayConnection()
         await pluginApplicationRuntime.stopAll()
+        await browserExtensionPairingRuntime.stop()
         try secretStore.delete(account: Self.accessTokenAccount)
         cachedAccessToken = nil
         hasLoadedAccessToken = true
@@ -145,6 +148,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         reconnectTask = nil
         await closeGatewayConnection(terminatePluginSessions: true)
         await pluginApplicationRuntime.stopAll()
+        await browserExtensionPairingRuntime.stop()
     }
 
     public func recoverGatewayConnection(forceReconnect: Bool = false) async {
@@ -576,6 +580,13 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         error: any Error
     ) async {
         guard webSocket === socket else { return }
+        let authenticationExpired = NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
+            statusCode: (socket.response as? HTTPURLResponse)?.statusCode ?? 0,
+            token: (try? accessToken()) ?? nil
+        )
+        if authenticationExpired {
+            shouldMaintainGatewayConnection = false
+        }
         Self.logger.error("网关长连接中断：\(error.localizedDescription, privacy: .public)")
         recordGatewayReconnectFailure()
         // A transient gateway outage must not destroy prepared Plugin MCP
@@ -584,7 +595,9 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         await closeGatewayConnection(
             terminatePluginSessions: Self.transientGatewayFailureTerminatesPluginSessions
         )
-        scheduleGatewayReconnect()
+        if !authenticationExpired {
+            scheduleGatewayReconnect()
+        }
     }
 
     static let transientGatewayFailureTerminatesPluginSessions = false
@@ -735,6 +748,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         lastGatewayPongAt = nil
         if terminatePluginSessions {
             await pluginRuntimeStore.terminateAll()
+            pluginSkillRuntimeSessions.removeAll()
         }
     }
 

@@ -11,6 +11,7 @@ public interface IPluginRuntimeLifetime
 internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
 {
     private readonly ConcurrentDictionary<string, Session> _sessions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SkillSession> _skillSessions = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _exclusiveExecution = new(1, 1);
 
     public async Task InsertAsync(
@@ -76,6 +77,65 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
         }
 
         return identity;
+    }
+
+    public void InsertSkill(
+        PluginRuntimeIdentity identity,
+        JsonElement expectedSnapshot,
+        DateTimeOffset expiresAt)
+    {
+        var session = new SkillSession(identity, expectedSnapshot.Clone(), expiresAt);
+        if (!_skillSessions.TryAdd(identity.AdapterSessionId, session))
+        {
+            throw new PluginRuntimeException("Plugin Skill runtime session could not be registered.");
+        }
+    }
+
+    public JsonElement ValidateSkill(
+        string adapterSessionId,
+        string pluginId,
+        string releaseId,
+        string artifactSha256,
+        string componentKey,
+        string? workspaceId,
+        string? projectId = null)
+    {
+        if (!_skillSessions.TryGetValue(adapterSessionId, out var session) ||
+            session.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            _skillSessions.TryRemove(adapterSessionId, out _);
+            throw new PluginRuntimeException("Plugin Skill session does not exist or has ended.");
+        }
+        var identity = session.Identity;
+        if (!string.Equals(identity.PluginId, pluginId, StringComparison.Ordinal) ||
+            !string.Equals(identity.ReleaseId, releaseId, StringComparison.Ordinal) ||
+            !string.Equals(identity.ArtifactSha256, artifactSha256, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(identity.ComponentKey, componentKey, StringComparison.Ordinal) ||
+            !string.Equals(identity.WorkspaceId, workspaceId, StringComparison.Ordinal) ||
+            !string.Equals(identity.ProjectId, projectId, StringComparison.Ordinal))
+        {
+            throw new PluginRuntimeException("Plugin Skill request does not match its prepared session.");
+        }
+        return session.ExpectedSnapshot.Clone();
+    }
+
+    public bool RemoveSkill(
+        string adapterSessionId,
+        string runId,
+        string? workspaceId,
+        string? projectId)
+    {
+        if (!_skillSessions.TryGetValue(adapterSessionId, out var session))
+        {
+            return false;
+        }
+        if (!string.Equals(session.Identity.RunId, runId, StringComparison.Ordinal) ||
+            !string.Equals(session.Identity.WorkspaceId, workspaceId, StringComparison.Ordinal) ||
+            !string.Equals(session.Identity.ProjectId, projectId, StringComparison.Ordinal))
+        {
+            throw new PluginRuntimeException("Plugin Skill cancellation does not match its prepared session.");
+        }
+        return _skillSessions.TryRemove(adapterSessionId, out _);
     }
 
     public JsonElement ToolDefinition(string adapterSessionId, string toolName)
@@ -242,6 +302,7 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
     {
         var sessions = _sessions.ToArray();
         _sessions.Clear();
+        _skillSessions.Clear();
         foreach (var session in sessions)
         {
             foreach (var invocation in session.Value.ActiveInvocations.Values)
@@ -256,6 +317,11 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
 
     public async Task TerminatePluginAsync(string pluginId)
     {
+        foreach (var value in _skillSessions.Where(value =>
+                     string.Equals(value.Value.Identity.PluginId, pluginId, StringComparison.Ordinal)).ToArray())
+        {
+            _skillSessions.TryRemove(value.Key, out _);
+        }
         var matching = _sessions
             .Where(value => string.Equals(value.Value.Identity.PluginId, pluginId, StringComparison.Ordinal))
             .ToArray();
@@ -292,6 +358,11 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
         public ConcurrentDictionary<string, CancellationTokenSource> ActiveInvocations { get; } =
             new(StringComparer.Ordinal);
     }
+
+    private sealed record SkillSession(
+        PluginRuntimeIdentity Identity,
+        JsonElement ExpectedSnapshot,
+        DateTimeOffset ExpiresAt);
 
     internal sealed record PluginVisualDescriptor(
         PluginRuntimeIdentity Identity,

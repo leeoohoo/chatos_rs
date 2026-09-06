@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ChatOS.Connector.Approval;
 using ChatOS.Connector.Plugins;
@@ -111,6 +113,128 @@ public sealed class PluginRelayHandlerTests : IDisposable
 
         Assert.Equal("cancelled", cancelled.Body.GetProperty("status").GetString());
         Assert.True(client.Terminated);
+    }
+
+    [Fact]
+    public async Task SkillV2SeparatesCatalogActivationAndResourceReads()
+    {
+        var installation = Path.Combine(_directory, "installed-skill");
+        var skillDirectory = Path.Combine(installation, "skills", "fixture-skill");
+        var references = Path.Combine(skillDirectory, "references");
+        Directory.CreateDirectory(references);
+        File.WriteAllText(Path.Combine(installation, "chatos.plugin.json"),
+            """{"schemaVersion":3,"name":"fixture","version":"1.0.0","skills":["./skills/fixture-skill"],"mcpServers":{}}""");
+        File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"), """
+            ---
+            name: fixture-skill
+            description: Fixture Skill instructions.
+            ---
+            # Fixture Skill
+            Read the guide only when needed.
+            """);
+        File.WriteAllText(Path.Combine(references, "guide.md"), "# Guide\nUse fresh screenshots.\n");
+        var record = Record(installation);
+        var runtime = Runtime(Path.Combine(_directory, "workspace-skill"));
+        Directory.CreateDirectory(Path.Combine(_directory, "workspace-skill"));
+        await runtime.InitializeAsync();
+        var sessions = new PluginRuntimeSessionStore();
+        var handler = new PluginRelayHandler(
+            new InstalledStore(record),
+            new PluginManagement(),
+            new PluginManifestLoader(Path.Combine(_directory, "runtime-skill")),
+            new ClientFactory(new FakeMcpClient()),
+            sessions,
+            runtime,
+            new LocalProjectPathResolver(runtime),
+            new CommandApprovalCoordinator(new ApprovalStore()));
+
+        var instructions = File.ReadAllBytes(Path.Combine(skillDirectory, "SKILL.md"));
+        var guide = File.ReadAllBytes(Path.Combine(references, "guide.md"));
+        var resource = JsonSerializer.SerializeToElement(new
+        {
+            relative_path = "references/guide.md",
+            kind = "reference",
+            size_bytes = guide.LongLength,
+            sha256 = Sha256(guide),
+        });
+        var resources = JsonSerializer.SerializeToElement(new[] { resource });
+        var metadata = JsonSerializer.SerializeToElement(new
+        {
+            name = "fixture-skill",
+            description = "Fixture Skill instructions.",
+            role = "leaf",
+            activation_policy = "model_or_user",
+            context_mode = "inline",
+            required_skills = Array.Empty<string>(),
+            related_skills = Array.Empty<string>(),
+            extra = new { },
+        });
+        var resourceManifestSha256 = CanonicalSha256(resources);
+        var snapshotPayload = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["protocol_version"] = 2,
+            ["skill_id"] = "fixture-skill",
+            ["relative_skill_path"] = "skills/fixture-skill/SKILL.md",
+            ["metadata"] = metadata,
+            ["instructions_sha256"] = Sha256(instructions),
+            ["resource_manifest_sha256"] = resourceManifestSha256,
+        });
+        var expectedSnapshot = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["protocol_version"] = 2,
+            ["skill_id"] = "fixture-skill",
+            ["relative_skill_path"] = "skills/fixture-skill/SKILL.md",
+            ["metadata"] = metadata,
+            ["instructions_sha256"] = Sha256(instructions),
+            ["resource_manifest_sha256"] = resourceManifestSha256,
+            ["resources"] = new[] { resource },
+            ["snapshot_sha256"] = CanonicalSha256(snapshotPayload),
+        });
+
+        var prepared = await handler.HandleAsync(Request(
+            "plugin_prepare_request", "prepare-skill", string.Empty, new
+            {
+                run_id = "run-skill",
+                plugin_id = "plugin-1",
+                release_id = "release-1",
+                artifact_sha256 = new string('a', 64),
+                component_key = "fixture-skill",
+                permission_snapshot = Array.Empty<string>(),
+                skill_runtime_protocol = 2,
+                skill_keys = new[] { "fixture-skill" },
+                skill_snapshot = expectedSnapshot,
+            }), CancellationToken.None);
+        var adapterSessionId = prepared.Body.GetProperty("adapter_session_id").GetString()!;
+        Assert.False(prepared.Body.GetProperty("skills")[0].TryGetProperty("instructions", out _));
+
+        var activated = await handler.HandleAsync(Request(
+            "plugin_execute_request", "activate-skill", string.Empty, new
+            {
+                plugin_id = "plugin-1",
+                release_id = "release-1",
+                artifact_sha256 = new string('a', 64),
+                component_key = "fixture-skill",
+                adapter_session_id = adapterSessionId,
+                invocation_id = "activation-1",
+                operation = "skill_activate",
+            }), CancellationToken.None);
+        Assert.Contains("# Fixture Skill",
+            activated.Body.GetProperty("result").GetProperty("instructions").GetString());
+
+        var resourceRead = await handler.HandleAsync(Request(
+            "plugin_execute_request", "read-skill", string.Empty, new
+            {
+                plugin_id = "plugin-1",
+                release_id = "release-1",
+                artifact_sha256 = new string('a', 64),
+                component_key = "fixture-skill",
+                adapter_session_id = adapterSessionId,
+                invocation_id = "read-1",
+                operation = "skill_read_resource",
+                arguments = new { relative_path = "references/guide.md", offset = 0, max_chars = 8 },
+            }), CancellationToken.None);
+        Assert.Equal("# Guide\n",
+            resourceRead.Body.GetProperty("result").GetProperty("content").GetString());
     }
 
     [Fact]
@@ -262,6 +386,12 @@ public sealed class PluginRelayHandlerTests : IDisposable
         WorkspaceId = workspaceId,
         Body = JsonSerializer.SerializeToElement(body),
     };
+
+    private static string CanonicalSha256(JsonElement value) =>
+        Sha256(Encoding.UTF8.GetBytes(CanonicalJson.Serialize(value)));
+
+    private static string Sha256(byte[] value) =>
+        Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
 
     private sealed class FakeMcpClient : IPluginMcpClient
     {

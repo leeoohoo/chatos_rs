@@ -16,7 +16,7 @@ struct MCPService: Sendable {
     func makeServer() async -> Server {
         let server = Server(
             name: "visual-computer-use",
-            version: "0.8.12",
+            version: "0.8.14",
             title: "Visual Computer Use for macOS",
             instructions: "Treat screenshots as the source of UI truth; do not infer DOM or application internals. Every screenshot includes a visibly non-system AI orbit reticle and virtualCursorGlobal. When the cursor is inside the capture, cursorScreenshotPixel gives its top-left-origin image pixel coordinate; otherwise an edge indicator points toward it. After full-screen discovery, reuse the smallest recognizable global region for move_mouse and click to reduce capture and vision latency. Never skip the move_mouse or click image. key_press and type_text may set capture_after=false only for deterministic intermediate keyboard steps after the app and focus were verified; the next visible state change must still be observed. Read captureRegionGlobal, globalDesktopBounds, display frames, and globalPointsPerScreenshotPixelX/Y from every observation. move_mouse only animates the visible virtual reticle; click posts a real CoreGraphics click at its verified cyan center hotspot.",
             capabilities: .init(tools: .init(listChanged: false)),
@@ -167,7 +167,9 @@ struct MCPService: Sendable {
         }
     }
 
-    private static let tools: [Tool] = [
+    static let tools: [Tool] = baseTools.map(skillGatedTool)
+
+    private static let baseTools: [Tool] = [
         Tool(
             name: "check_permissions",
             title: "Check macOS permissions",
@@ -310,6 +312,62 @@ struct MCPService: Sendable {
         )
     ]
 
+    private static func skillGatedTool(_ tool: Tool) -> Tool {
+        let requiredSkills = ["visual-computer-use", specialistSkill(for: tool.name)]
+        var metadata = tool._meta?.fields ?? [:]
+        metadata["chatos/skillGate"] = .object([
+            "evidenceArgument": "skillEvidence",
+            "allOf": .array(requiredSkills.map(Value.string))
+        ])
+
+        return Tool(
+            name: tool.name,
+            title: tool.title,
+            description: tool.description,
+            inputSchema: addingSkillEvidence(to: tool.inputSchema),
+            annotations: tool.annotations,
+            outputSchema: tool.outputSchema,
+            icons: tool.icons,
+            _meta: Metadata(additionalFields: metadata)
+        )
+    }
+
+    private static func specialistSkill(for toolName: String) -> String {
+        switch toolName {
+        case "check_permissions", "request_permissions":
+            return "visual-safety-verification"
+        case "observe_screen", "move_mouse":
+            return "visual-observation-targeting"
+        case "active_application", "activate_application", "list_shortcuts":
+            return "visual-application-focus"
+        default:
+            return "visual-pointer-keyboard"
+        }
+    }
+
+    private static func addingSkillEvidence(to inputSchema: Value) -> Value {
+        guard var schema = inputSchema.objectValue else { return inputSchema }
+        var properties = schema["properties"]?.objectValue ?? [:]
+        properties["skillEvidence"] = .object([
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 8,
+            "items": .object([
+                "type": "string",
+                "minLength": 1
+            ]),
+            "description": "Platform-issued activation evidence for the Visual Computer Use router and this tool's specialist Skill. ChatOS validates and removes this field before local execution."
+        ])
+        schema["properties"] = .object(properties)
+
+        var required = schema["required"]?.arrayValue ?? []
+        if !required.contains(.string("skillEvidence")) {
+            required.append(.string("skillEvidence"))
+        }
+        schema["required"] = .array(required)
+        return .object(schema)
+    }
+
     private func captureResult(
         _ arguments: [String: Value],
         defaultMaxWidth: Int = 1600
@@ -371,7 +429,9 @@ struct MCPService: Sendable {
         _ arguments: [String: Value],
         defaultMaxWidth: Int
     ) throws -> ComputerController.ObservationOptions {
-        let displayID = try optionalUInt32(arguments, "display_id")
+        let displayID = normalizedDisplayID(
+            try optionalUInt32(arguments, "display_id")
+        )
         let maxImageWidth = try int(
             arguments,
             "max_image_width",
@@ -408,6 +468,10 @@ struct MCPService: Sendable {
         )
     }
 
+    static func normalizedDisplayID(_ requestedDisplayID: UInt32?) -> UInt32? {
+        requestedDisplayID == 0 ? nil : requestedDisplayID
+    }
+
     private static func requestedRegion(
         _ arguments: [String: Value]
     ) throws -> RectDTO? {
@@ -434,7 +498,7 @@ struct MCPService: Sendable {
             "display_id": .object([
                 "type": "integer",
                 "minimum": 0,
-                "description": "Optional CGDirectDisplayID. If omitted, use the display containing region or the cursor."
+                "description": "Optional CGDirectDisplayID returned by a prior observation. Use 0 or omit this field to select automatically from the requested region, virtual cursor, or main display. Never guess a positive display id."
             ]),
             "region": .object([
                 "type": "object",

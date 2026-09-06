@@ -1,5 +1,13 @@
 import Foundation
 
+public extension Notification.Name {
+    /// Posted after an authenticated ChatOS or Local Connector request proves
+    /// that the currently stored user token is no longer valid.
+    static let chatOSAuthenticationDidExpire = Notification.Name(
+        "com.chatos.swift.authentication-did-expire"
+    )
+}
+
 public struct AuthUser: Codable, Sendable, Equatable {
     public var id: String
     public var username: String

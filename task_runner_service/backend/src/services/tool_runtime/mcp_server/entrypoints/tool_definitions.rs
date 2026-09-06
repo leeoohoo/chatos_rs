@@ -5,8 +5,6 @@ use std::collections::BTreeMap;
 
 use super::*;
 
-#[path = "tool_definitions/models.rs"]
-mod models;
 #[path = "tool_definitions/prompts.rs"]
 mod prompts;
 #[path = "tool_definitions/runs.rs"]
@@ -120,7 +118,6 @@ impl TaskRunnerMcpService {
 
     pub fn list_tools(&self) -> Vec<Value> {
         let mut tools = tasks::task_tool_definitions();
-        tools.extend(models::model_tool_definitions());
         tools.extend(runs::run_tool_definitions());
         tools.extend(prompts::prompt_tool_definitions());
         tools
@@ -138,19 +135,14 @@ impl TaskRunnerMcpService {
                 let visible_model_configs =
                     filter_model_configs_for_user(model_configs, current_user);
                 enrich_tool_schemas_with_model_configs(&mut tools, &visible_model_configs);
-                if tool_profile == McpToolProfile::ChatosAsyncPlanner {
-                    enrich_tool_schemas_for_async_planner(&mut tools, &visible_model_configs);
-                }
             }
-            Err(err) => {
-                tracing::warn!(
-                    error = err.as_str(),
-                    "task runner could not enrich MCP tool schemas with model configs"
-                );
-                if tool_profile == McpToolProfile::ChatosAsyncPlanner {
-                    enrich_tool_schemas_for_async_planner(&mut tools, &[]);
-                }
-            }
+            Err(err) => tracing::warn!(
+                error = err.as_str(),
+                "task runner could not expose User Service model choices to ChatOS"
+            ),
+        }
+        if tool_profile == McpToolProfile::ChatosAsyncPlanner {
+            enrich_tool_schemas_for_async_planner(&mut tools);
         }
         match self
             .task_mcp_schema_choices(current_user, request_context)

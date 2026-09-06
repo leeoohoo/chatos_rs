@@ -13,12 +13,13 @@ const launcher = path.join(projectRoot, 'bin', 'chatos-document-mcp');
 
 async function withClient(workspace, callback) {
   const artifact = await mkdtemp(path.join(os.tmpdir(), 'document-mcp-artifacts-'));
+  const workspaceEnv = workspace ? { CHATOS_WORKSPACE: workspace } : {};
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [launcher, 'mcp'],
     env: {
       ...process.env,
-      CHATOS_WORKSPACE: workspace,
+      ...workspaceEnv,
       CHATOS_PLUGIN_ARTIFACT_DIR: artifact,
       CHATOS_PLUGIN_ROOT: projectRoot
     },
@@ -26,12 +27,39 @@ async function withClient(workspace, callback) {
   });
   const client = new Client({ name: 'document-mcp-test', version: '1.0.0' });
   await client.connect(transport);
+  const callTool = client.callTool.bind(client);
+  client.callTool = (params, resultSchema, options) => callTool(params, resultSchema, {
+    timeout: 120_000,
+    ...options
+  });
   try {
     return await callback(client, { artifact });
   } finally {
     await client.close();
   }
 }
+
+test('reads current-session artifacts without a project workspace', async () => {
+  await withClient(undefined, async (client, { artifact }) => {
+    await writeFile(path.join(artifact, 'public-session.docx'), minimalDocx());
+
+    const inspected = await client.callTool({
+      name: 'document_inspect',
+      arguments: { inputPath: 'public-session.docx' }
+    });
+
+    assert.equal(inspected.isError, false, JSON.stringify(inspected.structuredContent));
+    assert.equal(inspected.structuredContent.format, 'docx');
+    assert.equal(inspected.structuredContent.source.relativePath, 'public-session.docx');
+
+    const missing = await client.callTool({
+      name: 'document_inspect',
+      arguments: { inputPath: 'not-created.docx' }
+    });
+    assert.equal(missing.isError, true);
+    assert.equal(missing.structuredContent.error.code, 'WORKSPACE_NOT_CONFIGURED');
+  });
+});
 
 function minimalDocx() {
   return zipSync({
@@ -120,6 +148,9 @@ test('lists policy-annotated tools and inspects a DOCX', async () => {
       for (const permission of tool._meta['chatos/requiredPermissions']) {
         assert.ok(['workspace.read', 'artifact.create'].includes(permission));
       }
+      assert.equal(tool._meta['chatos/skillGate'].evidenceArgument, 'skillEvidence');
+      assert.equal(tool.inputSchema.properties.skillEvidence.type, 'array');
+      assert.ok(tool.inputSchema.required.includes('skillEvidence'));
     }
 
     const response = await client.callTool({
@@ -234,7 +265,8 @@ test('creates and edits validated Office artifacts with typed operations', async
               ['North', 42]
             ],
             style: 'medium2'
-          }
+          },
+          { type: 'word_add_paragraph', text: 'Second page for PDF conversion', pageBreakBefore: true }
         ]
       }
     });
@@ -270,17 +302,16 @@ test('creates and edits validated Office artifacts with typed operations', async
     assert.equal(inspectedCreated.isError, false, JSON.stringify(inspectedCreated.structuredContent));
     assert.equal(inspectedCreated.structuredContent.source.relativePath, 'created.docx');
 
-    const twoPageXml = createdXml.replace(
-      '</w:body>',
-      '<w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:r><w:t>Second page for PDF conversion</w:t></w:r></w:p></w:body>'
-    );
-    await writeFile(
-      path.join(workspace, 'two-page.docx'),
-      zipSync({ ...createdZip, 'word/document.xml': strToU8(twoPageXml) })
-    );
+    await copyFile(createdPath, path.join(workspace, 'two-page.docx'));
     const convertedDocx = await client.callTool({
       name: 'document_convert',
-      arguments: { inputPath: 'two-page.docx', outputName: 'two-page.pdf', viewportWidth: 800, viewportHeight: 600 }
+      arguments: {
+        inputPath: 'two-page.docx',
+        outputName: 'two-page.pdf',
+        pages: [1, 2],
+        viewportWidth: 800,
+        viewportHeight: 600
+      }
     });
     assert.equal(convertedDocx.isError, false, JSON.stringify(convertedDocx.structuredContent));
     assert.equal(convertedDocx.structuredContent.conversionMode, 'raster');

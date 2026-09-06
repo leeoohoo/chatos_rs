@@ -15,7 +15,9 @@ use crate::managed_config::RelayRuntimeLimits;
 use crate::models::LocalConnectorRelayStats;
 use crate::pressure::PlatformPressureLevel;
 use crate::relay_signature::PlatformRelaySigner;
-use crate::valkey_coordination::{RelayCorrelation, ValkeyCoordinator};
+use crate::valkey_coordination::{
+    DevicePresence, RelayCorrelation, RelaySessionIdentity, ValkeyCoordinator,
+};
 
 mod terminal;
 #[cfg(test)]
@@ -205,6 +207,7 @@ struct RelayState {
     pending: HashMap<String, PendingRelayRequest>,
     terminal_events: HashMap<String, broadcast::Sender<TerminalRelayEvent>>,
     terminal_subscriptions: HashMap<String, HashSet<String>>,
+    terminal_sources: HashMap<String, RelaySessionIdentity>,
 }
 
 #[derive(Clone)]
@@ -215,8 +218,18 @@ struct ActiveConnectorSession {
 }
 
 struct PendingRelayRequest {
-    device_id: String,
+    source: RelaySessionIdentity,
     sender: oneshot::Sender<RelayResponse>,
+}
+
+impl ActiveConnectorSession {
+    fn relay_identity(&self, device_id: &str) -> RelaySessionIdentity {
+        RelaySessionIdentity {
+            owner_user_id: self.owner_user_id.clone(),
+            device_id: device_id.to_string(),
+            session_id: self.session_id.clone(),
+        }
+    }
 }
 
 impl ConnectorRelay {
@@ -315,7 +328,7 @@ impl ConnectorRelay {
                 let request_ids = inner
                     .pending
                     .iter()
-                    .filter(|&(_request_id, pending)| pending.device_id == device_id)
+                    .filter(|&(_request_id, pending)| pending.source.device_id == device_id)
                     .map(|(request_id, _pending)| request_id.clone())
                     .collect::<Vec<_>>();
                 for request_id in request_ids {
@@ -343,11 +356,7 @@ impl ConnectorRelay {
         owner_user_id: &str,
         device_id: &str,
     ) -> Result<bool, RelayError> {
-        if self
-            .local_session_outbound(device_id, owner_user_id)
-            .await
-            .is_some()
-        {
+        if self.local_session(device_id, owner_user_id).await.is_some() {
             return Ok(true);
         }
         let Some(distributed) = self.distributed.as_ref() else {
@@ -373,19 +382,24 @@ impl ConnectorRelay {
         let request_id = request.request_id.clone();
         let device_id = request.device_id.clone();
         let request = self.sign_request(request)?;
-        let local_outbound = self
-            .local_session_outbound(device_id.as_str(), request.owner_user_id.as_str())
+        let local_session = self
+            .local_session(device_id.as_str(), request.owner_user_id.as_str())
             .await;
-        let remote_instance = if local_outbound.is_none() {
-            Some(self.remote_instance_for_request(&request).await?)
+        let remote_presence = if local_session.is_none() {
+            Some(self.remote_presence_for_request(&request).await?)
         } else {
             None
         };
+        let source = local_session
+            .as_ref()
+            .map(|session| session.relay_identity(device_id.as_str()))
+            .or_else(|| remote_presence.as_ref().map(DevicePresence::relay_identity))
+            .ok_or(RelayError::Offline)?;
         let receiver = self
-            .insert_pending_request(request_id.as_str(), device_id.as_str())
+            .insert_pending_request(request_id.as_str(), source.clone())
             .await?;
 
-        if let Some(outbound) = local_outbound {
+        if let Some(session) = local_session {
             let text = match serde_json::to_string(&request) {
                 Ok(text) => text,
                 Err(error) => {
@@ -393,15 +407,20 @@ impl ConnectorRelay {
                     return Err(RelayError::RequestEncode(error.to_string()));
                 }
             };
-            if outbound.send(text).await.is_err() {
+            if session.outbound.send(text).await.is_err() {
                 self.remove_pending(request_id.as_str()).await;
                 return Err(RelayError::Offline);
             }
         } else {
             let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
+            let target_instance = remote_presence
+                .as_ref()
+                .expect("remote presence resolved above")
+                .instance_id
+                .clone();
             let correlation = RelayCorrelation {
                 requester_instance_id: distributed.instance_id.clone(),
-                device_id: device_id.clone(),
+                source,
             };
             let correlation_ttl =
                 timeout_duration.saturating_add(distributed.correlation_grace_ttl);
@@ -420,7 +439,6 @@ impl ConnectorRelay {
                 self.remove_pending(request_id.as_str()).await;
                 return Err(RelayError::DuplicateRequestId(request_id));
             }
-            let target_instance = remote_instance.expect("remote instance resolved above");
             let publish_result = distributed
                 .coordinator
                 .publish_instance_message(
@@ -456,23 +474,28 @@ impl ConnectorRelay {
 
     pub async fn send(&self, request: RelayRequest) -> Result<(), RelayError> {
         let request = self.sign_request(request)?;
-        if let Some(outbound) = self
-            .local_session_outbound(request.device_id.as_str(), request.owner_user_id.as_str())
+        if let Some(session) = self
+            .local_session(request.device_id.as_str(), request.owner_user_id.as_str())
             .await
         {
             let text = serde_json::to_string(&request)
                 .map_err(|err| RelayError::RequestEncode(err.to_string()))?;
-            return outbound.send(text).await.map_err(|_| RelayError::Offline);
+            return session
+                .outbound
+                .send(text)
+                .await
+                .map_err(|_| RelayError::Offline);
         }
-        let target_instance = self.remote_instance_for_request(&request).await?;
+        let presence = self.remote_presence_for_request(&request).await?;
+        let target_instance = presence.instance_id.clone();
         let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
         let request_id = request.request_id.clone();
         let receiver = self
-            .insert_pending_request(request_id.as_str(), request.device_id.as_str())
+            .insert_pending_request(request_id.as_str(), presence.relay_identity())
             .await?;
         let correlation = RelayCorrelation {
             requester_instance_id: distributed.instance_id.clone(),
-            device_id: request.device_id.clone(),
+            source: presence.relay_identity(),
         };
         let correlation_ttl = distributed
             .delivery_ack_timeout
@@ -662,7 +685,35 @@ impl ConnectorRelay {
         }
     }
 
-    async fn route_remote_response(&self, response: RelayResponse) -> Result<bool, String> {
+    pub(super) async fn complete_response_from_source(
+        &self,
+        response: RelayResponse,
+        source: &RelaySessionIdentity,
+    ) -> Result<bool, String> {
+        let sender = {
+            let mut inner = self.inner.lock().await;
+            let Some(pending) = inner.pending.get(response.request_id.as_str()) else {
+                return Ok(false);
+            };
+            if &pending.source != source {
+                return Err(
+                    "Local Connector relay response source does not match the dispatched request"
+                        .to_string(),
+                );
+            }
+            inner
+                .pending
+                .remove(response.request_id.as_str())
+                .map(|pending| pending.sender)
+        };
+        Ok(sender.is_some_and(|sender| sender.send(response).is_ok()))
+    }
+
+    pub(super) async fn route_remote_response(
+        &self,
+        response: RelayResponse,
+        source: &RelaySessionIdentity,
+    ) -> Result<bool, String> {
         let Some(distributed) = self.distributed.as_ref() else {
             return Ok(false);
         };
@@ -673,6 +724,12 @@ impl ConnectorRelay {
         else {
             return Ok(false);
         };
+        if &correlation.source != source {
+            return Err(
+                "Local Connector relay response source does not match the distributed request"
+                    .to_string(),
+            );
+        }
         if let Err(error) = distributed
             .coordinator
             .publish_instance_message(
@@ -701,32 +758,37 @@ impl ConnectorRelay {
     }
 
     async fn send_to_local_session(&self, request: &RelayRequest) -> Result<(), RelayError> {
-        let Some(outbound) = self
-            .local_session_outbound(request.device_id.as_str(), request.owner_user_id.as_str())
+        let Some(session) = self
+            .local_session(request.device_id.as_str(), request.owner_user_id.as_str())
             .await
         else {
             return Err(RelayError::Offline);
         };
         let text = serde_json::to_string(request)
             .map_err(|error| RelayError::RequestEncode(error.to_string()))?;
-        outbound.send(text).await.map_err(|_| RelayError::Offline)
+        session
+            .outbound
+            .send(text)
+            .await
+            .map_err(|_| RelayError::Offline)
     }
 
-    async fn local_session_outbound(
+    async fn local_session(
         &self,
         device_id: &str,
         owner_user_id: &str,
-    ) -> Option<mpsc::Sender<String>> {
+    ) -> Option<ActiveConnectorSession> {
         let inner = self.inner.lock().await;
-        inner.sessions.get(device_id).and_then(|session| {
-            (session.owner_user_id == owner_user_id).then(|| session.outbound.clone())
-        })
+        inner
+            .sessions
+            .get(device_id)
+            .and_then(|session| (session.owner_user_id == owner_user_id).then(|| session.clone()))
     }
 
-    async fn remote_instance_for_request(
+    async fn remote_presence_for_request(
         &self,
         request: &RelayRequest,
-    ) -> Result<String, RelayError> {
+    ) -> Result<DevicePresence, RelayError> {
         let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
         let presence = distributed
             .coordinator
@@ -739,13 +801,36 @@ impl ConnectorRelay {
         {
             return Err(RelayError::Offline);
         }
-        Ok(presence.instance_id)
+        Ok(presence)
+    }
+
+    pub(super) async fn relay_session_identity(
+        &self,
+        owner_user_id: &str,
+        device_id: &str,
+    ) -> Result<RelaySessionIdentity, RelayError> {
+        if let Some(session) = self.local_session(device_id, owner_user_id).await {
+            return Ok(session.relay_identity(device_id));
+        }
+        let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
+        let presence = distributed
+            .coordinator
+            .device_presence(device_id)
+            .await
+            .map_err(RelayError::Coordination)?
+            .ok_or(RelayError::Offline)?;
+        if presence.owner_user_id != owner_user_id
+            || presence.instance_id == distributed.instance_id
+        {
+            return Err(RelayError::Offline);
+        }
+        Ok(presence.relay_identity())
     }
 
     async fn insert_pending_request(
         &self,
         request_id: &str,
-        device_id: &str,
+        source: RelaySessionIdentity,
     ) -> Result<oneshot::Receiver<RelayResponse>, RelayError> {
         let runtime = self.runtime_config();
         let mut inner = self.inner.lock().await;
@@ -755,21 +840,18 @@ impl ConnectorRelay {
         let pending_count = inner
             .pending
             .values()
-            .filter(|pending| pending.device_id == device_id)
+            .filter(|pending| pending.source.device_id == source.device_id)
             .count();
         if pending_count >= runtime.limits.max_pending_requests_per_device {
             return Err(RelayError::TooManyPendingRequests {
-                device_id: device_id.to_string(),
+                device_id: source.device_id.clone(),
                 limit: runtime.limits.max_pending_requests_per_device,
             });
         }
         let (sender, receiver) = oneshot::channel();
         inner.pending.insert(
             request_id.to_string(),
-            PendingRelayRequest {
-                device_id: device_id.to_string(),
-                sender,
-            },
+            PendingRelayRequest { source, sender },
         );
         Ok(receiver)
     }

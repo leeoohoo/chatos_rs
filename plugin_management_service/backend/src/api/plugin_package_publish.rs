@@ -13,11 +13,14 @@ use axum::response::Response;
 use axum::{Extension, Json};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chatos_plugin_management_sdk::{
-    normalized_plugin_manifest_sha256, parse_plugin_manifest, plugin_component_descriptors,
-    plugin_release_signing_payload, PluginLicenseMetadata, PluginManifest, PluginMcpServer,
-    PluginNpmPackage, PluginPublisher, PluginReleaseSignature, PluginReleaseVerificationContext,
-    PluginUiRuntime, SigningKeyRef, PLUGIN_SIGNATURE_ALGORITHM_ED25519,
-    PLUGIN_SIGNING_KEY_USAGE_RELEASE,
+    normalize_plugin_relative_path, normalized_plugin_manifest_sha256, parse_plugin_manifest,
+    parse_skill_document, plugin_component_descriptors, plugin_release_signing_payload,
+    plugin_skill_snapshot_sha256, skill_resource_manifest_sha256, PluginLicenseMetadata,
+    PluginManifest, PluginMcpServer, PluginNpmPackage, PluginPublisher, PluginReleaseSignature,
+    PluginReleaseVerificationContext, PluginSkillComponentSnapshot, PluginUiRuntime,
+    RuntimeSkillResourceDescriptor, SigningKeyRef, SkillResourceKind,
+    PLUGIN_SIGNATURE_ALGORITHM_ED25519, PLUGIN_SIGNING_KEY_USAGE_RELEASE,
+    SKILL_RUNTIME_PROTOCOL_VERSION,
 };
 use flate2::read::GzDecoder;
 use ring::rand::SystemRandom;
@@ -42,6 +45,10 @@ const MANIFEST_PATHS: &[&str] = &[
 const MAX_PACKAGE_METADATA_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 50_000;
 const MAX_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_SKILL_INSTRUCTIONS_BYTES: u64 = 256 * 1024;
+const MAX_SKILL_RESOURCE_BYTES: u64 = 1024 * 1024;
+const MAX_SKILL_TOTAL_RESOURCE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_SKILL_RESOURCE_COUNT: usize = 256;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredPluginArtifactMetadata {
@@ -49,6 +56,8 @@ struct StoredPluginArtifactMetadata {
     artifact_ref: String,
     npm_package: PluginNpmPackage,
     normalized_manifest: PluginManifest,
+    #[serde(default)]
+    skill_snapshots: Vec<PluginSkillComponentSnapshot>,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +71,7 @@ pub(super) struct PluginPackageAnalysis {
     has_ui: bool,
     manifest: PluginManifest,
     components: Vec<chatos_plugin_management_sdk::PluginComponentDescriptor>,
+    skill_snapshots: Vec<PluginSkillComponentSnapshot>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,6 +116,7 @@ struct ParsedPackage {
     package_version: String,
     package_bins: Vec<String>,
     manifest: PluginManifest,
+    skill_snapshots: Vec<PluginSkillComponentSnapshot>,
 }
 
 #[derive(Debug)]
@@ -204,6 +215,20 @@ pub(super) async fn publish_uploaded_plugin(
                 "existing Plugin catalog entry belongs to another publisher",
             ));
         }
+        if state
+            .store
+            .find_plugin_release_by_version(
+                catalog.id.as_str(),
+                stored.normalized_manifest.version.as_str(),
+            )
+            .await
+            .map_err(ApiError::internal)?
+            .is_some()
+        {
+            return Err(ApiError::conflict(
+                "Plugin release version is immutable and already exists",
+            ));
+        }
     }
     let publisher = ensure_admin_managed_publisher(
         &state,
@@ -223,33 +248,9 @@ pub(super) async fn publish_uploaded_plugin(
         website: publisher.website.clone(),
         verified: true,
     };
+    let updates_existing_catalog = existing_catalog.is_some();
     let catalog = match existing_catalog {
-        Some(mut catalog) => {
-            // A new package release is also the source of truth for marketplace
-            // presentation metadata. Without this refresh, renamed plugins keep
-            // showing the title and description from their first published build.
-            catalog.display_name = stored.normalized_manifest.interface.display_name.clone();
-            catalog.description = stored.normalized_manifest.description.clone();
-            catalog.publisher = plugin_publisher.clone();
-            catalog.interface = stored.normalized_manifest.interface.clone();
-            catalog.keywords = stored.normalized_manifest.keywords.clone();
-            catalog.visibility = request.visibility;
-            catalog.featured = request.featured;
-            catalog.has_ui = !stored.normalized_manifest.ui.is_empty();
-            catalog.license = PluginLicenseMetadata {
-                license_id: request.license_id,
-                license_url,
-                redistributable: request.redistributable,
-                reviewed_at: request.redistributable.then(now_rfc3339),
-            };
-            catalog.updated_at = now_rfc3339();
-            state
-                .store
-                .replace_plugin_catalog_entry(&catalog)
-                .await
-                .map_err(ApiError::internal)?;
-            catalog
-        }
+        Some(catalog) => catalog,
         None => {
             publish_plugin_catalog_entry(
                 &state,
@@ -259,16 +260,16 @@ pub(super) async fn publish_uploaded_plugin(
                     name: stored.normalized_manifest.name.clone(),
                     display_name: stored.normalized_manifest.interface.display_name.clone(),
                     description: stored.normalized_manifest.description.clone(),
-                    publisher: plugin_publisher,
+                    publisher: plugin_publisher.clone(),
                     interface: stored.normalized_manifest.interface.clone(),
                     keywords: stored.normalized_manifest.keywords.clone(),
-                    visibility: request.visibility,
+                    visibility: request.visibility.clone(),
                     featured: request.featured,
                     enabled: true,
                     has_ui: !stored.normalized_manifest.ui.is_empty(),
                     license: PluginLicenseMetadata {
-                        license_id: request.license_id,
-                        license_url,
+                        license_id: request.license_id.clone(),
+                        license_url: license_url.clone(),
                         redistributable: request.redistributable,
                         reviewed_at: request.redistributable.then(now_rfc3339),
                     },
@@ -320,10 +321,46 @@ pub(super) async fn publish_uploaded_plugin(
             sbom_ref: None,
             release_channel: request.release_channel,
         },
-        stored.normalized_manifest,
+        stored.normalized_manifest.clone(),
+        stored.skill_snapshots.clone(),
     )
     .await?;
+    let mut catalog = state
+        .store
+        .get_plugin_catalog_entry(catalog.id.as_str())
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::internal("published Plugin catalog entry is missing"))?;
+    if updates_existing_catalog {
+        // Package publishing refreshes presentation data only. Governance fields
+        // (visibility, featured status and reviewed license metadata) belong to
+        // the catalog and must not be reset by release-form defaults.
+        apply_uploaded_presentation_metadata(
+            &mut catalog,
+            &stored.normalized_manifest,
+            plugin_publisher,
+        );
+        catalog.updated_at = now_rfc3339();
+        state
+            .store
+            .replace_plugin_catalog_entry(&catalog)
+            .await
+            .map_err(ApiError::internal)?;
+    }
     Ok(Json(PublishUploadedPluginResponse { catalog, release }))
+}
+
+fn apply_uploaded_presentation_metadata(
+    catalog: &mut PluginCatalogRecord,
+    manifest: &PluginManifest,
+    publisher: PluginPublisher,
+) {
+    catalog.display_name = manifest.interface.display_name.clone();
+    catalog.description = manifest.description.clone();
+    catalog.publisher = publisher;
+    catalog.interface = manifest.interface.clone();
+    catalog.keywords = manifest.keywords.clone();
+    catalog.has_ui = !manifest.ui.is_empty();
 }
 
 pub(super) async fn download_plugin_artifact(
@@ -361,6 +398,26 @@ pub(super) async fn download_plugin_artifact(
     Ok(response)
 }
 
+pub(super) async fn download_plugin_artifact_internal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(artifact_sha256): Path<String>,
+) -> Result<Response, ApiError> {
+    let identity =
+        require_local_connector_internal_request(&state, &headers, PLUGIN_INSTALL_MANAGE_SCOPE)?;
+    let mut audit = PluginManagementInternalAuditGuard::new(
+        &identity,
+        None,
+        "plugin_artifact",
+        artifact_sha256.as_str(),
+        "download",
+    );
+    audit.resource_name(Some(artifact_sha256.as_str()));
+    let response = download_plugin_artifact(State(state), Path(artifact_sha256)).await?;
+    audit.succeeded();
+    Ok(response)
+}
+
 fn persist_and_analyze_package(
     state: &AppState,
     package_bytes: Vec<u8>,
@@ -386,6 +443,7 @@ fn persist_and_analyze_package(
         artifact_ref: artifact_ref.clone(),
         npm_package,
         normalized_manifest: parsed.manifest.clone(),
+        skill_snapshots: parsed.skill_snapshots.clone(),
     };
     write_artifact_atomically(
         artifact_package_path(state, artifact_sha256.as_str()).as_path(),
@@ -407,6 +465,7 @@ fn persist_and_analyze_package(
         package_bins: parsed.package_bins,
         has_ui: !parsed.manifest.ui.is_empty(),
         components: plugin_component_descriptors(&parsed.manifest),
+        skill_snapshots: parsed.skill_snapshots,
         manifest: parsed.manifest,
     })
 }
@@ -551,8 +610,270 @@ fn parse_npm_package(
         package_name: package.name.trim().to_string(),
         package_version: package.version.trim().to_string(),
         package_bins: package_bins.into_iter().map(|item| item.name).collect(),
+        skill_snapshots: analyze_packaged_skills(bytes, &manifest)?,
         manifest,
     })
+}
+
+#[derive(Debug)]
+struct PackagedSkillFiles {
+    collection_path: String,
+    skill_document: Option<Vec<u8>>,
+    resources: BTreeMap<String, Vec<u8>>,
+    total_resource_bytes: u64,
+}
+
+fn analyze_packaged_skills(
+    bytes: &[u8],
+    manifest: &PluginManifest,
+) -> Result<Vec<PluginSkillComponentSnapshot>, ApiError> {
+    if manifest.skills.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut skill_files = BTreeMap::new();
+    for skill in &manifest.skills {
+        let normalized = normalize_plugin_relative_path(skill.path.as_str()).map_err(|error| {
+            ApiError::bad_request(format!("Plugin Skill path is invalid: {error}"))
+        })?;
+        let collection_path = normalized.trim_start_matches("./").trim_end_matches('/');
+        if skill_files.keys().any(|existing: &String| {
+            collection_path.starts_with(format!("{existing}/").as_str())
+                || existing.starts_with(format!("{collection_path}/").as_str())
+        }) {
+            return Err(ApiError::bad_request(
+                "Plugin Skill directories must not contain one another",
+            ));
+        }
+        if skill_files
+            .insert(
+                collection_path.to_string(),
+                PackagedSkillFiles {
+                    collection_path: collection_path.to_string(),
+                    skill_document: None,
+                    resources: BTreeMap::new(),
+                    total_resource_bytes: 0,
+                },
+            )
+            .is_some()
+        {
+            return Err(ApiError::bad_request(
+                "Plugin Manifest contains a duplicate Skill directory",
+            ));
+        }
+    }
+
+    let decoder = GzDecoder::new(Cursor::new(bytes));
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive.entries().map_err(|error| {
+        ApiError::bad_request(format!("read npm package archive failed: {error}"))
+    })? {
+        let mut entry = entry.map_err(|error| {
+            ApiError::bad_request(format!("read npm package entry failed: {error}"))
+        })?;
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        let path = entry
+            .path()
+            .map_err(|error| {
+                ApiError::bad_request(format!("read npm package path failed: {error}"))
+            })?
+            .into_owned();
+        validate_archive_path(path.as_path())?;
+        let path_text = path.to_string_lossy().into_owned();
+        let Some(package_relative_path) = path_text.strip_prefix("package/") else {
+            continue;
+        };
+        let Some((_, files)) = skill_files.iter_mut().find(|(collection_path, _)| {
+            package_relative_path == format!("{collection_path}/SKILL.md")
+                || package_relative_path.starts_with(format!("{collection_path}/").as_str())
+        }) else {
+            continue;
+        };
+        let relative_path = package_relative_path
+            .strip_prefix(format!("{}/", files.collection_path).as_str())
+            .expect("matched Skill collection prefix");
+        let size = entry.size();
+        if relative_path == "SKILL.md" {
+            if size == 0 || size > MAX_SKILL_INSTRUCTIONS_BYTES {
+                return Err(ApiError::bad_request(format!(
+                    "Plugin Skill {}/SKILL.md must contain 1-{MAX_SKILL_INSTRUCTIONS_BYTES} bytes",
+                    files.collection_path
+                )));
+            }
+            let mut content = Vec::with_capacity(size as usize);
+            entry.read_to_end(&mut content).map_err(|error| {
+                ApiError::bad_request(format!("read Plugin Skill instructions failed: {error}"))
+            })?;
+            if files.skill_document.replace(content).is_some() {
+                return Err(ApiError::bad_request(format!(
+                    "Plugin Skill {} contains duplicate SKILL.md entries",
+                    files.collection_path
+                )));
+            }
+            continue;
+        }
+        if size == 0 || size > MAX_SKILL_RESOURCE_BYTES {
+            return Err(ApiError::bad_request(format!(
+                "Plugin Skill resource {}/{} must contain 1-{MAX_SKILL_RESOURCE_BYTES} bytes",
+                files.collection_path, relative_path
+            )));
+        }
+        if files.resources.len() >= MAX_SKILL_RESOURCE_COUNT {
+            return Err(ApiError::bad_request(format!(
+                "Plugin Skill {} contains too many resources",
+                files.collection_path
+            )));
+        }
+        files.total_resource_bytes = files.total_resource_bytes.saturating_add(size);
+        if files.total_resource_bytes > MAX_SKILL_TOTAL_RESOURCE_BYTES {
+            return Err(ApiError::bad_request(format!(
+                "Plugin Skill {} resources exceed their total size limit",
+                files.collection_path
+            )));
+        }
+        let mut content = Vec::with_capacity(size as usize);
+        entry.read_to_end(&mut content).map_err(|error| {
+            ApiError::bad_request(format!("read Plugin Skill resource failed: {error}"))
+        })?;
+        if files
+            .resources
+            .insert(relative_path.to_string(), content)
+            .is_some()
+        {
+            return Err(ApiError::bad_request(format!(
+                "Plugin Skill {} contains duplicate resource {}",
+                files.collection_path, relative_path
+            )));
+        }
+    }
+
+    let mut snapshots = Vec::with_capacity(skill_files.len());
+    for (_, files) in skill_files {
+        let skill_document = files.skill_document.ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "Plugin Skill {} is missing SKILL.md",
+                files.collection_path
+            ))
+        })?;
+        let skill_text = std::str::from_utf8(skill_document.as_slice()).map_err(|_| {
+            ApiError::bad_request(format!(
+                "Plugin Skill {}/SKILL.md must use UTF-8",
+                files.collection_path
+            ))
+        })?;
+        let expected_name = files
+            .collection_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(files.collection_path.as_str());
+        let parsed = parse_skill_document(skill_text, Some(expected_name))
+            .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        let resources = files
+            .resources
+            .into_iter()
+            .map(|(relative_path, content)| RuntimeSkillResourceDescriptor {
+                kind: classify_skill_resource(relative_path.as_str()),
+                relative_path,
+                size_bytes: content.len() as u64,
+                sha256: hex::encode(Sha256::digest(content.as_slice())),
+            })
+            .collect::<Vec<_>>();
+        let instructions_sha256 = hex::encode(Sha256::digest(skill_document.as_slice()));
+        let resource_manifest_sha256 = skill_resource_manifest_sha256(resources.as_slice())
+            .map_err(|error| {
+                ApiError::internal(format!(
+                    "hash Plugin Skill resource manifest failed: {error}"
+                ))
+            })?;
+        let relative_skill_path = format!("{}/SKILL.md", files.collection_path);
+        let snapshot_sha256 = plugin_skill_snapshot_sha256(
+            parsed.metadata.name.as_str(),
+            relative_skill_path.as_str(),
+            &parsed.metadata,
+            instructions_sha256.as_str(),
+            resource_manifest_sha256.as_str(),
+        )
+        .map_err(|error| ApiError::internal(format!("hash Plugin Skill failed: {error}")))?;
+        snapshots.push(PluginSkillComponentSnapshot {
+            protocol_version: SKILL_RUNTIME_PROTOCOL_VERSION,
+            skill_id: parsed.metadata.name.clone(),
+            relative_skill_path,
+            metadata: parsed.metadata,
+            instructions_sha256,
+            resource_manifest_sha256,
+            resources,
+            snapshot_sha256,
+        });
+    }
+    snapshots.sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
+    validate_packaged_skill_dependencies(snapshots.as_slice())?;
+    Ok(snapshots)
+}
+
+fn classify_skill_resource(relative_path: &str) -> SkillResourceKind {
+    let first = relative_path.split('/').next().unwrap_or_default();
+    match first {
+        "references" => SkillResourceKind::Reference,
+        "scripts" => SkillResourceKind::Script,
+        "assets" => SkillResourceKind::Asset,
+        _ if relative_path.ends_with(".json") || relative_path.ends_with(".schema.json") => {
+            SkillResourceKind::Schema
+        }
+        _ => SkillResourceKind::Other,
+    }
+}
+
+fn validate_packaged_skill_dependencies(
+    snapshots: &[PluginSkillComponentSnapshot],
+) -> Result<(), ApiError> {
+    let by_name = snapshots
+        .iter()
+        .map(|snapshot| (snapshot.skill_id.as_str(), snapshot))
+        .collect::<BTreeMap<_, _>>();
+    for snapshot in snapshots {
+        for dependency in snapshot
+            .metadata
+            .required_skills
+            .iter()
+            .chain(snapshot.metadata.related_skills.iter())
+        {
+            if !by_name.contains_key(dependency.as_str()) {
+                return Err(ApiError::bad_request(format!(
+                    "Plugin Skill {} references missing Skill {}",
+                    snapshot.skill_id, dependency
+                )));
+            }
+        }
+    }
+    fn visit<'a>(
+        name: &'a str,
+        by_name: &BTreeMap<&'a str, &'a PluginSkillComponentSnapshot>,
+        visiting: &mut BTreeSet<&'a str>,
+        visited: &mut BTreeSet<&'a str>,
+    ) -> Result<(), ApiError> {
+        if visited.contains(name) {
+            return Ok(());
+        }
+        if !visiting.insert(name) {
+            return Err(ApiError::bad_request(format!(
+                "Plugin Skill required dependency graph contains a cycle at {name}"
+            )));
+        }
+        let snapshot = by_name.get(name).expect("validated Skill dependency");
+        for dependency in &snapshot.metadata.required_skills {
+            visit(dependency.as_str(), by_name, visiting, visited)?;
+        }
+        visiting.remove(name);
+        visited.insert(name);
+        Ok(())
+    }
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    for name in by_name.keys().copied() {
+        visit(name, &by_name, &mut visiting, &mut visited)?;
+    }
+    Ok(())
 }
 
 fn package_bins(value: &Value, package_name: &str) -> Result<Vec<PackageBin>, ApiError> {
@@ -907,6 +1228,14 @@ mod tests {
     }
 
     fn package_fixture_with_bin_file(manifest: &str, include_bin_file: bool) -> Vec<u8> {
+        package_fixture_with_files(manifest, include_bin_file, &[])
+    }
+
+    fn package_fixture_with_files(
+        manifest: &str,
+        include_bin_file: bool,
+        files: &[(&str, &[u8])],
+    ) -> Vec<u8> {
         let mut encoded = Vec::new();
         {
             let gzip = GzEncoder::new(&mut encoded, Compression::default());
@@ -923,6 +1252,9 @@ mod tests {
                     "package/dist/cli.js",
                     b"#!/usr/bin/env node\n",
                 );
+            }
+            for (path, bytes) in files {
+                append(&mut archive, path, bytes);
             }
             archive
                 .into_inner()
@@ -959,6 +1291,105 @@ mod tests {
         assert_eq!(parsed.package_name, "demo-mcp");
         assert_eq!(parsed.package_bins, vec!["demo-mcp"]);
         assert_eq!(parsed.manifest.mcp_servers.len(), 1);
+    }
+
+    #[test]
+    fn uploaded_package_analyzes_each_declared_skill_snapshot() {
+        let manifest = r#"{
+          "schemaVersion":3,
+          "name":"demo-mcp",
+          "version":"1.0.0",
+          "description":"Demo MCP",
+          "author":{"name":"Demo"},
+          "skills":["./skills/demo-router","./skills/demo-leaf"],
+          "mcpServers":{"demo":{"type":"stdio","bin":"demo-mcp"}},
+          "interface":{"displayName":"Demo MCP","shortDescription":"Demo","longDescription":"Demo MCP","developerName":"Demo","category":"Developer Tools"},
+          "permissions":[{"permission":"process.spawn","required":true,"reason":"Start MCP","components":["demo"]}]
+        }"#;
+        let router = br#"---
+name: demo-router
+description: Route demo work.
+metadata:
+  chatos.role: router
+  chatos.required-skills: demo-leaf
+---
+# Demo router
+Activate the leaf when needed.
+"#;
+        let leaf = br#"---
+name: demo-leaf
+description: Complete one focused demo operation.
+---
+# Demo leaf
+Read the example only when it is needed.
+"#;
+        let package = package_fixture_with_files(
+            manifest,
+            true,
+            &[
+                ("package/skills/demo-router/SKILL.md", router),
+                ("package/skills/demo-leaf/SKILL.md", leaf),
+                (
+                    "package/skills/demo-leaf/references/example.md",
+                    b"# Example\n",
+                ),
+            ],
+        );
+        let parsed = parse_npm_package(package.as_slice(), None).expect("parse");
+        assert_eq!(parsed.skill_snapshots.len(), 2);
+        let router = parsed
+            .skill_snapshots
+            .iter()
+            .find(|snapshot| snapshot.skill_id == "demo-router")
+            .expect("router");
+        assert_eq!(
+            router.metadata.role,
+            chatos_plugin_management_sdk::SkillRole::Router
+        );
+        assert_eq!(router.metadata.required_skills, ["demo-leaf"]);
+        let leaf = parsed
+            .skill_snapshots
+            .iter()
+            .find(|snapshot| snapshot.skill_id == "demo-leaf")
+            .expect("leaf");
+        assert_eq!(leaf.resources.len(), 1);
+        assert_eq!(leaf.resources[0].kind, SkillResourceKind::Reference);
+        assert_eq!(leaf.instructions_sha256.len(), 64);
+        assert_eq!(leaf.resource_manifest_sha256.len(), 64);
+        assert_eq!(leaf.snapshot_sha256.len(), 64);
+    }
+
+    #[test]
+    fn uploaded_package_rejects_missing_required_skill_dependency() {
+        let manifest = r#"{
+          "schemaVersion":3,
+          "name":"demo-mcp",
+          "version":"1.0.0",
+          "description":"Demo MCP",
+          "author":{"name":"Demo"},
+          "skills":["./skills/demo-router"],
+          "mcpServers":{"demo":{"type":"stdio","bin":"demo-mcp"}},
+          "interface":{"displayName":"Demo MCP","shortDescription":"Demo","longDescription":"Demo MCP","developerName":"Demo","category":"Developer Tools"},
+          "permissions":[{"permission":"process.spawn","required":true,"reason":"Start MCP","components":["demo"]}]
+        }"#;
+        let router = br#"---
+name: demo-router
+description: Route demo work.
+metadata:
+  chatos.required-skills: missing-leaf
+---
+# Demo router
+Activate the leaf.
+"#;
+        let package = package_fixture_with_files(
+            manifest,
+            true,
+            &[("package/skills/demo-router/SKILL.md", router)],
+        );
+        let error = parse_npm_package(package.as_slice(), None).unwrap_err();
+        assert!(error
+            .message
+            .contains("references missing Skill missing-leaf"));
     }
 
     #[test]
@@ -1049,5 +1480,91 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.message.contains("missing from the npm package"));
+    }
+
+    #[test]
+    fn existing_release_refresh_preserves_catalog_governance_metadata() {
+        let old_manifest = parse_plugin_manifest(r#"{
+          "schemaVersion":3,
+          "name":"demo-mcp",
+          "version":"1.0.0",
+          "description":"Old description",
+          "author":{"name":"Old Publisher"},
+          "mcpServers":{"demo":{"type":"stdio","bin":"demo-mcp"}},
+          "permissions":[{"permission":"process.spawn","required":true,"reason":"Start MCP","components":["demo"]}],
+          "interface":{"displayName":"Old Name","shortDescription":"Old","longDescription":"Old description","developerName":"Old Publisher","category":"Developer Tools"}
+        }"#).expect("old manifest");
+        let new_manifest = parse_plugin_manifest(r#"{
+          "schemaVersion":3,
+          "name":"demo-mcp",
+          "version":"1.1.0",
+          "description":"New description",
+          "author":{"name":"New Publisher"},
+          "keywords":["browser","automation"],
+          "mcpServers":{"demo":{"type":"stdio","bin":"demo-mcp"}},
+          "permissions":[{"permission":"process.spawn","required":true,"reason":"Start MCP","components":["demo"]}],
+          "interface":{"displayName":"New Name","shortDescription":"New","longDescription":"New description","developerName":"New Publisher","category":"Productivity"}
+        }"#).expect("new manifest");
+        let mut catalog = PluginCatalogRecord {
+            id: "plugin-id".to_string(),
+            plugin_key: "demo-mcp@marketplace".to_string(),
+            marketplace_id: "marketplace".to_string(),
+            owner_user_id: None,
+            name: "demo-mcp".to_string(),
+            display_name: old_manifest.interface.display_name.clone(),
+            description: old_manifest.description.clone(),
+            publisher: PluginPublisher {
+                id: "publisher".to_string(),
+                name: "Old Publisher".to_string(),
+                website: None,
+                verified: true,
+            },
+            interface: old_manifest.interface,
+            keywords: Vec::new(),
+            visibility: "private".to_string(),
+            featured: true,
+            enabled: true,
+            has_ui: false,
+            latest_release_id: "release-id".to_string(),
+            license: PluginLicenseMetadata {
+                license_id: "Apache-2.0".to_string(),
+                license_url: Some("https://www.apache.org/licenses/LICENSE-2.0".to_string()),
+                redistributable: true,
+                reviewed_at: Some("2026-09-03T00:00:00Z".to_string()),
+            },
+            created_at: "2026-09-03T00:00:00Z".to_string(),
+            updated_at: "2026-09-03T00:00:00Z".to_string(),
+        };
+        let governance_before = (
+            catalog.visibility.clone(),
+            catalog.featured,
+            catalog.license.clone(),
+            catalog.latest_release_id.clone(),
+        );
+
+        apply_uploaded_presentation_metadata(
+            &mut catalog,
+            &new_manifest,
+            PluginPublisher {
+                id: "publisher".to_string(),
+                name: "New Publisher".to_string(),
+                website: Some("https://example.com".to_string()),
+                verified: true,
+            },
+        );
+
+        assert_eq!(catalog.display_name, "New Name");
+        assert_eq!(catalog.description, "New description");
+        assert_eq!(catalog.publisher.name, "New Publisher");
+        assert_eq!(catalog.keywords, vec!["automation", "browser"]);
+        assert_eq!(
+            (
+                catalog.visibility,
+                catalog.featured,
+                catalog.license,
+                catalog.latest_release_id,
+            ),
+            governance_before,
+        );
     }
 }

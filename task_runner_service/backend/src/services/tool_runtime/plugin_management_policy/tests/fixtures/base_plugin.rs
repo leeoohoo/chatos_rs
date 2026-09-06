@@ -186,6 +186,7 @@ pub(in super::super) fn resolved_plugin(required: bool) -> ResolvedPlugin {
                 release_id: release.id.clone(),
                 component,
                 content_sha256: "c".repeat(64),
+                skill: None,
             })
             .collect(),
         auth_connection_ids: vec!["oauth-browser-account".to_string()],

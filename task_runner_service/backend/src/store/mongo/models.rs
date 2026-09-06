@@ -42,6 +42,7 @@ impl MongoStore {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::store) async fn save_model_config(
         &self,
         model: ModelConfigRecord,
@@ -54,11 +55,6 @@ impl MongoStore {
         &self,
     ) -> Result<Option<RuntimeSettingsRecord>, String> {
         self.find_by_id(&self.runtime_settings, "system").await
-    }
-
-    pub(in crate::store) async fn delete_model_config(&self, id: &str) -> Result<bool, String> {
-        let _ = id;
-        Err("model configurations are managed exclusively by User Service".to_string())
     }
 
     async fn request_user_service_model_catalog(
@@ -138,72 +134,5 @@ impl MongoStore {
         self.upsert_by_id(&self.task_projects, &project.id, &project)
             .await?;
         Ok(project)
-    }
-
-    pub(in crate::store) async fn list_model_config_usage(
-        &self,
-    ) -> Result<Vec<ModelConfigUsageRecord>, String> {
-        let task_counts = self
-            .aggregate_documents(
-                &self.tasks,
-                vec![
-                    doc! {
-                        "$match": {
-                            "default_model_config_id": {
-                                "$exists": true,
-                                "$ne": Bson::Null,
-                            }
-                        }
-                    },
-                    doc! {
-                        "$group": {
-                            "_id": "$default_model_config_id",
-                            "task_count": { "$sum": 1_i32 },
-                        }
-                    },
-                ],
-            )
-            .await?;
-        let run_counts = self
-            .aggregate_documents(
-                &self.runs,
-                vec![doc! {
-                    "$group": {
-                        "_id": "$model_config_id",
-                        "run_count": { "$sum": 1_i32 },
-                    }
-                }],
-            )
-            .await?;
-
-        let mut usage = BTreeMap::<String, ModelConfigUsageRecord>::new();
-        for row in task_counts {
-            let Some(model_config_id) = bson_string_field(&row, "_id") else {
-                continue;
-            };
-            let entry = usage
-                .entry(model_config_id.clone())
-                .or_insert(ModelConfigUsageRecord {
-                    model_config_id,
-                    task_count: 0,
-                    run_count: 0,
-                });
-            entry.task_count = bson_usize_field(&row, "task_count").unwrap_or(0);
-        }
-        for row in run_counts {
-            let Some(model_config_id) = bson_string_field(&row, "_id") else {
-                continue;
-            };
-            let entry = usage
-                .entry(model_config_id.clone())
-                .or_insert(ModelConfigUsageRecord {
-                    model_config_id,
-                    task_count: 0,
-                    run_count: 0,
-                });
-            entry.run_count = bson_usize_field(&row, "run_count").unwrap_or(0);
-        }
-
-        Ok(usage.into_values().collect())
     }
 }

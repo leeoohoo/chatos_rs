@@ -12,7 +12,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Form, Popconfirm, Space, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 
 import { api } from '../api/client';
 import { CompactId, DateTimeCell } from '../components/DisplayCells';
@@ -20,13 +20,14 @@ import { EnabledTag, RuntimeKindTag, VisibilityTag } from '../components/Tags';
 import { useI18n } from '../i18n/I18nProvider';
 import { mcpDisplayName } from '../i18n/labels';
 import type { CurrentUser, McpProviderSkill, McpRecord, RuntimeKind } from '../types';
-import { McpCatalogDialogs } from './mcpCatalog/McpCatalogDialogs';
 import {
   adminRuntimeKinds,
   buildMcpPayload,
   isSystemManagedMcp,
 } from './mcpCatalog/support';
 import { jsonText } from './formUtils';
+
+const McpCatalogDialogs = lazy(() => import('./mcpCatalog/McpCatalogDialogs').then((module) => ({ default: module.McpCatalogDialogs })));
 
 interface McpCatalogPageProps {
   user: CurrentUser;
@@ -51,6 +52,8 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
   const [optimizedInstructions, setOptimizedInstructions] = useState('');
   const [optimizationThinking, setOptimizationThinking] = useState('');
   const [optimizeStreaming, setOptimizeStreaming] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12);
   const optimizeAbortRef = useRef<AbortController | null>(null);
   const isAdmin = user.role === 'super_admin';
   const runtimeKinds = adminRuntimeKinds;
@@ -58,8 +61,13 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
   const editingSystemManaged = editing ? isSystemManagedMcp(editing) : false;
 
   const mcpsQuery = useQuery({
-    queryKey: ['plugin-management', 'mcps', isAdmin],
-    queryFn: () => api.listMcps({ include_system: isAdmin, limit: 500 }),
+    queryKey: ['plugin-management', 'mcps', isAdmin, page, pageSize],
+    queryFn: () => api.listMcps({
+      include_system: isAdmin,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+    }),
+    placeholderData: (previousData) => previousData,
   });
 
   const descriptorQuery = useQuery({
@@ -364,9 +372,18 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
         loading={mcpsQuery.isLoading}
         tableLayout="fixed"
         scroll={{ x: 1400 }}
-        pagination={{ pageSize: 12 }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: mcpsQuery.data?.total || 0,
+          showSizeChanger: true,
+          onChange: (nextPage, nextPageSize) => {
+            setPage(nextPageSize === pageSize ? nextPage : 1);
+            setPageSize(nextPageSize);
+          },
+        }}
       />
-      <McpCatalogDialogs
+      {modalOpen || descriptorModal || optimizeTarget ? <Suspense fallback={null}><McpCatalogDialogs
         form={form}
         optimizeForm={optimizeForm}
         editing={editing}
@@ -396,7 +413,7 @@ export function McpCatalogPage({ user }: McpCatalogPageProps) {
         onStream={streamProviderSkillOptimization}
         onSaveOptimized={() => saveOptimizedSkillMutation.mutate()}
         saveOptimizedPending={saveOptimizedSkillMutation.isPending}
-      />
+      /></Suspense> : null}
     </div>
   );
 }

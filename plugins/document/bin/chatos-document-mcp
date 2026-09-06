@@ -1,5 +1,17 @@
 #!/usr/bin/env node
 
+import { format } from 'node:util';
+
+if (process.argv[2] === 'mcp') {
+  const writeDiagnostic = (...values) => {
+    process.stderr.write(`${format(...values)}\n`);
+  };
+  console.log = writeDiagnostic;
+  console.info = writeDiagnostic;
+  console.warn = writeDiagnostic;
+  console.debug = writeDiagnostic;
+}
+
 import('../dist/server.mjs').catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`Failed to start Document MCP: ${message}\n`);

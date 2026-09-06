@@ -182,7 +182,11 @@ impl MongoStore {
     pub(in crate::store) async fn list_ask_user_prompt_task_counts(
         &self,
         status: Option<AskUserPromptStatus>,
+        task_ids: Option<&[String]>,
     ) -> Result<Vec<AskUserPromptTaskCountRecord>, String> {
+        if task_ids.is_some_and(|ids| ids.is_empty()) {
+            return Ok(Vec::new());
+        }
         let mut match_filter = doc! {
             "task_id": {
                 "$exists": true,
@@ -191,6 +195,9 @@ impl MongoStore {
         };
         if let Some(status) = status {
             match_filter.insert("status", ask_user_prompt_status_to_str(status));
+        }
+        if let Some(task_ids) = task_ids {
+            match_filter.insert("task_id", doc! { "$in": task_ids });
         }
         let rows = self
             .aggregate_documents(

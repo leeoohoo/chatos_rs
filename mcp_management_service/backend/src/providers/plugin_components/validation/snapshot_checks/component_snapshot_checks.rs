@@ -4,67 +4,76 @@
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use chatos_plugin_management_sdk::{plugin_agent_snapshot_sha256, plugin_command_snapshot_sha256};
+use chatos_plugin_management_sdk::{
+    plugin_agent_snapshot_sha256, plugin_command_snapshot_sha256, PluginSkillComponentSnapshot,
+};
 
 use crate::providers::ProviderCallError;
 use crate::runtime::PluginToolComponentRuntimeBinding;
 
 use super::super::value_helpers::{
-    component_metadata_string_array, component_metadata_text, is_lower_sha256,
-    normalized_value_text, required_value_text, sha256_text, value_string_array,
+    component_metadata_string_array, component_metadata_text, normalized_value_text,
+    required_value_text, sha256_text, value_string_array,
 };
 
-pub(in crate::providers::plugin_components) fn validate_local_skill_snapshot(
+pub(in crate::providers::plugin_components) fn validate_local_skill_catalog(
     immutable: &PluginToolComponentRuntimeBinding,
     skill: &Value,
 ) -> Result<(), ProviderCallError> {
-    for (field, expected) in [
-        ("plugin_id", immutable.plugin_id.as_str()),
-        ("release_id", immutable.release_id.as_str()),
-        ("version", immutable.version.as_str()),
-        ("artifact_sha256", immutable.artifact_sha256.as_str()),
-        ("component_key", immutable.component.component_key.as_str()),
-    ] {
-        if skill.get(field).and_then(Value::as_str) != Some(expected) {
-            return Err(ProviderCallError::invalid_response(format!(
-                "Plugin Skill response {field} does not match its immutable binding"
-            )));
-        }
-    }
-    let skill_key = skill
-        .get("skill_key")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ProviderCallError::invalid_response("Plugin Skill response is missing skill_key")
+    let expected = immutable.skill_snapshot.as_ref().ok_or_else(|| {
+        ProviderCallError::provider_unavailable("Plugin Skill v2 snapshot is missing")
+    })?;
+    let actual: PluginSkillComponentSnapshot =
+        serde_json::from_value(skill.clone()).map_err(|error| {
+            ProviderCallError::invalid_response(format!(
+                "Plugin Skill v2 catalog is invalid: {error}"
+            ))
         })?;
-    if skill_key != immutable.component.component_key {
+    if &actual != expected || skill.get("instructions").is_some() {
         return Err(ProviderCallError::invalid_response(
-            "Plugin Skill response skill_key does not match its immutable component",
-        ));
-    }
-    let instructions = skill
-        .get("instructions")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ProviderCallError::invalid_response("Plugin Skill response is missing instructions")
-        })?;
-    let expected_instructions_sha256 = hex::encode(Sha256::digest(instructions.as_bytes()));
-    if skill.get("instructions_sha256").and_then(Value::as_str)
-        != Some(expected_instructions_sha256.as_str())
-        || !skill
-            .get("snapshot_sha256")
-            .and_then(Value::as_str)
-            .is_some_and(is_lower_sha256)
-    {
-        return Err(ProviderCallError::invalid_response(
-            "Plugin Skill response hashes are invalid",
+            "Plugin Skill v2 catalog does not match its immutable Release snapshot",
         ));
     }
     Ok(())
+}
+
+pub(in crate::providers::plugin_components) fn validate_local_skill_activation(
+    immutable: &PluginToolComponentRuntimeBinding,
+    activation: &Value,
+) -> Result<String, ProviderCallError> {
+    let expected = immutable.skill_snapshot.as_ref().ok_or_else(|| {
+        ProviderCallError::provider_unavailable("Plugin Skill v2 snapshot is missing")
+    })?;
+    if activation.get("skill_id").and_then(Value::as_str) != Some(expected.skill_id.as_str())
+        || activation
+            .get("instructions_sha256")
+            .and_then(Value::as_str)
+            != Some(expected.instructions_sha256.as_str())
+        || activation
+            .get("resource_manifest_sha256")
+            .and_then(Value::as_str)
+            != Some(expected.resource_manifest_sha256.as_str())
+        || activation.get("snapshot_sha256").and_then(Value::as_str)
+            != Some(expected.snapshot_sha256.as_str())
+        || activation.get("resources") != Some(&serde_json::json!(expected.resources))
+    {
+        return Err(ProviderCallError::invalid_response(
+            "Plugin Skill activation does not match its immutable Release snapshot",
+        ));
+    }
+    let instructions = activation
+        .get("instructions")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            ProviderCallError::invalid_response("Plugin Skill activation is missing instructions")
+        })?;
+    if hex::encode(Sha256::digest(instructions.as_bytes())) != expected.instructions_sha256 {
+        return Err(ProviderCallError::invalid_response(
+            "Plugin Skill activation instructions hash is invalid",
+        ));
+    }
+    Ok(instructions.to_string())
 }
 
 pub(in crate::providers::plugin_components) fn validate_command_snapshot(

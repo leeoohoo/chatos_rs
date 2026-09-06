@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
 const background = await readFile(path.join(root, 'src', 'background.js'), 'utf8');
 const popup = await readFile(path.join(root, 'popup', 'popup.html'), 'utf8');
+const onboarding = await readFile(path.join(root, 'onboarding', 'onboarding.html'), 'utf8');
 
 test('manifest has the minimal explicit extension permissions', () => {
   assert.equal(manifest.manifest_version, 3);
@@ -41,4 +42,13 @@ test('popup includes complete first-run and recovery guidance', () => {
   assert.match(popup, /连接不上怎么办/);
   assert.match(background, /AUTO_RECONNECT_DELAY_MS = 2000/);
   assert.match(background, /paired: pairingEnabled/);
+});
+
+test('new users are proactively routed to a first-run onboarding page', () => {
+  assert.match(background, /runtime\.onInstalled/);
+  assert.match(background, /openOnboardingIfNeeded/);
+  assert.match(background, /onboarding_completed/);
+  assert.match(popup, /打开连接引导/);
+  assert.match(onboarding, /连接并继续/);
+  assert.match(onboarding, /每台电脑/);
 });

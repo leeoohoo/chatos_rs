@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>连接 Chatos Browser Bridge</title>
+    <link rel="stylesheet" href="onboarding.css">
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="brand" aria-hidden="true">C</div>
+        <div>
+          <p class="eyebrow">Chatos Browser Bridge</p>
+          <h1>让 Chatos 使用你的 Google Chrome</h1>
+          <p class="lead">只需在每台电脑、每个 Chrome 用户配置中授权一次。之后任务会自动连接，并把新页面放进任务标签组。</p>
+        </div>
+      </section>
+
+      <section class="card status-card" aria-live="polite">
+        <span id="status-dot" class="status-dot"></span>
+        <div>
+          <h2 id="status-title">正在检查连接状态…</h2>
+          <p id="status-detail">请保持本页面打开。</p>
+        </div>
+      </section>
+
+      <section class="steps" aria-label="连接步骤">
+        <article class="card">
+          <span class="step-number">1</span>
+          <h2>在 Chatos 发起浏览器任务</h2>
+          <p>Browser MCP 会在本机启动安全 Bridge，不会把浏览器控制端口暴露到公网。</p>
+        </article>
+        <article class="card">
+          <span class="step-number">2</span>
+          <h2>连接并授权本机</h2>
+          <p>点击下方按钮完成一次性授权。其他用户仍需在自己的电脑上分别授权。</p>
+        </article>
+        <article class="card">
+          <span class="step-number">3</span>
+          <h2>返回 Chatos</h2>
+          <p>连接成功后，新建页面会自动进入以任务名称命名的 Chrome 标签组。</p>
+        </article>
+      </section>
+
+      <section class="actions">
+        <button id="connect" type="button">连接并继续</button>
+        <button id="close" class="secondary" type="button" hidden>关闭引导页</button>
+      </section>
+      <p id="error" class="error" role="alert" hidden></p>
+      <p class="privacy">扩展只连接本机 Native Messaging Host 和 127.0.0.1 回环地址；只有任务创建的标签页和你主动共享的标签页可被控制。</p>
+    </main>
+    <script type="module" src="onboarding.js"></script>
+  </body>
+</html>

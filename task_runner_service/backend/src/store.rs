@@ -21,12 +21,12 @@ use crate::config::{AppConfig, StoreMode};
 use crate::models::{
     now_rfc3339, AskUserPromptPruneResult, AskUserPromptRecord, AskUserPromptStatus,
     AskUserPromptTaskCountRecord, ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus,
-    ModelConfigRecord, ModelConfigUsageRecord, PaginatedResponse, PromptListFilters,
-    RunEventPruneResult, RunExecutionStats, RunListFilters, RunSummaryRecord,
-    RuntimeSettingsRecord, TaskListFilters, TaskPrerequisiteRecord, TaskProjectRecord,
-    TaskProjectScopeFilter, TaskRecord, TaskRunAttemptRecord, TaskRunAttemptStatus,
-    TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig, TaskScheduleMode,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, UserRecord,
+    ModelConfigRecord, PaginatedResponse, PromptListFilters, RunEventPruneResult,
+    RunExecutionStats, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
+    TaskPrerequisiteRecord, TaskProjectRecord, TaskProjectScopeFilter, TaskRecord,
+    TaskRunAttemptRecord, TaskRunAttemptStatus, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
+    TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
+    UserRecord,
 };
 
 mod app_models;

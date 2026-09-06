@@ -8,9 +8,10 @@ use super::{
     PluginLocalProvider, PluginRouteDispatcher, ProjectServiceProvider, ProviderDispatcher,
     ProviderRuntimeConfig, TaskRunnerProvider, TaskRunnerProviderConfig,
 };
+use std::sync::Arc;
 
 impl ProviderDispatcher {
-    pub fn new(
+    pub(crate) fn new(
         project_service_http: reqwest::Client,
         project_service_base_url: impl Into<String>,
         project_service_internal_secret: Option<String>,
@@ -21,6 +22,7 @@ impl ProviderDispatcher {
         local_connector_service_base_url: impl Into<String>,
         local_connector_internal_secret: Option<String>,
         runtime: ProviderRuntimeConfig,
+        skill_attestations: Arc<super::plugin_components::SkillActivationAttestationService>,
     ) -> Result<Self, String> {
         let local_connector_service_base_url = local_connector_service_base_url.into();
         let plugin_local = PluginLocalProvider::new(
@@ -29,6 +31,7 @@ impl ProviderDispatcher {
             runtime.local_connector_request_timeout,
             local_connector_internal_secret.clone(),
             runtime.response_limit_bytes,
+            skill_attestations.clone(),
         )?;
         let plugin_components = PluginComponentProvider::new(
             local_connector_http.clone(),
@@ -36,6 +39,7 @@ impl ProviderDispatcher {
             runtime.local_connector_request_timeout,
             local_connector_internal_secret.clone(),
             runtime.response_limit_bytes,
+            skill_attestations,
         )?;
         Ok(Self {
             local_connector: LocalConnectorProvider::new(
