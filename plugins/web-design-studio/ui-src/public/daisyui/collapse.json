@@ -1,0 +1,69 @@
+{
+  "slug": "collapse",
+  "title": "Collapse",
+  "description": "Collapse is used for showing and hiding content.",
+  "demos": [
+    {
+      "id": "collapse-1",
+      "label": "Collapse with focus",
+      "html": "<div tabindex=\"0\" class=\"collapse bg-base-100 border-base-300 border\">\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-2",
+      "label": "Collapse with checkbox",
+      "html": "<div class=\"collapse bg-base-100 border border-base-300\">\n  <input type=\"checkbox\" />\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-3",
+      "label": "Collapse with checkbox and close on click outside",
+      "html": "<div class=\"collapse bg-base-100 border border-base-300\">\n  <input id=\"collapse-1-toggle\" type=\"checkbox\" class=\"peer\" />\n  <label for=\"collapse-1-toggle\" class=\"fixed inset-0 hidden peer-checked:block\"></label>\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm z-1\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-4",
+      "label": "Collapse using details and summary tag",
+      "html": "<details class=\"collapse bg-base-100 border-base-300 border\">\n  <summary class=\"collapse-title font-semibold\">How do I create an account?</summary>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</details>"
+    },
+    {
+      "id": "collapse-5",
+      "label": "Without border and background color",
+      "html": "<div tabindex=\"0\" class=\"collapse\">\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-6",
+      "label": "With arrow icon",
+      "html": "<div tabindex=\"0\" class=\"collapse collapse-arrow bg-base-100 border-base-300 border\">\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-7",
+      "label": "With arrow plus/minus icon",
+      "html": "<div tabindex=\"0\" class=\"collapse collapse-plus bg-base-100 border-base-300 border\">\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-8",
+      "label": "Moving collapse icon to the start",
+      "html": "<div tabindex=\"0\" class=\"collapse collapse-arrow bg-base-100 border-base-300 border\">\n  <div class=\"collapse-title font-semibold after:start-5 after:end-auto pe-4 ps-12\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-9",
+      "label": "Force open",
+      "html": "<div tabindex=\"0\" class=\"collapse collapse-open bg-base-100 border-base-300 border\">\n  <div class=\"collapse-title font-semibold\">I have collapse-open class</div>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-10",
+      "label": "Force close",
+      "html": "<div tabindex=\"0\" class=\"collapse collapse-close bg-base-100 border-base-300 border\">\n  <div class=\"collapse-title font-semibold\">I have collapse-close class</div>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-11",
+      "label": "Custom colors for collapse that works with focus",
+      "html": "<div\n  tabindex=\"0\"\n  class=\"bg-primary text-primary-content focus:bg-secondary focus:text-secondary-content collapse\"\n>\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    },
+    {
+      "id": "collapse-12",
+      "label": "Custom colors for collapse that works with checkbox",
+      "html": "<div class=\"bg-base-100 border-base-300 collapse border\">\n  <input type=\"checkbox\" class=\"peer\" />\n  <div\n    class=\"collapse-title bg-primary text-primary-content peer-checked:bg-secondary peer-checked:text-secondary-content\"\n  >\n    How do I create an account?\n  </div>\n  <div\n    class=\"collapse-content bg-primary text-primary-content peer-checked:bg-secondary peer-checked:text-secondary-content\"\n  >\n    Click the \"Sign Up\" button in the top right corner and follow the registration process.\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/collapse/"
+}

@@ -1,0 +1,24 @@
+{
+  "slug": "breadcrumbs",
+  "title": "Breadcrumbs",
+  "description": "Breadcrumbs helps users to navigate through the website.",
+  "demos": [
+    {
+      "id": "breadcrumbs-1",
+      "label": "Breadcrumbs",
+      "html": "<div class=\"breadcrumbs text-sm\">\n  <ul>\n    <li><a>Home</a></li>\n    <li><a>Documents</a></li>\n    <li>Add Document</li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "breadcrumbs-2",
+      "label": "Breadcrumbs with icons",
+      "html": "<div class=\"breadcrumbs text-sm\">\n  <ul>\n    <li>\n      <a>\n        <svg\n          xmlns=\"http://www.w3.org/2000/svg\"\n          fill=\"none\"\n          viewBox=\"0 0 24 24\"\n          class=\"h-4 w-4 stroke-current\">\n          <path\n            stroke-linecap=\"round\"\n            stroke-linejoin=\"round\"\n            stroke-width=\"2\"\n            d=\"M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z\"></path>\n        </svg>\n        Home\n      </a>\n    </li>\n    <li>\n      <a>\n        <svg\n          xmlns=\"http://www.w3.org/2000/svg\"\n          fill=\"none\"\n          viewBox=\"0 0 24 24\"\n          class=\"h-4 w-4 stroke-current\">\n          <path\n            stroke-linecap=\"round\"\n            stroke-linejoin=\"round\"\n            stroke-width=\"2\"\n            d=\"M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z\"></path>\n        </svg>\n        Documents\n      </a>\n    </li>\n    <li>\n      <span class=\"inline-flex items-center gap-2\">\n        <svg\n          xmlns=\"http://www.w3.org/2000/svg\"\n          fill=\"none\"\n          viewBox=\"0 0 24 24\"\n          class=\"h-4 w-4 stroke-current\">\n          <path\n            stroke-linecap=\"round\"\n            stroke-linejoin=\"round\"\n            stroke-width=\"2\"\n            d=\"M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\"></path>\n        </svg>\n        Add Document\n      </span>\n    </li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "breadcrumbs-3",
+      "label": "Breadcrumbs with max-width",
+      "html": "<div class=\"breadcrumbs max-w-xs text-sm\">\n  <ul>\n    <li>Long text 1</li>\n    <li>Long text 2</li>\n    <li>Long text 3</li>\n    <li>Long text 4</li>\n    <li>Long text 5</li>\n  </ul>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/breadcrumbs/"
+}

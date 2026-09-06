@@ -1,0 +1,34 @@
+{
+  "slug": "text-rotate",
+  "title": "Text Rotate",
+  "description": "Text Rotate can show up to 6 lines of text, one at a time, with an infinite loop animation. Duration is 10 seconds by default. The animation will pause on hover.",
+  "demos": [
+    {
+      "id": "text-rotate-1",
+      "label": "Text Rotate",
+      "html": "<span class=\"text-rotate\">\n  <span>\n    <span>ONE</span>\n    <span>TWO</span>\n    <span>THREE</span>\n  </span>\n</span>"
+    },
+    {
+      "id": "text-rotate-2",
+      "label": "Rotating 6 words",
+      "html": "<span class=\"text-rotate text-7xl\">\n  <span class=\"justify-items-center\">\n    <span>DESIGN</span>\n    <span>DEVELOP</span>\n    <span>DEPLOY</span>\n    <span>SCALE</span>\n    <span>MAINTAIN</span>\n    <span>REPEAT</span>\n  </span>\n</span>"
+    },
+    {
+      "id": "text-rotate-3",
+      "label": "Rotating words in a sentence",
+      "html": "<span>\n  Providing AI Agents for \n  <span class=\"text-rotate\">\n    <span>\n      <span class=\"bg-teal-400 text-teal-800 px-2\">Designers</span>\n      <span class=\"bg-red-400 text-red-800 px-2\">Developers</span>\n      <span class=\"bg-blue-400 text-blue-800 px-2\">Managers</span>\n    </span>\n  </span>\n</span>"
+    },
+    {
+      "id": "text-rotate-4",
+      "label": "Rotating 3 words with custom duration",
+      "html": "<span class=\"text-rotate text-7xl duration-6000\">\n  <span class=\"justify-items-center\">\n  <span>BLAZING</span>\n  <span class=\"font-bold italic px-2\">FAST ▶︎▶︎</span>\n  </span>\n</span>"
+    },
+    {
+      "id": "text-rotate-5",
+      "label": "Custom line height",
+      "html": "<span class=\"text-rotate text-7xl leading-[2]\">\n  <span class=\"justify-items-center\">\n    <span>📐 DESIGN</span>\n    <span>⌨️ DEVELOP</span>\n    <span>🌎 DEPLOY</span>\n    <span>🌱 SCALE</span>\n    <span>🔧 MAINTAIN</span>\n    <span>♻️ REPEAT</span>\n  </span>\n</span>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/text-rotate/"
+}

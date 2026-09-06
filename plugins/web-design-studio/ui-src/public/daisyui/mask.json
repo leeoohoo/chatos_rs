@@ -1,0 +1,79 @@
+{
+  "slug": "mask",
+  "title": "Mask",
+  "description": "Mask crops the content of the element to common shapes.",
+  "demos": [
+    {
+      "id": "mask-1",
+      "label": "Squircle",
+      "html": "<img\n  class=\"mask mask-squircle\"\n  alt=\"Squircle CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-2",
+      "label": "Heart",
+      "html": "<img\n  class=\"mask mask-heart\"\n  alt=\"Heart CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-3",
+      "label": "Hexagon",
+      "html": "<img\n  class=\"mask mask-hexagon\"\n  alt=\"Hexagon CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-4",
+      "label": "Hexagon-2 (horizontal hexagon)",
+      "html": "<img\n  class=\"mask mask-hexagon-2\"\n  alt=\"Hexagon-2 CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-5",
+      "label": "Decagon",
+      "html": "<img\n  class=\"mask mask-decagon\"\n  alt=\"Decagon CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-6",
+      "label": "Pentagon",
+      "html": "<img\n  class=\"mask mask-pentagon\"\n  alt=\"Pentagon CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-7",
+      "label": "Diamond",
+      "html": "<img\n  class=\"mask mask-diamond\"\n  alt=\"Diamond CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-8",
+      "label": "Circle",
+      "html": "<img\n  class=\"mask mask-circle\"\n  alt=\"Circle CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-9",
+      "label": "Star",
+      "html": "<img\n  class=\"mask mask-star\"\n  alt=\"Star CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-10",
+      "label": "Star-2 (bold star)",
+      "html": "<img\n  class=\"mask mask-star-2\"\n  alt=\"Star-2 CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-11",
+      "label": "Triangle (pointing top)",
+      "html": "<img\n  class=\"mask mask-triangle\"\n  alt=\"Triangle CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-12",
+      "label": "Triangle-2 (pointing down)",
+      "html": "<img\n  class=\"mask mask-triangle-2\"\n  alt=\"Triangle-2 CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-13",
+      "label": "Triangle-3 (pointing left)",
+      "html": "<img\n  class=\"mask mask-triangle-3\"\n  alt=\"Triangle-3 CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    },
+    {
+      "id": "mask-14",
+      "label": "Triangle-4 (pointing right)",
+      "html": "<img\n  class=\"mask mask-triangle-4\"\n  alt=\"Triangle-4 CSS mask\"\n  src=\"https://img.daisyui.com/images/stock/photo-1567653418876-5bb0e566e1c2.webp\" />"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/mask/"
+}

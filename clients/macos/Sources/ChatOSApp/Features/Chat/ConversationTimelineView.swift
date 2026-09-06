@@ -122,6 +122,10 @@ struct ConversationTimelineView: View {
                         .padding(.vertical, 20)
                     }
                     .coordinateSpace(name: Self.scrollCoordinateSpace)
+                    // Nested horizontal scroll views used by Markdown tables and code
+                    // blocks can otherwise draw beyond the vertical timeline viewport
+                    // on macOS, including across the conversation header and title bar.
+                    .clipped()
 
                     if conversation.unreadNewerCount > 0 {
                         Button(

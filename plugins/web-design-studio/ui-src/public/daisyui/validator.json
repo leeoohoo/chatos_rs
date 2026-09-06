@@ -1,0 +1,69 @@
+{
+  "slug": "validator",
+  "title": "Validator",
+  "description": "Validator class changes the color of form elements to error or success based on input's validation rules.",
+  "demos": [
+    {
+      "id": "validator-1",
+      "label": "Validator",
+      "html": "<input class=\"input validator\" type=\"email\" required placeholder=\"mail@site.com\" />"
+    },
+    {
+      "id": "validator-2",
+      "label": "Validator and validator-hint",
+      "html": "<input class=\"input validator\" type=\"email\" required placeholder=\"mail@site.com\" />\n<div class=\"validator-hint\">Enter valid email address</div>"
+    },
+    {
+      "id": "validator-3",
+      "label": "Password requirement validator",
+      "html": "<input type=\"password\" class=\"input validator\" required placeholder=\"Password\" minlength=\"8\" \n  pattern=\"(?=.*\\\\d)(?=.*[a-z])(?=.*[A-Z]).{8,}\" \n  title=\"Must be more than 8 characters, including number, lowercase letter, uppercase letter\" />\n<p class=\"validator-hint\">\n  Must be more than 8 characters, including\n  <br/>At least one number\n  <br/>At least one lowercase letter\n  <br/>At least one uppercase letter\n</p>"
+    },
+    {
+      "id": "validator-4",
+      "label": "Username requirement validator",
+      "html": "<input type=\"text\" class=\"input validator\" required placeholder=\"Username\" \n  pattern=\"[A-Za-z][A-Za-z0-9\\\\-]*\" minlength=\"3\" maxlength=\"30\" title=\"Only letters, numbers or dash\" />\n<p class=\"validator-hint\">\n  Must be 3 to 30 characters\n  <br/>containing only letters, numbers or dash\n</p>"
+    },
+    {
+      "id": "validator-5",
+      "label": "Phone Number requirement validator",
+      "html": "<input type=\"tel\" class=\"input validator tabular-nums\" required placeholder=\"Phone\" \n  pattern=\"[0-9]*\" minlength=\"10\" maxlength=\"10\" title=\"Must be 10 digits\" />\n<p class=\"validator-hint\">Must be 10 digits</p>"
+    },
+    {
+      "id": "validator-6",
+      "label": "URL input requirement validator",
+      "html": "<input type=\"url\" class=\"input validator\" required placeholder=\"https://\" value=\"https://\"\n  pattern=\"^(https?://)?([a-zA-Z0-9]([a-zA-Z0-9\\-].*[a-zA-Z0-9])?\\.)+[a-zA-Z].*$\" \n  title=\"Must be valid URL\" />\n<p class=\"validator-hint\">Must be valid URL</p>"
+    },
+    {
+      "id": "validator-7",
+      "label": "Date input requirement validator",
+      "html": "<input type=\"date\" class=\"input validator\" required placeholder=\"Pick a date in 2025\" \nmin=\"2025-01-01\" max=\"2025-12-31\"\n  title=\"Must be valid URL\" />\n<p class=\"validator-hint\">Must be 2025</p>"
+    },
+    {
+      "id": "validator-8",
+      "label": "Number input requirement validator",
+      "html": "<input type=\"number\" class=\"input validator\" required placeholder=\"Type a number between 1 to 10\" \nmin=\"1\" max=\"10\"\n  title=\"Must be between be 1 to 10\" />\n<p class=\"validator-hint\">Must be between be 1 to 10</p>"
+    },
+    {
+      "id": "validator-9",
+      "label": "Checkbox requirement validator",
+      "html": "<input type=\"checkbox\" class=\"checkbox validator\" required title=\"Required\" />\n<p class=\"validator-hint\">Required</p>"
+    },
+    {
+      "id": "validator-10",
+      "label": "Toggle requirement validator",
+      "html": "<input type=\"checkbox\" class=\"toggle validator\" required title=\"Required\" />\n<p class=\"validator-hint\">Required</p>"
+    },
+    {
+      "id": "validator-11",
+      "label": "Select requirement validator",
+      "html": "<form>\n  <select class=\"select validator\" required>\n    <option disabled selected value=\"\">Choose:</option>\n    <option>Tabs</option>\n    <option>Spaces</option>\n  </select>\n  <p class=\"validator-hint\">Required</p>\n  <button class=\"btn\" type=\"submit\">Submit form</button>\n</form>"
+    },
+    {
+      "id": "validator-12",
+      "label": "Form requirement validator",
+      "html": "<form class=\"fieldset bg-base-200 border-base-300 rounded-box w-xs border p-4\">\n  <fieldset class=\"fieldset\">\n    <label class=\"label\">Email</label>\n    <input type=\"email\" class=\"input validator\" placeholder=\"Email\" required />\n    <p class=\"validator-hint hidden\">Required</p>\n  </fieldset>\n\n  <label class=\"fieldset\">\n    <span class=\"label\">Password</span>\n    <input type=\"password\" class=\"input validator\" placeholder=\"Password\" required />\n    <span class=\"validator-hint hidden\">Required</span>\n  </label>\n\n  <button class=\"btn btn-neutral mt-4\" type=\"submit\">Login</button>\n  <button class=\"btn btn-ghost mt-1\" type=\"reset\">Reset</button>\n</form>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/validator/"
+}

@@ -40,6 +40,7 @@ import {
 } from '../../src/library-slots';
 import { applyUiLibraryVariant, createComponentFromUiLibrary, uiLibraryByName, UI_LIBRARIES, variantsForBoundComponent } from '../../src/ui-libraries';
 import type { UiComponentVariant, UiEditableSlot } from '../../src/ui-library';
+import { officialRuntimePresentation } from '../library-runtime/registry';
 import { WEB_DESIGN_THEME_PRESETS, type WebDesignThemePreset } from '../../src/design-themes';
 import { componentDefaults } from '../../src/templates';
 import {
@@ -232,6 +233,189 @@ function materializeExistingSlotContent(
   return [content];
 }
 
+function visibleCssColor(value: string): boolean {
+  if (!value || value === 'transparent') return false;
+  const alpha = value.match(/rgba?\([^)]*[,/]\s*([\d.]+)\s*\)$/)?.[1];
+  return alpha === undefined || Number(alpha) > 0;
+}
+
+function cssPixels(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function svgDataUrl(element: Element, color: string): string {
+  const clone = element.cloneNode(true) as SVGElement;
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  if (color) clone.setAttribute('color', color);
+  for (const node of [clone, ...clone.querySelectorAll('*')]) {
+    for (const attribute of ['fill', 'stroke']) {
+      if (node.getAttribute(attribute) === 'currentColor') node.setAttribute(attribute, color);
+    }
+  }
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(clone))}`;
+}
+
+async function materializeOfficialDemoContent(
+  container: WebDesignComponent,
+  slot: UiEditableSlot,
+  pageId: string,
+  device: WebDesignDevice
+): Promise<WebDesignComponent[]> {
+  if (slot.id !== 'content' || !container.library?.props.registryDemo || container.library.props.editorDetachedContent === true) return [];
+  let frame: HTMLIFrameElement | null = null;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const host = document.querySelector<HTMLElement>(`[data-component-id="${CSS.escape(container.id)}"]`);
+    frame = host?.querySelector('iframe') ?? null;
+    if (frame?.contentDocument?.getElementById('root')?.childElementCount) break;
+    await new Promise((resolve) => window.setTimeout(resolve, 80));
+  }
+  const runtimeDocument = frame?.contentDocument;
+  const runtimeWindow = frame?.contentWindow;
+  const runtimeRoot = runtimeDocument?.getElementById('root');
+  if (!runtimeDocument || !runtimeWindow || !runtimeRoot || !frame) return [];
+  const viewportWidth = runtimeDocument.documentElement.clientWidth || frame.clientWidth;
+  const viewportHeight = runtimeDocument.documentElement.clientHeight || frame.clientHeight;
+  const contentWidth = Math.max(viewportWidth, runtimeDocument.documentElement.scrollWidth, runtimeDocument.body.scrollWidth, runtimeRoot.scrollWidth);
+  const contentHeight = Math.max(viewportHeight, runtimeDocument.documentElement.scrollHeight, runtimeDocument.body.scrollHeight, runtimeRoot.scrollHeight);
+  if (viewportWidth <= 0 || viewportHeight <= 0) return [];
+  const containerFrame = resolveComponent(container, device);
+  const scaleX = containerFrame.width / viewportWidth;
+  const scaleY = scaleX;
+  const candidates: Array<{
+    component: WebDesignComponent;
+    element: Element;
+    priority: number;
+    order: number;
+    area: number;
+    canParent: boolean;
+  }> = [];
+  const elements = [...runtimeRoot.querySelectorAll<HTMLElement>('*')];
+
+  elements.forEach((element, order) => {
+    const computed = runtimeWindow.getComputedStyle(element);
+    if (computed.display === 'none' || computed.visibility === 'hidden' || Number(computed.opacity) === 0) return;
+    const bounds = element.getBoundingClientRect();
+    const left = Math.max(0, bounds.left);
+    const top = Math.max(0, bounds.top);
+    const right = Math.min(contentWidth, bounds.right);
+    const bottom = Math.min(contentHeight, bounds.bottom);
+    if (right - left < 3 || bottom - top < 3) return;
+    const tag = element.tagName.toLowerCase();
+    const interactiveAncestor = element.closest('button,a,[role="button"]');
+    const background = computed.backgroundImage !== 'none'
+      ? `${computed.backgroundImage}${visibleCssColor(computed.backgroundColor) ? `, ${computed.backgroundColor}` : ''}`
+      : visibleCssColor(computed.backgroundColor) ? computed.backgroundColor : undefined;
+    const borderWidth = Math.max(cssPixels(computed.borderTopWidth), cssPixels(computed.borderRightWidth), cssPixels(computed.borderBottomWidth), cssPixels(computed.borderLeftWidth));
+    const borderVisible = borderWidth > 0 && computed.borderTopStyle !== 'none' && visibleCssColor(computed.borderTopColor);
+    const shadow = computed.boxShadow !== 'none' ? computed.boxShadow : undefined;
+    const isInteractive = tag === 'button' || tag === 'a' || element.getAttribute('role') === 'button';
+    const isImage = tag === 'img' || tag === 'svg';
+    if (interactiveAncestor && interactiveAncestor !== element && !isImage) return;
+    const isInput = ['input', 'textarea', 'select'].includes(tag);
+    const directText = [...element.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent ?? '')
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const isText = !isInteractive && !isImage && !isInput
+      && (/^(h[1-6]|p|label|small|strong|em|blockquote|figcaption|span)$/.test(tag)
+        || tag === 'div' && element.childElementCount === 0)
+      && directText.length > 0;
+    const isSurface = !isInteractive && !isImage && !isInput && !isText
+      && (background !== undefined || borderVisible || shadow !== undefined);
+    if (!isInteractive && !isImage && !isInput && !isText && !isSurface) return;
+    if (isSurface && bounds.width >= contentWidth * .98 && bounds.height >= contentHeight * .98 && !borderVisible && !shadow) return;
+
+    const type: WebComponentType = isImage ? 'image'
+      : isInput ? tag === 'textarea' ? 'textarea' : tag === 'select' ? 'select' : 'input'
+        : isInteractive ? tag === 'a' ? 'link' : 'button'
+          : isText ? /^h[1-6]$/.test(tag) ? 'heading' : 'text'
+            : 'section';
+    const content = isImage
+      ? tag === 'svg'
+        ? svgDataUrl(element, computed.color)
+        : (element as HTMLImageElement).currentSrc || (element as HTMLImageElement).src
+      : isInput
+        ? (element as HTMLInputElement).value || element.getAttribute('placeholder') || ''
+        : isInteractive ? element.innerText.trim() : isText ? directText : '';
+    if (isText && !content) return;
+    const fontSize = cssPixels(computed.fontSize);
+    const lineHeightPixels = cssPixels(computed.lineHeight);
+    const fontWeight = Number.parseInt(computed.fontWeight, 10);
+    const textAlign = ['left', 'center', 'right'].includes(computed.textAlign) ? computed.textAlign as WebComponentStyle['textAlign'] : undefined;
+    const component = componentDefaults(type, containerFrame.x + left * scaleX, containerFrame.y + top * scaleY);
+    component.id = `detached-${type}-${crypto.randomUUID().slice(0, 8)}`;
+    component.name = isImage ? (element.getAttribute('alt') || '图片')
+      : isInteractive ? (content || '操作')
+        : isText ? content.slice(0, 28)
+          : '容器背景';
+    component.pageId = pageId;
+    component.parentId = container.id;
+    component.slot = slot.id;
+    component.width = Math.max(3, (right - left) * scaleX);
+    component.height = Math.max(3, (bottom - top) * scaleY);
+    component.content = content;
+    component.style = {
+      background,
+      color: (isText || isInteractive || isInput) && visibleCssColor(computed.color) ? computed.color : undefined,
+      borderColor: borderVisible ? computed.borderTopColor : undefined,
+      borderWidth: borderVisible ? borderWidth : undefined,
+      borderStyle: borderVisible ? 'solid' : undefined,
+      borderRadius: Math.max(cssPixels(computed.borderTopLeftRadius), cssPixels(computed.borderTopRightRadius), cssPixels(computed.borderBottomRightRadius), cssPixels(computed.borderBottomLeftRadius)) * Math.min(scaleX, scaleY),
+      padding: 0,
+      fontSize: fontSize > 0 ? fontSize * Math.min(scaleX, scaleY) : undefined,
+      fontWeight: Number.isFinite(fontWeight) ? fontWeight : computed.fontWeight === 'bold' ? 700 : undefined,
+      textAlign,
+      lineHeight: fontSize > 0 && lineHeightPixels > 0 ? lineHeightPixels / fontSize : undefined,
+      letterSpacing: computed.letterSpacing === 'normal' ? undefined : cssPixels(computed.letterSpacing) * scaleX,
+      opacity: Number(computed.opacity) < 1 ? Number(computed.opacity) : undefined,
+      shadow,
+      overflow: computed.overflow === 'hidden' ? 'hidden' : undefined,
+      objectFit: isImage && ['cover', 'contain', 'fill', 'none', 'scale-down'].includes(computed.objectFit) ? computed.objectFit as WebComponentStyle['objectFit'] : undefined,
+      objectPosition: isImage ? computed.objectPosition : undefined,
+      customCss: computed.fontFamily ? { fontFamily: computed.fontFamily } : undefined
+    };
+    if (tag === 'a' && (element as HTMLAnchorElement).href) component.interaction = { type: 'url', target: (element as HTMLAnchorElement).href };
+    const area = component.width * component.height;
+    candidates.push({
+      component,
+      element,
+      priority: isSurface ? 0 : isImage ? 1 : 2,
+      order,
+      area,
+      canParent: isSurface || isInteractive
+    });
+  });
+
+  const seen = new Set<string>();
+  const materialized = candidates
+    .sort((left, right) => left.priority - right.priority || (left.priority === 0 ? right.area - left.area : left.order - right.order))
+    .filter(({ component }) => {
+      const key = [component.type, Math.round(component.x), Math.round(component.y), Math.round(component.width), Math.round(component.height), component.content].join('|');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  const byElement = new Map(materialized.map((candidate) => [candidate.element, candidate]));
+  return materialized.map(({ component, element }, index) => {
+      let ancestor = element.parentElement;
+      while (ancestor && ancestor !== runtimeRoot) {
+        const parent = byElement.get(ancestor);
+        if (parent?.canParent) {
+          component.parentId = parent.component.id;
+          component.slot = undefined;
+          break;
+        }
+        ancestor = ancestor.parentElement;
+      }
+      component.zIndex = index + 1;
+      if (device !== 'desktop') return updateComponentFrame(component, device, { x: component.x, y: component.y, width: component.width, height: component.height });
+      return component;
+    });
+}
+
 const deviceOptions: Array<{ device: WebDesignDevice; label: string; icon: string }> = [
   { device: 'desktop', label: '桌面', icon: '▰' },
   { device: 'tablet', label: '平板', icon: '▯' },
@@ -252,6 +436,26 @@ type ViewportSelection = {
   orientation: WebDesignViewportOrientation;
   customHeight: number;
 };
+
+const STUDIO_PROJECT_QUERY = 'studio-project';
+const STUDIO_DESIGN_QUERY = 'studio-design';
+
+function studioLocationSelection() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    projectId: params.get(STUDIO_PROJECT_QUERY) || undefined,
+    documentId: params.get(STUDIO_DESIGN_QUERY) || undefined
+  };
+}
+
+function replaceStudioLocation(projectId?: string, documentId?: string) {
+  const url = new URL(window.location.href);
+  if (projectId) url.searchParams.set(STUDIO_PROJECT_QUERY, projectId);
+  else url.searchParams.delete(STUDIO_PROJECT_QUERY);
+  if (projectId && documentId) url.searchParams.set(STUDIO_DESIGN_QUERY, documentId);
+  else url.searchParams.delete(STUDIO_DESIGN_QUERY);
+  window.history.replaceState(null, '', url);
+}
 
 const DEFAULT_VIEWPORT_SELECTIONS: Record<WebDesignDevice, ViewportSelection> = {
   desktop: { presetId: 'desktop-responsive', orientation: 'default', customHeight: 900 },
@@ -337,6 +541,12 @@ const VARIANT_PROP_LABELS: Record<string, Record<string, string> | string> = {
   }
 };
 
+const INTERNAL_LIBRARY_PROPS = new Set(['componentSlug', 'registryDemo', 'editorDetachedContent']);
+
+function inspectableLibraryProps(props: Record<string, WebDesignJsonValue>) {
+  return Object.entries(props).filter(([key]) => !INTERNAL_LIBRARY_PROPS.has(key));
+}
+
 function variantDifferenceLabels(variant: UiComponentVariant): string[] {
   const labels: string[] = [];
   if (variant.width) labels.push(`${variant.width}×${variant.height ?? '自适应'}`);
@@ -365,6 +575,28 @@ function variantIsInteractive(variant: UiComponentVariant, componentId: string):
   return INTERACTIVE_COMPONENT_PREVIEWS.has(componentId)
     || variant.props.motion === true
     || ['hoverable', 'showSearch', 'multiple', 'allowClear', 'draggable', 'collapsible', 'editable', 'autoplay'].some((key) => variant.props[key] === true);
+}
+
+function LazyVariantPreview({ children, minHeight }: { children: ReactNode; minHeight: number }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return;
+      setVisible(true);
+      observer.disconnect();
+    }, { rootMargin: '600px 0px' });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={hostRef} className="lazy-variant-preview" style={{ minHeight }}>
+    {visible ? children : <span>滚动到此处时载入官方示例</span>}
+  </div>;
 }
 
 export function WebDesignStudioApp() {
@@ -503,9 +735,19 @@ export function WebDesignStudioApp() {
       const [items, projectItems, runtimeContext] = await Promise.all([repo.list(), repo.listProjects(), repo.runtimeContext()]);
       setDocuments(items);
       setProjects(projectItems);
-      if (runtimeContext.defaultProjectId) {
-        setActiveProject(await repo.readProject(runtimeContext.defaultProjectId));
-        setScreen('project');
+      const requested = studioLocationSelection();
+      const requestedProjectId = requested.projectId ?? runtimeContext.defaultProjectId;
+      if (requestedProjectId) {
+        const project = await repo.readProject(requestedProjectId);
+        setActiveProject(project);
+        if (requested.documentId && project.designIds.includes(requested.documentId)) {
+          openDocument(await repo.read(requested.documentId));
+          setScreen('editor');
+          replaceStudioLocation(project.projectId, requested.documentId);
+        } else {
+          setScreen('project');
+          replaceStudioLocation(project.projectId);
+        }
       }
       setReady(true);
     })().catch((error) => {
@@ -771,6 +1013,7 @@ export function WebDesignStudioApp() {
       const created = await repository.createProject(newProjectName, newProjectDescription);
       setActiveProject(created);
       setScreen('project');
+      replaceStudioLocation(created.projectId);
       setNewProjectOpen(false);
       setNewProjectName('');
       setNewProjectDescription('');
@@ -786,6 +1029,7 @@ export function WebDesignStudioApp() {
       setActiveProject(await repository.readProject(projectId));
       setDocument(undefined);
       setScreen('project');
+      replaceStudioLocation(projectId);
       setDirty(false);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
@@ -802,6 +1046,7 @@ export function WebDesignStudioApp() {
       setNewDesignName('');
       openDocument(created);
       setScreen('editor');
+      replaceStudioLocation(activeProject.projectId, created.documentId);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     }
@@ -814,6 +1059,7 @@ export function WebDesignStudioApp() {
       openDocument(await repository.read(documentId));
       setProjectLibraryOpen(false);
       setScreen('editor');
+      replaceStudioLocation(activeProject?.projectId, documentId);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     }
@@ -826,6 +1072,7 @@ export function WebDesignStudioApp() {
     setDirty(false);
     setScreen('projects');
     setProjectLibraryOpen(false);
+    replaceStudioLocation();
   }
 
   function goToActiveProject() {
@@ -834,6 +1081,7 @@ export function WebDesignStudioApp() {
     setDirty(false);
     setScreen('project');
     setProjectLibraryOpen(false);
+    replaceStudioLocation(activeProject?.projectId);
   }
 
   async function deleteProjectDocument(target: DesignSummary) {
@@ -845,6 +1093,7 @@ export function WebDesignStudioApp() {
       if (document?.documentId === target.documentId) setDocument(undefined);
       await refreshCatalog();
       setScreen('project');
+      replaceStudioLocation(activeProject.projectId);
       showToast(`已删除“${target.title}”`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
@@ -861,7 +1110,7 @@ export function WebDesignStudioApp() {
     event.dataTransfer.effectAllowed = 'copy';
   }
 
-  function addUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot) {
+  function addUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot): WebDesignComponent | undefined {
     const current = documentRef.current;
     if (!current) return;
     const library = uiLibraryByName(libraryName);
@@ -887,40 +1136,63 @@ export function WebDesignStudioApp() {
     setSelectedId(component.id);
     setSelectedIds([component.id]);
     showToast(container ? `已添加到${editableSlotsForUiComponent(container).find((slot) => slot.id === targetSlot?.slotId)?.label ?? '组件内容'}` : `已插入 ${library.displayName} ${component.library?.component}`);
+    return component;
   }
 
   function insertUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, variantId?: string) {
     const definition = uiLibraryByName(libraryName)?.components.find((candidate) => candidate.id === definitionId);
     if (!definition) return;
+    let inserted: WebDesignComponent | undefined;
     if (editingSlotCanvasSize) {
-      addUiLibraryComponent(libraryName, definitionId, Math.max(12, Math.round((editingSlotCanvasSize.width - definition.width) / 2)), 28, variantId);
+      inserted = addUiLibraryComponent(libraryName, definitionId, Math.max(12, Math.round((editingSlotCanvasSize.width - definition.width) / 2)), 28, variantId);
     } else {
-      addUiLibraryComponent(libraryName, definitionId, Math.max(24, Math.round((breakpoint.width - definition.width) / 2)), 80, variantId);
+      inserted = addUiLibraryComponent(libraryName, definitionId, Math.max(24, Math.round((breakpoint.width - definition.width) / 2)), 80, variantId);
     }
     setVariantPickerTarget(undefined);
+    const compoundSlot = inserted?.library?.props.registryDemo
+      ? editableSlotsForUiComponent(inserted).find((slot) => slot.id === 'content')
+      : undefined;
+    if (inserted && compoundSlot) {
+      window.setTimeout(() => { void editComponentSlot(inserted!, compoundSlot.id, { compoundOnly: true }); }, 120);
+    }
   }
 
-  function editComponentSlot(component: WebDesignComponent, slotId: string) {
+  async function editComponentSlot(component: WebDesignComponent, slotId: string, options: { compoundOnly?: boolean } = {}): Promise<boolean> {
     if (interactionMode) setInteractionMode(false);
     const current = documentRef.current;
     const slot = editableSlotsForUiComponent(component).find((candidate) => candidate.id === slotId);
     let first = current ? componentsInSlot(current, component.id, slotId)[0] : undefined;
     if (current && slot && !first) {
-      const materialized = materializeExistingSlotContent(component, slot, pageId, device);
+      const officialDemo = await materializeOfficialDemoContent(component, slot, pageId, device);
+      const officialRoots = officialDemo.filter((candidate) => candidate.parentId === component.id);
+      if (options.compoundOnly && officialRoots.length < 2) return false;
+      const materialized = officialDemo.length > 0 ? officialDemo : materializeExistingSlotContent(component, slot, pageId, device);
+      if (options.compoundOnly && officialDemo.length === 0) return false;
       if (materialized.length > 0) {
         commitWithCanvasGrowth((active) => ({
           ...active,
           components: [
-            ...active.components.map((candidate) => candidate.id === component.id ? { ...candidate, content: '' } : candidate),
+            ...active.components.map((candidate) => candidate.id === component.id ? {
+              ...candidate,
+              content: '',
+              library: officialDemo.length > 0 && candidate.library ? {
+                ...candidate.library,
+                props: { ...candidate.library.props, editorDetachedContent: true }
+              } : candidate.library
+            } : candidate),
             ...materialized
           ]
         }));
-        first = materialized[0];
+        first = (officialDemo.length > 0
+          ? officialDemo.filter((candidate) => candidate.parentId === component.id)
+            .sort((left, right) => resolveComponent(left, device).y - resolveComponent(right, device).y)[0]
+          : undefined) ?? materialized[0];
       }
     }
     setEditingSlot({ componentId: component.id, slotId });
     setSelectedId(first?.id);
     setSelectedIds(first ? [first.id] : []);
+    return true;
   }
 
   function exitSlotEditor() {
@@ -1497,7 +1769,29 @@ export function WebDesignStudioApp() {
 
   function applySelectedLibraryVariant(variantId: string) {
     if (!selected?.library) return;
-    updateComponent(selected.id, (component) => applyUiLibraryVariant(component, variantId));
+    if (selected.library.props.editorDetachedContent !== true) {
+      updateComponent(selected.id, (component) => applyUiLibraryVariant(component, variantId));
+      return;
+    }
+    if (!window.confirm('切换官方款式会替换当前已经拆分的内部设计，是否继续？')) return;
+    commit((current) => {
+      const slotRoots = current.components.filter((component) => component.parentId === selected.id && component.slot);
+      const removed = new Set(slotRoots.flatMap((component) => [component.id, ...descendantIds(current, component.id)]));
+      return {
+        ...current,
+        components: current.components
+          .filter((component) => !removed.has(component.id))
+          .map((component) => {
+            if (component.id !== selected.id || !component.library) return component;
+            const props = { ...component.library.props };
+            delete props.editorDetachedContent;
+            return applyUiLibraryVariant({ ...component, library: { ...component.library, props } }, variantId);
+          })
+      };
+    });
+    setSelectedId(selected.id);
+    setSelectedIds([selected.id]);
+    showToast('已切换官方款式；再次进入“内部内容”即可拆分编辑');
   }
 
   function detachSelectedSymbol() {
@@ -1772,6 +2066,7 @@ export function WebDesignStudioApp() {
   const selectedLibraryDefinition = selected?.library ? selectedLibrary?.components.find((item) => item.id === selected.library?.component) : undefined;
   const selectedLibraryVariants = selected?.library ? variantsForBoundComponent(selected) : [];
   const selectedEditableSlots = selected ? editableSlotsForUiComponent(selected) : [];
+  const selectedInspectableLibraryProps = selected?.library ? inspectableLibraryProps(selected.library.props) : [];
   const aiTarget = selected ?? editingContainer;
   const normalizedPaletteQuery = paletteQuery.trim().toLowerCase();
   const filteredPalette = palette.filter((item) => !normalizedPaletteQuery
@@ -1784,6 +2079,9 @@ export function WebDesignStudioApp() {
   const variantPickerLibrary = variantPickerTarget ? uiLibraryByName(variantPickerTarget.library) : undefined;
   const variantPickerDefinition = variantPickerTarget ? variantPickerLibrary?.components.find((item) => item.id === variantPickerTarget.componentId) : undefined;
   const variantPickerVariants = variantPickerDefinition && variantPickerLibrary ? variantPickerLibrary.variants[variantPickerDefinition.id] ?? [{ id: 'default', label: '默认款式', props: {} }] : [];
+  const variantPickerPresentation = variantPickerDefinition && variantPickerLibrary
+    ? officialRuntimePresentation(variantPickerLibrary.id, String(variantPickerDefinition.props?.componentSlug ?? variantPickerDefinition.id))
+    : undefined;
   const aiQuickPrompts = aiTarget
     ? ['让这个组件更精致、更有层次', '优化尺寸、间距和对齐', '给我 3 个更好看的视觉方案']
     : ['设计一个像 Apple 官网一样克制高级的页面', '统一整页的字号、间距、圆角和色彩', '检查并修复页面中不协调的视觉细节'];
@@ -1850,7 +2148,7 @@ export function WebDesignStudioApp() {
               {activeUiLibrary.categories.map((category) => {
                 const items = filteredUiLibraryComponents.filter((item) => item.category === category);
                 return items.length > 0 && <div key={category} className="ui-library-category"><div className="ui-library-category-title">{category}</div><div className="ui-library-component-list">
-                  {items.map((item) => <button key={item.id} draggable onDragStart={(event) => onUiLibraryDrag(event, activeUiLibrary.id, item.id)} onClick={() => setVariantPickerTarget({ library: activeUiLibrary.id, componentId: item.id })}><span className="ui-library-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{item.status === 'deprecated' ? `已废弃 · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : item.introduced ? `v${item.introduced} · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : (activeUiLibrary.variants[item.id]?.length ?? 1) > 1 ? `${activeUiLibrary.variants[item.id].length} 款` : '预览'}</em><b>›</b></button>)}
+                  {items.map((item) => <button key={item.id} draggable onDragStart={(event) => onUiLibraryDrag(event, activeUiLibrary.id, item.id)} onClick={() => setVariantPickerTarget({ library: activeUiLibrary.id, componentId: item.id })}><span className="ui-library-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{item.status === 'deprecated' ? `已废弃 · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : item.introduced ? `v${item.introduced} · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : `${activeUiLibrary.variants[item.id]?.length ?? 1} 款`}</em><b>›</b></button>)}
                 </div></div>;
               })}
             </>}
@@ -1957,7 +2255,7 @@ export function WebDesignStudioApp() {
                     const containerFrame = resolveComponent(editingContainer, device);
                     const resolved = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
                     if (resolved.hidden) return null;
-                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={() => { const slot = editableSlotsForUiComponent(component)[0]; if (slot) void editComponentSlot(component, slot.id); }} />;
                   })}
                 </div>
               </div>
@@ -1985,7 +2283,7 @@ export function WebDesignStudioApp() {
                 {[...pageComponents].filter((component) => !contentContainerAncestor(document, component)).sort((left, right) => left.zIndex - right.zIndex).map((component) => {
                   const resolved = resolveComponent(component, device);
                   if (resolved.hidden) return null;
-                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={() => { const slot = editableSlotsForUiComponent(component)[0]; if (slot) void editComponentSlot(component, slot.id); }} />;
                 })}
               </div>
             </div>}
@@ -2015,16 +2313,17 @@ export function WebDesignStudioApp() {
                 <div className="content-slots-heading"><div><strong>内部内容</strong><span>像页面一样继续设计</span></div><em>{selectedEditableSlots.length} 个区域</em></div>
                 {selectedEditableSlots.map((slot) => {
                   const count = componentsInSlot(document, selected.id, slot.id).length;
-                  return <button key={slot.id} className={editingSlot?.componentId === selected.id && editingSlot.slotId === slot.id ? 'active' : ''} onClick={() => editComponentSlot(selected, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{count > 0 ? `${count} 个组件` : '空白'}</em><b>编辑 ›</b></button>;
+                  const officialDemo = Boolean(selected.library?.props.registryDemo);
+                  return <button key={slot.id} className={editingSlot?.componentId === selected.id && editingSlot.slotId === slot.id ? 'active' : ''} onClick={() => void editComponentSlot(selected, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{count > 0 ? `${count} 个组件` : officialDemo ? '尚未拆分' : '空白'}</em><b>{officialDemo && count === 0 ? '拆开并编辑 ›' : '进入编辑 ›'}</b></button>;
                 })}
               </div>}
               <label className="field-label ui-library-variant-field">展现款式<select value={selected.library.variant ?? selectedLibraryVariants[0]?.id} onChange={(event) => applySelectedLibraryVariant(event.target.value)}>{selectedLibraryVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>
-              {Object.entries(selected.library.props).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => typeof value === 'boolean'
+              {selectedInspectableLibraryProps.filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => typeof value === 'boolean'
                 ? <label key={key} className="ui-library-boolean-prop"><input type="checkbox" checked={value} onChange={(event) => updateSelectedLibraryProp(key, event.target.checked)} /><span>{key}</span></label>
                 : typeof value === 'number'
                   ? <NumberField key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />
                   : <label key={key} className="field-label">{key}<input value={String(value)} onChange={(event) => updateSelectedLibraryProp(key, event.target.value)} /></label>)}
-              {Object.entries(selected.library.props).some(([, value]) => value !== null && typeof value === 'object') && <div className="ui-library-data-editors"><div className="panel-title section-title">示例数据</div>{Object.entries(selected.library.props).filter(([, value]) => value !== null && typeof value === 'object').map(([key, value]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
+              {selectedInspectableLibraryProps.some(([, value]) => value !== null && typeof value === 'object') && <div className="ui-library-data-editors"><div className="panel-title section-title">示例数据</div>{selectedInspectableLibraryProps.filter(([, value]) => value !== null && typeof value === 'object').map(([key, value]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
             </div>}
             <div className="panel-title section-title">预览交互</div>
             <label className="field-label">点击行为<select value={selected.interaction?.type ?? 'none'} onChange={(event) => {
@@ -2102,14 +2401,16 @@ export function WebDesignStudioApp() {
       {variantPickerDefinition && variantPickerLibrary && <div className="studio-modal-backdrop" onPointerDown={() => setVariantPickerTarget(undefined)}>
         <section className="studio-modal variant-picker" data-library-portal-host onPointerDown={(event) => event.stopPropagation()}>
           <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>先看实际效果，再选择最适合当前页面的款式。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
-          <div className={`variant-preview-grid ${WIDE_VARIANT_PREVIEWS.has(variantPickerDefinition.id) ? 'wide-component-previews' : ''}`}>{variantPickerVariants.map((variant) => {
+          <div className={`variant-preview-grid ${WIDE_VARIANT_PREVIEWS.has(variantPickerDefinition.id) || variantPickerPresentation?.previewSpan === 'wide' ? 'wide-component-previews' : ''} ${variantPickerVariants.length === 1 ? 'single-component-preview' : ''}`}>{variantPickerVariants.map((variant) => {
             const previewComponent = applyUiLibraryVariant(createComponentFromUiLibrary(variantPickerLibrary.id, variantPickerDefinition.id, 0, 0), variant.id);
             const differences = variantDifferenceLabels(variant);
             const interactiveVariant = variantIsInteractive(variant, variantPickerDefinition.id);
             const openOverlayPreview = OPEN_OVERLAY_PREVIEWS.has(variantPickerDefinition.id);
             const inlinePickerPreview = variantPickerLibrary.id === 'chakra' && ['DatePicker', 'ColorPicker'].includes(variantPickerDefinition.id);
-            const previewHeight = inlinePickerPreview ? 440 : Math.max(openOverlayPreview ? 320 : 118, Math.min(360, previewComponent.height + 24));
-            return <article key={variant.id} className={`variant-preview-card ${interactiveVariant ? 'interactive-variant' : ''}`} style={{ minHeight: previewHeight + 58 }}><div data-library-portal-host className={`variant-live-preview ${openOverlayPreview ? 'overlay-showcase' : ''} ${inlinePickerPreview ? 'inline-picker-showcase' : ''} ${variant.props.bordered === false || variant.props.variant === 'borderless' ? 'contrast-surface' : ''}`} style={{ minHeight: previewHeight }}>{interactiveVariant && !openOverlayPreview && <span className="variant-interaction-hint">可交互 · 移入或点击查看</span>}<LibraryCanvasComponent component={previewComponent} preview showcase tokens={tokens} /></div><footer><div className="variant-preview-description"><strong>{variant.label}</strong><span>{differences.map((difference) => <small key={difference}>{difference}</small>)}</span></div><button onClick={() => insertUiLibraryComponent(variantPickerLibrary.id, variantPickerDefinition.id, variant.id)}>插入此款式</button></footer></article>;
+            const previewHeight = variantPickerPresentation?.previewHeight ?? (inlinePickerPreview || interactiveVariant
+              ? 440
+              : Math.max(openOverlayPreview ? 320 : 118, Math.min(360, previewComponent.height + 24)));
+            return <article key={variant.id} className={`variant-preview-card ${interactiveVariant ? 'interactive-variant' : ''}`} style={{ minHeight: previewHeight + 58 }}><div data-library-portal-host className={`variant-live-preview ${openOverlayPreview ? 'overlay-showcase' : ''} ${inlinePickerPreview ? 'inline-picker-showcase' : ''} ${variant.props.bordered === false || variant.props.variant === 'borderless' ? 'contrast-surface' : ''}`} style={{ minHeight: previewHeight }}>{interactiveVariant && !openOverlayPreview && <span className="variant-interaction-hint">可交互 · 移入或点击查看</span>}<LazyVariantPreview minHeight={previewHeight}><LibraryCanvasComponent component={previewComponent} preview showcase tokens={tokens} /></LazyVariantPreview></div><footer><div className="variant-preview-description"><strong>{variant.label}</strong><span>{differences.map((difference) => <small key={difference}>{difference}</small>)}</span></div><button onClick={() => insertUiLibraryComponent(variantPickerLibrary.id, variantPickerDefinition.id, variant.id)}>插入此款式</button></footer></article>;
           })}</div>
         </section>
       </div>}
@@ -2211,7 +2512,7 @@ function CanvasComponentContent({ component, style = component.style, interactiv
   return <span className="component-copy">{component.content}</span>;
 }
 
-function CanvasComponent({ component, resolved, selected, primary, interactive, forcedState, tokens, slotContent, onPointerDown, onResizePointerDown, onPreviewActivate }: {
+function CanvasComponent({ component, resolved, selected, primary, interactive, forcedState, tokens, slotContent, onPointerDown, onResizePointerDown, onPreviewActivate, onEditContents }: {
   component: WebDesignComponent;
   resolved: ResolvedWebDesignComponent;
   selected: boolean;
@@ -2223,10 +2524,13 @@ function CanvasComponent({ component, resolved, selected, primary, interactive, 
   onPointerDown: (event: ReactPointerEvent) => void;
   onResizePointerDown: (event: ReactPointerEvent) => void;
   onPreviewActivate: () => void;
+  onEditContents?: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
   const [focused, setFocused] = useState(false);
+  const pointerOrigin = useRef<{ x: number; y: number } | null>(null);
+  const pointerMoved = useRef(false);
   const runtimeState: WebComponentVisualState | undefined = forcedState ?? (pressed ? 'active' : focused ? 'focus' : hovered ? 'hover' : undefined);
   const effectiveStyle = mergeComponentStyles(resolved.style, runtimeState ? component.states?.[runtimeState] : undefined);
   const style: CSSProperties = {
@@ -2235,10 +2539,10 @@ function CanvasComponent({ component, resolved, selected, primary, interactive, 
     transition: component.states ? 'background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease, opacity .18s ease, transform .18s ease' : undefined
   };
   return (
-    <div className={`canvas-component type-${component.type} ${component.library ? `library-component library-${component.library.name}` : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${interactive ? 'interactive' : ''}`} style={style} tabIndex={interactive && component.states?.focus ? 0 : undefined} onPointerEnter={() => interactive && setHovered(true)} onPointerLeave={() => { setHovered(false); setPressed(false); }} onPointerDown={(event) => { if (interactive) setPressed(true); onPointerDown(event); }} onPointerUp={() => setPressed(false)} onPointerCancel={() => setPressed(false)} onFocus={() => interactive && setFocused(true)} onBlur={() => setFocused(false)} onClick={(event) => { if (interactive && component.interaction) { event.stopPropagation(); onPreviewActivate(); } }}>
+    <div data-component-id={component.id} className={`canvas-component type-${component.type} ${component.library ? `library-component library-${component.library.name}` : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${interactive ? 'interactive' : ''}`} style={style} tabIndex={interactive && component.states?.focus ? 0 : undefined} onPointerEnter={() => interactive && setHovered(true)} onPointerLeave={() => { setHovered(false); setPressed(false); }} onPointerDown={(event) => { pointerOrigin.current = { x: event.clientX, y: event.clientY }; pointerMoved.current = false; if (interactive) setPressed(true); onPointerDown(event); }} onPointerUp={(event) => { const origin = pointerOrigin.current; pointerMoved.current = Boolean(origin && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 4); setPressed(false); }} onPointerCancel={() => { pointerOrigin.current = null; pointerMoved.current = false; setPressed(false); }} onFocus={() => interactive && setFocused(true)} onBlur={() => setFocused(false)} onDoubleClick={(event) => { event.preventDefault(); }} onClick={(event) => { if (!interactive && onEditContents && !pointerMoved.current) { event.stopPropagation(); onEditContents(); } else if (interactive && component.interaction) { event.stopPropagation(); onPreviewActivate(); } pointerOrigin.current = null; pointerMoved.current = false; }}>
       <CanvasComponentContent component={component} style={effectiveStyle} interactive={interactive} tokens={tokens} slotContent={slotContent} />
       {!interactive && component.annotations.some((annotation) => annotation.status === 'open') && <span className="annotation-badge">{component.annotations.filter((annotation) => annotation.status === 'open').length}</span>}
-      {primary && !interactive && <><span className="selection-label">{component.locked ? '🔒 ' : ''}{component.name}</span>{!component.locked && <span className="resize-handle" onPointerDown={onResizePointerDown} />}</>}
+      {primary && !interactive && <><span className="selection-label">{component.locked ? '🔒 ' : ''}{component.name}</span>{onEditContents && <span className="selection-edit-hint">拖动整体 · 点击编辑内部</span>}{!component.locked && <span className="resize-handle" onPointerDown={onResizePointerDown} />}</>}
     </div>
   );
 }

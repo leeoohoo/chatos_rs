@@ -1,0 +1,24 @@
+{
+  "slug": "filter",
+  "title": "Filter",
+  "description": "Filter is a group of radio buttons. Choosing one of the options will hide the others and shows a reset button next to the chosen option.",
+  "demos": [
+    {
+      "id": "filter-1",
+      "label": "Filter using HTML form, radio buttons and reset button",
+      "html": "<form class=\"filter\">\n  <input class=\"btn btn-square\" type=\"reset\" value=\"×\"/>\n  <input class=\"btn\" type=\"radio\" name=\"frameworks\" aria-label=\"Svelte\"/>\n  <input class=\"btn\" type=\"radio\" name=\"frameworks\" aria-label=\"Vue\"/>\n  <input class=\"btn\" type=\"radio\" name=\"frameworks\" aria-label=\"React\"/>\n</form>"
+    },
+    {
+      "id": "filter-2",
+      "label": "Filter without HTML form",
+      "html": "<div class=\"filter\">\n  <input class=\"btn filter-reset\" type=\"radio\" name=\"metaframeworks\" aria-label=\"All\"/>\n  <input class=\"btn\" type=\"radio\" name=\"metaframeworks\" aria-label=\"Sveltekit\"/>\n  <input class=\"btn\" type=\"radio\" name=\"metaframeworks\" aria-label=\"Nuxt\"/>\n  <input class=\"btn\" type=\"radio\" name=\"metaframeworks\" aria-label=\"Next.js\"/>\n</div>"
+    },
+    {
+      "id": "filter-3",
+      "label": "Filter using HTML form, checkboxes, and a reset button",
+      "html": "<form class=\"filter\">\n  <input class=\"btn\" type=\"checkbox\" name=\"frameworks\" aria-label=\"Svelte\"/>\n  <input class=\"btn\" type=\"checkbox\" name=\"frameworks\" aria-label=\"Vue\"/>\n  <input class=\"btn\" type=\"checkbox\" name=\"frameworks\" aria-label=\"React\"/>\n  <input class=\"btn btn-square\" type=\"reset\" value=\"×\"/>\n</form>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/filter/"
+}

@@ -1,0 +1,34 @@
+{
+  "slug": "otp",
+  "title": "OTP",
+  "description": "OTP (One-Time Password) component for inputting verification codes. It's usually 4 to 6 digits long and is used for two-factor authentication (2FA) or passwordless login.",
+  "demos": [
+    {
+      "id": "otp-1",
+      "label": "OTP",
+      "html": "<label class=\"otp\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>"
+    },
+    {
+      "id": "otp-2",
+      "label": "OTP with 6 digits",
+      "html": "<label class=\"otp\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"6\" pattern=\"[0-9]{6}\" required />\n</label>"
+    },
+    {
+      "id": "otp-3",
+      "label": "OTP joined",
+      "html": "<label class=\"otp otp-joined\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>"
+    },
+    {
+      "id": "otp-4",
+      "label": "OTP with different sizes",
+      "html": "<label class=\"otp otp-xs\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-sm\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-md\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-lg\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-xl\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>"
+    },
+    {
+      "id": "otp-5",
+      "label": "OTP with different colors",
+      "html": "<label class=\"otp otp-neutral\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-primary\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-secondary\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-accent\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-info\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-success\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-warning\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>\n\n<label class=\"otp otp-error\">\n  <span></span>\n  <span></span>\n  <span></span>\n  <span></span>\n  <input type=\"text\" autocomplete=\"one-time-code\" inputmode=\"numeric\" maxlength=\"4\" pattern=\"[0-9]{4}\" required />\n</label>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/otp/"
+}

@@ -1,0 +1,24 @@
+{
+  "slug": "hover-3d",
+  "title": "Hover 3D Card",
+  "description": "Hover 3D is a wrapper component that adds a 3D hover effect to its content. When we hover over the component, it tilts and rotates based on the mouse position, creating an interactive 3D effect.",
+  "demos": [
+    {
+      "id": "hover-3d-1",
+      "label": "3D image hover effect",
+      "html": "<div class=\"hover-3d\">\n  <!-- content -->\n  <figure class=\"max-w-100 rounded-2xl\">\n    <img src=\"https://img.daisyui.com/images/stock/creditcard.webp\" alt=\"3D card\" />\n  </figure>\n  <!-- 8 empty divs needed for the 3D effect -->\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n</div>"
+    },
+    {
+      "id": "hover-3d-2",
+      "label": "3D card hover effect",
+      "html": "<a href=\"#\" class=\"hover-3d my-12 mx-2 cursor-pointer\">\n  \n  <!-- content -->\n  <div class=\"card w-96 bg-black text-white bg-[radial-gradient(circle_at_bottom_left,#ffffff04_35%,transparent_36%),radial-gradient(circle_at_top_right,#ffffff04_35%,transparent_36%)] bg-size-[4.95em_4.95em]\">\n    <div class=\"card-body\">\n      <div class=\"flex justify-between mb-10\">\n        <div class=\"font-bold\">BANK OF LATVERIA</div>\n        <div class=\"text-5xl opacity-10\">❁</div>\n      </div>\n      <div class=\"text-lg mb-4 opacity-40\">0210 8820 1150 0222</div>\n      <div class=\"flex justify-between\">\n        <div>\n          <div class=\"text-xs opacity-20\">CARD HOLDER</div>\n          <div>VICTOR VON D.</div>\n        </div>\n        <div>\n          <div class=\"text-xs opacity-20\">EXPIRES</div>\n          <div>29/08</div>\n        </div>\n      </div>\n    </div>\n  </div>\n  \n  <!-- 8 empty divs needed for the 3D effect -->\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n</a>"
+    },
+    {
+      "id": "hover-3d-3",
+      "label": "3D hover effect for image gallery",
+      "html": "<div class=\"hover-3d\">\n  <!-- content -->\n  <figure class=\"w-60 rounded-2xl\">\n    <img src=\"https://img.daisyui.com/images/stock/card-1.webp?x\" alt=\"Tailwind CSS 3D card\" />\n  </figure>\n  <!-- 8 empty divs needed for the 3D effect -->\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n</div>\n\n<div class=\"hover-3d\">\n  <!-- content -->\n  <figure class=\"w-60 rounded-2xl\">\n    <img src=\"https://img.daisyui.com/images/stock/card-2.webp?x\" alt=\"Tailwind CSS 3D hover\" />\n  </figure>\n  <!-- 8 empty divs needed for the 3D effect -->\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n</div>\n\n<div class=\"hover-3d\">\n  <!-- content -->\n  <figure class=\"w-60 rounded-2xl\">\n    <img src=\"https://img.daisyui.com/images/stock/card-3.webp?x\" alt=\"Tailwind CSS 3D hover\" />\n  </figure>\n  <!-- 8 empty divs needed for the 3D effect -->\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n  <div></div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/hover-3d/"
+}

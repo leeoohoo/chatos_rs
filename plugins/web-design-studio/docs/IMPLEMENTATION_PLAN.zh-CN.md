@@ -42,8 +42,9 @@ Diagram Studio 是最接近本项目的参考实现，已经具备：
 - 结构化 JSON 文档与 revision 乐观锁；
 - MCP 读取、局部 patch、校验和导出；
 - 用户拖动、缩放、选择、属性编辑与本地持久化。
+- 宿主 project/workspace/user/context 标识参与稳定 scope 指纹，项目和文档按 scope 隔离。
 
-Web Design Studio 将沿用这套架构，并把“图节点”替换为“网页组件”，增加组件批注和 AI 请求队列。
+Web Design Studio 已沿用这套架构，并把“图节点”替换为“网页组件”，增加组件批注和 AI 请求队列。宿主项目 ID 通过环境上下文透传到稳定 scope 指纹，内部项目 ID 仅作为存储标识，不冒充宿主 ID。
 
 ## 3. 总体架构
 
@@ -81,6 +82,7 @@ Web Design Studio Workbench ┘
 - 绑定到组件的批注；
 - 绑定到页面或组件的 AI 请求；
 - revision、创建时间和更新时间。
+- scope 内的网站项目及其设计成员关系；URL 保存当前内部项目与设计，完整刷新后回到同一份设计。
 
 当前版本已经支持复用组件实例同步、覆盖属性和基础点击交互。后续版本扩展数据绑定以及 React/Vue 真实项目级组件映射。
 
@@ -154,8 +156,8 @@ Web Design Studio Workbench ┘
 - [已完成] 全部 72 个 Ant Design 组件至少提供两种真实展示款式，并记录官网文档、引入版本和废弃状态；新增 Listy、BorderBeam、App、ConfigProvider，以及 OTP、分组选择、可选择表格、可调整抽屉、可编辑标签页等官网主要形态。
 - [已完成] Drawer、Modal、Select、Dropdown 等浮层限定在当前网页画布内；全屏预览会隐藏编辑器 chrome 并按视口适配页面。
 - [已完成] Ant Design、Chakra UI、shadcn/ui 使用独立 Tab、独立运行时渲染器和统一组件目录抽象，不混合组件体系。
-- [已完成] Chakra UI List 按 3.37.0 官方文档覆盖基础、有序、图标、嵌套、Marker Style、plain、align 与 unstyled 形态；列表条目、说明和嵌套 children 均可在检查器中编辑并持久化。
-- [已完成] 以 Chakra UI 3.37.0 官网 114 个组件/工具页面作为精确审计基线，目录现已覆盖 114/114，所有条目均具备至少两种专属款式。包内组件直接使用 Chakra 官方运行时；Prose、RichTextEditor、PasswordInput、SegmentedControl、ToggleTip 与 Toast 等官网 snippet 按官方 composition 方式接入，其中富文本使用真实 Tiptap 编辑内核。LocaleProvider、FormatNumber、FormatByte、Checkmark、ClientOnly、EnvironmentProvider、For、Presence、Portal、Radiomark、Show、SkipNav、VisuallyHidden、Theme 等非视觉工具也提供了可观察、可配置的设计形态。
+- [已完成] Chakra UI 3.37.0 已改为官方源码 registry：113 个具备可运行官方示例的可视化组件、1152 个官方 composition 示例，款式数量直接来自官方源码，不再维护手写款式表。
+- [已完成] Chakra 统一复用 React registry adapter 和官方 ChakraProvider；旧 `ChakraCanvasComponent` 已删除，未发布可视化示例的 `EnvironmentProvider` 直接从设计目录移除，不做仿写、不做旧渲染兼容。
 
 ### 阶段三：界面内直接 AI 执行
 
@@ -188,10 +190,12 @@ Web Design Studio Workbench ┘
 
 串行顺序与官方基线：
 
-- [已完成] Magic UI：当前 MIT registry 78/78，明确排除 Magic UI Pro。
-- [已完成] Spell UI：公开 MIT registry 33/33。
-- [已完成] Inspira UI：英文官方组件文档 155/155，按 12 个官方分类独立展示，重点交互与嵌套编辑已验收。
-- [已完成] DaisyUI：5.7.28 当前官网组件路由 68/68，使用官方运行时 CSS，并覆盖主要结构、状态与交互修饰符。
+- [已完成] Magic UI：官方当前可下载 MIT 源码 68 个、123 个可下载官方 Demo 全量同步，全部通过共享 React registry 沙箱运行；款式数量来自 Demo 依赖关系，不再统一生成单一 `signature`。上游列名但组件和示例源码均返回 404 的七项不伪装为已集成，明确排除 Magic UI Pro。
+- [已完成] Spell UI：公开 MIT registry 33/33，全部直接运行官方源码，复用同一 React registry adapter、props/content 协议并完成浏览器逐项验收。
+- [迁移规则] Ant Design 与 Chakra UI 使用官方 npm runtime；shadcn/ui、Magic UI、Spell UI 与 Inspira UI 使用官方 registry 源码沙箱；daisyUI 使用官网原始 HTML、官方 CSS 与公共 DOM registry adapter。旧创意模板不再作为完成标准。
+- [已完成] Magic UI 与 Spell UI 的编辑器款式标识也由同步器生成：Magic UI 逐个关联全部官方 Demo，Spell UI 使用每个官方 registry 源文件作为唯一真实示例；删除旧 `signature / immersive / editorial` 手工款式生成器，不保留兼容别名。
+- [已完成] Inspira UI：自动扫描官方仓库 examples 树，覆盖英文官方组件文档 155/155 和官方 Vue 示例 197/197；同一组件的全部上游 Demo 由同步器生成独立款式并通过公共 Vue registry adapter 运行。旧手工背景款式与 GithubGlobe 兼容补丁已删除，只有一个官方 Demo 的组件准确显示“1 款”，不再用“预览”掩盖数量。
+- [已完成] daisyUI：5.7.28 当前官网组件路由 68/68、官方 HTML 示例 587/587；使用官网原始结构与官方 CSS，经公共 DOM registry adapter 渲染，示例资源按组件加载；Select、Drawer、Modal 等原生交互已通过浏览器验收。
 - [法务排除] React Bits：Pro 许可证禁止组件库再分发；公开仓库的 MIT + Commons Clause 同样禁止重新分发组件本身，因此不集成实现与变体预览。
 - 将设计映射到真实项目组件，并生成最小代码补丁；
 - 浏览器截图回归和设计一致性检查。

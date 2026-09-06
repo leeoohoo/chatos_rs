@@ -1,11 +1,63 @@
 @import "tailwindcss";
-@source "./vendor/inspira/**/*.vue";
+@source "./vendor/inspira";
+@source "./vendor/magicui";
+@source "./vendor/spell";
+@source "./vendor/shadcn";
+@source "./shadcn-compositions.json";
+@source "../public/daisyui";
+@plugin "daisyui" {
+  themes: light --default, dark;
+}
+@import "./magicui-registry.generated.css";
+@import "./shadcn-registry.generated.css";
+@import "./spell-registry.generated.css";
 
-:root { color-scheme: light dark; font-family: Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif; }
+@theme inline {
+  --color-background:var(--runtime-background);
+  --color-foreground:var(--runtime-foreground);
+  --color-primary:var(--runtime-primary);
+  --color-primary-foreground:var(--runtime-primary-foreground);
+  --color-border:var(--runtime-border);
+  --color-ring:var(--runtime-ring);
+  --color-muted:var(--runtime-muted);
+  --color-muted-foreground:var(--runtime-muted-foreground);
+  --color-secondary:var(--runtime-secondary);
+  --color-secondary-foreground:var(--runtime-secondary-foreground);
+  --color-accent:var(--runtime-accent);
+  --color-accent-foreground:var(--runtime-accent-foreground);
+  --color-input:var(--runtime-input);
+  --color-destructive:var(--runtime-destructive);
+  --color-destructive-foreground:var(--runtime-destructive-foreground);
+}
+
+:root { color-scheme:light;--runtime-background:#ffffff;--runtime-foreground:#18181b;--runtime-primary:#18181b;--runtime-primary-foreground:#fafafa;--runtime-border:#e4e4e7;--runtime-ring:#a1a1aa;--runtime-muted:#f4f4f5;--runtime-muted-foreground:#71717a;--runtime-secondary:#f4f4f5;--runtime-secondary-foreground:#18181b;--runtime-accent:#f4f4f5;--runtime-accent-foreground:#18181b;--runtime-input:#e4e4e7;--runtime-destructive:#dc2626;--runtime-destructive-foreground:#fff;--chart-1:#2563eb;--chart-2:#0d9488;--chart-3:#f59e0b;--chart-4:#8b5cf6;--chart-5:#ec4899;--sidebar:#fafafa;--sidebar-foreground:#18181b;--sidebar-primary:#18181b;--sidebar-primary-foreground:#fafafa;--sidebar-accent:#f4f4f5;--sidebar-accent-foreground:#18181b;--sidebar-border:#e4e4e7;--sidebar-ring:#a1a1aa;font-family:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif; }
 html,body,#root { width:100%;height:100%;margin:0;overflow:hidden;background:transparent; }
 #root { position:relative;isolation:isolate; }
-#root > * { width:100%!important;height:100%!important;min-height:100%!important; }
+html[data-runtime-layout="fill"] #root > * { width:100%!important;height:100%!important;min-height:100%!important; }
+html[data-runtime-layout="intrinsic"],html[data-runtime-layout="intrinsic"] body { height:auto;min-height:100%;overflow:auto; }
+html[data-runtime-layout="intrinsic"] #root { height:auto;min-height:100%;display:flex;align-items:flex-start;justify-content:center;overflow:visible; }
+html[data-runtime-layout="intrinsic"] #root > * { max-width:100%; }
+.react-registry-preview { box-sizing:border-box;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:16px; }
+.react-registry-stage { box-sizing:border-box;width:100%;min-width:0;max-width:100%; }
+html[data-runtime-layout="intrinsic"] .react-registry-preview { width:100%;height:auto;min-width:0;align-items:flex-start;overflow:visible; }
+.dom-registry-preview { box-sizing:border-box;width:100%;min-height:100%;display:flex;align-items:center;justify-content:center;overflow:auto;padding:16px;color:var(--color-base-content);background:var(--color-base-100); }
+.dom-registry-preview > * { max-width:100%; }
+html[data-runtime-layout="fill"] .dom-registry-preview { height:100%;overflow:hidden; }
+html[data-runtime-layout="intrinsic"] .dom-registry-preview { width:auto;height:auto;min-width:min(100%,320px); }
+.dom-registry-preview :where(img,svg,video,canvas) { max-width:100%; }
+.dom-registry-preview :where(button,input,select,textarea) { font:inherit; }
+.vue-registry-preview { box-sizing:border-box;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden; }
+html[data-runtime-layout="fill"] .vue-registry-preview > * { width:100%!important;height:100%!important;min-height:0!important;max-width:100%!important;max-height:100%!important; }
+html[data-runtime-layout="intrinsic"] .vue-registry-preview { height:auto;min-height:100%;align-items:flex-start;overflow:visible;padding:16px; }
+html[data-runtime-layout="intrinsic"] .vue-registry-preview > * { flex:none;width:auto!important;height:auto!important;min-height:0!important;max-width:100%!important;max-height:none!important; }
+.runtime-host-button { display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:8px 14px;border:0;border-radius:10px;background:var(--runtime-primary);color:var(--runtime-primary-foreground);font:inherit;font-size:13px;font-weight:650;cursor:pointer; }
+.runtime-host-switch { position:relative;display:inline-flex;width:42px;height:24px;cursor:pointer; }.runtime-host-switch input{position:absolute;opacity:0}.runtime-host-switch span{width:100%;height:100%;border-radius:999px;background:#d4d4d8;transition:.18s}.runtime-host-switch span::after{content:"";display:block;width:18px;height:18px;margin:3px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,.2);transition:.18s}.runtime-host-switch input:checked+span{background:var(--runtime-primary)}.runtime-host-switch input:checked+span::after{transform:translateX(18px)}
+.runtime-host-icon { display:inline-flex;align-items:center;justify-content:center;width:1em;height:1em;line-height:1; }
+.runtime-preview-chip { display:inline-flex;align-items:center;margin:0 6px;padding:10px 14px;border:1px solid var(--runtime-border);border-radius:14px;background:var(--runtime-background);color:var(--runtime-foreground);font-size:13px;font-weight:650;white-space:nowrap;box-shadow:0 8px 24px rgba(15,23,42,.08); }
+.runtime-preview-logo { display:inline-flex;align-items:center;justify-content:center;min-width:92px;height:44px;padding:0 14px;border:1px solid var(--runtime-border);border-radius:12px;background:var(--runtime-background);color:var(--runtime-foreground);font-size:13px;font-weight:750; }
+.runtime-preview-word { color:var(--runtime-foreground);font-size:28px;font-weight:800;letter-spacing:-.04em;white-space:nowrap; }
 .runtime-default-slot { position:absolute;inset:0;pointer-events:none; }
+.runtime-slot-content { position:relative;z-index:1; }
 .runtime-error { box-sizing:border-box;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:20px;background:#fff7ed;color:#9a3412;text-align:center; }
 .runtime-error strong { font-size:13px; }.runtime-error span { max-width:460px;font-size:10px;line-height:1.5; }
 

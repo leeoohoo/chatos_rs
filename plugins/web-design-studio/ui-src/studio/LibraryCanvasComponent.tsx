@@ -1,11 +1,7 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 import type { WebDesignComponent, WebDesignTokens } from '../../src/schema';
-
-const AntdCanvasComponent = lazy(() => import('./AntdCanvasComponent').then((module) => ({ default: module.AntdCanvasComponent })));
-const ChakraCanvasComponent = lazy(() => import('./ChakraCanvasComponent').then((module) => ({ default: module.ChakraCanvasComponent })));
-const ShadcnCanvasComponent = lazy(() => import('./ShadcnCanvasComponent').then((module) => ({ default: module.ShadcnCanvasComponent })));
-const CreativeCanvasComponent = lazy(() => import('./CreativeCanvasComponent').then((module) => ({ default: module.CreativeCanvasComponent })));
-const DaisyCanvasComponent = lazy(() => import('./DaisyCanvasComponent').then((module) => ({ default: module.DaisyCanvasComponent })));
+import { hasOfficialRuntimeComponent, officialRuntimePresentation } from '../library-runtime/registry';
+import { LibraryRuntimeComponent } from './LibraryRuntimeComponent';
 
 export function LibraryCanvasComponent({ component, preview, showcase = false, tokens, slotContent = {} }: {
   component: WebDesignComponent;
@@ -15,16 +11,10 @@ export function LibraryCanvasComponent({ component, preview, showcase = false, t
   slotContent?: Record<string, ReactNode>;
 }) {
   const library = component.library?.name;
-  const renderer = library === 'antd'
-    ? <AntdCanvasComponent component={component} preview={preview} showcase={showcase} tokens={tokens} slotContent={slotContent} />
-    : library === 'chakra'
-      ? <ChakraCanvasComponent component={component} preview={preview} showcase={showcase} tokens={tokens} slotContent={slotContent} />
-      : library === 'shadcn'
-        ? <ShadcnCanvasComponent component={component} preview={preview} showcase={showcase} tokens={tokens} slotContent={slotContent} />
-        : library === 'daisyui'
-          ? <DaisyCanvasComponent component={component} preview={preview} showcase={showcase} tokens={tokens} slotContent={slotContent} />
-        : library === 'magicui' || library === 'spell' || library === 'inspira'
-          ? <CreativeCanvasComponent component={component} preview={preview} showcase={showcase} tokens={tokens} slotContent={slotContent} />
-        : null;
+  const componentSlug = String(component.library?.props.componentSlug ?? component.library?.component.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z])([A-Z][a-z])/g, '$1-$2').toLowerCase() ?? '');
+  const officialPresentation = officialRuntimePresentation(library, componentSlug);
+  const renderer = hasOfficialRuntimeComponent(library, componentSlug)
+    ? <LibraryRuntimeComponent component={{ ...component, library: component.library ? { ...component.library, props: { ...component.library.props, componentSlug } } : undefined }} preview={preview} slotContent={slotContent.content} layout={officialPresentation?.layout ?? 'intrinsic'} autoSize={showcase} />
+    : null;
   return <Suspense fallback={<span className="library-loading-placeholder">加载组件…</span>}>{renderer}</Suspense>;
 }

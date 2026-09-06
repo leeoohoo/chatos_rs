@@ -1,0 +1,44 @@
+{
+  "slug": "steps",
+  "title": "Steps",
+  "description": "Steps can be used to show a list of steps in a process.",
+  "demos": [
+    {
+      "id": "steps-1",
+      "label": "Horizontal",
+      "html": "<ul class=\"steps\">\n  <li class=\"step step-primary\">Register</li>\n  <li class=\"step step-primary\">Choose plan</li>\n  <li class=\"step\">Purchase</li>\n  <li class=\"step\">Receive Product</li>\n</ul>"
+    },
+    {
+      "id": "steps-2",
+      "label": "Vertical",
+      "html": "<ul class=\"steps steps-vertical\">\n  <li class=\"step step-primary\">Register</li>\n  <li class=\"step step-primary\">Choose plan</li>\n  <li class=\"step\">Purchase</li>\n  <li class=\"step\">Receive Product</li>\n</ul>"
+    },
+    {
+      "id": "steps-3",
+      "label": "responsive (vertical on small screen, horizontal on large screen)",
+      "html": "<ul class=\"steps steps-vertical lg:steps-horizontal\">\n  <li class=\"step step-primary\">Register</li>\n  <li class=\"step step-primary\">Choose plan</li>\n  <li class=\"step\">Purchase</li>\n  <li class=\"step\">Receive Product</li>\n</ul>"
+    },
+    {
+      "id": "steps-4",
+      "label": "With custom content in step-icon",
+      "html": "<ul class=\"steps\">\n  <li class=\"step step-neutral\">\n    <span class=\"step-icon\">😕</span>Step 1\n  </li>\n  <li class=\"step step-neutral\">\n    <span class=\"step-icon\">😃</span>Step 2\n  </li>\n  <li class=\"step\">\n    <span class=\"step-icon\">😍</span>Step 3\n  </li>\n</ul>"
+    },
+    {
+      "id": "steps-5",
+      "label": "With data-content",
+      "html": "<ul class=\"steps\">\n  <li data-content=\"?\" class=\"step step-neutral\">Step 1</li>\n  <li data-content=\"!\" class=\"step step-neutral\">Step 2</li>\n  <li data-content=\"✓\" class=\"step step-neutral\">Step 3</li>\n  <li data-content=\"✕\" class=\"step step-neutral\">Step 4</li>\n  <li data-content=\"★\" class=\"step step-neutral\">Step 5</li>\n  <li data-content=\"\" class=\"step step-neutral\">Step 6</li>\n  <li data-content=\"●\" class=\"step step-neutral\">Step 7</li>\n</ul>"
+    },
+    {
+      "id": "steps-6",
+      "label": "Custom colors",
+      "html": "<ul class=\"steps\">\n  <li class=\"step step-info\">Fly to moon</li>\n  <li class=\"step step-info\">Shrink the moon</li>\n  <li class=\"step step-info\">Grab the moon</li>\n  <li class=\"step step-error\" data-content=\"?\">Sit on toilet</li>\n</ul>"
+    },
+    {
+      "id": "steps-7",
+      "label": "With scrollable wrapper",
+      "html": "<div class=\"overflow-x-auto\">\n  <ul class=\"steps\">\n    <li class=\"step\">start</li>\n    <li class=\"step step-secondary\">2</li>\n    <li class=\"step step-secondary\">3</li>\n    <li class=\"step step-secondary\">4</li>\n    <li class=\"step\">5</li>\n    <li class=\"step step-accent\">6</li>\n    <li class=\"step step-accent\">7</li>\n    <li class=\"step\">8</li>\n    <li class=\"step step-error\">9</li>\n    <li class=\"step step-error\">10</li>\n    <li class=\"step\">11</li>\n    <li class=\"step\">12</li>\n    <li class=\"step step-warning\">13</li>\n    <li class=\"step step-warning\">14</li>\n    <li class=\"step\">15</li>\n    <li class=\"step step-neutral\">16</li>\n    <li class=\"step step-neutral\">17</li>\n    <li class=\"step step-neutral\">18</li>\n    <li class=\"step step-neutral\">19</li>\n    <li class=\"step step-neutral\">20</li>\n    <li class=\"step step-neutral\">21</li>\n    <li class=\"step step-neutral\">22</li>\n    <li class=\"step step-neutral\">23</li>\n    <li class=\"step step-neutral\">end</li>\n  </ul>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/steps/"
+}

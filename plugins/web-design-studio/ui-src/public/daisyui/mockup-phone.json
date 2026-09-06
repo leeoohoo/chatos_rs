@@ -1,0 +1,20 @@
+{
+  "slug": "mockup-phone",
+  "title": "Phone mockup",
+  "description": "Phone mockup shows a mockup of an iPhone.",
+  "demos": [
+    {
+      "id": "mockup-phone-1",
+      "label": "iPhone mockup",
+      "html": "<div class=\"mockup-phone\">\n  <div class=\"mockup-phone-camera\"></div>\n  <div class=\"mockup-phone-display text-white grid place-content-center bg-neutral-900\">\n    It's Glowtime.\n  </div>\n</div>"
+    },
+    {
+      "id": "mockup-phone-2",
+      "label": "With color and wallpaper",
+      "html": "<div class=\"mockup-phone border-[#ff8938]\">\n  <div class=\"mockup-phone-camera\"></div>\n  <div class=\"mockup-phone-display\">\n    <img alt=\"wallpaper\" src=\"https://img.daisyui.com/images/stock/453966.webp\" />\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/mockup-phone/",
+  "previewHeight": 590
+}

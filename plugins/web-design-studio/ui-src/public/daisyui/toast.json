@@ -1,0 +1,60 @@
+{
+  "slug": "toast",
+  "title": "Toast",
+  "description": "Toast is a wrapper to stack elements, positioned on the corner of page.",
+  "demos": [
+    {
+      "id": "toast-1",
+      "label": "toast with alert inside",
+      "html": "<div class=\"toast\">\n  <div class=\"alert alert-info\">\n    <span>New message arrived.</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "toast-2",
+      "label": "toast-top toast-start",
+      "html": "<div class=\"toast toast-top toast-start\">\n  <div class=\"alert alert-info\">\n    <span>New mail arrived.</span>\n  </div>\n  <div class=\"alert alert-success\">\n    <span>Message sent successfully.</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "toast-3",
+      "label": "toast-top toast-center",
+      "html": "<div class=\"toast toast-top toast-center\">\n  <div class=\"alert alert-info\">\n    <span>New mail arrived.</span>\n  </div>\n  <div class=\"alert alert-success\">\n    <span>Message sent successfully.</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "toast-4",
+      "label": "toast-top toast-end",
+      "html": "<div class=\"toast toast-top toast-end\">\n  <div class=\"alert alert-info\">\n    <span>New mail arrived.</span>\n  </div>\n  <div class=\"alert alert-success\">\n    <span>Message sent successfully.</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "toast-5",
+      "label": "toast-start toast-middle",
+      "html": "<div class=\"toast toast-start toast-middle\">\n  <div class=\"alert alert-info\">\n    <span>New mail arrived.</span>\n  </div>\n  <div class=\"alert alert-success\">\n    <span>Message sent successfully.</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "toast-6",
+      "label": "toast-center toast-middle",
+      "html": "<div class=\"toast toast-center toast-middle\">\n  <div class=\"alert alert-info\">\n    <span>New mail arrived.</span>\n  </div>\n  <div class=\"alert alert-success\">\n    <span>Message sent successfully.</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "toast-7",
+      "label": "toast-end toast-middle",
+      "html": "<div class=\"toast toast-end toast-middle\">\n  <div class=\"alert alert-info\">\n    <span>New mail arrived.</span>\n  </div>\n  <div class=\"alert alert-success\">\n    <span>Message sent successfully.</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "toast-8",
+      "label": "toast-start toast-bottom (default)",
+      "html": "<div class=\"toast toast-start\">\n  <div class=\"alert alert-info\">\n    <span>New mail arrived.</span>\n  </div>\n  <div class=\"alert alert-success\">\n    <span>Message sent successfully.</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "toast-9",
+      "label": "toast-center toast-bottom (default)",
+      "html": "<div class=\"toast toast-center\">\n  <div class=\"alert alert-info\">\n    <span>New mail arrived.</span>\n  </div>\n  <div class=\"alert alert-success\">\n    <span>Message sent successfully.</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "toast-10",
+      "label": "toast-end (default) toast-bottom (default)",
+      "html": "<div class=\"toast toast-end\">\n  <div class=\"alert alert-info\">\n    <span>New mail arrived.</span>\n  </div>\n  <div class=\"alert alert-success\">\n    <span>Message sent successfully.</span>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/toast/",
+  "previewHeight": 330
+}

@@ -1,0 +1,29 @@
+{
+  "slug": "skeleton",
+  "title": "Skeleton",
+  "description": "Skeleton is a component that can be used to show a loading state of a component.",
+  "demos": [
+    {
+      "id": "skeleton-1",
+      "label": "Skeleton",
+      "html": "<div class=\"skeleton h-32 w-32\"></div>"
+    },
+    {
+      "id": "skeleton-2",
+      "label": "Skeleton - circle with content",
+      "html": "<div class=\"flex w-52 flex-col gap-4\">\n  <div class=\"flex items-center gap-4\">\n    <div class=\"skeleton h-16 w-16 shrink-0 rounded-full\"></div>\n    <div class=\"flex flex-col gap-4\">\n      <div class=\"skeleton h-4 w-20\"></div>\n      <div class=\"skeleton h-4 w-28\"></div>\n    </div>\n  </div>\n  <div class=\"skeleton h-32 w-full\"></div>\n</div>"
+    },
+    {
+      "id": "skeleton-3",
+      "label": "Skeleton - rectangle with content",
+      "html": "<div class=\"flex w-52 flex-col gap-4\">\n  <div class=\"skeleton h-32 w-full\"></div>\n  <div class=\"skeleton h-4 w-28\"></div>\n  <div class=\"skeleton h-4 w-full\"></div>\n  <div class=\"skeleton h-4 w-full\"></div>\n</div>"
+    },
+    {
+      "id": "skeleton-4",
+      "label": "skeleton-text - animated gradient text",
+      "html": "<span class=\"skeleton skeleton-text\">AI is thinking harder...</span>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/skeleton/"
+}

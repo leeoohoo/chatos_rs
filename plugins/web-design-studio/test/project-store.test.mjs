@@ -62,3 +62,49 @@ test('legacy migration creates only a project index and preserves the design fil
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('transmitted ChatOS scopes keep stable isolated project and design membership', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scope-store-'));
+  const store = new WebDesignDocumentStore(root);
+  try {
+    const scopeA = 'a'.repeat(64);
+    const scopeB = 'b'.repeat(64);
+    const first = await store.ensureScopedProject(scopeA, '项目 A');
+    const same = await store.ensureScopedProject(scopeA, '不应覆盖名称');
+    const second = await store.ensureScopedProject(scopeB, '项目 B');
+    assert.equal(same.projectId, first.projectId);
+    assert.notEqual(second.projectId, first.projectId);
+    assert.equal(first.scopeKey, scopeA);
+    assert.equal(first.isScopeDefault, true);
+    assert.deepEqual((await store.listProjects(scopeA)).map((project) => project.projectId), [first.projectId]);
+    assert.deepEqual((await store.listProjects(scopeB)).map((project) => project.projectId), [second.projectId]);
+
+    const design = await store.createInProject(first.projectId, '仅项目 A 可见', true);
+    assert.equal((await store.readInScope(design.documentId, scopeA)).documentId, design.documentId);
+    await assert.rejects(() => store.readInScope(design.documentId, scopeB), /different ChatOS user or project scope/);
+    await assert.rejects(() => store.readProjectInScope(first.projectId, scopeB), /different ChatOS user or project scope/);
+    await assert.rejects(() => store.moveDocument(design.documentId, second.projectId, first.projectId, scopeA), /different ChatOS user or project scope/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('legacy projects are assigned to the first transmitted scope without changing design bytes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scope-migration-'));
+  const store = new WebDesignDocumentStore(root);
+  try {
+    const legacy = await store.createProject('旧项目');
+    const design = await store.createInProject(legacy.projectId, '旧设计', true);
+    const file = path.join(root, `${design.documentId}.web-design.json`);
+    const before = await readFile(file, 'utf8');
+    const scope = 'c'.repeat(64);
+    const defaultProject = await store.ensureScopedProject(scope, '不会新建');
+    const after = await readFile(file, 'utf8');
+    assert.equal(defaultProject.projectId, legacy.projectId);
+    assert.equal((await store.readProject(legacy.projectId)).scopeKey, scope);
+    assert.equal((await store.readProject(legacy.projectId)).isScopeDefault, true);
+    assert.equal(after, before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

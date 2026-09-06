@@ -1,0 +1,39 @@
+{
+  "slug": "file-input",
+  "title": "File Input",
+  "description": "File Input is an input field for uploading files.",
+  "demos": [
+    {
+      "id": "file-input-1",
+      "label": "File input",
+      "html": "<input type=\"file\" class=\"file-input\" />"
+    },
+    {
+      "id": "file-input-2",
+      "label": "File input ghost",
+      "html": "<input type=\"file\" class=\"file-input file-input-ghost\" />"
+    },
+    {
+      "id": "file-input-3",
+      "label": "With fieldset and label",
+      "html": "<fieldset class=\"fieldset\">\n  <legend class=\"fieldset-legend\">Pick a file</legend>\n  <input type=\"file\" class=\"file-input\" />\n  <label class=\"label\">Max size 2MB</label>\n</fieldset>"
+    },
+    {
+      "id": "file-input-4",
+      "label": "Sizes",
+      "html": "<input type=\"file\" class=\"file-input file-input-xs\" />\n\n<input type=\"file\" class=\"file-input file-input-sm\" />\n\n<input type=\"file\" class=\"file-input file-input-md\" />\n\n<input type=\"file\" class=\"file-input file-input-lg\" />\n\n<input type=\"file\" class=\"file-input file-input-xl\" />"
+    },
+    {
+      "id": "file-input-5",
+      "label": "Primary color",
+      "html": "<input type=\"file\" class=\"file-input file-input-primary\" />\n<input type=\"file\" class=\"file-input file-input-secondary\" />\n<input type=\"file\" class=\"file-input file-input-accent\" />\n<input type=\"file\" class=\"file-input file-input-neutral\" />\n<input type=\"file\" class=\"file-input file-input-info\" />\n<input type=\"file\" class=\"file-input file-input-success\" />\n<input type=\"file\" class=\"file-input file-input-warning\" />\n<input type=\"file\" class=\"file-input file-input-error\" />"
+    },
+    {
+      "id": "file-input-6",
+      "label": "Disabled",
+      "html": "<input type=\"file\" placeholder=\"You can't touch this\" class=\"file-input\" disabled />"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/file-input/"
+}

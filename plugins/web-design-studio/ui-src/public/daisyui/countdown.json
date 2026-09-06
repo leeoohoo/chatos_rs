@@ -1,0 +1,44 @@
+{
+  "slug": "countdown",
+  "title": "Countdown",
+  "description": "Countdown gives you a transition effect when you change a number between 0 to 999.",
+  "demos": [
+    {
+      "id": "countdown-1",
+      "label": "Countdown",
+      "html": "<span class=\"countdown\">\n  <span style=\"--value:59;\" aria-live=\"polite\" aria-label=\"59\">59</span>\n</span>"
+    },
+    {
+      "id": "countdown-2",
+      "label": "Large text with 2 digits",
+      "html": "<span class=\"countdown font-mono text-6xl\">\n  <span style=\"--value:59; --digits: 2;\" aria-live=\"polite\" aria-label=\"59\">59</span>\n</span>"
+    },
+    {
+      "id": "countdown-3",
+      "label": "Clock countdown",
+      "html": "<span class=\"countdown font-mono text-2xl\">\n  <span style=\"--value:10;\" aria-live=\"polite\" aria-label=\"10\">10</span>\n  h\n  <span style=\"--value:24;\" aria-live=\"polite\" aria-label=\"24\">24</span>\n  m\n  <span style=\"--value:59;\" aria-live=\"polite\" aria-label=\"59\">59</span>\n  s\n</span>"
+    },
+    {
+      "id": "countdown-4",
+      "label": "Clock countdown with colons",
+      "html": "<span class=\"countdown font-mono text-2xl\">\n  <span style=\"--value:10;\" aria-live=\"polite\" aria-label=\"10\">10</span>\n  :\n  <span style=\"--value:24; --digits: 2;\" aria-live=\"polite\" aria-label=\"24\">24</span>\n  :\n  <span style=\"--value:59; --digits: 2;\" aria-live=\"polite\" aria-label=\"59\">59</span>\n</span>"
+    },
+    {
+      "id": "countdown-5",
+      "label": "Large text with labels",
+      "html": "<div class=\"flex gap-5\">\n  <div>\n    <span class=\"countdown font-mono text-4xl\">\n      <span style=\"--value:15;\" aria-live=\"polite\" aria-label=\"15\">15</span>\n    </span>\n    days\n  </div>\n  <div>\n    <span class=\"countdown font-mono text-4xl\">\n      <span style=\"--value:10;\" aria-live=\"polite\" aria-label=\"10\">10</span>\n    </span>\n    hours\n  </div>\n  <div>\n    <span class=\"countdown font-mono text-4xl\">\n      <span style=\"--value:24;\" aria-live=\"polite\" aria-label=\"24\">24</span>\n    </span>\n    min\n  </div>\n  <div>\n    <span class=\"countdown font-mono text-4xl\">\n      <span style=\"--value:59;\" aria-live=\"polite\" aria-label=\"59\">59</span>\n    </span>\n    sec\n  </div>\n</div>"
+    },
+    {
+      "id": "countdown-6",
+      "label": "Large text with labels under",
+      "html": "<div class=\"grid auto-cols-max grid-flow-col gap-5 text-center\">\n  <div class=\"flex flex-col\">\n    <span class=\"countdown font-mono text-5xl\">\n      <span style=\"--value:15;\" aria-live=\"polite\" aria-label=\"15\">15</span>\n    </span>\n    days\n  </div>\n  <div class=\"flex flex-col\">\n    <span class=\"countdown font-mono text-5xl\">\n      <span style=\"--value:10;\" aria-live=\"polite\" aria-label=\"10\">10</span>\n    </span>\n    hours\n  </div>\n  <div class=\"flex flex-col\">\n    <span class=\"countdown font-mono text-5xl\">\n      <span style=\"--value:24;\" aria-live=\"polite\" aria-label=\"24\">24</span>\n    </span>\n    min\n  </div>\n  <div class=\"flex flex-col\">\n    <span class=\"countdown font-mono text-5xl\">\n      <span style=\"--value:59;\" aria-live=\"polite\" aria-label=\"59\">59</span>\n    </span>\n    sec\n  </div>\n</div>"
+    },
+    {
+      "id": "countdown-7",
+      "label": "In boxes",
+      "html": "<div class=\"grid auto-cols-max grid-flow-col gap-5 text-center\">\n  <div class=\"bg-neutral rounded-box text-neutral-content flex flex-col p-2\">\n    <span class=\"countdown font-mono text-5xl\">\n      <span style=\"--value:15;\" aria-live=\"polite\" aria-label=\"15\">15</span>\n    </span>\n    days\n  </div>\n  <div class=\"bg-neutral rounded-box text-neutral-content flex flex-col p-2\">\n    <span class=\"countdown font-mono text-5xl\">\n      <span style=\"--value:10;\" aria-live=\"polite\" aria-label=\"10\">10</span>\n    </span>\n    hours\n  </div>\n  <div class=\"bg-neutral rounded-box text-neutral-content flex flex-col p-2\">\n    <span class=\"countdown font-mono text-5xl\">\n      <span style=\"--value:24;\" aria-live=\"polite\" aria-label=\"24\">24</span>\n    </span>\n    min\n  </div>\n  <div class=\"bg-neutral rounded-box text-neutral-content flex flex-col p-2\">\n    <span class=\"countdown font-mono text-5xl\">\n      <span style=\"--value:59;\" aria-live=\"polite\" aria-label=\"59\">59</span>\n    </span>\n    sec\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/countdown/"
+}

@@ -205,6 +205,8 @@ export interface WebDesignBreakpoints {
 export interface WebDesignProject {
   schemaVersion: 1;
   projectId: string;
+  scopeKey?: string;
+  isScopeDefault?: boolean;
   name: string;
   description?: string;
   createdAt: string;
@@ -214,6 +216,8 @@ export interface WebDesignProject {
 
 export interface WebDesignProjectSummary {
   projectId: string;
+  scopeKey?: string;
+  isScopeDefault?: boolean;
   name: string;
   description?: string;
   designCount: number;
@@ -301,6 +305,10 @@ export function assertWebDesignProject(value: unknown): asserts value is WebDesi
   const project = value as WebDesignProject;
   if (project.schemaVersion !== 1) throw new Error('Unsupported web design project schema version.');
   assertIdentifier(project.projectId, 'projectId');
+  if (project.scopeKey !== undefined && (typeof project.scopeKey !== 'string' || !/^[a-f0-9]{64}$/.test(project.scopeKey))) {
+    throw new Error('Project scopeKey must be a SHA-256 fingerprint.');
+  }
+  if (project.isScopeDefault !== undefined && typeof project.isScopeDefault !== 'boolean') throw new Error('Project isScopeDefault must be a boolean.');
   if (typeof project.name !== 'string' || !project.name.trim() || project.name.length > 240) {
     throw new Error('Project name must contain 1 to 240 characters.');
   }
@@ -321,6 +329,8 @@ export function assertWebDesignProject(value: unknown): asserts value is WebDesi
 export function webDesignProjectSummary(project: WebDesignProject): WebDesignProjectSummary {
   return {
     projectId: project.projectId,
+    ...(project.scopeKey ? { scopeKey: project.scopeKey } : {}),
+    ...(project.isScopeDefault ? { isScopeDefault: true } : {}),
     name: project.name,
     description: project.description,
     designCount: project.designIds.length,

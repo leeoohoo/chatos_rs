@@ -15,6 +15,20 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx"
+    ,"allowImportingTsExtensions": true
+    ,"baseUrl": "."
+    ,"paths": {
+      "@magic/*": ["ui-src/library-runtime/vendor/magicui/*"],
+      "@chakra-registry/*": ["ui-src/library-runtime/vendor/chakra/*"],
+      "compositions/*": ["ui-src/library-runtime/vendor/chakra/compositions/*"],
+      "@shadcn-registry/*": ["ui-src/library-runtime/vendor/shadcn/*"],
+      "@spell/*": ["ui-src/library-runtime/vendor/spell/*"],
+      "cn": ["ui-src/library-runtime/vendor/shadcn/cn.ts"],
+      "next/link": ["ui-src/library-runtime/compat/next-link.tsx"],
+      "next/image": ["ui-src/library-runtime/compat/next-image.tsx"],
+      "next/form": ["ui-src/library-runtime/compat/next-form.tsx"],
+      "next/font/google": ["ui-src/library-runtime/compat/next-font-google.ts"]
+    }
   },
   "include": ["src", "ui-src", "vite.config.ts"]
 }

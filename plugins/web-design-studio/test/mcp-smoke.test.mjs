@@ -60,11 +60,12 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.deepEqual(library.structuredContent.libraries.map((item) => item.id), ['antd', 'chakra', 'shadcn', 'magicui', 'spell', 'inspira', 'daisyui']);
     assert.equal(library.structuredContent.libraries.find((item) => item.id === 'antd').components.length, 72);
     const chakraLibrary = library.structuredContent.libraries.find((item) => item.id === 'chakra');
-    assert.equal(chakraLibrary.components.length, 114);
-    assert.equal(chakraLibrary.components.every((component) => component.variants.length >= 2), true);
+    assert.equal(chakraLibrary.components.length, 113);
+    assert.equal(chakraLibrary.components.some((component) => component.id === 'EnvironmentProvider'), false);
+    assert.equal(chakraLibrary.components.every((component) => component.variants.length >= 1), true);
     assert.ok(library.structuredContent.libraries.find((item) => item.id === 'shadcn').components.length >= 45);
     const magicLibrary = library.structuredContent.libraries.find((item) => item.id === 'magicui');
-    assert.equal(magicLibrary.components.length, 78);
+    assert.equal(magicLibrary.components.length, 68);
     assert.equal(magicLibrary.license, 'MIT');
     assert.equal(magicLibrary.components.every((component) => component.variants.length >= 1), true);
     assert.equal(magicLibrary.components.every((component) => component.variants.length === 3), false);
@@ -80,13 +81,16 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.equal(daisyLibrary.components.length, 68);
     assert.equal(daisyLibrary.license, 'MIT');
     assert.equal(daisyLibrary.components.every((component) => component.variants.length >= 1), true);
-    assert.equal(daisyLibrary.components.some((component) => component.variants.length === 1), true);
+    assert.equal(daisyLibrary.components.reduce((total, component) => total + component.variants.length, 0), 587);
     assert.equal(library.structuredContent.themes.length, 6);
     assert.equal(library.structuredContent.sections.length, 28);
     assert.equal(library.structuredContent.pageTemplates.length, 8);
     assert.equal(library.structuredContent.sections.some((section) => section.id === 'hero-centered'), true);
     assert.equal(library.structuredContent.pageTemplates.some((template) => template.id === 'developer'), true);
-    assert.equal(library.structuredContent.libraries.find((item) => item.id === 'antd').components.find((component) => component.id === 'Input').variants.length, 9);
+    const antdLibrary = library.structuredContent.libraries.find((item) => item.id === 'antd');
+    assert.equal(antdLibrary.components.reduce((total, component) => total + component.variants.length, 0), 828);
+    assert.equal(antdLibrary.components.find((component) => component.id === 'Input').variants.length, 18);
+    assert.notEqual(antdLibrary.components.find((component) => component.id === 'Form').variants.length, antdLibrary.components.find((component) => component.id === 'Button').variants.length);
 
     const templateSeed = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'Template Website', blank: true } });
     const templateDocumentId = templateSeed.structuredContent.document.documentId;

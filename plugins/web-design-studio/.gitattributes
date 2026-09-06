@@ -1,0 +1,2 @@
+# Preserve synchronized upstream component sources byte-for-byte.
+ui-src/library-runtime/vendor/** -whitespace

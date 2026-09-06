@@ -1,0 +1,109 @@
+{
+  "slug": "input",
+  "title": "Text Input",
+  "description": "Text Input is a simple input field.",
+  "demos": [
+    {
+      "id": "input-1",
+      "label": "Text input",
+      "html": "<input type=\"text\" placeholder=\"Type here\" class=\"input\" />"
+    },
+    {
+      "id": "input-2",
+      "label": "Text input with text label inside",
+      "html": "<label class=\"input\">\n  <svg class=\"h-[1em] opacity-50\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n    <g\n      stroke-linejoin=\"round\"\n      stroke-linecap=\"round\"\n      stroke-width=\"2.5\"\n      fill=\"none\"\n      stroke=\"currentColor\"\n    >\n      <circle cx=\"11\" cy=\"11\" r=\"8\"></circle>\n      <path d=\"m21 21-4.3-4.3\"></path>\n    </g>\n  </svg>\n  <input type=\"search\" class=\"grow\" placeholder=\"Search\" />\n  <kbd class=\"kbd kbd-sm\">⌘</kbd>\n  <kbd class=\"kbd kbd-sm\">K</kbd>\n</label>\n<label class=\"input\">\n  <svg class=\"h-[1em] opacity-50\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n    <g\n      stroke-linejoin=\"round\"\n      stroke-linecap=\"round\"\n      stroke-width=\"2.5\"\n      fill=\"none\"\n      stroke=\"currentColor\"\n    >\n      <path d=\"M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z\"></path>\n      <path d=\"M14 2v4a2 2 0 0 0 2 2h4\"></path>\n    </g>\n  </svg>\n  <input type=\"text\" class=\"grow\" placeholder=\"index.php\" />\n</label>\n<label class=\"input\">\n  Path\n  <input type=\"text\" class=\"grow\" placeholder=\"src/app/\" />\n  <span class=\"badge badge-neutral badge-xs\">Optional</span>\n</label>"
+    },
+    {
+      "id": "input-3",
+      "label": "Ghost style",
+      "html": "<input type=\"text\" placeholder=\"Type here\" class=\"input input-ghost\" />"
+    },
+    {
+      "id": "input-4",
+      "label": "With fieldset and fieldset-legend",
+      "html": "<fieldset class=\"fieldset\">\n  <legend class=\"fieldset-legend\">What is your name?</legend>\n  <input type=\"text\" class=\"input\" placeholder=\"Type here\" />\n  <p class=\"label\">Optional</p>\n</fieldset>"
+    },
+    {
+      "id": "input-5",
+      "label": "With fieldset and label",
+      "html": "<fieldset class=\"fieldset\">\n  <label class=\"label\" for=\"name\">Name</label>\n  <input type=\"text\" id=\"name\" class=\"input\" placeholder=\"Name\" />\n</fieldset>"
+    },
+    {
+      "id": "input-6",
+      "label": "Input colors",
+      "html": "<input type=\"text\" placeholder=\"neutral\" class=\"input input-neutral\" />\n<input type=\"text\" placeholder=\"Primary\" class=\"input input-primary\" />\n<input type=\"text\" placeholder=\"Secondary\" class=\"input input-secondary\" />\n<input type=\"text\" placeholder=\"Accent\" class=\"input input-accent\" />\n\n<input type=\"text\" placeholder=\"Info\" class=\"input input-info\" />\n<input type=\"text\" placeholder=\"Success\" class=\"input input-success\" />\n<input type=\"text\" placeholder=\"Warning\" class=\"input input-warning\" />\n<input type=\"text\" placeholder=\"Error\" class=\"input input-error\" />"
+    },
+    {
+      "id": "input-7",
+      "label": "Sizes",
+      "html": "<input type=\"text\" placeholder=\"Xsmall\" class=\"input input-xs\" />\n<input type=\"text\" placeholder=\"Small\" class=\"input input-sm\" />\n<input type=\"text\" placeholder=\"Medium\" class=\"input input-md\" />\n<input type=\"text\" placeholder=\"Large\" class=\"input input-lg\" />\n<input type=\"text\" placeholder=\"Xlarge\" class=\"input input-xl\" />"
+    },
+    {
+      "id": "input-8",
+      "label": "Disabled",
+      "html": "<input type=\"text\" placeholder=\"You can't touch this\" class=\"input\" disabled />"
+    },
+    {
+      "id": "input-9",
+      "label": "Text input with data list suggestion",
+      "html": "<input type=\"text\" class=\"input\" placeholder=\"Which browser do you use\" list=\"browsers\" />\n<datalist id=\"browsers\">\n  <option value=\"Chrome\"></option>\n  <option value=\"Firefox\"></option>\n  <option value=\"Safari\"></option>\n  <option value=\"Opera\"></option>\n  <option value=\"Edge\"></option>\n</datalist>"
+    },
+    {
+      "id": "input-10",
+      "label": "Date input",
+      "html": "<input type=\"date\" class=\"input\" />"
+    },
+    {
+      "id": "input-11",
+      "label": "Time input",
+      "html": "<input type=\"time\" class=\"input\" />"
+    },
+    {
+      "id": "input-12",
+      "label": "datetime-local input",
+      "html": "<input type=\"datetime-local\" class=\"input\" />"
+    },
+    {
+      "id": "input-13",
+      "label": "Username text input with icon and validator",
+      "html": "<label class=\"input validator\">\n  <svg class=\"h-[1em] opacity-50\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n    <g\n      stroke-linejoin=\"round\"\n      stroke-linecap=\"round\"\n      stroke-width=\"2.5\"\n      fill=\"none\"\n      stroke=\"currentColor\"\n    >\n      <path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\"></path>\n      <circle cx=\"12\" cy=\"7\" r=\"4\"></circle>\n    </g>\n  </svg>\n  <input\n    type=\"text\"\n    required\n    placeholder=\"Username\"\n    pattern=\"[A-Za-z][A-Za-z0-9\\\\-]*\"\n    minlength=\"3\"\n    maxlength=\"30\"\n    title=\"Only letters, numbers or dash\"\n  />\n</label>\n<p class=\"validator-hint\">\n  Must be 3 to 30 characters\n  <br />containing only letters, numbers or dash\n</p>"
+    },
+    {
+      "id": "input-14",
+      "label": "Search input with icon",
+      "html": "<label class=\"input\">\n  <svg class=\"h-[1em] opacity-50\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n    <g\n      stroke-linejoin=\"round\"\n      stroke-linecap=\"round\"\n      stroke-width=\"2.5\"\n      fill=\"none\"\n      stroke=\"currentColor\"\n    >\n      <circle cx=\"11\" cy=\"11\" r=\"8\"></circle>\n      <path d=\"m21 21-4.3-4.3\"></path>\n    </g>\n  </svg>\n  <input type=\"search\" required placeholder=\"Search\" />\n</label>"
+    },
+    {
+      "id": "input-15",
+      "label": "Email input with icon and validator",
+      "html": "<label class=\"input validator\">\n  <svg class=\"h-[1em] opacity-50\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n    <g\n      stroke-linejoin=\"round\"\n      stroke-linecap=\"round\"\n      stroke-width=\"2.5\"\n      fill=\"none\"\n      stroke=\"currentColor\"\n    >\n      <rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\"></rect>\n      <path d=\"m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7\"></path>\n    </g>\n  </svg>\n  <input type=\"email\" placeholder=\"mail@site.com\" required />\n</label>\n<div class=\"validator-hint hidden\">Enter valid email address</div>"
+    },
+    {
+      "id": "input-16",
+      "label": "Email input with icon, validator, button, join",
+      "html": "<div class=\"join\">\n  <div>\n    <label class=\"input validator join-item\">\n      <svg class=\"h-[1em] opacity-50\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n        <g\n          stroke-linejoin=\"round\"\n          stroke-linecap=\"round\"\n          stroke-width=\"2.5\"\n          fill=\"none\"\n          stroke=\"currentColor\"\n        >\n          <rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\"></rect>\n          <path d=\"m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7\"></path>\n        </g>\n      </svg>\n      <input type=\"email\" placeholder=\"mail@site.com\" required />\n    </label>\n    <div class=\"validator-hint hidden\">Enter valid email address</div>\n  </div>\n  <button class=\"btn btn-neutral join-item\">Join</button>\n</div>"
+    },
+    {
+      "id": "input-17",
+      "label": "Password input with icon and validator",
+      "html": "<label class=\"input validator\">\n  <svg class=\"h-[1em] opacity-50\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n    <g\n      stroke-linejoin=\"round\"\n      stroke-linecap=\"round\"\n      stroke-width=\"2.5\"\n      fill=\"none\"\n      stroke=\"currentColor\"\n    >\n      <path\n        d=\"M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z\"\n      ></path>\n      <circle cx=\"16.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\"></circle>\n    </g>\n  </svg>\n  <input\n    type=\"password\"\n    required\n    placeholder=\"Password\"\n    minlength=\"8\"\n    pattern=\"(?=.*\\\\d)(?=.*[a-z])(?=.*[A-Z]).{8,}\"\n    title=\"Must be more than 8 characters, including number, lowercase letter, uppercase letter\"\n  />\n</label>\n<p class=\"validator-hint hidden\">\n  Must be more than 8 characters, including\n  <br />At least one number <br />At least one lowercase letter <br />At least one uppercase letter\n</p>"
+    },
+    {
+      "id": "input-18",
+      "label": "Number input with validator",
+      "html": "<input\n  type=\"number\"\n  class=\"input validator\"\n  required\n  placeholder=\"Type a number between 1 to 10\"\n  min=\"1\"\n  max=\"10\"\n  title=\"Must be between be 1 to 10\"\n/>\n<p class=\"validator-hint\">Must be between be 1 to 10</p>"
+    },
+    {
+      "id": "input-19",
+      "label": "Telephone number input with icon and validator",
+      "html": "<label class=\"input validator\">\n  <svg class=\"h-[1em] opacity-50\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\">\n    <g fill=\"none\">\n      <path\n        d=\"M7.25 11.5C6.83579 11.5 6.5 11.8358 6.5 12.25C6.5 12.6642 6.83579 13 7.25 13H8.75C9.16421 13 9.5 12.6642 9.5 12.25C9.5 11.8358 9.16421 11.5 8.75 11.5H7.25Z\"\n        fill=\"currentColor\"\n      ></path>\n      <path\n        fill-rule=\"evenodd\"\n        clip-rule=\"evenodd\"\n        d=\"M6 1C4.61929 1 3.5 2.11929 3.5 3.5V12.5C3.5 13.8807 4.61929 15 6 15H10C11.3807 15 12.5 13.8807 12.5 12.5V3.5C12.5 2.11929 11.3807 1 10 1H6ZM10 2.5H9.5V3C9.5 3.27614 9.27614 3.5 9 3.5H7C6.72386 3.5 6.5 3.27614 6.5 3V2.5H6C5.44771 2.5 5 2.94772 5 3.5V12.5C5 13.0523 5.44772 13.5 6 13.5H10C10.5523 13.5 11 13.0523 11 12.5V3.5C11 2.94772 10.5523 2.5 10 2.5Z\"\n        fill=\"currentColor\"\n      ></path>\n    </g>\n  </svg>\n  <input\n    type=\"tel\"\n    class=\"tabular-nums\"\n    required\n    placeholder=\"Phone\"\n    pattern=\"[0-9]*\"\n    minlength=\"10\"\n    maxlength=\"10\"\n    title=\"Must be 10 digits\"\n  />\n</label>\n<p class=\"validator-hint\">Must be 10 digits</p>"
+    },
+    {
+      "id": "input-20",
+      "label": "URL with icon and validator",
+      "html": "<label class=\"input validator\">\n  <svg class=\"h-[1em] opacity-50\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n    <g\n      stroke-linejoin=\"round\"\n      stroke-linecap=\"round\"\n      stroke-width=\"2.5\"\n      fill=\"none\"\n      stroke=\"currentColor\"\n    >\n      <path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\"></path>\n      <path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\"></path>\n    </g>\n  </svg>\n  <input\n    type=\"url\"\n    required\n    placeholder=\"https://\"\n    value=\"https://\"\n    pattern=\"^(https?://)?([a-zA-Z0-9]([a-zA-Z0-9\\\\-].*[a-zA-Z0-9])?\\\\.)+[a-zA-Z].*$\"\n    title=\"Must be valid URL\"\n  />\n</label>\n<p class=\"validator-hint\">Must be valid URL</p>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/input/"
+}

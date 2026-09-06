@@ -1,0 +1,84 @@
+{
+  "slug": "select",
+  "title": "Select",
+  "description": "Select is used to pick a value from a list of options.",
+  "demos": [
+    {
+      "id": "select-1",
+      "label": "Select",
+      "html": "<select class=\"select\">\n  <option disabled selected>Pick a color</option>\n  <option>Crimson</option>\n  <option>Amber</option>\n  <option>Velvet</option>\n</select>"
+    },
+    {
+      "id": "select-2",
+      "label": "Ghost (no background)",
+      "html": "<select class=\"select select-ghost\">\n  <option disabled selected>Pick a font</option>\n  <option>Inter</option>\n  <option>Poppins</option>\n  <option>Raleway</option>\n</select>"
+    },
+    {
+      "id": "select-3",
+      "label": "With fieldset and labels",
+      "html": "<fieldset class=\"fieldset\">\n  <legend class=\"fieldset-legend\">Browsers</legend>\n  <select class=\"select\">\n    <option disabled selected>Pick a browser</option>\n    <option>Chrome</option>\n    <option>FireFox</option>\n    <option>Safari</option>\n  </select>\n  <span class=\"label\">Optional</span>\n</fieldset>"
+    },
+    {
+      "id": "select-4",
+      "label": "Primary color",
+      "html": "<select class=\"select select-primary\">\n  <option disabled selected>Pick a text editor</option>\n  <option>VScode</option>\n  <option>VScode fork</option>\n  <option>Another VScode fork</option>\n</select>"
+    },
+    {
+      "id": "select-5",
+      "label": "Secondary color",
+      "html": "<select class=\"select select-secondary\">\n  <option disabled selected>Pick a language</option>\n  <option>Zig</option>\n  <option>Go</option>\n  <option>Rust</option>\n</select>"
+    },
+    {
+      "id": "select-6",
+      "label": "Accent color",
+      "html": "<select class=\"select select-accent\">\n  <option selected disabled>Color scheme</option>\n  <option>Light mode</option>\n  <option>Dark mode</option>\n  <option>System</option>\n</select>"
+    },
+    {
+      "id": "select-7",
+      "label": "Neutral color",
+      "html": "<select class=\"select select-neutral\">\n  <option disabled selected>Server location</option>\n  <option>North America</option>\n  <option>EU west</option>\n  <option>South East Asia</option>\n</select>"
+    },
+    {
+      "id": "select-8",
+      "label": "Info color",
+      "html": "<select class=\"select select-info\">\n  <option disabled selected>Pick a Framework</option>\n  <option>React</option>\n  <option>Vue</option>\n  <option>Angular</option>\n</select>"
+    },
+    {
+      "id": "select-9",
+      "label": "Success color",
+      "html": "<select class=\"select select-success\">\n  <option disabled selected>Pick a Runtime</option>\n  <option>npm</option>\n  <option>Bun</option>\n  <option>yarn</option>\n</select>"
+    },
+    {
+      "id": "select-10",
+      "label": "Warning color",
+      "html": "<select class=\"select select-warning\">\n  <option disabled selected>Pick an OS</option>\n  <option>Windows</option>\n  <option>MacOS</option>\n  <option>Linux</option>\n</select>"
+    },
+    {
+      "id": "select-11",
+      "label": "Error color",
+      "html": "<select class=\"select select-error\">\n  <option disabled selected>Pick an AI Model</option>\n  <option>GPT-4</option>\n  <option>Claude</option>\n  <option>Llama</option>\n</select>"
+    },
+    {
+      "id": "select-12",
+      "label": "Sizes",
+      "html": "<select class=\"select select-xs\">\n  <option disabled selected>Xsmall</option>\n  <option>Xsmall Apple</option>\n  <option>Xsmall Orange</option>\n  <option>Xsmall Tomato</option>\n</select>\n<select class=\"select select-sm\">\n  <option disabled selected>Small</option>\n  <option>Small Apple</option>\n  <option>Small Orange</option>\n  <option>Small Tomato</option>\n</select>\n<select class=\"select select-md\">\n  <option disabled selected>Medium</option>\n  <option>Medium Apple</option>\n  <option>Medium Orange</option>\n  <option>Medium Tomato</option>\n</select>\n<select class=\"select select-lg\">\n  <option disabled selected>Large</option>\n  <option>Large Apple</option>\n  <option>Large Orange</option>\n  <option>Large Tomato</option>\n</select>\n<select class=\"select select-xl\">\n  <option disabled selected>Xlarge</option>\n  <option>Xlarge Apple</option>\n  <option>Xlarge Orange</option>\n  <option>Xlarge Tomato</option>\n</select>"
+    },
+    {
+      "id": "select-13",
+      "label": "Disabled",
+      "html": "<select class=\"select\" disabled>\n  <option>You can't touch this</option>\n</select>"
+    },
+    {
+      "id": "select-14",
+      "label": "Using OS native style for the options dropdown",
+      "html": "<select class=\"select appearance-none\">\n  <option disabled selected>Pick a color</option>\n  <option>Crimson</option>\n  <option>Amber</option>\n  <option>Velvet</option>\n</select>"
+    },
+    {
+      "id": "select-15",
+      "label": "Select with custom dropdown height",
+      "html": "<select class=\"select [&::picker(select)]:max-h-26\">\n  <option disabled selected>Pick a color</option>\n  <option>Crimson</option>\n  <option>Amber</option>\n  <option>Velvet</option>\n</select>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/select/"
+}

@@ -1,0 +1,61 @@
+{
+  "slug": "navbar",
+  "title": "Navbar",
+  "description": "Navbar is used to show a navigation bar on the top of the page.",
+  "demos": [
+    {
+      "id": "navbar-1",
+      "label": "Navbar with title only",
+      "html": "<div class=\"navbar bg-base-100 shadow-sm\">\n  <a class=\"btn btn-ghost text-xl\">daisyUI</a>\n</div>"
+    },
+    {
+      "id": "navbar-2",
+      "label": "Navbar with title and icon",
+      "html": "<div class=\"navbar bg-base-100 shadow-sm\">\n  <div class=\"flex-1\">\n    <a class=\"btn btn-ghost text-xl\">daisyUI</a>\n  </div>\n  <div class=\"flex-none\">\n    <button class=\"btn btn-square btn-ghost\">\n      <svg aria-label=\"More\" xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" class=\"inline-block h-5 w-5 stroke-current\"> <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z\"></path> </svg>\n    </button>\n  </div>\n</div>"
+    },
+    {
+      "id": "navbar-3",
+      "label": "Navbar with icon at start and end",
+      "html": "<div class=\"navbar bg-base-100 shadow-sm\">\n  <div class=\"flex-none\">\n    <button class=\"btn btn-square btn-ghost\">\n      <svg aria-label=\"Menu\" xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" class=\"inline-block h-5 w-5 stroke-current\"> <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M4 6h16M4 12h16M4 18h16\"></path> </svg>\n    </button>\n  </div>\n  <div class=\"flex-1\">\n    <a class=\"btn btn-ghost text-xl\">daisyUI</a>\n  </div>\n  <div class=\"flex-none\">\n    <button class=\"btn btn-square btn-ghost\">\n      <svg aria-label=\"More\" xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" class=\"inline-block h-5 w-5 stroke-current\"> <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z\"></path> </svg>\n    </button>\n  </div>\n</div>"
+    },
+    {
+      "id": "navbar-4",
+      "label": "Navbar with menu and submenu",
+      "html": "<div class=\"navbar bg-base-100 shadow-sm\">\n  <div class=\"flex-1\">\n    <a class=\"btn btn-ghost text-xl\">daisyUI</a>\n  </div>\n  <div class=\"flex-none\">\n    <ul class=\"menu menu-horizontal px-1\">\n      <li><a>Link</a></li>\n      <li>\n        <details>\n          <summary>Parent</summary>\n          <ul class=\"bg-base-100 rounded-t-none p-2\">\n            <li><a>Link 1</a></li>\n            <li><a>Link 2</a></li>\n          </ul>\n        </details>\n      </li>\n    </ul>\n  </div>\n</div>"
+    },
+    {
+      "id": "navbar-5",
+      "label": "Navbar with search input and dropdown",
+      "html": "<div class=\"navbar bg-base-100 shadow-sm\">\n  <div class=\"flex-1\">\n    <a class=\"btn btn-ghost text-xl\">daisyUI</a>\n  </div>\n  <div class=\"flex gap-2\">\n    <input type=\"text\" placeholder=\"Search\" class=\"input w-24 md:w-auto\" />\n    <div class=\"dropdown dropdown-end\">\n      <div tabindex=\"0\" role=\"button\" class=\"btn btn-ghost btn-circle avatar\">\n        <div class=\"w-10 rounded-full\">\n          <img\n            alt=\"Tailwind CSS Navbar component\"\n            src=\"https://img.daisyui.com/images/stock/photo-1534528741775-53994a69daeb.webp\" />\n        </div>\n      </div>\n      <ul\n        tabindex=\"-1\"\n        class=\"menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-52 p-2 shadow\">\n        <li>\n          <a class=\"justify-between\">\n            Profile\n            <span class=\"badge\">New</span>\n          </a>\n        </li>\n        <li><a>Settings</a></li>\n        <li><a>Logout</a></li>\n      </ul>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "navbar-6",
+      "label": "Navbar with icon, indicator and dropdown",
+      "html": "<div class=\"navbar bg-base-100 shadow-sm\">\n  <div class=\"flex-1\">\n    <a class=\"btn btn-ghost text-xl\">daisyUI</a>\n  </div>\n  <div class=\"flex-none\">\n    <div class=\"dropdown dropdown-end\">\n      <div tabindex=\"0\" role=\"button\" class=\"btn btn-ghost btn-circle\">\n        <div class=\"indicator\">\n          <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"> <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z\" /> </svg>\n          <span class=\"badge badge-sm indicator-item\">8</span>\n        </div>\n      </div>\n      <div\n        tabindex=\"0\"\n        class=\"card card-sm dropdown-content bg-base-100 z-1 mt-3 w-52 shadow\">\n        <div class=\"card-body\">\n          <span class=\"text-lg font-bold\">8 Items</span>\n          <span class=\"text-info\">Subtotal: $999</span>\n          <div class=\"card-actions\">\n            <button class=\"btn btn-primary btn-block\">View cart</button>\n          </div>\n        </div>\n      </div>\n    </div>\n    <div class=\"dropdown dropdown-end\">\n      <div tabindex=\"0\" role=\"button\" class=\"btn btn-ghost btn-circle avatar\">\n        <div class=\"w-10 rounded-full\">\n          <img\n            alt=\"Tailwind CSS Navbar component\"\n            src=\"https://img.daisyui.com/images/stock/photo-1534528741775-53994a69daeb.webp\" />\n        </div>\n      </div>\n      <ul\n        tabindex=\"-1\"\n        class=\"menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-52 p-2 shadow\">\n        <li>\n          <a class=\"justify-between\">\n            Profile\n            <span class=\"badge\">New</span>\n          </a>\n        </li>\n        <li><a>Settings</a></li>\n        <li><a>Logout</a></li>\n      </ul>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "navbar-7",
+      "label": "Navbar with dropdown, center logo and icon",
+      "html": "<div class=\"navbar bg-base-100 shadow-sm\">\n  <div class=\"navbar-start\">\n    <div class=\"dropdown\">\n      <div tabindex=\"0\" role=\"button\" class=\"btn btn-ghost btn-circle\">\n        <svg aria-label=\"Menu\" xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"> <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M4 6h16M4 12h16M4 18h7\" /> </svg>\n      </div>\n      <ul\n        tabindex=\"-1\"\n        class=\"menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-52 p-2 shadow\">\n        <li><a>Homepage</a></li>\n        <li><a>Portfolio</a></li>\n        <li><a>About</a></li>\n      </ul>\n    </div>\n  </div>\n  <div class=\"navbar-center\">\n    <a class=\"btn btn-ghost text-xl\">daisyUI</a>\n  </div>\n  <div class=\"navbar-end\">\n    <button class=\"btn btn-ghost btn-circle\">\n      <svg aria-label=\"Search\" xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"> <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z\" /> </svg>\n    </button>\n    <button class=\"btn btn-ghost btn-circle\">\n      <div class=\"indicator\">\n        <svg aria-label=\"Notifications\" xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"> <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9\" /> </svg>\n        <span class=\"badge badge-xs badge-primary indicator-item\"></span>\n      </div>\n    </button>\n  </div>\n</div>"
+    },
+    {
+      "id": "navbar-8",
+      "label": "Responsive (dropdown menu on small screen, center menu on large screen)",
+      "html": "<div class=\"navbar bg-base-100 shadow-sm\">\n  <div class=\"navbar-start\">\n    <div class=\"dropdown\">\n      <div tabindex=\"0\" role=\"button\" class=\"btn btn-ghost lg:hidden\">\n        <svg aria-label=\"Menu\" xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"> <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M4 6h16M4 12h8m-8 6h16\" /> </svg>\n      </div>\n      <ul\n        tabindex=\"-1\"\n        class=\"menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-52 p-2 shadow\">\n        <li><a>Item 1</a></li>\n        <li>\n          <a>Parent</a>\n          <ul class=\"p-2\">\n            <li><a>Submenu 1</a></li>\n            <li><a>Submenu 2</a></li>\n          </ul>\n        </li>\n        <li><a>Item 3</a></li>\n      </ul>\n    </div>\n    <a class=\"btn btn-ghost text-xl\">daisyUI</a>\n  </div>\n  <div class=\"navbar-center hidden lg:flex\">\n    <ul class=\"menu menu-horizontal px-1\">\n      <li><a>Item 1</a></li>\n      <li>\n        <details>\n          <summary>Parent</summary>\n          <ul class=\"p-2 bg-base-100 w-40 z-1\">\n            <li><a>Submenu 1</a></li>\n            <li><a>Submenu 2</a></li>\n          </ul>\n        </details>\n      </li>\n      <li><a>Item 3</a></li>\n    </ul>\n  </div>\n  <div class=\"navbar-end\">\n    <a class=\"btn\">Button</a>\n  </div>\n</div>"
+    },
+    {
+      "id": "navbar-9",
+      "label": "Responsive (collapse on small screen, full content on large screen)",
+      "html": "<div class=\"max-lg:collapse bg-base-200 lg:mb-48 shadow-sm w-full rounded-md\">\n  <input id=\"navbar-1-toggle\" class=\"peer hidden\" type=\"checkbox\" />\n  <label for=\"navbar-1-toggle\" class=\"fixed inset-0 hidden max-lg:peer-checked:block\"></label>\n  <div class=\"collapse-title navbar\">\n    <div class=\"navbar-start\">\n      <label for=\"navbar-1-toggle\" class=\"btn btn-ghost lg:hidden\">\n        <svg aria-label=\"Menu\" xmlns=\"http://www.w3.org/2000/svg\" class=\"h-5 w-5\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M4 6h16M4 12h8m-8 6h16\" /></svg>\n      </label>\n      <button class=\"btn btn-ghost text-xl\">daisyUI</button>\n    </div>\n    <div class=\"navbar-center hidden lg:flex\">\n      <ul class=\"menu menu-horizontal px-1\">\n        <li><button>Item 1</button></li>\n        <li>\n          <details>\n            <summary>Parent</summary>\n            <ul class=\"p-2 bg-base-100 w-40 z-1\">\n              <li><button>Submenu 1</button></li>\n              <li><button>Submenu 2</button></li>\n            </ul>\n          </details>\n        </li>\n        <li><button>Item 3</button></li>\n      </ul>\n    </div>\n    <div class=\"navbar-end\">\n      <input type=\"text\" placeholder=\"Search\" class=\"input w-64 lg:w-auto\" />\n    </div>\n  </div>\n\n  <div class=\"collapse-content lg:hidden z-1\">\n    <ul class=\"menu\">\n      <li><button>Item 1</button></li>\n      <li>\n        <button>Parent</button>\n        <ul>\n          <li><button>Submenu 1</button></li>\n          <li><button>Submenu 2</button></li>\n        </ul>\n      </li>\n      <li><button>Item 3</button></li>\n    </ul>\n  </div>\n</div>"
+    },
+    {
+      "id": "navbar-10",
+      "label": "Navbar with colors",
+      "html": "<div class=\"navbar bg-neutral text-neutral-content\">\n  <button class=\"btn btn-ghost text-xl\">daisyUI</button>\n</div>\n\n<div class=\"navbar bg-base-300\">\n  <button class=\"btn btn-ghost text-xl\">daisyUI</button>\n</div>\n\n<div class=\"navbar bg-primary text-primary-content\">\n  <button class=\"btn btn-ghost text-xl\">daisyUI</button>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/navbar/",
+  "previewHeight": 260,
+  "previewSpan": "wide"
+}

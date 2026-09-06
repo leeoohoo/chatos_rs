@@ -1,0 +1,104 @@
+{
+  "slug": "indicator",
+  "title": "Indicator",
+  "description": "Indicators are used to place an element on the corner of another element.",
+  "demos": [
+    {
+      "id": "indicator-1",
+      "label": "Status Indicator",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item status status-success\"></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-2",
+      "label": "Badge as indicator",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item badge badge-primary\">New</span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-3",
+      "label": "for button",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item badge badge-secondary\">12</span>\n  <button class=\"btn\">inbox</button>\n</div>"
+    },
+    {
+      "id": "indicator-4",
+      "label": "for tab",
+      "html": "<div class=\"tabs tabs-lift\">\n  <a class=\"tab\">Messages</a>\n  <a class=\"indicator tab tab-active\">\n    Notifications\n    <span class=\"indicator-item badge\">8</span>\n  </a>\n  <a class=\"tab\">Requests</a>\n</div>"
+    },
+    {
+      "id": "indicator-5",
+      "label": "for avatar",
+      "html": "<div class=\"avatar indicator\">\n  <span class=\"indicator-item badge badge-secondary\">Justice</span>\n  <div class=\"h-20 w-20 rounded-lg\">\n    <img\n      alt=\"Tailwind CSS examples\"\n      src=\"https://img.daisyui.com/images/profile/demo/batperson@192.webp\"\n    />\n  </div>\n</div>"
+    },
+    {
+      "id": "indicator-6",
+      "label": "for an input",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item badge\">Required</span>\n  <input type=\"text\" placeholder=\"Your email address\" class=\"input\" />\n</div>"
+    },
+    {
+      "id": "indicator-7",
+      "label": "A button as an indicator for a card",
+      "html": "<div class=\"indicator\">\n  <div class=\"indicator-item indicator-bottom\">\n    <button class=\"btn btn-primary\">Apply</button>\n  </div>\n  <div class=\"card border-base-300 border shadow-sm\">\n    <div class=\"card-body\">\n      <h2 class=\"card-title\">Job Title</h2>\n      <p>Rerum reiciendis beatae tenetur excepturi</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "indicator-8",
+      "label": "in center of an image",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item indicator-center indicator-middle\">\n    Only available for Pro users\n  </span>\n  <img\n    alt=\"Tailwind CSS examples\"\n    src=\"https://img.daisyui.com/images/stock/photo-1606107557195-0e29a4b5b4aa.webp\"\n  />\n</div>"
+    },
+    {
+      "id": "indicator-9",
+      "label": "indicator-top (default) indicator-start",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item indicator-start badge badge-secondary\"></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-10",
+      "label": "indicator-top (default) indicator-center",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item indicator-center badge badge-secondary\"></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-11",
+      "label": "indicator-top (default) indicator-end (default)",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item badge badge-secondary\"></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-12",
+      "label": "indicator-middle indicator-start",
+      "html": "<div class=\"indicator\">\n  <span\n    class=\"indicator-item indicator-middle indicator-start badge badge-secondary\"\n  ></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-13",
+      "label": "indicator-middle indicator-center",
+      "html": "<div class=\"indicator\">\n  <span\n    class=\"indicator-item indicator-middle indicator-center badge badge-secondary\"\n  ></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-14",
+      "label": "indicator-middle indicator-end (default)",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item indicator-middle badge badge-secondary\"></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-15",
+      "label": "indicator-bottom indicator-start",
+      "html": "<div class=\"indicator\">\n  <span\n    class=\"indicator-item indicator-bottom indicator-start badge badge-secondary\"\n  ></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-16",
+      "label": "indicator-bottom indicator-center",
+      "html": "<div class=\"indicator\">\n  <span\n    class=\"indicator-item indicator-bottom indicator-center badge badge-secondary\"\n  ></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-17",
+      "label": "indicator-bottom indicator-end (default)",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item indicator-bottom badge badge-secondary\"></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    },
+    {
+      "id": "indicator-18",
+      "label": "multiple indicators",
+      "html": "<div class=\"indicator\">\n  <span class=\"indicator-item indicator-top indicator-start badge\">↖︎</span>\n  <span class=\"indicator-item indicator-top indicator-center badge\">↑</span>\n  <span class=\"indicator-item indicator-top indicator-end badge\">↗︎</span>\n  <span class=\"indicator-item indicator-middle indicator-start badge\">←</span>\n  <span class=\"indicator-item indicator-middle indicator-center badge\">●</span>\n  <span class=\"indicator-item indicator-middle indicator-end badge\">→</span>\n  <span class=\"indicator-item indicator-bottom indicator-start badge\">↙︎</span>\n  <span class=\"indicator-item indicator-bottom indicator-center badge\">↓</span>\n  <span class=\"indicator-item indicator-bottom indicator-end badge\">↘︎</span>\n  <div class=\"bg-base-300 grid h-32 w-60 place-items-center\">Box</div>\n</div>"
+    },
+    {
+      "id": "indicator-19",
+      "label": "Responsive",
+      "html": "<div class=\"indicator\">\n  <span\n    class=\"indicator-item indicator-start sm:indicator-middle md:indicator-bottom lg:indicator-center xl:indicator-end badge badge-secondary\"\n  ></span>\n  <div class=\"bg-base-300 grid h-32 w-32 place-items-center\">content</div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/indicator/"
+}

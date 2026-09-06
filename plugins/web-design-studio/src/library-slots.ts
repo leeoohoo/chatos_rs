@@ -110,6 +110,13 @@ export function editableSlotsForUiComponent(component: WebDesignComponent): UiEd
     if (name === 'Popover' || name === 'HoverCard') return [contentSlot(component, 'popup', name === 'Popover' ? '气泡内容' : '悬浮卡片内容', '浮层中的自由内容', { width: 320, height: 220 })];
   }
 
+  if (typeof component.library?.props.registryDemo === 'string') {
+    return [contentSlot(component, 'content', '示例内容', '双击组件，或点击“拆开并编辑”，即可逐项选择官方示例中的元素', {
+      width: component.width,
+      height: component.height
+    })];
+  }
+
   return [];
 }
 

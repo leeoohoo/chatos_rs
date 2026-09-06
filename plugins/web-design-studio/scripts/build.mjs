@@ -29,10 +29,15 @@ await Promise.all([
   build({ ...common, entryPoints: ['src/magicui-library.ts'], outfile: 'dist/magicui-library.test.mjs' }),
   build({ ...common, entryPoints: ['src/spell-library.ts'], outfile: 'dist/spell-library.test.mjs' }),
   build({ ...common, entryPoints: ['src/inspira-library.ts'], outfile: 'dist/inspira-library.test.mjs' }),
+  build({ ...common, entryPoints: ['ui-src/library-runtime/inspira-registry.generated.ts'], outfile: 'dist/inspira-registry.test.mjs' }),
+  build({ ...common, entryPoints: ['ui-src/library-runtime/vue-registry-adapter.ts'], outfile: 'dist/vue-registry-adapter.test.mjs' }),
+  build({ ...common, entryPoints: ['ui-src/library-runtime/shadcn-registry.generated.ts'], outfile: 'dist/shadcn-registry.test.mjs' }),
+  build({ ...common, entryPoints: ['ui-src/library-runtime/daisyui-registry.generated.ts'], outfile: 'dist/daisyui-registry.test.mjs' }),
   build({ ...common, entryPoints: ['src/daisyui-library.ts'], outfile: 'dist/daisyui-library.test.mjs' }),
   build({ ...common, entryPoints: ['src/ui-libraries.ts'], outfile: 'dist/ui-libraries.test.mjs' }),
   build({ ...common, entryPoints: ['src/library-slots.ts'], outfile: 'dist/library-slots.test.mjs' }),
   build({ ...common, entryPoints: ['src/viewport-presets.ts'], outfile: 'dist/viewport-presets.test.mjs' }),
   build({ ...common, entryPoints: ['src/templates.ts'], outfile: 'dist/templates.test.mjs' }),
-  build({ ...common, entryPoints: ['src/document-store.ts'], outfile: 'dist/document-store.test.mjs' })
+  build({ ...common, entryPoints: ['src/document-store.ts'], outfile: 'dist/document-store.test.mjs' }),
+  build({ ...common, entryPoints: ['src/runtime-scope.ts'], outfile: 'dist/runtime-scope.test.mjs' })
 ]);

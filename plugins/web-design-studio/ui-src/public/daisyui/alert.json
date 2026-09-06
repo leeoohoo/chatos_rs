@@ -1,0 +1,59 @@
+{
+  "slug": "alert",
+  "title": "Alert",
+  "description": "Alert informs users about important events.",
+  "demos": [
+    {
+      "id": "alert-1",
+      "label": "Alert",
+      "html": "<div role=\"alert\" class=\"alert\">\n  <svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" class=\"stroke-current text-info h-6 w-6 shrink-0\">\n    <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"></path>\n  </svg>\n  <span>12 unread messages. Tap to see.</span>\n</div>"
+    },
+    {
+      "id": "alert-2",
+      "label": "Info color",
+      "html": "<div role=\"alert\" class=\"alert alert-info\">\n  <svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" class=\"h-6 w-6 shrink-0 stroke-current\">\n    <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"></path>\n  </svg>\n  <span>New software update available.</span>\n</div>"
+    },
+    {
+      "id": "alert-3",
+      "label": "Success color",
+      "html": "<div role=\"alert\" class=\"alert alert-success\">\n  <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-6 w-6 shrink-0 stroke-current\" fill=\"none\" viewBox=\"0 0 24 24\">\n    <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z\" />\n  </svg>\n  <span>Your purchase has been confirmed!</span>\n</div>"
+    },
+    {
+      "id": "alert-4",
+      "label": "Warning color",
+      "html": "<div role=\"alert\" class=\"alert alert-warning\">\n  <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-6 w-6 shrink-0 stroke-current\" fill=\"none\" viewBox=\"0 0 24 24\">\n    <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z\" />\n  </svg>\n  <span>Warning: Invalid email address!</span>\n</div>"
+    },
+    {
+      "id": "alert-5",
+      "label": "Error color",
+      "html": "<div role=\"alert\" class=\"alert alert-error\">\n  <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-6 w-6 shrink-0 stroke-current\" fill=\"none\" viewBox=\"0 0 24 24\">\n    <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z\" />\n  </svg>\n  <span>Error! Task failed successfully.</span>\n</div>"
+    },
+    {
+      "id": "alert-6",
+      "label": "Alert soft style",
+      "html": "<div role=\"alert\" class=\"alert alert-info alert-soft\">\n  <span>12 unread messages. Tap to see.</span>\n</div>\n<div role=\"alert\" class=\"alert alert-success alert-soft\">\n  <span>Your purchase has been confirmed!</span>\n</div>\n<div role=\"alert\" class=\"alert alert-warning alert-soft\">\n  <span>Warning: Invalid email address!</span>\n</div>\n<div role=\"alert\" class=\"alert alert-error alert-soft\">\n  <span>Error! Task failed successfully.</span>\n</div>"
+    },
+    {
+      "id": "alert-7",
+      "label": "Alert outline style",
+      "html": "<div role=\"alert\" class=\"alert alert-info alert-outline\">\n  <span>12 unread messages. Tap to see.</span>\n</div>\n<div role=\"alert\" class=\"alert alert-success alert-outline\">\n  <span>Your purchase has been confirmed!</span>\n</div>\n<div role=\"alert\" class=\"alert alert-warning alert-outline\">\n  <span>Warning: Invalid email address!</span>\n</div>\n<div role=\"alert\" class=\"alert alert-error alert-outline\">\n  <span>Error! Task failed successfully.</span>\n</div>"
+    },
+    {
+      "id": "alert-8",
+      "label": "Alert dash style",
+      "html": "<div role=\"alert\" class=\"alert alert-info alert-dash\">\n  <span>12 unread messages. Tap to see.</span>\n</div>\n<div role=\"alert\" class=\"alert alert-success alert-dash\">\n  <span>Your purchase has been confirmed!</span>\n</div>\n<div role=\"alert\" class=\"alert alert-warning alert-dash\">\n  <span>Warning: Invalid email address!</span>\n</div>\n<div role=\"alert\" class=\"alert alert-error alert-dash\">\n  <span>Error! Task failed successfully.</span>\n</div>"
+    },
+    {
+      "id": "alert-9",
+      "label": "Alert with buttons + responsive",
+      "html": "<div role=\"alert\" class=\"alert alert-vertical sm:alert-horizontal\">\n  <svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" class=\"stroke-current text-info h-6 w-6 shrink-0\">\n    <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"></path>\n  </svg>\n  <span>we use cookies for no reason.</span>\n  <div>\n    <button class=\"btn btn-sm\">Deny</button>\n    <button class=\"btn btn-sm btn-primary\">Accept</button>\n  </div>\n</div>"
+    },
+    {
+      "id": "alert-10",
+      "label": "Alert with title and description",
+      "html": "<div role=\"alert\" class=\"alert alert-vertical sm:alert-horizontal\">\n  <svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" class=\"stroke-current text-info h-6 w-6 shrink-0\">\n    <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"></path>\n  </svg>\n  <div>\n    <h3 class=\"font-bold\">New message!</h3>\n    <div class=\"text-xs\">You have 1 unread message</div>\n  </div>\n  <button class=\"btn btn-sm\">See</button>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/alert/"
+}

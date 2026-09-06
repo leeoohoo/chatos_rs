@@ -1,0 +1,46 @@
+{
+  "slug": "stat",
+  "title": "Stat",
+  "description": "Stat is used to show numbers and data in a block.",
+  "demos": [
+    {
+      "id": "stat-1",
+      "label": "Stat",
+      "html": "<div class=\"stats shadow\">\n  <div class=\"stat\">\n    <div class=\"stat-title\">Total Page Views</div>\n    <div class=\"stat-value\">89,400</div>\n    <div class=\"stat-desc\">21% more than last month</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stat-2",
+      "label": "Stat with icons or image",
+      "html": "<div class=\"stats shadow\">\n  <div class=\"stat\">\n    <div class=\"stat-figure text-primary\">\n      <svg\n        xmlns=\"http://www.w3.org/2000/svg\"\n        fill=\"none\"\n        viewBox=\"0 0 24 24\"\n        class=\"inline-block h-8 w-8 stroke-current\"\n      >\n        <path\n          stroke-linecap=\"round\"\n          stroke-linejoin=\"round\"\n          stroke-width=\"2\"\n          d=\"M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z\"\n        ></path>\n      </svg>\n    </div>\n    <div class=\"stat-title\">Total Likes</div>\n    <div class=\"stat-value text-primary\">25.6K</div>\n    <div class=\"stat-desc\">21% more than last month</div>\n  </div>\n\n  <div class=\"stat\">\n    <div class=\"stat-figure text-secondary\">\n      <svg\n        xmlns=\"http://www.w3.org/2000/svg\"\n        fill=\"none\"\n        viewBox=\"0 0 24 24\"\n        class=\"inline-block h-8 w-8 stroke-current\"\n      >\n        <path\n          stroke-linecap=\"round\"\n          stroke-linejoin=\"round\"\n          stroke-width=\"2\"\n          d=\"M13 10V3L4 14h7v7l9-11h-7z\"\n        ></path>\n      </svg>\n    </div>\n    <div class=\"stat-title\">Page Views</div>\n    <div class=\"stat-value text-secondary\">2.6M</div>\n    <div class=\"stat-desc\">21% more than last month</div>\n  </div>\n\n  <div class=\"stat\">\n    <div class=\"stat-figure text-secondary\">\n      <div class=\"avatar avatar-online\">\n        <div class=\"w-16 rounded-full\">\n          <img alt=\"Tailwind CSS stat example component\" src=\"https://img.daisyui.com/images/profile/demo/anakeen@192.webp\" />\n        </div>\n      </div>\n    </div>\n    <div class=\"stat-value\">86%</div>\n    <div class=\"stat-title\">Tasks done</div>\n    <div class=\"stat-desc text-secondary\">31 tasks remaining</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stat-3",
+      "label": "Stat",
+      "html": "<div class=\"stats shadow\">\n  <div class=\"stat\">\n    <div class=\"stat-figure text-secondary\">\n      <svg\n        xmlns=\"http://www.w3.org/2000/svg\"\n        fill=\"none\"\n        viewBox=\"0 0 24 24\"\n        class=\"inline-block h-8 w-8 stroke-current\"\n      >\n        <path\n          stroke-linecap=\"round\"\n          stroke-linejoin=\"round\"\n          stroke-width=\"2\"\n          d=\"M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"\n        ></path>\n      </svg>\n    </div>\n    <div class=\"stat-title\">Downloads</div>\n    <div class=\"stat-value\">31K</div>\n    <div class=\"stat-desc\">Jan 1st - Feb 1st</div>\n  </div>\n\n  <div class=\"stat\">\n    <div class=\"stat-figure text-secondary\">\n      <svg\n        xmlns=\"http://www.w3.org/2000/svg\"\n        fill=\"none\"\n        viewBox=\"0 0 24 24\"\n        class=\"inline-block h-8 w-8 stroke-current\"\n      >\n        <path\n          stroke-linecap=\"round\"\n          stroke-linejoin=\"round\"\n          stroke-width=\"2\"\n          d=\"M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4\"\n        ></path>\n      </svg>\n    </div>\n    <div class=\"stat-title\">New Users</div>\n    <div class=\"stat-value\">4,200</div>\n    <div class=\"stat-desc\">↗︎ 400 (22%)</div>\n  </div>\n\n  <div class=\"stat\">\n    <div class=\"stat-figure text-secondary\">\n      <svg\n        xmlns=\"http://www.w3.org/2000/svg\"\n        fill=\"none\"\n        viewBox=\"0 0 24 24\"\n        class=\"inline-block h-8 w-8 stroke-current\"\n      >\n        <path\n          stroke-linecap=\"round\"\n          stroke-linejoin=\"round\"\n          stroke-width=\"2\"\n          d=\"M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4\"\n        ></path>\n      </svg>\n    </div>\n    <div class=\"stat-title\">New Registers</div>\n    <div class=\"stat-value\">1,200</div>\n    <div class=\"stat-desc\">↘︎ 90 (14%)</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stat-4",
+      "label": "Centered items",
+      "html": "<div class=\"stats shadow\">\n  <div class=\"stat place-items-center\">\n    <div class=\"stat-title\">Downloads</div>\n    <div class=\"stat-value\">31K</div>\n    <div class=\"stat-desc\">From January 1st to February 1st</div>\n  </div>\n\n  <div class=\"stat place-items-center\">\n    <div class=\"stat-title\">Users</div>\n    <div class=\"stat-value text-secondary\">4,200</div>\n    <div class=\"stat-desc text-secondary\">↗︎ 40 (2%)</div>\n  </div>\n\n  <div class=\"stat place-items-center\">\n    <div class=\"stat-title\">New Registers</div>\n    <div class=\"stat-value\">1,200</div>\n    <div class=\"stat-desc\">↘︎ 90 (14%)</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stat-5",
+      "label": "Vertical",
+      "html": "<div class=\"stats stats-vertical shadow\">\n  <div class=\"stat\">\n    <div class=\"stat-title\">Downloads</div>\n    <div class=\"stat-value\">31K</div>\n    <div class=\"stat-desc\">Jan 1st - Feb 1st</div>\n  </div>\n\n  <div class=\"stat\">\n    <div class=\"stat-title\">New Users</div>\n    <div class=\"stat-value\">4,200</div>\n    <div class=\"stat-desc\">↗︎ 400 (22%)</div>\n  </div>\n\n  <div class=\"stat\">\n    <div class=\"stat-title\">New Registers</div>\n    <div class=\"stat-value\">1,200</div>\n    <div class=\"stat-desc\">↘︎ 90 (14%)</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stat-6",
+      "label": "Responsive (vertical on small screen, horizontal on large screen)",
+      "html": "<div class=\"stats stats-vertical lg:stats-horizontal shadow\">\n  <div class=\"stat\">\n    <div class=\"stat-title\">Downloads</div>\n    <div class=\"stat-value\">31K</div>\n    <div class=\"stat-desc\">Jan 1st - Feb 1st</div>\n  </div>\n\n  <div class=\"stat\">\n    <div class=\"stat-title\">New Users</div>\n    <div class=\"stat-value\">4,200</div>\n    <div class=\"stat-desc\">↗︎ 400 (22%)</div>\n  </div>\n\n  <div class=\"stat\">\n    <div class=\"stat-title\">New Registers</div>\n    <div class=\"stat-value\">1,200</div>\n    <div class=\"stat-desc\">↘︎ 90 (14%)</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stat-7",
+      "label": "With custom colors and button",
+      "html": "<div class=\"stats bg-base-100 border-base-300 border\">\n  <div class=\"stat\">\n    <div class=\"stat-title\">Account balance</div>\n    <div class=\"stat-value\">$89,400</div>\n    <div class=\"stat-actions\">\n      <button class=\"btn btn-xs btn-success\">Add funds</button>\n    </div>\n  </div>\n\n  <div class=\"stat\">\n    <div class=\"stat-title\">Current balance</div>\n    <div class=\"stat-value\">$89,400</div>\n    <div class=\"stat-actions\">\n      <button class=\"btn btn-xs\">Withdrawal</button>\n      <button class=\"btn btn-xs\">Deposit</button>\n    </div>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/stat/",
+  "previewHeight": 300,
+  "previewSpan": "wide"
+}

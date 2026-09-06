@@ -1,0 +1,34 @@
+{
+  "slug": "fieldset",
+  "title": "Fieldset",
+  "description": "Fieldset is a container for grouping related form elements. It includes fieldset-legend as a title and label as a description.",
+  "demos": [
+    {
+      "id": "fieldset-1",
+      "label": "Fieldset fieldset-legend and label",
+      "html": "<fieldset class=\"fieldset\">\n  <legend class=\"fieldset-legend\">Page title</legend>\n  <input type=\"text\" class=\"input\" placeholder=\"My awesome page\" />\n  <p class=\"label\">You can edit page title later on from settings</p>\n</fieldset>"
+    },
+    {
+      "id": "fieldset-2",
+      "label": "Fieldset with background and border",
+      "html": "<fieldset class=\"fieldset bg-base-200 border-base-300 rounded-box w-xs border p-4\">\n  <legend class=\"fieldset-legend\">Page title</legend>\n  <input type=\"text\" class=\"input\" placeholder=\"My awesome page\" />\n  <p class=\"label\">You can edit page title later on from settings</p>\n</fieldset>"
+    },
+    {
+      "id": "fieldset-3",
+      "label": "Fieldset with multiple inputs",
+      "html": "<fieldset class=\"fieldset bg-base-200 border-base-300 rounded-box w-xs border p-4\">\n  <legend class=\"fieldset-legend\">Page details</legend>\n\n  <label class=\"label\">Title</label>\n  <input type=\"text\" class=\"input\" placeholder=\"My awesome page\" />\n\n  <label class=\"label\">Slug</label>\n  <input type=\"text\" class=\"input\" placeholder=\"my-awesome-page\" />\n\n  <label class=\"label\">Author</label>\n  <input type=\"text\" class=\"input\" placeholder=\"Name\" />\n</fieldset>"
+    },
+    {
+      "id": "fieldset-4",
+      "label": "Fieldset with multiple join items",
+      "html": "<fieldset class=\"fieldset bg-base-200 border-base-300 rounded-box w-xs border p-4\">\n  <legend class=\"fieldset-legend\">Settings</legend>\n  <div class=\"join\">\n    <input type=\"text\" class=\"input join-item\" placeholder=\"Product name\" />\n    <button class=\"btn join-item\">save</button>\n  </div>\n</fieldset>"
+    },
+    {
+      "id": "fieldset-5",
+      "label": "Login form with fieldset",
+      "html": "<fieldset class=\"fieldset bg-base-200 border-base-300 rounded-box w-xs border p-4\">\n  <legend class=\"fieldset-legend\">Login</legend>\n\n  <label class=\"label\">Email</label>\n  <input type=\"email\" class=\"input\" placeholder=\"Email\" />\n\n  <label class=\"label\">Password</label>\n  <input type=\"password\" class=\"input\" placeholder=\"Password\" />\n\n  <button class=\"btn btn-neutral mt-4\">Login</button>\n</fieldset>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/fieldset/"
+}

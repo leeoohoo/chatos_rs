@@ -1,0 +1,44 @@
+{
+  "slug": "loading",
+  "title": "Loading",
+  "description": "Loading shows an animation to indicate that something is loading.",
+  "demos": [
+    {
+      "id": "loading-1",
+      "label": "Loading spinner",
+      "html": "<span class=\"loading loading-spinner loading-xs\"></span>\n<span class=\"loading loading-spinner loading-sm\"></span>\n<span class=\"loading loading-spinner loading-md\"></span>\n<span class=\"loading loading-spinner loading-lg\"></span>\n<span class=\"loading loading-spinner loading-xl\"></span>"
+    },
+    {
+      "id": "loading-2",
+      "label": "Loading dots",
+      "html": "<span class=\"loading loading-dots loading-xs\"></span>\n<span class=\"loading loading-dots loading-sm\"></span>\n<span class=\"loading loading-dots loading-md\"></span>\n<span class=\"loading loading-dots loading-lg\"></span>\n<span class=\"loading loading-dots loading-xl\"></span>"
+    },
+    {
+      "id": "loading-3",
+      "label": "Loading ring",
+      "html": "<span class=\"loading loading-ring loading-xs\"></span>\n<span class=\"loading loading-ring loading-sm\"></span>\n<span class=\"loading loading-ring loading-md\"></span>\n<span class=\"loading loading-ring loading-lg\"></span>\n<span class=\"loading loading-ring loading-xl\"></span>"
+    },
+    {
+      "id": "loading-4",
+      "label": "Loading ball",
+      "html": "<span class=\"loading loading-ball loading-xs\"></span>\n<span class=\"loading loading-ball loading-sm\"></span>\n<span class=\"loading loading-ball loading-md\"></span>\n<span class=\"loading loading-ball loading-lg\"></span>\n<span class=\"loading loading-ball loading-xl\"></span>"
+    },
+    {
+      "id": "loading-5",
+      "label": "Loading bars",
+      "html": "<span class=\"loading loading-bars loading-xs\"></span>\n<span class=\"loading loading-bars loading-sm\"></span>\n<span class=\"loading loading-bars loading-md\"></span>\n<span class=\"loading loading-bars loading-lg\"></span>\n<span class=\"loading loading-bars loading-xl\"></span>"
+    },
+    {
+      "id": "loading-6",
+      "label": "Loading infinity",
+      "html": "<span class=\"loading loading-infinity loading-xs\"></span>\n<span class=\"loading loading-infinity loading-sm\"></span>\n<span class=\"loading loading-infinity loading-md\"></span>\n<span class=\"loading loading-infinity loading-lg\"></span>\n<span class=\"loading loading-infinity loading-xl\"></span>"
+    },
+    {
+      "id": "loading-7",
+      "label": "Loading with colors",
+      "html": "<span class=\"loading loading-spinner text-primary\"></span>\n<span class=\"loading loading-spinner text-secondary\"></span>\n<span class=\"loading loading-spinner text-accent\"></span>\n<span class=\"loading loading-spinner text-neutral\"></span>\n<span class=\"loading loading-spinner text-info\"></span>\n<span class=\"loading loading-spinner text-success\"></span>\n<span class=\"loading loading-spinner text-warning\"></span>\n<span class=\"loading loading-spinner text-error\"></span>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/loading/"
+}

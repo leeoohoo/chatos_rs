@@ -1,15 +1,16 @@
 import type { WebDesignComponent } from './schema.js';
 import { applyUiComponentVariant, createUiLibraryComponent, defineUiComponent, variantsForUiComponent, type UiComponentDefinition, type UiComponentVariant, type UiLibraryCatalog } from './ui-library.js';
+import { SHADCN_OFFICIAL_COMPONENT_IDS, SHADCN_OFFICIAL_COMPONENT_VARIANTS } from './shadcn-registry.generated.js';
 
 export type ShadcnCategory = '布局' | '排版' | '按钮' | '数据录入' | '导航' | '数据展示' | '反馈' | '浮层';
 export type ShadcnComponentDefinition = UiComponentDefinition<ShadcnCategory>;
 export type ShadcnComponentVariant = UiComponentVariant;
 
-export const SHADCN_VERSION = 'registry-2026.09';
+export const SHADCN_VERSION = 'registry-2026.09-official';
 export const SHADCN_CATEGORIES: ShadcnCategory[] = ['布局', '排版', '按钮', '数据录入', '导航', '数据展示', '反馈', '浮层'];
 const item = defineUiComponent<ShadcnCategory>;
 
-export const SHADCN_COMPONENT_VARIANTS: Record<string, ShadcnComponentVariant[]> = {
+const LEGACY_SHADCN_COMPONENT_VARIANTS: Record<string, ShadcnComponentVariant[]> = {
   AspectRatio: [
     { id: 'video', label: '16:9 视频画面', props: { kind: 'video', ratio: 16 / 9, label: '16:9', title: '产品演示视频' }, width: 400, height: 225 },
     { id: 'square', label: '1:1 方形媒体', props: { kind: 'square', ratio: 1, label: '1:1', title: '品牌视觉素材' }, width: 240, height: 240 },
@@ -337,7 +338,7 @@ export const SHADCN_COMPONENT_VARIANTS: Record<string, ShadcnComponentVariant[]>
 const tabItems = [{ key: 'account', label: '账号' }, { key: 'password', label: '密码' }, { key: 'billing', label: '账单' }];
 const accordionItems = [{ key: 'design', label: '设计能力' }, { key: 'ai', label: 'AI 协作' }, { key: 'export', label: '交付方式' }];
 
-export const SHADCN_COMPONENTS: ShadcnComponentDefinition[] = [
+const LEGACY_SHADCN_COMPONENTS: ShadcnComponentDefinition[] = [
   item('AspectRatio', '宽高比容器', '布局', '▭', 'section', 400, 225, '', { ratio: 1.7778 }),
   item('ButtonGroup', '按钮组', '布局', '▣', 'section', 340, 52, '', { orientation: 'horizontal', attached: true }),
   item('Resizable', '可调分栏', '布局', '↔', 'section', 460, 220, '', { direction: 'horizontal', defaultSizes: [45, 55] }),
@@ -410,6 +411,32 @@ export const SHADCN_COMPONENTS: ShadcnComponentDefinition[] = [
   item('Popover', '气泡卡片', '浮层', '▢', 'button', 150, 44, '打开气泡', { title: '尺寸设置', placement: 'bottom' }),
   item('Tooltip', '文字提示', '浮层', '?', 'button', 150, 44, '悬停查看', { content: '添加到组件库', placement: 'top' })
 ];
+
+const officialComponentIds = new Set<string>(SHADCN_OFFICIAL_COMPONENT_IDS);
+const addedOfficialComponents: ShadcnComponentDefinition[] = [
+  item('Form', '表单', '数据录入', '▤', 'section', 420, 300, '', {}),
+  item('Sonner', '消息通知', '反馈', '▢', 'button', 150, 44, '显示通知', {})
+];
+
+function componentSlug(componentId: string) {
+  return componentId.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+}
+
+export const SHADCN_COMPONENTS: ShadcnComponentDefinition[] = [
+  ...LEGACY_SHADCN_COMPONENTS.filter((definition) => officialComponentIds.has(definition.id)),
+  ...addedOfficialComponents
+].map((definition) => ({
+  ...definition,
+  props: { ...definition.props, componentSlug: componentSlug(definition.id) },
+  docsUrl: `https://ui.shadcn.com/docs/components/${componentSlug(definition.id)}`
+}));
+
+export const SHADCN_COMPONENT_VARIANTS: Record<string, ShadcnComponentVariant[]> = Object.fromEntries(
+  Object.entries(SHADCN_OFFICIAL_COMPONENT_VARIANTS).map(([component, variants]) => [component, variants.map((variant) => ({
+    ...variant,
+    props: { ...variant.props }
+  }))])
+);
 
 export const SHADCN_LIBRARY: UiLibraryCatalog<ShadcnCategory> = {
   id: 'shadcn', displayName: 'shadcn/ui', shortName: 'shadcn', version: SHADCN_VERSION, brandMark: 'S',

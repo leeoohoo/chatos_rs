@@ -1,0 +1,49 @@
+{
+  "slug": "toggle",
+  "title": "Toggle",
+  "description": "Toggle is a checkbox that is styled to look like a switch button.",
+  "demos": [
+    {
+      "id": "toggle-1",
+      "label": "Toggle (switch)",
+      "html": "<input type=\"checkbox\" checked=\"checked\" class=\"toggle\" />"
+    },
+    {
+      "id": "toggle-2",
+      "label": "With fieldset and label",
+      "html": "<fieldset class=\"fieldset bg-base-100 border-base-300 rounded-box w-64 border p-4\">\n  <legend class=\"fieldset-legend\">Login options</legend>\n  <label class=\"label\">\n    <input type=\"checkbox\" checked=\"checked\" class=\"toggle\" />\n    Remember me\n  </label>\n</fieldset>"
+    },
+    {
+      "id": "toggle-3",
+      "label": "Sizes",
+      "html": "<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-xs\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-sm\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-md\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-lg\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-xl\" />"
+    },
+    {
+      "id": "toggle-4",
+      "label": "Colors",
+      "html": "<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-primary\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-secondary\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-accent\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-neutral\" />\n\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-info\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-success\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-warning\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"toggle toggle-error\" />"
+    },
+    {
+      "id": "toggle-5",
+      "label": "Disabled",
+      "html": "<input type=\"checkbox\" class=\"toggle\" disabled />\n<input type=\"checkbox\" class=\"toggle\" disabled checked=\"checked\" />"
+    },
+    {
+      "id": "toggle-6",
+      "label": "Indeterminate",
+      "html": "<!-- You can make a checkbox indeterminate using JS -->\n<script>\n  document.getElementById(\"my-toggle\").indeterminate = true\n</script>\n<input type=\"checkbox\" class=\"toggle\" id=\"my-toggle\" />"
+    },
+    {
+      "id": "toggle-7",
+      "label": "Toggle with icons inside",
+      "html": "<label class=\"toggle text-base-content\">\n  <input type=\"checkbox\" />\n  <svg aria-label=\"enabled\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n    <g\n      stroke-linejoin=\"round\"\n      stroke-linecap=\"round\"\n      stroke-width=\"4\"\n      fill=\"none\"\n      stroke=\"currentColor\"\n    >\n      <path d=\"M20 6 9 17l-5-5\"></path>\n    </g>\n  </svg>\n  <svg\n    aria-label=\"disabled\"\n    xmlns=\"http://www.w3.org/2000/svg\"\n    viewBox=\"0 0 24 24\"\n    fill=\"none\"\n    stroke=\"currentColor\"\n    stroke-width=\"4\"\n    stroke-linecap=\"round\"\n    stroke-linejoin=\"round\"\n  >\n    <path d=\"M18 6 6 18\" />\n    <path d=\"m6 6 12 12\" />\n  </svg>\n</label>"
+    },
+    {
+      "id": "toggle-8",
+      "label": "Toggle with custom colors",
+      "html": "<input\n  type=\"checkbox\"\n  checked=\"checked\"\n  class=\"toggle border-indigo-600 bg-indigo-500 checked:border-orange-500 checked:bg-orange-400 checked:text-orange-800\"\n/>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/toggle/"
+}

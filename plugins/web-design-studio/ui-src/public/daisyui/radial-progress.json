@@ -1,0 +1,34 @@
+{
+  "slug": "radial-progress",
+  "title": "Radial progress",
+  "description": "Radial progress can be used to show the progress of a task or to show the passing of time.",
+  "demos": [
+    {
+      "id": "radial-progress-1",
+      "label": "Radial progress",
+      "html": "<div class=\"radial-progress\" style=\"--value:70;\" aria-valuenow=\"70\" role=\"progressbar\">70%</div>"
+    },
+    {
+      "id": "radial-progress-2",
+      "label": "Different values",
+      "html": "<div class=\"radial-progress\" style=\"--value:0;\" aria-valuenow=\"0\" role=\"progressbar\">0%</div>\n<div class=\"radial-progress\" style=\"--value:20;\" aria-valuenow=\"20\" role=\"progressbar\">20%</div>\n<div class=\"radial-progress\" style=\"--value:60;\" aria-valuenow=\"60\" role=\"progressbar\">60%</div>\n<div class=\"radial-progress\" style=\"--value:80;\" aria-valuenow=\"80\" role=\"progressbar\">80%</div>\n<div class=\"radial-progress\" style=\"--value:100;\" aria-valuenow=\"100\" role=\"progressbar\">100%</div>"
+    },
+    {
+      "id": "radial-progress-3",
+      "label": "Custom color",
+      "html": "<div class=\"radial-progress text-primary\" style=\"--value:70;\" aria-valuenow=\"70\" role=\"progressbar\">70%</div>"
+    },
+    {
+      "id": "radial-progress-4",
+      "label": "With background color and border",
+      "html": "<div\n  class=\"radial-progress bg-primary text-primary-content border-primary border-4\"\n  style=\"--value:70;\" aria-valuenow=\"70\" role=\"progressbar\">\n  70%\n</div>"
+    },
+    {
+      "id": "radial-progress-5",
+      "label": "Custom size and custom thickness",
+      "html": "<div class=\"radial-progress\" style=\"--value:70; --size:12rem; --thickness: 2px;\" aria-valuenow=\"70\" role=\"progressbar\">70%</div>\n<div class=\"radial-progress\" style=\"--value:70; --size:12rem; --thickness: 2rem;\" aria-valuenow=\"70\" role=\"progressbar\">70%</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/radial-progress/"
+}

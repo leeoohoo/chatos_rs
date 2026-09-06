@@ -44,6 +44,12 @@ export function editableSlotsForAntdComponent(component: WebDesignComponent): An
       id: `slide-${index + 1}`, label, description: `第 ${index + 1} 张轮播内容`, width: contentWidth, height: contentHeight
     }));
   }
+  if (typeof props.registryDemo === 'string') {
+    return [contentSlot(component, 'content', '示例内容', '双击组件，或点击“拆开并编辑”，即可逐项选择官方示例中的元素', {
+      width: component.width,
+      height: component.height
+    })];
+  }
   return [];
 }
 

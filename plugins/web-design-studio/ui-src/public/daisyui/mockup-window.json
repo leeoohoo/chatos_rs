@@ -1,0 +1,21 @@
+{
+  "slug": "mockup-window",
+  "title": "Window mockup",
+  "description": "Window mockup shows a box that looks like an operating system window.",
+  "demos": [
+    {
+      "id": "mockup-window-1",
+      "label": "window mockup with border",
+      "html": "<div class=\"mockup-window border border-base-300 w-full\">\n  <div class=\"grid place-content-center border-t border-base-300 h-80\">Hello!</div>\n</div>"
+    },
+    {
+      "id": "mockup-window-2",
+      "label": "window mockup with background color",
+      "html": "<div class=\"mockup-window bg-base-100 border border-base-300\">\n  <div class=\"grid place-content-center h-80\">Hello!</div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/mockup-window/",
+  "previewHeight": 350,
+  "previewSpan": "wide"
+}

@@ -9,8 +9,8 @@ import { exportVueComponent } from './vue-exporter.js';
 import { editableSlotsForUiComponent, isUiContentContainer } from './library-slots.js';
 import { createComponentFromUiLibrary, UI_LIBRARIES } from './ui-libraries.js';
 import { WEB_DESIGN_THEME_PRESETS } from './design-themes.js';
-import { createBlankWebsite } from './templates.js';
 import { WEB_DESIGN_BLOCK_PRESETS, WEB_DESIGN_PAGE_TEMPLATES } from './component-library.js';
+import { runtimeScopeFingerprint } from './runtime-scope.js';
 import {
   assertWebDesignDocument,
   designSummary,
@@ -21,6 +21,15 @@ import {
 const SERVER_NAME = 'chatos-web-design-studio';
 const SERVER_VERSION = '0.9.0';
 const store = new WebDesignDocumentStore();
+await store.initialize();
+await store.ensureLegacyProject();
+const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
+const defaultProject = await store.ensureScopedProject(
+  scopeKey,
+  process.env.CHATOS_CONTEXT_SCOPE === 'project' && process.env.CHATOS_PROJECT_ID
+    ? process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 网站项目'
+    : '公共网站设计'
+);
 
 const policy = {
   'chatos/policyVersion': 1,
@@ -373,7 +382,7 @@ function runtimeScope(): Record<string, unknown> {
 }
 
 async function requestEntries(documentId: string, includeResolved: boolean) {
-  const document = await store.read(documentId);
+  const document = await store.readInScope(documentId, scopeKey);
   return document.requests
     .filter((request) => includeResolved || request.status === 'pending')
     .map((request) => ({
@@ -391,33 +400,33 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
   const argumentsValue = objectArguments(rawArguments);
   switch (name) {
     case 'web_design_list_documents':
-      return { scope: runtimeScope(), documents: typeof argumentsValue.projectId === 'string' ? await store.listInProject(argumentsValue.projectId) : await store.list() };
+      return { scope: runtimeScope(), documents: typeof argumentsValue.projectId === 'string' ? await store.listInProject(argumentsValue.projectId, scopeKey) : await store.listInScope(scopeKey) };
     case 'web_design_list_projects':
-      return { scope: runtimeScope(), projects: await store.listProjects() };
+      return { scope: runtimeScope(), projects: await store.listProjects(scopeKey) };
     case 'web_design_create_project':
-      return { scope: runtimeScope(), project: await store.createProject(String(argumentsValue.name), typeof argumentsValue.description === 'string' ? argumentsValue.description : undefined) };
+      return { scope: runtimeScope(), project: await store.createProject(String(argumentsValue.name), typeof argumentsValue.description === 'string' ? argumentsValue.description : undefined, scopeKey) };
     case 'web_design_get_project': {
       const projectId = String(argumentsValue.projectId);
-      return { scope: runtimeScope(), project: await store.readProject(projectId), documents: await store.listInProject(projectId) };
+      return { scope: runtimeScope(), project: await store.readProjectInScope(projectId, scopeKey), documents: await store.listInProject(projectId, scopeKey) };
     }
     case 'web_design_update_project':
+      await store.readProjectInScope(String(argumentsValue.projectId), scopeKey);
       return { project: await store.updateProject(String(argumentsValue.projectId), { name: typeof argumentsValue.name === 'string' ? argumentsValue.name : undefined, description: typeof argumentsValue.description === 'string' ? argumentsValue.description : undefined }) };
     case 'web_design_delete_project':
+      await store.readProjectInScope(String(argumentsValue.projectId), scopeKey);
       await store.deleteProject(String(argumentsValue.projectId), argumentsValue.deleteDocuments === true);
       return { deleted: true, projectId: String(argumentsValue.projectId) };
     case 'web_design_move_document':
-      return store.moveDocument(String(argumentsValue.documentId), String(argumentsValue.targetProjectId), typeof argumentsValue.sourceProjectId === 'string' ? argumentsValue.sourceProjectId : undefined);
+      return store.moveDocument(String(argumentsValue.documentId), String(argumentsValue.targetProjectId), typeof argumentsValue.sourceProjectId === 'string' ? argumentsValue.sourceProjectId : undefined, scopeKey);
     case 'web_design_create_document': {
       const title = typeof argumentsValue.title === 'string' ? argumentsValue.title : undefined;
       const document = typeof argumentsValue.projectId === 'string'
-        ? await store.createInProject(argumentsValue.projectId, title, argumentsValue.blank === true)
-        : argumentsValue.blank === true
-          ? await store.writeNew(createBlankWebsite(title))
-          : await store.create(title);
+        ? (await store.readProjectInScope(argumentsValue.projectId, scopeKey), await store.createInProject(argumentsValue.projectId, title, argumentsValue.blank === true))
+        : await store.createInProject(defaultProject.projectId, title, argumentsValue.blank === true);
       return { scope: runtimeScope(), document: designSummary(document) };
     }
     case 'web_design_get_document':
-      return { document: await store.read(String(argumentsValue.documentId)) };
+      return { document: await store.readInScope(String(argumentsValue.documentId), scopeKey) };
     case 'web_design_get_component_library':
       return {
         libraries: UI_LIBRARIES.map((library) => ({
@@ -439,6 +448,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         themes: WEB_DESIGN_THEME_PRESETS
       };
     case 'web_design_insert_section':
+      await store.readInScope(String(argumentsValue.documentId), scopeKey);
       return {
         document: await store.insertSection(
           String(argumentsValue.documentId),
@@ -448,6 +458,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         )
       };
     case 'web_design_apply_page_template':
+      await store.readInScope(String(argumentsValue.documentId), scopeKey);
       return {
         document: await store.applyPageTemplate(
           String(argumentsValue.documentId),
@@ -459,9 +470,11 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     case 'web_design_replace_document': {
       const document: unknown = argumentsValue.document;
       assertWebDesignDocument(document);
+      await store.readInScope((document as WebDesignDocument).documentId, scopeKey);
       return { document: await store.replace(document as WebDesignDocument, Number(argumentsValue.expectedRevision)) };
     }
     case 'web_design_apply_patch':
+      await store.readInScope(String(argumentsValue.documentId), scopeKey);
       return {
         document: await store.patch(
           String(argumentsValue.documentId),
@@ -470,6 +483,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         )
       };
     case 'web_design_auto_layout':
+      await store.readInScope(String(argumentsValue.documentId), scopeKey);
       return {
         document: await store.autoLayout(
           String(argumentsValue.documentId),
@@ -479,6 +493,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         )
       };
     case 'web_design_sync_symbol_instances':
+      await store.readInScope(String(argumentsValue.documentId), scopeKey);
       return {
         document: await store.syncSymbolInstances(
           String(argumentsValue.documentId),
@@ -487,6 +502,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         )
       };
     case 'web_design_update_symbol_from_instance':
+      await store.readInScope(String(argumentsValue.documentId), scopeKey);
       return {
         document: await store.updateSymbolFromInstance(
           String(argumentsValue.documentId),
@@ -495,7 +511,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         )
       };
     case 'web_design_export_html': {
-      const document = await store.read(String(argumentsValue.documentId));
+      const document = await store.readInScope(String(argumentsValue.documentId), scopeKey);
       const device = (typeof argumentsValue.device === 'string' ? argumentsValue.device : 'desktop') as 'desktop' | 'tablet' | 'mobile';
       if (typeof argumentsValue.pageId === 'string') {
         const pageId = argumentsValue.pageId;
@@ -506,12 +522,12 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       return { files: exportDocumentHtmlFiles(document, device) };
     }
     case 'web_design_export_react': {
-      const document = await store.read(String(argumentsValue.documentId));
+      const document = await store.readInScope(String(argumentsValue.documentId), scopeKey);
       const device = (typeof argumentsValue.device === 'string' ? argumentsValue.device : 'desktop') as 'desktop' | 'tablet' | 'mobile';
       return { files: [exportReactComponent(document, device)] };
     }
     case 'web_design_export_vue': {
-      const document = await store.read(String(argumentsValue.documentId));
+      const document = await store.readInScope(String(argumentsValue.documentId), scopeKey);
       const device = (typeof argumentsValue.device === 'string' ? argumentsValue.device : 'desktop') as 'desktop' | 'tablet' | 'mobile';
       return { files: [exportVueComponent(document, device)] };
     }
@@ -520,11 +536,12 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       if (typeof argumentsValue.documentId === 'string') {
         return { requests: await requestEntries(argumentsValue.documentId, includeResolved) };
       }
-      const summaries = await store.list();
+      const summaries = await store.listInScope(scopeKey);
       const requests = (await Promise.all(summaries.map((item) => requestEntries(item.documentId, includeResolved)))).flat();
       return { scope: runtimeScope(), requests };
     }
     case 'web_design_resolve_request':
+      await store.readInScope(String(argumentsValue.documentId), scopeKey);
       return {
         document: await store.patch(
           String(argumentsValue.documentId),
@@ -537,7 +554,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         )
       };
     case 'web_design_validate': {
-      const document = await store.read(String(argumentsValue.documentId));
+      const document = await store.readInScope(String(argumentsValue.documentId), scopeKey);
       const outOfBounds = (['desktop', 'tablet', 'mobile'] as const).flatMap((device) => {
         const target = breakpointFor(document, device);
         return document.components.flatMap((component) => {
