@@ -28,6 +28,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
 
     private let service: any LocalConnectorControlServicing
     private var refreshGeneration: Int64 = 0
+    private var pluginRefreshGeneration: Int64 = 0
     private var approvalMonitorTask: Task<Void, Never>?
     private var approvalStreamTask: Task<Void, Never>?
     private var approvalEventStreamTask: Task<Void, Never>?
@@ -98,6 +99,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     func resetForSignedOut() {
         stopApprovalMonitoring()
         refreshGeneration += 1
+        pluginRefreshGeneration += 1
         isStarting = false
         isLoading = false
         isPerformingAction = false
@@ -327,8 +329,26 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func loadPlugins() {
-        load {
-            self.plugins = try await self.service.fetchPlugins()
+        pluginRefreshGeneration += 1
+        let generation = pluginRefreshGeneration
+        let requestedTab = selectedTab
+        isLoading = true
+        errorMessage = nil
+        Task {
+            do {
+                let nextPlugins = try await service.fetchPlugins()
+                guard generation == pluginRefreshGeneration else { return }
+                plugins = nextPlugins
+            } catch {
+                guard generation == pluginRefreshGeneration else { return }
+                if selectedTab == requestedTab {
+                    errorMessage = error.localizedDescription
+                }
+            }
+            guard generation == pluginRefreshGeneration else { return }
+            if selectedTab == requestedTab {
+                isLoading = false
+            }
         }
     }
 
