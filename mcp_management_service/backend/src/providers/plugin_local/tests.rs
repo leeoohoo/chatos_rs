@@ -232,6 +232,7 @@ fn activation_claims(
 fn context() -> ProjectExecutionContext {
     ProjectExecutionContext {
         project_id: Some("project-1".to_string()),
+        project_name: Some("Project 1".to_string()),
         owner_user_id: "user-1".to_string(),
         workspace_provider: WorkspaceProviderKind::LocalConnector,
         workspace: Some(WorkspaceExecutionTarget {
@@ -246,6 +247,7 @@ fn context() -> ProjectExecutionContext {
 fn device_only_context() -> ProjectExecutionContext {
     ProjectExecutionContext {
         project_id: None,
+        project_name: None,
         owner_user_id: "user-1".to_string(),
         workspace_provider: WorkspaceProviderKind::None,
         workspace: None,
@@ -504,6 +506,7 @@ async fn start_local_connector(
     expected_cwd: Option<&'static str>,
     expected_permission: &'static str,
     expected_project_id: Option<&'static str>,
+    expected_project_name: Option<&'static str>,
 ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
     #[derive(Clone)]
     struct TestState {
@@ -513,6 +516,7 @@ async fn start_local_connector(
         expected_cwd: Option<&'static str>,
         expected_permission: &'static str,
         expected_project_id: Option<&'static str>,
+        expected_project_name: Option<&'static str>,
     }
 
     async fn handler(
@@ -558,6 +562,12 @@ async fn start_local_connector(
             body.get("project_id").and_then(Value::as_str),
             state.expected_project_id
         );
+        if action == "prepare" {
+            assert_eq!(
+                body.get("project_name").and_then(Value::as_str),
+                state.expected_project_name
+            );
+        }
         state.actions.lock().unwrap().push(action.clone());
         match action.as_str() {
             "prepare" => {
@@ -683,6 +693,7 @@ async fn start_local_connector(
             expected_cwd,
             expected_permission,
             expected_project_id,
+            expected_project_name,
         });
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -699,6 +710,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         Some("projects/space-station"),
         "workspace.read",
         Some("project-1"),
+        Some("Project 1"),
     )
     .await;
     let provider = PluginLocalProvider::new(
@@ -993,7 +1005,7 @@ fn only_definitely_unexecuted_adapter_failures_are_recoverable() {
 async fn device_only_plugin_prepare_uses_the_installation_device_without_workspace_query() {
     const SECRET: &str = "device-only-plugin-local-test-secret";
     let (base_url, actions, server) =
-        start_local_connector(SECRET, None, None, "network.domain:github.com", None).await;
+        start_local_connector(SECRET, None, None, "network.domain:github.com", None, None).await;
     let provider = PluginLocalProvider::new(
         reqwest::Client::new(),
         base_url,

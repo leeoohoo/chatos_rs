@@ -249,6 +249,7 @@ struct NativePluginRuntimeTests {
         )
         #expect(mcp.environment["CHATOS_CONTEXT_SCOPE"] == "project")
         #expect(mcp.environment["CHATOS_PROJECT_ID"] == "project-1")
+        #expect(mcp.environment["CHATOS_PROJECT_NAME"] == "Project One")
         #expect(publicProject.environment["CHATOS_CONTEXT_SCOPE"] == "device")
         #expect(publicProject.environment["CHATOS_PROJECT_ID"] == nil)
         #expect(publicProject.dataURL != mcp.dataURL)

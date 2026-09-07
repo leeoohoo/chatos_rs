@@ -48,7 +48,14 @@ test('studio serves the packaged workbench and persists a design', async () => {
     assert.equal(projects.items[0].projectId, context.defaultProjectId);
     assert.equal(projects.items[0].name, '宿主产品项目');
 
-    const projectDesign = await fetch(`${base}/api/projects/${context.defaultProjectId}/documents`, {
+    const projectMutation = await fetch(`${base}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '不应创建的内部项目' })
+    });
+    assert.equal(projectMutation.status, 404);
+
+    const projectDesign = await fetch(`${base}/api/documents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: '项目内空白网站', blank: true })

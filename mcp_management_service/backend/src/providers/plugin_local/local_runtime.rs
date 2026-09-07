@@ -140,6 +140,7 @@ impl PluginLocalProvider {
             ),
         ]);
         body.insert("project_id".to_string(), json!(context.project_id));
+        body.insert("project_name".to_string(), json!(context.project_name));
         if let Some(server_key) = immutable.server_key.as_deref() {
             body.insert("server_key".to_string(), json!(server_key));
         }

@@ -38,7 +38,7 @@ The product provides:
 - container Flex row, Flex column, and Grid auto layout, including main-axis distribution and responsive row wrapping;
 - multiple isolated pages with create, duplicate, rename, route, and delete controls;
 - scope-isolated website projects keyed by the transmitted ChatOS project, workspace, user, and context identifiers, with stable default-project reuse and lossless legacy migration;
-- URL-persisted internal project and design selection, preserving host query parameters and reopening the exact design after a full browser refresh;
+- URL-persisted design selection inside the ChatOS-bound scope, preserving host query parameters and reopening the exact design after a full browser refresh;
 - component-tree copy/paste within or across pages;
 - image import into a reusable document asset library;
 - standalone HTML export for the active responsive breakpoint;

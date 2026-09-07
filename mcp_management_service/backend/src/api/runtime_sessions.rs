@@ -521,6 +521,7 @@ pub(super) async fn resolve_runtime_session(
 fn user_conversation_execution_context(owner_user_id: &str) -> ProjectExecutionContext {
     ProjectExecutionContext {
         project_id: None,
+        project_name: None,
         owner_user_id: owner_user_id.trim().to_string(),
         workspace_provider: WorkspaceProviderKind::None,
         workspace: None,

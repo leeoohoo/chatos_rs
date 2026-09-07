@@ -189,19 +189,7 @@ export class WebDesignDocumentStore {
   async ensureScopedProject(scopeKey: string, name: string): Promise<WebDesignProject> {
     if (!/^[a-f0-9]{64}$/.test(scopeKey)) throw new Error('scopeKey must be a SHA-256 fingerprint.');
     return this.withStoreLock(async () => {
-      const projects = await this.readAllProjects();
-      const existing = projects.find((project) => project.scopeKey === scopeKey && project.isScopeDefault === true);
-      if (existing) return existing;
-      const scopedProjects = projects.filter((project) => project.scopeKey === scopeKey);
-      if (scopedProjects.length > 0) {
-        const promoted: WebDesignProject = {
-          ...scopedProjects.sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0],
-          isScopeDefault: true,
-          updatedAt: new Date().toISOString()
-        };
-        await this.atomicWriteProject(this.projectPath(promoted.projectId), promoted);
-        return promoted;
-      }
+      let projects = await this.readAllProjects();
       if (projects.length > 0 && projects.every((project) => project.scopeKey === undefined)) {
         const ordered = [...projects].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
         const migratedAt = new Date().toISOString();
@@ -213,12 +201,48 @@ export class WebDesignDocumentStore {
             updatedAt: migratedAt
           });
         }
-        return this.readProject(ordered[0].projectId);
+        projects = await this.readAllProjects();
       }
-      const project = this.prepareProject(name, undefined, scopeKey, true);
-      await this.atomicWriteProject(this.projectPath(project.projectId), project);
-      return project;
+
+      const scopedProjects = projects
+        .filter((project) => project.scopeKey === scopeKey)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      if (scopedProjects.length === 0) {
+        const project = this.prepareProject(name, undefined, scopeKey, true);
+        const unassigned = await this.unassignedDocumentIds(projects);
+        project.designIds = unassigned;
+        await this.atomicWriteProject(this.projectPath(project.projectId), project);
+        return project;
+      }
+
+      const primary = scopedProjects.find((project) => project.isScopeDefault === true) ?? scopedProjects[0];
+      const designIds = [...new Set([
+        ...scopedProjects.flatMap((project) => project.designIds),
+        ...await this.unassignedDocumentIds(projects)
+      ])];
+      const now = new Date().toISOString();
+      const locked: WebDesignProject = {
+        ...primary,
+        name: name.trim(),
+        scopeKey,
+        isScopeDefault: true,
+        designIds,
+        updatedAt: now
+      };
+      await this.atomicWriteProject(this.projectPath(locked.projectId), locked);
+      for (const duplicate of scopedProjects) {
+        if (duplicate.projectId === locked.projectId) continue;
+        await fs.unlink(this.projectPath(duplicate.projectId));
+      }
+      return locked;
     });
+  }
+
+  private async unassignedDocumentIds(projects: WebDesignProject[]): Promise<string[]> {
+    const assigned = new Set(projects.flatMap((project) => project.designIds));
+    return (await this.list())
+      .map((document) => document.documentId)
+      .filter((documentId) => !assigned.has(documentId));
   }
 
   async readProjectInScope(projectId: string, scopeKey: string): Promise<WebDesignProject> {

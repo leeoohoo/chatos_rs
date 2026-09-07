@@ -9,7 +9,6 @@ const port = Number.parseInt(process.env.CHATOS_PLUGIN_APP_PORT ?? process.env.W
 const host = process.env.CHATOS_PLUGIN_APP_HOST ?? process.env.WEB_DESIGN_STUDIO_HOST ?? '127.0.0.1';
 const store = new WebDesignDocumentStore();
 await store.initialize();
-await store.ensureLegacyProject();
 
 const contextKind = process.env.CHATOS_CONTEXT_SCOPE ?? 'device';
 const runtimeContext = {
@@ -44,7 +43,7 @@ app.get('/api/context', (_request, response) => {
 app.get('/api/documents', async (_request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json({ items: await store.listInScope(scopeKey) });
+    response.json({ items: await store.listInProject(defaultProjectId, scopeKey) });
   } catch (error) {
     next(error);
   }
@@ -63,48 +62,6 @@ app.get('/api/projects/:projectId', async (request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
     response.json(await store.readProjectInScope(request.params.projectId, scopeKey));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post('/api/projects', async (request, response, next) => {
-  try {
-    const name = typeof request.body?.name === 'string' ? request.body.name : '';
-    const description = typeof request.body?.description === 'string' ? request.body.description : undefined;
-    response.status(201).json(await store.createProject(name, description, scopeKey));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.patch('/api/projects/:projectId', async (request, response, next) => {
-  try {
-    await store.readProjectInScope(request.params.projectId, scopeKey);
-    response.json(await store.updateProject(request.params.projectId, {
-      name: typeof request.body?.name === 'string' ? request.body.name : undefined,
-      description: typeof request.body?.description === 'string' ? request.body.description : undefined
-    }));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.delete('/api/projects/:projectId', async (request, response, next) => {
-  try {
-    await store.readProjectInScope(request.params.projectId, scopeKey);
-    await store.deleteProject(request.params.projectId, request.query.deleteDocuments === 'true');
-    response.status(204).end();
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post('/api/projects/:projectId/documents', async (request, response, next) => {
-  try {
-    await store.readProjectInScope(request.params.projectId, scopeKey);
-    const title = typeof request.body?.title === 'string' ? request.body.title : undefined;
-    response.status(201).json(await store.createInProject(request.params.projectId, title, request.body?.blank === true));
   } catch (error) {
     next(error);
   }

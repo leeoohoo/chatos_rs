@@ -36,17 +36,20 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_export_vue'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_sync_symbol_instances'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_update_symbol_from_instance'));
-    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_list_projects'));
-    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_create_project'));
-    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_project'));
-    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_move_document'));
+    for (const projectTool of ['web_design_list_projects', 'web_design_create_project', 'web_design_get_project', 'web_design_update_project', 'web_design_delete_project', 'web_design_move_document']) {
+      assert.equal(tools.tools.some((tool) => tool.name === projectTool), false);
+    }
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_insert_section'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_apply_page_template'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_document_outline'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_page'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_node'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_apply_node_batch'));
+    assert.equal(tools.tools.some((tool) => tool.name.includes('project')), false);
     assert.equal(tools.tools.some((tool) => Object.hasOwn(tool.inputSchema.properties ?? {}, 'chatosProjectId')), false);
+    assert.equal(tools.tools.some((tool) => Object.hasOwn(tool.inputSchema.properties ?? {}, 'projectId')), false);
+    assert.equal(JSON.stringify(tools.tools.map((tool) => tool.inputSchema)).includes('projectId'), false);
+    assert.equal(JSON.stringify(tools.tools.map((tool) => tool.inputSchema)).includes('project_id'), false);
     for (const tool of tools.tools) {
       assert.ok(tool._meta['chatos/skillGate'].allOf.length >= 2);
       assert.equal(Object.hasOwn(tool.inputSchema.properties ?? {}, 'skillEvidence'), false);
@@ -59,20 +62,9 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.equal(patchSchema.oneOf.some((branch) => branch.properties?.op?.const === 'move_component' && branch.required.includes('x') && branch.required.includes('y')), true);
     assert.equal(patchSchema.oneOf.some((branch) => branch.properties?.op?.const === 'update_component' && branch.required.includes('changes')), true);
 
-    const projectList = await client.callTool({ name: 'web_design_list_projects', arguments: {} });
-    assert.deepEqual(projectList.structuredContent.scope, {
-      kind: 'project',
-      isolated: true,
-      hasProjectContext: true,
-      projectName: '宿主产品项目'
-    });
-    assert.equal(Object.hasOwn(projectList.structuredContent.scope, 'chatosProjectId'), false);
-    assert.equal(Object.hasOwn(projectList.structuredContent.scope, 'workspaceId'), false);
-
-    const createdProject = await client.callTool({ name: 'web_design_create_project', arguments: { name: 'Web Studio 内部项目' } });
-    const internalProjectId = createdProject.structuredContent.project.projectId;
-    assert.match(internalProjectId, /^project-/);
-    assert.equal(Object.hasOwn(createdProject.structuredContent.scope, 'chatosProjectId'), false);
+    const initialDocuments = await client.callTool({ name: 'web_design_list_documents', arguments: {} });
+    assert.deepEqual(initialDocuments.structuredContent.documents, []);
+    assert.equal(Object.hasOwn(initialDocuments.structuredContent, 'scope'), false);
 
     const catalog = await client.callTool({ name: 'web_design_get_catalog', arguments: {} });
     assert.deepEqual(catalog.structuredContent.libraries.map((item) => item.id), ['antd', 'chakra', 'shadcn', 'magicui', 'spell', 'inspira', 'daisyui']);
@@ -110,7 +102,7 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.equal(inputContract.structuredContent.component.bindingTemplate.name, 'antd');
     assert.equal(inputContract.structuredContent.component.bindingTemplate.component, 'Input');
 
-    const templateSeed = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'Template Website', blank: true } });
+    const templateSeed = await client.callTool({ name: 'web_design_create_document', arguments: { title: 'Template Website', blank: true } });
     const templateDocumentId = templateSeed.structuredContent.document.documentId;
     const templated = await client.callTool({
       name: 'web_design_apply_page_template',
@@ -126,12 +118,11 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.equal(withSection.structuredContent.document.revision, 3);
     assert.ok(withSection.structuredContent.document.componentCount > templated.structuredContent.document.componentCount);
 
-    const created = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'MCP Website' } });
+    const created = await client.callTool({ name: 'web_design_create_document', arguments: { title: 'MCP Website' } });
     const documentId = created.structuredContent.document.documentId;
-    assert.equal(Object.hasOwn(created.structuredContent.scope, 'chatosProjectId'), false);
-    const internalProject = await client.callTool({ name: 'web_design_get_project', arguments: { projectId: internalProjectId } });
-    assert.deepEqual(internalProject.structuredContent.project.designIds, [templateDocumentId, documentId]);
-    assert.equal(Object.hasOwn(internalProject.structuredContent.scope, 'chatosProjectId'), false);
+    assert.equal(Object.hasOwn(created.structuredContent, 'scope'), false);
+    const documentsAfterCreate = await client.callTool({ name: 'web_design_list_documents', arguments: {} });
+    assert.deepEqual(documentsAfterCreate.structuredContent.documents.map((item) => item.documentId).sort(), [templateDocumentId, documentId].sort());
     const read = await client.callTool({ name: 'web_design_get_document', arguments: { documentId } });
     assert.equal(read.structuredContent.document.revision, 1);
     const outline = await client.callTool({ name: 'web_design_get_document_outline', arguments: { documentId } });
@@ -209,7 +200,7 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     const resolvedRequests = await client.callTool({ name: 'web_design_list_requests', arguments: { documentId, includeResolved: true } });
     assert.equal(resolvedRequests.structuredContent.requests[0].request.status, 'resolved');
 
-    const badSeed = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'Invalid Text Mockup', blank: true } });
+    const badSeed = await client.callTool({ name: 'web_design_create_document', arguments: { title: 'Invalid Text Mockup', blank: true } });
     const badDocumentId = badSeed.structuredContent.document.documentId;
     const fakeInterface = Array.from({ length: 20 }, (_, index) => `Navigation ${index}    Button ${index}    Card ${index}`).join('\n');
     const badBatch = await client.callTool({
@@ -251,7 +242,7 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.equal(blockedExport.isError, true);
     assert.match(blockedExport.structuredContent.error, /not ready for export/);
 
-    const focusedSeed = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'Focused batches', blank: true } });
+    const focusedSeed = await client.callTool({ name: 'web_design_create_document', arguments: { title: 'Focused batches', blank: true } });
     const focusedDocumentId = focusedSeed.structuredContent.document.documentId;
     const withSecondPage = await client.callTool({
       name: 'web_design_apply_patch',

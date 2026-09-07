@@ -72,6 +72,7 @@ fn build_execution_context(
     let revision = execution_context_revision(project, workspace_provider, workspace.as_ref());
     ProjectExecutionContext {
         project_id: Some(project.id.clone()),
+        project_name: Some(project.name.clone()),
         owner_user_id: owner_user_id.to_string(),
         workspace_provider,
         workspace,
@@ -107,6 +108,7 @@ fn execution_context_revision(
     let input = serde_json::json!({
         "purpose": "mcp-project-execution-context-local-connector-v1",
         "project_id": project.id,
+        "project_name": project.name,
         "project_updated_at": project.updated_at,
         "workspace_provider": workspace_provider,
         "workspace": workspace,

@@ -27,10 +27,9 @@ import {
 } from './schema.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '0.11.0';
+const SERVER_VERSION = '0.12.0';
 const store = new WebDesignDocumentStore();
 await store.initialize();
-await store.ensureLegacyProject();
 const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
 const defaultProject = await store.ensureScopedProject(
   scopeKey,
@@ -355,54 +354,17 @@ const patchOperationSchema = {
 const TOOL_DEFINITIONS_BASE = [
   {
     name: 'web_design_list_documents',
-    description: 'List editable website design documents, optionally limited to one Web Design Studio project.',
-    inputSchema: { type: 'object', properties: { projectId: { type: 'string', minLength: 1, maxLength: 128 } }, additionalProperties: false },
-    _meta: policy
-  },
-  {
-    name: 'web_design_list_projects',
-    description: 'List Web Design Studio projects in the current ChatOS runtime scope.',
+    description: 'List editable website design documents in the current program-injected ChatOS scope.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     _meta: policy
   },
   {
-    name: 'web_design_create_project',
-    description: 'Create a project that can contain multiple separately named website designs.',
-    inputSchema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 240 }, description: { type: 'string', maxLength: 4000 } }, required: ['name'], additionalProperties: false },
-    _meta: policy
-  },
-  {
-    name: 'web_design_get_project',
-    description: 'Read a website project and the summaries of designs assigned to it.',
-    inputSchema: { type: 'object', properties: { projectId: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['projectId'], additionalProperties: false },
-    _meta: policy
-  },
-  {
-    name: 'web_design_update_project',
-    description: 'Rename a website project or update its description.',
-    inputSchema: { type: 'object', properties: { projectId: { type: 'string', minLength: 1, maxLength: 128 }, name: { type: 'string', minLength: 1, maxLength: 240 }, description: { type: 'string', maxLength: 4000 } }, required: ['projectId'], additionalProperties: false },
-    _meta: policy
-  },
-  {
-    name: 'web_design_delete_project',
-    description: 'Delete a website project, optionally deleting all website designs assigned to it.',
-    inputSchema: { type: 'object', properties: { projectId: { type: 'string', minLength: 1, maxLength: 128 }, deleteDocuments: { type: 'boolean', default: false } }, required: ['projectId'], additionalProperties: false },
-    _meta: policy
-  },
-  {
-    name: 'web_design_move_document',
-    description: 'Attach or move one website design into another Web Design Studio project.',
-    inputSchema: { type: 'object', properties: { documentId: { type: 'string', minLength: 1, maxLength: 128 }, targetProjectId: { type: 'string', minLength: 1, maxLength: 128 }, sourceProjectId: { type: 'string', minLength: 1, maxLength: 128 } }, required: ['documentId', 'targetProjectId'], additionalProperties: false },
-    _meta: policy
-  },
-  {
     name: 'web_design_create_document',
-    description: 'Create an editable website design, optionally inside a project and optionally as a blank canvas.',
+    description: 'Create an editable website design in the current program-injected ChatOS scope, optionally as a blank canvas.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', minLength: 1, maxLength: 240 },
-        projectId: { type: 'string', minLength: 1, maxLength: 128 },
         blank: { type: 'boolean', default: false }
       },
       additionalProperties: false
@@ -724,7 +686,7 @@ function webDesignToolSkills(name: string): string[] {
   if (name.includes('auto_layout')) return ['web-design-responsive-layout'];
   if (name.includes('catalog') || name.includes('component') || name.includes('symbol')) return ['web-design-components'];
   if (name.includes('export') || name.includes('validate')) return ['web-design-validation-export'];
-  return ['web-design-projects'];
+  return ['web-design-documents'];
 }
 
 const TOOL_DEFINITIONS = TOOL_DEFINITIONS_BASE.map((tool) => ({
@@ -740,16 +702,6 @@ const TOOL_DEFINITIONS = TOOL_DEFINITIONS_BASE.map((tool) => ({
 function objectArguments(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Tool arguments must be an object.');
   return value as Record<string, unknown>;
-}
-
-function runtimeScope(): Record<string, unknown> {
-  const kind = process.env.CHATOS_CONTEXT_SCOPE ?? 'device';
-  return {
-    kind,
-    isolated: true,
-    hasProjectContext: kind === 'project',
-    ...(process.env.CHATOS_PROJECT_NAME ? { projectName: process.env.CHATOS_PROJECT_NAME } : {})
-  };
 }
 
 function changedComponentIds(operations: WebDesignPatchOperation[]): string[] {
@@ -831,30 +783,11 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
   const argumentsValue = objectArguments(rawArguments);
   switch (name) {
     case 'web_design_list_documents':
-      return { scope: runtimeScope(), documents: typeof argumentsValue.projectId === 'string' ? await store.listInProject(argumentsValue.projectId, scopeKey) : await store.listInScope(scopeKey) };
-    case 'web_design_list_projects':
-      return { scope: runtimeScope(), projects: await store.listProjects(scopeKey) };
-    case 'web_design_create_project':
-      return { scope: runtimeScope(), project: await store.createProject(String(argumentsValue.name), typeof argumentsValue.description === 'string' ? argumentsValue.description : undefined, scopeKey) };
-    case 'web_design_get_project': {
-      const projectId = String(argumentsValue.projectId);
-      return { scope: runtimeScope(), project: await store.readProjectInScope(projectId, scopeKey), documents: await store.listInProject(projectId, scopeKey) };
-    }
-    case 'web_design_update_project':
-      await store.readProjectInScope(String(argumentsValue.projectId), scopeKey);
-      return { project: await store.updateProject(String(argumentsValue.projectId), { name: typeof argumentsValue.name === 'string' ? argumentsValue.name : undefined, description: typeof argumentsValue.description === 'string' ? argumentsValue.description : undefined }) };
-    case 'web_design_delete_project':
-      await store.readProjectInScope(String(argumentsValue.projectId), scopeKey);
-      await store.deleteProject(String(argumentsValue.projectId), argumentsValue.deleteDocuments === true);
-      return { deleted: true, projectId: String(argumentsValue.projectId) };
-    case 'web_design_move_document':
-      return store.moveDocument(String(argumentsValue.documentId), String(argumentsValue.targetProjectId), typeof argumentsValue.sourceProjectId === 'string' ? argumentsValue.sourceProjectId : undefined, scopeKey);
+      return { documents: await store.listInProject(defaultProject.projectId, scopeKey) };
     case 'web_design_create_document': {
       const title = typeof argumentsValue.title === 'string' ? argumentsValue.title : undefined;
-      const document = typeof argumentsValue.projectId === 'string'
-        ? (await store.readProjectInScope(argumentsValue.projectId, scopeKey), await store.createInProject(argumentsValue.projectId, title, argumentsValue.blank === true))
-        : await store.createInProject(defaultProject.projectId, title, argumentsValue.blank === true);
-      return { scope: runtimeScope(), document: designSummary(document) };
+      const document = await store.createInProject(defaultProject.projectId, title, argumentsValue.blank === true);
+      return { document: designSummary(document) };
     }
     case 'web_design_get_document':
       return { document: await store.readInScope(String(argumentsValue.documentId), scopeKey) };
@@ -1131,9 +1064,9 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       if (typeof argumentsValue.documentId === 'string') {
         return { requests: await requestEntries(argumentsValue.documentId, includeResolved) };
       }
-      const summaries = await store.listInScope(scopeKey);
+      const summaries = await store.listInProject(defaultProject.projectId, scopeKey);
       const requests = (await Promise.all(summaries.map((item) => requestEntries(item.documentId, includeResolved)))).flat();
-      return { scope: runtimeScope(), requests };
+      return { requests };
     }
     case 'web_design_resolve_request': {
       const current = await store.readInScope(String(argumentsValue.documentId), scopeKey);

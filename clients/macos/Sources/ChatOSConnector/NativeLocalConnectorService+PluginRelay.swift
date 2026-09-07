@@ -81,6 +81,7 @@ extension NativeLocalConnectorService {
         let serverKey = body["server_key"]?.jsonString
         let permissionSnapshot = Set(try body.requireStringArray("permission_snapshot"))
         let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
+        let projectName = body["project_name"]?.jsonString?.nonEmptyTrimmed
         let allowlist = Set(try body.optionalStringArray("tool_allowlist"))
         let blocklist = Set(try body.optionalStringArray("tool_blocklist"))
         try scope.validate(permissionSnapshot: permissionSnapshot)
@@ -142,6 +143,7 @@ extension NativeLocalConnectorService {
             workspaceID: scope.workspaceID,
             workspaceRoot: projectRoot,
             projectID: projectID,
+            projectName: projectName,
             permissionSnapshot: permissionSnapshot,
             runtimeRootURL: pluginRuntimeRootURL
         )

@@ -125,6 +125,7 @@ mod tests {
         let resolved = task_plugin_runtime_context_from_project(
             ProjectExecutionContext {
                 project_id: Some("project-1".to_string()),
+                project_name: Some("Project 1".to_string()),
                 owner_user_id: "owner-1".to_string(),
                 workspace_provider: WorkspaceProviderKind::LocalConnector,
                 workspace: Some(WorkspaceExecutionTarget {
@@ -153,6 +154,7 @@ mod tests {
         let error = task_plugin_runtime_context_from_project(
             ProjectExecutionContext {
                 project_id: Some("project-1".to_string()),
+                project_name: Some("Project 1".to_string()),
                 owner_user_id: "owner-1".to_string(),
                 workspace_provider: WorkspaceProviderKind::LocalConnector,
                 workspace: Some(WorkspaceExecutionTarget {
@@ -175,6 +177,7 @@ mod tests {
         let error = task_plugin_runtime_context_from_project(
             ProjectExecutionContext {
                 project_id: Some("another-project".to_string()),
+                project_name: Some("Another Project".to_string()),
                 owner_user_id: "owner-1".to_string(),
                 workspace_provider: WorkspaceProviderKind::None,
                 workspace: None,

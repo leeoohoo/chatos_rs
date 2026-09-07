@@ -65,6 +65,8 @@ impl RuntimeWorkspaceRouteTarget {
 pub struct ProjectExecutionContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
     pub owner_user_id: String,
     #[serde(default)]
     pub workspace_provider: WorkspaceProviderKind,

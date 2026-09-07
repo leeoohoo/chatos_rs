@@ -112,7 +112,8 @@ public sealed class PluginManifestLoaderTests : IDisposable
             "owner-1",
             "device-1",
             workspaceId: "workspace-1",
-            projectId: "project-1");
+            projectId: "project-1",
+            projectName: "Relay");
         var second = await loader.PrepareAsync(
             Record(installation),
             "main",
@@ -142,6 +143,7 @@ public sealed class PluginManifestLoaderTests : IDisposable
             publicProject.Environment["CHATOS_PLUGIN_DATA_DIR"]);
         Assert.Equal("project", first.Environment["CHATOS_CONTEXT_SCOPE"]);
         Assert.Equal("project-1", first.Environment["CHATOS_PROJECT_ID"]);
+        Assert.Equal("Relay", first.Environment["CHATOS_PROJECT_NAME"]);
         Assert.Equal("device", publicProject.Environment["CHATOS_CONTEXT_SCOPE"]);
         Assert.False(publicProject.Environment.ContainsKey("CHATOS_PROJECT_ID"));
     }

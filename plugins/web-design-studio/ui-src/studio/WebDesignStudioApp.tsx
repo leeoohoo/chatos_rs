@@ -64,7 +64,6 @@ import {
   type WebDesignJsonValue,
   type WebDesignLibraryName,
   type WebDesignProject,
-  type WebDesignProjectSummary,
   type WebHorizontalConstraint,
   type WebDesignSymbol,
   type WebDesignTokens,
@@ -649,11 +648,10 @@ function SelectableVariantCard({ component, previewHeight, className, interactiv
 export function WebDesignStudioApp() {
   const [repository, setRepository] = useState<DesignRepository>();
   const [documents, setDocuments] = useState<DesignSummary[]>([]);
-  const [projects, setProjects] = useState<WebDesignProjectSummary[]>([]);
   const [activeProject, setActiveProject] = useState<WebDesignProject>();
   const [document, setDocument] = useState<WebDesignDocument>();
   const [ready, setReady] = useState(false);
-  const [screen, setScreen] = useState<'projects' | 'project' | 'editor'>('projects');
+  const [screen, setScreen] = useState<'project' | 'editor'>('project');
   const [persistedRevision, setPersistedRevision] = useState(0);
   const [selectedId, setSelectedId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -680,9 +678,6 @@ export function WebDesignStudioApp() {
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [projectLibraryOpen, setProjectLibraryOpen] = useState(false);
-  const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectDescription, setNewProjectDescription] = useState('');
   const [newDesignOpen, setNewDesignOpen] = useState(false);
   const [newDesignName, setNewDesignName] = useState('');
   const [newDesignBlank, setNewDesignBlank] = useState(true);
@@ -783,9 +778,8 @@ export function WebDesignStudioApp() {
       setRepository(repo);
       const [items, projectItems, runtimeContext] = await Promise.all([repo.list(), repo.listProjects(), repo.runtimeContext()]);
       setDocuments(items);
-      setProjects(projectItems);
       const requested = studioLocationSelection();
-      const requestedProjectId = requested.projectId ?? runtimeContext.defaultProjectId;
+      const requestedProjectId = runtimeContext.defaultProjectId ?? projectItems[0]?.projectId;
       if (requestedProjectId) {
         const project = await repo.readProject(requestedProjectId);
         setActiveProject(project);
@@ -1037,12 +1031,7 @@ export function WebDesignStudioApp() {
   }
 
   async function createNew() {
-    if (!activeProject) {
-      setNewProjectName('');
-      setNewProjectDescription('');
-      setNewProjectOpen(true);
-      return;
-    }
+    if (!activeProject) return;
     setNewDesignName('');
     setNewDesignBlank(true);
     setNewDesignOpen(true);
@@ -1051,38 +1040,7 @@ export function WebDesignStudioApp() {
 
   async function refreshCatalog() {
     if (!repository) return;
-    const [nextDocuments, nextProjects] = await Promise.all([repository.list(), repository.listProjects()]);
-    setDocuments(nextDocuments);
-    setProjects(nextProjects);
-  }
-
-  async function createProjectFromSheet() {
-    if (!repository || !newProjectName.trim()) return;
-    try {
-      const created = await repository.createProject(newProjectName, newProjectDescription);
-      setActiveProject(created);
-      setScreen('project');
-      replaceStudioLocation(created.projectId);
-      setNewProjectOpen(false);
-      setNewProjectName('');
-      setNewProjectDescription('');
-      await refreshCatalog();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function openProject(projectId: string) {
-    if (!repository) return;
-    try {
-      setActiveProject(await repository.readProject(projectId));
-      setDocument(undefined);
-      setScreen('project');
-      replaceStudioLocation(projectId);
-      setDirty(false);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
-    }
+    setDocuments(await repository.list());
   }
 
   async function createDesignFromSheet() {
@@ -1112,16 +1070,6 @@ export function WebDesignStudioApp() {
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     }
-  }
-
-  function goToProjects() {
-    if (dirty && !window.confirm('返回项目列表会丢弃未保存修改，确定继续吗？')) return;
-    setDocument(undefined);
-    setActiveProject(undefined);
-    setDirty(false);
-    setScreen('projects');
-    setProjectLibraryOpen(false);
-    replaceStudioLocation();
   }
 
   function goToActiveProject() {
@@ -2169,16 +2117,6 @@ export function WebDesignStudioApp() {
   }
 
   const storageBadge = <span className={`service-pill ${repository?.mode === 'server' ? 'online' : ''}`}>{repository?.mode === 'server' ? '本地服务' : '浏览器存储'}</span>;
-  const newProjectModal = newProjectOpen && <div className="studio-modal-backdrop" onPointerDown={() => setNewProjectOpen(false)}>
-    <section className="studio-modal project-create-modal" onPointerDown={(event) => event.stopPropagation()}>
-      <header><div><span className="eyebrow">WEB DESIGN STUDIO</span><h2>新建网站项目</h2><p>项目用于管理同一个产品、品牌或业务下的多份网站设计。</p></div><button onClick={() => setNewProjectOpen(false)}>×</button></header>
-      <div className="project-form-body">
-        <label>项目名称<input autoFocus maxLength={240} value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && newProjectName.trim()) void createProjectFromSheet(); }} placeholder="例如：Chatos 官方网站" /></label>
-        <label>项目说明<textarea rows={3} maxLength={4000} value={newProjectDescription} onChange={(event) => setNewProjectDescription(event.target.value)} placeholder="项目目标、品牌、受众或设计要求（可选）" /></label>
-      </div>
-      <footer className="project-modal-actions"><button className="quiet-button" onClick={() => setNewProjectOpen(false)}>取消</button><button className="primary-button" disabled={!newProjectName.trim()} onClick={() => void createProjectFromSheet()}>创建项目</button></footer>
-    </section>
-  </div>;
   const newDesignModal = newDesignOpen && activeProject && <div className="studio-modal-backdrop" onPointerDown={() => setNewDesignOpen(false)}>
     <section className="studio-modal project-create-modal" onPointerDown={(event) => event.stopPropagation()}>
       <header><div><span className="eyebrow">{activeProject.name}</span><h2>新建网站设计</h2><p>每份设计拥有独立页面、组件、响应式布局和设计系统。</p></div><button onClick={() => setNewDesignOpen(false)}>×</button></header>
@@ -2195,20 +2133,8 @@ export function WebDesignStudioApp() {
 
   if (!ready) return <div className="loading-screen"><div className="loading-dot" />正在准备 Web Design Studio…</div>;
 
-  if (screen === 'projects') return <div className="web-project-shell">
-    <header className="web-project-toolbar"><div className="brand"><span className="brand-mark">W</span><span>Web Design Studio</span>{storageBadge}</div><button className="primary-button" onClick={() => { setNewProjectName(''); setNewProjectDescription(''); setNewProjectOpen(true); }}>＋ 新建项目</button></header>
-    <main className="web-project-home">
-      <section className="web-project-intro"><div><span className="eyebrow">WEB DESIGN STUDIO</span><h1>网站项目</h1><p>一个项目可以包含多份网站设计，每份设计内部可以继续包含多个页面。</p></div><button className="web-project-new-card" onClick={() => setNewProjectOpen(true)}><span>＋</span><strong>新建网站项目</strong><small>先建立项目，再创建具体设计</small></button></section>
-      <section className="web-project-section"><div className="web-project-section-heading"><h2>所有项目</h2><span>{projects.length} 个项目</span></div>
-        {projects.length ? <div className="web-project-grid">{projects.map((project) => <button className="web-project-card" key={project.projectId} onClick={() => void openProject(project.projectId)}>
-          <span className="web-project-folder">⌘</span><span className="web-project-card-copy"><strong>{project.name}</strong><small>{project.designCount} 份网站设计{project.description ? ` · ${project.description}` : ''}</small></span><time>{formatProjectDate(project.updatedAt)}</time><b>›</b>
-        </button>)}</div> : <div className="web-project-empty"><span>⌘</span><strong>还没有网站项目</strong><p>创建项目后，可以把同一产品的官网、活动页和不同设计方案放在一起管理。</p><button className="primary-button" onClick={() => setNewProjectOpen(true)}>＋ 新建网站项目</button></div>}
-      </section>
-    </main>{newProjectModal}{toast && <div className="toast">{toast}</div>}
-  </div>;
-
   if (screen === 'project' && activeProject) return <div className="web-project-shell">
-    <header className="web-project-toolbar"><div className="brand"><button className="web-home-button" onClick={goToProjects} aria-label="返回项目列表">‹</button><span className="brand-mark">W</span><span>{activeProject.name}</span>{storageBadge}</div><button className="primary-button" onClick={() => void createNew()}>＋ 新建设计</button></header>
+    <header className="web-project-toolbar"><div className="brand"><span className="brand-mark">W</span><span>{activeProject.name}</span>{storageBadge}</div><button className="primary-button" onClick={() => void createNew()}>＋ 新建设计</button></header>
     <main className="web-project-home">
       <section className="web-project-intro"><div><span className="eyebrow">网站项目</span><h1>{activeProject.name}</h1><p>{activeProject.description || `项目内共有 ${activeProjectDocuments.length} 份网站设计。`}</p></div><button className="web-project-new-card" onClick={() => void createNew()}><span>＋</span><strong>新建网站设计</strong><small>创建空白网站或从完整模板开始</small></button></section>
       <section className="web-project-section"><div className="web-project-section-heading"><h2>项目设计</h2><span>{activeProjectDocuments.length} 份</span></div>
