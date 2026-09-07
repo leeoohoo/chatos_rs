@@ -43,7 +43,7 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/deploy-online.sh                    # interactive menu
-  scripts/deploy-online.sh all                # cloud services + all four Plugins
+  scripts/deploy-online.sh all                # cloud services + all five Plugins
   scripts/deploy-online.sh cloud              # all cloud services
   scripts/deploy-online.sh cloud-backends     # all backend services
   scripts/deploy-online.sh cloud-frontends    # all frontend services
@@ -54,6 +54,7 @@ Usage:
   scripts/deploy-online.sh plugin computer-use
   scripts/deploy-online.sh plugin document
   scripts/deploy-online.sh plugin diagram-studio
+  scripts/deploy-online.sh plugin web-design-studio
   scripts/deploy-online.sh plugin browser computer-use
   scripts/deploy-online.sh client mac
   scripts/deploy-online.sh client windows
@@ -222,6 +223,12 @@ build_plugin_artifact() {
       artifact_name="$(cd "$ROOT_DIR/plugins/diagram-studio" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
       printf '%s\n' "$DEPLOY_TMP/$artifact_name"
       ;;
+    web-design-studio)
+      echo "[INFO] verifying and building Web Design Studio Plugin"
+      npm --prefix "$ROOT_DIR/plugins/web-design-studio" run pack:verify >&2
+      artifact_name="$(cd "$ROOT_DIR/plugins/web-design-studio" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
+      printf '%s\n' "$DEPLOY_TMP/$artifact_name"
+      ;;
     *)
       echo "[ERROR] unknown Plugin: $plugin" >&2
       exit 2
@@ -231,7 +238,7 @@ build_plugin_artifact() {
 
 plugin_publisher_json() {
   case "$1" in
-    browser|document|diagram-studio)
+    browser|document|diagram-studio|web-design-studio)
       jq -nc '{id:"chatos",name:"Chatos",website:"https://github.com/chatos-ai"}'
       ;;
     computer-use)
@@ -243,13 +250,16 @@ plugin_publisher_json() {
 publish_plugin() {
   local plugin="$1"
   local token artifact analysis artifact_sha name version license publisher publisher_id publisher_name publisher_website
-  local catalog_response catalog_id latest_release_id releases current_release current_version current_sha license_url
+  local artifact_output catalog_response catalog_id latest_release_id releases current_release current_version current_sha license_url
   if [[ "$plugin" == "browser" && ! "${CHATOS_BROWSER_EXTENSION_ID:-}" =~ ^[a-p]{32}$ ]]; then
     echo "[ERROR] Browser Plugin publishing requires the 32-character Chrome Web Store Extension ID in CHATOS_BROWSER_EXTENSION_ID" >&2
     exit 1
   fi
   token="$(plugin_admin_token)"
-  artifact="$(build_plugin_artifact "$plugin" | tail -n 1)"
+  ensure_deploy_tmp
+  artifact_output="$DEPLOY_TMP/$plugin-artifact-output"
+  build_plugin_artifact "$plugin" > "$artifact_output"
+  artifact="$(tail -n 1 "$artifact_output")"
   [[ -f "$artifact" ]] || { echo "[ERROR] Plugin artifact was not created: $artifact" >&2; exit 1; }
 
   echo "[INFO] analyzing $artifact"
@@ -325,7 +335,7 @@ deploy_plugins() {
   local plugins=("$@")
   local plugin
   if [[ ${#plugins[@]} -eq 0 ]]; then
-    echo "[ERROR] expected Plugin: all, browser, computer-use, document, or diagram-studio" >&2
+    echo "[ERROR] expected Plugin: all, browser, computer-use, document, diagram-studio, or web-design-studio" >&2
     exit 2
   fi
   if [[ "${plugins[0]}" == "all" ]]; then
@@ -333,11 +343,11 @@ deploy_plugins() {
       echo "[ERROR] Plugin 'all' cannot be combined with individual Plugins" >&2
       exit 2
     fi
-    plugins=(browser computer-use document diagram-studio)
+    plugins=(browser computer-use document diagram-studio web-design-studio)
   fi
   for plugin in "${plugins[@]}"; do
     case "$plugin" in
-      browser|computer-use|document|diagram-studio) ;;
+      browser|computer-use|document|diagram-studio|web-design-studio) ;;
       *)
         echo "[ERROR] unknown Plugin: $plugin" >&2
         exit 2
@@ -381,6 +391,7 @@ Plugins:
   computer-use
   document
   diagram-studio
+  web-design-studio
 Clients:
   mac
   windows
@@ -390,7 +401,7 @@ EOF
 interactive_menu() {
   cat <<'EOF'
 ChatOS online deployment
-  1) Deploy everything online (cloud + four Plugins)
+  1) Deploy everything online (cloud + five Plugins)
   2) Deploy all cloud services
   3) Deploy all backend services
   4) Deploy selected cloud service(s)
@@ -400,8 +411,9 @@ ChatOS online deployment
   8) Deploy Computer Use
  9) Deploy Document Tools
  10) Deploy Diagram Studio
- 11) Show deployment status
- 12) Follow deployment logs
+ 11) Deploy Web Design Studio
+ 12) Show deployment status
+ 13) Follow deployment logs
 EOF
   read -r -p "Select: " selection
   case "$selection" in
@@ -420,8 +432,9 @@ EOF
     8) set -- plugin computer-use ;;
     9) set -- plugin document ;;
     10) set -- plugin diagram-studio ;;
-    11) set -- status ;;
-    12)
+    11) set -- plugin web-design-studio ;;
+    12) set -- status ;;
+    13)
       read -r -p "Service name (empty for all): " service
       set -- logs "$service"
       ;;
