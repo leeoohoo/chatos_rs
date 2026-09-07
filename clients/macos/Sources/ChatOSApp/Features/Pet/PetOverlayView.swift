@@ -17,6 +17,20 @@ final class PetOverlayInteractionState: ObservableObject {
     @Published var selectedQuickChatResourceID: String?
 }
 
+enum PetMessageActivityScope: Equatable {
+    case primary
+    case running
+
+    func contains(_ activity: PetActivity) -> Bool {
+        switch self {
+        case .primary:
+            return activity.kind != .working && activity.kind != .reviewing
+        case .running:
+            return activity.kind == .working || activity.kind == .reviewing
+        }
+    }
+}
+
 struct PetCharacterView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var store: PetOverlayStore
@@ -51,6 +65,7 @@ struct PetMessageView: View {
     @ObservedObject var store: PetOverlayStore
     @ObservedObject var interactionState: PetOverlayInteractionState
     @ObservedObject var approvalViewModel: LocalConnectorControlCenterViewModel
+    let activityScope: PetMessageActivityScope
     let onOpen: (PetActivity) -> Void
     let onRetry: (PetActivity, String) async throws -> Void
     let onCancel: (PetActivity) async throws -> Void
@@ -67,12 +82,14 @@ struct PetMessageView: View {
     @State private var cancellationErrors: [String: String] = [:]
 
     var body: some View {
-        if let primaryActivity = store.presentation.primaryActivity
+        if let primaryActivity = scopedPrimaryActivity
             ?? interactionState.inspectedTaskActivity {
             let activity = interactionState.inspectedTaskActivity
                 ?? (interactionState.isMessageExpanded
                 ? interactionState.selectedActivityID.flatMap { selectedID in
-                    store.activities.first(where: { $0.id == selectedID })
+                    store.activities.first(where: {
+                        $0.id == selectedID && activityScope.contains($0)
+                    })
                 } ?? primaryActivity
                 : primaryActivity)
             Group {
@@ -111,12 +128,15 @@ struct PetMessageView: View {
                 guard interactionState.isMessageExpanded else { return }
                 guard interactionState.inspectedTaskActivity == nil else { return }
                 let selectedActivity = interactionState.selectedActivityID.flatMap { selectedID in
-                    store.activities.first(where: { $0.id == selectedID })
+                    store.activities.first(where: {
+                        $0.id == selectedID && activityScope.contains($0)
+                    })
                 }
                 if selectedActivity == nil {
-                    interactionState.selectedActivityID = store.presentation.primaryActivity?.id
+                    interactionState.selectedActivityID = scopedPrimaryActivity?.id
                     return
                 }
+                guard activityScope == .primary else { return }
                 guard selectedActivity?.kind != .waitingForApproval,
                       selectedActivity?.kind != .waitingForUser,
                       let pendingActivity = store.activities.first(where: {
@@ -132,6 +152,17 @@ struct PetMessageView: View {
                     interactionState.inspectedTaskActivity = nil
                 }
             }
+        }
+    }
+
+    private var scopedPrimaryActivity: PetActivity? {
+        switch activityScope {
+        case .primary:
+            return store.presentation.primaryActivity.flatMap {
+                activityScope.contains($0) ? $0 : nil
+            }
+        case .running:
+            return runningActivities().first
         }
     }
 
@@ -161,7 +192,8 @@ struct PetMessageView: View {
                 }
 
                 HStack {
-                    if shouldShowActiveWorkSummary(for: activity) {
+                    if activityScope == .running,
+                       shouldShowActiveWorkSummary(for: activity) {
                         Text("\(store.presentation.activeWorkCount) 项正在执行")
                     } else {
                         Text(compactHint(for: activity))
@@ -263,22 +295,17 @@ struct PetMessageView: View {
             }
 
             let otherAttention = attentionActivities(excluding: activity.id)
-            if !isInspectingTask, !otherAttention.isEmpty {
+            if activityScope == .primary,
+               !isInspectingTask,
+               !otherAttention.isEmpty {
                 Divider()
                 attentionActivitiesSection(otherAttention)
             }
 
-            let otherRunning = runningActivities(excluding: activity.id)
-            if !isInspectingTask,
-               activity.kind != .working,
-               activity.kind != .reviewing,
-               !otherRunning.isEmpty {
-                Divider()
-                runningActivitiesSection(otherRunning, showsHeader: true)
-            }
-
             let otherCompleted = completedTaskActivities(excluding: activity.id)
-            if !isInspectingTask, !otherCompleted.isEmpty {
+            if activityScope == .primary,
+               !isInspectingTask,
+               !otherCompleted.isEmpty {
                 Divider()
                 completedActivitiesSection(otherCompleted)
             }
@@ -753,10 +780,6 @@ struct PetMessageView: View {
                 && displayText(activity.route.runID ?? activity.route.turnID) != nil
         }
         return false
-    }
-
-    private func runningActivities(excluding activityID: String) -> [PetActivity] {
-        runningActivities().filter { $0.id != activityID }
     }
 
     private func runningActivities() -> [PetActivity] {
