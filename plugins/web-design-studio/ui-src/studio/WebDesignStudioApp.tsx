@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import {
   autoLayoutContainer,
   breakpointFor,
@@ -72,6 +73,7 @@ import {
 import { createRepository, type DesignRepository, type DesignSummary } from './repository';
 import { LibraryCanvasComponent } from './LibraryCanvasComponent';
 import { componentEffectStyleToCss, componentStyleToCss, mergeComponentStyles } from './component-style';
+import { libraryPreviewSelection, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
 
 type BasicShapeId = 'rectangle' | 'ellipse' | 'line';
 
@@ -504,7 +506,15 @@ type Interaction = {
 type LayerAction = 'front' | 'forward' | 'backward' | 'back';
 type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 type LibraryTab = 'components' | WebDesignLibraryName | 'my' | 'layers';
-type VariantPickerTarget = { library: WebDesignLibraryName; componentId: string };
+type VariantPickerTarget = { library: WebDesignLibraryName; componentId: string; replaceComponentId?: string };
+type VariantPickerPointerDrag = Omit<LibraryPreviewPointerEvent, 'phase'> & {
+  libraryName: WebDesignLibraryName;
+  definitionId: string;
+  variantId: string;
+  startClientX: number;
+  startClientY: number;
+  dragging: boolean;
+};
 type EditingSlot = { componentId: string; slotId: string };
 type InspectorVisualState = 'default' | WebComponentVisualState;
 
@@ -541,10 +551,22 @@ const VARIANT_PROP_LABELS: Record<string, Record<string, string> | string> = {
   }
 };
 
-const INTERNAL_LIBRARY_PROPS = new Set(['componentSlug', 'registryDemo', 'editorDetachedContent']);
+const INTERNAL_LIBRARY_PROPS = new Set(['componentSlug', 'registryDemo', 'registryElement', 'editorDetachedContent']);
 
 function inspectableLibraryProps(props: Record<string, WebDesignJsonValue>) {
   return Object.entries(props).filter(([key]) => !INTERNAL_LIBRARY_PROPS.has(key));
+}
+
+function bindLibraryPreviewElement(component: WebDesignComponent, libraryDisplayName: string, selection: LibraryPreviewSelection): WebDesignComponent {
+  if (!component.library) return component;
+  return {
+    ...component,
+    name: `${libraryDisplayName} · ${selection.label}`,
+    content: selection.label,
+    width: Math.max(6, Math.round(selection.width)),
+    height: Math.max(6, Math.round(selection.height)),
+    library: { ...component.library, props: { ...component.library.props, registryElement: { ...selection } } }
+  };
 }
 
 function variantDifferenceLabels(variant: UiComponentVariant): string[] {
@@ -599,6 +621,31 @@ function LazyVariantPreview({ children, minHeight }: { children: ReactNode; minH
   </div>;
 }
 
+function SelectableVariantCard({ component, previewHeight, className, interactive, variantLabel, differences, tokens, onPickItem, onPickPointerEvent }: {
+  component: WebDesignComponent;
+  previewHeight: number;
+  className: string;
+  interactive: boolean;
+  variantLabel: string;
+  differences: string[];
+  tokens?: WebDesignTokens;
+  onPickItem: (selection: LibraryPreviewSelection) => void;
+  onPickPointerEvent: (event: LibraryPreviewPointerEvent) => void;
+}) {
+  const [contentHeight, setContentHeight] = useState<number>();
+  const surfaceHeight = Math.max(previewHeight, contentHeight ?? 0);
+  const cardHeight = surfaceHeight + 58;
+  return <article className={`variant-preview-card ${interactive ? 'interactive-variant' : ''}`} style={{ minHeight: cardHeight, height: cardHeight }}>
+    <div data-library-portal-host className={className} style={{ minHeight: surfaceHeight, height: surfaceHeight }}>
+      <span className="variant-interaction-hint">点击选择 · 按住拖动</span>
+      <LazyVariantPreview minHeight={surfaceHeight}>
+        <LibraryCanvasComponent component={component} preview showcase tokens={tokens} pickItems onPickItem={onPickItem} onPickPointerEvent={onPickPointerEvent} onContentHeight={setContentHeight} />
+      </LazyVariantPreview>
+    </div>
+    <footer><div className="variant-preview-description"><strong>{variantLabel}</strong><span>{differences.map((difference) => <small key={difference}>{difference}</small>)}</span></div><span className="variant-item-pick-help">选择其中一个元素</span></footer>
+  </article>;
+}
+
 export function WebDesignStudioApp() {
   const [repository, setRepository] = useState<DesignRepository>();
   const [documents, setDocuments] = useState<DesignSummary[]>([]);
@@ -629,6 +676,7 @@ export function WebDesignStudioApp() {
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('antd');
   const [personalSymbols, setPersonalSymbols] = useState<WebDesignSymbol[]>(loadPersonalSymbols);
   const [variantPickerTarget, setVariantPickerTarget] = useState<VariantPickerTarget>();
+  const [variantPickerDrag, setVariantPickerDrag] = useState<VariantPickerPointerDrag>();
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [projectLibraryOpen, setProjectLibraryOpen] = useState(false);
@@ -641,6 +689,7 @@ export function WebDesignStudioApp() {
   const [editingSlot, setEditingSlot] = useState<EditingSlot>();
   const [inspectorVisualState, setInspectorVisualState] = useState<InspectorVisualState>('default');
   const interaction = useRef<Interaction | undefined>(undefined);
+  const variantPickerDragRef = useRef<VariantPickerPointerDrag | undefined>(undefined);
   const documentRef = useRef<WebDesignDocument | undefined>(undefined);
   const assetInput = useRef<HTMLInputElement | null>(null);
   const canvasScroll = useRef<HTMLDivElement | null>(null);
@@ -1110,7 +1159,7 @@ export function WebDesignStudioApp() {
     event.dataTransfer.effectAllowed = 'copy';
   }
 
-  function addUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot): WebDesignComponent | undefined {
+  function addUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot, registryElement?: LibraryPreviewSelection): WebDesignComponent | undefined {
     const current = documentRef.current;
     if (!current) return;
     const library = uiLibraryByName(libraryName);
@@ -1121,6 +1170,7 @@ export function WebDesignStudioApp() {
     const componentY = containerFrame ? containerFrame.y + y : y;
     let component = createComponentFromUiLibrary(libraryName, definitionId, componentX, componentY);
     if (variantId) component = applyUiLibraryVariant(component, variantId);
+    if (registryElement) component = bindLibraryPreviewElement(component, library.displayName, registryElement);
     component.pageId = pageId;
     if (container && targetSlot) {
       component.parentId = container.id;
@@ -1139,22 +1189,134 @@ export function WebDesignStudioApp() {
     return component;
   }
 
-  function insertUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, variantId?: string) {
+  function insertUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, variantId?: string, registryElement?: LibraryPreviewSelection) {
     const definition = uiLibraryByName(libraryName)?.components.find((candidate) => candidate.id === definitionId);
     if (!definition) return;
     let inserted: WebDesignComponent | undefined;
     if (editingSlotCanvasSize) {
-      inserted = addUiLibraryComponent(libraryName, definitionId, Math.max(12, Math.round((editingSlotCanvasSize.width - definition.width) / 2)), 28, variantId);
+      const width = registryElement?.width ?? definition.width;
+      inserted = addUiLibraryComponent(libraryName, definitionId, Math.max(12, Math.round((editingSlotCanvasSize.width - width) / 2)), 28, variantId, editingSlot, registryElement);
     } else {
-      inserted = addUiLibraryComponent(libraryName, definitionId, Math.max(24, Math.round((breakpoint.width - definition.width) / 2)), 80, variantId);
+      const width = registryElement?.width ?? definition.width;
+      inserted = addUiLibraryComponent(libraryName, definitionId, Math.max(24, Math.round((breakpoint.width - width) / 2)), 80, variantId, editingSlot, registryElement);
     }
     setVariantPickerTarget(undefined);
-    const compoundSlot = inserted?.library?.props.registryDemo
+    const compoundSlot = inserted?.library?.props.registryDemo && !inserted.library.props.registryElement
       ? editableSlotsForUiComponent(inserted).find((slot) => slot.id === 'content')
       : undefined;
     if (inserted && compoundSlot) {
       window.setTimeout(() => { void editComponentSlot(inserted!, compoundSlot.id, { compoundOnly: true }); }, 120);
     }
+  }
+
+  function chooseUiLibraryPreviewElement(libraryName: WebDesignLibraryName, definitionId: string, variantId: string, registryElement: LibraryPreviewSelection) {
+    const replaceComponentId = variantPickerTarget?.replaceComponentId;
+    if (!replaceComponentId) {
+      insertUiLibraryComponent(libraryName, definitionId, variantId, registryElement);
+      return;
+    }
+    const library = uiLibraryByName(libraryName);
+    if (!library) return;
+    updateComponent(replaceComponentId, (component) => {
+      let next = bindLibraryPreviewElement(applyUiLibraryVariant(component, variantId), library.displayName, registryElement);
+      if (device !== 'desktop') next = updateComponentFrame(next, device, { width: next.width, height: next.height });
+      return next;
+    });
+    setVariantPickerTarget(undefined);
+    setSelectedId(replaceComponentId);
+    setSelectedIds([replaceComponentId]);
+    showToast(`已改为 ${registryElement.label}`);
+  }
+
+  function beginUiLibraryPreviewPointerDrag(
+    libraryName: WebDesignLibraryName,
+    definitionId: string,
+    variantId: string,
+    state: LibraryPreviewPointerEvent
+  ) {
+    const next: VariantPickerPointerDrag = {
+      selection: state.selection,
+      pointerId: state.pointerId,
+      clientX: state.clientX,
+      clientY: state.clientY,
+      libraryName,
+      definitionId,
+      variantId,
+      startClientX: state.clientX,
+      startClientY: state.clientY,
+      dragging: false
+    };
+    variantPickerDragRef.current = next;
+    flushSync(() => setVariantPickerDrag(next));
+  }
+
+  function moveUiLibraryPreviewPointerDragAt(clientX: number, clientY: number) {
+    const active = variantPickerDragRef.current;
+    if (!active) return;
+    const dragging = active.dragging
+      || Math.hypot(clientX - active.startClientX, clientY - active.startClientY) >= 5;
+    if (!dragging && clientX === active.clientX && clientY === active.clientY) return;
+    const next = { ...active, clientX, clientY, dragging };
+    variantPickerDragRef.current = next;
+    setVariantPickerDrag(next);
+  }
+
+  function finishUiLibraryPreviewPointerDragAt(clientX: number, clientY: number, cancelled = false) {
+    const active = variantPickerDragRef.current;
+    if (!active) return;
+    variantPickerDragRef.current = undefined;
+    setVariantPickerDrag(undefined);
+    if (cancelled) return;
+    if (!active.dragging) {
+      chooseUiLibraryPreviewElement(active.libraryName, active.definitionId, active.variantId, active.selection);
+      return;
+    }
+    dropUiLibraryPreviewElement(active.libraryName, active.definitionId, active.variantId, active.selection, {
+      clientX,
+      clientY
+    });
+  }
+
+  function handleUiLibraryPreviewPointerEvent(
+    libraryName: WebDesignLibraryName,
+    definitionId: string,
+    variantId: string,
+    event: LibraryPreviewPointerEvent
+  ) {
+    if (event.phase === 'start') beginUiLibraryPreviewPointerDrag(libraryName, definitionId, variantId, event);
+    else if (event.phase === 'move') moveUiLibraryPreviewPointerDragAt(event.clientX, event.clientY);
+    else finishUiLibraryPreviewPointerDragAt(event.clientX, event.clientY, event.phase === 'cancel');
+  }
+
+  function dropUiLibraryPreviewElement(
+    libraryName: WebDesignLibraryName,
+    definitionId: string,
+    variantId: string,
+    registryElement: LibraryPreviewSelection,
+    point: { clientX: number; clientY: number }
+  ) {
+    variantPickerDragRef.current = undefined;
+    setVariantPickerDrag(undefined);
+    if (variantPickerTarget?.replaceComponentId) {
+      chooseUiLibraryPreviewElement(libraryName, definitionId, variantId, registryElement);
+      return;
+    }
+    const canvasSelector = editingSlot ? '.slot-design-canvas' : '.design-canvas:not(.slot-design-canvas)';
+    const canvas = [...window.document.querySelectorAll<HTMLElement>(canvasSelector)].find((candidate) => {
+      const bounds = candidate.getBoundingClientRect();
+      return point.clientX >= bounds.left && point.clientX <= bounds.right
+        && point.clientY >= bounds.top && point.clientY <= bounds.bottom;
+    });
+    if (!canvas) {
+      showToast('请把元素拖到中间画布区域');
+      return;
+    }
+    const bounds = canvas.getBoundingClientRect();
+    const activeScale = editingSlot ? 1 : zoom;
+    const x = Math.max(0, Math.round((point.clientX - bounds.left) / activeScale - registryElement.width / 2));
+    const y = Math.max(0, Math.round((point.clientY - bounds.top) / activeScale - registryElement.height / 2));
+    addUiLibraryComponent(libraryName, definitionId, x, y, variantId, editingSlot, registryElement);
+    setVariantPickerTarget(undefined);
   }
 
   async function editComponentSlot(component: WebDesignComponent, slotId: string, options: { compoundOnly?: boolean } = {}): Promise<boolean> {
@@ -1233,10 +1395,12 @@ export function WebDesignStudioApp() {
     const libraryPayload = event.dataTransfer.getData('application/x-web-design-library');
     if (libraryPayload) {
       try {
-        const parsed = JSON.parse(libraryPayload) as VariantPickerTarget & { definitionId?: string };
+        const parsed = JSON.parse(libraryPayload) as VariantPickerTarget & { definitionId?: string; variantId?: string; registryElement?: LibraryPreviewSelection };
         const definitionId = parsed.definitionId ?? parsed.componentId;
         if (uiLibraryByName(parsed.library)?.components.some((item) => item.id === definitionId)) {
-          addUiLibraryComponent(parsed.library, definitionId, x, y);
+          addUiLibraryComponent(parsed.library, definitionId, x, y, parsed.variantId, editingSlot, parsed.registryElement);
+          setVariantPickerDrag(undefined);
+          if (parsed.registryElement) setVariantPickerTarget(undefined);
           return;
         }
       } catch { /* Ignore malformed drag payloads. */ }
@@ -2065,6 +2229,7 @@ export function WebDesignStudioApp() {
   const selectedLibrary = uiLibraryByName(selected?.library?.name);
   const selectedLibraryDefinition = selected?.library ? selectedLibrary?.components.find((item) => item.id === selected.library?.component) : undefined;
   const selectedLibraryVariants = selected?.library ? variantsForBoundComponent(selected) : [];
+  const selectedRegistryElement = libraryPreviewSelection(selected?.library?.props.registryElement);
   const selectedEditableSlots = selected ? editableSlotsForUiComponent(selected) : [];
   const selectedInspectableLibraryProps = selected?.library ? inspectableLibraryProps(selected.library.props) : [];
   const aiTarget = selected ?? editingContainer;
@@ -2255,7 +2420,8 @@ export function WebDesignStudioApp() {
                     const containerFrame = resolveComponent(editingContainer, device);
                     const resolved = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
                     if (resolved.hidden) return null;
-                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={() => { const slot = editableSlotsForUiComponent(component)[0]; if (slot) void editComponentSlot(component, slot.id); }} />;
+                    const editableSlot = editableSlotsForUiComponent(component)[0];
+                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
                   })}
                 </div>
               </div>
@@ -2283,7 +2449,8 @@ export function WebDesignStudioApp() {
                 {[...pageComponents].filter((component) => !contentContainerAncestor(document, component)).sort((left, right) => left.zIndex - right.zIndex).map((component) => {
                   const resolved = resolveComponent(component, device);
                   if (resolved.hidden) return null;
-                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={() => { const slot = editableSlotsForUiComponent(component)[0]; if (slot) void editComponentSlot(component, slot.id); }} />;
+                  const editableSlot = editableSlotsForUiComponent(component)[0];
+                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
                 })}
               </div>
             </div>}
@@ -2317,7 +2484,8 @@ export function WebDesignStudioApp() {
                   return <button key={slot.id} className={editingSlot?.componentId === selected.id && editingSlot.slotId === slot.id ? 'active' : ''} onClick={() => void editComponentSlot(selected, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{count > 0 ? `${count} 个组件` : officialDemo ? '尚未拆分' : '空白'}</em><b>{officialDemo && count === 0 ? '拆开并编辑 ›' : '进入编辑 ›'}</b></button>;
                 })}
               </div>}
-              <label className="field-label ui-library-variant-field">展现款式<select value={selected.library.variant ?? selectedLibraryVariants[0]?.id} onChange={(event) => applySelectedLibraryVariant(event.target.value)}>{selectedLibraryVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>
+              {selectedRegistryElement ? <div className="selected-registry-element-summary"><div><span>已选择的独立元素</span><strong>{selectedRegistryElement.label}</strong><small>{selected.library.variant ? `来源款式：${selectedLibraryVariants.find((variant) => variant.id === selected.library?.variant)?.label ?? selected.library.variant}` : '保留官方真实运行时'}</small></div><button onClick={() => setVariantPickerTarget({ library: selected.library!.name, componentId: selected.library!.component, replaceComponentId: selected.id })}>重新选择</button></div>
+                : <label className="field-label ui-library-variant-field">展现款式<select value={selected.library.variant ?? selectedLibraryVariants[0]?.id} onChange={(event) => applySelectedLibraryVariant(event.target.value)}>{selectedLibraryVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>}
               {selectedInspectableLibraryProps.filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => typeof value === 'boolean'
                 ? <label key={key} className="ui-library-boolean-prop"><input type="checkbox" checked={value} onChange={(event) => updateSelectedLibraryProp(key, event.target.checked)} /><span>{key}</span></label>
                 : typeof value === 'number'
@@ -2398,11 +2566,12 @@ export function WebDesignStudioApp() {
           </> : <div className="empty-inspector"><div className="empty-icon">↖</div><strong>选择一个组件</strong><p>在画布或图层中选择组件，然后编辑、对齐、锁定、批注或提交 AI 请求。</p></div>}
         </aside>}
       </main>
-      {variantPickerDefinition && variantPickerLibrary && <div className="studio-modal-backdrop" onPointerDown={() => setVariantPickerTarget(undefined)}>
+      {variantPickerDefinition && variantPickerLibrary && <div className={`studio-modal-backdrop ${variantPickerDrag?.dragging ? 'dragging-library-element' : ''}`} onPointerDown={() => setVariantPickerTarget(undefined)}>
         <section className="studio-modal variant-picker" data-library-portal-host onPointerDown={(event) => event.stopPropagation()}>
-          <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>先看实际效果，再选择最适合当前页面的款式。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
+          <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>移动到想要的元素上，点击直接插入，或按住拖到画布中的准确位置。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
           <div className={`variant-preview-grid ${WIDE_VARIANT_PREVIEWS.has(variantPickerDefinition.id) || variantPickerPresentation?.previewSpan === 'wide' ? 'wide-component-previews' : ''} ${variantPickerVariants.length === 1 ? 'single-component-preview' : ''}`}>{variantPickerVariants.map((variant) => {
             const previewComponent = applyUiLibraryVariant(createComponentFromUiLibrary(variantPickerLibrary.id, variantPickerDefinition.id, 0, 0), variant.id);
+            previewComponent.id = `library-preview-${variantPickerLibrary.id}-${variantPickerDefinition.id}-${variant.id}`;
             const differences = variantDifferenceLabels(variant);
             const interactiveVariant = variantIsInteractive(variant, variantPickerDefinition.id);
             const openOverlayPreview = OPEN_OVERLAY_PREVIEWS.has(variantPickerDefinition.id);
@@ -2410,10 +2579,18 @@ export function WebDesignStudioApp() {
             const previewHeight = variantPickerPresentation?.previewHeight ?? (inlinePickerPreview || interactiveVariant
               ? 440
               : Math.max(openOverlayPreview ? 320 : 118, Math.min(360, previewComponent.height + 24)));
-            return <article key={variant.id} className={`variant-preview-card ${interactiveVariant ? 'interactive-variant' : ''}`} style={{ minHeight: previewHeight + 58 }}><div data-library-portal-host className={`variant-live-preview ${openOverlayPreview ? 'overlay-showcase' : ''} ${inlinePickerPreview ? 'inline-picker-showcase' : ''} ${variant.props.bordered === false || variant.props.variant === 'borderless' ? 'contrast-surface' : ''}`} style={{ minHeight: previewHeight }}>{interactiveVariant && !openOverlayPreview && <span className="variant-interaction-hint">可交互 · 移入或点击查看</span>}<LazyVariantPreview minHeight={previewHeight}><LibraryCanvasComponent component={previewComponent} preview showcase tokens={tokens} /></LazyVariantPreview></div><footer><div className="variant-preview-description"><strong>{variant.label}</strong><span>{differences.map((difference) => <small key={difference}>{difference}</small>)}</span></div><button onClick={() => insertUiLibraryComponent(variantPickerLibrary.id, variantPickerDefinition.id, variant.id)}>插入此款式</button></footer></article>;
+            return <SelectableVariantCard key={variant.id} component={previewComponent} previewHeight={previewHeight} className={`variant-live-preview ${openOverlayPreview ? 'overlay-showcase' : ''} ${inlinePickerPreview ? 'inline-picker-showcase' : ''} ${variant.props.bordered === false || variant.props.variant === 'borderless' ? 'contrast-surface' : ''}`} interactive={interactiveVariant} variantLabel={variant.label} differences={differences} tokens={tokens} onPickItem={(selection) => chooseUiLibraryPreviewElement(variantPickerLibrary.id, variantPickerDefinition.id, variant.id, selection)} onPickPointerEvent={(event) => handleUiLibraryPreviewPointerEvent(variantPickerLibrary.id, variantPickerDefinition.id, variant.id, event)} />;
           })}</div>
         </section>
       </div>}
+      {variantPickerDrag && <div
+        className="variant-picker-pointer-capture"
+        onPointerMove={(event) => { event.preventDefault(); event.stopPropagation(); moveUiLibraryPreviewPointerDragAt(event.clientX, event.clientY); }}
+        onPointerUp={(event) => { event.preventDefault(); event.stopPropagation(); finishUiLibraryPreviewPointerDragAt(event.clientX, event.clientY); }}
+        onPointerCancel={(event) => { event.preventDefault(); event.stopPropagation(); finishUiLibraryPreviewPointerDragAt(event.clientX, event.clientY, true); }}
+        onContextMenu={(event) => event.preventDefault()}
+      />}
+      {variantPickerDrag?.dragging && <div className="variant-picker-drag-ghost" style={{ left: variantPickerDrag.clientX, top: variantPickerDrag.clientY }}><strong>{variantPickerDrag.selection.label}</strong><small>{Math.round(variantPickerDrag.selection.width)} × {Math.round(variantPickerDrag.selection.height)}</small></div>}
       {themePickerOpen && <div className="studio-modal-backdrop" onPointerDown={() => setThemePickerOpen(false)}>
         <section className="studio-modal theme-picker" onPointerDown={(event) => event.stopPropagation()}>
           <header><div><span className="eyebrow">Visual system</span><h2>选择整站设计风格</h2><p>一次统一颜色、字体、圆角、画布背景和全部 UI 组件主题。</p></div><button onClick={() => setThemePickerOpen(false)}>×</button></header>

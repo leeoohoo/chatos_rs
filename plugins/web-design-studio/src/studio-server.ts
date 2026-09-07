@@ -14,10 +14,9 @@ await store.ensureLegacyProject();
 const contextKind = process.env.CHATOS_CONTEXT_SCOPE ?? 'device';
 const runtimeContext = {
   kind: contextKind,
-  shared: contextKind === 'device',
-  ...(process.env.CHATOS_PROJECT_ID ? { chatosProjectId: process.env.CHATOS_PROJECT_ID } : {}),
-  ...(process.env.CHATOS_PROJECT_NAME ? { chatosProjectName: process.env.CHATOS_PROJECT_NAME } : {}),
-  ...(process.env.CHATOS_WORKSPACE_ID ? { workspaceId: process.env.CHATOS_WORKSPACE_ID } : {})
+  isolated: true,
+  hasProjectContext: contextKind === 'project',
+  ...(process.env.CHATOS_PROJECT_NAME ? { projectName: process.env.CHATOS_PROJECT_NAME } : {})
 };
 const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
 const defaultProject = await store.ensureScopedProject(

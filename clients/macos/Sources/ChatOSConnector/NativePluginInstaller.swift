@@ -194,19 +194,39 @@ struct NativePluginInstaller: Sendable {
     }
 
     @discardableResult
-    private func runTar(_ arguments: [String]) throws -> String {
+    func runTar(_ arguments: [String]) throws -> String {
+        let fileManager = FileManager.default
+        let outputDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("chatos-tar-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: outputDirectory) }
+
+        let stdoutURL = outputDirectory.appendingPathComponent("stdout")
+        let stderrURL = outputDirectory.appendingPathComponent("stderr")
+        guard fileManager.createFile(atPath: stdoutURL.path, contents: nil),
+              fileManager.createFile(atPath: stderrURL.path, contents: nil) else {
+            throw NativeConnectorError.pluginInstallation("无法创建安装校验输出文件")
+        }
+        let stdout = try FileHandle(forWritingTo: stdoutURL)
+        let stderr = try FileHandle(forWritingTo: stderrURL)
+        defer {
+            try? stdout.close()
+            try? stderr.close()
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
         process.arguments = arguments
-        let stdout = Pipe()
-        let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
         try process.run()
         process.waitUntilExit()
-        let output = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        try? stdout.close()
+        try? stderr.close()
+
+        let output = String(decoding: try Data(contentsOf: stdoutURL), as: UTF8.self)
         if process.terminationStatus != 0 {
-            let detail = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let detail = String(decoding: try Data(contentsOf: stderrURL), as: UTF8.self)
             throw NativeConnectorError.pluginInstallation(detail.trimmedNonEmpty ?? "tar 执行失败")
         }
         return output

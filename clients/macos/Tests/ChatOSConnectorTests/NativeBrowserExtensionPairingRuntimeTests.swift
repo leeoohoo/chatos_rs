@@ -4,6 +4,14 @@ import Testing
 
 struct NativeBrowserExtensionPairingRuntimeTests {
     @Test
+    func pairingFailuresAreNotReportedAsPluginInstallationFailures() {
+        #expect(
+            NativeConnectorError.browserExtensionPairing("连接服务启动失败").errorDescription
+                == "Chrome 连接失败：连接服务启动失败"
+        )
+    }
+
+    @Test
     func pairingStatusAcceptsOnlyTheProductionExtensionIdentity() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("BrowserPairingStatus-\(UUID().uuidString)", isDirectory: true)
@@ -39,13 +47,13 @@ struct NativeBrowserExtensionPairingRuntimeTests {
         let manifest = try JSONDecoder().decode(
             NativePluginManifest.self,
             from: Data("""
-            {"schemaVersion":3,"name":"chatos-browser-cdp","version":"1.0.0","mcpServers":{"browser-cdp":{"type":"stdio","bin":"fixture","args":[]}}}
+            {"schemaVersion":3,"name":"chatos-browser-cdp","version":"1.0.0","mcpServers":{"browser-cdp-mcp":{"type":"stdio","bin":"fixture","args":[]}}}
             """.utf8)
         )
         let launch = NativePreparedPluginLaunch(
             manifest: manifest,
-            componentKey: "browser-cdp",
-            server: manifest.mcpServers["browser-cdp"]!,
+            componentKey: NativeBrowserPluginIdentity.componentKey,
+            server: manifest.mcpServers[NativeBrowserPluginIdentity.componentKey]!,
             executableURL: URL(fileURLWithPath: "/bin/zsh"),
             arguments: [script.path],
             environment: [:],

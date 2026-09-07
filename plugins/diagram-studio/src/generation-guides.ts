@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,7 +6,8 @@ import { assertIdentifier, type DiagramDocument, type DiagramKind } from './sche
 import type { DiagramQualityProfile } from './quality.js';
 
 const GENERATION_PERMIT_TTL_MS = 30 * 60 * 1000;
-const signingSecret = randomBytes(32);
+const GENERATION_PERMIT_DIRECTORY = '.generation-permits';
+const fallbackRuntimeSessionId = randomUUID();
 
 export interface DiagramGuideModeContract {
   qualityProfile: DiagramQualityProfile;
@@ -88,35 +89,43 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(canonicalize(value));
 }
 
-function signPayload(payload: object): string {
-  const encoded = Buffer.from(canonicalJson(payload), 'utf8').toString('base64url');
-  const signature = createHmac('sha256', signingSecret).update(encoded).digest('base64url');
-  return `${encoded}.${signature}`;
+function generationPermitPath(storeDirectory: string, scopeFingerprint: string, artifactKey: string): string {
+  const key = hashText(canonicalJson({ scopeFingerprint, artifactKey }));
+  return path.join(path.resolve(storeDirectory), GENERATION_PERMIT_DIRECTORY, `${key}.json`);
 }
 
-function verifySignedPayload<T extends { tokenType: string; expiresAt: string }>(token: string, tokenType: T['tokenType']): T {
-  const [encoded, signature, extra] = token.split('.');
-  if (!encoded || !signature || extra !== undefined) throw new Error('Generation authorization token is malformed.');
-  const expected = createHmac('sha256', signingSecret).update(encoded).digest();
-  let actual: Buffer;
+async function persistGenerationPermit(storeDirectory: string, permit: GenerationPermitPayload): Promise<void> {
+  const destination = generationPermitPath(storeDirectory, permit.scopeFingerprint, permit.artifactKey);
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify(permit, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  await fs.rename(temporary, destination);
+}
+
+async function readGenerationPermit(
+  storeDirectory: string,
+  scopeFingerprint: string,
+  artifactKey: string
+): Promise<GenerationPermitPayload> {
+  const source = generationPermitPath(storeDirectory, scopeFingerprint, artifactKey);
+  let value: unknown;
   try {
-    actual = Buffer.from(signature, 'base64url');
+    value = JSON.parse(await fs.readFile(source, 'utf8')) as unknown;
   } catch {
-    throw new Error('Generation authorization signature is malformed.');
+    throw new Error('No active generation plan exists for this diagram. Call diagram_prepare_generation first.');
   }
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
-    throw new Error('Generation authorization signature is invalid.');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('The active generation plan is invalid. Call diagram_prepare_generation again.');
   }
-  let payload: T;
-  try {
-    payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as T;
-  } catch {
-    throw new Error('Generation authorization payload is invalid.');
+  const permit = value as GenerationPermitPayload;
+  if (permit.tokenType !== 'generation-permit') {
+    throw new Error('The active generation plan has an invalid type. Call diagram_prepare_generation again.');
   }
-  if (payload.tokenType !== tokenType) throw new Error(`Expected a ${tokenType} token.`);
-  const expiresAt = Date.parse(payload.expiresAt);
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error('Generation authorization token has expired.');
-  return payload;
+  const expiresAt = Date.parse(permit.expiresAt);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    throw new Error('The active generation plan has expired. Call diagram_prepare_generation again.');
+  }
+  return permit;
 }
 
 function validateContract(value: unknown, expectedKind: DiagramKind): DiagramGuideContract {
@@ -188,7 +197,7 @@ async function readGuideFiles(kind: DiagramKind): Promise<{
   throw new Error(`Generation guide for ${kind} could not be loaded: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
-export function runtimeScopeFingerprint(rootDirectory: string): string {
+export function runtimeDataScopeFingerprint(rootDirectory: string): string {
   return hashText(canonicalJson({
     scope: process.env.CHATOS_CONTEXT_SCOPE ?? 'device',
     scopeId: process.env.CHATOS_CONTEXT_SCOPE_ID ?? '',
@@ -199,7 +208,15 @@ export function runtimeScopeFingerprint(rootDirectory: string): string {
   }));
 }
 
+export function runtimeGenerationScopeFingerprint(rootDirectory: string): string {
+  return hashText(canonicalJson({
+    dataScopeFingerprint: runtimeDataScopeFingerprint(rootDirectory),
+    runtimeSessionId: process.env.CHATOS_PLUGIN_RUNTIME_SESSION_ID?.trim() || fallbackRuntimeSessionId
+  }));
+}
+
 export async function prepareGenerationPermit(argumentsValue: {
+  storeDirectory: string;
   kind: DiagramKind;
   mode?: string;
   artifactKey: string;
@@ -208,7 +225,7 @@ export async function prepareGenerationPermit(argumentsValue: {
   title: string;
   plan: GenerationPlan;
   scopeFingerprint: string;
-}): Promise<{ generationPermit: string; permit: GenerationPermitPayload; planHash: string }> {
+}): Promise<{ permit: GenerationPermitPayload; planHash: string }> {
   assertIdentifier(argumentsValue.artifactKey, 'artifactKey');
   const title = normalizeText(argumentsValue.title);
   if (!title || title.length > 240) throw new Error('Generation title must contain 1 to 240 characters.');
@@ -255,7 +272,8 @@ export async function prepareGenerationPermit(argumentsValue: {
     issuedAt: issuedAt.toISOString(),
     expiresAt: new Date(issuedAt.getTime() + GENERATION_PERMIT_TTL_MS).toISOString()
   };
-  return { generationPermit: signPayload(permit), permit, planHash };
+  await persistGenerationPermit(argumentsValue.storeDirectory, permit);
+  return { permit, planHash };
 }
 
 function validatePlan(value: unknown): GenerationPlan {
@@ -320,8 +338,8 @@ function validatePlanAgainstContract(
   }
 }
 
-export function verifyGenerationPermit(
-  token: string,
+export async function verifyGenerationPermit(
+  storeDirectory: string,
   expected: {
     scopeFingerprint: string;
     kind: DiagramKind;
@@ -330,8 +348,12 @@ export function verifyGenerationPermit(
     operation?: 'create' | 'revise';
     documentId?: string;
   }
-): GenerationPermitPayload {
-  const permit = verifySignedPayload<GenerationPermitPayload>(token, 'generation-permit');
+): Promise<GenerationPermitPayload> {
+  const permit = await readGenerationPermit(
+    storeDirectory,
+    expected.scopeFingerprint,
+    expected.artifactKey
+  );
   if (permit.scopeFingerprint !== expected.scopeFingerprint) throw new Error('Generation permit belongs to a different ChatOS user or project scope.');
   if (permit.kind !== expected.kind) throw new Error(`Generation permit is for ${permit.kind}, not ${expected.kind}.`);
   if (permit.artifactKey !== expected.artifactKey) throw new Error('Generation permit artifactKey does not match this deliverable.');

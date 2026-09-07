@@ -71,15 +71,15 @@ For every AI-generated or structurally rewritten diagram:
 
 1. Call `diagram_list_documents` to avoid accidental duplicates when appropriate.
 2. Choose exactly one diagram kind and one mode for the next document.
-3. Activate the matching dedicated Skill from the platform catalog with `skill_skill_activate`, using this router activation as `parent_activation_ref`.
+3. Activate the matching dedicated Skill from the platform catalog with `skill_skill_activate`. ChatOS associates it with this router internally.
 4. Read the dedicated Skill's linked examples or contract resource when its instructions require them.
-5. Call `diagram_prepare_generation` with the router and leaf activation evidence, a stable `artifactKey`, and a bounded plan. Do not pass an operation or document ID; the plugin resolves create versus revise from that artifact key inside the injected scope.
-6. Call `diagram_commit_generation` with the same current Skill evidence and the returned `generationPermit`.
-7. If the result is not `ready`, revise the plan or split the diagram and obtain a new permit.
+5. Call `diagram_prepare_generation` with a stable `artifactKey` and a bounded plan. Do not pass an operation, document ID, permit, activation field, or host context; the plugin stores the approved plan internally and resolves create versus revise inside the injected scope.
+6. Call `diagram_commit_generation` with the PlantUML source and the same semantic `kind`, `title`, and `artifactKey`.
+7. If the result is not `ready`, revise the plan or split the diagram and prepare it again.
 8. Call `diagram_validate` before reporting completion.
 9. Return the document ID, artifact key, guide ID/version, and validation result.
 
-Activation evidence proves that the correct immutable Skill instructions were loaded in this Runtime Session. The structured plan and final quality validation prove that the instructions were applied.
+The platform's internal activation graph proves that the correct immutable Skill instructions were loaded in this Runtime Session. The structured plan and final quality validation prove that the instructions were applied. AI-facing tool arguments contain business content only.
 
 ## Tool reference
 
@@ -109,21 +109,21 @@ Returns the complete editable document. Call it before revising an existing diag
 
 ### `diagram_prepare_generation`
 
-Submits the plan for one logical diagram and returns a signed `generationPermit`. The plan must state scope, excluded details, estimated size, boundaries or participants, split decisions, and the dedicated Skill checklist acknowledgements. Pass `kind`, optional `mode`, a stable `artifactKey`, and the router plus leaf activation evidence. It takes no project ID, operation, or document ID.
+Submits and internally stores the approved plan for one logical diagram. The plan must state scope, excluded details, estimated size, boundaries or participants, split decisions, and the dedicated Skill checklist acknowledgements. Pass `kind`, optional `mode`, and a stable `artifactKey`. It takes no project ID, operation, document ID, permit, or activation credential.
 
-The plugin resolves the write mode itself: an `artifactKey` not present in the current injected scope produces a create permit; an existing `artifactKey` produces a revision permit bound to that document. Never invent placeholder document IDs such as `create`, `none`, or `new`.
+The plugin resolves the write mode itself: an `artifactKey` not present in the current injected scope prepares a create; an existing `artifactKey` prepares a revision bound to that document. Never invent placeholder document IDs such as `create`, `none`, or `new`.
 
-A permit is bound to the injected runtime scope, diagram kind, mode, artifact key, operation, plan, and current guide version. Do not reuse it for another diagram.
+The internal plan state is bound to the injected runtime session and scope, diagram kind, mode, artifact key, operation, plan, and current guide version. It is never returned to or copied by the AI.
 
 ### `diagram_commit_generation`
 
-Creates or upserts one generated diagram from PlantUML. It requires a valid permit. Use stable ASCII aliases, pass source evidence for code-derived nodes, and use the same `artifactKey` and `idempotencyKey` selected in the plan.
+Creates or upserts one generated diagram from PlantUML using the active internal plan. Use stable ASCII aliases, pass source evidence for code-derived nodes, and use the same `artifactKey` and `idempotencyKey` selected in the plan.
 
 This tool performs parsing, layout, contract checks, quality validation, persistence, and generation-provenance recording. Do not call `diagram_create_document` first.
 
 ### `diagram_import_plantuml`
 
-Imports PlantUML through the same generation gates as `diagram_commit_generation`. It requires current Skill evidence and the matching `generationPermit`, accepts no project ID, and applies the same contract, quality, scope, and provenance checks.
+Imports PlantUML through the same generation gates as `diagram_commit_generation`. It resolves the active Skill and generation plan internally, accepts no project ID or credential, and applies the same contract, quality, scope, and provenance checks.
 
 ### `diagram_create_document`
 
@@ -131,13 +131,13 @@ Creates an empty canvas only. Use it when the user explicitly wants to draw manu
 
 ### `diagram_apply_patch`
 
-Applies focused changes to an existing document using optimistic revision control. Title, description, position, and viewport-only changes do not require a generation permit. Adding/removing nodes or semantic edges requires a permit for that document and diagram kind.
+Applies focused changes to an existing document using optimistic revision control. Title, description, position, and viewport-only changes do not require a prepared generation plan. Before adding or removing nodes or semantic edges, prepare a plan for that document's `artifactKey`; the plugin resolves it internally.
 
 Preserve unrelated user edits. On a revision conflict, reread the document and rebase the intended patch.
 
 ### `diagram_replace_document`
 
-Replaces the complete structured document and therefore requires a generation permit. Prefer a focused patch unless the entire semantic structure truly must change.
+Replaces the complete structured document and therefore requires an active internally stored generation plan. Prefer a focused patch unless the entire semantic structure truly must change.
 
 ### `diagram_auto_layout`
 

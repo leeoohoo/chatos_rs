@@ -316,7 +316,6 @@ struct MCPService: Sendable {
         let requiredSkills = ["visual-computer-use", specialistSkill(for: tool.name)]
         var metadata = tool._meta?.fields ?? [:]
         metadata["chatos/skillGate"] = .object([
-            "evidenceArgument": "skillEvidence",
             "allOf": .array(requiredSkills.map(Value.string))
         ])
 
@@ -324,7 +323,7 @@ struct MCPService: Sendable {
             name: tool.name,
             title: tool.title,
             description: tool.description,
-            inputSchema: addingSkillEvidence(to: tool.inputSchema),
+            inputSchema: tool.inputSchema,
             annotations: tool.annotations,
             outputSchema: tool.outputSchema,
             icons: tool.icons,
@@ -343,29 +342,6 @@ struct MCPService: Sendable {
         default:
             return "visual-pointer-keyboard"
         }
-    }
-
-    private static func addingSkillEvidence(to inputSchema: Value) -> Value {
-        guard var schema = inputSchema.objectValue else { return inputSchema }
-        var properties = schema["properties"]?.objectValue ?? [:]
-        properties["skillEvidence"] = .object([
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 8,
-            "items": .object([
-                "type": "string",
-                "minLength": 1
-            ]),
-            "description": "Platform-issued activation evidence for the Visual Computer Use router and this tool's specialist Skill. ChatOS validates and removes this field before local execution."
-        ])
-        schema["properties"] = .object(properties)
-
-        var required = schema["required"]?.arrayValue ?? []
-        if !required.contains(.string("skillEvidence")) {
-            required.append(.string("skillEvidence"))
-        }
-        schema["required"] = .array(required)
-        return .object(schema)
     }
 
     private func captureResult(

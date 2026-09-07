@@ -6,7 +6,7 @@ List projects, find “Marketing Site”, list its documents, reuse “Pricing r
 
 ## Negative
 
-Create a new project and document for every prompt, or pass the outer ChatOS project ID as the plugin's `projectId`. Both cause duplicate or mis-scoped work.
+Create a new project and document for every prompt, invent a `projectId`, or try to derive one from host context. These cause duplicate or mis-scoped work. Use only an internal project ID returned by Web Design Studio.
 
 ## Revision conflict
 

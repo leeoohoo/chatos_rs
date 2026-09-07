@@ -148,9 +148,9 @@ test('lists policy-annotated tools and inspects a DOCX', async () => {
       for (const permission of tool._meta['chatos/requiredPermissions']) {
         assert.ok(['workspace.read', 'artifact.create'].includes(permission));
       }
-      assert.equal(tool._meta['chatos/skillGate'].evidenceArgument, 'skillEvidence');
-      assert.equal(tool.inputSchema.properties.skillEvidence.type, 'array');
-      assert.ok(tool.inputSchema.required.includes('skillEvidence'));
+      assert.ok(tool._meta['chatos/skillGate'].allOf.length >= 1);
+      assert.equal(Object.hasOwn(tool.inputSchema.properties, 'skillEvidence'), false);
+      assert.equal(tool.inputSchema.required.includes('skillEvidence'), false);
     }
 
     const response = await client.callTool({

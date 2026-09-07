@@ -24,11 +24,11 @@ Use Document MCP for DOCX, XLSX, PPTX, and PDF files inside the bound ChatOS wor
 - Activate `document-presentation` for PPTX slides, text boxes, ordering, backgrounds, and slide-by-slide visual review.
 - Activate `document-pdf` for PDF inspection, forms, page extraction, merge, reorder, rotation, metadata, or Office-to-PDF conversion limitations.
 
-Use this router activation as `parent_activation_ref`.
+Activate the relevant specialist Skills after this router. ChatOS associates them internally.
 
 ## Platform Skill protocol
 
-Activate this router with `skill_skill_activate`, activate the relevant format leaf with this activation as `parent_activation_ref`, and pass the returned evidence in `skillEvidence`. `office_create` selects its required leaf from `format`; spreadsheet and PDF tools require their matching leaf. Evidence is injected only as a model argument and is validated and removed by ChatOS before local execution.
+Activate this router with `skill_skill_activate`, then activate the relevant format leaf. `office_create` selects its required leaf from `format`; spreadsheet and PDF tools require their matching leaf. ChatOS records and validates the activation state automatically. Call Document tools with file, format, content, and edit arguments only; never add user, project, workspace, session, activation, or authentication fields.
 
 ## MCP tool directory
 

@@ -19,7 +19,7 @@ import {
 } from './schema.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '0.9.0';
+const SERVER_VERSION = '0.10.0';
 const store = new WebDesignDocumentStore();
 await store.initialize();
 await store.ensureLegacyProject();
@@ -38,6 +38,194 @@ const policy = {
   'chatos/timeoutMs': 30_000,
   'chatos/toolResultMaxChars': 100_000
 };
+
+const patchOperationSchema = {
+  oneOf: [
+    {
+      type: 'object',
+      properties: { op: { const: 'set_title' }, title: { type: 'string', minLength: 1, maxLength: 240 } },
+      required: ['op', 'title'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'set_description' }, description: { type: 'string', maxLength: 4000 } },
+      required: ['op', 'description'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'set_viewport' },
+        viewport: {
+          type: 'object',
+          properties: {
+            width: { type: 'number', minimum: 1 },
+            height: { type: 'number', minimum: 1 },
+            background: { type: 'string', minLength: 1, maxLength: 200 }
+          },
+          required: ['width', 'height', 'background'],
+          additionalProperties: false
+        }
+      },
+      required: ['op', 'viewport'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'set_breakpoint' },
+        device: { type: 'string', enum: ['desktop', 'tablet', 'mobile'] },
+        width: { type: 'number', minimum: 1 },
+        height: { type: 'number', minimum: 1 }
+      },
+      required: ['op', 'device', 'width', 'height'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'upsert_page' }, page: { type: 'object', description: 'Complete page object with id, name, and slash-prefixed slug.' } },
+      required: ['op', 'page'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'remove_page' }, pageId: { type: 'string', minLength: 1, maxLength: 128 } },
+      required: ['op', 'pageId'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'upsert_asset' }, asset: { type: 'object', description: 'Complete image asset object matching the document schema.' } },
+      required: ['op', 'asset'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'remove_asset' }, assetId: { type: 'string', minLength: 1, maxLength: 128 } },
+      required: ['op', 'assetId'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'set_tokens' }, tokens: { type: 'object', description: 'Complete color, radii, and typography token groups.' } },
+      required: ['op', 'tokens'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'upsert_symbol' }, symbol: { type: 'object', description: 'Complete reusable symbol object matching the document schema.' } },
+      required: ['op', 'symbol'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'remove_symbol' }, symbolId: { type: 'string', minLength: 1, maxLength: 128 } },
+      required: ['op', 'symbolId'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'upsert_component' }, component: { type: 'object', description: 'Complete component object. Preserve stable IDs and copy exact library bindings from a component contract.' } },
+      required: ['op', 'component'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'remove_component' }, componentId: { type: 'string', minLength: 1, maxLength: 128 } },
+      required: ['op', 'componentId'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'set_parent' },
+        componentId: { type: 'string', minLength: 1, maxLength: 128 },
+        parentId: { type: 'string', minLength: 1, maxLength: 128 },
+        slot: { type: 'string', minLength: 1, maxLength: 128 }
+      },
+      required: ['op', 'componentId'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'set_layout' },
+        componentId: { type: 'string', minLength: 1, maxLength: 128 },
+        layout: { type: 'object', description: 'Container layout with mode free, flex-row, flex-column, or grid and its supported alignment, gap, padding, wrapping, or grid fields.' }
+      },
+      required: ['op', 'componentId', 'layout'],
+      additionalProperties: false
+    },
+    ...(['move_component', 'resize_component'] as const).map((op) => ({
+      type: 'object',
+      properties: op === 'move_component'
+        ? {
+            op: { const: op },
+            componentId: { type: 'string', minLength: 1, maxLength: 128 },
+            x: { type: 'number' },
+            y: { type: 'number' },
+            device: { type: 'string', enum: ['desktop', 'tablet', 'mobile'] }
+          }
+        : {
+            op: { const: op },
+            componentId: { type: 'string', minLength: 1, maxLength: 128 },
+            width: { type: 'number', minimum: 1 },
+            height: { type: 'number', minimum: 1 },
+            device: { type: 'string', enum: ['desktop', 'tablet', 'mobile'] }
+          },
+      required: op === 'move_component' ? ['op', 'componentId', 'x', 'y'] : ['op', 'componentId', 'width', 'height'],
+      additionalProperties: false
+    })),
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'update_component' },
+        componentId: { type: 'string', minLength: 1, maxLength: 128 },
+        device: { type: 'string', enum: ['desktop', 'tablet', 'mobile'] },
+        changes: { type: 'object', minProperties: 1, description: 'Only changed component fields: name, content, zIndex, style, states, locked, hidden, symbolOverrides, constraints, or interaction.' }
+      },
+      required: ['op', 'componentId', 'changes'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'add_annotation' },
+        componentId: { type: 'string', minLength: 1, maxLength: 128 },
+        annotation: { type: 'object', description: 'Complete annotation with stable id, author, text, status, and timestamps.' }
+      },
+      required: ['op', 'componentId', 'annotation'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'resolve_annotation' },
+        componentId: { type: 'string', minLength: 1, maxLength: 128 },
+        annotationId: { type: 'string', minLength: 1, maxLength: 128 }
+      },
+      required: ['op', 'componentId', 'annotationId'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'add_request' }, request: { type: 'object', description: 'Complete AI work request with stable id, prompt, status, timestamps, and optional pageId or componentId.' } },
+      required: ['op', 'request'],
+      additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'resolve_request' },
+        requestId: { type: 'string', minLength: 1, maxLength: 128 },
+        resolution: { type: 'string', maxLength: 4000 }
+      },
+      required: ['op', 'requestId'],
+      additionalProperties: false
+    }
+  ]
+} as const;
 
 const TOOL_DEFINITIONS_BASE = [
   {
@@ -108,10 +296,40 @@ const TOOL_DEFINITIONS_BASE = [
     _meta: policy
   },
   {
-    name: 'web_design_get_component_library',
-    description: 'Read independently grouped design-library components, including Ant Design, Chakra UI, shadcn/ui and licensed creative libraries, plus variants, editable slots, sample data, insertion sizes, production sections, page templates, and visual themes. Children placed in a slot use parentId plus slot.',
+    name: 'web_design_get_catalog',
+    description: 'Read the compact Web Design Studio catalog: available design systems, categories, component counts, production sections, page templates, and visual themes. Use search next instead of loading every component and variant.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    _meta: { ...policy, 'chatos/toolResultMaxChars': 300_000 }
+    _meta: policy
+  },
+  {
+    name: 'web_design_search_components',
+    description: 'Search a bounded component catalog by intent, label, category, or component name. Returns compact candidates only; call web_design_get_component_contract for the chosen component before inserting it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', maxLength: 200, description: 'Optional user intent or component keyword, for example pricing card, 表格, navigation, or upload.' },
+        libraryId: { type: 'string', enum: UI_LIBRARIES.map((library) => library.id) },
+        category: { type: 'string', maxLength: 120 },
+        includeDeprecated: { type: 'boolean', default: false },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 }
+      },
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_get_component_contract',
+    description: 'Read one selected component contract with its supported variants, exact library binding template, default content and size, and editable slots. Do not invent library, component, variant, prop, or slot names.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        libraryId: { type: 'string', enum: UI_LIBRARIES.map((library) => library.id) },
+        componentId: { type: 'string', minLength: 1, maxLength: 160 }
+      },
+      required: ['libraryId', 'componentId'],
+      additionalProperties: false
+    },
+    _meta: policy
   },
   {
     name: 'web_design_insert_section',
@@ -171,23 +389,7 @@ const TOOL_DEFINITIONS_BASE = [
           type: 'array',
           minItems: 1,
           maxItems: 1000,
-          items: {
-            type: 'object',
-            properties: {
-              op: {
-                type: 'string',
-                enum: [
-                  'set_title', 'set_description', 'set_viewport', 'set_breakpoint', 'upsert_page', 'remove_page', 'upsert_asset', 'remove_asset',
-                  'set_tokens', 'upsert_symbol', 'remove_symbol',
-                  'upsert_component', 'remove_component', 'set_parent', 'set_layout',
-                  'move_component', 'resize_component', 'update_component', 'add_annotation',
-                  'resolve_annotation', 'add_request', 'resolve_request'
-                ]
-              }
-            },
-            required: ['op'],
-            additionalProperties: true
-          }
+          items: patchOperationSchema
         }
       },
       required: ['documentId', 'expectedRevision', 'operations'],
@@ -326,14 +528,6 @@ const TOOL_DEFINITIONS_BASE = [
   }
 ] as const;
 
-const webDesignSkillEvidence = {
-  type: 'array',
-  minItems: 1,
-  maxItems: 8,
-  items: { type: 'string', minLength: 1 },
-  description: 'Platform-issued activation evidence for Web Design Studio and the specialist workflow required by this tool. ChatOS validates and removes it before local execution.'
-} as const;
-
 function webDesignToolSkills(name: string): string[] {
   if (name === 'web_design_replace_document'
     || name === 'web_design_insert_section' || name === 'web_design_apply_page_template') {
@@ -341,25 +535,16 @@ function webDesignToolSkills(name: string): string[] {
   }
   if (name === 'web_design_apply_patch') return ['web-design-components'];
   if (name.includes('auto_layout')) return ['web-design-responsive-layout'];
-  if (name.includes('component_library') || name.includes('symbol')) return ['web-design-components'];
+  if (name.includes('catalog') || name.includes('component') || name.includes('symbol')) return ['web-design-components'];
   if (name.includes('export') || name.includes('validate')) return ['web-design-validation-export'];
   return ['web-design-projects'];
 }
 
 const TOOL_DEFINITIONS = TOOL_DEFINITIONS_BASE.map((tool) => ({
   ...tool,
-  inputSchema: {
-    ...tool.inputSchema,
-    properties: {
-      ...tool.inputSchema.properties,
-      skillEvidence: webDesignSkillEvidence
-    },
-    required: [...('required' in tool.inputSchema ? tool.inputSchema.required : []), 'skillEvidence']
-  },
   _meta: {
     ...tool._meta,
     'chatos/skillGate': {
-      evidenceArgument: 'skillEvidence',
       allOf: ['web-design-studio', ...webDesignToolSkills(tool.name)]
     }
   }
@@ -374,10 +559,9 @@ function runtimeScope(): Record<string, unknown> {
   const kind = process.env.CHATOS_CONTEXT_SCOPE ?? 'device';
   return {
     kind,
-    shared: kind === 'device',
-    ...(process.env.CHATOS_PROJECT_ID ? { chatosProjectId: process.env.CHATOS_PROJECT_ID } : {}),
-    ...(process.env.CHATOS_PROJECT_NAME ? { chatosProjectName: process.env.CHATOS_PROJECT_NAME } : {}),
-    ...(process.env.CHATOS_WORKSPACE_ID ? { workspaceId: process.env.CHATOS_WORKSPACE_ID } : {})
+    isolated: true,
+    hasProjectContext: kind === 'project',
+    ...(process.env.CHATOS_PROJECT_NAME ? { projectName: process.env.CHATOS_PROJECT_NAME } : {})
   };
 }
 
@@ -427,7 +611,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     }
     case 'web_design_get_document':
       return { document: await store.readInScope(String(argumentsValue.documentId), scopeKey) };
-    case 'web_design_get_component_library':
+    case 'web_design_get_catalog':
       return {
         libraries: UI_LIBRARIES.map((library) => ({
           id: library.id,
@@ -437,16 +621,77 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
           sourceUrl: library.sourceUrl,
           licenseUrl: library.licenseUrl,
           categories: library.categories,
-          components: library.components.map((component) => ({
-            ...component,
-            variants: library.variants[component.id] ?? [{ id: 'default', label: '默认款式', props: {} }],
-            editableSlots: editableSlotsForUiComponent(createComponentFromUiLibrary(library.id, component.id, 0, 0))
-          }))
+          componentCount: library.components.length,
+          variantCount: library.components.reduce((total, component) => total + (library.variants[component.id]?.length ?? 1), 0)
         })),
         sections: WEB_DESIGN_BLOCK_PRESETS,
         pageTemplates: WEB_DESIGN_PAGE_TEMPLATES,
         themes: WEB_DESIGN_THEME_PRESETS
       };
+    case 'web_design_search_components': {
+      const query = typeof argumentsValue.query === 'string' ? argumentsValue.query.trim().toLocaleLowerCase() : '';
+      const libraryId = typeof argumentsValue.libraryId === 'string' ? argumentsValue.libraryId : undefined;
+      const category = typeof argumentsValue.category === 'string' ? argumentsValue.category.trim().toLocaleLowerCase() : '';
+      const includeDeprecated = argumentsValue.includeDeprecated === true;
+      const limit = typeof argumentsValue.limit === 'number' ? Math.max(1, Math.min(50, Math.trunc(argumentsValue.limit))) : 20;
+      const candidates = UI_LIBRARIES
+        .filter((library) => !libraryId || library.id === libraryId)
+        .flatMap((library) => library.components.map((component) => ({ library, component })))
+        .filter(({ component }) => includeDeprecated || component.status !== 'deprecated')
+        .filter(({ component }) => !category || component.category.toLocaleLowerCase() === category)
+        .filter(({ component }) => {
+          if (!query) return true;
+          return [component.id, component.label, component.category, component.baseType, ...component.keywords]
+            .some((value) => value.toLocaleLowerCase().includes(query));
+        })
+        .slice(0, limit)
+        .map(({ library, component }) => ({
+          libraryId: library.id,
+          libraryName: library.displayName,
+          libraryVersion: library.version,
+          componentId: component.id,
+          label: component.label,
+          category: component.category,
+          baseType: component.baseType,
+          defaultSize: { width: component.width, height: component.height },
+          variantCount: library.variants[component.id]?.length ?? 1,
+          keywords: component.keywords,
+          status: component.status ?? 'stable',
+          docsUrl: component.docsUrl
+        }));
+      return { query, count: candidates.length, candidates };
+    }
+    case 'web_design_get_component_contract': {
+      const library = UI_LIBRARIES.find((candidate) => candidate.id === argumentsValue.libraryId);
+      if (!library) throw new Error(`UI library not found: ${String(argumentsValue.libraryId)}`);
+      const component = library.components.find((candidate) => candidate.id === argumentsValue.componentId);
+      if (!component) throw new Error(`${library.displayName} component not found: ${String(argumentsValue.componentId)}`);
+      const variants = library.variants[component.id] ?? [{ id: 'default', label: '默认款式', props: {} }];
+      const defaultVariant = variants[0];
+      const instance = createComponentFromUiLibrary(library.id, component.id, 0, 0);
+      return {
+        library: {
+          id: library.id,
+          name: library.displayName,
+          version: library.version,
+          license: library.license,
+          sourceUrl: library.sourceUrl,
+          licenseUrl: library.licenseUrl
+        },
+        component: {
+          ...component,
+          variants,
+          bindingTemplate: {
+            name: library.id,
+            version: library.version,
+            component: component.id,
+            variant: defaultVariant.id,
+            props: { ...(component.props ?? {}), ...defaultVariant.props }
+          },
+          editableSlots: editableSlotsForUiComponent(instance)
+        }
+      };
+    }
     case 'web_design_insert_section':
       await store.readInScope(String(argumentsValue.documentId), scopeKey);
       return {

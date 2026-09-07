@@ -11,6 +11,7 @@ public enum NativeConnectorError: LocalizedError, Sendable {
     case unsafeWorkingDirectory
     case pluginInstallerUnavailable
     case pluginInstallation(String)
+    case browserExtensionPairing(String)
 
     public var errorDescription: String? {
         switch self {
@@ -23,6 +24,7 @@ public enum NativeConnectorError: LocalizedError, Sendable {
         case .unsafeWorkingDirectory: "工作目录超出了当前工作区。"
         case .pluginInstallerUnavailable: "原生 Plugin 安装器尚未完成迁移。"
         case let .pluginInstallation(message): "Plugin 安装失败：\(message)"
+        case let .browserExtensionPairing(message): "Chrome 连接失败：\(message)"
         }
     }
 }

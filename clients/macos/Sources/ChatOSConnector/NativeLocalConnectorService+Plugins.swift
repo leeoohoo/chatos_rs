@@ -177,17 +177,17 @@ extension NativeLocalConnectorService {
               let record = state.installedPluginRecords?[pluginID],
               let ownerUserID = state.user?.id,
               let deviceID = state.deviceID else {
-            throw NativeConnectorError.pluginInstallation("Browser CDP 尚未安装或设备尚未配对")
+            throw NativeConnectorError.browserExtensionPairing("Browser CDP 尚未安装或设备尚未配对")
         }
         let manifest = try installedPluginManifest(record: record)
-        guard manifest.name == "chatos-browser-cdp",
-              manifest.mcpServers["browser-cdp"] != nil else {
-            throw NativeConnectorError.pluginInstallation("当前 Plugin 不是可连接 Chrome 的 Browser CDP")
+        guard manifest.name == NativeBrowserPluginIdentity.packageName,
+              manifest.mcpServers[NativeBrowserPluginIdentity.componentKey] != nil else {
+            throw NativeConnectorError.browserExtensionPairing("当前 Plugin 不是可连接 Chrome 的 Browser CDP")
         }
         let launch = try NativePluginManifestLoader.prepare(
             record: record,
-            componentKey: "browser-cdp",
-            serverKey: "browser-cdp",
+            componentKey: NativeBrowserPluginIdentity.componentKey,
+            serverKey: NativeBrowserPluginIdentity.componentKey,
             adapterSessionID: "browser-extension-pairing-\(UUID().uuidString.lowercased())",
             ownerUserID: ownerUserID,
             deviceID: deviceID,
@@ -205,13 +205,13 @@ extension NativeLocalConnectorService {
             return false
         }
         let manifest = try installedPluginManifest(record: record)
-        guard manifest.name == "chatos-browser-cdp",
-              manifest.mcpServers["browser-cdp"] != nil else {
+        guard manifest.name == NativeBrowserPluginIdentity.packageName,
+              manifest.mcpServers[NativeBrowserPluginIdentity.componentKey] != nil else {
             return false
         }
         let runtimeContext = try NativePluginRuntimeContextResolver.resolve(
             manifest: manifest,
-            componentKey: "browser-cdp",
+            componentKey: NativeBrowserPluginIdentity.componentKey,
             runtimeRootURL: pluginRuntimeRootURL,
             pluginID: record.pluginID,
             host: .init(

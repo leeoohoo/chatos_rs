@@ -13,10 +13,9 @@ export interface DesignSummary {
 
 export interface WebDesignRuntimeContext {
   kind: string;
-  shared: boolean;
-  chatosProjectId?: string;
-  chatosProjectName?: string;
-  workspaceId?: string;
+  isolated: boolean;
+  hasProjectContext: boolean;
+  projectName?: string;
   defaultProjectId?: string;
 }
 
@@ -61,7 +60,7 @@ class LocalRepository implements DesignRepository {
   readonly mode = 'local' as const;
 
   async runtimeContext(): Promise<WebDesignRuntimeContext> {
-    return { kind: 'device', shared: true };
+    return { kind: 'device', isolated: true, hasProjectContext: false };
   }
 
   async list(): Promise<DesignSummary[]> {
@@ -219,7 +218,7 @@ class ServerRepository implements DesignRepository {
 
   async runtimeContext(): Promise<WebDesignRuntimeContext> {
     const response = await fetch('/api/context', { cache: 'no-store' });
-    if (!response.ok) return { kind: 'device', shared: true };
+    if (!response.ok) return { kind: 'device', isolated: true, hasProjectContext: false };
     return response.json() as Promise<WebDesignRuntimeContext>;
   }
 

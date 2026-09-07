@@ -25,7 +25,10 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     await client.connect(transport);
     const tools = await client.listTools();
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_apply_patch'));
-    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_component_library'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_catalog'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_search_components'));
+    assert.ok(tools.tools.some((tool) => tool.name === 'web_design_get_component_contract'));
+    assert.equal(tools.tools.some((tool) => tool.name === 'web_design_get_component_library'), false);
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_list_requests'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_auto_layout'));
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_export_html'));
@@ -41,56 +44,65 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
     assert.ok(tools.tools.some((tool) => tool.name === 'web_design_apply_page_template'));
     assert.equal(tools.tools.some((tool) => Object.hasOwn(tool.inputSchema.properties ?? {}, 'chatosProjectId')), false);
     for (const tool of tools.tools) {
-      assert.equal(tool._meta['chatos/skillGate'].evidenceArgument, 'skillEvidence');
-      assert.equal(tool.inputSchema.properties.skillEvidence.type, 'array');
-      assert.ok(tool.inputSchema.required.includes('skillEvidence'));
+      assert.ok(tool._meta['chatos/skillGate'].allOf.length >= 2);
+      assert.equal(Object.hasOwn(tool.inputSchema.properties ?? {}, 'skillEvidence'), false);
+      assert.equal(tool.inputSchema.required?.includes('skillEvidence') ?? false, false);
     }
+    const patchSchema = tools.tools.find((tool) => tool.name === 'web_design_apply_patch').inputSchema.properties.operations.items;
+    assert.ok(Array.isArray(patchSchema.oneOf));
+    assert.equal(patchSchema.oneOf.some((branch) => branch.properties?.op?.const === 'move_component' && branch.required.includes('x') && branch.required.includes('y')), true);
+    assert.equal(patchSchema.oneOf.some((branch) => branch.properties?.op?.const === 'update_component' && branch.required.includes('changes')), true);
 
     const projectList = await client.callTool({ name: 'web_design_list_projects', arguments: {} });
-    assert.equal(projectList.structuredContent.scope.chatosProjectId, 'host-project-through-123');
-    assert.equal(projectList.structuredContent.scope.chatosProjectName, '宿主产品项目');
-    assert.equal(projectList.structuredContent.scope.workspaceId, 'workspace-through-456');
+    assert.deepEqual(projectList.structuredContent.scope, {
+      kind: 'project',
+      isolated: true,
+      hasProjectContext: true,
+      projectName: '宿主产品项目'
+    });
+    assert.equal(Object.hasOwn(projectList.structuredContent.scope, 'chatosProjectId'), false);
+    assert.equal(Object.hasOwn(projectList.structuredContent.scope, 'workspaceId'), false);
 
     const createdProject = await client.callTool({ name: 'web_design_create_project', arguments: { name: 'Web Studio 内部项目' } });
     const internalProjectId = createdProject.structuredContent.project.projectId;
-    assert.notEqual(internalProjectId, projectList.structuredContent.scope.chatosProjectId);
-    assert.equal(createdProject.structuredContent.scope.chatosProjectId, 'host-project-through-123');
+    assert.match(internalProjectId, /^project-/);
+    assert.equal(Object.hasOwn(createdProject.structuredContent.scope, 'chatosProjectId'), false);
 
-    const library = await client.callTool({ name: 'web_design_get_component_library', arguments: {} });
-    assert.deepEqual(library.structuredContent.libraries.map((item) => item.id), ['antd', 'chakra', 'shadcn', 'magicui', 'spell', 'inspira', 'daisyui']);
-    assert.equal(library.structuredContent.libraries.find((item) => item.id === 'antd').components.length, 72);
-    const chakraLibrary = library.structuredContent.libraries.find((item) => item.id === 'chakra');
-    assert.equal(chakraLibrary.components.length, 113);
-    assert.equal(chakraLibrary.components.some((component) => component.id === 'EnvironmentProvider'), false);
-    assert.equal(chakraLibrary.components.every((component) => component.variants.length >= 1), true);
-    assert.ok(library.structuredContent.libraries.find((item) => item.id === 'shadcn').components.length >= 45);
-    const magicLibrary = library.structuredContent.libraries.find((item) => item.id === 'magicui');
-    assert.equal(magicLibrary.components.length, 68);
-    assert.equal(magicLibrary.license, 'MIT');
-    assert.equal(magicLibrary.components.every((component) => component.variants.length >= 1), true);
-    assert.equal(magicLibrary.components.every((component) => component.variants.length === 3), false);
-    const spellLibrary = library.structuredContent.libraries.find((item) => item.id === 'spell');
-    assert.equal(spellLibrary.components.length, 33);
-    assert.equal(spellLibrary.license, 'MIT');
-    const inspiraLibrary = library.structuredContent.libraries.find((item) => item.id === 'inspira');
-    assert.equal(inspiraLibrary.components.length, 155);
-    assert.equal(inspiraLibrary.license, 'MIT');
-    assert.equal(inspiraLibrary.components.every((component) => component.variants.length >= 1), true);
-    assert.equal(inspiraLibrary.components.every((component) => component.variants.length === 3), false);
-    const daisyLibrary = library.structuredContent.libraries.find((item) => item.id === 'daisyui');
-    assert.equal(daisyLibrary.components.length, 68);
-    assert.equal(daisyLibrary.license, 'MIT');
-    assert.equal(daisyLibrary.components.every((component) => component.variants.length >= 1), true);
-    assert.equal(daisyLibrary.components.reduce((total, component) => total + component.variants.length, 0), 587);
-    assert.equal(library.structuredContent.themes.length, 6);
-    assert.equal(library.structuredContent.sections.length, 28);
-    assert.equal(library.structuredContent.pageTemplates.length, 8);
-    assert.equal(library.structuredContent.sections.some((section) => section.id === 'hero-centered'), true);
-    assert.equal(library.structuredContent.pageTemplates.some((template) => template.id === 'developer'), true);
-    const antdLibrary = library.structuredContent.libraries.find((item) => item.id === 'antd');
-    assert.equal(antdLibrary.components.reduce((total, component) => total + component.variants.length, 0), 828);
-    assert.equal(antdLibrary.components.find((component) => component.id === 'Input').variants.length, 18);
-    assert.notEqual(antdLibrary.components.find((component) => component.id === 'Form').variants.length, antdLibrary.components.find((component) => component.id === 'Button').variants.length);
+    const catalog = await client.callTool({ name: 'web_design_get_catalog', arguments: {} });
+    assert.deepEqual(catalog.structuredContent.libraries.map((item) => item.id), ['antd', 'chakra', 'shadcn', 'magicui', 'spell', 'inspira', 'daisyui']);
+    assert.equal(catalog.structuredContent.libraries.find((item) => item.id === 'antd').componentCount, 72);
+    assert.equal(catalog.structuredContent.libraries.find((item) => item.id === 'antd').variantCount, 828);
+    assert.equal(catalog.structuredContent.libraries.find((item) => item.id === 'chakra').componentCount, 113);
+    assert.ok(catalog.structuredContent.libraries.find((item) => item.id === 'shadcn').componentCount >= 45);
+    assert.equal(catalog.structuredContent.libraries.find((item) => item.id === 'magicui').componentCount, 68);
+    assert.equal(catalog.structuredContent.libraries.find((item) => item.id === 'spell').componentCount, 33);
+    assert.equal(catalog.structuredContent.libraries.find((item) => item.id === 'inspira').componentCount, 155);
+    assert.equal(catalog.structuredContent.libraries.find((item) => item.id === 'daisyui').variantCount, 587);
+    assert.equal(catalog.structuredContent.themes.length, 6);
+    assert.equal(catalog.structuredContent.sections.length, 28);
+    assert.equal(catalog.structuredContent.pageTemplates.length, 8);
+    assert.equal(catalog.structuredContent.sections.some((section) => section.id === 'hero-centered'), true);
+    assert.equal(catalog.structuredContent.pageTemplates.some((template) => template.id === 'developer'), true);
+
+    const search = await client.callTool({
+      name: 'web_design_search_components',
+      arguments: { libraryId: 'antd', query: 'input', limit: 5 }
+    });
+    assert.ok(search.structuredContent.count >= 1);
+    assert.ok(search.structuredContent.count <= 5);
+    assert.equal(search.structuredContent.candidates.every((item) => item.libraryId === 'antd'), true);
+    assert.equal(search.structuredContent.candidates.some((item) => item.componentId === 'Input'), true);
+    assert.equal(search.structuredContent.candidates.some((item) => item.componentId === 'List'), false);
+
+    const inputContract = await client.callTool({
+      name: 'web_design_get_component_contract',
+      arguments: { libraryId: 'antd', componentId: 'Input' }
+    });
+    assert.equal(inputContract.structuredContent.library.id, 'antd');
+    assert.equal(inputContract.structuredContent.component.id, 'Input');
+    assert.equal(inputContract.structuredContent.component.variants.length, 18);
+    assert.equal(inputContract.structuredContent.component.bindingTemplate.name, 'antd');
+    assert.equal(inputContract.structuredContent.component.bindingTemplate.component, 'Input');
 
     const templateSeed = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'Template Website', blank: true } });
     const templateDocumentId = templateSeed.structuredContent.document.documentId;
@@ -109,10 +121,10 @@ test('MCP can create, patch, list, and resolve a component request', async () =>
 
     const created = await client.callTool({ name: 'web_design_create_document', arguments: { projectId: internalProjectId, title: 'MCP Website' } });
     const documentId = created.structuredContent.document.documentId;
-    assert.equal(created.structuredContent.scope.chatosProjectId, 'host-project-through-123');
+    assert.equal(Object.hasOwn(created.structuredContent.scope, 'chatosProjectId'), false);
     const internalProject = await client.callTool({ name: 'web_design_get_project', arguments: { projectId: internalProjectId } });
     assert.deepEqual(internalProject.structuredContent.project.designIds, [templateDocumentId, documentId]);
-    assert.equal(internalProject.structuredContent.scope.chatosProjectId, 'host-project-through-123');
+    assert.equal(Object.hasOwn(internalProject.structuredContent.scope, 'chatosProjectId'), false);
     const read = await client.callTool({ name: 'web_design_get_document', arguments: { documentId } });
     assert.equal(read.structuredContent.document.revision, 1);
 

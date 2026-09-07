@@ -19,16 +19,18 @@ import { inspectDiagramQuality, type DiagramQualityProfile } from './quality.js'
 import {
   inspectGenerationContract,
   prepareGenerationPermit,
-  runtimeScopeFingerprint,
+  runtimeDataScopeFingerprint,
+  runtimeGenerationScopeFingerprint,
   verifyGenerationPermit,
   type GenerationPlan,
   type GenerationPermitPayload
 } from './generation-guides.js';
 
 const SERVER_NAME = 'chatos-diagram-studio';
-const SERVER_VERSION = '0.2.1';
+const SERVER_VERSION = '0.3.0';
 const store = new DiagramDocumentStore();
-const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
+const scopeKey = runtimeDataScopeFingerprint(store.rootDirectory);
+const generationScopeKey = runtimeGenerationScopeFingerprint(store.rootDirectory);
 
 const policy = {
   'chatos/policyVersion': 1,
@@ -40,7 +42,6 @@ const policy = {
 
 const diagramSkillGate = {
   'chatos/skillGate': {
-    evidenceArgument: 'skillEvidence',
     allOf: ['diagram-studio'],
     selectByArgument: {
       pointer: '/kind',
@@ -55,20 +56,11 @@ const diagramSkillGate = {
   }
 };
 
-const skillEvidenceProperty = {
-  type: 'array',
-  minItems: 2,
-  maxItems: 8,
-  items: { type: 'string', minLength: 1 },
-  description: 'Activation evidence returned by the platform for diagram-studio and the selected diagram-kind Skill. The platform validates and removes this field before local execution.'
-} as const;
-
 const generatedDiagramProperties = {
-  generationPermit: { type: 'string', minLength: 1, description: 'Signed permit returned by diagram_prepare_generation for this exact scope, kind, title, artifactKey, and plan.' },
   source: { type: 'string', minLength: 1, maxLength: 2_097_152, description: 'Complete PlantUML source using stable unique ASCII aliases for structural declarations.' },
-  title: { type: 'string', minLength: 1, maxLength: 240, description: 'User-facing title bound to the generation permit.' },
-  kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'], description: 'Explicit diagram kind bound to the generation permit.' },
-  artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$', description: 'Stable logical identity bound to the generation permit.' },
+  title: { type: 'string', minLength: 1, maxLength: 240, description: 'User-facing title matching the active generation plan.' },
+  kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'], description: 'Explicit diagram kind matching the active generation plan.' },
+  artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$', description: 'Stable logical identity used to resolve the active generation plan internally.' },
   idempotencyKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$', description: 'Stable key for retrying this exact write without creating a duplicate.' },
   layoutDirection: { type: 'string', enum: ['RIGHT', 'DOWN'], description: 'Optional primary reading direction. Defaults from the diagram kind.' },
   nodeEvidence: {
@@ -97,11 +89,10 @@ const generatedDiagramProperties = {
 const TOOL_DEFINITIONS = [
   {
     name: 'diagram_prepare_generation',
-    description: 'Submit one bounded diagram plan after activating the Diagram Studio router and the dedicated diagram-kind Skill. The current injected scope and artifactKey automatically determine whether this creates a new diagram or revises the existing logical diagram; do not supply an operation or documentId. Returns a scope-, skill-contract-, plan-, kind-, title-, and artifact-bound generationPermit only when the plan is valid.',
+    description: 'Submit one bounded diagram plan after activating the Diagram Studio router and the dedicated diagram-kind Skill. The current injected scope and artifactKey automatically determine whether this creates a new diagram or revises the existing logical diagram. ChatOS stores the approved plan internally; do not supply an operation, documentId, permit, or credential.',
     inputSchema: {
       type: 'object',
       properties: {
-        skillEvidence: skillEvidenceProperty,
         kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'] },
         mode: { type: 'string', minLength: 1, maxLength: 64 },
         artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$', description: 'Stable logical identity in the injected scope. A new key creates a diagram; an existing key revises that diagram.' },
@@ -123,7 +114,7 @@ const TOOL_DEFINITIONS = [
           additionalProperties: false
         }
       },
-      required: ['skillEvidence', 'kind', 'artifactKey', 'title', 'plan'],
+      required: ['kind', 'artifactKey', 'title', 'plan'],
       additionalProperties: false
     },
     _meta: { ...policy, ...diagramSkillGate }
@@ -133,8 +124,8 @@ const TOOL_DEFINITIONS = [
     description: 'Create or revise one editable generated diagram after the dedicated guide and plan gates. Parses PlantUML, lays it out, checks the guide contract and quality profile, records provenance, and persists only when ready. ChatOS project identity is injected; never pass a projectId.',
     inputSchema: {
       type: 'object',
-      properties: { skillEvidence: skillEvidenceProperty, ...generatedDiagramProperties },
-      required: ['skillEvidence', 'generationPermit', 'source', 'title', 'kind', 'artifactKey'],
+      properties: { ...generatedDiagramProperties },
+      required: ['source', 'title', 'kind', 'artifactKey'],
       additionalProperties: false
     },
     _meta: { ...policy, ...diagramSkillGate }
@@ -224,11 +215,11 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'diagram_import_plantuml',
-    description: 'Import PlantUML as one generated editable diagram. A valid generationPermit and current Skill evidence are required; projectId is not accepted.',
+    description: 'Import PlantUML as one generated editable diagram using the active internally stored generation plan. projectId, permits, credentials, and activation fields are not accepted.',
     inputSchema: {
       type: 'object',
-      properties: { skillEvidence: skillEvidenceProperty, ...generatedDiagramProperties },
-      required: ['skillEvidence', 'generationPermit', 'source', 'title', 'kind', 'artifactKey'],
+      properties: { ...generatedDiagramProperties },
+      required: ['source', 'title', 'kind', 'artifactKey'],
       additionalProperties: false
     },
     _meta: { ...policy, ...diagramSkillGate }
@@ -272,28 +263,26 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'diagram_replace_document',
-    description: 'Replace a complete diagram using optimistic revision control and a valid generationPermit for this document. Prefer diagram_apply_patch for focused changes.',
+    description: 'Replace a complete diagram using optimistic revision control and the active internally stored generation plan for this document. Prefer diagram_apply_patch for focused changes.',
     inputSchema: {
       type: 'object',
       properties: {
         expectedRevision: { type: 'integer', minimum: 0 },
-        document: { type: 'object' },
-        generationPermit: { type: 'string', minLength: 1 }
+        document: { type: 'object' }
       },
-      required: ['expectedRevision', 'document', 'generationPermit'],
+      required: ['expectedRevision', 'document'],
       additionalProperties: false
     },
     _meta: policy
   },
   {
     name: 'diagram_apply_patch',
-    description: 'Apply focused changes without replacing unrelated content. A generationPermit is required only when adding/removing nodes or semantic edges; title, description, position, and viewport-only edits remain permit-free.',
+    description: 'Apply focused changes without replacing unrelated content. Structural changes use the active internally stored generation plan; title, description, position, and viewport-only edits do not require a prepared plan.',
     inputSchema: {
       type: 'object',
       properties: {
         documentId: { type: 'string', minLength: 1, maxLength: 128 },
         expectedRevision: { type: 'integer', minimum: 0 },
-        generationPermit: { type: 'string', minLength: 1 },
         operations: {
           type: 'array',
           minItems: 1,
@@ -461,8 +450,7 @@ async function commitGeneratedDiagram(argumentsValue: Record<string, unknown>) {
   const source = String(argumentsValue.source);
   const title = String(argumentsValue.title);
   const artifactKey = String(argumentsValue.artifactKey);
-  const generationPermit = String(argumentsValue.generationPermit);
-  const permit = verifyGenerationPermit(generationPermit, { scopeFingerprint: scopeKey, kind, artifactKey, title });
+  const permit = await verifyGenerationPermit(store.rootDirectory, { scopeFingerprint: generationScopeKey, kind, artifactKey, title });
   const imported = plantUmlToDiagram(source, { title, kind });
   if (imported.kind !== kind) throw new Error(`PlantUML produced ${imported.kind}, but the generation permit requires ${kind}.`);
   const direction = argumentsValue.layoutDirection === 'DOWN'
@@ -504,10 +492,9 @@ function runtimeScope(): Record<string, unknown> {
   const kind = process.env.CHATOS_CONTEXT_SCOPE ?? 'device';
   return {
     kind,
-    shared: kind === 'device',
-    ...(process.env.CHATOS_PROJECT_ID ? { chatosProjectId: process.env.CHATOS_PROJECT_ID } : {}),
-    ...(process.env.CHATOS_PROJECT_NAME ? { chatosProjectName: process.env.CHATOS_PROJECT_NAME } : {}),
-    ...(process.env.CHATOS_WORKSPACE_ID ? { workspaceId: process.env.CHATOS_WORKSPACE_ID } : {})
+    isolated: true,
+    hasProjectContext: kind === 'project',
+    ...(process.env.CHATOS_PROJECT_NAME ? { projectName: process.env.CHATOS_PROJECT_NAME } : {})
   };
 }
 
@@ -520,6 +507,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const operation = existing ? 'revise' : 'create';
       const documentId = existing?.documentId;
       const prepared = await prepareGenerationPermit({
+        storeDirectory: store.rootDirectory,
         kind: requiredDiagramKind(argumentsValue.kind),
         mode: typeof argumentsValue.mode === 'string' ? argumentsValue.mode : undefined,
         artifactKey,
@@ -527,7 +515,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         documentId,
         title: String(argumentsValue.title),
         plan: argumentsValue.plan as GenerationPlan,
-        scopeFingerprint: scopeKey
+        scopeFingerprint: generationScopeKey
       });
       if (documentId) {
         const current = await store.readInScope(documentId, scopeKey);
@@ -535,8 +523,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         if (current.artifactKey && current.artifactKey !== prepared.permit.artifactKey) throw new Error('The requested artifactKey does not match the selected document.');
       }
       return {
-        generationPermit: prepared.generationPermit,
-        permitId: prepared.permit.permitId,
+        prepared: true,
         kind: prepared.permit.kind,
         mode: prepared.permit.mode,
         artifactKey: prepared.permit.artifactKey,
@@ -635,8 +622,8 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const current = await store.readInScope(document.documentId, scopeKey);
       const artifactKey = document.artifactKey ?? current.artifactKey;
       if (!artifactKey) throw new Error('Generated replacement requires a stable artifactKey on the document.');
-      const permit = verifyGenerationPermit(String(argumentsValue.generationPermit), {
-        scopeFingerprint: scopeKey,
+      const permit = await verifyGenerationPermit(store.rootDirectory, {
+        scopeFingerprint: generationScopeKey,
         kind: document.kind,
         artifactKey,
         title: document.title,
@@ -656,11 +643,10 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const changesStructure = operations.some((operation) => ['upsert_node', 'remove_node', 'upsert_edge', 'remove_edge'].includes(operation.op));
       let patchProvenance: ReturnType<typeof generationProvenance> | undefined;
       if (changesStructure) {
-        if (typeof argumentsValue.generationPermit !== 'string') throw new Error('A generationPermit is required for structural diagram changes.');
         const artifactKey = current.artifactKey;
         if (!artifactKey) throw new Error('Assign a stable artifactKey through a generated revision before structural AI changes.');
-        const permit = verifyGenerationPermit(argumentsValue.generationPermit, {
-          scopeFingerprint: scopeKey,
+        const permit = await verifyGenerationPermit(store.rootDirectory, {
+          scopeFingerprint: generationScopeKey,
           kind: current.kind,
           artifactKey,
           operation: 'revise',

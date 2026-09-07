@@ -53,6 +53,7 @@ export function editableSlotsForUiComponent(component: WebDesignComponent): UiEd
   const library = component.library?.name;
   const name = component.library?.component;
   if (!library || !name) return [];
+  if (component.library?.props.registryElement) return [];
   if (library === 'antd') return editableSlotsForAntdComponent(component);
 
   if (library === 'magicui' || library === 'spell' || library === 'inspira' || library === 'daisyui') {

@@ -1,4 +1,6 @@
 import type { LibraryRuntimeAdapter, MountedLibraryComponent } from './types';
+import { applyPreviewElementContent, isolatePreviewElement, libraryPreviewSelection, LIBRARY_PREVIEW_POINTER_EVENT, resolvePreviewElement, type LibraryPreviewPointerEvent } from './element-selection';
+import { installRuntimePreviewPicker } from './preview-picker';
 import './runtime.css';
 
 const adapterLoaders: Record<string, () => Promise<LibraryRuntimeAdapter>> = {
@@ -14,15 +16,25 @@ const query = new URLSearchParams(window.location.search);
 const library = query.get('library') ?? '';
 const slug = query.get('component') ?? '';
 const instance = query.get('instance') ?? '';
+const pickerEnabled = query.get('picker') === '1';
 document.documentElement.dataset.runtimeLayout = query.get('layout') === 'intrinsic' ? 'intrinsic' : 'fill';
 const target = document.getElementById('root');
 let mounted: MountedLibraryComponent | undefined;
 let booting: Promise<void> | undefined;
 let sizeObserver: ResizeObserver | undefined;
 let sizeFrame = 0;
+let selectionFrame = 0;
+let selectionCleanup: (() => void) | undefined;
+let pickerCleanup: (() => void) | undefined;
 
 function emit(event: string, detail?: unknown) {
   window.parent.postMessage({ source: 'web-design-library-runtime', instance, event, detail }, window.location.origin);
+}
+
+function emitPreviewPointerEvent(state: LibraryPreviewPointerEvent) {
+  window.parent.dispatchEvent(new CustomEvent(LIBRARY_PREVIEW_POINTER_EVENT, {
+    detail: { instance, state }
+  }));
 }
 
 function reportContentSize() {
@@ -50,19 +62,42 @@ function runtimeProps(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function applySelectedElement(props: Record<string, unknown>, content: string) {
+  cancelAnimationFrame(selectionFrame);
+  selectionCleanup?.();
+  selectionCleanup = undefined;
+  const selection = libraryPreviewSelection(props.registryElement);
+  if (!selection || !target) return;
+  selectionFrame = requestAnimationFrame(() => {
+    selectionFrame = requestAnimationFrame(() => {
+      const element = resolvePreviewElement(target, selection.path);
+      if (!element) return;
+      selectionCleanup = isolatePreviewElement(target, element);
+      applyPreviewElementContent(element, content);
+      reportContentSize();
+    });
+  });
+}
+
 window.addEventListener('message', (message) => {
   if (message.origin !== window.location.origin || message.data?.source !== 'web-design-studio') return;
   if (message.data.instance !== instance) return;
   if (message.data.type === 'props') {
     const props = runtimeProps(message.data.props);
     const content = typeof message.data.content === 'string' ? message.data.content : '';
-    if (mounted) mounted.update(props, content);
+    if (mounted) {
+      mounted.update(props, content);
+      applySelectedElement(props, content);
+    }
     else void boot(props, content);
   }
 });
 
 window.addEventListener('beforeunload', () => {
   cancelAnimationFrame(sizeFrame);
+  cancelAnimationFrame(selectionFrame);
+  selectionCleanup?.();
+  pickerCleanup?.();
   sizeObserver?.disconnect();
   mounted?.destroy();
 });
@@ -73,6 +108,16 @@ async function mount(props: Record<string, unknown>, content: string) {
   if (!loadAdapter) throw new Error(`No runtime adapter is registered for ${library}.`);
   const adapter = await loadAdapter();
   mounted = await adapter.mount({ slug, target, props, content, emit });
+  if (pickerEnabled) {
+    pickerCleanup?.();
+    pickerCleanup = installRuntimePreviewPicker(
+      target,
+      slug,
+      emitPreviewPointerEvent,
+      (selection) => emit('preview-select', selection)
+    );
+  }
+  applySelectedElement(props, content);
   observeContentSize();
   emit('ready', { library, slug });
 }

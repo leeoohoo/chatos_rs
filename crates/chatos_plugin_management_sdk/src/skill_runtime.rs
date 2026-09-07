@@ -171,36 +171,6 @@ pub struct RuntimeSkillDescriptor {
     pub related_skills: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SkillActivationSource {
-    Model,
-    User,
-    ParentSkill,
-    SystemRequired,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeSkillActivation {
-    pub activation_ref: String,
-    pub skill_ref: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_activation_ref: Option<String>,
-    pub depth: u32,
-    pub arguments_sha256: String,
-    pub rendered_content_sha256: String,
-    pub activated_by: SkillActivationSource,
-    pub context_mode: SkillContextMode,
-    pub activated_at: String,
-    pub last_used_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillActivationEvidence {
-    pub activation_ref: String,
-    pub attestation: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillActivationAttestationClaims {
     pub issuer: String,
@@ -242,7 +212,6 @@ pub struct SkillGateSelector {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SkillGateDeclaration {
-    pub evidence_argument: String,
     #[serde(default)]
     pub all_of: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

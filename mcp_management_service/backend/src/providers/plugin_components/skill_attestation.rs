@@ -10,9 +10,8 @@ use chatos_plugin_management_sdk::{
     SkillActivationAttestationClaims, DEFAULT_SKILL_ACTIVATION_LIMIT,
 };
 use futures_util::TryStreamExt;
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime};
-use mongodb::options::IndexOptions;
+use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime, Document};
+use mongodb::options::{IndexOptions, UpdateOptions};
 use mongodb::{Client, Collection, IndexModel};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -22,6 +21,8 @@ use tokio::sync::RwLock;
 use super::THIRD_PARTY_PLUGIN_ENVELOPE;
 
 const ACTIVATION_NONCE_BYTES: usize = 12;
+const ACTIVATION_REFERENCE_PREFIX: &str = "SA";
+const ACTIVATION_REFERENCE_RANDOM_HEX_LENGTH: usize = 32;
 const MAX_PERSISTED_ACTIVATION_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -29,13 +30,10 @@ pub(crate) struct ActiveSkillActivation {
     pub(crate) claims: SkillActivationAttestationClaims,
     pub(crate) parent_activation_ref: Option<String>,
     pub(crate) depth: u32,
-    pub(crate) evidence: String,
     pub(crate) instructions: String,
 }
 
 pub(crate) struct SkillActivationAttestationService {
-    encoding: EncodingKey,
-    decoding: DecodingKey,
     store: SkillActivationStore,
 }
 
@@ -68,22 +66,25 @@ struct ActivationCipher {
 
 impl SkillActivationAttestationService {
     pub(crate) fn new(secret: &str) -> Result<Self, String> {
-        let (encoding, decoding) = signing_keys(secret)?;
+        validate_activation_secret(secret)?;
         Ok(Self {
-            encoding,
-            decoding,
             store: SkillActivationStore::Memory(RwLock::new(HashMap::new())),
         })
     }
 
     pub(crate) async fn connect(secret: &str, database_url: &str) -> Result<Self, String> {
-        let (encoding, decoding) = signing_keys(secret)?;
+        validate_activation_secret(secret)?;
         let client = Client::with_uri_str(database_url)
             .await
             .map_err(|error| format!("connect Plugin Skill activation MongoDB failed: {error}"))?;
         let database = client.default_database().ok_or_else(|| {
             "MCP_MANAGEMENT_DATABASE_URL must include a MongoDB database name".to_string()
         })?;
+        verify_shared_activation_key(
+            database.collection::<Document>("mcp_management_skill_activation_metadata"),
+            secret,
+        )
+        .await?;
         let collection = database
             .collection::<StoredSkillActivationDocument>("mcp_management_skill_activations");
         collection
@@ -124,44 +125,11 @@ impl SkillActivationAttestationService {
                 format!("initialize Plugin Skill activation lookup index failed: {error}")
             })?;
         Ok(Self {
-            encoding,
-            decoding,
             store: SkillActivationStore::Mongo(MongoSkillActivationStore {
                 collection,
                 cipher: ActivationCipher::new(secret)?,
             }),
         })
-    }
-
-    pub(crate) fn issue(
-        &self,
-        claims: &SkillActivationAttestationClaims,
-    ) -> Result<String, String> {
-        jsonwebtoken::encode(&Header::new(Algorithm::HS256), claims, &self.encoding)
-            .map_err(|error| format!("issue Plugin Skill activation evidence failed: {error}"))
-    }
-
-    pub(crate) fn verify(&self, token: &str) -> Result<SkillActivationAttestationClaims, String> {
-        let mut validation = Validation::new(Algorithm::HS256);
-        validation.validate_exp = false;
-        validation.required_spec_claims.clear();
-        let claims = jsonwebtoken::decode::<SkillActivationAttestationClaims>(
-            token,
-            &self.decoding,
-            &validation,
-        )
-        .map_err(|error| format!("Plugin Skill activation evidence is invalid: {error}"))?
-        .claims;
-        if claims.issuer != "mcp-management-service"
-            || claims.audience != "plugin-skill-runtime"
-            || claims.expires_at_unix <= chrono::Utc::now().timestamp()
-        {
-            return Err(
-                "Plugin Skill activation evidence has expired or has an invalid audience"
-                    .to_string(),
-            );
-        }
-        Ok(claims)
     }
 
     pub(crate) async fn activation(
@@ -223,7 +191,7 @@ impl SkillActivationAttestationService {
                 .cloned()),
             SkillActivationStore::Mongo(store) => store
                 .collection
-                .find_one(
+                .find(
                     doc! {
                         "runtime_session_id": claims.runtime_session_id.as_str(),
                         "equivalence_sha256": equivalence_sha256,
@@ -235,8 +203,15 @@ impl SkillActivationAttestationService {
                 .map_err(|error| {
                     format!("find equivalent Plugin Skill activation failed: {error}")
                 })?
+                .try_collect::<Vec<_>>()
+                .await
+                .map_err(|error| {
+                    format!("read equivalent Plugin Skill activations failed: {error}")
+                })?
+                .into_iter()
                 .map(|document| store.cipher.decrypt(document))
-                .transpose(),
+                .collect::<Result<Vec<_>, _>>()
+                .map(|activations| activations.into_iter().next()),
         }
     }
 
@@ -247,12 +222,11 @@ impl SkillActivationAttestationService {
         depth: u32,
         instructions: String,
     ) -> Result<ActiveSkillActivation, String> {
-        let evidence = self.issue(&claims)?;
+        validate_activation_reference(claims.activation_ref.as_str())?;
         let activation = ActiveSkillActivation {
             claims: claims.clone(),
             parent_activation_ref,
             depth,
-            evidence,
             instructions,
         };
         match &self.store {
@@ -296,30 +270,10 @@ impl SkillActivationAttestationService {
         Ok(activation)
     }
 
-    pub(crate) async fn verify_active(&self, token: &str) -> Result<ActiveSkillActivation, String> {
-        let claims = self.verify(token)?;
-        let activation = self
-            .activation(
-                claims.runtime_session_id.as_str(),
-                claims.activation_ref.as_str(),
-            )
-            .await?
-            .ok_or_else(|| {
-                "Plugin Skill activation evidence is not active in this Runtime Session".to_string()
-            })?;
-        if activation.claims != claims || activation.evidence != token {
-            return Err(
-                "Plugin Skill activation evidence does not match the active invocation graph"
-                    .to_string(),
-            );
-        }
-        Ok(activation)
-    }
-
-    pub(crate) async fn protected_instruction_items(
+    pub(crate) async fn active_activations(
         &self,
         runtime_session_id: &str,
-    ) -> Result<Vec<Value>, String> {
+    ) -> Result<Vec<ActiveSkillActivation>, String> {
         let now = chrono::Utc::now().timestamp();
         let mut activations = match &self.store {
             SkillActivationStore::Memory(store) => store
@@ -349,13 +303,39 @@ impl SkillActivationAttestationService {
                     .collect::<Result<Vec<_>, _>>()?
             }
         };
-        activations.retain(|activation| activation.claims.expires_at_unix > now);
+        activations.retain(|activation| {
+            activation.claims.runtime_session_id == runtime_session_id
+                && activation.claims.issuer == "mcp-management-service"
+                && activation.claims.audience == "plugin-skill-runtime"
+                && activation.claims.expires_at_unix > now
+        });
         activations.sort_by(|left, right| {
             left.depth
                 .cmp(&right.depth)
                 .then(left.claims.issued_at_unix.cmp(&right.claims.issued_at_unix))
                 .then(left.claims.activation_ref.cmp(&right.claims.activation_ref))
         });
+        Ok(activations)
+    }
+
+    pub(crate) async fn active_for_skill_ref(
+        &self,
+        runtime_session_id: &str,
+        skill_ref: &str,
+    ) -> Result<Option<ActiveSkillActivation>, String> {
+        Ok(self
+            .active_activations(runtime_session_id)
+            .await?
+            .into_iter()
+            .rev()
+            .find(|activation| activation.claims.skill_ref == skill_ref))
+    }
+
+    pub(crate) async fn protected_instruction_items(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Vec<Value>, String> {
+        let activations = self.active_activations(runtime_session_id).await?;
         Ok(activations
             .into_iter()
             .map(|activation| protected_instruction_item(&activation))
@@ -378,15 +358,66 @@ impl SkillActivationAttestationService {
     }
 }
 
-fn signing_keys(secret: &str) -> Result<(EncodingKey, DecodingKey), String> {
-    let secret = secret.trim().as_bytes();
-    if secret.len() < 16 {
+fn validate_activation_secret(secret: &str) -> Result<(), String> {
+    if secret.trim().as_bytes().len() < 16 {
         return Err("Plugin Skill attestation secret must contain at least 16 bytes".to_string());
     }
-    Ok((
-        EncodingKey::from_secret(secret),
-        DecodingKey::from_secret(secret),
-    ))
+    Ok(())
+}
+
+async fn verify_shared_activation_key(
+    collection: Collection<Document>,
+    secret: &str,
+) -> Result<(), String> {
+    let fingerprint = hex::encode(Sha256::digest(
+        format!("chatos.plugin.skill.activation.key.v1\0{}", secret.trim()).as_bytes(),
+    ));
+    collection
+        .update_one(
+            doc! { "_id": "encryption-key-v1" },
+            doc! {
+                "$setOnInsert": {
+                    "fingerprint_sha256": fingerprint.as_str(),
+                    "created_at": DateTime::now(),
+                }
+            },
+            UpdateOptions::builder().upsert(true).build(),
+        )
+        .await
+        .map_err(|error| {
+            format!("initialize Plugin Skill activation key metadata failed: {error}")
+        })?;
+    let metadata = collection
+        .find_one(doc! { "_id": "encryption-key-v1" }, None)
+        .await
+        .map_err(|error| format!("read Plugin Skill activation key metadata failed: {error}"))?
+        .ok_or_else(|| "Plugin Skill activation key metadata is missing".to_string())?;
+    if metadata.get_str("fingerprint_sha256").ok() != Some(fingerprint.as_str()) {
+        return Err(
+            "Plugin Skill activation encryption key does not match the key already registered by another MCP Management instance"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn new_activation_reference() -> String {
+    format!(
+        "{ACTIVATION_REFERENCE_PREFIX}{}",
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
+fn validate_activation_reference(value: &str) -> Result<(), String> {
+    let suffix = value
+        .strip_prefix(ACTIVATION_REFERENCE_PREFIX)
+        .ok_or_else(|| "Plugin Skill activation evidence has an invalid reference".to_string())?;
+    if suffix.len() != ACTIVATION_REFERENCE_RANDOM_HEX_LENGTH
+        || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("Plugin Skill activation evidence has an invalid reference".to_string());
+    }
+    Ok(())
 }
 
 fn activation_equivalence_sha256(
@@ -413,21 +444,17 @@ fn protected_instruction_item(activation: &ActiveSkillActivation) -> Value {
         "content": [{
             "type": "input_text",
             "text": format!(
-                "[Protected Plugin Skill Context]\n{}\n\n<skill_activation_receipt name=\"{}\" skill_ref=\"{}\" activation_ref=\"{}\" activation_evidence=\"{}\" depth=\"{}\" />\nUse activation_evidence only as an exact gated-tool argument. Never edit it, substitute activation_ref for it, or disclose it in user-facing output.\n\n<skill_content name=\"{}\" activation_ref=\"{}\" depth=\"{}\">\n{}\n</skill_content>",
+                "[Protected Plugin Skill Context]\n{}\n\n<skill_activation name=\"{}\" skill_ref=\"{}\" depth=\"{}\" />\nThe platform tracks this activation internally. Do not add authentication, user, project, workspace, session, or activation identifiers to Plugin tool arguments.\n\n<skill_content name=\"{}\" depth=\"{}\">\n{}\n</skill_content>",
                 THIRD_PARTY_PLUGIN_ENVELOPE,
                 activation.claims.skill_name,
                 activation.claims.skill_ref,
-                activation.claims.activation_ref,
-                activation.evidence,
                 activation.depth,
                 activation.claims.skill_name,
-                activation.claims.activation_ref,
                 activation.depth,
                 activation.instructions,
             )
         }],
         "_meta": {
-            "chatos/protectedSkillActivationRef": activation.claims.activation_ref,
             "chatos/pluginId": activation.claims.plugin_id,
             "chatos/releaseId": activation.claims.release_id,
             "chatos/instructionsSha256": activation.claims.instructions_sha256,
@@ -572,9 +599,10 @@ mod tests {
     #[tokio::test]
     async fn memory_store_persists_verifies_and_composes_protected_context() {
         let service = SkillActivationAttestationService::new("0123456789abcdef").unwrap();
+        let activation_ref = "SA0123456789abcdef0123456789abcdef";
         let activation = service
             .register(
-                claims("SA1"),
+                claims(activation_ref),
                 None,
                 0,
                 "Follow the router rules.".to_string(),
@@ -583,10 +611,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             service
-                .verify_active(activation.evidence.as_str())
+                .active_for_skill_ref("session-a", activation.claims.skill_ref.as_str())
                 .await
+                .unwrap()
                 .unwrap(),
-            activation
+            activation,
         );
         let items = service
             .protected_instruction_items("session-a")
@@ -594,29 +623,101 @@ mod tests {
             .unwrap();
         assert_eq!(items.len(), 1);
         assert!(items[0].to_string().contains("Follow the router rules."));
-        assert!(items[0]
+        let protected_text = items[0]
             .pointer("/content/0/text")
             .and_then(Value::as_str)
-            .is_some_and(|text| text.contains(activation.evidence.as_str())));
+            .unwrap();
+        assert!(!protected_text.contains(activation_ref));
+        assert!(!protected_text.contains("activation_evidence"));
         service.remove_session("session-a").await.unwrap();
         assert!(service
-            .activation("session-a", "SA1")
+            .activation("session-a", activation_ref)
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn activation_state_is_internal_and_scoped_to_the_runtime_session() {
+        let service = SkillActivationAttestationService::new("0123456789abcdef").unwrap();
+        let activation_ref = "SAfedcba9876543210fedcba9876543210";
+        let activation = service
+            .register(
+                claims(activation_ref),
+                None,
+                0,
+                "Follow the router rules.".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert!(service
+            .active_for_skill_ref("another-session", activation.claims.skill_ref.as_str())
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            service
+                .active_for_skill_ref("session-a", activation.claims.skill_ref.as_str())
+                .await
+                .unwrap()
+                .unwrap(),
+            activation,
+        );
     }
 
     #[test]
     fn encrypted_activation_roundtrip_binds_envelope_fields() {
         let cipher = ActivationCipher::new("0123456789abcdef").unwrap();
         let activation = ActiveSkillActivation {
-            claims: claims("SA2"),
-            parent_activation_ref: Some("SA1".to_string()),
+            claims: claims("SA11111111111111111111111111111111"),
+            parent_activation_ref: Some("SA00000000000000000000000000000000".to_string()),
             depth: 1,
-            evidence: "signed-evidence".to_string(),
             instructions: "Specialist rules".to_string(),
         };
         let document = cipher.encrypt(&activation).unwrap();
         assert_eq!(cipher.decrypt(document).unwrap(), activation);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL"]
+    async fn mongodb_store_shares_internal_activation_state_and_rejects_key_drift() {
+        let database_url = std::env::var("CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL").unwrap();
+        let secret = "shared-skill-activation-secret";
+        let first = SkillActivationAttestationService::connect(secret, database_url.as_str())
+            .await
+            .unwrap();
+        let second = SkillActivationAttestationService::connect(secret, database_url.as_str())
+            .await
+            .unwrap();
+        let session_id = format!("skill-session-{}", uuid::Uuid::new_v4().simple());
+        let activation_ref = new_activation_reference();
+        let mut shared_claims = claims(activation_ref.as_str());
+        shared_claims.runtime_session_id = session_id.clone();
+        let activation = first
+            .register(
+                shared_claims,
+                None,
+                0,
+                "Shared specialist rules".to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            second
+                .active_for_skill_ref(session_id.as_str(), activation.claims.skill_ref.as_str())
+                .await
+                .unwrap()
+                .unwrap(),
+            activation,
+        );
+        assert!(SkillActivationAttestationService::connect(
+            "different-skill-activation-secret",
+            database_url.as_str(),
+        )
+        .await
+        .is_err());
+        first.remove_session(session_id.as_str()).await.unwrap();
     }
 }

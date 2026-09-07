@@ -36,17 +36,17 @@ test('studio serves the packaged workbench and persists a design', async () => {
 
     const context = await fetch(`${base}/api/context`).then((response) => response.json());
     assert.equal(context.kind, 'project');
-    assert.equal(context.chatosProjectId, 'host-project-through-123');
-    assert.equal(context.chatosProjectName, '宿主产品项目');
-    assert.equal(context.workspaceId, 'workspace-through-456');
+    assert.equal(context.isolated, true);
+    assert.equal(context.hasProjectContext, true);
+    assert.equal(context.projectName, '宿主产品项目');
+    assert.equal(Object.hasOwn(context, 'chatosProjectId'), false);
+    assert.equal(Object.hasOwn(context, 'workspaceId'), false);
     assert.ok(context.defaultProjectId);
-    assert.notEqual(context.defaultProjectId, context.chatosProjectId);
 
     const projects = await fetch(`${base}/api/projects`).then((response) => response.json());
     assert.equal(projects.items.length, 1);
     assert.equal(projects.items[0].projectId, context.defaultProjectId);
     assert.equal(projects.items[0].name, '宿主产品项目');
-    assert.equal(projects.items.some((project) => project.projectId === context.chatosProjectId), false);
 
     const projectDesign = await fetch(`${base}/api/projects/${context.defaultProjectId}/documents`, {
       method: 'POST',

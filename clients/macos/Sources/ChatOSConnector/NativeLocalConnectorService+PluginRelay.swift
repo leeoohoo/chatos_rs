@@ -94,7 +94,7 @@ extension NativeLocalConnectorService {
               record.artifactSHA256 == artifactSHA256.lowercased() else {
             throw NativePluginRuntimeError.invalidRequest("Plugin 未安装、已停用或 Release 不匹配")
         }
-        if componentKey == "browser-cdp" {
+        if componentKey == NativeBrowserPluginIdentity.componentKey {
             await browserExtensionPairingRuntime.stop()
         }
         let adapterSessionID = UUID().uuidString.lowercased()

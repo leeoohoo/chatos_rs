@@ -1,23 +1,35 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { WebDesignComponent } from '../../src/schema';
+import { libraryPreviewSelection, LIBRARY_PREVIEW_POINTER_EVENT, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
 
-export function LibraryRuntimeComponent({ component, preview, slotContent, layout = 'fill', autoSize = false }: {
+export function LibraryRuntimeComponent({ component, preview, slotContent, layout = 'fill', autoSize = false, pickItems = false, onPickItem, onPickPointerEvent, onContentHeight }: {
   component: WebDesignComponent;
   preview: boolean;
   slotContent?: ReactNode;
   layout?: 'fill' | 'intrinsic';
   autoSize?: boolean;
+  pickItems?: boolean;
+  onPickItem?: (selection: LibraryPreviewSelection) => void;
+  onPickPointerEvent?: (event: LibraryPreviewPointerEvent) => void;
+  onContentHeight?: (height: number) => void;
 }) {
+  const hostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const recoveryTimerRef = useRef<number | undefined>(undefined);
+  const onPickItemRef = useRef(onPickItem);
+  const onPickPointerEventRef = useRef(onPickPointerEvent);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [contentHeight, setContentHeight] = useState<number>();
+  const [hostSize, setHostSize] = useState({ width: component.width, height: component.height });
   const [recoveryAttempt, setRecoveryAttempt] = useState(0);
   const props = component.library?.props ?? {};
   const library = component.library?.name ?? '';
   const slug = String(props.componentSlug ?? '');
   const instance = component.id;
   const detachedContent = props.editorDetachedContent === true;
+  const selectedElement = libraryPreviewSelection(props.registryElement);
+  useEffect(() => { onPickItemRef.current = onPickItem; }, [onPickItem]);
+  useEffect(() => { onPickPointerEventRef.current = onPickPointerEvent; }, [onPickPointerEvent]);
   const source = useMemo(() => {
     const url = new URL(window.location.href);
     url.search = '';
@@ -27,9 +39,10 @@ export function LibraryRuntimeComponent({ component, preview, slotContent, layou
     url.searchParams.set('component', slug);
     url.searchParams.set('instance', instance);
     url.searchParams.set('layout', layout);
+    if (pickItems) url.searchParams.set('picker', '1');
     if (recoveryAttempt > 0) url.searchParams.set('runtime-retry', String(recoveryAttempt));
     return url.toString();
-  }, [instance, layout, library, recoveryAttempt, slug]);
+  }, [instance, layout, library, pickItems, recoveryAttempt, slug]);
 
   const sendProps = () => frameRef.current?.contentWindow?.postMessage({
     source: 'web-design-studio',
@@ -50,16 +63,56 @@ export function LibraryRuntimeComponent({ component, preview, slotContent, layou
       if (message.data.event === 'content-size' && autoSize) {
         const measuredHeight = Number(message.data.detail?.height);
         if (Number.isFinite(measuredHeight) && measuredHeight > 0) {
-          setContentHeight(Math.max(118, Math.min(720, Math.ceil(measuredHeight))));
+          const nextHeight = Math.max(118, Math.min(720, Math.ceil(measuredHeight)));
+          setContentHeight(nextHeight);
+          onContentHeight?.(nextHeight);
         }
+      }
+      if (message.data.event === 'preview-select' && pickItems) {
+        const selection = libraryPreviewSelection(message.data.detail);
+        if (selection) onPickItemRef.current?.(selection);
       }
       if (message.data.event === 'error') setStatus('error');
     };
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);
-  });
+  }, [autoSize, instance, onContentHeight, pickItems]);
+
+  useEffect(() => {
+    if (!pickItems) return;
+    const receivePointerEvent = (event: Event) => {
+      const detail = (event as CustomEvent<{ instance?: string; state?: LibraryPreviewPointerEvent }>).detail;
+      if (detail?.instance !== instance) return;
+      const state = detail.state;
+      const selection = libraryPreviewSelection(state?.selection);
+      const frame = frameRef.current;
+      if (!selection || !state || !frame) return;
+      const bounds = frame.getBoundingClientRect();
+      onPickPointerEventRef.current?.({
+        selection,
+        pointerId: state.pointerId,
+        clientX: bounds.left + state.clientX,
+        clientY: bounds.top + state.clientY,
+        phase: state.phase
+      });
+    };
+    window.addEventListener(LIBRARY_PREVIEW_POINTER_EVENT, receivePointerEvent);
+    return () => window.removeEventListener(LIBRARY_PREVIEW_POINTER_EVENT, receivePointerEvent);
+  }, [instance, pickItems]);
 
   useEffect(sendProps, [props, instance, component.content]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      const height = entry.contentRect.height;
+      if (width > 0 && height > 0) setHostSize({ width, height });
+    });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => () => window.clearTimeout(recoveryTimerRef.current), []);
 
@@ -77,8 +130,21 @@ export function LibraryRuntimeComponent({ component, preview, slotContent, layou
     recoveryTimerRef.current = window.setTimeout(() => setRecoveryAttempt((attempt) => attempt + 1), 750);
   };
 
-  const autoSizeStyle = autoSize && contentHeight ? { height: contentHeight, minHeight: contentHeight } : undefined;
-  return <div className={`library-runtime-component library-${library} component-${slug} status-${status} ${autoSize ? 'auto-size' : ''}`} style={autoSizeStyle}>
+  const autoSizeStyle = autoSize && contentHeight && !selectedElement ? { height: contentHeight, minHeight: contentHeight } : undefined;
+  const selectionScaleX = selectedElement ? hostSize.width / selectedElement.width : 1;
+  const selectionScaleY = selectedElement ? hostSize.height / selectedElement.height : 1;
+  const selectedFrameStyle = selectedElement ? {
+    width: selectedElement.viewportWidth,
+    height: selectedElement.viewportHeight,
+    maxWidth: 'none',
+    maxHeight: 'none',
+    position: 'absolute' as const,
+    left: 0,
+    top: 0,
+    transformOrigin: '0 0',
+    transform: `matrix(${selectionScaleX},0,0,${selectionScaleY},${-selectedElement.x * selectionScaleX},${-selectedElement.y * selectionScaleY})`
+  } : undefined;
+  return <div ref={hostRef} className={`library-runtime-component library-${library} component-${slug} status-${status} ${autoSize ? 'auto-size' : ''} ${selectedElement ? 'selected-registry-element' : ''}`} style={autoSizeStyle}>
     <iframe
       ref={frameRef}
       src={source}
@@ -86,7 +152,7 @@ export function LibraryRuntimeComponent({ component, preview, slotContent, layou
       onLoad={handleFrameLoad}
       sandbox="allow-scripts allow-same-origin"
       aria-hidden={detachedContent || undefined}
-      style={{ pointerEvents: preview ? 'auto' : 'none', visibility: detachedContent ? 'hidden' : undefined }}
+      style={{ ...selectedFrameStyle, pointerEvents: preview ? 'auto' : 'none', visibility: detachedContent ? 'hidden' : undefined }}
     />
     {!detachedContent && status === 'loading' && <div className="library-runtime-status">正在载入官方组件…</div>}
     {!detachedContent && status === 'error' && <div className="library-runtime-status error">官方组件运行失败</div>}

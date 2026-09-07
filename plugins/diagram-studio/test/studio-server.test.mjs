@@ -36,9 +36,11 @@ test('studio command serves the packaged UI and persists blank project diagrams'
 
     const context = await fetch(`${base}/api/context`).then((response) => response.json());
     assert.equal(context.kind, 'project');
-    assert.equal(context.shared, false);
-    assert.equal(context.chatosProjectId, 'project-relay');
-    assert.equal(context.chatosProjectName, 'relay');
+    assert.equal(context.isolated, true);
+    assert.equal(context.hasProjectContext, true);
+    assert.equal(context.projectName, 'relay');
+    assert.equal(Object.hasOwn(context, 'chatosProjectId'), false);
+    assert.equal(Object.hasOwn(context, 'workspaceId'), false);
     assert.match(context.defaultProjectId, /^project-/);
 
     const initialProjects = await fetch(`${base}/api/projects`).then((response) => response.json());

@@ -16,4 +16,4 @@ metadata:
 
 A website project may contain multiple designs; a design may contain multiple pages. Keep component `pageId` and parent relationships inside one page. Treat open annotations and page/component design requests as requirements, and resolve a request only after its change is applied.
 
-Never copy the host-injected `scope.chatosProjectId` into a `projectId` argument. Read [project examples](references/examples.md) before create-versus-reuse decisions.
+ChatOS host identifiers are injected and intentionally not exposed by the plugin. A tool `projectId` is always an internal Web Design Studio project identifier returned by a project tool. Read [project examples](references/examples.md) before create-versus-reuse decisions.

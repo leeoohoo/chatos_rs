@@ -243,12 +243,12 @@ impl PluginLocalProvider {
         }
     }
 
-    async fn apply_skill_gate(
+    pub(super) async fn apply_skill_gate(
         &self,
         snapshot: &RuntimeSessionSnapshot,
         binding: &PluginLocalProviderBinding,
         tool_name: &str,
-        mut arguments: Value,
+        arguments: Value,
     ) -> Result<Value, ProviderCallError> {
         let definition = binding
             .tools
@@ -272,50 +272,16 @@ impl PluginLocalProvider {
                     "Plugin MCP tool has an invalid chatos/skillGate declaration: {error}"
                 ))
             })?;
-        let evidence_argument = gate.evidence_argument.trim();
-        if evidence_argument.is_empty()
-            || (gate.all_of.is_empty() && gate.select_by_argument.is_none())
-        {
+        if gate.all_of.is_empty() && gate.select_by_argument.is_none() {
             return Err(ProviderCallError::invalid_response(
-                "Plugin MCP skill gate must declare an evidence argument and at least one required Skill",
+                "Plugin MCP skill gate must declare at least one required Skill",
             ));
         }
-        let object = arguments.as_object_mut().ok_or_else(|| {
+        arguments.as_object().ok_or_else(|| {
             ProviderCallError::invalid_response(
                 "Plugin MCP tool arguments must be an object when a Skill gate is declared",
             )
         })?;
-        let evidence_value = object
-            .remove(evidence_argument)
-            .ok_or_else(|| ProviderCallError {
-                code: MCP_ERROR_AUTH_REQUIRED,
-                message: format!(
-                    "Plugin tool requires active Skill evidence in argument {evidence_argument}"
-                ),
-            })?;
-        let tokens = match evidence_value {
-            Value::String(token) => vec![token],
-            Value::Array(values) => values
-                .into_iter()
-                .map(|value| {
-                    value.as_str().map(str::to_string).ok_or_else(|| {
-                        ProviderCallError::invalid_response(
-                            "Plugin Skill evidence array must contain only strings",
-                        )
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-            _ => {
-                return Err(ProviderCallError::invalid_response(
-                    "Plugin Skill evidence must be a token string or an array of token strings",
-                ))
-            }
-        };
-        if tokens.is_empty() || tokens.len() > 16 {
-            return Err(ProviderCallError::invalid_response(
-                "Plugin Skill evidence must contain between 1 and 16 tokens",
-            ));
-        }
         let mut required = gate
             .all_of
             .iter()
@@ -344,18 +310,19 @@ impl PluginLocalProvider {
             required.insert(skill_name.clone());
         }
         let mut activated_names = HashSet::new();
-        for token in tokens {
-            let activation = self
-                .skill_attestations
-                .verify_active(token.trim())
-                .await
-                .map_err(ProviderCallError::provider_unavailable)?;
-            self.validate_gated_activation(snapshot, binding, &activation.claims)?;
-            if !activated_names.insert(activation.claims.skill_name.clone()) {
-                return Err(ProviderCallError::invalid_response(
-                    "Plugin Skill evidence contains a duplicate Skill activation",
-                ));
+        for activation in self
+            .skill_attestations
+            .active_activations(snapshot.session_id.as_str())
+            .await
+            .map_err(ProviderCallError::provider_unavailable)?
+        {
+            if activation.claims.plugin_id != binding.runtime.plugin_id
+                || activation.claims.release_id != binding.runtime.release_id
+            {
+                continue;
             }
+            self.validate_gated_activation(snapshot, binding, &activation.claims)?;
+            activated_names.insert(activation.claims.skill_name.clone());
         }
         let mut missing = required
             .difference(&activated_names)
@@ -390,8 +357,9 @@ impl PluginLocalProvider {
             })
             .ok_or_else(|| ProviderCallError {
                 code: MCP_ERROR_AUTH_REQUIRED,
-                message: "Plugin Skill evidence refers to a component outside this Runtime Session"
-                    .to_string(),
+                message:
+                    "Plugin Skill activation refers to a component outside this Runtime Session"
+                        .to_string(),
             })?;
         let skill = skill_binding
             .runtime
@@ -436,7 +404,7 @@ impl PluginLocalProvider {
         {
             return Err(ProviderCallError {
                 code: MCP_ERROR_AUTH_REQUIRED,
-                message: "Plugin Skill evidence does not match the target Plugin Runtime Session"
+                message: "Plugin Skill activation does not match the target Plugin Runtime Session"
                     .to_string(),
             });
         }
