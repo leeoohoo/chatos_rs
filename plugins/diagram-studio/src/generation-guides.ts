@@ -199,11 +199,6 @@ async function readGuideFiles(kind: DiagramKind): Promise<{
 
 export function runtimeDataScopeFingerprint(rootDirectory: string): string {
   return hashText(canonicalJson({
-    scope: process.env.CHATOS_CONTEXT_SCOPE ?? 'device',
-    scopeId: process.env.CHATOS_CONTEXT_SCOPE_ID ?? '',
-    projectId: process.env.CHATOS_PROJECT_ID ?? '',
-    workspaceId: process.env.CHATOS_WORKSPACE_ID ?? '',
-    userId: process.env.CHATOS_USER_ID ?? process.env.CHATOS_ACCOUNT_ID ?? '',
     dataDirectory: path.resolve(rootDirectory)
   }));
 }

@@ -30,6 +30,12 @@ test('persistent diagram scope is stable across runtime sessions while generatio
     const generationB = runtimeGenerationScopeFingerprint('/tmp/diagram-data-scope');
     assert.equal(dataB, dataA);
     assert.notEqual(generationB, generationA);
+    process.env.CHATOS_CONTEXT_SCOPE_ID = 'scope-b';
+    process.env.CHATOS_PROJECT_ID = 'project-b';
+    process.env.CHATOS_WORKSPACE_ID = 'workspace-b';
+    process.env.CHATOS_USER_ID = 'user-b';
+    assert.equal(runtimeDataScopeFingerprint('/tmp/diagram-data-scope'), dataA);
+    assert.notEqual(runtimeDataScopeFingerprint('/tmp/diagram-data-scope-b'), dataA);
   } finally {
     for (const name of names) {
       if (original[name] === undefined) delete process.env[name];
