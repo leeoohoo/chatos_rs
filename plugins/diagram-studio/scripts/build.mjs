@@ -54,6 +54,11 @@ await Promise.all([
   }),
   build({
     ...common,
+    entryPoints: ['src/mindmap.ts'],
+    outfile: 'dist/mindmap.test.mjs'
+  }),
+  build({
+    ...common,
     entryPoints: ['src/generation-guides.ts'],
     outfile: 'dist/generation-guides.test.mjs'
   })

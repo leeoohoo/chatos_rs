@@ -16,12 +16,13 @@ import {
   type Connection,
   type EdgeChange,
   type EdgeProps,
+  type FinalConnectionState,
   type NodeChange
 } from '@xyflow/react';
 import { toPng, toSvg } from 'html-to-image';
 import type { DiagramDocument, DiagramEdge, DiagramKind, DiagramNode, DiagramProject, DiagramProjectSummary } from '../../src/schema';
 import { layoutDiagram } from '../../src/layout';
-import { analyzeMindMap, createMindMapEdge, layoutMindMap, mindMapNodeSize, mindMapSubtreeIds } from '../../src/mindmap';
+import { analyzeMindMap, createMindMapEdge, insertMindMapChild, layoutMindMap, mindMapNodeSize, mindMapSubtreeIds } from '../../src/mindmap';
 import { nextNodeZIndex, reorderNodeLayers, type NodeLayerAction } from '../../src/layers';
 import { detectPlantUmlDiagramKind, diagramToPlantUml, hasEmbeddedDiagramLayout, plantUmlToDiagram } from '../../src/plantuml';
 import {
@@ -580,6 +581,31 @@ export function DiagramStudioApp() {
     });
   }
 
+  function onConnectEnd(event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) {
+    if (!document || document.kind !== 'mindmap' || connectionState.isValid || !connectionState.fromNode || connectionState.toNode) return;
+    const eventTarget = event.target;
+    if (eventTarget instanceof Element && eventTarget.closest('.react-flow__node')) return;
+    const parent = document.nodes.find((node) => node.id === connectionState.fromNode?.id);
+    if (!parent || !['mindmap-root', 'mindmap-topic'].includes(parent.data.shape)) return;
+    const clientPosition = connectionEndClientPosition(event);
+    if (!clientPosition) return;
+    const position = reactFlow.screenToFlowPosition(clientPosition);
+    const parentSize = mindMapNodeSize(parent);
+    const side = parent.data.shape === 'mindmap-root'
+      ? connectionState.fromHandle?.id === 'left'
+        ? 'left'
+        : connectionState.fromHandle?.id === 'right'
+          ? 'right'
+          : position.x < parent.position.x + parentSize.width / 2 ? 'left' : 'right'
+      : parent.data.mindmapSide ?? 'right';
+    const inserted = insertMindMapChild(document, parent.id, { position, side, label: '新主题' });
+    commit(inserted.document);
+    setSelectedNodeIds(new Set([inserted.node.id]));
+    setSelectedEdgeId(undefined);
+    setMindmapEdit({ nodeId: inserted.node.id, value: '' });
+    window.setTimeout(() => reactFlow.fitView({ padding: 0.28, duration: 280, maxZoom: 1.2 }), 40);
+  }
+
   function addNode(item: PaletteItem, droppedPosition?: { x: number; y: number }) {
     if (!document) return;
     if (document.kind === 'mindmap' && (item.shape === 'mindmap-root' || item.shape === 'mindmap-topic')) {
@@ -697,25 +723,16 @@ export function DiagramStudioApp() {
     const side = parent.data.shape === 'mindmap-root'
       ? selected.data.shape === 'mindmap-topic' ? selected.data.mindmapSide ?? 'right' : balancedMindMapSide(document, parent.id)
       : parent.data.mindmapSide ?? 'right';
-    const newNode: DiagramNode = {
-      id: `mindmap-${crypto.randomUUID().slice(0, 8)}`,
-      type: 'diagramNode',
-      position: { x: 0, y: 0 },
-      width: 150,
-      height: 46,
-      zIndex: nextNodeZIndex(document.nodes),
-      data: {
-        label: '新主题', category: 'mindmap', shape: 'mindmap-topic', showLabel: true,
-        color: side === 'left' ? '#7967D8' : '#4E7CC7', borderColor: side === 'left' ? '#7967D8' : '#4E7CC7', fillColor: 'transparent',
-        fontSize: 14, fontWeight: 620, mindmapSide: side,
-        mindmapOrder: document.edges.filter((edge) => edge.source === parent.id).length
-      }
+    const parentSize = mindMapNodeSize(parent);
+    const position = {
+      x: parent.position.x + (side === 'right' ? parentSize.width + 250 : -250),
+      y: parent.position.y + parentSize.height / 2
     };
-    const nodes = [...document.nodes, newNode];
-    commit(layoutMindMap({ ...document, nodes, edges: [...document.edges, createMindMapEdge(parent.id, newNode.id, nodes)] }));
-    setSelectedNodeIds(new Set([newNode.id]));
+    const inserted = insertMindMapChild(document, parent.id, { position, side, label: '新主题' });
+    commit(inserted.document);
+    setSelectedNodeIds(new Set([inserted.node.id]));
     setSelectedEdgeId(undefined);
-    setMindmapEdit({ nodeId: newNode.id, value: '' });
+    setMindmapEdit({ nodeId: inserted.node.id, value: '' });
     window.setTimeout(() => reactFlow.fitView({ padding: 0.28, duration: 280, maxZoom: 1.2 }), 40);
   }
 
@@ -1236,6 +1253,7 @@ export function DiagramStudioApp() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onConnectEnd={onConnectEnd}
           onNodeDoubleClick={(_event, node) => {
             const resolved = document.nodes.find((candidate) => candidate.id === node.id);
             if (resolved && document.kind === 'mindmap' && ['mindmap-root', 'mindmap-topic'].includes(resolved.data.shape)) setMindmapEdit({ nodeId: resolved.id, value: resolved.data.label });
@@ -1260,12 +1278,12 @@ export function DiagramStudioApp() {
           colorMode="system"
         >
           <Background variant={BackgroundVariant.Dots} gap={18} size={1.25} color="var(--grid-dot)" />
-          {document.nodes.length === 0 && <div className="canvas-empty-hint"><span><Icon name={document.kind === 'mindmap' ? 'mindmap' : kindIcon(document.kind)} /></span><strong>{document.kind === 'mindmap' ? '先添加中心主题' : '空白画布'}</strong><p>{document.kind === 'mindmap' ? '从左侧拖入“中心主题”，再用 Tab 或拖入分支主题继续展开。' : '从左侧组件库拖入元素开始绘制。'}</p></div>}
+          {document.nodes.length === 0 && <div className="canvas-empty-hint"><span><Icon name={document.kind === 'mindmap' ? 'mindmap' : kindIcon(document.kind)} /></span><strong>{document.kind === 'mindmap' ? '先添加中心主题' : '空白画布'}</strong><p>{document.kind === 'mindmap' ? '从左侧拖入“中心主题”，再从主题两侧拉出分支，松到空白处即可创建下级主题。' : '从左侧组件库拖入元素开始绘制。'}</p></div>}
           <MiniMap className="apple-minimap" pannable zoomable nodeColor={(node) => (node.data as unknown as DiagramNode['data'])?.color ?? '#7D8797'} />
           <Controls className="apple-controls" showInteractive={false} />
           <div className="canvas-status">
             <span>拖动空白移动画布 · Shift 拖动框选</span><i />
-            <span>{kindLabel(document.kind)}</span><i />
+            <span>{document.kind === 'mindmap' ? '从主题拉线到空白处可创建子主题' : kindLabel(document.kind)}</span><i />
             <span>{document.nodes.filter((node) => node.type !== 'laneNode').length} 个节点</span><i />
             <span>{document.edges.length} 条连线</span>
           </div>
@@ -1445,6 +1463,12 @@ function balancedMindMapSide(document: DiagramDocument, rootId: string): 'left' 
     else right += 1;
   }
   return right <= left ? 'right' : 'left';
+}
+
+function connectionEndClientPosition(event: MouseEvent | TouchEvent): { x: number; y: number } | undefined {
+  if ('clientX' in event) return { x: event.clientX, y: event.clientY };
+  const touch = event.changedTouches[0] ?? event.touches[0];
+  return touch ? { x: touch.clientX, y: touch.clientY } : undefined;
 }
 
 function findActivationAt(nodes: DiagramNode[], lifeline: DiagramNode, slot: number): DiagramNode | undefined {

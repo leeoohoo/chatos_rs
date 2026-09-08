@@ -12,6 +12,13 @@ export interface MindMapAnalysis {
   hiddenNodeIds: Set<string>;
 }
 
+export interface InsertMindMapChildOptions {
+  id?: string;
+  label?: string;
+  position: { x: number; y: number };
+  side?: 'left' | 'right';
+}
+
 const horizontalGap = 250;
 const verticalGap = 34;
 
@@ -161,6 +168,65 @@ export function createMindMapEdge(source: string, target: string, nodes: Diagram
   return mindMapEdge({ id, source, target }, nodes);
 }
 
+export function insertMindMapChild(
+  document: DiagramDocument,
+  parentId: string,
+  options: InsertMindMapChildOptions
+): { document: DiagramDocument; node: DiagramNode } {
+  const analysis = analyzeMindMap(document);
+  const parent = document.nodes.find((node) => node.id === parentId);
+  if (!parent || !isMindMapNode(parent)) throw new Error('Mind-map parent not found');
+
+  const directChildren = analysis.childrenByNode.get(parent.id) ?? [];
+  const side = parent.data.shape === 'mindmap-root'
+    ? options.side ?? balancedSide(directChildren)
+    : parent.data.mindmapSide ?? options.side ?? 'right';
+  const siblings = directChildren
+    .filter((node) => parent.data.shape !== 'mindmap-root' || node.data.mindmapSide === side)
+    .sort((left, right) => nodeCenterY(left) - nodeCenterY(right));
+  const insertionIndex = siblings.findIndex((node) => options.position.y < nodeCenterY(node));
+  const orderedSiblings = [...siblings];
+  const nodeId = options.id ?? `mindmap-${crypto.randomUUID().slice(0, 8)}`;
+  const branchColor = parent.data.shape === 'mindmap-root'
+    ? side === 'left' ? '#7967D8' : '#4E7CC7'
+    : parent.data.color ?? (side === 'left' ? '#7967D8' : '#4E7CC7');
+  const newNode: DiagramNode = {
+    id: nodeId,
+    type: 'diagramNode',
+    position: options.position,
+    width: 150,
+    height: 46,
+    zIndex: Math.max(0, ...document.nodes.map((node) => node.zIndex ?? 0)) + 1,
+    data: {
+      label: options.label ?? '新主题',
+      category: 'mindmap',
+      shape: 'mindmap-topic',
+      showLabel: true,
+      color: branchColor,
+      borderColor: branchColor,
+      fillColor: 'transparent',
+      fontSize: 14,
+      fontWeight: 620,
+      mindmapSide: side,
+      mindmapOrder: insertionIndex < 0 ? siblings.length : insertionIndex
+    }
+  };
+  orderedSiblings.splice(insertionIndex < 0 ? orderedSiblings.length : insertionIndex, 0, newNode);
+  const siblingOrder = new Map(orderedSiblings.map((node, index) => [node.id, index]));
+  const nodes = document.nodes.map((node) => {
+    if (node.id === parent.id) return { ...node, data: { ...node.data, mindmapCollapsed: false } };
+    const order = siblingOrder.get(node.id);
+    return order === undefined ? node : { ...node, data: { ...node.data, mindmapOrder: order } };
+  });
+  nodes.push(newNode);
+  const next = layoutMindMap({
+    ...document,
+    nodes,
+    edges: [...document.edges, createMindMapEdge(parent.id, newNode.id, nodes)]
+  });
+  return { document: next, node: next.nodes.find((node) => node.id === newNode.id)! };
+}
+
 export function mindMapEdge(edge: DiagramEdge, nodes: DiagramNode[]): DiagramEdge {
   const target = nodes.find((node) => node.id === edge.target);
   const side = target?.data.mindmapSide ?? 'right';
@@ -204,4 +270,14 @@ function normalizeMindMapOrigin(document: DiagramDocument): void {
   const offsetX = 100 - minX;
   const offsetY = 100 - minY;
   for (const node of document.nodes) node.position = { x: node.position.x + offsetX, y: node.position.y + offsetY };
+}
+
+function balancedSide(children: DiagramNode[]): 'left' | 'right' {
+  const left = children.filter((node) => node.data.mindmapSide === 'left').length;
+  const right = children.length - left;
+  return right <= left ? 'right' : 'left';
+}
+
+function nodeCenterY(node: DiagramNode): number {
+  return node.position.y + mindMapNodeSize(node).height / 2;
 }

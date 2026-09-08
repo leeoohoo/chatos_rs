@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderDiagramSvg } from '../dist/document-store.test.mjs';
 import { layoutDiagram } from '../dist/layout.test.mjs';
+import { analyzeMindMap as inspectMindMap, insertMindMapChild } from '../dist/mindmap.test.mjs';
 import { inspectDiagramQuality } from '../dist/quality.test.mjs';
 import { detectPlantUmlDiagramKind, diagramToPlantUml, parsePlantUmlMindMap, plantUmlToDiagram } from '../dist/plantuml.test.mjs';
 
@@ -73,6 +74,25 @@ test('mind-map SVG export preserves the dedicated visual language', async () => 
   assert.match(svg, />AI 生成<\/text>/);
   assert.doesNotMatch(svg, /<path d="M [^"]+"[^>]+marker-start=/);
   assert.doesNotMatch(svg, /<path d="M [^"]+"[^>]+marker-end=/);
+});
+
+test('dropping a branch on blank canvas creates and orders an editable child topic', () => {
+  const document = plantUmlToDiagram(source, { documentId: 'mindmap-connect-drop', kind: 'mindmap' });
+  const root = document.nodes.find((node) => node.data.shape === 'mindmap-root');
+  assert.ok(root);
+  const inserted = insertMindMapChild(document, root.id, {
+    id: 'mindmap-new-child',
+    label: '新增分支',
+    side: 'right',
+    position: { x: root.position.x + 300, y: -1000 }
+  });
+  const analysis = inspectMindMap(inserted.document);
+  assert.equal(inserted.node.data.label, '新增分支');
+  assert.equal(inserted.node.data.mindmapSide, 'right');
+  assert.equal(analysis.parentByNode.get(inserted.node.id), root.id);
+  assert.equal(analysis.childrenByNode.get(root.id)?.filter((node) => node.data.mindmapSide === 'right')[0]?.id, inserted.node.id);
+  assert.ok(inserted.document.edges.some((edge) => edge.source === root.id && edge.target === inserted.node.id && edge.data?.endMarker === 'none'));
+  assert.equal(inspectDiagramQuality(inserted.document).ready, true);
 });
 
 test('mind-map quality rejects multiple parents and cycles', () => {
