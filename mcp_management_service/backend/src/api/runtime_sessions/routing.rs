@@ -351,3 +351,16 @@ pub(super) fn required_routes_without_provider_adapter(
         .map(|route| route.resource_id.clone())
         .collect()
 }
+
+pub(super) fn required_unavailable_routes(
+    required_resource_ids: &HashSet<String>,
+    routes: &[chatos_mcp_management_sdk::ResolvedMcpRoute],
+) -> Vec<String> {
+    routes
+        .iter()
+        .filter(|route| {
+            required_resource_ids.contains(route.resource_id.as_str()) && !route.is_available()
+        })
+        .map(|route| route.resource_id.clone())
+        .collect()
+}

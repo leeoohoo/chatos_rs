@@ -3,8 +3,8 @@
 
 use super::*;
 use chatos_mcp_management_sdk::{
-    ProjectExecutionContext, RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget,
-    WorkspaceProviderKind,
+    ProjectExecutionContext, RuntimeRemoteConnectionRouteTarget, RuntimeWorkspaceRouteTarget,
+    WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
@@ -427,6 +427,38 @@ fn required_route_without_registered_provider_adapter_is_blocked() {
     assert_eq!(
         required_routes_without_provider_adapter(&required_resource_ids, &routes, |_| false),
         vec!["required-mcp"]
+    );
+}
+
+#[test]
+fn required_remote_connection_route_uses_the_final_bound_route_state() {
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::RemoteConnectionController);
+    let required_resource_ids = HashSet::from([descriptor.resource_id.to_string()]);
+    let mut route = system_route(SystemMcpKey::RemoteConnectionController);
+    route.provider_kind = McpProviderKind::Unavailable;
+    route.provider_ref = None;
+    route.reason =
+        "remote connection MCP requires an explicit Local Connector connection target".to_string();
+
+    assert_eq!(
+        required_unavailable_routes(&required_resource_ids, std::slice::from_ref(&route)),
+        vec![descriptor.resource_id.to_string()]
+    );
+
+    bind_remote_connection_route(
+        std::slice::from_mut(&mut route),
+        Some(&RuntimeRemoteConnectionRouteTarget {
+            remote_connection_id: "connection-1".to_string(),
+            device_id: "device-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+        }),
+    );
+
+    assert!(required_unavailable_routes(&required_resource_ids, &[route.clone()]).is_empty());
+    assert_eq!(route.provider_kind, McpProviderKind::LocalConnector);
+    assert_eq!(
+        route.provider_ref.as_deref(),
+        Some("device:device-1/workspace:workspace-1")
     );
 }
 

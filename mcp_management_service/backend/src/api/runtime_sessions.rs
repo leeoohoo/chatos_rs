@@ -262,7 +262,6 @@ pub(super) async fn resolve_runtime_session(
             route_response.routes.as_slice(),
         )?;
         let mut unavailable_required_mcps = materialized.unavailable_required_resources;
-        unavailable_required_mcps.extend(route_response.unavailable_required_mcps);
         unavailable_required_mcps.extend(tool_result.missing_required_tool_schemas);
         let mut required_resource_ids = capabilities
             .mcps
@@ -286,6 +285,10 @@ pub(super) async fn resolve_runtime_session(
                 .filter(|binding| binding.required)
                 .map(|binding| binding.resource_id.clone()),
         );
+        unavailable_required_mcps.extend(required_unavailable_routes(
+            &required_resource_ids,
+            route_response.routes.as_slice(),
+        ));
         unavailable_required_mcps.extend(required_routes_without_provider_adapter(
             &required_resource_ids,
             route_response.routes.as_slice(),
