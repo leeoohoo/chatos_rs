@@ -2,31 +2,29 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebDesignDocumentStore, RevisionConflictError } from './document-store.js';
+import { runtimeScopeFingerprint } from './runtime-scope.js';
 import { assertWebDesignDocument, type WebDesignDocument } from './schema.js';
 
 const port = Number.parseInt(process.env.CHATOS_PLUGIN_APP_PORT ?? process.env.WEB_DESIGN_STUDIO_PORT ?? '4188', 10);
 const host = process.env.CHATOS_PLUGIN_APP_HOST ?? process.env.WEB_DESIGN_STUDIO_HOST ?? '127.0.0.1';
 const store = new WebDesignDocumentStore();
 await store.initialize();
-await store.ensureLegacyProject();
 
 const contextKind = process.env.CHATOS_CONTEXT_SCOPE ?? 'device';
 const runtimeContext = {
   kind: contextKind,
-  shared: contextKind === 'device',
-  ...(process.env.CHATOS_PROJECT_ID ? { chatosProjectId: process.env.CHATOS_PROJECT_ID } : {}),
-  ...(process.env.CHATOS_PROJECT_NAME ? { chatosProjectName: process.env.CHATOS_PROJECT_NAME } : {}),
-  ...(process.env.CHATOS_WORKSPACE_ID ? { workspaceId: process.env.CHATOS_WORKSPACE_ID } : {})
+  isolated: true,
+  hasProjectContext: contextKind === 'project',
+  ...(process.env.CHATOS_PROJECT_NAME ? { projectName: process.env.CHATOS_PROJECT_NAME } : {})
 };
-let defaultProjectId: string | undefined;
-if (contextKind === 'project' && process.env.CHATOS_PROJECT_ID) {
-  const projects = await store.listProjects();
-  if (projects.length === 0) {
-    defaultProjectId = (await store.createProject(process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 网站项目')).projectId;
-  } else if (projects.length === 1) {
-    defaultProjectId = projects[0].projectId;
-  }
-}
+const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
+const defaultProject = await store.ensureScopedProject(
+  scopeKey,
+  contextKind === 'project' && process.env.CHATOS_PROJECT_ID
+    ? process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 网站项目'
+    : '公共网站设计'
+);
+const defaultProjectId = defaultProject.projectId;
 
 const app = express();
 app.disable('x-powered-by');
@@ -45,7 +43,7 @@ app.get('/api/context', (_request, response) => {
 app.get('/api/documents', async (_request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json({ items: await store.list() });
+    response.json({ items: await store.listInProject(defaultProjectId, scopeKey) });
   } catch (error) {
     next(error);
   }
@@ -54,7 +52,7 @@ app.get('/api/documents', async (_request, response, next) => {
 app.get('/api/projects', async (_request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json({ items: await store.listProjects() });
+    response.json({ items: await store.listProjects(scopeKey) });
   } catch (error) {
     next(error);
   }
@@ -63,46 +61,7 @@ app.get('/api/projects', async (_request, response, next) => {
 app.get('/api/projects/:projectId', async (request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json(await store.readProject(request.params.projectId));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post('/api/projects', async (request, response, next) => {
-  try {
-    const name = typeof request.body?.name === 'string' ? request.body.name : '';
-    const description = typeof request.body?.description === 'string' ? request.body.description : undefined;
-    response.status(201).json(await store.createProject(name, description));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.patch('/api/projects/:projectId', async (request, response, next) => {
-  try {
-    response.json(await store.updateProject(request.params.projectId, {
-      name: typeof request.body?.name === 'string' ? request.body.name : undefined,
-      description: typeof request.body?.description === 'string' ? request.body.description : undefined
-    }));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.delete('/api/projects/:projectId', async (request, response, next) => {
-  try {
-    await store.deleteProject(request.params.projectId, request.query.deleteDocuments === 'true');
-    response.status(204).end();
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post('/api/projects/:projectId/documents', async (request, response, next) => {
-  try {
-    const title = typeof request.body?.title === 'string' ? request.body.title : undefined;
-    response.status(201).json(await store.createInProject(request.params.projectId, title, request.body?.blank === true));
+    response.json(await store.readProjectInScope(request.params.projectId, scopeKey));
   } catch (error) {
     next(error);
   }
@@ -111,7 +70,7 @@ app.post('/api/projects/:projectId/documents', async (request, response, next) =
 app.post('/api/documents', async (request, response, next) => {
   try {
     const title = typeof request.body?.title === 'string' ? request.body.title : undefined;
-    response.status(201).json(await store.create(title));
+    response.status(201).json(await store.createInProject(defaultProjectId, title, request.body?.blank === true));
   } catch (error) {
     next(error);
   }
@@ -120,7 +79,7 @@ app.post('/api/documents', async (request, response, next) => {
 app.get('/api/documents/:documentId', async (request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json(await store.read(request.params.documentId));
+    response.json(await store.readInScope(request.params.documentId, scopeKey));
   } catch (error) {
     next(error);
   }
@@ -128,6 +87,7 @@ app.get('/api/documents/:documentId', async (request, response, next) => {
 
 app.put('/api/documents/:documentId', async (request, response, next) => {
   try {
+    await store.readInScope(request.params.documentId, scopeKey);
     const expectedRevision = request.body?.expectedRevision;
     const submitted: unknown = request.body?.document;
     if (!Number.isSafeInteger(expectedRevision)) throw new Error('expectedRevision is required.');
@@ -142,6 +102,7 @@ app.put('/api/documents/:documentId', async (request, response, next) => {
 
 app.delete('/api/documents/:documentId', async (request, response, next) => {
   try {
+    await store.readInScope(request.params.documentId, scopeKey);
     await store.remove(request.params.documentId);
     response.status(204).end();
   } catch (error) {

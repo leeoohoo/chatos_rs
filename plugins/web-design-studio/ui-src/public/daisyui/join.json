@@ -1,0 +1,39 @@
+{
+  "slug": "join",
+  "title": "Join (group items)",
+  "description": "Join is a container for grouping multiple items, it can be used to group buttons, inputs, etc. Join applies border radius to the first and last item. Join can be used to create a horizontal or vertical list of items.",
+  "demos": [
+    {
+      "id": "join-1",
+      "label": "Join",
+      "html": "<div class=\"join\">\n  <button class=\"btn join-item\">Button</button>\n  <button class=\"btn join-item\">Button</button>\n  <button class=\"btn join-item\">Button</button>\n</div>"
+    },
+    {
+      "id": "join-2",
+      "label": "Group items vertically",
+      "html": "<div class=\"join join-vertical\">\n  <button class=\"btn join-item\">Button</button>\n  <button class=\"btn join-item\">Button</button>\n  <button class=\"btn join-item\">Button</button>\n</div>"
+    },
+    {
+      "id": "join-3",
+      "label": "Responsive: it's vertical on small screen and horizontal on large screen",
+      "html": "<div class=\"join join-vertical lg:join-horizontal\">\n  <button class=\"btn join-item\">Button</button>\n  <button class=\"btn join-item\">Button</button>\n  <button class=\"btn join-item\">Button</button>\n</div>"
+    },
+    {
+      "id": "join-4",
+      "label": "With extra elements in the group",
+      "html": "<div class=\"join\">\n  <div>\n    <div>\n      <input class=\"input join-item\" placeholder=\"Search\" />\n    </div>\n  </div>\n  <select class=\"select join-item\">\n    <option disabled selected>Filter</option>\n    <option>Sci-fi</option>\n    <option>Drama</option>\n    <option>Action</option>\n  </select>\n  <div class=\"indicator\">\n    <span class=\"indicator-item badge badge-secondary\">new</span>\n    <button class=\"btn join-item\">Search</button>\n  </div>\n</div>"
+    },
+    {
+      "id": "join-5",
+      "label": "Custom border radius",
+      "html": "<div class=\"join\">\n  <input class=\"input join-item\" placeholder=\"Email\" />\n  <button class=\"btn join-item rounded-r-full\">Subscribe</button>\n</div>"
+    },
+    {
+      "id": "join-6",
+      "label": "Join radio inputs with btn style",
+      "html": "<div class=\"join\">\n  <input class=\"join-item btn\" type=\"radio\" name=\"options\" aria-label=\"Radio 1\" />\n  <input class=\"join-item btn\" type=\"radio\" name=\"options\" aria-label=\"Radio 2\" />\n  <input class=\"join-item btn\" type=\"radio\" name=\"options\" aria-label=\"Radio 3\" />\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/join/"
+}

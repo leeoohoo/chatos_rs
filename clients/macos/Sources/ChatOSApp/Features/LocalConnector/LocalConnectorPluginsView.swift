@@ -29,6 +29,10 @@ struct LocalConnectorPluginsView: View {
                     ))
                         .appFont(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
+                    Button(model.localized("检查更新", english: "Check for Updates"), systemImage: "arrow.clockwise") {
+                        viewModel.loadPlugins()
+                    }
+                    .disabled(viewModel.isLoading)
                 }
             }
 

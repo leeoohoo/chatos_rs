@@ -206,6 +206,7 @@ fn route(binding: &PluginToolComponentRuntimeBinding) -> ResolvedMcpRoute {
 fn local_context() -> ProjectExecutionContext {
     ProjectExecutionContext {
         project_id: Some("project-1".to_string()),
+        project_name: Some("Project 1".to_string()),
         owner_user_id: "user-1".to_string(),
         workspace_provider: WorkspaceProviderKind::LocalConnector,
         workspace: Some(WorkspaceExecutionTarget {
@@ -586,31 +587,30 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
         .as_str()
         .unwrap()
         .contains("progressive instructions"));
-    assert!(outcome.result["structuredContent"]["activation_evidence"]
-        .as_str()
-        .is_some_and(|value| value.split('.').count() == 3));
+    assert_eq!(outcome.result["structuredContent"]["activated"], true);
+    assert!(outcome.result["structuredContent"]
+        .get("activation_ref")
+        .is_none());
+    assert!(outcome.result["structuredContent"]
+        .get("activation_evidence")
+        .is_none());
     assert_eq!(
         requests.lock().unwrap()[1].1["invocation_id"],
         "invocation-skill-activate-1"
     );
-    let activation_ref = outcome.result["structuredContent"]["activation_ref"]
+    let activated_skill_ref = outcome.result["structuredContent"]["skill_ref"]
         .as_str()
         .unwrap();
-    let activation_evidence = outcome.result["structuredContent"]["activation_evidence"]
+    assert!(!outcome.result["content"][0]["text"]
         .as_str()
-        .unwrap();
-    assert!(outcome.result["content"][0]["text"]
-        .as_str()
-        .is_some_and(|text| text.contains(activation_evidence)));
+        .unwrap()
+        .contains("activation_evidence"));
     let listed = provider
         .call_tool(
             &runtime,
             &routes[0],
             SKILL_LIST_RESOURCES_TOOL_NAME,
-            json!({
-                "activation_ref": activation_ref,
-                "activation_evidence": activation_evidence
-            }),
+            json!({"skill_ref": activated_skill_ref}),
             "invocation-skill-list-1",
         )
         .await
@@ -625,8 +625,7 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
             &routes[0],
             SKILL_READ_RESOURCE_TOOL_NAME,
             json!({
-                "activation_ref": activation_ref,
-                "activation_evidence": activation_evidence,
+                "skill_ref": activated_skill_ref,
                 "relative_path": "references/guide.md",
                 "offset": 0,
                 "max_chars": 8
@@ -638,9 +637,7 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
     assert_eq!(read.result["content"][0]["text"], "# Guide\n");
     let resource_request = requests.lock().unwrap()[2].1.clone();
     assert_eq!(resource_request["invocation_id"], "invocation-skill-read-1");
-    assert!(resource_request["arguments"]
-        .get("activation_evidence")
-        .is_none());
+    assert!(resource_request["arguments"].get("skill_ref").is_none());
     assert_eq!(requests.lock().unwrap()[1].0, "execute");
     server.abort();
 }

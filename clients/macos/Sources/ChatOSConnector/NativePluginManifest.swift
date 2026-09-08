@@ -1,5 +1,10 @@
 import Foundation
 
+enum NativeBrowserPluginIdentity {
+    static let packageName = "chatos-browser-cdp"
+    static let componentKey = "browser-cdp-mcp"
+}
+
 struct NativePreparedPluginLaunch: Sendable {
     var manifest: NativePluginManifest
     var componentKey: String
@@ -135,6 +140,7 @@ enum NativePluginManifestLoader {
             "CHATOS_PLUGIN_VISUAL_SESSION_DIR": visualSessionURL.path,
             "CHATOS_PLUGIN_ID": record.pluginID,
             "CHATOS_PLUGIN_COMPONENT_KEY": componentKey,
+            "CHATOS_PLUGIN_RUNTIME_SESSION_ID": adapterSessionID,
         ], uniquingKeysWith: { _, runtime in runtime })
         environment.merge(runtimeContext.environment, uniquingKeysWith: { _, runtime in runtime })
 #if os(macOS)

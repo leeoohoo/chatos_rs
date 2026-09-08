@@ -1,0 +1,36 @@
+{
+  "slug": "hero",
+  "title": "Hero",
+  "description": "Hero is a component for displaying a large box or image with a title and description.",
+  "demos": [
+    {
+      "id": "hero-1",
+      "label": "Centered hero",
+      "html": "<div class=\"hero bg-base-200 min-h-screen\">\n  <div class=\"hero-content text-center\">\n    <div class=\"max-w-md\">\n      <h1 class=\"text-5xl font-bold\">Hello there</h1>\n      <p class=\"py-6\">\n        Provident cupiditate voluptatem et in. Quaerat fugiat ut assumenda excepturi exercitationem\n        quasi. In deleniti eaque aut repudiandae et a id nisi.\n      </p>\n      <button class=\"btn btn-primary\">Get Started</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "hero-2",
+      "label": "Hero with figure",
+      "html": "<div class=\"hero bg-base-200 min-h-screen\">\n  <div class=\"hero-content flex-col lg:flex-row\">\n    <img\n      alt=\"Tailwind CSS hero component\"\n      src=\"https://img.daisyui.com/images/stock/photo-1635805737707-575885ab0820.webp\"\n      class=\"max-w-sm rounded-lg shadow-2xl\"\n    />\n    <div>\n      <h1 class=\"text-5xl font-bold\">Box Office News!</h1>\n      <p class=\"py-6\">\n        Provident cupiditate voluptatem et in. Quaerat fugiat ut assumenda excepturi exercitationem\n        quasi. In deleniti eaque aut repudiandae et a id nisi.\n      </p>\n      <button class=\"btn btn-primary\">Get Started</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "hero-3",
+      "label": "Hero with figure but reverse order",
+      "html": "<div class=\"hero bg-base-200 min-h-screen\">\n  <div class=\"hero-content flex-col lg:flex-row-reverse\">\n    <img\n      alt=\"Tailwind CSS hero component\"\n      src=\"https://img.daisyui.com/images/stock/photo-1635805737707-575885ab0820.webp\"\n      class=\"max-w-sm rounded-lg shadow-2xl\"\n    />\n    <div>\n      <h1 class=\"text-5xl font-bold\">Box Office News!</h1>\n      <p class=\"py-6\">\n        Provident cupiditate voluptatem et in. Quaerat fugiat ut assumenda excepturi exercitationem\n        quasi. In deleniti eaque aut repudiandae et a id nisi.\n      </p>\n      <button class=\"btn btn-primary\">Get Started</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "hero-4",
+      "label": "Hero with form",
+      "html": "<div class=\"hero bg-base-200 min-h-screen\">\n  <div class=\"hero-content flex-col lg:flex-row-reverse\">\n    <div class=\"text-center lg:text-left\">\n      <h1 class=\"text-5xl font-bold\">Login now!</h1>\n      <p class=\"py-6\">\n        Provident cupiditate voluptatem et in. Quaerat fugiat ut assumenda excepturi exercitationem\n        quasi. In deleniti eaque aut repudiandae et a id nisi.\n      </p>\n    </div>\n    <div class=\"card bg-base-100 w-full max-w-sm shrink-0 shadow-2xl\">\n      <div class=\"card-body\">\n        <fieldset class=\"fieldset\">\n          <label class=\"label\">Email</label>\n          <input type=\"email\" class=\"input\" placeholder=\"Email\" />\n          <label class=\"label\">Password</label>\n          <input type=\"password\" class=\"input\" placeholder=\"Password\" />\n          <div><a class=\"link link-hover\">Forgot password?</a></div>\n          <button class=\"btn btn-neutral mt-4\">Login</button>\n        </fieldset>\n      </div>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "hero-5",
+      "label": "Hero with overlay image",
+      "html": "<div\n  class=\"hero min-h-screen\"\n  style=\"background-image: url(https://img.daisyui.com/images/stock/photo-1507358522600-9f71e620c44e.webp);\"\n>\n  <div class=\"hero-overlay\"></div>\n  <div class=\"hero-content text-neutral-content text-center\">\n    <div class=\"max-w-md\">\n      <h1 class=\"mb-5 text-5xl font-bold\">Hello there</h1>\n      <p class=\"mb-5\">\n        Provident cupiditate voluptatem et in. Quaerat fugiat ut assumenda excepturi exercitationem\n        quasi. In deleniti eaque aut repudiandae et a id nisi.\n      </p>\n      <button class=\"btn btn-primary\">Get Started</button>\n    </div>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/hero/",
+  "previewHeight": 380,
+  "previewSpan": "wide"
+}

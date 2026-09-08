@@ -747,14 +747,6 @@ const TOOL_DEFINITIONS_BASE = [
   }
 ] as const;
 
-const documentSkillEvidence = {
-  type: 'array',
-  minItems: 1,
-  maxItems: 8,
-  items: { type: 'string', minLength: 1 },
-  description: 'Platform-issued activation evidence for the Document router and any required format Skill. ChatOS validates and removes this field before local execution.'
-} as const;
-
 function requiredDocumentSkills(toolName: string): string[] {
   if (toolName.startsWith('spreadsheet_')) return ['document', 'document-spreadsheet'];
   if (toolName.startsWith('pdf_')) return ['document', 'document-pdf'];
@@ -774,18 +766,9 @@ export const TOOL_DEFINITIONS = TOOL_DEFINITIONS_BASE.map((tool) => {
     : undefined;
   return {
     ...tool,
-    inputSchema: {
-      ...tool.inputSchema,
-      properties: {
-        ...tool.inputSchema.properties,
-        skillEvidence: documentSkillEvidence
-      },
-      required: [...tool.inputSchema.required, 'skillEvidence']
-    },
     _meta: {
       ...tool._meta,
       'chatos/skillGate': {
-        evidenceArgument: 'skillEvidence',
         allOf: requiredDocumentSkills(tool.name),
         ...(selector ? { selectByArgument: selector } : {})
       }

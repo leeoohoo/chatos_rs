@@ -1,0 +1,44 @@
+{
+  "slug": "kbd",
+  "title": "Kbd",
+  "description": "Kbd is used to display keyboard shortcuts.",
+  "demos": [
+    {
+      "id": "kbd-1",
+      "label": "Kbd",
+      "html": "<kbd class=\"kbd\">K</kbd>"
+    },
+    {
+      "id": "kbd-2",
+      "label": "Kbd sizes",
+      "html": "<kbd class=\"kbd kbd-xs\">Xsmall</kbd>\n<kbd class=\"kbd kbd-sm\">Small</kbd>\n<kbd class=\"kbd kbd-md\">Medium</kbd>\n<kbd class=\"kbd kbd-lg\">Large</kbd>\n<kbd class=\"kbd kbd-xl\">Xlarge</kbd>"
+    },
+    {
+      "id": "kbd-3",
+      "label": "In text",
+      "html": "Press\n<kbd class=\"kbd kbd-sm\">F</kbd>\nto pay respects."
+    },
+    {
+      "id": "kbd-4",
+      "label": "Key combination",
+      "html": "<kbd class=\"kbd\">ctrl</kbd>\n+\n<kbd class=\"kbd\">shift</kbd>\n+\n<kbd class=\"kbd\">del</kbd>"
+    },
+    {
+      "id": "kbd-5",
+      "label": "Function Keys",
+      "html": "<kbd class=\"kbd\">⌘</kbd>\n<kbd class=\"kbd\">⌥</kbd>\n<kbd class=\"kbd\">⇧</kbd>\n<kbd class=\"kbd\">⌃</kbd>"
+    },
+    {
+      "id": "kbd-6",
+      "label": "A full keyboard",
+      "html": "<div class=\"my-1 flex w-full justify-center gap-1\">\n  <kbd class=\"kbd\">q</kbd>\n  <kbd class=\"kbd\">w</kbd>\n  <kbd class=\"kbd\">e</kbd>\n  <kbd class=\"kbd\">r</kbd>\n  <kbd class=\"kbd\">t</kbd>\n  <kbd class=\"kbd\">y</kbd>\n  <kbd class=\"kbd\">u</kbd>\n  <kbd class=\"kbd\">i</kbd>\n  <kbd class=\"kbd\">o</kbd>\n  <kbd class=\"kbd\">p</kbd>\n</div>\n<div class=\"my-1 flex w-full justify-center gap-1\">\n  <kbd class=\"kbd\">a</kbd>\n  <kbd class=\"kbd\">s</kbd>\n  <kbd class=\"kbd\">d</kbd>\n  <kbd class=\"kbd\">f</kbd>\n  <kbd class=\"kbd\">g</kbd>\n  <kbd class=\"kbd\">h</kbd>\n  <kbd class=\"kbd\">j</kbd>\n  <kbd class=\"kbd\">k</kbd>\n  <kbd class=\"kbd\">l</kbd>\n</div>\n<div class=\"my-1 flex w-full justify-center gap-1\">\n  <kbd class=\"kbd\">z</kbd>\n  <kbd class=\"kbd\">x</kbd>\n  <kbd class=\"kbd\">c</kbd>\n  <kbd class=\"kbd\">v</kbd>\n  <kbd class=\"kbd\">b</kbd>\n  <kbd class=\"kbd\">n</kbd>\n  <kbd class=\"kbd\">m</kbd>\n  <kbd class=\"kbd\">/</kbd>\n</div>"
+    },
+    {
+      "id": "kbd-7",
+      "label": "Arrow Keys",
+      "html": "<div class=\"flex w-full justify-center\">\n  <kbd class=\"kbd\">▲</kbd>\n</div>\n<div class=\"flex w-full justify-center gap-12\">\n  <kbd class=\"kbd\">◀︎</kbd>\n  <kbd class=\"kbd\">▶︎</kbd>\n</div>\n<div class=\"flex w-full justify-center\">\n  <kbd class=\"kbd\">▼</kbd>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/kbd/"
+}

@@ -1,0 +1,21 @@
+{
+  "slug": "mockup-browser",
+  "title": "Browser mockup",
+  "description": "Browser mockup shows a box that looks like a browser window.",
+  "demos": [
+    {
+      "id": "mockup-browser-1",
+      "label": "browser mockup with border",
+      "html": "<div class=\"mockup-browser border border-base-300 w-full\">\n  <div class=\"mockup-browser-toolbar\">\n    <div class=\"input\">https://daisyui.com</div>\n  </div>\n  <div class=\"grid place-content-center border-t border-base-300 h-80\">Hello!</div>\n</div>"
+    },
+    {
+      "id": "mockup-browser-2",
+      "label": "browser mockup with background color",
+      "html": "<div class=\"mockup-browser bg-base-100 w-full border border-base-300\">\n  <div class=\"mockup-browser-toolbar\">\n    <div class=\"input\">https://daisyui.com</div>\n  </div>\n  <div class=\"grid place-content-center h-80\">Hello!</div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/mockup-browser/",
+  "previewHeight": 350,
+  "previewSpan": "wide"
+}

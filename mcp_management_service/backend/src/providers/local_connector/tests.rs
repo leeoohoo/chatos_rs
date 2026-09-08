@@ -92,6 +92,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
         }),
         project_context: ProjectExecutionContext {
             project_id: Some("project-1".to_string()),
+            project_name: Some("Project 1".to_string()),
             owner_user_id: "user-1".to_string(),
             workspace_provider: WorkspaceProviderKind::LocalConnector,
             workspace: Some(WorkspaceExecutionTarget {

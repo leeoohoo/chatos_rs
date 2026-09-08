@@ -1,0 +1,74 @@
+{
+  "slug": "aura",
+  "title": "Aura",
+  "description": "Aura is a border light effect that can wrap around any component. It is a great way to add a cool, eye-catching visual effect to your components. Aura is useful for the most important button, card, or div that you want to highlight.",
+  "demos": [
+    {
+      "id": "aura-1",
+      "label": "Aura",
+      "html": "<div class=\"aura\">\n  <div class=\"card bg-base-100\">\n    <div class=\"card-body\">\n      <p>This card has aura</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-2",
+      "label": "Aura around a button",
+      "html": "<div class=\"aura\">\n  <button class=\"btn\">button with aura</button>\n</div>"
+    },
+    {
+      "id": "aura-3",
+      "label": "Aura dual",
+      "html": "<div class=\"aura aura-dual\">\n  <div class=\"card bg-base-100\">\n    <div class=\"card-body\">\n      <p>This card has dual aura</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-4",
+      "label": "Aura rainbow",
+      "html": "<div class=\"aura aura-rainbow\">\n  <div class=\"card bg-base-100\">\n    <div class=\"card-body\">\n      <p>This card has rainbow aura</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-5",
+      "label": "Aura holo",
+      "html": "<div class=\"aura aura-holo\">\n  <div class=\"card bg-base-100\">\n    <div class=\"card-body\">\n      <p>This card has holo aura</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-6",
+      "label": "Aura glow",
+      "html": "<div class=\"aura aura-glow\">\n  <div class=\"card bg-base-100\">\n    <div class=\"card-body\">\n      <p>This card has glow aura</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-7",
+      "label": "Aura gold",
+      "html": "<div class=\"aura aura-gold\">\n  <div class=\"card bg-base-100\">\n    <div class=\"card-body\">\n      <p>This card has gold aura</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-8",
+      "label": "Aura silver",
+      "html": "<div class=\"aura aura-silver\">\n  <div class=\"card bg-base-100\">\n    <div class=\"card-body\">\n      <p>This card has silver aura</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-9",
+      "label": "Aura with custom color",
+      "html": "<div class=\"aura text-orange-600\">\n    <div class=\"card bg-base-100 text-base-content\">\n    <div class=\"card-body\">\n      <p>This card has custom color aura</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-10",
+      "label": "Aura with custom color and custom background color",
+      "html": "<div class=\"aura text-orange-600 bg-yellow-200\">\n    <div class=\"card bg-base-100 text-base-content\">\n    <div class=\"card-body\">\n      <p>This card has custom color and background aura</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-11",
+      "label": "Aura rainbow around a pricing card",
+      "html": "<div class=\"aura aura-rainbow\">\n  <div class=\"card w-96 bg-base-100 shadow-sm\">\n    <div class=\"card-body\">\n      <span class=\"badge badge-xs badge-warning\">Most Popular</span>\n      <div class=\"flex justify-between\">\n        <h2 class=\"text-3xl font-bold\">Premium</h2>\n        <span class=\"text-xl\">$29/mo</span>\n      </div>\n      <ul class=\"mt-6 flex flex-col gap-2 text-xs\">\n        <li>\n          <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-success\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n          <span>High-resolution image generation</span>\n        </li>\n        <li>\n          <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-success\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n          <span>Customizable style templates</span>\n        </li>\n        <li>\n          <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-success\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n          <span>Batch processing capabilities</span>\n        </li>\n        <li>\n          <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-success\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n          <span>AI-driven image enhancements</span>\n        </li>\n        <li class=\"opacity-50\">\n          <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-base-content/50\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n          <span class=\"line-through\">Seamless cloud integration</span>\n        </li>\n        <li class=\"opacity-50\">\n          <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-base-content/50\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n          <span class=\"line-through\">Real-time collaboration tools</span>\n        </li>\n      </ul>\n      <div class=\"mt-6\">\n        <button class=\"btn btn-primary btn-block\">Subscribe</button>\n      </div>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "aura-12",
+      "label": "Aura sizes",
+      "html": "<div class=\"aura aura-xs\">\n  <button class=\"btn\">XS</button>\n</div>\n<div class=\"aura aura-sm\">\n  <button class=\"btn\">SM</button>\n</div>\n<div class=\"aura\">\n  <button class=\"btn\">MD</button>\n</div>\n<div class=\"aura aura-lg\">\n  <button class=\"btn\">LG</button>\n</div>\n<div class=\"aura aura-xl\">\n  <button class=\"btn\">XL</button>\n</div>"
+    },
+    {
+      "id": "aura-13",
+      "label": "Aura with custom animation duration",
+      "html": "<div class=\"aura aura-rainbow duration-2000\">\n  <div class=\"card bg-base-100\">\n    <div class=\"card-body\">\n      <p>2000ms duration aura</p>\n    </div>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/aura/"
+}

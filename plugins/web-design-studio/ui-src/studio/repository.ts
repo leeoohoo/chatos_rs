@@ -13,10 +13,9 @@ export interface DesignSummary {
 
 export interface WebDesignRuntimeContext {
   kind: string;
-  shared: boolean;
-  chatosProjectId?: string;
-  chatosProjectName?: string;
-  workspaceId?: string;
+  isolated: boolean;
+  hasProjectContext: boolean;
+  projectName?: string;
   defaultProjectId?: string;
 }
 
@@ -26,9 +25,6 @@ export interface DesignRepository {
   list(): Promise<DesignSummary[]>;
   listProjects(): Promise<WebDesignProjectSummary[]>;
   readProject(projectId: string): Promise<WebDesignProject>;
-  createProject(name: string, description?: string): Promise<WebDesignProject>;
-  updateProject(projectId: string, updates: { name?: string; description?: string }): Promise<WebDesignProject>;
-  deleteProject(projectId: string, deleteDocuments?: boolean): Promise<void>;
   read(documentId: string): Promise<WebDesignDocument>;
   create(title?: string): Promise<WebDesignDocument>;
   createInProject(projectId: string, title?: string, blank?: boolean): Promise<WebDesignDocument>;
@@ -61,7 +57,7 @@ class LocalRepository implements DesignRepository {
   readonly mode = 'local' as const;
 
   async runtimeContext(): Promise<WebDesignRuntimeContext> {
-    return { kind: 'device', shared: true };
+    return { kind: 'device', isolated: true, hasProjectContext: false };
   }
 
   async list(): Promise<DesignSummary[]> {
@@ -91,36 +87,13 @@ class LocalRepository implements DesignRepository {
     return JSON.parse(raw) as WebDesignProject;
   }
 
-  async createProject(name: string, description?: string): Promise<WebDesignProject> {
+  private async createDefaultProject(name: string, description?: string): Promise<WebDesignProject> {
     const trimmedName = name.trim();
     if (!trimmedName) throw new Error('请填写项目名称。');
     const now = new Date().toISOString();
     const project: WebDesignProject = { schemaVersion: 1, projectId: `project-${crypto.randomUUID().slice(0, 8)}`, name: trimmedName.slice(0, 240), description: description?.trim().slice(0, 4000) || undefined, createdAt: now, updatedAt: now, designIds: [] };
     await this.persistProject(project);
     return project;
-  }
-
-  async updateProject(projectId: string, updates: { name?: string; description?: string }): Promise<WebDesignProject> {
-    const project = await this.readProject(projectId);
-    const name = updates.name === undefined ? project.name : updates.name.trim();
-    if (!name) throw new Error('项目名称不能为空。');
-    const next = { ...project, name: name.slice(0, 240), description: updates.description === undefined ? project.description : updates.description.trim().slice(0, 4000) || undefined, updatedAt: new Date().toISOString() };
-    await this.persistProject(next);
-    return next;
-  }
-
-  async deleteProject(projectId: string, deleteDocuments = false): Promise<void> {
-    const project = await this.readProject(projectId);
-    if (deleteDocuments) {
-      for (const documentId of project.designIds) {
-        localStorage.removeItem(`${documentPrefix}${documentId}`);
-      }
-      const documentIds = JSON.parse(localStorage.getItem(indexKey) ?? '[]') as string[];
-      localStorage.setItem(indexKey, JSON.stringify(documentIds.filter((id) => !project.designIds.includes(id))));
-    }
-    localStorage.removeItem(`${projectPrefix}${projectId}`);
-    const projectIds = JSON.parse(localStorage.getItem(projectIndexKey) ?? '[]') as string[];
-    localStorage.setItem(projectIndexKey, JSON.stringify(projectIds.filter((id) => id !== projectId)));
   }
 
   async read(documentId: string): Promise<WebDesignDocument> {
@@ -199,18 +172,25 @@ class LocalRepository implements DesignRepository {
 
   private async ensureLegacyProject(): Promise<void> {
     const projectIds = JSON.parse(localStorage.getItem(projectIndexKey) ?? '[]') as string[];
+    const projects: WebDesignProject[] = [];
     const assigned = new Set<string>();
     for (const projectId of projectIds) {
       const raw = localStorage.getItem(`${projectPrefix}${projectId}`);
       if (!raw) continue;
-      try { (JSON.parse(raw) as WebDesignProject).designIds.forEach((id) => assigned.add(id)); }
+      try {
+        const project = JSON.parse(raw) as WebDesignProject;
+        projects.push(project);
+        project.designIds.forEach((id) => assigned.add(id));
+      }
       catch { /* Ignore malformed projects during migration. */ }
     }
     const documentIds = JSON.parse(localStorage.getItem(indexKey) ?? '[]') as string[];
     const unassigned = documentIds.filter((id) => !assigned.has(id) && localStorage.getItem(`${documentPrefix}${id}`));
-    if (unassigned.length === 0) return;
-    const project = await this.createProject('现有网站设计', '自动归档升级前已经存在的网站设计。');
-    await this.persistProject({ ...project, designIds: unassigned });
+    const primary = projects[0] ?? await this.createDefaultProject('公共网站设计');
+    const designIds = [...new Set([...projects.flatMap((project) => project.designIds), ...unassigned])];
+    await this.persistProject({ ...primary, designIds, updatedAt: new Date().toISOString() });
+    for (const duplicate of projects.slice(1)) localStorage.removeItem(`${projectPrefix}${duplicate.projectId}`);
+    localStorage.setItem(projectIndexKey, JSON.stringify([primary.projectId]));
   }
 }
 
@@ -219,7 +199,7 @@ class ServerRepository implements DesignRepository {
 
   async runtimeContext(): Promise<WebDesignRuntimeContext> {
     const response = await fetch('/api/context', { cache: 'no-store' });
-    if (!response.ok) return { kind: 'device', shared: true };
+    if (!response.ok) return { kind: 'device', isolated: true, hasProjectContext: false };
     return response.json() as Promise<WebDesignRuntimeContext>;
   }
 
@@ -241,23 +221,6 @@ class ServerRepository implements DesignRepository {
     return response.json() as Promise<WebDesignProject>;
   }
 
-  async createProject(name: string, description?: string): Promise<WebDesignProject> {
-    const response = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, description }) });
-    if (!response.ok) throw new Error('无法创建网站项目。');
-    return response.json() as Promise<WebDesignProject>;
-  }
-
-  async updateProject(projectId: string, updates: { name?: string; description?: string }): Promise<WebDesignProject> {
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
-    if (!response.ok) throw new Error('无法更新网站项目。');
-    return response.json() as Promise<WebDesignProject>;
-  }
-
-  async deleteProject(projectId: string, deleteDocuments = false): Promise<void> {
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}?deleteDocuments=${deleteDocuments ? 'true' : 'false'}`, { method: 'DELETE' });
-    if (!response.ok) throw new Error('无法删除网站项目。');
-  }
-
   async read(documentId: string): Promise<WebDesignDocument> {
     const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, { cache: 'no-store' });
     if (!response.ok) throw new Error('无法打开这个网站设计。');
@@ -275,7 +238,9 @@ class ServerRepository implements DesignRepository {
   }
 
   async createInProject(projectId: string, title?: string, blank = false): Promise<WebDesignDocument> {
-    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/documents`, {
+    const context = await this.runtimeContext();
+    if (context.defaultProjectId !== projectId) throw new Error('当前设计范围已经由 ChatOS 锁定。');
+    const response = await fetch('/api/documents', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: title?.trim() || undefined, blank })

@@ -139,32 +139,28 @@ export class DiagramDocumentStore {
     if (!/^[a-f0-9]{64}$/.test(scopeKey)) throw new Error('scopeKey must be a SHA-256 fingerprint.');
     return this.withLock(async () => {
       const projects = await this.readAllProjects();
-      const existing = projects.find((project) => project.scopeKey === scopeKey && project.isScopeDefault === true);
-      if (existing) return existing;
-      const scopedProjects = projects.filter((project) => project.scopeKey === scopeKey);
-      if (scopedProjects.length > 0) {
-        const promoted: DiagramProject = {
-          ...scopedProjects.sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0],
-          isScopeDefault: true,
-          updatedAt: new Date().toISOString()
-        };
-        await this.atomicWriteProject(this.projectPath(promoted.projectId), promoted);
-        return promoted;
+      if (projects.length === 0) return this.createProjectUnlocked(name, undefined, scopeKey, true);
+
+      const defaultProjects = projects.filter((project) => project.isScopeDefault === true);
+      const primaryCandidates = defaultProjects.length > 0 ? defaultProjects : projects;
+      const ordered = [...primaryCandidates].sort((left, right) => {
+        const contentDifference = right.diagramIds.length - left.diagramIds.length;
+        if (contentDifference !== 0) return contentDifference;
+        return left.createdAt.localeCompare(right.createdAt);
+      });
+      const primary = ordered[0];
+      const normalizedAt = new Date().toISOString();
+      for (const project of projects) {
+        const shouldBeDefault = project.projectId === primary.projectId;
+        if (project.scopeKey === scopeKey && project.isScopeDefault === shouldBeDefault) continue;
+        await this.atomicWriteProject(this.projectPath(project.projectId), {
+          ...project,
+          scopeKey,
+          ...(shouldBeDefault ? { isScopeDefault: true } : { isScopeDefault: undefined }),
+          updatedAt: normalizedAt
+        });
       }
-      if (projects.length > 0 && projects.every((project) => project.scopeKey === undefined)) {
-        const ordered = [...projects].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-        const migratedAt = new Date().toISOString();
-        for (const [index, project] of ordered.entries()) {
-          await this.atomicWriteProject(this.projectPath(project.projectId), {
-            ...project,
-            scopeKey,
-            ...(index === 0 ? { isScopeDefault: true } : {}),
-            updatedAt: migratedAt
-          });
-        }
-        return this.readProject(ordered[0].projectId);
-      }
-      return this.createProjectUnlocked(name, undefined, scopeKey, true);
+      return this.readProject(primary.projectId);
     });
   }
 

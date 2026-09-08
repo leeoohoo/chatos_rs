@@ -195,7 +195,7 @@ struct NativeConnectorGateway: Sendable {
     ) async throws -> URL {
         let endpoint = "/api/plugin-management/plugins/\(pluginID.urlPathEncoded)/releases/\(releaseID.urlPathEncoded)/artifact"
         guard let url = makeURL(endpoint) else { throw NativeConnectorError.invalidEndpoint }
-        var request = URLRequest(url: url)
+        var request = Self.dynamicRequest(url: url)
         request.timeoutInterval = 5 * 60
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/gzip, application/octet-stream", forHTTPHeaderField: "Accept")
@@ -280,7 +280,7 @@ struct NativeConnectorGateway: Sendable {
         guard let url = makeURL(endpoint) else {
             throw NativeConnectorError.invalidEndpoint
         }
-        var request = URLRequest(url: url)
+        var request = Self.dynamicRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -314,7 +314,7 @@ struct NativeConnectorGateway: Sendable {
         guard let url = makeURL(endpoint) else {
             throw NativeConnectorError.invalidEndpoint
         }
-        var request = URLRequest(url: url)
+        var request = Self.dynamicRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
         request.timeoutInterval = 30
@@ -351,6 +351,16 @@ struct NativeConnectorGateway: Sendable {
             string: baseURL.absoluteString
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/")) + endpoint
         )
+    }
+
+    static func dynamicRequest(url: URL) -> URLRequest {
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData
+        )
+        request.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+        return request
     }
 
     @discardableResult

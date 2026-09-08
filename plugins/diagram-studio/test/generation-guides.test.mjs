@@ -1,14 +1,52 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import {
   prepareGenerationPermit,
+  runtimeDataScopeFingerprint,
+  runtimeGenerationScopeFingerprint,
   verifyGenerationPermit
 } from '../dist/generation-guides.test.mjs';
 
-const architectureChecklist = ['single_architecture_viewpoint', 'boundaries_show_ownership', 'primary_path_is_visible', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'];
+const architectureChecklist = ['single_architecture_viewpoint', 'boundaries_show_ownership', 'primary_path_is_visible', 'relationships_are_aggregated', 'runtime_cycles_are_moved_to_detail', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'];
 const sequenceChecklist = ['single_runtime_scenario', 'participants_have_distinct_roles', 'message_order_is_causal', 'activation_intervals_are_bounded', 'fragments_do_not_hide_content', 'independent_scenarios_are_split'];
 
+test('persistent diagram scope is stable across runtime sessions while generation plans are session-bound', () => {
+  const names = ['CHATOS_CONTEXT_SCOPE', 'CHATOS_CONTEXT_SCOPE_ID', 'CHATOS_PROJECT_ID', 'CHATOS_WORKSPACE_ID', 'CHATOS_USER_ID', 'CHATOS_ACCOUNT_ID', 'CHATOS_PLUGIN_RUNTIME_SESSION_ID'];
+  const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    process.env.CHATOS_CONTEXT_SCOPE = 'project';
+    process.env.CHATOS_CONTEXT_SCOPE_ID = 'scope-a';
+    process.env.CHATOS_PROJECT_ID = 'project-a';
+    process.env.CHATOS_WORKSPACE_ID = 'workspace-a';
+    process.env.CHATOS_USER_ID = 'user-a';
+    process.env.CHATOS_PLUGIN_RUNTIME_SESSION_ID = 'runtime-a';
+    const dataA = runtimeDataScopeFingerprint('/tmp/diagram-data-scope');
+    const generationA = runtimeGenerationScopeFingerprint('/tmp/diagram-data-scope');
+    process.env.CHATOS_PLUGIN_RUNTIME_SESSION_ID = 'runtime-b';
+    const dataB = runtimeDataScopeFingerprint('/tmp/diagram-data-scope');
+    const generationB = runtimeGenerationScopeFingerprint('/tmp/diagram-data-scope');
+    assert.equal(dataB, dataA);
+    assert.notEqual(generationB, generationA);
+    process.env.CHATOS_CONTEXT_SCOPE_ID = 'scope-b';
+    process.env.CHATOS_PROJECT_ID = 'project-b';
+    process.env.CHATOS_WORKSPACE_ID = 'workspace-b';
+    process.env.CHATOS_USER_ID = 'user-b';
+    assert.equal(runtimeDataScopeFingerprint('/tmp/diagram-data-scope'), dataA);
+    assert.notEqual(runtimeDataScopeFingerprint('/tmp/diagram-data-scope-b'), dataA);
+  } finally {
+    for (const name of names) {
+      if (original[name] === undefined) delete process.env[name];
+      else process.env[name] = original[name];
+    }
+  }
+});
+
 test('generation permits are bound to skill contract, kind, artifact, and runtime scope', async () => {
+  const storeDirectory = await mkdtemp(path.join(os.tmpdir(), 'diagram-generation-plan-'));
+  try {
   const scopeA = 'a'.repeat(64);
   const scopeB = 'b'.repeat(64);
   const goal = 'Show one bounded system architecture overview';
@@ -24,6 +62,7 @@ test('generation permits are bound to skill contract, kind, artifact, and runtim
     checklistAcknowledgements: architectureChecklist
   };
   const prepared = await prepareGenerationPermit({
+    storeDirectory,
     kind: 'architecture',
     mode: 'overview',
     artifactKey: 'system-overview',
@@ -32,7 +71,7 @@ test('generation permits are bound to skill contract, kind, artifact, and runtim
     plan,
     scopeFingerprint: scopeA
   });
-  const permit = verifyGenerationPermit(prepared.generationPermit, {
+  const permit = await verifyGenerationPermit(storeDirectory, {
     scopeFingerprint: scopeA,
     kind: 'architecture',
     artifactKey: 'system-overview',
@@ -41,24 +80,29 @@ test('generation permits are bound to skill contract, kind, artifact, and runtim
   assert.equal(permit.qualityProfile, 'architecture-overview');
   assert.match(prepared.planHash, /^[a-f0-9]{64}$/);
 
-  assert.throws(() => verifyGenerationPermit(prepared.generationPermit, {
+  await assert.rejects(() => verifyGenerationPermit(storeDirectory, {
     scopeFingerprint: scopeB,
     kind: 'architecture',
     artifactKey: 'system-overview'
-  }), /different ChatOS user or project scope/);
-  assert.throws(() => verifyGenerationPermit(prepared.generationPermit, {
+  }), /No active generation plan/);
+  await assert.rejects(() => verifyGenerationPermit(storeDirectory, {
     scopeFingerprint: scopeA,
     kind: 'sequence',
     artifactKey: 'system-overview'
   }), /permit is for architecture/);
-  assert.throws(() => verifyGenerationPermit(prepared.generationPermit, {
+  await assert.rejects(() => verifyGenerationPermit(storeDirectory, {
     scopeFingerprint: scopeA,
     kind: 'architecture',
     artifactKey: 'another-artifact'
-  }), /artifactKey/);
+  }), /No active generation plan/);
+  } finally {
+    await rm(storeDirectory, { recursive: true, force: true });
+  }
 });
 
 test('generation planning rejects an over-budget plan and incomplete skill checklist', async () => {
+  const storeDirectory = await mkdtemp(path.join(os.tmpdir(), 'diagram-generation-plan-'));
+  try {
   const scope = 'c'.repeat(64);
   const goal = 'Show one payment callback sequence';
   const basePlan = {
@@ -73,6 +117,7 @@ test('generation planning rejects an over-budget plan and incomplete skill check
     checklistAcknowledgements: sequenceChecklist
   };
   await assert.rejects(() => prepareGenerationPermit({
+    storeDirectory,
     kind: 'sequence',
     artifactKey: 'payment-callback',
     operation: 'create',
@@ -81,6 +126,7 @@ test('generation planning rejects an over-budget plan and incomplete skill check
     scopeFingerprint: scope
   }), /exceeding.*budget|exceeds.*budget/i);
   await assert.rejects(() => prepareGenerationPermit({
+    storeDirectory,
     kind: 'sequence',
     artifactKey: 'payment-callback',
     operation: 'create',
@@ -88,4 +134,7 @@ test('generation planning rejects an over-budget plan and incomplete skill check
     plan: { ...basePlan, checklistAcknowledgements: sequenceChecklist.slice(0, -1) },
     scopeFingerprint: scope
   }), /Checklist acknowledgement mismatch/);
+  } finally {
+    await rm(storeDirectory, { recursive: true, force: true });
+  }
 });

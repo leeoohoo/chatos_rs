@@ -42,6 +42,7 @@ internal sealed class PluginManifestLoader
         string deviceId,
         string? workspaceId = null,
         string? projectId = null,
+        string? projectName = null,
         CancellationToken cancellationToken = default)
     {
         var installationPath = Path.GetFullPath(record.InstallationPath);
@@ -161,7 +162,8 @@ internal sealed class PluginManifestLoader
             deviceId,
             workspaceId,
             workspaceRoot,
-            projectId);
+            projectId,
+            projectName);
         var dataPath = context.DataPath;
         var cachePath = context.CachePath;
         var artifactPath = Path.Combine(_runtimeRoot, "artifacts", "users", userHash, sessionHash);
@@ -222,7 +224,8 @@ internal sealed class PluginManifestLoader
         string deviceId,
         string? workspaceId,
         string? workspaceRoot,
-        string? projectId)
+        string? projectId,
+        string? projectName)
     {
         var pluginHash = Sha256(pluginId);
         var userHash = Sha256(ownerUserId);
@@ -297,6 +300,10 @@ internal sealed class PluginManifestLoader
         if (requested.Contains("project.id") && !string.IsNullOrWhiteSpace(projectId))
         {
             environment["CHATOS_PROJECT_ID"] = projectId.Trim();
+        }
+        if (!string.IsNullOrWhiteSpace(projectName))
+        {
+            environment["CHATOS_PROJECT_NAME"] = projectName.Trim();
         }
         if (requested.Contains("workspace.id") && !string.IsNullOrWhiteSpace(workspaceId))
         {

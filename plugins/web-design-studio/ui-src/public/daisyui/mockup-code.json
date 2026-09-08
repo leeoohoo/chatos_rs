@@ -1,0 +1,41 @@
+{
+  "slug": "mockup-code",
+  "title": "Code mockup",
+  "description": "Code mockup is used to show a block of code in a box that looks like a code editor.",
+  "demos": [
+    {
+      "id": "mockup-code-1",
+      "label": "mockup code with line prefix",
+      "html": "<div class=\"mockup-code w-full\">\n  <pre data-prefix=\"$\"><code>npm i daisyui</code></pre>\n</div>"
+    },
+    {
+      "id": "mockup-code-2",
+      "label": "Multi line",
+      "html": "<div class=\"mockup-code w-full\">\n  <pre data-prefix=\"$\"><code>npm i daisyui</code></pre>\n  <pre data-prefix=\">\" class=\"text-warning\"><code>installing...</code></pre>\n  <pre data-prefix=\">\" class=\"text-success\"><code>Done!</code></pre>\n</div>"
+    },
+    {
+      "id": "mockup-code-3",
+      "label": "Highlighted line",
+      "html": "<div class=\"mockup-code w-full\">\n  <pre data-prefix=\"1\"><code>npm i daisyui</code></pre>\n  <pre data-prefix=\"2\"><code>installing...</code></pre>\n  <pre data-prefix=\"3\" class=\"bg-warning text-warning-content\"><code>Error!</code></pre>\n</div>"
+    },
+    {
+      "id": "mockup-code-4",
+      "label": "Long line will scroll",
+      "html": "<div class=\"mockup-code w-full\">\n  <pre\n    data-prefix=\"~\"><code>Magnam dolore beatae necessitatibus nemopsum itaque sit. Et porro quae qui et et dolore ratione.</code></pre>\n</div>"
+    },
+    {
+      "id": "mockup-code-5",
+      "label": "Without prefix",
+      "html": "<div class=\"mockup-code w-full\">\n  <pre><code>without prefix</code></pre>\n</div>"
+    },
+    {
+      "id": "mockup-code-6",
+      "label": "With color",
+      "html": "<div class=\"mockup-code bg-primary text-primary-content w-full\">\n  <pre><code>can be any color!</code></pre>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/mockup-code/",
+  "previewHeight": 330,
+  "previewSpan": "wide"
+}

@@ -57,4 +57,6 @@ case "$(uname -s)" in
     ;;
 esac
 
+node scripts/generate-sbom.mjs
+
 echo "Staged $destination ($build_profile, local development)"

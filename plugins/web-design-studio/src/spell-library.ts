@@ -1,7 +1,8 @@
-import { assertCreativeCatalog, createCreativeDefinitions, createCreativeVariants, type CreativeComponentDescriptor } from './creative-library.js';
-import { applyUiComponentVariant, createUiLibraryComponent, variantsForUiComponent, type UiLibraryCatalog } from './ui-library.js';
+import { assertCreativeCatalog, createCreativeDefinitions, type CreativeComponentDescriptor } from './creative-library.js';
+import { SPELL_OFFICIAL_COMPONENT_VARIANTS } from './spell-registry.generated.js';
+import { applyUiComponentVariant, createUiLibraryComponent, variantsForUiComponent, type UiComponentVariant, type UiLibraryCatalog } from './ui-library.js';
 
-export const SPELL_VERSION = 'registry-2026.09';
+export const SPELL_VERSION = 'registry-2026.09-official';
 export const SPELL_LICENSE = 'MIT';
 export const SPELL_CATEGORIES = ['文字与排版', '按钮与表单', '数据与反馈', '卡片与媒体', '视觉特效'] as const;
 export type SpellCategory = (typeof SPELL_CATEGORIES)[number];
@@ -48,7 +49,9 @@ const SPELL_DESCRIPTORS = [
 
 assertCreativeCatalog('spell', SPELL_DESCRIPTORS);
 export const SPELL_COMPONENTS = createCreativeDefinitions(SPELL_DESCRIPTORS, 'https://spell.sh/docs/');
-export const SPELL_COMPONENT_VARIANTS = createCreativeVariants(SPELL_DESCRIPTORS);
+export const SPELL_COMPONENT_VARIANTS: Record<string, UiComponentVariant[]> = Object.fromEntries(
+  Object.entries(SPELL_OFFICIAL_COMPONENT_VARIANTS).map(([componentId, variants]) => [componentId, variants.map((variant) => ({ ...variant }))])
+);
 
 export const SPELL_LIBRARY: UiLibraryCatalog<SpellCategory> = {
   id: 'spell', displayName: 'Spell UI', shortName: 'Spell', version: SPELL_VERSION, brandMark: 'S',

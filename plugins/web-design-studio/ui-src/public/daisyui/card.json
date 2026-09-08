@@ -1,0 +1,89 @@
+{
+  "slug": "card",
+  "title": "Card",
+  "description": "Cards are used to group and display content in a way that is easily readable.",
+  "demos": [
+    {
+      "id": "card-1",
+      "label": "Card",
+      "html": "<div class=\"card bg-base-100 w-96 shadow-sm\">\n  <figure>\n    <img\n      src=\"https://img.daisyui.com/images/stock/photo-1606107557195-0e29a4b5b4aa.webp\"\n      alt=\"Shoes\" />\n  </figure>\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Card Title</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-2",
+      "label": "Pricing Card",
+      "html": "<div class=\"card w-96 bg-base-100 shadow-sm\">\n  <div class=\"card-body\">\n    <span class=\"badge badge-xs badge-warning\">Most Popular</span>\n    <div class=\"flex justify-between\">\n      <h2 class=\"text-3xl font-bold\">Premium</h2>\n      <span class=\"text-xl\">$29/mo</span>\n    </div>\n    <ul class=\"mt-6 flex flex-col gap-2 text-xs\">\n      <li>\n        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-success\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n        <span>High-resolution image generation</span>\n      </li>\n      <li>\n        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-success\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n        <span>Customizable style templates</span>\n      </li>\n      <li>\n        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-success\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n        <span>Batch processing capabilities</span>\n      </li>\n      <li>\n        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-success\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n        <span>AI-driven image enhancements</span>\n      </li>\n      <li class=\"opacity-50\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-base-content/50\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n        <span class=\"line-through\">Seamless cloud integration</span>\n      </li>\n      <li class=\"opacity-50\">\n        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4 me-2 inline-block text-base-content/50\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\" /></svg>\n        <span class=\"line-through\">Real-time collaboration tools</span>\n      </li>\n    </ul>\n    <div class=\"mt-6\">\n      <button class=\"btn btn-primary btn-block\">Subscribe</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-3",
+      "label": "Card sizes",
+      "html": "<div class=\"card w-96 bg-base-100 card-xs shadow-sm\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Xsmall Card</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"justify-end card-actions\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>\n\n<div class=\"card w-96 bg-base-100 card-sm shadow-sm\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Small Card</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"justify-end card-actions\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>\n\n<div class=\"card w-96 bg-base-100 card-md shadow-sm\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Medium Card</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"justify-end card-actions\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>\n\n<div class=\"card w-96 bg-base-100 card-lg shadow-sm\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Large Card</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"justify-end card-actions\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>\n\n<div class=\"card w-96 bg-base-100 card-xl shadow-sm\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Xlarge Card</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"justify-end card-actions\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-4",
+      "label": "Card with a card-border",
+      "html": "<div class=\"card card-border bg-base-100 w-96\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Card Title</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-5",
+      "label": "Card with a dash border",
+      "html": "<div class=\"card card-dash bg-base-100 w-96\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Card Title</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-6",
+      "label": "Card with badge",
+      "html": "<div class=\"card bg-base-100 w-96 shadow-sm\">\n  <figure>\n    <img\n      src=\"https://img.daisyui.com/images/stock/photo-1606107557195-0e29a4b5b4aa.webp\"\n      alt=\"Shoes\" />\n  </figure>\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">\n      Card Title\n      <div class=\"badge badge-secondary\">NEW</div>\n    </h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"card-actions justify-end\">\n      <div class=\"badge badge-outline\">Fashion</div>\n      <div class=\"badge badge-outline\">Products</div>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-7",
+      "label": "Card with bottom image",
+      "html": "<div class=\"card bg-base-100 w-96 shadow-sm\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Card Title</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n  </div>\n  <figure>\n    <img\n      src=\"https://img.daisyui.com/images/stock/photo-1606107557195-0e29a4b5b4aa.webp\"\n      alt=\"Shoes\" />\n  </figure>\n</div>"
+    },
+    {
+      "id": "card-8",
+      "label": "Card with centered content and paddings",
+      "html": "<div class=\"card bg-base-100 w-96 shadow-sm\">\n  <figure class=\"px-10 pt-10\">\n    <img\n      src=\"https://img.daisyui.com/images/stock/photo-1606107557195-0e29a4b5b4aa.webp\"\n      alt=\"Shoes\"\n      class=\"rounded-xl\" />\n  </figure>\n  <div class=\"card-body items-center text-center\">\n    <h2 class=\"card-title\">Card Title</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"card-actions\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-9",
+      "label": "Card with image overlay",
+      "html": "<div class=\"card bg-base-100 image-full w-96 shadow-sm\">\n  <figure>\n    <img\n      src=\"https://img.daisyui.com/images/stock/photo-1606107557195-0e29a4b5b4aa.webp\"\n      alt=\"Shoes\" />\n  </figure>\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Card Title</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-10",
+      "label": "Card with no image",
+      "html": "<div class=\"card bg-base-100 w-96 shadow-sm\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Card title!</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn btn-primary\">Buy Now</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-11",
+      "label": "Card with custom color",
+      "html": "<div class=\"card bg-primary text-primary-content w-96\">\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">Card title!</h2>\n    <p>A card component has a figure, a body part, and inside body there are title and actions parts</p>\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn\">Buy Now</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-12",
+      "label": "Centered card with neutral color",
+      "html": "<div class=\"card bg-neutral text-neutral-content w-96\">\n  <div class=\"card-body items-center text-center\">\n    <h2 class=\"card-title\">Cookies!</h2>\n    <p>We are using cookies for no reason.</p>\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn btn-primary\">Accept</button>\n      <button class=\"btn btn-ghost\">Deny</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-13",
+      "label": "Card with action on top",
+      "html": "<div class=\"card bg-base-100 w-96 shadow-sm\">\n  <div class=\"card-body\">\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn btn-square btn-sm\">\n        <svg\n          aria-label=\"Close\"\n          xmlns=\"http://www.w3.org/2000/svg\"\n          class=\"h-6 w-6\"\n          fill=\"none\"\n          viewBox=\"0 0 24 24\"\n          stroke=\"currentColor\">\n          <path\n            stroke-linecap=\"round\"\n            stroke-linejoin=\"round\"\n            stroke-width=\"2\"\n            d=\"M6 18L18 6M6 6l12 12\" />\n        </svg>\n      </button>\n    </div>\n    <p>We are using cookies for no reason.</p>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-14",
+      "label": "Card with image on side",
+      "html": "<div class=\"card card-side bg-base-100 shadow-sm\">\n  <figure>\n    <img\n      src=\"https://img.daisyui.com/images/stock/photo-1635805737707-575885ab0820.webp\"\n      alt=\"Movie\" />\n  </figure>\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">New movie is released!</h2>\n    <p>Click the button to watch on Jetflix app.</p>\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn btn-primary\">Watch</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-15",
+      "label": "Responsive card (vertical on small screen, horizontal on large screen)",
+      "html": "<div class=\"card lg:card-side bg-base-100 shadow-sm\">\n  <figure>\n    <img\n      src=\"https://img.daisyui.com/images/stock/photo-1494232410401-ad00d5433cfa.webp\"\n      alt=\"Album\" />\n  </figure>\n  <div class=\"card-body\">\n    <h2 class=\"card-title\">New album is released!</h2>\n    <p>Click the button to listen on Spotiwhy app.</p>\n    <div class=\"card-actions justify-end\">\n      <button class=\"btn btn-primary\">Listen</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "card-16",
+      "label": "Selectable cards",
+      "html": "<div class=\"flex flex-wrap items-start gap-3\">\n  <label class=\"card bg-accent text-accent-content\">\n    <input type=\"checkbox\" name=\"card-urgent-1\" />\n    <div class=\"card-body\">\n      <h2 class=\"card-title\">Urgent</h2>\n      <p>Same day delivery</p>\n    </div>\n  </label>\n\n  <div class=\"join bg-base-300 rounded-selector\">\n    <label class=\"join-item card\">\n      <input type=\"radio\" value=\"sm\" name=\"card-size-1\" />\n      <div class=\"card-body\">\n        <h2 class=\"card-title\">Size SM</h2>\n        <p>Available</p>\n      </div>\n    </label>\n\n    <label class=\"join-item card\">\n      <input type=\"radio\" value=\"md\" name=\"card-size-1\" disabled />\n      <div class=\"card-body opacity-60\">\n        <h2 class=\"card-title\">Size MD</h2>\n        <p>Not available</p>\n      </div>\n    </label>\n\n    <label class=\"join-item card\">\n      <input type=\"radio\" value=\"lg\" name=\"card-size-1\" />\n      <div class=\"card-body\">\n        <h2 class=\"card-title\">Size LG</h2>\n        <p>Short supply</p>\n      </div>\n    </label>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/card/"
+}

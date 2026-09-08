@@ -44,9 +44,10 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     }
     for (const name of ['diagram_prepare_generation', 'diagram_commit_generation', 'diagram_import_plantuml']) {
       const tool = tools.get(name);
-      assert.equal(tool._meta['chatos/skillGate'].evidenceArgument, 'skillEvidence');
-      assert.equal(tool.inputSchema.properties.skillEvidence.type, 'array');
-      assert.ok(tool.inputSchema.required.includes('skillEvidence'));
+      assert.ok(tool._meta['chatos/skillGate'].allOf.length >= 1);
+      assert.equal(Object.hasOwn(tool.inputSchema.properties, 'skillEvidence'), false);
+      assert.equal(tool.inputSchema.required.includes('skillEvidence'), false);
+      assert.equal(Object.hasOwn(tool.inputSchema.properties, 'generationPermit'), false);
     }
     assert.ok(tools.has('diagram_create_project'), 'UI classification projects remain available');
 
@@ -70,7 +71,7 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     const overBudget = await client.callTool({
       name: 'diagram_prepare_generation',
       arguments: {
-        skillEvidence: ['router-evidence', 'sequence-evidence'], kind: 'sequence',
+        kind: 'sequence',
         artifactKey: 'token-refresh', title: 'Token Refresh Sequence',
         plan: planFor('sequence', goal, { estimatedPrimaryItemCount: 9 })
       }
@@ -79,11 +80,13 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     assert.match(overBudget.structuredContent.error, /exceeding.*budget|exceeds.*budget/i);
 
     const prepared = await call(client, 'diagram_prepare_generation', {
-      skillEvidence: ['router-evidence', 'sequence-evidence'], kind: 'sequence',
+      kind: 'sequence',
       artifactKey: 'token-refresh', title: 'Token Refresh Sequence',
       plan: planFor('sequence', goal)
     });
     assert.equal(prepared.operation, 'create');
+    assert.equal(prepared.prepared, true);
+    assert.equal(Object.hasOwn(prepared, 'generationPermit'), false);
     const source = [
       '@startuml',
       'actor "User" as user',
@@ -103,8 +106,6 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
       '@enduml'
     ].join('\n');
     const committed = await call(client, 'diagram_commit_generation', {
-      skillEvidence: ['router-evidence', 'sequence-evidence'],
-      generationPermit: prepared.generationPermit,
       source, title: 'Token Refresh Sequence', kind: 'sequence', artifactKey: 'token-refresh',
       idempotencyKey: 'token-refresh-write-1', responseDetail: 'document'
     });
@@ -114,33 +115,31 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     assert.equal(committed.document.generationProvenance.guideId, 'diagram-sequence');
     assert.equal(committed.document.generationProvenance.planHash, prepared.planHash);
 
-    const revisionPrepared = await call(client, 'diagram_prepare_generation', {
-      skillEvidence: ['router-evidence', 'sequence-evidence'], kind: 'sequence',
-      artifactKey: 'token-refresh', title: 'Token Refresh Sequence',
-      plan: planFor('sequence', goal)
-    });
-    assert.equal(revisionPrepared.operation, 'revise');
-    assert.equal(revisionPrepared.documentId, committed.document.documentId);
-
     const retry = await call(client, 'diagram_commit_generation', {
-      skillEvidence: ['router-evidence', 'sequence-evidence'],
-      generationPermit: prepared.generationPermit,
       source, title: 'Token Refresh Sequence', kind: 'sequence', artifactKey: 'token-refresh',
       idempotencyKey: 'token-refresh-write-1'
     });
     assert.equal(retry.document.documentId, committed.document.documentId);
     assert.equal(retry.reused, true);
 
+    const revisionPrepared = await call(client, 'diagram_prepare_generation', {
+      kind: 'sequence',
+      artifactKey: 'token-refresh', title: 'Token Refresh Sequence',
+      plan: planFor('sequence', goal)
+    });
+    assert.equal(revisionPrepared.operation, 'revise');
+    assert.equal(revisionPrepared.documentId, committed.document.documentId);
+
     const structuralPatchWithoutPermit = await client.callTool({
       name: 'diagram_apply_patch',
       arguments: {
-        documentId: committed.document.documentId,
-        expectedRevision: committed.document.revision,
-        operations: [{ op: 'remove_edge', edgeId: committed.document.edges[0].id }]
+        documentId: blank.document.documentId,
+        expectedRevision: blank.document.revision,
+        operations: [{ op: 'upsert_node', node: { id: 'unplanned', label: 'Unplanned', type: 'component', position: { x: 100, y: 100 }, size: { width: 160, height: 80 } } }]
       }
     });
     assert.equal(structuralPatchWithoutPermit.isError, true);
-    assert.match(structuralPatchWithoutPermit.structuredContent.error, /generationPermit/);
+    assert.match(structuralPatchWithoutPermit.structuredContent.error, /diagram_prepare_generation/);
 
     const renamed = await call(client, 'diagram_apply_patch', {
       documentId: committed.document.documentId,
@@ -150,7 +149,14 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     assert.equal(renamed.document.title, 'Token Refresh Runtime Sequence');
 
     const listedDocuments = await call(client, 'diagram_list_documents', {});
-    assert.equal(listedDocuments.scope.chatosProjectId, 'chatos-project-1');
+    assert.deepEqual(listedDocuments.scope, {
+      kind: 'project',
+      isolated: true,
+      hasProjectContext: true,
+      projectName: 'ChatOS Project One'
+    });
+    assert.equal(Object.hasOwn(listedDocuments.scope, 'chatosProjectId'), false);
+    assert.equal(Object.hasOwn(listedDocuments.scope, 'workspaceId'), false);
     assert.equal(listedDocuments.documents.length, 2);
 
     const target = await call(client, 'diagram_create_project', { name: 'Reviewed Diagrams' });

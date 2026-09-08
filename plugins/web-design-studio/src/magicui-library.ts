@@ -1,12 +1,13 @@
-import { assertCreativeCatalog, createCreativeDefinitions, createCreativeVariants, type CreativeComponentDescriptor } from './creative-library.js';
-import { applyUiComponentVariant, createUiLibraryComponent, variantsForUiComponent, type UiLibraryCatalog } from './ui-library.js';
+import { assertCreativeCatalog, createCreativeDefinitions, type CreativeComponentDescriptor } from './creative-library.js';
+import { MAGICUI_OFFICIAL_CATALOG, MAGICUI_OFFICIAL_COMPONENT_VARIANTS } from './magicui-registry.generated.js';
+import { applyUiComponentVariant, createUiLibraryComponent, variantsForUiComponent, type UiComponentVariant, type UiLibraryCatalog } from './ui-library.js';
 
-export const MAGICUI_VERSION = 'registry-2026.09';
+export const MAGICUI_VERSION = 'registry-2026.09-official';
 export const MAGICUI_LICENSE = 'MIT';
 export const MAGICUI_CATEGORIES = ['展示组件', '交互效果', '视觉特效', '文字动画', '设备模型', '按钮', '背景'] as const;
 export type MagicUiCategory = (typeof MAGICUI_CATEGORIES)[number];
 
-const MAGICUI_DESCRIPTORS = [
+const MAGICUI_KNOWN_DESCRIPTORS = [
   { slug: 'magic-card', label: '魔法聚光卡片', category: '展示组件', family: 'card', icon: '✦', content: '鼠标移动时呈现聚光与渐变边缘' },
   { slug: 'hero-video-dialog', label: '主视觉视频弹窗', category: '展示组件', family: 'media', icon: '▶', content: '观看产品设计演示' },
   { slug: 'code-comparison', label: '代码差异比较', category: '展示组件', family: 'comparison', icon: '⟷', content: '拖动查看重构前后的代码差异' },
@@ -21,8 +22,6 @@ const MAGICUI_DESCRIPTORS = [
   { slug: 'icon-cloud', label: '三维图标云', category: '展示组件', family: 'iconcloud', icon: '◌', content: 'React · Vue · Figma · AI' },
   { slug: 'file-tree', label: '项目文件树', category: '展示组件', family: 'tree', icon: '⌁', content: '网站项目资源结构', props: { items: ['app', 'components', 'assets', 'package.json'] } },
   { slug: 'terminal', label: '命令终端', category: '展示组件', family: 'terminal', icon: '⌘', content: '正在生成响应式网站…' },
-  { slug: 'dotted-map', label: '点阵世界地图', category: '展示组件', family: 'globe', icon: '∷', content: '用点阵与连线展示全球业务节点' },
-  { slug: 'backlight', label: '媒体背光', category: '展示组件', family: 'media', icon: '◐', content: '根据图像与视频色彩生成环境背光' },
 
   { slug: 'lens', label: '图片放大镜', category: '交互效果', family: 'lens', icon: '⌕', content: '悬停查看设计细节' },
   { slug: 'pointer', label: '自定义指针', category: '交互效果', family: 'pointer', icon: '↖', content: '跟随鼠标的品牌化指针' },
@@ -34,7 +33,6 @@ const MAGICUI_DESCRIPTORS = [
   { slug: 'animated-theme-toggler', label: '动画主题切换', category: '交互效果', family: 'theme', icon: '◐', content: '切换明亮与深色主题' },
 
   { slug: 'neon-gradient-card', label: '霓虹渐变卡片', category: '视觉特效', family: 'card', icon: '◇', content: '流动的霓虹渐变边框与光晕' },
-  { slug: 'glare-hover', label: '悬浮眩光', category: '视觉特效', family: 'card', icon: '◒', content: '指针经过时一束眩光横扫内容' },
   { slug: 'meteors', label: '流星特效', category: '视觉特效', family: 'effect', icon: '☄', content: '夜空中划过的动态流星' },
   { slug: 'particles', label: '粒子背景', category: '视觉特效', family: 'effect', icon: '⁙', content: '轻盈漂浮的空间粒子' },
   { slug: 'ripple', label: '同心波纹', category: '视觉特效', family: 'effect', icon: '◎', content: '从中心持续扩散的波纹' },
@@ -44,7 +42,6 @@ const MAGICUI_DESCRIPTORS = [
   { slug: 'shine-border', label: '闪耀描边', category: '视觉特效', family: 'card', icon: '▱', content: '多色高光沿边框流动' },
   { slug: 'animated-circular-progress-bar', label: '动画环形进度', category: '视觉特效', family: 'progress', icon: '◔', content: '项目完成度 78%' },
   { slug: 'glyph-matrix', label: '字符矩阵', category: '视觉特效', family: 'matrix', icon: '⌗', content: '由字符组成的动态数据矩阵' },
-  { slug: 'light-rays', label: '光线幕布', category: '视觉特效', family: 'beam', icon: '╱', content: '多束柔和光线从上方穿过页面' },
   { slug: 'warp-background', label: '时空扭曲背景', category: '视觉特效', family: 'background', icon: '✧', content: '向视点汇聚的动态透视网格' },
 
   { slug: 'line-shadow-text', label: '线性阴影文字', category: '文字动画', family: 'text', icon: 'T', content: 'Build remarkable products' },
@@ -59,19 +56,15 @@ const MAGICUI_DESCRIPTORS = [
   { slug: 'typing-animation', label: '打字机文字', category: '文字动画', family: 'text', icon: '⌨', content: 'Tell AI what you want to build…' },
   { slug: 'sparkles-text', label: '闪光文字', category: '文字动画', family: 'text', icon: '✧', content: 'Create something magical' },
   { slug: 'spinning-text', label: '环形旋转文字', category: '文字动画', family: 'text', icon: '◌', content: 'DESIGN · BUILD · SHIP ·' },
-  { slug: 'text-3d-flip', label: '3D 翻转文字', category: '文字动画', family: 'text', icon: '⇵', content: 'Future of web design' },
   { slug: 'comic-text', label: '漫画标题文字', category: '文字动画', family: 'text', icon: 'B', content: 'WOW! DESIGN!' },
-  { slug: 'kinetic-text', label: '动力排版文字', category: '文字动画', family: 'text', icon: 'K', content: 'MOVE WITH PURPOSE' },
   { slug: 'text-animate', label: '多模式文字动画', category: '文字动画', family: 'text', icon: 'T', content: 'Animate every word with purpose' },
   { slug: 'scroll-based-velocity', label: '滚动速度文字', category: '文字动画', family: 'text', icon: '↠', content: 'CREATIVE DEVELOPMENT —' },
   { slug: 'blur-fade', label: '模糊淡入', category: '文字动画', family: 'text', icon: '◒', content: '从模糊中清晰出现' },
   { slug: 'video-text', label: '视频填充文字', category: '文字动画', family: 'text', icon: '▶', content: 'MOTION' },
   { slug: 'highlighter', label: '手绘高亮文字', category: '文字动画', family: 'text', icon: '▰', content: '让关键价值真正被看见' },
-  { slug: 'dia-text-reveal', label: '对角文字揭示', category: '文字动画', family: 'text', icon: '◩', content: '文字沿对角切面逐步揭示' },
 
   { slug: 'android', label: 'Android 手机模型', category: '设备模型', family: 'device', icon: '▯', content: 'Android 产品预览' },
   { slug: 'safari', label: 'Safari 浏览器模型', category: '设备模型', family: 'device', icon: '▭', content: '桌面网站真实浏览器预览', width: 520, height: 330 },
-  { slug: 'iphone', label: 'iPhone 模型', category: '设备模型', family: 'device', icon: '▯', content: '移动端产品预览', width: 260, height: 460 },
   { slug: 'pixel-image', label: '像素化图片', category: '设备模型', family: 'image', icon: '▦', content: '由像素块逐步还原的产品图片' },
 
   { slug: 'shimmer-button', label: '微光按钮', category: '按钮', family: 'button', icon: '✦', content: '开始设计' },
@@ -88,14 +81,29 @@ const MAGICUI_DESCRIPTORS = [
   { slug: 'dot-pattern', label: '点阵背景', category: '背景', family: 'background', icon: '⁙', content: '轻量点阵衬托主体内容' },
   { slug: 'flickering-grid', label: '闪烁网格背景', category: '背景', family: 'background', icon: '▦', content: '随机闪烁的数据网格' },
   { slug: 'animated-grid-pattern', label: '动画网格图案', category: '背景', family: 'background', icon: '▧', content: '网格单元依次流动点亮' },
-  { slug: 'retro-grid', label: '复古透视网格', category: '背景', family: 'background', icon: '⌁', content: '具有纵深感的复古地平线' },
-  { slug: 'hexagon-pattern', label: '六边形网格', category: '背景', family: 'background', icon: '⬡', content: '可调间距与描边的六边形纹理' },
-  { slug: 'noise-texture', label: '噪点纹理', category: '背景', family: 'background', icon: '∷', content: '为界面叠加细腻的胶片颗粒质感' }
+  { slug: 'retro-grid', label: '复古透视网格', category: '背景', family: 'background', icon: '⌁', content: '具有纵深感的复古地平线' }
 ] as const satisfies readonly CreativeComponentDescriptor<MagicUiCategory>[];
+
+const knownDescriptors = new Map<string, CreativeComponentDescriptor<MagicUiCategory>>(
+  MAGICUI_KNOWN_DESCRIPTORS.map((descriptor) => [descriptor.slug, descriptor])
+);
+const MAGICUI_DESCRIPTORS: CreativeComponentDescriptor<MagicUiCategory>[] = MAGICUI_OFFICIAL_CATALOG.map((entry) =>
+  knownDescriptors.get(entry.slug) ?? {
+    slug: entry.slug,
+    label: entry.title,
+    category: '展示组件',
+    family: 'effect',
+    icon: '✦',
+    content: entry.title,
+    props: { description: entry.description }
+  }
+);
 
 assertCreativeCatalog('magicui', MAGICUI_DESCRIPTORS);
 export const MAGICUI_COMPONENTS = createCreativeDefinitions(MAGICUI_DESCRIPTORS, 'https://magicui.design/docs/components/');
-export const MAGICUI_COMPONENT_VARIANTS = createCreativeVariants(MAGICUI_DESCRIPTORS);
+export const MAGICUI_COMPONENT_VARIANTS: Record<string, UiComponentVariant[]> = Object.fromEntries(
+  Object.entries(MAGICUI_OFFICIAL_COMPONENT_VARIANTS).map(([componentId, variants]) => [componentId, variants.map((variant) => ({ ...variant }))])
+);
 
 export const MAGICUI_LIBRARY: UiLibraryCatalog<MagicUiCategory> = {
   id: 'magicui', displayName: 'Magic UI', shortName: 'Magic', version: MAGICUI_VERSION, brandMark: 'M',

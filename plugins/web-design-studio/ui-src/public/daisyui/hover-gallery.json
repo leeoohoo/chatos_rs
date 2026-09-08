@@ -1,0 +1,21 @@
+{
+  "slug": "hover-gallery",
+  "title": "Hover Gallery",
+  "description": "Hover Gallery is container of images. The first image is visible by default and when we hover it horizontally, other images show up. Hover Gallery is useful for product cards in ecommerce sites, portfolios or in image galleries. Hover Gallery can include up to 10 images.",
+  "demos": [
+    {
+      "id": "hover-gallery-1",
+      "label": "Hover Gallery",
+      "html": "<figure class=\"hover-gallery max-w-60\">\n  <img alt=\"Tailwind CSS image hover gallery\" src=\"https://img.daisyui.com/images/stock/daisyui-hat-1.webp\" />\n  <img alt=\"Tailwind CSS image hover gallery\" src=\"https://img.daisyui.com/images/stock/daisyui-hat-2.webp\" />\n  <img alt=\"Tailwind CSS image hover gallery\" src=\"https://img.daisyui.com/images/stock/daisyui-hat-3.webp\" />\n  <img alt=\"Tailwind CSS image hover gallery\" src=\"https://img.daisyui.com/images/stock/daisyui-hat-4.webp\" />\n</figure>"
+    },
+    {
+      "id": "hover-gallery-2",
+      "label": "Hover Gallery in a card",
+      "html": "<div class=\"card card-sm bg-base-200 max-w-60 shadow\">\n  <figure class=\"hover-gallery\">\n    <img alt=\"Tailwind CSS image hover gallery\" src=\"https://img.daisyui.com/images/stock/daisyui-hat-1.webp\" />\n    <img alt=\"Tailwind CSS image hover gallery\" src=\"https://img.daisyui.com/images/stock/daisyui-hat-2.webp\" />\n    <img alt=\"Tailwind CSS image hover gallery\" src=\"https://img.daisyui.com/images/stock/daisyui-hat-3.webp\" />\n    <img alt=\"Tailwind CSS image hover gallery\" src=\"https://img.daisyui.com/images/stock/daisyui-hat-4.webp\" />\n  </figure>\n  <div class=\"card-body\">\n    <h2 class=\"card-title flex justify-between\">\n      daisyUI Hat\n      <span class=\"font-normal\">$25</span>\n    </h2>\n    <p>High Quality classic cap hat with stitch logo</p>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/hover-gallery/",
+  "previewHeight": 360,
+  "previewSpan": "wide"
+}

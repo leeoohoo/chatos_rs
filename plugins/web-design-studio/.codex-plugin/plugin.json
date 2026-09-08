@@ -1,6 +1,6 @@
 {
   "name": "web-design-studio",
-  "version": "0.9.0",
+  "version": "0.12.0",
   "description": "Design and refine editable websites with an AI-aware visual canvas.",
   "author": {
     "name": "Chatos"
@@ -12,7 +12,7 @@
   "interface": {
     "displayName": "Web Design Studio",
     "shortDescription": "Design editable websites with AI.",
-    "longDescription": "A product-ready visual website design workbench where users and AI share the same structured document. Build with native primitives, 68 real Ant Design 6 components, responsive finished sections, reusable instances, precise annotations, and interactive HTML, React, or Vue export.",
+    "longDescription": "An AI-first visual website design workbench where AI generates and revises a shared structured document while people fine-tune the canvas and leave component-level requests. Build with native primitives, searchable production component systems, responsive sections, reusable instances, precise annotations, and optional HTML, React, or Vue export.",
     "developerName": "Chatos",
     "category": "Creativity",
     "capabilities": ["Interactive", "Read", "Write"],

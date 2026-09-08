@@ -6,14 +6,14 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use axum::http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, VARY};
 use axum::http::{HeaderValue, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use chatos_plugin_management_sdk::{
-    verify_plugin_release_signature, PluginInstallSource, PluginInstallSourceList,
-    PluginReleaseVerificationContext, UpdateUserPluginPreferenceRequest,
-    UpdateUserPluginPreferenceResponse, PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY,
+    verify_plugin_release_signature, PluginInstallSource, PluginReleaseVerificationContext,
+    UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
+    PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY,
 };
 use futures::StreamExt;
 use reqwest::redirect::Policy;
@@ -30,7 +30,7 @@ const MAX_PLUGIN_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 pub(super) async fn list_plugin_install_sources(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
-) -> Result<Json<PluginInstallSourceList>, ApiError> {
+) -> Result<Response, ApiError> {
     require_human_user(&user)?;
     let sources = state
         .plugin_management_client
@@ -40,7 +40,14 @@ pub(super) async fn list_plugin_install_sources(
     for source in &sources.items {
         ensure_source_preference_identity(source, user.effective_owner_user_id())?;
     }
-    Ok(Json(sources))
+    let mut response = Json(sources).into_response();
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
+    response
+        .headers_mut()
+        .insert(VARY, HeaderValue::from_static("authorization"));
+    Ok(response)
 }
 
 #[derive(Debug, Deserialize)]

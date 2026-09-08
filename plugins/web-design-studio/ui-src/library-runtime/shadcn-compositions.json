@@ -1,0 +1,275 @@
+{
+  "direction": {
+    "previewHeight": 150,
+    "demos": [
+      {
+        "id": "direction-ltr",
+        "label": "从左到右",
+        "composition": {
+          "module": "direction.DirectionProvider",
+          "props": { "direction": "ltr" },
+          "children": [
+            {
+              "element": "div",
+              "props": { "dir": "ltr", "className": "flex w-full max-w-md items-center justify-between gap-4 rounded-xl border bg-background p-4" },
+              "children": [
+                { "element": "span", "props": { "className": "text-sm font-medium" }, "children": [{ "$ref": "content", "fallback": "Design from left to right" }] },
+                { "module": "button.Button", "children": ["Continue →"] }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "direction-rtl",
+        "label": "从右到左",
+        "composition": {
+          "module": "direction.DirectionProvider",
+          "props": { "direction": "rtl" },
+          "children": [
+            {
+              "element": "div",
+              "props": { "dir": "rtl", "className": "flex w-full max-w-md items-center justify-between gap-4 rounded-xl border bg-background p-4" },
+              "children": [
+                { "element": "span", "props": { "className": "text-sm font-medium" }, "children": ["تصميم من اليمين إلى اليسار"] },
+                { "module": "button.Button", "children": ["متابعة ←"] }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "attachment": {
+    "previewHeight": 170,
+    "demos": [
+      {
+        "id": "attachment-done",
+        "label": "完成状态",
+        "composition": {
+          "module": "attachment.Attachment",
+          "props": { "state": "done", "className": "w-full max-w-md" },
+          "children": [
+            { "module": "attachment.AttachmentMedia", "children": ["FIG"] },
+            { "module": "attachment.AttachmentContent", "children": [
+              { "module": "attachment.AttachmentTitle", "children": [{ "$ref": "content", "fallback": "design-system.fig" }] },
+              { "module": "attachment.AttachmentDescription", "children": ["18.4 MB · Uploaded"] }
+            ] },
+            { "module": "attachment.AttachmentActions", "children": [
+              { "module": "attachment.AttachmentAction", "props": { "aria-label": "Remove attachment" }, "children": ["×"] }
+            ] }
+          ]
+        }
+      },
+      {
+        "id": "attachment-uploading",
+        "label": "上传状态",
+        "composition": {
+          "module": "attachment.Attachment",
+          "props": { "state": "uploading", "className": "w-full max-w-md" },
+          "children": [
+            { "module": "attachment.AttachmentMedia", "children": ["68%"] },
+            { "module": "attachment.AttachmentContent", "children": [
+              { "module": "attachment.AttachmentTitle", "children": [{ "$ref": "content", "fallback": "hero-video.mp4" }] },
+              { "module": "attachment.AttachmentDescription", "children": ["Uploading · 24.8 MB"] }
+            ] },
+            { "module": "attachment.AttachmentActions", "children": [
+              { "module": "attachment.AttachmentAction", "props": { "aria-label": "Cancel upload" }, "children": ["×"] }
+            ] }
+          ]
+        }
+      },
+      {
+        "id": "attachment-error",
+        "label": "错误状态",
+        "composition": {
+          "module": "attachment.Attachment",
+          "props": { "state": "error", "className": "w-full max-w-md" },
+          "children": [
+            { "module": "attachment.AttachmentMedia", "children": ["!"] },
+            { "module": "attachment.AttachmentContent", "children": [
+              { "module": "attachment.AttachmentTitle", "children": [{ "$ref": "content", "fallback": "oversize-image.png" }] },
+              { "module": "attachment.AttachmentDescription", "children": ["Upload failed · File is too large"] }
+            ] },
+            { "module": "attachment.AttachmentActions", "children": [
+              { "module": "attachment.AttachmentAction", "props": { "aria-label": "Retry upload" }, "children": ["↻"] }
+            ] }
+          ]
+        }
+      }
+    ]
+  },
+  "bubble": {
+    "previewHeight": 150,
+    "demos": [
+      {
+        "id": "bubble-default",
+        "label": "主要气泡",
+        "composition": {
+          "module": "bubble.Bubble",
+          "props": { "variant": "default", "align": "start" },
+          "children": [
+            { "module": "bubble.BubbleContent", "children": [{ "$ref": "content", "fallback": "I updated the page hierarchy and spacing." }] }
+          ]
+        }
+      },
+      {
+        "id": "bubble-secondary",
+        "label": "次要气泡",
+        "composition": {
+          "module": "bubble.Bubble",
+          "props": { "variant": "secondary", "align": "end" },
+          "children": [
+            { "module": "bubble.BubbleContent", "children": [{ "$ref": "content", "fallback": "Make the hero section more expressive." }] }
+          ]
+        }
+      },
+      {
+        "id": "bubble-outline-reaction",
+        "label": "描边与反馈",
+        "composition": {
+          "module": "bubble.Bubble",
+          "props": { "variant": "outline", "align": "start" },
+          "children": [
+            { "module": "bubble.BubbleContent", "children": [{ "$ref": "content", "fallback": "This version keeps every breakpoint aligned." }] },
+            { "module": "bubble.BubbleReactions", "children": ["✓ 12"] }
+          ]
+        }
+      }
+    ]
+  },
+  "marker": {
+    "previewHeight": 130,
+    "demos": [
+      {
+        "id": "marker-default",
+        "label": "基础标记",
+        "composition": {
+          "module": "marker.Marker",
+          "children": [
+            { "module": "marker.MarkerIcon", "children": ["✦"] },
+            { "module": "marker.MarkerContent", "children": [{ "$ref": "content", "fallback": "Important design decision" }] }
+          ]
+        }
+      },
+      {
+        "id": "marker-separator",
+        "label": "分隔标记",
+        "composition": {
+          "module": "marker.Marker",
+          "props": { "variant": "separator", "className": "w-full max-w-md" },
+          "children": [
+            { "module": "marker.MarkerContent", "children": [{ "$ref": "content", "fallback": "Today" }] }
+          ]
+        }
+      },
+      {
+        "id": "marker-border",
+        "label": "底边标记",
+        "composition": {
+          "module": "marker.Marker",
+          "props": { "variant": "border", "className": "w-full max-w-md" },
+          "children": [
+            { "module": "marker.MarkerContent", "children": [{ "$ref": "content", "fallback": "Responsive review completed" }] }
+          ]
+        }
+      }
+    ]
+  },
+  "message": {
+    "previewHeight": 190,
+    "previewSpan": "wide",
+    "demos": [
+      {
+        "id": "message-assistant",
+        "label": "助手消息",
+        "composition": {
+          "module": "message.Message",
+          "props": { "align": "start", "className": "w-full max-w-xl" },
+          "children": [
+            { "module": "message.MessageAvatar", "children": ["AI"] },
+            { "module": "message.MessageContent", "children": [
+              { "module": "message.MessageHeader", "children": ["AI Designer · just now"] },
+              { "module": "bubble.Bubble", "props": { "variant": "secondary" }, "children": [
+                { "module": "bubble.BubbleContent", "children": [{ "$ref": "content", "fallback": "The page structure is ready. You can keep refining the visual details." }] }
+              ] },
+              { "module": "message.MessageFooter", "children": ["Delivered"] }
+            ] }
+          ]
+        }
+      },
+      {
+        "id": "message-user",
+        "label": "用户消息",
+        "composition": {
+          "module": "message.Message",
+          "props": { "align": "end", "className": "w-full max-w-xl" },
+          "children": [
+            { "module": "message.MessageAvatar", "children": ["You"] },
+            { "module": "message.MessageContent", "children": [
+              { "module": "message.MessageHeader", "children": ["You · 10:24"] },
+              { "module": "bubble.Bubble", "props": { "variant": "default", "align": "end" }, "children": [
+                { "module": "bubble.BubbleContent", "children": [{ "$ref": "content", "fallback": "Increase the contrast between the headline and the primary action." }] }
+              ] },
+              { "module": "message.MessageFooter", "children": ["Read"] }
+            ] }
+          ]
+        }
+      }
+    ]
+  },
+  "message-scroller": {
+    "layout": "fill",
+    "previewHeight": 340,
+    "previewSpan": "wide",
+    "demos": [
+      {
+        "id": "message-scroller-conversation",
+        "label": "可滚动对话",
+        "composition": {
+          "module": "message-scroller.MessageScrollerProvider",
+          "children": [
+            { "module": "message-scroller.MessageScroller", "props": { "className": "h-full min-h-72 w-full max-w-xl rounded-xl border bg-background" }, "children": [
+              { "module": "message-scroller.MessageScrollerViewport", "children": [
+                { "module": "message-scroller.MessageScrollerContent", "props": { "className": "p-4" }, "children": [
+                  { "module": "message-scroller.MessageScrollerItem", "children": [
+                    { "module": "message.Message", "children": [
+                      { "module": "message.MessageAvatar", "children": ["AI"] },
+                      { "module": "message.MessageContent", "children": [
+                        { "module": "message.MessageHeader", "children": ["AI Designer"] },
+                        { "module": "bubble.Bubble", "props": { "variant": "secondary" }, "children": [
+                          { "module": "bubble.BubbleContent", "children": ["I created a responsive hero and navigation."] }
+                        ] }
+                      ] }
+                    ] }
+                  ] },
+                  { "module": "message-scroller.MessageScrollerItem", "children": [
+                    { "module": "message.Message", "props": { "align": "end" }, "children": [
+                      { "module": "message.MessageContent", "children": [
+                        { "module": "bubble.Bubble", "props": { "variant": "default", "align": "end" }, "children": [
+                          { "module": "bubble.BubbleContent", "children": [{ "$ref": "content", "fallback": "Make the visual language more editorial." }] }
+                        ] }
+                      ] },
+                      { "module": "message.MessageAvatar", "children": ["You"] }
+                    ] }
+                  ] },
+                  { "module": "message-scroller.MessageScrollerItem", "props": { "scrollAnchor": true }, "children": [
+                    { "module": "message.Message", "children": [
+                      { "module": "message.MessageAvatar", "children": ["AI"] },
+                      { "module": "message.MessageContent", "children": [
+                        { "module": "bubble.Bubble", "props": { "variant": "tinted" }, "children": [
+                          { "module": "bubble.BubbleContent", "children": ["Done. Typography, spacing, and imagery now follow one coherent system."] }
+                        ] }
+                      ] }
+                    ] }
+                  ] }
+                ] }
+              ] },
+              { "module": "message-scroller.MessageScrollerButton" }
+            ] }
+          ]
+        }
+      }
+    ]
+  }
+}

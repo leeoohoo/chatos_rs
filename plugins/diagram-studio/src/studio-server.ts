@@ -3,7 +3,7 @@ import { watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DiagramDocumentStore, RevisionConflictError } from './document-store.js';
-import { runtimeScopeFingerprint } from './generation-guides.js';
+import { runtimeDataScopeFingerprint } from './generation-guides.js';
 import { assertDiagramDocument, type DiagramDocument, type DiagramKind } from './schema.js';
 
 const port = Number.parseInt(
@@ -17,12 +17,11 @@ await store.initialize();
 const contextKind = process.env.CHATOS_CONTEXT_SCOPE ?? 'device';
 const runtimeContext = {
   kind: contextKind,
-  shared: contextKind === 'device',
-  ...(process.env.CHATOS_PROJECT_ID ? { chatosProjectId: process.env.CHATOS_PROJECT_ID } : {}),
-  ...(process.env.CHATOS_PROJECT_NAME ? { chatosProjectName: process.env.CHATOS_PROJECT_NAME } : {}),
-  ...(process.env.CHATOS_WORKSPACE_ID ? { workspaceId: process.env.CHATOS_WORKSPACE_ID } : {})
+  isolated: true,
+  hasProjectContext: contextKind === 'project',
+  ...(process.env.CHATOS_PROJECT_NAME ? { projectName: process.env.CHATOS_PROJECT_NAME } : {})
 };
-const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
+const scopeKey = runtimeDataScopeFingerprint(store.rootDirectory);
 const defaultProject = await store.ensureScopedProject(
   scopeKey,
   contextKind === 'project' && process.env.CHATOS_PROJECT_ID

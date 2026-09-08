@@ -7,6 +7,7 @@ use chatos_mcp_management_sdk::{McpRouteResourceKind, WorkspaceExecutionTarget};
 fn context(workspace_provider: WorkspaceProviderKind) -> ProjectExecutionContext {
     ProjectExecutionContext {
         project_id: Some("project-1".to_string()),
+        project_name: Some("Project 1".to_string()),
         owner_user_id: "user-1".to_string(),
         workspace_provider,
         workspace: (workspace_provider == WorkspaceProviderKind::LocalConnector).then(|| {

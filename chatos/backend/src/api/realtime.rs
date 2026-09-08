@@ -8,6 +8,7 @@ use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::api::metrics::{ActiveWebSocketConnection, WebSocketKind};
 use crate::core::auth::AuthUser;
@@ -96,7 +97,15 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                             break;
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        warn!(
+                            user_id = %user_id,
+                            skipped,
+                            "realtime websocket subscriber lagged; closing connection for reconciliation"
+                        );
+                        shutdown.cancel();
+                        break;
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }

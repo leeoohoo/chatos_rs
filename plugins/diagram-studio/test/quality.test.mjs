@@ -28,3 +28,41 @@ test('source evidence can be required for delivery readiness', () => {
   assert.equal(required.ready, false);
   assert.ok(required.warnings.some((warning) => warning.code === 'missing_source_references' && warning.blocking));
 });
+
+test('architecture overview quality blocks runtime cycles and cross-boundary edge stars', () => {
+  const document = plantUmlToDiagram(`@startuml
+left to right direction
+actor "User" as user
+package "Client" as client_boundary { component "Client App" as client }
+package "Core" as core_boundary { component "ChatOS Core" as core }
+package "Task" as task_boundary { component "Task Runner" as task }
+package "Capability" as capability_boundary { component "Tool Runtime" as tools }
+package "Data" as data_boundary {
+  database "State" as state
+  component "Memory" as memory
+  queue "Events" as events
+}
+user --> client : Uses
+client --> core : HTTPS
+core --> task : Submit work
+task ..> core : Callback result
+core --> tools : Invoke tools
+task --> tools : Runtime tools
+core --> state : Persist messages
+core --> memory : Read context
+core ..> events : Consume results
+task --> state : Persist runs
+task --> memory : Sync project
+task ..> events : Publish work
+@enduml`, { documentId: 'runtime-cycle-overview', kind: 'architecture' });
+  const report = inspectDiagramQuality(document, 'architecture-overview');
+  const codes = new Set(report.warnings.filter((warning) => warning.blocking).map((warning) => warning.code));
+
+  assert.equal(report.ready, false);
+  assert.ok(codes.has('architecture_reciprocal_relationships'));
+  assert.ok(codes.has('architecture_cross_boundary_hub'));
+  assert.ok(codes.has('architecture_boundary_pair_too_dense'));
+  assert.equal(report.metrics.reciprocalRelationshipCount, 1);
+  assert.ok(report.metrics.maxCrossBoundaryFan > 4);
+  assert.ok(report.metrics.maxBoundaryPairEdges > 2);
+});

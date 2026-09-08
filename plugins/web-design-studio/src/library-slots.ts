@@ -53,6 +53,7 @@ export function editableSlotsForUiComponent(component: WebDesignComponent): UiEd
   const library = component.library?.name;
   const name = component.library?.component;
   if (!library || !name) return [];
+  if (component.library?.props.registryElement) return [];
   if (library === 'antd') return editableSlotsForAntdComponent(component);
 
   if (library === 'magicui' || library === 'spell' || library === 'inspira' || library === 'daisyui') {
@@ -108,6 +109,13 @@ export function editableSlotsForUiComponent(component: WebDesignComponent): UiEd
     if (name === 'Dialog' || name === 'AlertDialog') return [contentSlot(component, 'content', name === 'AlertDialog' ? '确认内容' : '对话框内容', '正文、表单和操作区域', { width: 480, height: 400 })];
     if (name === 'Drawer' || name === 'Sheet') return overlaySlot(component, name === 'Sheet' ? '面板内容' : '抽屉内容', '表单、详情、导航和操作区域');
     if (name === 'Popover' || name === 'HoverCard') return [contentSlot(component, 'popup', name === 'Popover' ? '气泡内容' : '悬浮卡片内容', '浮层中的自由内容', { width: 320, height: 220 })];
+  }
+
+  if (typeof component.library?.props.registryDemo === 'string') {
+    return [contentSlot(component, 'content', '示例内容', '双击组件，或点击“拆开并编辑”，即可逐项选择官方示例中的元素', {
+      width: component.width,
+      height: component.height
+    })];
   }
 
   return [];

@@ -23,6 +23,9 @@ export interface DiagramQualityReport {
     maxContainerChildren: number;
     maxFanOut: number;
     maxFanIn: number;
+    reciprocalRelationshipCount: number;
+    maxCrossBoundaryFan: number;
+    maxBoundaryPairEdges: number;
     unlabeledEdgeCount: number;
     missingSourceReferenceCount: number;
     isolatedNodeCount: number;
@@ -51,10 +54,26 @@ export function inspectDiagramQuality(
   const childCounts = containers.map((container) => document.nodes.filter((node) => node.parentId === container.id).length);
   const fanOut = new Map<string, number>();
   const fanIn = new Map<string, number>();
+  const directedPairs = new Set<string>();
+  const crossBoundaryFan = new Map<string, number>();
+  const boundaryPairEdges = new Map<string, number>();
   for (const edge of document.edges) {
     fanOut.set(edge.source, (fanOut.get(edge.source) ?? 0) + 1);
     fanIn.set(edge.target, (fanIn.get(edge.target) ?? 0) + 1);
+    directedPairs.add(`${edge.source}\u0000${edge.target}`);
+    const sourceBoundary = topLevelNodeId(document.nodes, edge.source);
+    const targetBoundary = topLevelNodeId(document.nodes, edge.target);
+    if (sourceBoundary && targetBoundary && sourceBoundary !== targetBoundary) {
+      crossBoundaryFan.set(edge.source, (crossBoundaryFan.get(edge.source) ?? 0) + 1);
+      crossBoundaryFan.set(edge.target, (crossBoundaryFan.get(edge.target) ?? 0) + 1);
+      const boundaryPair = [sourceBoundary, targetBoundary].sort().join('\u0000');
+      boundaryPairEdges.set(boundaryPair, (boundaryPairEdges.get(boundaryPair) ?? 0) + 1);
+    }
   }
+  const reciprocalPairs = new Set(document.edges
+    .filter((edge) => directedPairs.has(`${edge.target}\u0000${edge.source}`))
+    .map((edge) => [edge.source, edge.target].sort().join('\u0000')));
+  const reciprocalRelationships = reciprocalPairs.size;
   const rectangles = components.slice(0, 300).map((node) => nodeRectangle(document.nodes, node));
   let overlapCount = 0;
   for (let left = 0; left < rectangles.length; left += 1) {
@@ -105,8 +124,8 @@ export function inspectDiagramQuality(
       blocking: requireSourceReferences
     });
   }
-  const maxComponents = profile === 'architecture-overview' ? 12 : 20;
-  const maxEdges = profile === 'architecture-overview' ? 18 : profile === 'architecture-detail' ? 28 : 30;
+  const maxComponents = profile === 'architecture-overview' ? 10 : profile === 'architecture-detail' ? 16 : 20;
+  const maxEdges = profile === 'architecture-overview' ? 12 : profile === 'architecture-detail' ? 22 : 30;
   if (document.kind === 'architecture' && components.length > maxComponents) {
     warnings.push({
       code: 'architecture_too_many_components',
@@ -130,6 +149,8 @@ export function inspectDiagramQuality(
   }
   const maxFanOut = maximum(fanOut.values());
   const maxFanIn = maximum(fanIn.values());
+  const maxCrossBoundaryFan = maximum(crossBoundaryFan.values());
+  const maxBoundaryPairEdges = maximum(boundaryPairEdges.values());
   if (document.kind === 'architecture' && Math.max(maxFanOut, maxFanIn) > 7) {
     warnings.push({
       code: 'architecture_hub_overloaded',
@@ -142,6 +163,34 @@ export function inspectDiagramQuality(
       code: 'flat_architecture',
       message: 'Architecture has many components but no system or layer boundaries.',
       blocking: profile === 'architecture-overview'
+    });
+  }
+  if (document.kind === 'architecture' && profile === 'architecture-overview' && reciprocalRelationships > 0) {
+    warnings.push({
+      code: 'architecture_reciprocal_relationships',
+      message: `${reciprocalRelationships} reciprocal relationship pair(s) turn the overview into a runtime flow. Aggregate request/result semantics into one relationship or move the callback to a focused detail diagram.`,
+      blocking: true
+    });
+  }
+  if (document.kind === 'architecture' && profile === 'architecture-overview' && maxCrossBoundaryFan > 4) {
+    warnings.push({
+      code: 'architecture_cross_boundary_hub',
+      message: `One component participates in ${maxCrossBoundaryFan} cross-boundary relationships; aggregate shared data/runtime dependencies or split the concern into a detail diagram.`,
+      blocking: true
+    });
+  }
+  if (document.kind === 'architecture' && profile === 'architecture-overview' && maxBoundaryPairEdges > 2) {
+    warnings.push({
+      code: 'architecture_boundary_pair_too_dense',
+      message: `${maxBoundaryPairEdges} relationships connect the same pair of boundaries; replace them with one boundary-level relationship or create a focused detail diagram.`,
+      blocking: true
+    });
+  }
+  if (document.kind === 'architecture' && profile === 'architecture-overview' && containers.length > 5) {
+    warnings.push({
+      code: 'architecture_too_many_boundaries',
+      message: `${containers.length} boundaries fragment the overview; merge equivalent ownership areas or move internal boundaries to detail diagrams.`,
+      blocking: true
     });
   }
   const maxContainerChildren = maximum(childCounts);
@@ -182,6 +231,9 @@ export function inspectDiagramQuality(
       maxContainerChildren,
       maxFanOut,
       maxFanIn,
+      reciprocalRelationshipCount: reciprocalRelationships,
+      maxCrossBoundaryFan,
+      maxBoundaryPairEdges,
       unlabeledEdgeCount,
       missingSourceReferenceCount: missingSourceReferenceIds.length,
       isolatedNodeCount: isolatedNodeIds.length,
@@ -194,6 +246,16 @@ export function inspectDiagramQuality(
     errors,
     warnings
   };
+}
+
+function topLevelNodeId(nodes: DiagramNode[], nodeId: string): string | undefined {
+  let current = nodes.find((node) => node.id === nodeId);
+  const seen = new Set<string>();
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id);
+    current = nodes.find((node) => node.id === current!.parentId);
+  }
+  return current?.id;
 }
 
 function sourceContainerCount(document: DiagramDocument): number | undefined {

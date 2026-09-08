@@ -167,7 +167,9 @@ impl PluginComponentProvider {
                     (self.skill_binding_by_ref(snapshot, requested_ref)?, None)
                 }
                 SKILL_LIST_RESOURCES_TOOL_NAME | SKILL_READ_RESOURCE_TOOL_NAME => {
-                    let activation = self.verify_skill_evidence(snapshot, &arguments).await?;
+                    let activation = self
+                        .active_skill_from_arguments(snapshot, &arguments)
+                        .await?;
                     let binding = self.skill_binding_for_claims(snapshot, &activation.claims)?;
                     (binding, Some(activation.claims))
                 }
@@ -182,7 +184,7 @@ impl PluginComponentProvider {
         };
         let progressive_skill = binding.runtime.skill_snapshot.as_ref();
         if progressive_skill.is_some() && original_tool_name == SKILL_LIST_RESOURCES_TOOL_NAME {
-            let claims = verified_claims.expect("resource listing verifies activation evidence");
+            let claims = verified_claims.expect("resource listing verifies active Skill state");
             let resources = progressive_skill.unwrap().resources.clone();
             let result = json!({
                 "content": [{
@@ -194,7 +196,6 @@ impl PluginComponentProvider {
                     )
                 }],
                 "structuredContent": {
-                    "activation_ref": claims.activation_ref,
                     "skill_ref": claims.skill_ref,
                     "resources": resources
                 }
@@ -391,35 +392,30 @@ impl PluginComponentProvider {
         Ok(())
     }
 
-    async fn verify_skill_evidence(
+    async fn active_skill_from_arguments(
         &self,
         snapshot: &RuntimeSessionSnapshot,
         arguments: &Value,
     ) -> Result<super::skill_attestation::ActiveSkillActivation, ProviderCallError> {
-        let token = arguments
-            .get("activation_evidence")
+        let requested_skill_ref = arguments
+            .get("skill_ref")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
-                ProviderCallError::invalid_response("Plugin Skill activation evidence is required")
+                ProviderCallError::invalid_response("Plugin Skill skill_ref is required")
             })?;
         let activation = self
             .skill_attestations
-            .verify_active(token)
+            .active_for_skill_ref(snapshot.session_id.as_str(), requested_skill_ref)
             .await
-            .map_err(ProviderCallError::provider_unavailable)?;
-        let requested_activation_ref = arguments
-            .get("activation_ref")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+            .map_err(ProviderCallError::provider_unavailable)?
+            .ok_or_else(|| ProviderCallError {
+                code: MCP_ERROR_AUTH_REQUIRED,
+                message: "Plugin Skill is not active in this Runtime Session".to_string(),
+            })?;
         let binding = self.skill_binding_for_claims(snapshot, &activation.claims)?;
-        self.validate_skill_claims(
-            snapshot,
-            binding,
-            &activation.claims,
-            Some(requested_activation_ref),
-        )?;
+        self.validate_skill_claims(snapshot, binding, &activation.claims, None)?;
         Ok(activation)
     }
 
@@ -431,7 +427,7 @@ impl PluginComponentProvider {
         result: &Value,
     ) -> Result<Value, ProviderCallError> {
         let claims = self
-            .verify_skill_evidence(snapshot, arguments)
+            .active_skill_from_arguments(snapshot, arguments)
             .await?
             .claims;
         let skill = binding.runtime.skill_snapshot.as_ref().unwrap();
@@ -462,7 +458,6 @@ impl PluginComponentProvider {
         Ok(json!({
             "content": [{"type": "text", "text": content}],
             "structuredContent": {
-                "activation_ref": claims.activation_ref,
                 "skill_ref": claims.skill_ref,
                 "relative_path": requested_path,
                 "sha256": descriptor.sha256,
@@ -494,49 +489,42 @@ impl PluginComponentProvider {
         let now = chrono::Utc::now().timestamp();
         let expires_at = snapshot.expires_at_unix.min(now + 60 * 60);
         let (scope_kind, scope_id) = skill_scope(snapshot, binding);
-        let parent_activation_ref = arguments
-            .get("parent_activation_ref")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let depth = if let Some(parent_ref) = parent_activation_ref.as_deref() {
-            let parent = self
-                .skill_attestations
-                .activation(snapshot.session_id.as_str(), parent_ref)
-                .await
-                .map_err(ProviderCallError::provider_unavailable)?
-                .ok_or_else(|| {
-                    ProviderCallError::provider_unavailable(
-                        "parent Skill activation is not active in this Runtime Session",
-                    )
-                })?;
-            if parent.claims.plugin_id != binding.runtime.plugin_id
-                || parent.claims.release_id != binding.runtime.release_id
+        let mut parent_candidates = Vec::new();
+        for activation in self
+            .skill_attestations
+            .active_activations(snapshot.session_id.as_str())
+            .await
+            .map_err(ProviderCallError::provider_unavailable)?
+        {
+            if activation.claims.plugin_id != binding.runtime.plugin_id
+                || activation.claims.release_id != binding.runtime.release_id
+                || activation.claims.skill_name == skill.metadata.name
             {
-                return Err(ProviderCallError {
-                    code: MCP_ERROR_AUTH_REQUIRED,
-                    message: "parent Skill activation belongs to another Plugin Release"
-                        .to_string(),
-                });
+                continue;
             }
-            let parent_binding = self.skill_binding_for_claims(snapshot, &parent.claims)?;
+            let parent_binding = self.skill_binding_for_claims(snapshot, &activation.claims)?;
             let parent_skill = parent_binding.runtime.skill_snapshot.as_ref().unwrap();
-            if !parent_skill
+            if parent_skill
                 .metadata
                 .required_skills
                 .iter()
                 .chain(parent_skill.metadata.related_skills.iter())
                 .any(|name| name == &skill.metadata.name)
             {
-                return Err(ProviderCallError {
-                    code: MCP_ERROR_AUTH_REQUIRED,
-                    message: format!(
-                        "parent Skill {} does not declare {} as a required or related Skill",
-                        parent_skill.metadata.name, skill.metadata.name
-                    ),
-                });
+                parent_candidates.push(activation);
             }
+        }
+        parent_candidates.sort_by(|left, right| {
+            left.depth
+                .cmp(&right.depth)
+                .then(left.claims.issued_at_unix.cmp(&right.claims.issued_at_unix))
+                .then(left.claims.activation_ref.cmp(&right.claims.activation_ref))
+        });
+        let parent = parent_candidates.pop();
+        let parent_activation_ref = parent
+            .as_ref()
+            .map(|activation| activation.claims.activation_ref.clone());
+        let depth = if let Some(parent) = parent {
             let parent_depth = parent.depth;
             let mut cursor = Some(parent);
             while let Some(ancestor) = cursor {
@@ -621,7 +609,7 @@ impl PluginComponentProvider {
                 true,
             ));
         }
-        claims.activation_ref = format!("SA{}", Uuid::new_v4().simple());
+        claims.activation_ref = super::skill_attestation::new_activation_reference();
         let activation = self
             .skill_attestations
             .register(
@@ -694,33 +682,22 @@ fn skill_activation_payload(
     instructions: &str,
     deduplicated: bool,
 ) -> Value {
-    let activation_receipt = json!({
-        "activation_ref": activation.claims.activation_ref,
-        "activation_evidence": activation.evidence,
-        "skill_ref": activation.claims.skill_ref,
-        "name": skill.metadata.name,
-        "parent_activation_ref": activation.parent_activation_ref,
-        "depth": activation.depth,
-    });
     json!({
         "content": [{
             "type": "text",
             "text": format!(
-                "{}\n\n[Activated Plugin Skill: {}]\n{}\n\n[Plugin Skill Activation Receipt]\n{}\nUse activation_evidence only as an exact gated-tool argument. Never edit it, substitute activation_ref for it, or disclose it in user-facing output.",
+                "{}\n\n[Activated Plugin Skill: {}]\n{}\n\nThe platform has recorded this Skill activation for the current Runtime Session. Call the relevant Plugin tools with business arguments only; never add user, project, workspace, session, activation, or authentication fields.",
                 super::THIRD_PARTY_PLUGIN_ENVELOPE,
                 skill.metadata.name,
                 instructions,
-                serde_json::to_string(&activation_receipt).unwrap_or_else(|_| "{}".to_string()),
             )
         }],
         "structuredContent": {
-            "activation_ref": activation.claims.activation_ref,
-            "activation_evidence": activation.evidence,
+            "activated": true,
             "skill_ref": activation.claims.skill_ref,
             "name": skill.metadata.name,
             "content_sha256": skill.instructions_sha256,
             "resource_manifest_sha256": skill.resource_manifest_sha256,
-            "parent_activation_ref": activation.parent_activation_ref,
             "depth": activation.depth,
             "deduplicated": deduplicated,
             "expires_at_unix": activation.claims.expires_at_unix

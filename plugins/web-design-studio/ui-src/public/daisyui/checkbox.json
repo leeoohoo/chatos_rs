@@ -1,0 +1,44 @@
+{
+  "slug": "checkbox",
+  "title": "Checkbox",
+  "description": "Checkboxes are used to select or deselect a value.",
+  "demos": [
+    {
+      "id": "checkbox-1",
+      "label": "Checkbox",
+      "html": "<input type=\"checkbox\" checked=\"checked\" class=\"checkbox\" />"
+    },
+    {
+      "id": "checkbox-2",
+      "label": "With fieldset and label",
+      "html": "<fieldset class=\"fieldset bg-base-100 border-base-300 rounded-box w-64 border p-4\">\n  <legend class=\"fieldset-legend\">Login options</legend>\n  <label class=\"label\">\n    <input type=\"checkbox\" checked=\"checked\" class=\"checkbox\" />\n    Remember me\n  </label>\n</fieldset>"
+    },
+    {
+      "id": "checkbox-3",
+      "label": "Sizes",
+      "html": "<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-xs\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-sm\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-md\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-lg\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-xl\" />"
+    },
+    {
+      "id": "checkbox-4",
+      "label": "Colors",
+      "html": "<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-primary\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-secondary\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-accent\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-neutral\" />\n\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-info\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-success\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-warning\" />\n<input type=\"checkbox\" checked=\"checked\" class=\"checkbox checkbox-error\" />"
+    },
+    {
+      "id": "checkbox-5",
+      "label": "Disabled",
+      "html": "<input type=\"checkbox\" class=\"checkbox\" disabled />\n<input type=\"checkbox\" class=\"checkbox\" disabled checked=\"checked\" />"
+    },
+    {
+      "id": "checkbox-6",
+      "label": "Indeterminate",
+      "html": "<!-- You can make a checkbox indeterminate using JS -->\n<script>\n  document.getElementById(\"my-checkbox\").indeterminate = true\n</script>\n<input type=\"checkbox\" class=\"checkbox\" id=\"my-checkbox\" />"
+    },
+    {
+      "id": "checkbox-7",
+      "label": "Checkbox with custom colors",
+      "html": "<input\n  type=\"checkbox\"\n  checked=\"checked\"\n  class=\"checkbox border-indigo-600 bg-indigo-500 checked:border-orange-500 checked:bg-orange-400 checked:text-orange-800\"\n/>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/checkbox/"
+}

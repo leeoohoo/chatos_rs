@@ -13,10 +13,9 @@ export interface DiagramSummary {
 
 export interface DiagramRuntimeContext {
   kind: string;
-  shared: boolean;
-  chatosProjectId?: string;
-  chatosProjectName?: string;
-  workspaceId?: string;
+  isolated: boolean;
+  hasProjectContext: boolean;
+  projectName?: string;
   defaultProjectId?: string;
 }
 
@@ -60,7 +59,7 @@ class LocalRepository implements Repository {
   readonly mode = 'local' as const;
 
   async runtimeContext(): Promise<DiagramRuntimeContext> {
-    return { kind: 'device', shared: true };
+    return { kind: 'device', isolated: true, hasProjectContext: false };
   }
 
   async list(): Promise<DiagramSummary[]> {
@@ -185,7 +184,7 @@ class ServerRepository implements Repository {
 
   async runtimeContext(): Promise<DiagramRuntimeContext> {
     const response = await fetch('/api/context', { cache: 'no-store' });
-    if (!response.ok) return { kind: 'device', shared: true };
+    if (!response.ok) return { kind: 'device', isolated: true, hasProjectContext: false };
     return response.json() as Promise<DiagramRuntimeContext>;
   }
 

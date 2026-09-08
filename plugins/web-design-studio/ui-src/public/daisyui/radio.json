@@ -1,0 +1,69 @@
+{
+  "slug": "radio",
+  "title": "Radio",
+  "description": "Radio buttons allow the user to select one option from a set.",
+  "demos": [
+    {
+      "id": "radio-1",
+      "label": "Radio",
+      "html": "<input type=\"radio\" name=\"radio-1\" class=\"radio\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-1\" class=\"radio\" />"
+    },
+    {
+      "id": "radio-2",
+      "label": "Radio sizes",
+      "html": "<input type=\"radio\" name=\"radio-2\" class=\"radio radio-xs\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-2\" class=\"radio radio-sm\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-2\" class=\"radio radio-md\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-2\" class=\"radio radio-lg\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-2\" class=\"radio radio-xl\" checked=\"checked\" />"
+    },
+    {
+      "id": "radio-3",
+      "label": "Neutral color",
+      "html": "<input type=\"radio\" name=\"radio-3\" class=\"radio radio-neutral\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-3\" class=\"radio radio-neutral\" />"
+    },
+    {
+      "id": "radio-4",
+      "label": "Primary color",
+      "html": "<input type=\"radio\" name=\"radio-4\" class=\"radio radio-primary\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-4\" class=\"radio radio-primary\" />"
+    },
+    {
+      "id": "radio-5",
+      "label": "Secondary color",
+      "html": "<input type=\"radio\" name=\"radio-5\" class=\"radio radio-secondary\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-5\" class=\"radio radio-secondary\" />"
+    },
+    {
+      "id": "radio-6",
+      "label": "Accent color",
+      "html": "<input type=\"radio\" name=\"radio-6\" class=\"radio radio-accent\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-6\" class=\"radio radio-accent\" />"
+    },
+    {
+      "id": "radio-7",
+      "label": "Success color",
+      "html": "<input type=\"radio\" name=\"radio-7\" class=\"radio radio-success\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-7\" class=\"radio radio-success\" />"
+    },
+    {
+      "id": "radio-8",
+      "label": "Warning color",
+      "html": "<input type=\"radio\" name=\"radio-8\" class=\"radio radio-warning\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-8\" class=\"radio radio-warning\" />"
+    },
+    {
+      "id": "radio-9",
+      "label": "Info color",
+      "html": "<input type=\"radio\" name=\"radio-9\" class=\"radio radio-info\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-9\" class=\"radio radio-info\" />"
+    },
+    {
+      "id": "radio-10",
+      "label": "Error color",
+      "html": "<input type=\"radio\" name=\"radio-10\" class=\"radio radio-error\" checked=\"checked\" />\n<input type=\"radio\" name=\"radio-10\" class=\"radio radio-error\" />"
+    },
+    {
+      "id": "radio-11",
+      "label": "Disabled",
+      "html": "<input type=\"radio\" name=\"radio-11\" class=\"radio\" disabled checked=\"checked\" />\n<input type=\"radio\" name=\"radio-11\" class=\"radio\" disabled />"
+    },
+    {
+      "id": "radio-12",
+      "label": "Radio with custom colors",
+      "html": "<input\n  type=\"radio\" name=\"radio-12\" checked=\"checked\"\n  class=\"radio bg-red-100 border-red-300 checked:bg-red-200 checked:text-red-600 checked:border-red-600\" />\n<input\n  type=\"radio\" name=\"radio-12\" checked=\"checked\"\n  class=\"radio bg-blue-100 border-blue-300 checked:bg-blue-200 checked:text-blue-600 checked:border-blue-600\" />"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/radio/"
+}

@@ -1,0 +1,44 @@
+{
+  "slug": "label",
+  "title": "Label",
+  "description": "Label is used to provide a name or title for an input field. Label can be placed before or after the field.",
+  "demos": [
+    {
+      "id": "label-1",
+      "label": "Label for input",
+      "html": "<label class=\"input\">\n  <span class=\"label\">https://</span>\n  <input type=\"text\" placeholder=\"URL\" />\n</label>"
+    },
+    {
+      "id": "label-2",
+      "label": "Label for input at the end",
+      "html": "<label class=\"input\">\n  <input type=\"text\" placeholder=\"domain name\" />\n  <span class=\"label\">.com</span>\n</label>"
+    },
+    {
+      "id": "label-3",
+      "label": "Label for select",
+      "html": "<label class=\"select\">\n  <span class=\"label\">Type</span>\n  <select>\n    <option>Personal</option>\n    <option>Business</option>\n  </select>\n</label>"
+    },
+    {
+      "id": "label-4",
+      "label": "Label for date input",
+      "html": "<label class=\"input\">\n  <span class=\"label\">Publish date</span>\n  <input type=\"date\" />\n</label>"
+    },
+    {
+      "id": "label-5",
+      "label": "Floating Label",
+      "html": "<label class=\"floating-label\">\n  <span>Your Email</span>\n  <input type=\"text\" placeholder=\"mail@site.com\" class=\"input input-md\" />\n</label>"
+    },
+    {
+      "id": "label-6",
+      "label": "Floating Label with Different Sizes",
+      "html": "<label class=\"floating-label\">\n  <input type=\"text\" placeholder=\"Extra Small\" class=\"input input-xs\" />\n  <span>Extra Small</span>\n</label>\n<label class=\"floating-label\">\n  <input type=\"text\" placeholder=\"Small\" class=\"input input-sm\" />\n  <span>Small</span>\n</label>\n<label class=\"floating-label\">\n  <input type=\"text\" placeholder=\"Medium\" class=\"input input-md\" />\n  <span>Medium</span>\n</label>\n<label class=\"floating-label\">\n  <input type=\"text\" placeholder=\"Large\" class=\"input input-lg\" />\n  <span>Large</span>\n</label>\n<label class=\"floating-label\">\n  <input type=\"text\" placeholder=\"Extra Large\" class=\"input input-xl\" />\n  <span>Extra Large</span>\n</label>"
+    },
+    {
+      "id": "label-7",
+      "label": "Responsive Size Floating Label",
+      "html": "<label class=\"floating-label\">\n  <input type=\"text\" placeholder=\"Input\" class=\"input input-xs sm:input-sm md:input-md lg:input-lg xl:input-xl\" value=\"Placeholder\" />\n  <span>Input</span>\n</label>\n\n<label class=\"floating-label\">\n  <textarea placeholder=\"Textarea\" class=\"textarea textarea-xs sm:textarea-sm md:textarea-md lg:textarea-lg xl:textarea-xl\">Placeholder</textarea>\n  <span>Textarea</span>\n</label>\n\n<label class=\"floating-label\">\n  <select class=\"select select-xs sm:select-sm md:select-md lg:select-lg xl:select-xl\">\n    <option disabled selected>Placeholder</option>\n    <option>Option</option>\n  </select>\n  <span>Select</span>\n</label>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/label/"
+}

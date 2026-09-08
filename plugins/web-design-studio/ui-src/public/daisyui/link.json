@@ -1,0 +1,59 @@
+{
+  "slug": "link",
+  "title": "Link",
+  "description": "Link adds the missing underline style to links.",
+  "demos": [
+    {
+      "id": "link-1",
+      "label": "Link",
+      "html": "<a class=\"link\">Click me</a>"
+    },
+    {
+      "id": "link-2",
+      "label": "Link",
+      "html": "<p>\n  Tailwind CSS resets the style of links by default.\n  <br />\n  Add \"link\" class to make it look like a\n  <a class=\"link\">normal link</a>\n  again.\n</p>"
+    },
+    {
+      "id": "link-3",
+      "label": "Primary color",
+      "html": "<a class=\"link link-primary\">Click me</a>"
+    },
+    {
+      "id": "link-4",
+      "label": "Secondary color",
+      "html": "<a class=\"link link-secondary\">Click me</a>"
+    },
+    {
+      "id": "link-5",
+      "label": "Accent color",
+      "html": "<a class=\"link link-accent\">Click me</a>"
+    },
+    {
+      "id": "link-6",
+      "label": "Success color",
+      "html": "<a class=\"link link-success\">Click me</a>"
+    },
+    {
+      "id": "link-7",
+      "label": "Info color",
+      "html": "<a class=\"link link-info\">Click me</a>"
+    },
+    {
+      "id": "link-8",
+      "label": "Warning color",
+      "html": "<a class=\"link link-warning\">Click me</a>"
+    },
+    {
+      "id": "link-9",
+      "label": "Error color",
+      "html": "<a class=\"link link-error\">Click me</a>"
+    },
+    {
+      "id": "link-10",
+      "label": "Show underline only on hover",
+      "html": "<a class=\"link link-hover\">Click me</a>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/link/"
+}

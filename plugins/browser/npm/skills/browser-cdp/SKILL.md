@@ -26,13 +26,13 @@ Use Browser CDP for goal-oriented work in a real or managed Chrome session. User
 - Activate `browser-network-debugging` for console, requests, WebSocket, HAR, interception, or raw CDP diagnostics.
 - Activate `browser-file-transfer` for uploads, downloads, chooser handling, and artifact delivery.
 
-Use this activation as `parent_activation_ref` when activating a leaf. Activate only leaves that change the execution decisions for the current request.
+Activate only leaves that change the execution decisions for the current request. ChatOS associates them with this router internally.
 
 ## Platform Skill protocol
 
 1. Activate this router with `skill_skill_activate` using its catalog `skill_ref`.
-2. Choose the smallest leaf from the routing list above and activate it with this router's `activation_ref` as `parent_activation_ref`.
-3. Pass both returned `activation_evidence` tokens in the business tool's `skillEvidence` array. Never invent, reuse across tasks, or edit an evidence token.
+2. Choose the smallest leaf from the routing list above and activate it.
+3. Call Browser tools with navigation, observation, interaction, or diagnostic arguments only. ChatOS validates active Skills and supplies user, project, device, workspace, browser-session, and authentication context internally.
 4. Read a leaf reference only through `skill_skill_list_resources` and `skill_skill_read_resource` with that leaf's activation reference and evidence.
 
 ## MCP tool directory

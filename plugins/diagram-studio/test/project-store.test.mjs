@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -134,6 +134,37 @@ test('all legacy projects in an already isolated data root are migrated without 
     assert.deepEqual(new Set(migrated.map((project) => project.projectId)), new Set([first.projectId, second.projectId]));
     assert.ok([first.projectId, second.projectId].includes(defaultProject.projectId));
     assert.equal((await store.readProject(defaultProject.projectId)).isScopeDefault, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('scope metadata drift rebinds the isolated data root and keeps the populated project visible', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-studio-scope-drift-test-'));
+  try {
+    const store = new DiagramDocumentStore(root);
+    const oldScope = '1'.repeat(64);
+    const currentScope = '2'.repeat(64);
+    const populated = await store.createProject('已有项目', undefined, oldScope);
+    await store.createInProject(populated.projectId, 'flowchart', '已有流程图', true);
+    const empty = await store.createProject('错误生成的空项目', undefined, currentScope);
+    await writeFile(path.join(root, `${populated.projectId}.project.json`), JSON.stringify({
+      ...await store.readProject(populated.projectId),
+      isScopeDefault: true
+    }, null, 2));
+    await writeFile(path.join(root, `${empty.projectId}.project.json`), JSON.stringify({
+      ...await store.readProject(empty.projectId),
+      isScopeDefault: true
+    }, null, 2));
+
+    const selected = await store.ensureScopedProject(currentScope, 'Ignored');
+    const projects = await store.listProjects(currentScope);
+
+    assert.equal(selected.projectId, populated.projectId);
+    assert.equal(projects.length, 2);
+    assert.equal((await store.readProject(populated.projectId)).isScopeDefault, true);
+    assert.equal((await store.readProject(empty.projectId)).isScopeDefault, undefined);
+    assert.equal((await store.listInProject(populated.projectId, currentScope)).length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,5 +1,6 @@
 node_modules/
 dist/
-ui/
+/ui/
 .web-design-studio-data/
+.web-design-studio-baselines/
 *.tgz

@@ -1,0 +1,89 @@
+{
+  "slug": "tooltip",
+  "title": "Tooltip",
+  "description": "Tooltip can be used to show a message when hovering over an element.",
+  "demos": [
+    {
+      "id": "tooltip-1",
+      "label": "Tooltip",
+      "html": "<div class=\"tooltip\" data-tip=\"hello\">\n  <button class=\"btn\">Hover me</button>\n</div>"
+    },
+    {
+      "id": "tooltip-2",
+      "label": "Tooltip with tooltip-content",
+      "html": "<div class=\"tooltip\">\n  <div class=\"tooltip-content\">\n    <div class=\"animate-bounce text-orange-400 -rotate-10 text-2xl font-black\">Wow!</div>\n  </div>\n  <button class=\"btn\">Hover me</button>\n</div>"
+    },
+    {
+      "id": "tooltip-3",
+      "label": "Force open",
+      "html": "<div class=\"tooltip tooltip-open\" data-tip=\"hello\">\n  <button class=\"btn\">Force open</button>\n</div>"
+    },
+    {
+      "id": "tooltip-4",
+      "label": "Top",
+      "html": "<div class=\"tooltip tooltip-open tooltip-top tooltip-start\" data-tip=\"hello\">\n  <button class=\"btn\">Top start</button>\n</div>\n<div class=\"tooltip tooltip-open tooltip-top\" data-tip=\"hello\">\n  <button class=\"btn\">Top</button>\n</div>\n<div class=\"tooltip tooltip-open tooltip-top tooltip-end\" data-tip=\"hello\">\n  <button class=\"btn\">Top end</button>\n</div>"
+    },
+    {
+      "id": "tooltip-5",
+      "label": "Bottom",
+      "html": "<div class=\"tooltip tooltip-open tooltip-bottom tooltip-start\" data-tip=\"hello\">\n  <button class=\"btn\">Bottom start</button>\n</div>\n<div class=\"tooltip tooltip-open tooltip-bottom\" data-tip=\"hello\">\n  <button class=\"btn\">Bottom</button>\n</div>\n<div class=\"tooltip tooltip-open tooltip-bottom tooltip-end\" data-tip=\"hello\">\n  <button class=\"btn\">Bottom end</button>\n</div>"
+    },
+    {
+      "id": "tooltip-6",
+      "label": "Left",
+      "html": "<div class=\"tooltip tooltip-open tooltip-left tooltip-start\" data-tip=\"hello\">\n  <button class=\"btn\">Left start</button>\n</div>\n<div class=\"tooltip tooltip-open tooltip-left\" data-tip=\"hello\">\n  <button class=\"btn\">Left</button>\n</div>\n<div class=\"tooltip tooltip-open tooltip-left tooltip-end\" data-tip=\"hello\">\n  <button class=\"btn\">Left end</button>\n</div>"
+    },
+    {
+      "id": "tooltip-7",
+      "label": "Right",
+      "html": "<div class=\"tooltip tooltip-open tooltip-right tooltip-start\" data-tip=\"hello\">\n  <button class=\"btn\">Right start</button>\n</div>\n<div class=\"tooltip tooltip-open tooltip-right\" data-tip=\"hello\">\n  <button class=\"btn\">Right</button>\n</div>\n<div class=\"tooltip tooltip-open tooltip-right tooltip-end\" data-tip=\"hello\">\n  <button class=\"btn\">Right end</button>\n</div>"
+    },
+    {
+      "id": "tooltip-8",
+      "label": "Primary color",
+      "html": "<div class=\"tooltip tooltip-open tooltip-primary\" data-tip=\"primary\">\n  <button class=\"btn btn-primary\">primary</button>\n</div>"
+    },
+    {
+      "id": "tooltip-9",
+      "label": "Secondary color",
+      "html": "<div class=\"tooltip tooltip-open tooltip-secondary\" data-tip=\"secondary\">\n  <button class=\"btn btn-secondary\">secondary</button>\n</div>"
+    },
+    {
+      "id": "tooltip-10",
+      "label": "Accent color",
+      "html": "<div class=\"tooltip tooltip-open tooltip-accent\" data-tip=\"accent\">\n  <button class=\"btn btn-accent\">accent</button>\n</div>"
+    },
+    {
+      "id": "tooltip-11",
+      "label": "Info color",
+      "html": "<div class=\"tooltip tooltip-open tooltip-info\" data-tip=\"info\">\n  <button class=\"btn btn-info\">info</button>\n</div>"
+    },
+    {
+      "id": "tooltip-12",
+      "label": "Success color",
+      "html": "<div class=\"tooltip tooltip-open tooltip-success\" data-tip=\"success\">\n  <button class=\"btn btn-success\">success</button>\n</div>"
+    },
+    {
+      "id": "tooltip-13",
+      "label": "Warning color",
+      "html": "<div class=\"tooltip tooltip-open tooltip-warning\" data-tip=\"warning\">\n  <button class=\"btn btn-warning\">warning</button>\n</div>"
+    },
+    {
+      "id": "tooltip-14",
+      "label": "Error color",
+      "html": "<div class=\"tooltip tooltip-open tooltip-error\" data-tip=\"error\">\n  <button class=\"btn btn-error\">error</button>\n</div>"
+    },
+    {
+      "id": "tooltip-15",
+      "label": "Responsive tooltip. only show for large screen",
+      "html": "<div class=\"lg:tooltip\" data-tip=\"hello\">\n  <button class=\"btn\">Hover me</button>\n</div>"
+    },
+    {
+      "id": "tooltip-16",
+      "label": "Responsive tooltip position",
+      "html": "<div class=\"tooltip tooltip-start md:tooltip-right md:tooltip-center\" data-tip=\"hello\">\n  <button class=\"btn\">Hover me</button>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/tooltip/"
+}

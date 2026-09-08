@@ -1,0 +1,21 @@
+{
+  "slug": "diff",
+  "title": "Diff",
+  "description": "Diff component shows a side-by-side comparison of two items.",
+  "demos": [
+    {
+      "id": "diff-1",
+      "label": "Diff",
+      "html": "<figure class=\"diff aspect-16/9\" tabindex=\"0\">\n  <div class=\"diff-item-1\" role=\"img\" tabindex=\"0\">\n    <img alt=\"daisy\" src=\"https://img.daisyui.com/images/stock/photo-1560717789-0ac7c58ac90a.webp\" />\n  </div>\n  <div class=\"diff-item-2\" role=\"img\">\n    <img\n      alt=\"daisy\"\n      src=\"https://img.daisyui.com/images/stock/photo-1560717789-0ac7c58ac90a-blur.webp\" />\n  </div>\n  <div class=\"diff-resizer\"></div>\n</figure>"
+    },
+    {
+      "id": "diff-2",
+      "label": "Diff text",
+      "html": "<figure class=\"diff aspect-16/9\" tabindex=\"0\">\n  <div class=\"diff-item-1\" role=\"img\" tabindex=\"0\">\n    <div class=\"bg-primary text-primary-content grid place-content-center text-9xl font-black\">\n      DAISY\n    </div>\n  </div>\n  <div class=\"diff-item-2\" role=\"img\">\n    <div class=\"bg-base-200 grid place-content-center text-9xl font-black\">DAISY</div>\n  </div>\n  <div class=\"diff-resizer\"></div>\n</figure>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/diff/",
+  "previewHeight": 320,
+  "previewSpan": "wide"
+}

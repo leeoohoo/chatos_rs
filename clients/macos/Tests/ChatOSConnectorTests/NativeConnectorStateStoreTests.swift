@@ -53,6 +53,39 @@ struct NativeConnectorStateStoreTests {
     }
 
     @Test
+    func webDesignStudioUpdateFrom0100To0110IsAvailable() {
+        let installed = NativeInstalledPluginRecord(
+            pluginID: "14993149-32e7-40a8-b166-dc7639edebfc",
+            releaseID: "9a8dbb08-bb45-434e-a59e-40550867e7fb",
+            version: "0.10.0",
+            artifactSHA256: "e22f2a4e5b14d3e434fa4b01541d74dbcef31de0fc2586083962549467c0e20a",
+            installationPath: "/tmp/chatos-web-design-studio/0.10.0",
+            installedAt: "2026-09-07T00:00:00Z"
+        )
+
+        #expect(NativeLocalConnectorService.pluginUpdateAvailable(
+            installed: installed,
+            release: .init(
+                id: "c8a8a26c-4605-4477-acb0-9a84a04b3098",
+                version: "0.11.0",
+                artifactSHA256: "75de6a325efb6bc1c3034ba9e207461d7dcfb6945498fa3c08d27e82d4a673c3",
+                npmPackage: nil
+            )
+        ))
+    }
+
+    @Test
+    func dynamicGatewayRequestsBypassCachedMarketplaceResponses() {
+        let request = NativeConnectorGateway.dynamicRequest(
+            url: URL(string: "https://connector.jgoool.com/api/plugin-management/plugins/install-sources")!
+        )
+
+        #expect(request.cachePolicy == .reloadIgnoringLocalAndRemoteCacheData)
+        #expect(request.value(forHTTPHeaderField: "Cache-Control") == "no-cache, no-store")
+        #expect(request.value(forHTTPHeaderField: "Pragma") == "no-cache")
+    }
+
+    @Test
     func stateRoundTripsWithoutLosingSecurityOrPluginSettings() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

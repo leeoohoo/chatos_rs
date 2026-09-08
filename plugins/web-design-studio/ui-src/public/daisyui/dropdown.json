@@ -1,0 +1,130 @@
+{
+  "slug": "dropdown",
+  "title": "Dropdown",
+  "description": "Dropdown can open a menu or any other element when the button is clicked.",
+  "demos": [
+    {
+      "id": "dropdown-1",
+      "label": "Dropdown using details and summary",
+      "html": "<details class=\"dropdown\">\n  <summary class=\"btn m-1\">open or close</summary>\n  <ul class=\"menu dropdown-content bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</details>"
+    },
+    {
+      "id": "dropdown-2",
+      "label": "Dropdown using popover API and anchor positioning",
+      "html": "<!-- change popover-1 and --anchor-1 names. Use unique names for each dropdown -->\n<button class=\"btn\" popovertarget=\"popover-1\" style=\"anchor-name:--anchor-1\">\n  Button\n</button>\n<ul class=\"dropdown menu w-52 rounded-box bg-base-100 shadow-sm\"\n  popover id=\"popover-1\" style=\"position-anchor:--anchor-1\">\n  <li><a>Item 1</a></li>\n  <li><a>Item 2</a></li>\n</ul>"
+    },
+    {
+      "id": "dropdown-3",
+      "label": "Dropdown menu",
+      "html": "<div class=\"dropdown\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-4",
+      "label": "Dropdown / aligns to start of button horizontally",
+      "html": "<div class=\"dropdown dropdown-start\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬇️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-5",
+      "label": "Dropdown / aligns to end of button horizontally",
+      "html": "<div class=\"dropdown dropdown-end\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click  ⬇️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-6",
+      "label": "Dropdown / aligns to center of button horizontally",
+      "html": "<div class=\"dropdown dropdown-center\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click  ⬇️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-7",
+      "label": "Dropdown top",
+      "html": "<div class=\"dropdown dropdown-top\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬆️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-8",
+      "label": "Dropdown top / aligns to center of button horizontally",
+      "html": "<div class=\"dropdown dropdown-top dropdown-center\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬆️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-9",
+      "label": "Dropdown top / aligns to end of button horizontally",
+      "html": "<div class=\"dropdown dropdown-top dropdown-end\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬆️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-10",
+      "label": "Dropdown bottom (default)",
+      "html": "<div class=\"dropdown dropdown-bottom\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬇️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-11",
+      "label": "Dropdown bottom (default) / aligns to center of button horizontally",
+      "html": "<div class=\"dropdown dropdown-bottom dropdown-center\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬇️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-12",
+      "label": "Dropdown bottom (default) / aligns to end of button horizontally",
+      "html": "<div class=\"dropdown dropdown-bottom dropdown-end\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬇️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-13",
+      "label": "Dropdown left",
+      "html": "<div class=\"dropdown dropdown-left\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬅️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-14",
+      "label": "Dropdown left / aligns to center of button vertically",
+      "html": "<div class=\"dropdown dropdown-left dropdown-center\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬅️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-15",
+      "label": "Dropdown left / aligns to end of button vertically",
+      "html": "<div class=\"dropdown dropdown-left dropdown-end\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ⬅️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-16",
+      "label": "Dropdown right",
+      "html": "<div class=\"dropdown dropdown-right\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ➡️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-17",
+      "label": "Dropdown right / aligns to end of button vertically",
+      "html": "<div class=\"dropdown dropdown-right dropdown-end\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ➡️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-18",
+      "label": "Dropdown right / aligns to center of button vertically",
+      "html": "<div class=\"dropdown dropdown-right dropdown-center\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click ➡️</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-19",
+      "label": "Dropdown on hover",
+      "html": "<div class=\"dropdown dropdown-hover\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Hover</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-20",
+      "label": "Force open",
+      "html": "<div class=\"dropdown dropdown-open\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Button</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-21",
+      "label": "Force close",
+      "html": "<div class=\"dropdown dropdown-close\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Button</div>\n  <ul tabindex=\"-1\" class=\"dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm\">\n    <li><a>Item 1</a></li>\n    <li><a>Item 2</a></li>\n  </ul>\n</div>"
+    },
+    {
+      "id": "dropdown-22",
+      "label": "Card as dropdown",
+      "html": "<div class=\"dropdown\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn m-1\">Click</div>\n  <div\n    tabindex=\"0\"\n    class=\"dropdown-content card card-sm bg-base-100 z-1 w-64 shadow-md\">\n    <div class=\"card-body\">\n      <p>This is a card. You can use any element as a dropdown.</p>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "dropdown-23",
+      "label": "Dropdown in navbar",
+      "html": "<div class=\"navbar bg-base-200\">\n  <div class=\"ps-4\">\n    <a class=\"text-lg font-bold\">daisyUI</a>\n  </div>\n  <div class=\"flex grow justify-end px-2\">\n    <div class=\"flex items-stretch\">\n      <a class=\"btn btn-ghost rounded-field\">Button</a>\n      <div class=\"dropdown dropdown-end\">\n        <div tabindex=\"0\" role=\"button\" class=\"btn btn-ghost rounded-field\">Dropdown</div>\n        <ul\n          tabindex=\"-1\"\n          class=\"menu dropdown-content bg-base-200 rounded-box z-1 mt-4 w-52 p-2 shadow-sm\">\n          <li><a>Item 1</a></li>\n          <li><a>Item 2</a></li>\n        </ul>\n      </div>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "dropdown-24",
+      "label": "Helper dropdown",
+      "html": "<div class=\"dropdown dropdown-end\">\n  <div tabindex=\"0\" role=\"button\" class=\"btn btn-circle btn-ghost btn-xs text-info\">\n    <svg\n      tabindex=\"0\"\n      aria-label=\"More info\"\n      xmlns=\"http://www.w3.org/2000/svg\"\n      fill=\"none\"\n      viewBox=\"0 0 24 24\"\n      class=\"h-4 w-4 stroke-current\">\n      <path\n        stroke-linecap=\"round\"\n        stroke-linejoin=\"round\"\n        stroke-width=\"2\"\n        d=\"M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"></path>\n    </svg>\n  </div>\n  <div\n    tabindex=\"0\"\n    class=\"card card-sm dropdown-content bg-base-100 rounded-box z-1 w-64 shadow-sm\">\n    <div tabindex=\"0\" class=\"card-body\">\n      <h2 class=\"card-title\">You needed more info?</h2>\n      <p>Here is a description!</p>\n    </div>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/dropdown/",
+  "previewHeight": 330
+}

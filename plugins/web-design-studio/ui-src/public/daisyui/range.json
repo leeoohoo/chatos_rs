@@ -1,0 +1,74 @@
+{
+  "slug": "range",
+  "title": "Range slider",
+  "description": "Range slider is used to select a value by sliding a handle.",
+  "demos": [
+    {
+      "id": "range-1",
+      "label": "Range",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range\" />"
+    },
+    {
+      "id": "range-2",
+      "label": "With steps and measure",
+      "html": "<div class=\"w-full max-w-xs\">\n  <input type=\"range\" min=\"0\" max=\"100\" value=\"25\" class=\"range\" step=\"25\" />\n  <div class=\"flex justify-between px-2.5 mt-2 text-xs\">\n    <span>|</span>\n    <span>|</span>\n    <span>|</span>\n    <span>|</span>\n    <span>|</span>\n  </div>\n  <div class=\"flex justify-between px-2.5 mt-2 text-xs\">\n    <span>1</span>\n    <span>2</span>\n    <span>3</span>\n    <span>4</span>\n    <span>5</span>\n  </div>\n</div>"
+    },
+    {
+      "id": "range-3",
+      "label": "Neutral color",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-neutral\" />"
+    },
+    {
+      "id": "range-4",
+      "label": "Primary color",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-primary\" />"
+    },
+    {
+      "id": "range-5",
+      "label": "Secondary color",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-secondary\" />"
+    },
+    {
+      "id": "range-6",
+      "label": "Accent color",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-accent\" />"
+    },
+    {
+      "id": "range-7",
+      "label": "Success color",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-success\" />"
+    },
+    {
+      "id": "range-8",
+      "label": "Warning color",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-warning\" />"
+    },
+    {
+      "id": "range-9",
+      "label": "Info color",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-info\" />"
+    },
+    {
+      "id": "range-10",
+      "label": "Error color",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-error\" />"
+    },
+    {
+      "id": "range-11",
+      "label": "Sizes",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"30\" class=\"range range-xs\" />\n<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-sm\" />\n<input type=\"range\" min=\"0\" max=\"100\" value=\"50\" class=\"range range-md\" />\n<input type=\"range\" min=\"0\" max=\"100\" value=\"60\" class=\"range range-lg\" />\n<input type=\"range\" min=\"0\" max=\"100\" value=\"70\" class=\"range range-xl\" />"
+    },
+    {
+      "id": "range-12",
+      "label": "Range with custom color and no fill",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" \n  class=\"range text-blue-300 [--range-bg:orange] [--range-thumb:blue] [--range-fill:0]\" />"
+    },
+    {
+      "id": "range-13",
+      "label": "Vertical",
+      "html": "<input type=\"range\" min=\"0\" max=\"100\" value=\"40\" class=\"range range-vertical\" />"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/range/"
+}

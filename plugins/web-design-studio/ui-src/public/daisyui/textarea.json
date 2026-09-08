@@ -1,0 +1,39 @@
+{
+  "slug": "textarea",
+  "title": "Textarea",
+  "description": "Textarea allows users to enter text in multiple lines.",
+  "demos": [
+    {
+      "id": "textarea-1",
+      "label": "Textarea",
+      "html": "<textarea class=\"textarea\" placeholder=\"Bio\"></textarea>"
+    },
+    {
+      "id": "textarea-2",
+      "label": "Ghost (no background)",
+      "html": "<textarea class=\"textarea textarea-ghost\" placeholder=\"Bio\"></textarea>"
+    },
+    {
+      "id": "textarea-3",
+      "label": "With form control and labels",
+      "html": "<fieldset class=\"fieldset\">\n  <legend class=\"fieldset-legend\">Your bio</legend>\n  <textarea class=\"textarea h-24\" placeholder=\"Bio\"></textarea>\n  <div class=\"label\">Optional</div>\n</fieldset>"
+    },
+    {
+      "id": "textarea-4",
+      "label": "Textarea colors",
+      "html": "<textarea placeholder=\"Primary\" class=\"textarea textarea-primary\"></textarea>\n<textarea placeholder=\"Secondary\" class=\"textarea textarea-secondary\"></textarea>\n<textarea placeholder=\"Accent\" class=\"textarea textarea-accent\"></textarea>\n<textarea placeholder=\"Neutral\" class=\"textarea textarea-neutral\"></textarea>\n<textarea placeholder=\"Info\" class=\"textarea textarea-info\"></textarea>\n<textarea placeholder=\"Success\" class=\"textarea textarea-success\"></textarea>\n<textarea placeholder=\"Warning\" class=\"textarea textarea-warning\"></textarea>\n<textarea placeholder=\"Error\" class=\"textarea textarea-error\"></textarea>"
+    },
+    {
+      "id": "textarea-5",
+      "label": "Sizes",
+      "html": "<textarea placeholder=\"Bio\" class=\"textarea textarea-xs\"></textarea>\n\n<textarea placeholder=\"Bio\" class=\"textarea textarea-sm\"></textarea>\n\n<textarea placeholder=\"Bio\" class=\"textarea textarea-md\"></textarea>\n\n<textarea placeholder=\"Bio\" class=\"textarea textarea-lg\"></textarea>\n\n<textarea placeholder=\"Bio\" class=\"textarea textarea-xl\"></textarea>"
+    },
+    {
+      "id": "textarea-6",
+      "label": "Disabled",
+      "html": "<textarea class=\"textarea\" placeholder=\"Bio\" disabled></textarea>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/textarea/"
+}

@@ -372,25 +372,26 @@ test('Ant Design 6.6.2 catalog matches the current official component baseline',
 });
 
 test('Ant Design variants and structured sample data remain editable and persistent', () => {
-  const input = applyAntdComponentVariant(createAntdComponent('Input', 20, 20), 'search');
-  assert.equal(input.library.variant, 'search');
-  assert.equal(input.library.props.enterButton, true);
-  assert.equal(variantsForAntdComponent('Input').length, 9);
-  assert.equal(variantsForAntdComponent('Select').length, 9);
+  const input = applyAntdComponentVariant(createAntdComponent('Input', 20, 20), 'input-search-input');
+  assert.equal(input.library.variant, 'input-search-input');
+  assert.equal(input.library.props.registryDemo, 'input-search-input');
+  assert.equal(input.library.props.componentSlug, 'input');
+  assert.equal(variantsForAntdComponent('Input').length, 18);
+  assert.equal(variantsForAntdComponent('Select').length, 27);
   assert.equal(variantsForAntdComponent('List').length, 8);
-  assert.equal(variantsForAntdComponent('Listy').length, 8);
-  assert.equal(variantsForAntdComponent('BorderBeam').length, 5);
-  assert.equal(variantsForAntdComponent('Menu').length, 4);
-  assert.equal(variantsForAntdComponent('Drawer').length, 7);
-  assert.equal(variantsForAntdComponent('Table').length, 7);
+  assert.equal(variantsForAntdComponent('Listy').length, 6);
+  assert.equal(variantsForAntdComponent('BorderBeam').length, 8);
+  assert.equal(variantsForAntdComponent('Menu').length, 12);
+  assert.equal(variantsForAntdComponent('Drawer').length, 14);
+  assert.equal(variantsForAntdComponent('Table').length, 32);
   assert.equal(variantsForAntdComponent('Card').length, 10);
-  assert.equal(new Set(variantsForAntdComponent('Card').map((variant) => variant.props.showcase)).size, 10);
+  assert.equal(new Set(variantsForAntdComponent('Card').map((variant) => variant.props.registryDemo)).size, 10);
 
   const select = createAntdComponent('Select', 20, 80);
   select.library.props.options = [{ value: 'custom', label: '自定义选项' }];
-  const multiple = applyAntdComponentVariant(select, 'multiple');
-  assert.equal(multiple.library.variant, 'multiple');
-  assert.equal(multiple.library.props.mode, 'multiple');
+  const multiple = applyAntdComponentVariant(select, 'select-multiple');
+  assert.equal(multiple.library.variant, 'select-multiple');
+  assert.equal(multiple.library.props.registryDemo, 'select-multiple');
   assert.deepEqual(multiple.library.props.options, [{ value: 'custom', label: '自定义选项' }]);
 
   const document = createLandingPage();
@@ -419,35 +420,40 @@ test('Ant Design variants and structured sample data remain editable and persist
 
 test('Chakra UI and shadcn/ui catalogs create valid independently bound components', () => {
   assert.equal(CHAKRA_VERSION, '3.37.0');
-  assert.equal(SHADCN_VERSION, 'registry-2026.09');
-  assert.equal(CHAKRA_COMPONENTS.length, 114);
+  assert.equal(SHADCN_VERSION, 'registry-2026.09-official');
+  assert.equal(CHAKRA_COMPONENTS.length, 113);
+  assert.equal(CHAKRA_COMPONENTS.some((component) => component.id === 'EnvironmentProvider'), false);
   const officialShadcnComponents = [
     'Accordion', 'Alert', 'AlertDialog', 'AspectRatio', 'Attachment', 'Avatar', 'Badge', 'Breadcrumb', 'Bubble', 'Button',
     'ButtonGroup', 'Calendar', 'Card', 'Carousel', 'Chart', 'Checkbox', 'Collapsible', 'Combobox', 'Command', 'ContextMenu',
-    'DataTable', 'DatePicker', 'Dialog', 'Direction', 'Drawer', 'DropdownMenu', 'Empty', 'Field', 'HoverCard', 'Input',
+    'Dialog', 'Direction', 'Drawer', 'DropdownMenu', 'Empty', 'Field', 'Form', 'HoverCard', 'Input',
     'InputGroup', 'InputOTP', 'Item', 'Kbd', 'Label', 'Marker', 'Menubar', 'Message', 'MessageScroller', 'NativeSelect',
-    'NavigationMenu', 'Pagination', 'Popover', 'Progress', 'Questionnaire', 'RadioGroup', 'Resizable', 'ScrollArea', 'Select',
-    'Separator', 'Sheet', 'Sidebar', 'Skeleton', 'Slider', 'Spinner', 'Switch', 'Table', 'Tabs', 'Textarea', 'Toast',
-    'Toggle', 'ToggleGroup', 'Tooltip', 'Typography'
+    'NavigationMenu', 'Pagination', 'Popover', 'Progress', 'RadioGroup', 'Resizable', 'ScrollArea', 'Select',
+    'Separator', 'Sheet', 'Sidebar', 'Skeleton', 'Slider', 'Sonner', 'Spinner', 'Switch', 'Table', 'Tabs', 'Textarea',
+    'Toggle', 'ToggleGroup', 'Tooltip'
   ];
   assert.deepEqual(SHADCN_COMPONENTS.map((component) => component.id).sort(), officialShadcnComponents.sort());
   assert.deepEqual([...new Set(CHAKRA_COMPONENTS.map((component) => component.category))], CHAKRA_CATEGORIES);
   assert.deepEqual([...new Set(SHADCN_COMPONENTS.map((component) => component.category))], SHADCN_CATEGORIES);
   assert.deepEqual(UI_LIBRARIES.map((library) => library.id), ['antd', 'chakra', 'shadcn', 'magicui', 'spell', 'inspira', 'daisyui']);
 
-  const chakraInput = applyChakraComponentVariant(createChakraComponent('Input', 20, 20), 'subtle');
-  const shadcnButton = applyShadcnComponentVariant(createShadcnComponent('Button', 20, 80), 'destructive');
+  const chakraInput = applyChakraComponentVariant(createChakraComponent('Input', 20, 20), 'chakra-input-with-variants');
+  const shadcnButton = applyShadcnComponentVariant(createShadcnComponent('Button', 20, 80), 'button-destructive');
   assert.equal(chakraInput.library.name, 'chakra');
-  assert.equal(chakraInput.library.props.variant, 'subtle');
+  assert.equal(chakraInput.library.props.registryDemo, 'chakra-input-with-variants');
   assert.equal(shadcnButton.library.name, 'shadcn');
-  assert.equal(shadcnButton.library.props.variant, 'destructive');
+  assert.equal(shadcnButton.library.props.registryDemo, 'button-destructive');
   assert.ok(variantsForChakraComponent('Button').length >= 5);
   assert.deepEqual(variantsForChakraComponent('List').map((variant) => variant.id), [
-    'basic', 'ordered', 'icon-check', 'icon-info', 'nested', 'custom-marker', 'plain', 'align-end'
+    'chakra-list-basic', 'chakra-list-nested', 'chakra-list-ordered', 'chakra-list-with-icon', 'chakra-list-with-marker-style'
   ]);
-  assert.equal(CHAKRA_COMPONENTS.every((definition) => variantsForChakraComponent(definition.id).length >= 2), true);
+  assert.equal(CHAKRA_COMPONENTS.every((definition) => variantsForChakraComponent(definition.id).length >= 1), true);
   assert.ok(variantsForShadcnComponent('Button').length >= 6);
-  assert.equal(SHADCN_COMPONENTS.every((definition) => variantsForShadcnComponent(definition.id).length >= 2), true);
+  assert.equal(SHADCN_COMPONENTS.every((definition) => variantsForShadcnComponent(definition.id).length >= 1), true);
+  assert.equal(variantsForShadcnComponent('Chart').length, 76);
+  assert.equal(variantsForShadcnComponent('Sidebar').length, 16);
+  assert.equal(variantsForShadcnComponent('Input').length, 6);
+  assert.equal(new Set(SHADCN_COMPONENTS.map((definition) => variantsForShadcnComponent(definition.id).length)).size > 8, true);
 
   for (const definition of CHAKRA_COMPONENTS) {
     const variants = variantsForChakraComponent(definition.id);
@@ -490,9 +496,9 @@ test('Chakra UI and shadcn/ui catalogs create valid independently bound componen
 });
 
 test('Magic UI catalog follows the current MIT registry and every curated example is valid', () => {
-  assert.equal(MAGICUI_VERSION, 'registry-2026.09');
-  assert.equal(MAGICUI_COMPONENTS.length, 78);
-  assert.deepEqual([...new Set(MAGICUI_COMPONENTS.map((component) => component.category))], MAGICUI_CATEGORIES);
+  assert.equal(MAGICUI_VERSION, 'registry-2026.09-official');
+  assert.equal(MAGICUI_COMPONENTS.length, 68);
+  assert.deepEqual([...new Set(MAGICUI_COMPONENTS.map((component) => component.category))].sort(), [...MAGICUI_CATEGORIES].sort());
   assert.equal(MAGICUI_COMPONENTS.every((definition) => variantsForMagicUiComponent(definition.id).length >= 1), true);
   assert.equal(MAGICUI_COMPONENTS.every((definition) => variantsForMagicUiComponent(definition.id).length === 3), false);
   assert.equal(MAGICUI_COMPONENTS.every((definition) => definition.docsUrl?.startsWith('https://magicui.design/docs/components/')), true);
@@ -516,7 +522,7 @@ test('Magic UI catalog follows the current MIT registry and every curated exampl
 });
 
 test('Spell UI catalog covers all public MIT registry components with valid curated examples', () => {
-  assert.equal(SPELL_VERSION, 'registry-2026.09');
+  assert.equal(SPELL_VERSION, 'registry-2026.09-official');
   assert.equal(SPELL_COMPONENTS.length, 33);
   assert.deepEqual([...new Set(SPELL_COMPONENTS.map((component) => component.category))], SPELL_CATEGORIES);
   assert.equal(SPELL_COMPONENTS.every((definition) => variantsForSpellComponent(definition.id).length >= 1), true);
@@ -535,7 +541,7 @@ test('Spell UI catalog covers all public MIT registry components with valid cura
 });
 
 test('Inspira UI catalog covers all current public MIT documentation components with valid curated examples', () => {
-  assert.equal(INSPIRA_VERSION, 'docs-2026.09');
+  assert.equal(INSPIRA_VERSION, 'registry-2026.09-official');
   assert.equal(INSPIRA_COMPONENTS.length, 155);
   assert.equal(new Set(INSPIRA_COMPONENT_SLUGS).size, 155);
   assert.deepEqual([...new Set(INSPIRA_COMPONENTS.map((component) => component.category))], INSPIRA_CATEGORIES);
@@ -559,18 +565,21 @@ test('Inspira UI catalog covers all current public MIT documentation components 
   }
 });
 
-test('daisyUI catalog covers every current official component route and its structural modifiers', () => {
+test('daisyUI catalog covers every current official component route and official documentation example', () => {
   assert.equal(DAISYUI_VERSION, '5.7.28');
   assert.equal(DAISYUI_COMPONENTS.length, 68);
   assert.equal(new Set(DAISYUI_COMPONENT_SLUGS).size, 68);
   assert.deepEqual([...new Set(DAISYUI_COMPONENTS.map((component) => component.category))], DAISYUI_CATEGORIES);
   assert.equal(DAISYUI_COMPONENTS.every((definition) => definition.docsUrl === `https://daisyui.com/components/${definition.props.componentSlug}/`), true);
   assert.equal(DAISYUI_COMPONENTS.every((definition) => variantsForDaisyUiComponent(definition.id).length >= 1), true);
-  assert.equal(DAISYUI_COMPONENTS.some((definition) => variantsForDaisyUiComponent(definition.id).length === 1), true);
-  assert.deepEqual(variantsForDaisyUiComponent('Avatar').map((variant) => variant.id), ['single', 'ring', 'group', 'placeholder']);
-  assert.deepEqual(variantsForDaisyUiComponent('Button').map((variant) => variant.id), ['primary', 'secondary', 'outline', 'soft', 'dash', 'wide']);
-  assert.deepEqual(variantsForDaisyUiComponent('Card').map((variant) => variant.id), ['body', 'image', 'side', 'compact']);
-  assert.deepEqual(variantsForDaisyUiComponent('Modal').map((variant) => variant.id), ['dialog', 'bottom', 'sheet']);
+  assert.equal(DAISYUI_COMPONENTS.reduce((total, definition) => total + variantsForDaisyUiComponent(definition.id).length, 0), 587);
+  assert.equal(variantsForDaisyUiComponent('Avatar').length, 9);
+  assert.equal(variantsForDaisyUiComponent('Button').length, 18);
+  assert.equal(variantsForDaisyUiComponent('Card').length, 16);
+  assert.equal(variantsForDaisyUiComponent('Dropdown').length, 24);
+  assert.equal(variantsForDaisyUiComponent('Modal').length, 10);
+  assert.equal(variantsForDaisyUiComponent('Hover3D').length, 3);
+  assert.deepEqual(variantsForDaisyUiComponent('List').map((variant) => variant.id), ['list-1', 'list-2', 'list-3']);
   for (const definition of DAISYUI_COMPONENTS) {
     for (const variant of variantsForDaisyUiComponent(definition.id)) {
       const component = applyDaisyUiComponentVariant(createDaisyUiComponent(definition.id, 24, 24), variant.id);

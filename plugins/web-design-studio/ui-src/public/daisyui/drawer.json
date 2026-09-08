@@ -1,0 +1,36 @@
+{
+  "slug": "drawer",
+  "title": "Drawer sidebar",
+  "description": "Drawer is a grid layout that can show/hide a sidebar on the left or right side of the page.",
+  "demos": [
+    {
+      "id": "drawer-1",
+      "label": "Drawer sidebar",
+      "html": "<div class=\"drawer\">\n  <input id=\"my-drawer-1\" type=\"checkbox\" class=\"drawer-toggle\" />\n  <div class=\"drawer-content\">\n    <!-- Page content here -->\n    <label for=\"my-drawer-1\" class=\"btn drawer-button\">Open drawer</label>\n  </div>\n  <div class=\"drawer-side\">\n    <label for=\"my-drawer-1\" aria-label=\"close sidebar\" class=\"drawer-overlay\"></label>\n    <ul class=\"menu bg-base-200 min-h-full w-80 p-4\">\n      <!-- Sidebar content here -->\n      <li><a>Sidebar Item 1</a></li>\n      <li><a>Sidebar Item 2</a></li>\n    </ul>\n  </div>\n</div>"
+    },
+    {
+      "id": "drawer-2",
+      "label": "Navbar menu for desktop + sidebar drawer for mobile",
+      "html": "<div class=\"drawer\">\n  <input id=\"my-drawer-2\" type=\"checkbox\" class=\"drawer-toggle lg:hidden\" />\n  <div class=\"drawer-content flex flex-col\">\n    <!-- Navbar -->\n    <div class=\"navbar bg-base-300 w-full\">\n      <div class=\"flex-none lg:hidden\">\n        <label for=\"my-drawer-2\" aria-label=\"open sidebar\" class=\"btn btn-square btn-ghost drawer-button\">\n          <svg\n            xmlns=\"http://www.w3.org/2000/svg\"\n            fill=\"none\"\n            viewBox=\"0 0 24 24\"\n            class=\"inline-block h-6 w-6 stroke-current\"\n          >\n            <path\n              stroke-linecap=\"round\"\n              stroke-linejoin=\"round\"\n              stroke-width=\"2\"\n              d=\"M4 6h16M4 12h16M4 18h16\"\n            ></path>\n          </svg>\n        </label>\n      </div>\n      <div class=\"mx-2 flex-1 px-2\">Navbar Title</div>\n      <div class=\"hidden flex-none lg:block\">\n        <ul class=\"menu menu-horizontal\">\n          <!-- Navbar menu content here -->\n          <li><a>Navbar Item 1</a></li>\n          <li><a>Navbar Item 2</a></li>\n        </ul>\n      </div>\n    </div>\n    <!-- Page content here -->\n    Content\n  </div>\n  <div class=\"drawer-side\">\n    <label for=\"my-drawer-2\" aria-label=\"close sidebar\" class=\"drawer-overlay\"></label>\n    <ul class=\"menu bg-base-200 min-h-full w-80 p-4\">\n      <!-- Sidebar content here -->\n      <li><a>Sidebar Item 1</a></li>\n      <li><a>Sidebar Item 2</a></li>\n    </ul>\n  </div>\n</div>"
+    },
+    {
+      "id": "drawer-3",
+      "label": "Responsive: Sidebar is always visible on large screen, can be toggled on small screen",
+      "html": "<div class=\"drawer lg:drawer-open\">\n  <input id=\"my-drawer-3\" type=\"checkbox\" class=\"drawer-toggle\" />\n  <div class=\"drawer-content flex flex-col items-center justify-center\">\n    <!-- Page content here -->\n    <label for=\"my-drawer-3\" class=\"btn drawer-button lg:hidden\">\n      Open drawer\n    </label>\n  </div>\n  <div class=\"drawer-side\">\n    <label for=\"my-drawer-3\" aria-label=\"close sidebar\" class=\"drawer-overlay\"></label>\n    <ul class=\"menu bg-base-200 min-h-full w-80 p-4\">\n      <!-- Sidebar content here -->\n      <li><a>Sidebar Item 1</a></li>\n      <li><a>Sidebar Item 2</a></li>\n    </ul>\n  </div>\n</div>"
+    },
+    {
+      "id": "drawer-4",
+      "label": "Responsive collapsible Icon-only drawer sidebar. Using is-drawer-close and is-drawer-open",
+      "html": "<div class=\"drawer lg:drawer-open\">\n  <input id=\"my-drawer-4\" type=\"checkbox\" class=\"drawer-toggle inline\" />\n  <div class=\"drawer-content\">\n    <!-- Navbar -->\n    <nav class=\"navbar w-full bg-base-300\">\n      <label for=\"my-drawer-4\" aria-label=\"open sidebar\" class=\"btn btn-square btn-ghost drawer-button\">\n        <!-- Sidebar toggle icon -->\n        <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" stroke-linejoin=\"round\" stroke-linecap=\"round\" stroke-width=\"2\" fill=\"none\" stroke=\"currentColor\" class=\"my-1.5 inline-block size-4\"><path d=\"M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z\"></path><path d=\"M9 4v16\"></path><path d=\"M14 10l2 2l-2 2\"></path></svg>\n      </label>\n      <div class=\"px-4\">Navbar Title</div>\n    </nav>\n    <!-- Page content here -->\n    <div class=\"p-4\">Page Content</div>\n  </div>\n\n  <div class=\"drawer-side is-drawer-close:overflow-visible\">\n    <label for=\"my-drawer-4\" aria-label=\"close sidebar\" class=\"drawer-overlay\"></label>\n    <div class=\"flex min-h-full flex-col items-start bg-base-200 is-drawer-close:w-14 is-drawer-open:w-64\">\n      <!-- Sidebar content here -->\n      <ul class=\"menu w-full grow\">\n        <!-- List item -->\n        <li>\n          <button class=\"is-drawer-close:tooltip is-drawer-close:tooltip-right\" data-tip=\"Homepage\">\n            <!-- Home icon -->\n            <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" stroke-linejoin=\"round\" stroke-linecap=\"round\" stroke-width=\"2\" fill=\"none\" stroke=\"currentColor\" class=\"my-1.5 inline-block size-4\"><path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\"></path><path d=\"M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"></path></svg>\n            <span class=\"is-drawer-close:hidden\">Homepage</span>\n          </button>\n        </li>\n\n        <!-- List item -->\n        <li>\n          <button class=\"is-drawer-close:tooltip is-drawer-close:tooltip-right\" data-tip=\"Settings\">\n            <!-- Settings icon -->\n            <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" stroke-linejoin=\"round\" stroke-linecap=\"round\" stroke-width=\"2\" fill=\"none\" stroke=\"currentColor\" class=\"my-1.5 inline-block size-4\"><path d=\"M20 7h-9\"></path><path d=\"M14 17H5\"></path><circle cx=\"17\" cy=\"17\" r=\"3\"></circle><circle cx=\"7\" cy=\"7\" r=\"3\"></circle></svg>\n            <span class=\"is-drawer-close:hidden\">Settings</span>\n          </button>\n        </li>\n      </ul>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "drawer-5",
+      "label": "Drawer sidebar that opens from right side of page",
+      "html": "<div class=\"drawer drawer-end\">\n  <input id=\"my-drawer-5\" type=\"checkbox\" class=\"drawer-toggle\" />\n  <div class=\"drawer-content\">\n    <!-- Page content here -->\n    <label for=\"my-drawer-5\" class=\"drawer-button btn btn-primary\">Open drawer</label>\n  </div>\n  <div class=\"drawer-side\">\n    <label for=\"my-drawer-5\" aria-label=\"close sidebar\" class=\"drawer-overlay\"></label>\n    <ul class=\"menu bg-base-200 min-h-full w-80 p-4\">\n      <!-- Sidebar content here -->\n      <li><a>Sidebar Item 1</a></li>\n      <li><a>Sidebar Item 2</a></li>\n    </ul>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "fill",
+  "docsUrl": "https://daisyui.com/components/drawer/",
+  "previewHeight": 390,
+  "previewSpan": "wide"
+}

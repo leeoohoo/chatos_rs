@@ -23,11 +23,11 @@ Use this plugin only when a purpose-built connector, API, or CLI cannot complete
 - Activate `visual-application-focus` for foreground identity, application activation, window transitions, and shortcuts.
 - Activate `visual-safety-verification` before consequential external actions or whenever completion evidence matters.
 
-Use this activation as `parent_activation_ref`. Activate only the leaves needed by the current visible workflow.
+Activate only the leaves needed by the current visible workflow. ChatOS associates each selected leaf with this router internally.
 
 ## Platform Skill protocol
 
-Activate this router with `skill_skill_activate`, activate the chosen leaf with this activation as `parent_activation_ref`, and pass both platform-issued evidence tokens in every business tool's `skillEvidence` array. Use `skill_skill_list_resources` and `skill_skill_read_resource` only for references declared by the activated leaf. Evidence is task-, user-, session-, device-, workspace-, Plugin-, and Release-bound; never construct or copy it across tasks.
+Activate this router with `skill_skill_activate`, then activate the chosen leaf. ChatOS records and validates those activations automatically. Call Visual Computer Use tools with visible-action arguments only; never add user, project, workspace, device, session, activation, or authentication fields. Use `skill_skill_list_resources` and `skill_skill_read_resource` only for references declared by the activated leaf.
 
 ## MCP tool directory
 

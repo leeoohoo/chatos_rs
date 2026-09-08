@@ -5,8 +5,8 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { applyMagicUiComponentVariant, createMagicUiComponent } from '../dist/magicui-library.test.mjs';
-import { applySpellComponentVariant, createSpellComponent } from '../dist/spell-library.test.mjs';
+import { applyMagicUiComponentVariant, createMagicUiComponent, variantsForMagicUiComponent } from '../dist/magicui-library.test.mjs';
+import { applySpellComponentVariant, createSpellComponent, variantsForSpellComponent } from '../dist/spell-library.test.mjs';
 import { applyInspiraComponentVariant, createInspiraComponent } from '../dist/inspira-library.test.mjs';
 import { applyDaisyUiComponentVariant, createDaisyUiComponent } from '../dist/daisyui-library.test.mjs';
 
@@ -36,19 +36,26 @@ test('studio serves the packaged workbench and persists a design', async () => {
 
     const context = await fetch(`${base}/api/context`).then((response) => response.json());
     assert.equal(context.kind, 'project');
-    assert.equal(context.chatosProjectId, 'host-project-through-123');
-    assert.equal(context.chatosProjectName, '宿主产品项目');
-    assert.equal(context.workspaceId, 'workspace-through-456');
+    assert.equal(context.isolated, true);
+    assert.equal(context.hasProjectContext, true);
+    assert.equal(context.projectName, '宿主产品项目');
+    assert.equal(Object.hasOwn(context, 'chatosProjectId'), false);
+    assert.equal(Object.hasOwn(context, 'workspaceId'), false);
     assert.ok(context.defaultProjectId);
-    assert.notEqual(context.defaultProjectId, context.chatosProjectId);
 
     const projects = await fetch(`${base}/api/projects`).then((response) => response.json());
     assert.equal(projects.items.length, 1);
     assert.equal(projects.items[0].projectId, context.defaultProjectId);
     assert.equal(projects.items[0].name, '宿主产品项目');
-    assert.equal(projects.items.some((project) => project.projectId === context.chatosProjectId), false);
 
-    const projectDesign = await fetch(`${base}/api/projects/${context.defaultProjectId}/documents`, {
+    const projectMutation = await fetch(`${base}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '不应创建的内部项目' })
+    });
+    assert.equal(projectMutation.status, 404);
+
+    const projectDesign = await fetch(`${base}/api/documents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: '项目内空白网站', blank: true })
@@ -77,24 +84,24 @@ test('studio serves the packaged workbench and persists a design', async () => {
     form.height = 720.25;
     form.style = { ...form.style, background: 'rgba(255,255,255,.83)', borderRadius: 17.5 };
     form.responsive = { mobile: { x: 21.5, y: 812.25, width: 347.5, height: 508.75 } };
-    const magicCard = applyMagicUiComponentVariant(createMagicUiComponent('MagicCard', 1480.25, 620.75), 'editorial');
+    const magicCard = applyMagicUiComponentVariant(createMagicUiComponent('MagicCard', 1480.25, 620.75), variantsForMagicUiComponent('MagicCard')[0].id);
     magicCard.pageId = exactDesign.pages[0].id;
     magicCard.width = 512.5;
     magicCard.height = 286.25;
     magicCard.responsive = { mobile: { x: 18.25, y: 1420.5, width: 354.75, height: 236.5 } };
     exactDesign.components.push(magicCard);
-    const spellChart = applySpellComponentVariant(createSpellComponent('Chart', 720.5, 1860.25), 'immersive');
+    const spellChart = applySpellComponentVariant(createSpellComponent('Chart', 720.5, 1860.25), variantsForSpellComponent('Chart')[0].id);
     spellChart.pageId = exactDesign.pages[0].id;
     spellChart.library.props.values = [21, 35, 29, 64, 73, 91];
     exactDesign.components.push(spellChart);
-    const inspiraUpload = applyInspiraComponentVariant(createInspiraComponent('FileUpload', 1320.75, 1940.5), 'editorial');
+    const inspiraUpload = applyInspiraComponentVariant(createInspiraComponent('FileUpload', 1320.75, 1940.5), 'inspira-file-upload-basic');
     inspiraUpload.pageId = exactDesign.pages[0].id;
     inspiraUpload.width = 518.25;
     inspiraUpload.height = 346.75;
     inspiraUpload.library.props.files = ['brand-system.fig', 'launch-visual.pdf'];
     inspiraUpload.responsive = { mobile: { x: 18.5, y: 1710.25, width: 352.75, height: 318.5 } };
     exactDesign.components.push(inspiraUpload);
-    const daisyCard = applyDaisyUiComponentVariant(createDaisyUiComponent('Card', 1900.25, 2010.75), 'side');
+    const daisyCard = applyDaisyUiComponentVariant(createDaisyUiComponent('Card', 1900.25, 2010.75), 'card-14');
     daisyCard.pageId = exactDesign.pages[0].id;
     daisyCard.width = 548.5;
     daisyCard.height = 312.25;

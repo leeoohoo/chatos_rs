@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSCore
 import Testing
 @testable import ChatOSApp
 
@@ -51,5 +52,51 @@ struct PetStackedPanelPlacementTests {
         )
 
         #expect(origin == NSPoint(x: 930, y: 360))
+    }
+
+    @Test("stacks a new message in its own card above running work")
+    func stacksMessageAboveRunningWork() {
+        let visibleFrame = NSRect(x: 0, y: 0, width: 1_440, height: 1_200)
+        let runningOrigin = PetStackedPanelPlacement.origin(
+            size: NSSize(width: 400, height: 260),
+            anchorFrame: NSRect(x: 620, y: 80, width: 112, height: 112),
+            visibleFrame: visibleFrame
+        )
+        let runningFrame = NSRect(
+            origin: runningOrigin,
+            size: NSSize(width: 400, height: 260)
+        )
+        let messageOrigin = PetStackedPanelPlacement.origin(
+            size: NSSize(width: 400, height: 235),
+            anchorFrame: runningFrame,
+            visibleFrame: visibleFrame
+        )
+
+        #expect(messageOrigin.y == runningFrame.maxY + 10)
+        #expect(messageOrigin.x == runningOrigin.x)
+    }
+}
+
+@Suite("Pet activity panel scopes")
+struct PetActivityPanelScopeTests {
+    @Test("running work and new messages are routed to different panels")
+    func separatesRunningWorkFromMessages() {
+        let running = PetActivity(
+            id: "running",
+            source: .taskRunner,
+            kind: .working,
+            title: "正在执行"
+        )
+        let completion = PetActivity(
+            id: "completion",
+            source: .chat,
+            kind: .succeeded,
+            title: "AI 已完成本轮任务"
+        )
+
+        #expect(PetMessageActivityScope.running.contains(running))
+        #expect(!PetMessageActivityScope.running.contains(completion))
+        #expect(PetMessageActivityScope.primary.contains(completion))
+        #expect(!PetMessageActivityScope.primary.contains(running))
     }
 }

@@ -1,0 +1,20 @@
+{
+  "slug": "calendar",
+  "title": "Calendar",
+  "description": "Calendar includes styles for different calendar libraries.",
+  "demos": [
+    {
+      "id": "calendar-1",
+      "label": "Cally calendar example",
+      "html": "<!--\n* Import Cally web component from CDN\n<script type=\"module\" src=\"https://unpkg.com/cally\"></script>\n\n* Or install as a dependency:\nnpm i cally\n* and import it in JS\nimport \"cally\";\n-->\n\n<calendar-date class=\"cally bg-base-100 border border-base-300 shadow-lg rounded-box\">\n  <svg aria-label=\"Previous\" class=\"fill-current size-4\" slot=\"previous\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M15.75 19.5 8.25 12l7.5-7.5\"></path></svg>\n  <svg aria-label=\"Next\" class=\"fill-current size-4\" slot=\"next\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"m8.25 4.5 7.5 7.5-7.5 7.5\"></path></svg>\n  <calendar-month></calendar-month>\n</calendar-date>"
+    },
+    {
+      "id": "calendar-2",
+      "label": "Cally date picker example",
+      "html": "<!--\n* Import Cally web component from CDN\n<script type=\"module\" src=\"https://unpkg.com/cally\"></script>\n\n* Or install as a dependency:\nnpm i cally\n* and import it in JS\nimport \"cally\";\n-->\n\n<button popovertarget=\"cally-popover1\" class=\"input\" id=\"cally1\" style=\"anchor-name:--cally1\">\n  Pick a date\n</button>\n<div popover id=\"cally-popover1\" class=\"dropdown bg-base-100 rounded-box shadow-lg\" style=\"position-anchor:--cally1\">\n  <calendar-date class=\"cally\" onchange=\"document.getElementById('cally1').innerText = this.value\">\n    <svg aria-label=\"Previous\" class=\"fill-current size-4\" slot=\"previous\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"M15.75 19.5 8.25 12l7.5-7.5\"></path></svg>\n    <svg aria-label=\"Next\" class=\"fill-current size-4\" slot=\"next\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"m8.25 4.5 7.5 7.5-7.5 7.5\"></path></svg>\n    <calendar-month></calendar-month>\n  </calendar-date>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/calendar/",
+  "previewHeight": 360
+}

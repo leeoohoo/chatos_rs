@@ -1,0 +1,49 @@
+{
+  "slug": "stack",
+  "title": "Stack",
+  "description": "Stack visually puts elements on top of each other.",
+  "demos": [
+    {
+      "id": "stack-1",
+      "label": "3 divs in a stack",
+      "html": "<div class=\"stack h-20 w-32\">\n  <div class=\"bg-primary text-primary-content grid place-content-center rounded-box\">1</div>\n  <div class=\"bg-accent text-accent-content grid place-content-center rounded-box\">2</div>\n  <div class=\"bg-secondary text-secondary-content grid place-content-center rounded-box\">\n    3\n  </div>\n</div>"
+    },
+    {
+      "id": "stack-2",
+      "label": "stacked images",
+      "html": "<div class=\"stack w-48\">\n  <img alt=\"Tailwind CSS example 1\" src=\"https://img.daisyui.com/images/stock/photo-1572635148818-ef6fd45eb394.webp\" class=\"rounded-box\" />\n  <img alt=\"Tailwind CSS example 2\" src=\"https://img.daisyui.com/images/stock/photo-1565098772267-60af42b81ef2.webp\" class=\"rounded-box\" />\n  <img alt=\"Tailwind CSS example 3\" src=\"https://img.daisyui.com/images/stock/photo-1559703248-dcaaec9fab78.webp\" class=\"rounded-box\" />\n</div>"
+    },
+    {
+      "id": "stack-3",
+      "label": "stacked cards",
+      "html": "<div class=\"stack size-28\">\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">A</div>\n  </div>\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">B</div>\n  </div>\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">C</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stack-4",
+      "label": "stacked cards (top direction)",
+      "html": "<div class=\"stack stack-top size-28\">\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">A</div>\n  </div>\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">B</div>\n  </div>\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">C</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stack-5",
+      "label": "stacked cards (start direction)",
+      "html": "<div class=\"stack stack-start size-28\">\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">A</div>\n  </div>\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">B</div>\n  </div>\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">C</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stack-6",
+      "label": "stacked cards (end direction)",
+      "html": "<div class=\"stack stack-end size-28\">\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">A</div>\n  </div>\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">B</div>\n  </div>\n  <div class=\"border-base-content card bg-base-100 border text-center\">\n    <div class=\"card-body\">C</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stack-7",
+      "label": "stacked cards with shadow",
+      "html": "<div class=\"stack\">\n  <div class=\"card bg-base-200 text-center shadow-md\">\n    <div class=\"card-body\">A</div>\n  </div>\n  <div class=\"card bg-base-200 text-center shadow\">\n    <div class=\"card-body\">B</div>\n  </div>\n  <div class=\"card bg-base-200 text-center shadow-sm\">\n    <div class=\"card-body\">C</div>\n  </div>\n</div>"
+    },
+    {
+      "id": "stack-8",
+      "label": "stacked cards",
+      "html": "<div class=\"stack\">\n  <div class=\"card shadow-md bg-base-100\">\n    <div class=\"card-body\">\n      <h2 class=\"card-title\">Notification 1</h2>\n      <p>You have 3 unread messages. Tap here to see.</p>\n    </div>\n  </div>\n  <div class=\"card shadow-md bg-base-100\">\n    <div class=\"card-body\">\n      <h2 class=\"card-title\">Notification 2</h2>\n      <p>You have 3 unread messages. Tap here to see.</p>\n    </div>\n  </div>\n  <div class=\"card shadow-md bg-base-100\">\n    <div class=\"card-body\">\n      <h2 class=\"card-title\">Notification 3</h2>\n      <p>You have 3 unread messages. Tap here to see.</p>\n    </div>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/stack/"
+}

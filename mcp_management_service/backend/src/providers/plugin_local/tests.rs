@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -15,11 +15,20 @@ use chatos_mcp_management_sdk::{
     McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
     WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
-use chatos_plugin_management_sdk::PluginMcpServer;
+use chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED;
+use chatos_plugin_management_sdk::{
+    PackagedSkillMetadata, PluginComponentDescriptor, PluginComponentKind, PluginMcpServer,
+    PluginPathRef, PluginSkillComponentSnapshot, SkillActivationAttestationClaims,
+    SkillActivationPolicy, SkillContextMode, SkillRole, SKILL_RUNTIME_PROTOCOL_VERSION,
+};
 use serde_json::json;
+use sha2::Digest;
 
 use crate::providers::{canonical_json, ProviderCallError, ProviderCancelOutcome};
-use crate::runtime::{PluginMcpRuntimeBinding, RuntimeSessionSnapshot};
+use crate::runtime::{
+    PluginLocalProviderBinding, PluginLocalToolComponentBinding, PluginMcpRuntimeBinding,
+    RuntimeSessionSnapshot,
+};
 
 use super::*;
 
@@ -69,9 +78,161 @@ fn immutable_binding() -> PluginMcpRuntimeBinding {
     }
 }
 
+fn gated_local_binding(
+    immutable: &PluginMcpRuntimeBinding,
+    expires_at_unix: i64,
+) -> PluginLocalProviderBinding {
+    PluginLocalProviderBinding {
+        runtime: immutable.clone(),
+        run_id: "session-1".to_string(),
+        device_id: "device-1".to_string(),
+        workspace_id: Some("workspace-1".to_string()),
+        project_id: Some("project-1".to_string()),
+        adapter_session_id: "adapter-1".to_string(),
+        operation: MCP_TOOL_CALL_OPERATION.to_string(),
+        session_sha256: "d".repeat(64),
+        snapshot_sha256: "e".repeat(64),
+        tool_snapshot_sha256: "f".repeat(64),
+        server_instructions_sha256: "1".repeat(64),
+        server_instructions: None,
+        tools: vec![json!({
+            "name": "generate_site",
+            "description": "Generate an editable site",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"brief": {"type": "string"}},
+                "required": ["brief"],
+                "additionalProperties": false
+            },
+            "_meta": {
+                "chatos/skillGate": {
+                    "allOf": ["web-design-studio", "web-design-components"]
+                }
+            }
+        })],
+        oauth_connection_id: None,
+        expires_at_unix,
+    }
+}
+
+fn skill_component_binding(
+    immutable: &PluginMcpRuntimeBinding,
+    skill_name: &str,
+    component_key: &str,
+    expires_at_unix: i64,
+) -> PluginLocalToolComponentBinding {
+    let instructions_sha256 = format!("{}", "2".repeat(64));
+    let resource_manifest_sha256 = format!("{}", "3".repeat(64));
+    let skill_snapshot = PluginSkillComponentSnapshot {
+        protocol_version: SKILL_RUNTIME_PROTOCOL_VERSION,
+        skill_id: skill_name.to_string(),
+        relative_skill_path: format!("skills/{skill_name}/SKILL.md"),
+        metadata: PackagedSkillMetadata {
+            name: skill_name.to_string(),
+            description: format!("Instructions for {skill_name}"),
+            role: if skill_name == "web-design-studio" {
+                SkillRole::Router
+            } else {
+                SkillRole::Leaf
+            },
+            activation_policy: SkillActivationPolicy::ModelOrUser,
+            context_mode: SkillContextMode::Inline,
+            required_skills: Vec::new(),
+            related_skills: Vec::new(),
+            max_output_chars: None,
+            extra: BTreeMap::new(),
+        },
+        instructions_sha256,
+        resource_manifest_sha256,
+        resources: Vec::new(),
+        snapshot_sha256: "4".repeat(64),
+    };
+    PluginLocalToolComponentBinding {
+        runtime: crate::runtime::PluginToolComponentRuntimeBinding {
+            provider_ref: format!("plugin-tool-binding:{}", "5".repeat(64)),
+            resource_id: format!("plugin_component_{component_key}"),
+            plugin_id: immutable.plugin_id.clone(),
+            release_id: immutable.release_id.clone(),
+            version: immutable.version.clone(),
+            artifact_sha256: immutable.artifact_sha256.clone(),
+            normalized_manifest_sha256: immutable.normalized_manifest_sha256.clone(),
+            component: PluginComponentDescriptor {
+                component_key: component_key.to_string(),
+                kind: PluginComponentKind::SkillCollection,
+                display_name: skill_name.to_string(),
+                runtime_kind: "prompt".to_string(),
+                entrypoint: Some(PluginPathRef::new(format!(
+                    "./skills/{skill_name}/SKILL.md"
+                ))),
+                required: false,
+                permissions: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+            component_content_sha256: "4".repeat(64),
+            skill_snapshot: Some(skill_snapshot),
+            installation_device_id: Some("device-1".to_string()),
+            permission_snapshot: Vec::new(),
+            auth_connection_ids: Vec::new(),
+            required: true,
+            allow_writes: false,
+            command_arguments: None,
+        },
+        run_id: "session-1".to_string(),
+        device_id: "device-1".to_string(),
+        workspace_id: Some("workspace-1".to_string()),
+        adapter_session_id: format!("adapter-{component_key}"),
+        operation: "skill_activate".to_string(),
+        session_sha256: "6".repeat(64),
+        tools: Vec::new(),
+        instruction_items: Vec::new(),
+        static_result: None,
+        expires_at_unix,
+    }
+}
+
+fn activation_claims(
+    snapshot: &RuntimeSessionSnapshot,
+    binding: &PluginLocalToolComponentBinding,
+    activation_ref: &str,
+) -> SkillActivationAttestationClaims {
+    let skill = binding.runtime.skill_snapshot.as_ref().unwrap();
+    let scope_material = format!(
+        "project\n{}\n{}\n{}",
+        snapshot.tenant_id,
+        snapshot.owner_user_id,
+        snapshot.project_id.as_deref().unwrap()
+    );
+    SkillActivationAttestationClaims {
+        issuer: "mcp-management-service".to_string(),
+        audience: "plugin-skill-runtime".to_string(),
+        tenant_id: snapshot.tenant_id.clone(),
+        owner_user_id: snapshot.owner_user_id.clone(),
+        task_id: snapshot.task_id.clone(),
+        run_id: snapshot.run_id.clone(),
+        runtime_session_id: snapshot.session_id.clone(),
+        scope_kind: "project".to_string(),
+        scope_id: hex::encode(sha2::Sha256::digest(scope_material.as_bytes())),
+        device_id: Some(binding.device_id.clone()),
+        workspace_id: binding.workspace_id.clone(),
+        plugin_id: binding.runtime.plugin_id.clone(),
+        release_id: binding.runtime.release_id.clone(),
+        component_key: binding.runtime.component.component_key.clone(),
+        skill_ref: format!("skill-ref-{}", skill.metadata.name),
+        skill_name: skill.metadata.name.clone(),
+        activation_ref: activation_ref.to_string(),
+        instructions_sha256: skill.instructions_sha256.clone(),
+        resource_manifest_sha256: skill.resource_manifest_sha256.clone(),
+        arguments_sha256: "7".repeat(64),
+        nonce: "nonce".to_string(),
+        issued_at_unix: chrono::Utc::now().timestamp(),
+        expires_at_unix: snapshot.expires_at_unix,
+    }
+}
+
 fn context() -> ProjectExecutionContext {
     ProjectExecutionContext {
         project_id: Some("project-1".to_string()),
+        project_name: Some("Project 1".to_string()),
         owner_user_id: "user-1".to_string(),
         workspace_provider: WorkspaceProviderKind::LocalConnector,
         workspace: Some(WorkspaceExecutionTarget {
@@ -86,6 +247,7 @@ fn context() -> ProjectExecutionContext {
 fn device_only_context() -> ProjectExecutionContext {
     ProjectExecutionContext {
         project_id: None,
+        project_name: None,
         owner_user_id: "user-1".to_string(),
         workspace_provider: WorkspaceProviderKind::None,
         workspace: None,
@@ -200,12 +362,151 @@ async fn mcp_prepare_ignores_plugin_tool_component_routes() {
         .is_some_and(|value| value.starts_with("plugin-tool-binding:")));
 }
 
+#[tokio::test]
+async fn skill_gates_use_internal_session_state_and_reject_cross_scope_reuse() {
+    const SECRET: &str = "skill-gate-session-state-secret";
+    let attestations = Arc::new(SkillActivationAttestationService::new(SECRET).unwrap());
+    let provider = PluginLocalProvider::new(
+        reqwest::Client::new(),
+        "http://127.0.0.1:1",
+        Duration::from_secs(1),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+        attestations.clone(),
+    )
+    .unwrap();
+    let immutable = immutable_binding();
+    let expires_at_unix = chrono::Utc::now().timestamp() + 600;
+    let business_binding = gated_local_binding(&immutable, expires_at_unix);
+    let mut snapshot = runtime_snapshot(
+        &immutable,
+        vec![route(&immutable)],
+        HashMap::from([(immutable.resource_id.clone(), business_binding.clone())]),
+        expires_at_unix,
+    );
+    let router = skill_component_binding(
+        &immutable,
+        "web-design-studio",
+        "web-design-studio-skill",
+        expires_at_unix,
+    );
+    let component = skill_component_binding(
+        &immutable,
+        "web-design-components",
+        "web-design-components-skill",
+        expires_at_unix,
+    );
+    snapshot.plugin_local_tool_component_bindings = HashMap::from([
+        (router.runtime.resource_id.clone(), router.clone()),
+        (component.runtime.resource_id.clone(), component.clone()),
+    ]);
+
+    let missing = provider
+        .apply_skill_gate(
+            &snapshot,
+            &business_binding,
+            "generate_site",
+            json!({"brief": "Build a product website"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(missing.code, MCP_ERROR_AUTH_REQUIRED);
+    assert!(missing.message.contains("web-design-studio"));
+    assert!(missing.message.contains("web-design-components"));
+
+    attestations
+        .register(
+            activation_claims(&snapshot, &router, "SA00000000000000000000000000000001"),
+            None,
+            0,
+            "router instructions".to_string(),
+        )
+        .await
+        .unwrap();
+    attestations
+        .register(
+            activation_claims(&snapshot, &component, "SA00000000000000000000000000000002"),
+            Some("SA00000000000000000000000000000001".to_string()),
+            1,
+            "component instructions".to_string(),
+        )
+        .await
+        .unwrap();
+
+    let business_arguments = json!({"brief": "Build a product website"});
+    assert_eq!(
+        provider
+            .apply_skill_gate(
+                &snapshot,
+                &business_binding,
+                "generate_site",
+                business_arguments.clone(),
+            )
+            .await
+            .unwrap(),
+        business_arguments
+    );
+
+    let mut another_user = snapshot.clone();
+    another_user.owner_user_id = "user-2".to_string();
+    let error = provider
+        .apply_skill_gate(
+            &another_user,
+            &business_binding,
+            "generate_site",
+            json!({"brief": "Build a product website"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, MCP_ERROR_AUTH_REQUIRED);
+
+    let mut another_project = snapshot.clone();
+    another_project.project_id = Some("project-2".to_string());
+    let error = provider
+        .apply_skill_gate(
+            &another_project,
+            &business_binding,
+            "generate_site",
+            json!({"brief": "Build a product website"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, MCP_ERROR_AUTH_REQUIRED);
+
+    let mut another_session = snapshot.clone();
+    another_session.session_id = "session-2".to_string();
+    let error = provider
+        .apply_skill_gate(
+            &another_session,
+            &business_binding,
+            "generate_site",
+            json!({"brief": "Build a product website"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, MCP_ERROR_AUTH_REQUIRED);
+
+    let mut another_release = business_binding.clone();
+    another_release.runtime.release_id = "release-workspace-2".to_string();
+    let error = provider
+        .apply_skill_gate(
+            &snapshot,
+            &another_release,
+            "generate_site",
+            json!({"brief": "Build a product website"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, MCP_ERROR_AUTH_REQUIRED);
+}
+
 async fn start_local_connector(
     secret: &'static str,
     expected_workspace_id: Option<&'static str>,
     expected_cwd: Option<&'static str>,
     expected_permission: &'static str,
     expected_project_id: Option<&'static str>,
+    expected_project_name: Option<&'static str>,
 ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
     #[derive(Clone)]
     struct TestState {
@@ -215,6 +516,7 @@ async fn start_local_connector(
         expected_cwd: Option<&'static str>,
         expected_permission: &'static str,
         expected_project_id: Option<&'static str>,
+        expected_project_name: Option<&'static str>,
     }
 
     async fn handler(
@@ -260,6 +562,12 @@ async fn start_local_connector(
             body.get("project_id").and_then(Value::as_str),
             state.expected_project_id
         );
+        if action == "prepare" {
+            assert_eq!(
+                body.get("project_name").and_then(Value::as_str),
+                state.expected_project_name
+            );
+        }
         state.actions.lock().unwrap().push(action.clone());
         match action.as_str() {
             "prepare" => {
@@ -385,6 +693,7 @@ async fn start_local_connector(
             expected_cwd,
             expected_permission,
             expected_project_id,
+            expected_project_name,
         });
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -401,6 +710,7 @@ async fn prepare_call_and_close_use_the_exact_local_plugin_snapshot() {
         Some("projects/space-station"),
         "workspace.read",
         Some("project-1"),
+        Some("Project 1"),
     )
     .await;
     let provider = PluginLocalProvider::new(
@@ -695,7 +1005,7 @@ fn only_definitely_unexecuted_adapter_failures_are_recoverable() {
 async fn device_only_plugin_prepare_uses_the_installation_device_without_workspace_query() {
     const SECRET: &str = "device-only-plugin-local-test-secret";
     let (base_url, actions, server) =
-        start_local_connector(SECRET, None, None, "network.domain:github.com", None).await;
+        start_local_connector(SECRET, None, None, "network.domain:github.com", None, None).await;
     let provider = PluginLocalProvider::new(
         reqwest::Client::new(),
         base_url,

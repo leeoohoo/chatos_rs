@@ -64,9 +64,9 @@ The server publishes tools for listing, creating, reading, patching, laying out,
 
 AI-authored structure uses the platform Skill Runtime plus a mandatory two-stage generation protocol:
 
-1. Activate the `diagram-studio` router with the platform `skill_skill_activate` tool, then activate the selected diagram-type Skill using the router activation as `parent_activation_ref`.
-2. `diagram_prepare_generation` requires the platform-issued router and leaf `skillEvidence`, validates a bounded plan, explicit exclusions, splitting decision, structure, and complexity estimates, then returns a Generation Permit.
-3. `diagram_commit_generation` requires the same Skill evidence, parses and lays out PlantUML, enforces the fixed diagram contract and final quality gate, records provenance, and persists only a ready diagram.
+1. Activate the `diagram-studio` router with the platform `skill_skill_activate` tool, then activate the selected diagram-type Skill. ChatOS records the relationship internally.
+2. `diagram_prepare_generation` validates a bounded plan, explicit exclusions, splitting decision, structure, and complexity estimates, then stores the approved plan in the isolated Plugin Runtime Session.
+3. `diagram_commit_generation` receives business content only, resolves the active Skill and plan internally, parses and lays out PlantUML, enforces the fixed diagram contract and final quality gate, records provenance, and persists only a ready diagram.
 
 `diagram_import_plantuml` imports user-authored PlantUML and is protected by the same platform Skill gate. Generated-document tools do not accept a ChatOS `projectId`; the host-injected runtime scope selects the destination. Diagram Studio project IDs remain available only for UI classification inside that scope.
 
@@ -81,4 +81,4 @@ AI-authored structure uses the platform Skill Runtime plus a mandatory two-stage
 
 The visual page does not receive model credentials or arbitrary filesystem access. In standalone mode it talks only to the loopback Diagram Studio service. In ChatOS it is intended to run inside the sandboxed Plugin App host and use a bounded host bridge.
 
-The client supplies an isolated plugin data directory and `CHATOS_CONTEXT_SCOPE_ID`. Diagram Studio derives an additional scope fingerprint from those values and binds projects, document access, Generation Permits, and provenance to it. A public scope is private to the current user/device data root; it is not a cross-user shared project. Cross-scope project IDs and document IDs are rejected even if guessed.
+The client supplies an isolated plugin data directory, `CHATOS_CONTEXT_SCOPE_ID`, and an internal Plugin Runtime Session identifier. Diagram Studio derives an additional scope fingerprint from those values and binds projects, document access, prepared generation plans, and provenance to it. A public scope is private to the current user/device data root; it is not a cross-user shared project. Cross-scope project IDs and document IDs are rejected even if guessed.

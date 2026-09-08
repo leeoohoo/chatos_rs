@@ -25,7 +25,7 @@ function portalHostFor(anchor: HTMLElement | null): HTMLElement | null {
 }
 
 function portalThemeFor(anchor: HTMLElement | null): CSSProperties {
-  const runtime = anchor?.closest('.shadcn-runtime, .chakra-runtime') as HTMLElement | null;
+  const runtime = anchor?.closest('.chakra-runtime') as HTMLElement | null;
   if (!runtime) return {};
   const computed = window.getComputedStyle(runtime);
   const style: Record<string, string> = {

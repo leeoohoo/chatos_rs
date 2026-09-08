@@ -1,6 +1,6 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ElkNode } from 'elkjs/lib/elk-api.js';
-import type { DiagramDocument, DiagramNode } from './schema.js';
+import type { DiagramDocument, DiagramEdge, DiagramNode } from './schema.js';
 
 const elk = new ELK();
 
@@ -45,17 +45,21 @@ export async function layoutDiagram(
         child.position = { x: 150 + index * 260, y: 48 };
       });
     });
+    refreshGenericEdgeHandles(next);
     return next;
   }
   if (next.nodes.some((node) => node.data.shape === 'container')) {
     try {
-      await layoutCompoundDiagram(next, direction ?? 'RIGHT');
+      if (next.kind === 'architecture') {
+        layoutContainerDiagram(next, direction ?? 'RIGHT');
+      } else {
+        await layoutCompoundDiagram(next, direction ?? 'RIGHT');
+      }
     } catch (error) {
       if (typeof process !== 'undefined' && process.env.DIAGRAM_STUDIO_LAYOUT_DEBUG === '1') {
         console.error('Diagram Studio compound layout failed; using fallback.', error);
       }
-      // Keep existing documents usable if ELK rejects malformed legacy nesting.
-      layoutContainerDiagramFallback(next, direction ?? 'RIGHT');
+      layoutContainerDiagram(next, direction ?? 'RIGHT');
     }
     refreshGenericEdgeHandles(next);
     return next;
@@ -69,10 +73,15 @@ export async function layoutDiagram(
     layoutOptions: {
       'elk.algorithm': 'layered',
       'elk.direction': resolvedDirection,
+      'elk.edgeRouting': 'ORTHOGONAL',
       'elk.spacing.nodeNode': '72',
+      'elk.spacing.edgeNode': '28',
       'elk.layered.spacing.nodeNodeBetweenLayers': '96',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '28',
       'elk.padding': '[top=50,left=50,bottom=50,right=50]',
       'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
       ...(shouldWrapArchitecture
         ? {
             'elk.layered.wrapping.strategy': 'MULTI_EDGE',
@@ -95,7 +104,7 @@ export async function layoutDiagram(
     ...node,
     position: positions.get(node.id) ?? node.position
   }));
-  if (document.kind === 'architecture' || document.kind === 'topology') refreshGenericEdgeHandles(next);
+  refreshGenericEdgeHandles(next);
   return next;
 }
 
@@ -176,7 +185,7 @@ async function layoutCompoundDiagram(document: DiagramDocument, direction: 'RIGH
   applyNodeLayout(laidOut.children);
 }
 
-function layoutContainerDiagramFallback(document: DiagramDocument, direction: 'RIGHT' | 'DOWN'): void {
+function layoutContainerDiagram(document: DiagramDocument, direction: 'RIGHT' | 'DOWN'): void {
   const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
   const childrenByParent = new Map<string, DiagramNode[]>();
   for (const node of document.nodes) {
@@ -279,22 +288,63 @@ function layoutContainerDiagramFallback(document: DiagramDocument, direction: 'R
   });
   const ranks = graphRanks(topNodes, collapsedEdges);
   const rankValues = [...new Set(topNodes.map((node) => ranks.get(node.id) ?? 0))].sort((left, right) => left - right);
-  let primaryOffset = 60;
-  for (const rank of rankValues) {
-    const group = topNodes.filter((node) => (ranks.get(node.id) ?? 0) === rank);
-    let secondaryOffset = 60;
-    let maximumPrimarySize = 0;
-    for (const node of group) {
-      const width = node.width ?? nodeSize(node).width;
-      const height = node.height ?? nodeSize(node).height;
-      node.position = direction === 'RIGHT'
-        ? { x: primaryOffset, y: secondaryOffset }
-        : { x: secondaryOffset, y: primaryOffset };
-      secondaryOffset += (direction === 'RIGHT' ? height : width) + 110;
-      maximumPrimarySize = Math.max(maximumPrimarySize, direction === 'RIGHT' ? width : height);
+  const groups = rankValues.map((rank) => topNodes
+    .filter((node) => (ranks.get(node.id) ?? 0) === rank)
+    .sort((left, right) => architectureVerticalPriority(left, childrenByParent) - architectureVerticalPriority(right, childrenByParent)));
+  const groupSizes = groups.map((group) => ({
+    group,
+    primary: Math.max(...group.map((node) => {
+      const size = nodeSize(node);
+      return direction === 'RIGHT' ? size.width : size.height;
+    })),
+    secondary: group.reduce((span, node, index) => {
+      const size = nodeSize(node);
+      return span + (direction === 'RIGHT' ? size.height : size.width) + (index > 0 ? 96 : 0);
+    }, 0)
+  }));
+  const rows: typeof groupSizes[] = [];
+  let currentRow: typeof groupSizes = [];
+  let currentPrimarySpan = 0;
+  const maximumPrimarySpan = 2100;
+  for (const groupSize of groupSizes) {
+    const required = groupSize.primary + (currentRow.length > 0 ? 128 : 0);
+    if (currentRow.length > 0 && currentPrimarySpan + required > maximumPrimarySpan) {
+      rows.push(currentRow);
+      currentRow = [];
+      currentPrimarySpan = 0;
     }
-    primaryOffset += maximumPrimarySize + 160;
+    currentRow.push(groupSize);
+    currentPrimarySpan += groupSize.primary + (currentRow.length > 1 ? 128 : 0);
   }
+  if (currentRow.length > 0) rows.push(currentRow);
+
+  let rowSecondaryOffset = 60;
+  for (const row of rows) {
+    const rowSecondarySpan = Math.max(...row.map((entry) => entry.secondary));
+    let primaryOffset = 60;
+    for (const { group, primary, secondary } of row) {
+      let secondaryOffset = rowSecondaryOffset + Math.max(0, (rowSecondarySpan - secondary) / 2);
+      for (const node of group) {
+        const width = node.width ?? nodeSize(node).width;
+        const height = node.height ?? nodeSize(node).height;
+        node.position = direction === 'RIGHT'
+          ? { x: primaryOffset, y: secondaryOffset }
+          : { x: secondaryOffset, y: primaryOffset };
+        secondaryOffset += (direction === 'RIGHT' ? height : width) + 96;
+      }
+      primaryOffset += primary + 128;
+    }
+    rowSecondaryOffset += rowSecondarySpan + 160;
+  }
+}
+
+function architectureVerticalPriority(node: DiagramNode, childrenByParent: Map<string, DiagramNode[]>): number {
+  const members = node.data.shape === 'container' ? childrenByParent.get(node.id) ?? [] : [node];
+  if (members.some((member) => member.data.category === 'external')) return 0;
+  if (members.some((member) => member.data.category === 'client')) return 1;
+  if (members.some((member) => member.data.category === 'service')) return 2;
+  if (members.some((member) => member.data.category === 'database' || member.data.category === 'queue')) return 3;
+  return 2;
 }
 
 function refreshGenericEdgeHandles(document: DiagramDocument): void {
@@ -308,14 +358,64 @@ function refreshGenericEdgeHandles(document: DiagramDocument): void {
     const targetSize = nodeSize(target);
     const sourceCenter = { x: sourcePosition.x + sourceSize.width / 2, y: sourcePosition.y + sourceSize.height / 2 };
     const targetCenter = { x: targetPosition.x + targetSize.width / 2, y: targetPosition.y + targetSize.height / 2 };
-    const vertical = Math.abs(targetCenter.y - sourceCenter.y) >= Math.abs(targetCenter.x - sourceCenter.x);
+    const horizontalDistance = Math.abs(targetCenter.x - sourceCenter.x);
+    const verticalDistance = Math.abs(targetCenter.y - sourceCenter.y);
+    const prefersVerticalFlow = document.kind === 'flowchart' || document.kind === 'swimlane';
+    const vertical = prefersVerticalFlow
+      ? verticalDistance >= horizontalDistance * 0.65
+      : verticalDistance >= horizontalDistance;
     return {
       ...edge,
       sourceHandle: vertical ? (targetCenter.y >= sourceCenter.y ? 'bottom' : 'top') : (targetCenter.x >= sourceCenter.x ? 'right' : 'left'),
       targetHandle: vertical ? (targetCenter.y >= sourceCenter.y ? 'top' : 'bottom') : (targetCenter.x >= sourceCenter.x ? 'left' : 'right')
     };
   });
+  routeDecisionBranches(document);
   distributeEdgeHandles(document);
+}
+
+function routeDecisionBranches(document: DiagramDocument): void {
+  const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
+  const outgoing = new Map<string, Array<{ edge: DiagramEdge; targetCenter: { x: number; y: number } }>>();
+  for (const edge of document.edges) {
+    const source = nodeById.get(edge.source);
+    const target = nodeById.get(edge.target);
+    if (source?.data.shape !== 'diamond' || !target) continue;
+    const targetPosition = absoluteNodePosition(document.nodes, target);
+    const targetSize = nodeSize(target);
+    const entries = outgoing.get(source.id) ?? [];
+    entries.push({
+      edge,
+      targetCenter: {
+        x: targetPosition.x + targetSize.width / 2,
+        y: targetPosition.y + targetSize.height / 2
+      }
+    });
+    outgoing.set(source.id, entries);
+  }
+
+  for (const [sourceId, entries] of outgoing) {
+    if (entries.length < 2) continue;
+    const source = nodeById.get(sourceId)!;
+    const sourcePosition = absoluteNodePosition(document.nodes, source);
+    const sourceSize = nodeSize(source);
+    const sourceCenter = {
+      x: sourcePosition.x + sourceSize.width / 2,
+      y: sourcePosition.y + sourceSize.height / 2
+    };
+    const downward = entries
+      .filter((entry) => entry.targetCenter.y > sourceCenter.y)
+      .sort((left, right) => Math.abs(left.targetCenter.x - sourceCenter.x) - Math.abs(right.targetCenter.x - sourceCenter.x));
+    const primary = downward[0]
+      && Math.abs(downward[0].targetCenter.x - sourceCenter.x) <= sourceSize.width * 0.75
+      ? downward[0]
+      : undefined;
+    for (const entry of entries) {
+      entry.edge.sourceHandle = entry === primary
+        ? 'bottom'
+        : entry.targetCenter.x < sourceCenter.x ? 'left' : 'right';
+    }
+  }
 }
 
 function distributeEdgeHandles(document: DiagramDocument): void {
@@ -329,6 +429,7 @@ function distributeEdgeHandles(document: DiagramDocument): void {
   const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
   const groups = new Map<string, Endpoint[]>();
   const addEndpoint = (endpoint: Endpoint) => {
+    if (nodeById.get(endpoint.nodeId)?.data.shape === 'diamond') return;
     const key = `${endpoint.nodeId}\u0000${endpoint.side}`;
     const entries = groups.get(key) ?? [];
     entries.push(endpoint);
@@ -390,43 +491,75 @@ function absoluteNodePosition(nodes: DiagramNode[], node: DiagramNode): { x: num
 }
 
 function graphRanks(nodes: DiagramNode[], edges: DiagramDocument['edges']): Map<string, number> {
-  const ranks = new Map(nodes.map((node) => [node.id, 0]));
-  const incoming = new Map(nodes.map((node) => [node.id, 0]));
+  const nodeIds = new Set(nodes.map((node) => node.id));
   const outgoing = new Map(nodes.map((node) => [node.id, [] as string[]]));
   const seenEdges = new Set<string>();
   for (const edge of edges) {
-    if (!incoming.has(edge.target) || !outgoing.has(edge.source)) continue;
+    if (!nodeIds.has(edge.target) || !nodeIds.has(edge.source)) continue;
     const key = `${edge.source}\u0000${edge.target}`;
     if (seenEdges.has(key)) continue;
     seenEdges.add(key);
-    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1);
     outgoing.get(edge.source)!.push(edge.target);
   }
-  const queue = nodes.filter((node) => (incoming.get(node.id) ?? 0) === 0).map((node) => node.id);
-  const visited = new Set<string>();
+
+  const components = stronglyConnectedComponents(nodes.map((node) => node.id), outgoing);
+  const componentByNode = new Map<string, number>();
+  components.forEach((component, componentIndex) => component.forEach((nodeId) => componentByNode.set(nodeId, componentIndex)));
+  const componentOutgoing = new Map(components.map((_, index) => [index, new Set<number>()]));
+  const componentIncoming = new Map(components.map((_, index) => [index, 0]));
+  for (const [source, targets] of outgoing) {
+    const sourceComponent = componentByNode.get(source)!;
+    for (const target of targets) {
+      const targetComponent = componentByNode.get(target)!;
+      if (sourceComponent === targetComponent || componentOutgoing.get(sourceComponent)!.has(targetComponent)) continue;
+      componentOutgoing.get(sourceComponent)!.add(targetComponent);
+      componentIncoming.set(targetComponent, (componentIncoming.get(targetComponent) ?? 0) + 1);
+    }
+  }
+  const componentRanks = new Map(components.map((_, index) => [index, 0]));
+  const queue = components.map((_, index) => index).filter((index) => componentIncoming.get(index) === 0);
   while (queue.length) {
     const current = queue.shift()!;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    for (const target of outgoing.get(current) ?? []) {
-      ranks.set(target, Math.max(ranks.get(target) ?? 0, (ranks.get(current) ?? 0) + 1));
-      incoming.set(target, Math.max(0, (incoming.get(target) ?? 0) - 1));
-      if ((incoming.get(target) ?? 0) === 0) queue.push(target);
+    for (const target of componentOutgoing.get(current) ?? []) {
+      componentRanks.set(target, Math.max(componentRanks.get(target) ?? 0, (componentRanks.get(current) ?? 0) + 1));
+      componentIncoming.set(target, (componentIncoming.get(target) ?? 0) - 1);
+      if (componentIncoming.get(target) === 0) queue.push(target);
     }
   }
-  for (const node of nodes) {
-    if (visited.has(node.id)) continue;
-    const cycleQueue = [node.id];
-    visited.add(node.id);
-    while (cycleQueue.length) {
-      const current = cycleQueue.shift()!;
-      for (const target of outgoing.get(current) ?? []) {
-        if (visited.has(target)) continue;
-        ranks.set(target, Math.max(ranks.get(target) ?? 0, (ranks.get(current) ?? 0) + 1));
-        visited.add(target);
-        cycleQueue.push(target);
+  return new Map(nodes.map((node) => [node.id, componentRanks.get(componentByNode.get(node.id)!) ?? 0]));
+}
+
+function stronglyConnectedComponents(nodeIds: string[], outgoing: Map<string, string[]>): string[][] {
+  let nextIndex = 0;
+  const indexes = new Map<string, number>();
+  const lowLinks = new Map<string, number>();
+  const stack: string[] = [];
+  const onStack = new Set<string>();
+  const components: string[][] = [];
+  const visit = (nodeId: string) => {
+    indexes.set(nodeId, nextIndex);
+    lowLinks.set(nodeId, nextIndex);
+    nextIndex += 1;
+    stack.push(nodeId);
+    onStack.add(nodeId);
+    for (const target of outgoing.get(nodeId) ?? []) {
+      if (!indexes.has(target)) {
+        visit(target);
+        lowLinks.set(nodeId, Math.min(lowLinks.get(nodeId)!, lowLinks.get(target)!));
+      } else if (onStack.has(target)) {
+        lowLinks.set(nodeId, Math.min(lowLinks.get(nodeId)!, indexes.get(target)!));
       }
     }
-  }
-  return ranks;
+    if (lowLinks.get(nodeId) !== indexes.get(nodeId)) return;
+    const component: string[] = [];
+    while (stack.length) {
+      const member = stack.pop()!;
+      onStack.delete(member);
+      component.push(member);
+      if (member === nodeId) break;
+    }
+    components.push(component);
+  };
+  nodeIds.forEach((nodeId) => { if (!indexes.has(nodeId)) visit(nodeId); });
+  return components;
 }

@@ -1,0 +1,34 @@
+{
+  "slug": "accordion",
+  "title": "Accordion",
+  "description": "Accordion is used for showing and hiding content but only one item can stay open at a time.",
+  "demos": [
+    {
+      "id": "accordion-1",
+      "label": "Accordion using radio inputs",
+      "html": "<div class=\"collapse bg-base-100 border border-base-300\">\n  <input type=\"radio\" name=\"my-accordion-1\" checked=\"checked\" />\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">Click the \"Sign Up\" button in the top right corner and follow the registration process.</div>\n</div>\n<div class=\"collapse bg-base-100 border border-base-300\">\n  <input type=\"radio\" name=\"my-accordion-1\" />\n  <div class=\"collapse-title font-semibold\">I forgot my password. What should I do?</div>\n  <div class=\"collapse-content text-sm\">Click on \"Forgot Password\" on the login page and follow the instructions sent to your email.</div>\n</div>\n<div class=\"collapse bg-base-100 border border-base-300\">\n  <input type=\"radio\" name=\"my-accordion-1\" />\n  <div class=\"collapse-title font-semibold\">How do I update my profile information?</div>\n  <div class=\"collapse-content text-sm\">Go to \"My Account\" settings and select \"Edit Profile\" to make changes.</div>\n</div>"
+    },
+    {
+      "id": "accordion-2",
+      "label": "Accordion using details",
+      "html": "<details class=\"collapse bg-base-100 border border-base-300\" name=\"my-accordion-det-1\" open>\n  <summary class=\"collapse-title font-semibold\">How do I create an account?</summary>\n  <div class=\"collapse-content text-sm\">Click the \"Sign Up\" button in the top right corner and follow the registration process.</div>\n</details>\n<details class=\"collapse bg-base-100 border border-base-300\" name=\"my-accordion-det-1\">\n  <summary class=\"collapse-title font-semibold\">I forgot my password. What should I do?</summary>\n  <div class=\"collapse-content text-sm\">Click on \"Forgot Password\" on the login page and follow the instructions sent to your email.</div>\n</details>\n<details class=\"collapse bg-base-100 border border-base-300\" name=\"my-accordion-det-1\">\n  <summary class=\"collapse-title font-semibold\">How do I update my profile information?</summary>\n  <div class=\"collapse-content text-sm\">Go to \"My Account\" settings and select \"Edit Profile\" to make changes.</div>\n</details>"
+    },
+    {
+      "id": "accordion-3",
+      "label": "Accordion with arrow icon",
+      "html": "<div class=\"collapse collapse-arrow bg-base-100 border border-base-300\">\n  <input type=\"radio\" name=\"my-accordion-2\" checked=\"checked\" />\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">Click the \"Sign Up\" button in the top right corner and follow the registration process.</div>\n</div>\n<div class=\"collapse collapse-arrow bg-base-100 border border-base-300\">\n  <input type=\"radio\" name=\"my-accordion-2\" />\n  <div class=\"collapse-title font-semibold\">I forgot my password. What should I do?</div>\n  <div class=\"collapse-content text-sm\">Click on \"Forgot Password\" on the login page and follow the instructions sent to your email.</div>\n</div>\n<div class=\"collapse collapse-arrow bg-base-100 border border-base-300\">\n  <input type=\"radio\" name=\"my-accordion-2\" />\n  <div class=\"collapse-title font-semibold\">How do I update my profile information?</div>\n  <div class=\"collapse-content text-sm\">Go to \"My Account\" settings and select \"Edit Profile\" to make changes.</div>\n</div>"
+    },
+    {
+      "id": "accordion-4",
+      "label": "Accordion with plus/minus icon",
+      "html": "<div class=\"collapse collapse-plus bg-base-100 border border-base-300\">\n  <input type=\"radio\" name=\"my-accordion-3\" checked=\"checked\" />\n  <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n  <div class=\"collapse-content text-sm\">Click the \"Sign Up\" button in the top right corner and follow the registration process.</div>\n</div>\n<div class=\"collapse collapse-plus bg-base-100 border border-base-300\">\n  <input type=\"radio\" name=\"my-accordion-3\" />\n  <div class=\"collapse-title font-semibold\">I forgot my password. What should I do?</div>\n  <div class=\"collapse-content text-sm\">Click on \"Forgot Password\" on the login page and follow the instructions sent to your email.</div>\n</div>\n<div class=\"collapse collapse-plus bg-base-100 border border-base-300\">\n  <input type=\"radio\" name=\"my-accordion-3\" />\n  <div class=\"collapse-title font-semibold\">How do I update my profile information?</div>\n  <div class=\"collapse-content text-sm\">Go to \"My Account\" settings and select \"Edit Profile\" to make changes.</div>\n</div>"
+    },
+    {
+      "id": "accordion-5",
+      "label": "Using Accordion and Join together",
+      "html": "<div class=\"join join-vertical bg-base-100\">\n  <div class=\"collapse collapse-arrow join-item border-base-300 border\">\n    <input type=\"radio\" name=\"my-accordion-4\" checked=\"checked\" />\n    <div class=\"collapse-title font-semibold\">How do I create an account?</div>\n    <div class=\"collapse-content text-sm\">Click the \"Sign Up\" button in the top right corner and follow the registration process.</div>\n  </div>\n  <div class=\"collapse collapse-arrow join-item border-base-300 border\">\n    <input type=\"radio\" name=\"my-accordion-4\" />\n    <div class=\"collapse-title font-semibold\">I forgot my password. What should I do?</div>\n    <div class=\"collapse-content text-sm\">Click on \"Forgot Password\" on the login page and follow the instructions sent to your email.</div>\n  </div>\n  <div class=\"collapse collapse-arrow join-item border-base-300 border\">\n    <input type=\"radio\" name=\"my-accordion-4\" />\n    <div class=\"collapse-title font-semibold\">How do I update my profile information?</div>\n    <div class=\"collapse-content text-sm\">Go to \"My Account\" settings and select \"Edit Profile\" to make changes.</div>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/accordion/"
+}

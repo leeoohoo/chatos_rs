@@ -1,0 +1,34 @@
+{
+  "slug": "chat",
+  "title": "Chat bubble",
+  "description": "Chat bubbles are used to show one line of conversation and all its data, including the author image, author name, time, etc.",
+  "demos": [
+    {
+      "id": "chat-1",
+      "label": "chat-start and chat-end",
+      "html": "<div class=\"chat chat-start\">\n  <div class=\"chat-bubble\">\n    It's over Anakin,\n    <br />\n    I have the high ground.\n  </div>\n</div>\n<div class=\"chat chat-end\">\n  <div class=\"chat-bubble\">You underestimate my power!</div>\n</div>"
+    },
+    {
+      "id": "chat-2",
+      "label": "Chat with image",
+      "html": "<div class=\"chat chat-start\">\n  <div class=\"chat-image avatar\">\n    <div class=\"w-10 rounded-full\">\n      <img\n        alt=\"Tailwind CSS chat bubble component\"\n        src=\"https://img.daisyui.com/images/profile/demo/kenobee@192.webp\"\n      />\n    </div>\n  </div>\n  <div class=\"chat-bubble\">It was said that you would, destroy the Sith, not join them.</div>\n</div>\n<div class=\"chat chat-start\">\n  <div class=\"chat-image avatar\">\n    <div class=\"w-10 rounded-full\">\n      <img\n        alt=\"Tailwind CSS chat bubble component\"\n        src=\"https://img.daisyui.com/images/profile/demo/kenobee@192.webp\"\n      />\n    </div>\n  </div>\n  <div class=\"chat-bubble\">It was you who would bring balance to the Force</div>\n</div>\n<div class=\"chat chat-start\">\n  <div class=\"chat-image avatar\">\n    <div class=\"w-10 rounded-full\">\n      <img\n        alt=\"Tailwind CSS chat bubble component\"\n        src=\"https://img.daisyui.com/images/profile/demo/kenobee@192.webp\"\n      />\n    </div>\n  </div>\n  <div class=\"chat-bubble\">Not leave it in Darkness</div>\n</div>"
+    },
+    {
+      "id": "chat-3",
+      "label": "Chat with image, header and footer",
+      "html": "<div class=\"chat chat-start\">\n  <div class=\"chat-image avatar\">\n    <div class=\"w-10 rounded-full\">\n      <img\n        alt=\"Tailwind CSS chat bubble component\"\n        src=\"https://img.daisyui.com/images/profile/demo/kenobee@192.webp\"\n      />\n    </div>\n  </div>\n  <div class=\"chat-header\">\n    Obi-Wan Kenobi\n    <time class=\"text-xs opacity-50\">12:45</time>\n  </div>\n  <div class=\"chat-bubble\">You were the Chosen One!</div>\n  <div class=\"chat-footer opacity-50\">Delivered</div>\n</div>\n<div class=\"chat chat-end\">\n  <div class=\"chat-image avatar\">\n    <div class=\"w-10 rounded-full\">\n      <img\n        alt=\"Tailwind CSS chat bubble component\"\n        src=\"https://img.daisyui.com/images/profile/demo/anakeen@192.webp\"\n      />\n    </div>\n  </div>\n  <div class=\"chat-header\">\n    Anakin\n    <time class=\"text-xs opacity-50\">12:46</time>\n  </div>\n  <div class=\"chat-bubble\">I hate you!</div>\n  <div class=\"chat-footer opacity-50\">Seen at 12:46</div>\n</div>"
+    },
+    {
+      "id": "chat-4",
+      "label": "Chat with header and footer",
+      "html": "<div class=\"chat chat-start\">\n  <div class=\"chat-header\">\n    Obi-Wan Kenobi\n    <time class=\"text-xs opacity-50\">2 hours ago</time>\n  </div>\n  <div class=\"chat-bubble\">You were the Chosen One!</div>\n  <div class=\"chat-footer opacity-50\">Seen</div>\n</div>\n<div class=\"chat chat-start\">\n  <div class=\"chat-header\">\n    Obi-Wan Kenobi\n    <time class=\"text-xs opacity-50\">2 hour ago</time>\n  </div>\n  <div class=\"chat-bubble\">I loved you.</div>\n  <div class=\"chat-footer opacity-50\">Delivered</div>\n</div>"
+    },
+    {
+      "id": "chat-5",
+      "label": "Chat Bubble with colors",
+      "html": "<div class=\"chat chat-start\">\n  <div class=\"chat-bubble chat-bubble-primary\">What kind of nonsense is this</div>\n</div>\n<div class=\"chat chat-start\">\n  <div class=\"chat-bubble chat-bubble-secondary\">\n    Put me on the Council and not make me a Master!??\n  </div>\n</div>\n<div class=\"chat chat-start\">\n  <div class=\"chat-bubble chat-bubble-accent\">\n    That's never been done in the history of the Jedi.\n  </div>\n</div>\n<div class=\"chat chat-start\">\n  <div class=\"chat-bubble chat-bubble-neutral\">It's insulting!</div>\n</div>\n<div class=\"chat chat-end\">\n  <div class=\"chat-bubble chat-bubble-info\">Calm down, Anakin.</div>\n</div>\n<div class=\"chat chat-end\">\n  <div class=\"chat-bubble chat-bubble-success\">You have been given a great honor.</div>\n</div>\n<div class=\"chat chat-end\">\n  <div class=\"chat-bubble chat-bubble-warning\">To be on the Council at your age.</div>\n</div>\n<div class=\"chat chat-end\">\n  <div class=\"chat-bubble chat-bubble-error\">It's never happened before.</div>\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/chat/"
+}

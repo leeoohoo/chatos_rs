@@ -81,6 +81,7 @@ extension NativeLocalConnectorService {
         let serverKey = body["server_key"]?.jsonString
         let permissionSnapshot = Set(try body.requireStringArray("permission_snapshot"))
         let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
+        let projectName = body["project_name"]?.jsonString?.nonEmptyTrimmed
         let allowlist = Set(try body.optionalStringArray("tool_allowlist"))
         let blocklist = Set(try body.optionalStringArray("tool_blocklist"))
         try scope.validate(permissionSnapshot: permissionSnapshot)
@@ -94,7 +95,7 @@ extension NativeLocalConnectorService {
               record.artifactSHA256 == artifactSHA256.lowercased() else {
             throw NativePluginRuntimeError.invalidRequest("Plugin 未安装、已停用或 Release 不匹配")
         }
-        if componentKey == "browser-cdp" {
+        if componentKey == NativeBrowserPluginIdentity.componentKey {
             await browserExtensionPairingRuntime.stop()
         }
         let adapterSessionID = UUID().uuidString.lowercased()
@@ -142,6 +143,7 @@ extension NativeLocalConnectorService {
             workspaceID: scope.workspaceID,
             workspaceRoot: projectRoot,
             projectID: projectID,
+            projectName: projectName,
             permissionSnapshot: permissionSnapshot,
             runtimeRootURL: pluginRuntimeRootURL
         )

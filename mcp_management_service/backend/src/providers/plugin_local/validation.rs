@@ -186,8 +186,7 @@ fn validate_tool_snapshot(tools: &[Value], expected_sha256: &str) -> Result<(), 
                     ))
                 },
             )?;
-            if gate.evidence_argument.trim().is_empty()
-                || (gate.all_of.is_empty() && gate.select_by_argument.is_none())
+            if (gate.all_of.is_empty() && gate.select_by_argument.is_none())
                 || gate.all_of.iter().any(|skill| skill.trim().is_empty())
                 || gate.select_by_argument.as_ref().is_some_and(|selector| {
                     !selector.pointer.starts_with('/')
@@ -201,19 +200,13 @@ fn validate_tool_snapshot(tools: &[Value], expected_sha256: &str) -> Result<(), 
                     "Plugin MCP tool {name} has an incomplete chatos/skillGate declaration"
                 )));
             }
-            let properties = tool
-                .pointer("/inputSchema/properties")
+            tool.pointer("/inputSchema/properties")
                 .and_then(Value::as_object)
                 .ok_or_else(|| {
                     ProviderCallError::invalid_response(format!(
                         "Plugin MCP tool {name} Skill gate requires an object input schema"
                     ))
                 })?;
-            if !properties.contains_key(gate.evidence_argument.as_str()) {
-                return Err(ProviderCallError::invalid_response(format!(
-                    "Plugin MCP tool {name} input schema does not declare its Skill evidence argument"
-                )));
-            }
         }
     }
     Ok(())

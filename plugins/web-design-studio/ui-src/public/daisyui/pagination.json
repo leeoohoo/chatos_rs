@@ -1,0 +1,39 @@
+{
+  "slug": "pagination",
+  "title": "Pagination",
+  "description": "Pagination is a group of buttons that allow the user to navigate between a set of related content.",
+  "demos": [
+    {
+      "id": "pagination-1",
+      "label": "Pagination with an active button",
+      "html": "<div class=\"join\">\n  <button class=\"join-item btn\">1</button>\n  <button class=\"join-item btn btn-active\">2</button>\n  <button class=\"join-item btn\">3</button>\n  <button class=\"join-item btn\">4</button>\n</div>"
+    },
+    {
+      "id": "pagination-2",
+      "label": "Sizes",
+      "html": "<div class=\"join\">\n  <button class=\"join-item btn btn-xs\">1</button>\n  <button class=\"join-item btn btn-xs btn-active\">2</button>\n  <button class=\"join-item btn btn-xs\">3</button>\n  <button class=\"join-item btn btn-xs\">4</button>\n</div>\n<div class=\"join\">\n  <button class=\"join-item btn btn-sm\">1</button>\n  <button class=\"join-item btn btn-sm btn-active\">2</button>\n  <button class=\"join-item btn btn-sm\">3</button>\n  <button class=\"join-item btn btn-sm\">4</button>\n</div>\n<div class=\"join\">\n  <button class=\"join-item btn btn-md\">1</button>\n  <button class=\"join-item btn btn-md btn-active\">2</button>\n  <button class=\"join-item btn btn-md\">3</button>\n  <button class=\"join-item btn btn-md\">4</button>\n</div>\n<div class=\"join\">\n  <button class=\"join-item btn btn-lg\">1</button>\n  <button class=\"join-item btn btn-lg btn-active\">2</button>\n  <button class=\"join-item btn btn-lg\">3</button>\n  <button class=\"join-item btn btn-lg\">4</button>\n</div>\n<div class=\"join\">\n  <button class=\"join-item btn btn-xl\">1</button>\n  <button class=\"join-item btn btn-xl btn-active\">2</button>\n  <button class=\"join-item btn btn-xl\">3</button>\n  <button class=\"join-item btn btn-xl\">4</button>\n</div>"
+    },
+    {
+      "id": "pagination-3",
+      "label": "With a disabled button",
+      "html": "<div class=\"join\">\n  <button class=\"join-item btn\">1</button>\n  <button class=\"join-item btn\">2</button>\n  <button class=\"join-item btn btn-disabled\">...</button>\n  <button class=\"join-item btn\">99</button>\n  <button class=\"join-item btn\">100</button>\n</div>"
+    },
+    {
+      "id": "pagination-4",
+      "label": "Extra small buttons",
+      "html": "<div class=\"join\">\n  <button class=\"join-item btn\">«</button>\n  <button class=\"join-item btn\">Page 22</button>\n  <button class=\"join-item btn\">»</button>\n</div>"
+    },
+    {
+      "id": "pagination-5",
+      "label": "Nex/Prev outline buttons with equal width",
+      "html": "<div class=\"join grid grid-cols-2\">\n  <button class=\"join-item btn btn-outline\">Previous page</button>\n  <button class=\"join-item btn btn-outline\">Next</button>\n</div>"
+    },
+    {
+      "id": "pagination-6",
+      "label": "Using radio inputs",
+      "html": "<div class=\"join\">\n  <input\n    class=\"join-item btn btn-square\"\n    type=\"radio\"\n    name=\"options\"\n    aria-label=\"1\"\n    checked=\"checked\" />\n  <input class=\"join-item btn btn-square\" type=\"radio\" name=\"options\" aria-label=\"2\" />\n  <input class=\"join-item btn btn-square\" type=\"radio\" name=\"options\" aria-label=\"3\" />\n  <input class=\"join-item btn btn-square\" type=\"radio\" name=\"options\" aria-label=\"4\" />\n</div>"
+    }
+  ],
+  "layout": "intrinsic",
+  "docsUrl": "https://daisyui.com/components/pagination/"
+}

@@ -54,7 +54,15 @@ export class WebDesignDocumentStore {
     return documents.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map(designSummary);
   }
 
-  async listProjects(): Promise<ReturnType<typeof webDesignProjectSummary>[]> {
+  async listProjects(scopeKey?: string): Promise<ReturnType<typeof webDesignProjectSummary>[]> {
+    const projects = await this.readAllProjects();
+    return projects
+      .filter((project) => scopeKey === undefined || project.scopeKey === scopeKey)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(webDesignProjectSummary);
+  }
+
+  private async readAllProjects(): Promise<WebDesignProject[]> {
     await this.initialize();
     const entries = await fs.readdir(this.rootDirectory, { withFileTypes: true });
     const projects: WebDesignProject[] = [];
@@ -66,7 +74,7 @@ export class WebDesignDocumentStore {
         // Malformed project files do not prevent the remaining project list from loading.
       }
     }
-    return projects.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map(webDesignProjectSummary);
+    return projects;
   }
 
   async readProject(projectId: string): Promise<WebDesignProject> {
@@ -78,8 +86,8 @@ export class WebDesignDocumentStore {
     return value;
   }
 
-  async listInProject(projectId: string): Promise<ReturnType<typeof designSummary>[]> {
-    const project = await this.readProject(projectId);
+  async listInProject(projectId: string, scopeKey?: string): Promise<ReturnType<typeof designSummary>[]> {
+    const project = scopeKey ? await this.readProjectInScope(projectId, scopeKey) : await this.readProject(projectId);
     const documents = await Promise.all(project.designIds.map(async (documentId) => {
       try { return await this.read(documentId); }
       catch { return undefined; }
@@ -90,9 +98,9 @@ export class WebDesignDocumentStore {
       .map(designSummary);
   }
 
-  async createProject(name: string, description?: string): Promise<WebDesignProject> {
+  async createProject(name: string, description?: string, scopeKey?: string): Promise<WebDesignProject> {
     return this.withStoreLock(async () => {
-      const project = this.prepareProject(name, description);
+      const project = this.prepareProject(name, description, scopeKey);
       await this.atomicWriteProject(this.projectPath(project.projectId), project);
       return project;
     });
@@ -147,12 +155,15 @@ export class WebDesignDocumentStore {
     });
   }
 
-  async moveDocument(documentId: string, targetProjectId: string, sourceProjectId?: string): Promise<{ sourceProject?: WebDesignProject; targetProject: WebDesignProject }> {
+  async moveDocument(documentId: string, targetProjectId: string, sourceProjectId?: string, scopeKey?: string): Promise<{ sourceProject?: WebDesignProject; targetProject: WebDesignProject }> {
     return this.withStoreLock(async () => {
-      await this.read(documentId);
-      const target = await this.readProject(targetProjectId);
+      if (scopeKey) await this.readInScope(documentId, scopeKey);
+      else await this.read(documentId);
+      const target = scopeKey ? await this.readProjectInScope(targetProjectId, scopeKey) : await this.readProject(targetProjectId);
       if (sourceProjectId === targetProjectId) return { targetProject: target };
-      const source = sourceProjectId ? await this.readProject(sourceProjectId) : undefined;
+      const source = sourceProjectId
+        ? scopeKey ? await this.readProjectInScope(sourceProjectId, scopeKey) : await this.readProject(sourceProjectId)
+        : scopeKey ? (await this.readAllProjects()).find((candidate) => candidate.scopeKey === scopeKey && candidate.designIds.includes(documentId)) : undefined;
       const now = new Date().toISOString();
       const nextTarget = { ...target, designIds: target.designIds.includes(documentId) ? target.designIds : [...target.designIds, documentId], updatedAt: now };
       const nextSource = source ? { ...source, designIds: source.designIds.filter((id) => id !== documentId), updatedAt: now } : undefined;
@@ -173,6 +184,92 @@ export class WebDesignDocumentStore {
       await this.atomicWriteProject(this.projectPath(project.projectId), project);
       return project;
     });
+  }
+
+  async ensureScopedProject(scopeKey: string, name: string): Promise<WebDesignProject> {
+    if (!/^[a-f0-9]{64}$/.test(scopeKey)) throw new Error('scopeKey must be a SHA-256 fingerprint.');
+    return this.withStoreLock(async () => {
+      let projects = await this.readAllProjects();
+      if (projects.length > 0 && projects.every((project) => project.scopeKey === undefined)) {
+        const ordered = [...projects].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+        const migratedAt = new Date().toISOString();
+        for (const [index, project] of ordered.entries()) {
+          await this.atomicWriteProject(this.projectPath(project.projectId), {
+            ...project,
+            scopeKey,
+            ...(index === 0 ? { isScopeDefault: true } : {}),
+            updatedAt: migratedAt
+          });
+        }
+        projects = await this.readAllProjects();
+      }
+
+      const scopedProjects = projects
+        .filter((project) => project.scopeKey === scopeKey)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      if (scopedProjects.length === 0) {
+        const project = this.prepareProject(name, undefined, scopeKey, true);
+        const unassigned = await this.unassignedDocumentIds(projects);
+        project.designIds = unassigned;
+        await this.atomicWriteProject(this.projectPath(project.projectId), project);
+        return project;
+      }
+
+      const primary = scopedProjects.find((project) => project.isScopeDefault === true) ?? scopedProjects[0];
+      const designIds = [...new Set([
+        ...scopedProjects.flatMap((project) => project.designIds),
+        ...await this.unassignedDocumentIds(projects)
+      ])];
+      const now = new Date().toISOString();
+      const locked: WebDesignProject = {
+        ...primary,
+        name: name.trim(),
+        scopeKey,
+        isScopeDefault: true,
+        designIds,
+        updatedAt: now
+      };
+      await this.atomicWriteProject(this.projectPath(locked.projectId), locked);
+      for (const duplicate of scopedProjects) {
+        if (duplicate.projectId === locked.projectId) continue;
+        await fs.unlink(this.projectPath(duplicate.projectId));
+      }
+      return locked;
+    });
+  }
+
+  private async unassignedDocumentIds(projects: WebDesignProject[]): Promise<string[]> {
+    const assigned = new Set(projects.flatMap((project) => project.designIds));
+    return (await this.list())
+      .map((document) => document.documentId)
+      .filter((documentId) => !assigned.has(documentId));
+  }
+
+  async readProjectInScope(projectId: string, scopeKey: string): Promise<WebDesignProject> {
+    const project = await this.readProject(projectId);
+    if (project.scopeKey !== scopeKey) throw new Error('Web Design Studio project belongs to a different ChatOS user or project scope.');
+    return project;
+  }
+
+  async listInScope(scopeKey: string): Promise<ReturnType<typeof designSummary>[]> {
+    const projects = await this.readAllProjects();
+    const documentIds = new Set(projects.filter((project) => project.scopeKey === scopeKey).flatMap((project) => project.designIds));
+    const documents = await Promise.all([...documentIds].map(async (documentId) => {
+      try { return await this.read(documentId); }
+      catch { return undefined; }
+    }));
+    return documents
+      .filter((document): document is WebDesignDocument => document !== undefined)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(designSummary);
+  }
+
+  async readInScope(documentId: string, scopeKey: string): Promise<WebDesignDocument> {
+    const projects = await this.readAllProjects();
+    if (!projects.some((project) => project.scopeKey === scopeKey && project.designIds.includes(documentId))) {
+      throw new Error('Web design belongs to a different ChatOS user or project scope.');
+    }
+    return this.read(documentId);
   }
 
   async read(documentId: string): Promise<WebDesignDocument> {
@@ -356,13 +453,16 @@ export class WebDesignDocumentStore {
     return path.join(this.rootDirectory, `${projectId}.web-project.json`);
   }
 
-  private prepareProject(name: string, description?: string): WebDesignProject {
+  private prepareProject(name: string, description?: string, scopeKey?: string, isScopeDefault = false): WebDesignProject {
     const trimmedName = name.trim();
     if (!trimmedName || trimmedName.length > 240) throw new Error('Project name must contain 1 to 240 characters.');
+    if (scopeKey !== undefined && !/^[a-f0-9]{64}$/.test(scopeKey)) throw new Error('scopeKey must be a SHA-256 fingerprint.');
     const now = new Date().toISOString();
     return {
       schemaVersion: 1,
       projectId: `project-${randomUUID().slice(0, 8)}`,
+      ...(scopeKey ? { scopeKey } : {}),
+      ...(isScopeDefault ? { isScopeDefault: true } : {}),
       name: trimmedName,
       description: description?.trim().slice(0, 4000) || undefined,
       createdAt: now,

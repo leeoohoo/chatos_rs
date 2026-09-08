@@ -249,6 +249,7 @@ struct NativePluginRuntimeTests {
         )
         #expect(mcp.environment["CHATOS_CONTEXT_SCOPE"] == "project")
         #expect(mcp.environment["CHATOS_PROJECT_ID"] == "project-1")
+        #expect(mcp.environment["CHATOS_PROJECT_NAME"] == "Project One")
         #expect(publicProject.environment["CHATOS_CONTEXT_SCOPE"] == "device")
         #expect(publicProject.environment["CHATOS_PROJECT_ID"] == nil)
         #expect(publicProject.dataURL != mcp.dataURL)
@@ -783,6 +784,7 @@ struct NativePluginRuntimeTests {
 
         #expect(launch.executableURL == launcher.standardizedFileURL)
         #expect(launch.arguments == ["mcp"])
+        #expect(launch.environment["CHATOS_PLUGIN_RUNTIME_SESSION_ID"] == "adapter-1")
         #expect(launch.environment["CHATOS_WORKSPACE"] == root.path)
         for key in [
             "CHATOS_PLUGIN_VISUAL_SESSION_DIR",
@@ -976,7 +978,7 @@ struct NativePluginRuntimeTests {
                 installationPath: installation.path,
                 installedAt: "2026-08-29T00:00:00Z"
             ),
-            componentKey: "browser-cdp",
+            componentKey: NativeBrowserPluginIdentity.componentKey,
             serverKey: nil,
             adapterSessionID: UUID().uuidString.lowercased(),
             ownerUserID: "user-1",

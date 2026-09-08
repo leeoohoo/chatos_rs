@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import {
   autoLayoutContainer,
   breakpointFor,
@@ -40,6 +41,7 @@ import {
 } from '../../src/library-slots';
 import { applyUiLibraryVariant, createComponentFromUiLibrary, uiLibraryByName, UI_LIBRARIES, variantsForBoundComponent } from '../../src/ui-libraries';
 import type { UiComponentVariant, UiEditableSlot } from '../../src/ui-library';
+import { officialRuntimePresentation } from '../library-runtime/registry';
 import { WEB_DESIGN_THEME_PRESETS, type WebDesignThemePreset } from '../../src/design-themes';
 import { componentDefaults } from '../../src/templates';
 import {
@@ -62,7 +64,6 @@ import {
   type WebDesignJsonValue,
   type WebDesignLibraryName,
   type WebDesignProject,
-  type WebDesignProjectSummary,
   type WebHorizontalConstraint,
   type WebDesignSymbol,
   type WebDesignTokens,
@@ -71,6 +72,12 @@ import {
 import { createRepository, type DesignRepository, type DesignSummary } from './repository';
 import { LibraryCanvasComponent } from './LibraryCanvasComponent';
 import { componentEffectStyleToCss, componentStyleToCss, mergeComponentStyles } from './component-style';
+import { CanvasComponent as WorkspaceCanvasComponent, CanvasComponentContent as WorkspaceCanvasComponentContent } from './CanvasComponent';
+import { libraryPreviewSelection, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
+import { WorkspaceBottomToolbar, WorkspaceNavigationBar, WorkspacePanelResizeHandle } from './WorkspaceShellChrome';
+import { DEFAULT_WORKSPACE_SHELL, parseWorkspaceShellState, workspaceShellGridStyle, workspaceShellReducer, workspaceShellShortcut, type WorkspaceArea, type WorkspaceTool } from './workspace-shell-model';
+import { centeredCanvasScroll, createInfiniteCanvasGeometry, panCanvasScroll, type InfiniteCanvasGeometry } from './infinite-canvas-model';
+import { inspectorCapabilities as resolveInspectorCapabilities } from './inspector-model';
 
 type BasicShapeId = 'rectangle' | 'ellipse' | 'line';
 
@@ -232,6 +239,189 @@ function materializeExistingSlotContent(
   return [content];
 }
 
+function visibleCssColor(value: string): boolean {
+  if (!value || value === 'transparent') return false;
+  const alpha = value.match(/rgba?\([^)]*[,/]\s*([\d.]+)\s*\)$/)?.[1];
+  return alpha === undefined || Number(alpha) > 0;
+}
+
+function cssPixels(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function svgDataUrl(element: Element, color: string): string {
+  const clone = element.cloneNode(true) as SVGElement;
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  if (color) clone.setAttribute('color', color);
+  for (const node of [clone, ...clone.querySelectorAll('*')]) {
+    for (const attribute of ['fill', 'stroke']) {
+      if (node.getAttribute(attribute) === 'currentColor') node.setAttribute(attribute, color);
+    }
+  }
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(clone))}`;
+}
+
+async function materializeOfficialDemoContent(
+  container: WebDesignComponent,
+  slot: UiEditableSlot,
+  pageId: string,
+  device: WebDesignDevice
+): Promise<WebDesignComponent[]> {
+  if (slot.id !== 'content' || !container.library?.props.registryDemo || container.library.props.editorDetachedContent === true) return [];
+  let frame: HTMLIFrameElement | null = null;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const host = document.querySelector<HTMLElement>(`[data-component-id="${CSS.escape(container.id)}"]`);
+    frame = host?.querySelector('iframe') ?? null;
+    if (frame?.contentDocument?.getElementById('root')?.childElementCount) break;
+    await new Promise((resolve) => window.setTimeout(resolve, 80));
+  }
+  const runtimeDocument = frame?.contentDocument;
+  const runtimeWindow = frame?.contentWindow;
+  const runtimeRoot = runtimeDocument?.getElementById('root');
+  if (!runtimeDocument || !runtimeWindow || !runtimeRoot || !frame) return [];
+  const viewportWidth = runtimeDocument.documentElement.clientWidth || frame.clientWidth;
+  const viewportHeight = runtimeDocument.documentElement.clientHeight || frame.clientHeight;
+  const contentWidth = Math.max(viewportWidth, runtimeDocument.documentElement.scrollWidth, runtimeDocument.body.scrollWidth, runtimeRoot.scrollWidth);
+  const contentHeight = Math.max(viewportHeight, runtimeDocument.documentElement.scrollHeight, runtimeDocument.body.scrollHeight, runtimeRoot.scrollHeight);
+  if (viewportWidth <= 0 || viewportHeight <= 0) return [];
+  const containerFrame = resolveComponent(container, device);
+  const scaleX = containerFrame.width / viewportWidth;
+  const scaleY = scaleX;
+  const candidates: Array<{
+    component: WebDesignComponent;
+    element: Element;
+    priority: number;
+    order: number;
+    area: number;
+    canParent: boolean;
+  }> = [];
+  const elements = [...runtimeRoot.querySelectorAll<HTMLElement>('*')];
+
+  elements.forEach((element, order) => {
+    const computed = runtimeWindow.getComputedStyle(element);
+    if (computed.display === 'none' || computed.visibility === 'hidden' || Number(computed.opacity) === 0) return;
+    const bounds = element.getBoundingClientRect();
+    const left = Math.max(0, bounds.left);
+    const top = Math.max(0, bounds.top);
+    const right = Math.min(contentWidth, bounds.right);
+    const bottom = Math.min(contentHeight, bounds.bottom);
+    if (right - left < 3 || bottom - top < 3) return;
+    const tag = element.tagName.toLowerCase();
+    const interactiveAncestor = element.closest('button,a,[role="button"]');
+    const background = computed.backgroundImage !== 'none'
+      ? `${computed.backgroundImage}${visibleCssColor(computed.backgroundColor) ? `, ${computed.backgroundColor}` : ''}`
+      : visibleCssColor(computed.backgroundColor) ? computed.backgroundColor : undefined;
+    const borderWidth = Math.max(cssPixels(computed.borderTopWidth), cssPixels(computed.borderRightWidth), cssPixels(computed.borderBottomWidth), cssPixels(computed.borderLeftWidth));
+    const borderVisible = borderWidth > 0 && computed.borderTopStyle !== 'none' && visibleCssColor(computed.borderTopColor);
+    const shadow = computed.boxShadow !== 'none' ? computed.boxShadow : undefined;
+    const isInteractive = tag === 'button' || tag === 'a' || element.getAttribute('role') === 'button';
+    const isImage = tag === 'img' || tag === 'svg';
+    if (interactiveAncestor && interactiveAncestor !== element && !isImage) return;
+    const isInput = ['input', 'textarea', 'select'].includes(tag);
+    const directText = [...element.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent ?? '')
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const isText = !isInteractive && !isImage && !isInput
+      && (/^(h[1-6]|p|label|small|strong|em|blockquote|figcaption|span)$/.test(tag)
+        || tag === 'div' && element.childElementCount === 0)
+      && directText.length > 0;
+    const isSurface = !isInteractive && !isImage && !isInput && !isText
+      && (background !== undefined || borderVisible || shadow !== undefined);
+    if (!isInteractive && !isImage && !isInput && !isText && !isSurface) return;
+    if (isSurface && bounds.width >= contentWidth * .98 && bounds.height >= contentHeight * .98 && !borderVisible && !shadow) return;
+
+    const type: WebComponentType = isImage ? 'image'
+      : isInput ? tag === 'textarea' ? 'textarea' : tag === 'select' ? 'select' : 'input'
+        : isInteractive ? tag === 'a' ? 'link' : 'button'
+          : isText ? /^h[1-6]$/.test(tag) ? 'heading' : 'text'
+            : 'section';
+    const content = isImage
+      ? tag === 'svg'
+        ? svgDataUrl(element, computed.color)
+        : (element as HTMLImageElement).currentSrc || (element as HTMLImageElement).src
+      : isInput
+        ? (element as HTMLInputElement).value || element.getAttribute('placeholder') || ''
+        : isInteractive ? element.innerText.trim() : isText ? directText : '';
+    if (isText && !content) return;
+    const fontSize = cssPixels(computed.fontSize);
+    const lineHeightPixels = cssPixels(computed.lineHeight);
+    const fontWeight = Number.parseInt(computed.fontWeight, 10);
+    const textAlign = ['left', 'center', 'right'].includes(computed.textAlign) ? computed.textAlign as WebComponentStyle['textAlign'] : undefined;
+    const component = componentDefaults(type, containerFrame.x + left * scaleX, containerFrame.y + top * scaleY);
+    component.id = `detached-${type}-${crypto.randomUUID().slice(0, 8)}`;
+    component.name = isImage ? (element.getAttribute('alt') || '图片')
+      : isInteractive ? (content || '操作')
+        : isText ? content.slice(0, 28)
+          : '容器背景';
+    component.pageId = pageId;
+    component.parentId = container.id;
+    component.slot = slot.id;
+    component.width = Math.max(3, (right - left) * scaleX);
+    component.height = Math.max(3, (bottom - top) * scaleY);
+    component.content = content;
+    component.style = {
+      background,
+      color: (isText || isInteractive || isInput) && visibleCssColor(computed.color) ? computed.color : undefined,
+      borderColor: borderVisible ? computed.borderTopColor : undefined,
+      borderWidth: borderVisible ? borderWidth : undefined,
+      borderStyle: borderVisible ? 'solid' : undefined,
+      borderRadius: Math.max(cssPixels(computed.borderTopLeftRadius), cssPixels(computed.borderTopRightRadius), cssPixels(computed.borderBottomRightRadius), cssPixels(computed.borderBottomLeftRadius)) * Math.min(scaleX, scaleY),
+      padding: 0,
+      fontSize: fontSize > 0 ? fontSize * Math.min(scaleX, scaleY) : undefined,
+      fontWeight: Number.isFinite(fontWeight) ? fontWeight : computed.fontWeight === 'bold' ? 700 : undefined,
+      textAlign,
+      lineHeight: fontSize > 0 && lineHeightPixels > 0 ? lineHeightPixels / fontSize : undefined,
+      letterSpacing: computed.letterSpacing === 'normal' ? undefined : cssPixels(computed.letterSpacing) * scaleX,
+      opacity: Number(computed.opacity) < 1 ? Number(computed.opacity) : undefined,
+      shadow,
+      overflow: computed.overflow === 'hidden' ? 'hidden' : undefined,
+      objectFit: isImage && ['cover', 'contain', 'fill', 'none', 'scale-down'].includes(computed.objectFit) ? computed.objectFit as WebComponentStyle['objectFit'] : undefined,
+      objectPosition: isImage ? computed.objectPosition : undefined,
+      customCss: computed.fontFamily ? { fontFamily: computed.fontFamily } : undefined
+    };
+    if (tag === 'a' && (element as HTMLAnchorElement).href) component.interaction = { type: 'url', target: (element as HTMLAnchorElement).href };
+    const area = component.width * component.height;
+    candidates.push({
+      component,
+      element,
+      priority: isSurface ? 0 : isImage ? 1 : 2,
+      order,
+      area,
+      canParent: isSurface || isInteractive
+    });
+  });
+
+  const seen = new Set<string>();
+  const materialized = candidates
+    .sort((left, right) => left.priority - right.priority || (left.priority === 0 ? right.area - left.area : left.order - right.order))
+    .filter(({ component }) => {
+      const key = [component.type, Math.round(component.x), Math.round(component.y), Math.round(component.width), Math.round(component.height), component.content].join('|');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  const byElement = new Map(materialized.map((candidate) => [candidate.element, candidate]));
+  return materialized.map(({ component, element }, index) => {
+      let ancestor = element.parentElement;
+      while (ancestor && ancestor !== runtimeRoot) {
+        const parent = byElement.get(ancestor);
+        if (parent?.canParent) {
+          component.parentId = parent.component.id;
+          component.slot = undefined;
+          break;
+        }
+        ancestor = ancestor.parentElement;
+      }
+      component.zIndex = index + 1;
+      if (device !== 'desktop') return updateComponentFrame(component, device, { x: component.x, y: component.y, width: component.width, height: component.height });
+      return component;
+    });
+}
+
 const deviceOptions: Array<{ device: WebDesignDevice; label: string; icon: string }> = [
   { device: 'desktop', label: '桌面', icon: '▰' },
   { device: 'tablet', label: '平板', icon: '▯' },
@@ -252,6 +442,26 @@ type ViewportSelection = {
   orientation: WebDesignViewportOrientation;
   customHeight: number;
 };
+
+const STUDIO_PROJECT_QUERY = 'studio-project';
+const STUDIO_DESIGN_QUERY = 'studio-design';
+
+function studioLocationSelection() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    projectId: params.get(STUDIO_PROJECT_QUERY) || undefined,
+    documentId: params.get(STUDIO_DESIGN_QUERY) || undefined
+  };
+}
+
+function replaceStudioLocation(projectId?: string, documentId?: string) {
+  const url = new URL(window.location.href);
+  if (projectId) url.searchParams.set(STUDIO_PROJECT_QUERY, projectId);
+  else url.searchParams.delete(STUDIO_PROJECT_QUERY);
+  if (projectId && documentId) url.searchParams.set(STUDIO_DESIGN_QUERY, documentId);
+  else url.searchParams.delete(STUDIO_DESIGN_QUERY);
+  window.history.replaceState(null, '', url);
+}
 
 const DEFAULT_VIEWPORT_SELECTIONS: Record<WebDesignDevice, ViewportSelection> = {
   desktop: { presetId: 'desktop-responsive', orientation: 'default', customHeight: 900 },
@@ -297,12 +507,28 @@ type Interaction = {
   scoped: boolean;
 };
 
+type CanvasPan = {
+  pointerX: number;
+  pointerY: number;
+  scrollLeft: number;
+  scrollTop: number;
+};
+
 type LayerAction = 'front' | 'forward' | 'backward' | 'back';
 type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 type LibraryTab = 'components' | WebDesignLibraryName | 'my' | 'layers';
-type VariantPickerTarget = { library: WebDesignLibraryName; componentId: string };
+type VariantPickerTarget = { library: WebDesignLibraryName; componentId: string; replaceComponentId?: string };
+type VariantPickerPointerDrag = Omit<LibraryPreviewPointerEvent, 'phase'> & {
+  libraryName: WebDesignLibraryName;
+  definitionId: string;
+  variantId: string;
+  startClientX: number;
+  startClientY: number;
+  dragging: boolean;
+};
 type EditingSlot = { componentId: string; slotId: string };
 type InspectorVisualState = 'default' | WebComponentVisualState;
+type InspectorTab = 'design' | 'prototype' | 'ai';
 
 const PERSONAL_SYMBOLS_STORAGE_KEY = 'web-design-studio:personal-symbols:v1';
 
@@ -337,6 +563,24 @@ const VARIANT_PROP_LABELS: Record<string, Record<string, string> | string> = {
   }
 };
 
+const INTERNAL_LIBRARY_PROPS = new Set(['componentSlug', 'registryDemo', 'registryElement', 'editorDetachedContent']);
+
+function inspectableLibraryProps(props: Record<string, WebDesignJsonValue>) {
+  return Object.entries(props).filter(([key]) => !INTERNAL_LIBRARY_PROPS.has(key));
+}
+
+function bindLibraryPreviewElement(component: WebDesignComponent, libraryDisplayName: string, selection: LibraryPreviewSelection): WebDesignComponent {
+  if (!component.library) return component;
+  return {
+    ...component,
+    name: `${libraryDisplayName} · ${selection.label}`,
+    content: selection.label,
+    width: Math.max(6, Math.round(selection.width)),
+    height: Math.max(6, Math.round(selection.height)),
+    library: { ...component.library, props: { ...component.library.props, registryElement: { ...selection } } }
+  };
+}
+
 function variantDifferenceLabels(variant: UiComponentVariant): string[] {
   const labels: string[] = [];
   if (variant.width) labels.push(`${variant.width}×${variant.height ?? '自适应'}`);
@@ -367,14 +611,59 @@ function variantIsInteractive(variant: UiComponentVariant, componentId: string):
     || ['hoverable', 'showSearch', 'multiple', 'allowClear', 'draggable', 'collapsible', 'editable', 'autoplay'].some((key) => variant.props[key] === true);
 }
 
+function LazyVariantPreview({ children, minHeight }: { children: ReactNode; minHeight: number }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return;
+      setVisible(true);
+      observer.disconnect();
+    }, { rootMargin: '600px 0px' });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={hostRef} className="lazy-variant-preview" style={{ minHeight }}>
+    {visible ? children : <span>滚动到此处时载入官方示例</span>}
+  </div>;
+}
+
+function SelectableVariantCard({ component, previewHeight, className, interactive, variantLabel, differences, tokens, onPickItem, onPickPointerEvent }: {
+  component: WebDesignComponent;
+  previewHeight: number;
+  className: string;
+  interactive: boolean;
+  variantLabel: string;
+  differences: string[];
+  tokens?: WebDesignTokens;
+  onPickItem: (selection: LibraryPreviewSelection) => void;
+  onPickPointerEvent: (event: LibraryPreviewPointerEvent) => void;
+}) {
+  const [contentHeight, setContentHeight] = useState<number>();
+  const surfaceHeight = Math.max(previewHeight, contentHeight ?? 0);
+  const cardHeight = surfaceHeight + 58;
+  return <article className={`variant-preview-card ${interactive ? 'interactive-variant' : ''}`} style={{ minHeight: cardHeight, height: cardHeight }}>
+    <div data-library-portal-host className={className} style={{ minHeight: surfaceHeight, height: surfaceHeight }}>
+      <LazyVariantPreview minHeight={surfaceHeight}>
+        <LibraryCanvasComponent component={component} preview showcase tokens={tokens} pickItems onPickItem={onPickItem} onPickPointerEvent={onPickPointerEvent} onContentHeight={setContentHeight} />
+      </LazyVariantPreview>
+    </div>
+    <footer><div className="variant-preview-description"><strong>{variantLabel}</strong><span>{differences.map((difference) => <small key={difference}>{difference}</small>)}</span></div><span className="variant-item-pick-help">点击预览选择 · 拖到画布放置</span></footer>
+  </article>;
+}
+
 export function WebDesignStudioApp() {
   const [repository, setRepository] = useState<DesignRepository>();
   const [documents, setDocuments] = useState<DesignSummary[]>([]);
-  const [projects, setProjects] = useState<WebDesignProjectSummary[]>([]);
   const [activeProject, setActiveProject] = useState<WebDesignProject>();
   const [document, setDocument] = useState<WebDesignDocument>();
   const [ready, setReady] = useState(false);
-  const [screen, setScreen] = useState<'projects' | 'project' | 'editor'>('projects');
+  const [screen, setScreen] = useState<'project' | 'editor'>('project');
   const [persistedRevision, setPersistedRevision] = useState(0);
   const [selectedId, setSelectedId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -397,23 +686,32 @@ export function WebDesignStudioApp() {
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('antd');
   const [personalSymbols, setPersonalSymbols] = useState<WebDesignSymbol[]>(loadPersonalSymbols);
   const [variantPickerTarget, setVariantPickerTarget] = useState<VariantPickerTarget>();
+  const [variantPickerDrag, setVariantPickerDrag] = useState<VariantPickerPointerDrag>();
   const [themePickerOpen, setThemePickerOpen] = useState(false);
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [projectLibraryOpen, setProjectLibraryOpen] = useState(false);
-  const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectDescription, setNewProjectDescription] = useState('');
   const [newDesignOpen, setNewDesignOpen] = useState(false);
   const [newDesignName, setNewDesignName] = useState('');
   const [newDesignBlank, setNewDesignBlank] = useState(true);
   const [editingSlot, setEditingSlot] = useState<EditingSlot>();
   const [inspectorVisualState, setInspectorVisualState] = useState<InspectorVisualState>('default');
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('design');
+  const [workspaceShell, dispatchWorkspaceShell] = useReducer(
+    workspaceShellReducer,
+    DEFAULT_WORKSPACE_SHELL,
+    () => parseWorkspaceShellState(window.localStorage.getItem('web-design-studio.workspace-shell.v1'))
+  );
   const interaction = useRef<Interaction | undefined>(undefined);
+  const canvasPan = useRef<CanvasPan | undefined>(undefined);
+  const spacePressed = useRef(false);
+  const canvasGeometrySnapshot = useRef<{ context: string; geometry: InfiniteCanvasGeometry } | undefined>(undefined);
+  const variantPickerDragRef = useRef<VariantPickerPointerDrag | undefined>(undefined);
   const documentRef = useRef<WebDesignDocument | undefined>(undefined);
   const assetInput = useRef<HTMLInputElement | null>(null);
   const canvasScroll = useRef<HTMLDivElement | null>(null);
   const previewZoom = useRef(zoom);
   const interactionZoom = useRef(zoom);
+  const [canvasPanning, setCanvasPanning] = useState(false);
+  const [canvasPanReady, setCanvasPanReady] = useState(false);
 
   useEffect(() => { documentRef.current = document; }, [document]);
 
@@ -438,6 +736,12 @@ export function WebDesignStudioApp() {
     : viewportSelection.customHeight;
   const viewportLabel = viewportPreset?.label ?? '自定义视口';
   const renderedCanvasHeight = Math.max(breakpoint.height, previewViewportHeight);
+  const scaledCanvasWidth = breakpoint.width * zoom;
+  const scaledCanvasHeight = renderedCanvasHeight * zoom;
+  const infiniteCanvasGeometry = useMemo(
+    () => createInfiniteCanvasGeometry(scaledCanvasWidth, scaledCanvasHeight),
+    [scaledCanvasWidth, scaledCanvasHeight]
+  );
   const pages = useMemo(() => document ? pagesForDocument(document) : [], [document]);
   const activeProjectDocuments = useMemo(() => {
     const ids = new Set(activeProject?.designIds ?? []);
@@ -482,6 +786,10 @@ export function WebDesignStudioApp() {
   }, [personalSymbols]);
 
   useEffect(() => {
+    window.localStorage.setItem('web-design-studio.workspace-shell.v1', JSON.stringify(workspaceShell));
+  }, [workspaceShell]);
+
+  useEffect(() => {
     if (!document?.symbols?.length) return;
     setPersonalSymbols((current) => {
       const byId = new Map(current.map((symbol) => [symbol.id, symbol]));
@@ -502,10 +810,19 @@ export function WebDesignStudioApp() {
       setRepository(repo);
       const [items, projectItems, runtimeContext] = await Promise.all([repo.list(), repo.listProjects(), repo.runtimeContext()]);
       setDocuments(items);
-      setProjects(projectItems);
-      if (runtimeContext.defaultProjectId) {
-        setActiveProject(await repo.readProject(runtimeContext.defaultProjectId));
-        setScreen('project');
+      const requested = studioLocationSelection();
+      const requestedProjectId = runtimeContext.defaultProjectId ?? projectItems[0]?.projectId;
+      if (requestedProjectId) {
+        const project = await repo.readProject(requestedProjectId);
+        setActiveProject(project);
+        if (requested.documentId && project.designIds.includes(requested.documentId)) {
+          openDocument(await repo.read(requested.documentId));
+          setScreen('editor');
+          replaceStudioLocation(project.projectId, requested.documentId);
+        } else {
+          setScreen('project');
+          replaceStudioLocation(project.projectId);
+        }
       }
       setReady(true);
     })().catch((error) => {
@@ -516,6 +833,20 @@ export function WebDesignStudioApp() {
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
+      const activePan = canvasPan.current;
+      if (activePan) {
+        const scroller = canvasScroll.current;
+        if (!scroller) return;
+        const next = panCanvasScroll(
+          activePan.scrollLeft,
+          activePan.scrollTop,
+          event.clientX - activePan.pointerX,
+          event.clientY - activePan.pointerY
+        );
+        scroller.scrollLeft = next.left;
+        scroller.scrollTop = next.top;
+        return;
+      }
       const active = interaction.current;
       if (!active) return;
       const dx = (event.clientX - active.pointerX) / active.scale;
@@ -551,6 +882,10 @@ export function WebDesignStudioApp() {
       }
     };
     const onUp = () => {
+      if (canvasPan.current) {
+        canvasPan.current = undefined;
+        setCanvasPanning(false);
+      }
       const active = interaction.current;
       if (!active) return;
       setPast((items) => [...items.slice(-59), active.snapshot]);
@@ -570,7 +905,14 @@ export function WebDesignStudioApp() {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      if (event.code === 'Space' && !preview && !editingSlot) {
+        event.preventDefault();
+        spacePressed.current = true;
+        setCanvasPanReady(true);
+        return;
+      }
       const command = event.metaKey || event.ctrlKey;
+      const shellAction = workspaceShellShortcut(event.key, command);
       if (event.key === 'Escape' && preview) {
         event.preventDefault();
         toggleFullPreview();
@@ -601,6 +943,10 @@ export function WebDesignStudioApp() {
       } else if (command && event.key.toLowerCase() === 'v' && clipboard) {
         event.preventDefault();
         pasteClipboard();
+      } else if (shellAction) {
+        event.preventDefault();
+        if (shellAction.type === 'select-tool') activateWorkspaceTool(shellAction.tool);
+        else dispatchWorkspaceShell(shellAction);
       } else if ((event.key === 'Backspace' || event.key === 'Delete') && selectedIds.length > 0) {
         event.preventDefault();
         deleteSelected();
@@ -612,13 +958,90 @@ export function WebDesignStudioApp() {
         nudgeSelected(dx, dy);
       }
     };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== 'Space') return;
+      spacePressed.current = false;
+      setCanvasPanReady(false);
+    };
+    const onBlur = () => {
+      spacePressed.current = false;
+      canvasPan.current = undefined;
+      setCanvasPanReady(false);
+      setCanvasPanning(false);
+    };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedIds, past, future, dirty, saving, repository, persistedRevision, device, clipboard, pageId, preview, interactionMode, zoom, breakpoint.width]);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [selectedIds, past, future, dirty, saving, repository, persistedRevision, device, clipboard, pageId, preview, interactionMode, zoom, breakpoint.width, editingSlot]);
+
+  useEffect(() => {
+    if (screen !== 'editor' || preview || editingSlot) {
+      canvasGeometrySnapshot.current = undefined;
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const scroller = canvasScroll.current;
+      if (!scroller) return;
+      const context = `${document?.documentId ?? ''}:${pageId}:${device}:${zoom}`;
+      const previous = canvasGeometrySnapshot.current;
+      if (previous?.context === context) {
+        scroller.scrollLeft += infiniteCanvasGeometry.contentX - previous.geometry.contentX;
+        scroller.scrollTop += infiniteCanvasGeometry.contentY - previous.geometry.contentY;
+      } else {
+        const centered = centeredCanvasScroll(
+          infiniteCanvasGeometry,
+          scroller.clientWidth,
+          scroller.clientHeight,
+          scaledCanvasWidth,
+          scaledCanvasHeight
+        );
+        scroller.scrollTo({ left: centered.left, top: centered.top });
+      }
+      canvasGeometrySnapshot.current = { context, geometry: infiniteCanvasGeometry };
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [screen, preview, editingSlot, document?.documentId, pageId, device, zoom, scaledCanvasWidth, scaledCanvasHeight, infiniteCanvasGeometry]);
 
   function showToast(message: string) {
     setToast(message);
     window.setTimeout(() => setToast((current) => current === message ? undefined : current), 2600);
+  }
+
+  function chooseLibraryTab(tab: LibraryTab) {
+    setLibraryTab(tab);
+    const area: WorkspaceArea = tab === 'layers' ? 'layers' : tab === 'components' ? 'tools' : tab === 'my' ? 'my' : 'assets';
+    dispatchWorkspaceShell({ type: 'select-area', area });
+  }
+
+  function activateWorkspaceArea(area: WorkspaceArea) {
+    dispatchWorkspaceShell({ type: 'select-area', area });
+    if (area === 'layers' || area === 'variables' || area === 'ai') setLibraryTab('layers');
+    else if (area === 'tools') setLibraryTab('components');
+    else if (area === 'my') setLibraryTab('my');
+    else if (libraryTab === 'layers' || libraryTab === 'components' || libraryTab === 'my') setLibraryTab('antd');
+  }
+
+  function activateWorkspaceTool(tool: WorkspaceTool) {
+    dispatchWorkspaceShell({ type: 'select-tool', tool });
+    if (tool === 'ai') {
+      activateWorkspaceArea('ai');
+      return;
+    }
+    if (tool === 'insert') {
+      activateWorkspaceArea('tools');
+      showToast('从左侧选择元素，再拖到画布');
+      return;
+    }
+    if (tool === 'comment') {
+      setInspectorTab('ai');
+      if (!workspaceShell.rightPanelOpen) dispatchWorkspaceShell({ type: 'toggle-right-panel' });
+      showToast(selected ? '可以在右侧添加批注或让 AI 修改' : '批注工具已开启，请点击画布中的组件');
+    }
   }
 
   function setCurrent(next: WebDesignDocument) {
@@ -746,12 +1169,7 @@ export function WebDesignStudioApp() {
   }
 
   async function createNew() {
-    if (!activeProject) {
-      setNewProjectName('');
-      setNewProjectDescription('');
-      setNewProjectOpen(true);
-      return;
-    }
+    if (!activeProject) return;
     setNewDesignName('');
     setNewDesignBlank(true);
     setNewDesignOpen(true);
@@ -760,36 +1178,7 @@ export function WebDesignStudioApp() {
 
   async function refreshCatalog() {
     if (!repository) return;
-    const [nextDocuments, nextProjects] = await Promise.all([repository.list(), repository.listProjects()]);
-    setDocuments(nextDocuments);
-    setProjects(nextProjects);
-  }
-
-  async function createProjectFromSheet() {
-    if (!repository || !newProjectName.trim()) return;
-    try {
-      const created = await repository.createProject(newProjectName, newProjectDescription);
-      setActiveProject(created);
-      setScreen('project');
-      setNewProjectOpen(false);
-      setNewProjectName('');
-      setNewProjectDescription('');
-      await refreshCatalog();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function openProject(projectId: string) {
-    if (!repository) return;
-    try {
-      setActiveProject(await repository.readProject(projectId));
-      setDocument(undefined);
-      setScreen('project');
-      setDirty(false);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
-    }
+    setDocuments(await repository.list());
   }
 
   async function createDesignFromSheet() {
@@ -802,6 +1191,7 @@ export function WebDesignStudioApp() {
       setNewDesignName('');
       openDocument(created);
       setScreen('editor');
+      replaceStudioLocation(activeProject.projectId, created.documentId);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     }
@@ -814,18 +1204,10 @@ export function WebDesignStudioApp() {
       openDocument(await repository.read(documentId));
       setProjectLibraryOpen(false);
       setScreen('editor');
+      replaceStudioLocation(activeProject?.projectId, documentId);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     }
-  }
-
-  function goToProjects() {
-    if (dirty && !window.confirm('返回项目列表会丢弃未保存修改，确定继续吗？')) return;
-    setDocument(undefined);
-    setActiveProject(undefined);
-    setDirty(false);
-    setScreen('projects');
-    setProjectLibraryOpen(false);
   }
 
   function goToActiveProject() {
@@ -834,6 +1216,7 @@ export function WebDesignStudioApp() {
     setDirty(false);
     setScreen('project');
     setProjectLibraryOpen(false);
+    replaceStudioLocation(activeProject?.projectId);
   }
 
   async function deleteProjectDocument(target: DesignSummary) {
@@ -845,6 +1228,7 @@ export function WebDesignStudioApp() {
       if (document?.documentId === target.documentId) setDocument(undefined);
       await refreshCatalog();
       setScreen('project');
+      replaceStudioLocation(activeProject.projectId);
       showToast(`已删除“${target.title}”`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
@@ -861,7 +1245,7 @@ export function WebDesignStudioApp() {
     event.dataTransfer.effectAllowed = 'copy';
   }
 
-  function addUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot) {
+  function addUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot, registryElement?: LibraryPreviewSelection): WebDesignComponent | undefined {
     const current = documentRef.current;
     if (!current) return;
     const library = uiLibraryByName(libraryName);
@@ -872,6 +1256,7 @@ export function WebDesignStudioApp() {
     const componentY = containerFrame ? containerFrame.y + y : y;
     let component = createComponentFromUiLibrary(libraryName, definitionId, componentX, componentY);
     if (variantId) component = applyUiLibraryVariant(component, variantId);
+    if (registryElement) component = bindLibraryPreviewElement(component, library.displayName, registryElement);
     component.pageId = pageId;
     if (container && targetSlot) {
       component.parentId = container.id;
@@ -887,40 +1272,175 @@ export function WebDesignStudioApp() {
     setSelectedId(component.id);
     setSelectedIds([component.id]);
     showToast(container ? `已添加到${editableSlotsForUiComponent(container).find((slot) => slot.id === targetSlot?.slotId)?.label ?? '组件内容'}` : `已插入 ${library.displayName} ${component.library?.component}`);
+    return component;
   }
 
-  function insertUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, variantId?: string) {
+  function insertUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, variantId?: string, registryElement?: LibraryPreviewSelection) {
     const definition = uiLibraryByName(libraryName)?.components.find((candidate) => candidate.id === definitionId);
     if (!definition) return;
+    let inserted: WebDesignComponent | undefined;
     if (editingSlotCanvasSize) {
-      addUiLibraryComponent(libraryName, definitionId, Math.max(12, Math.round((editingSlotCanvasSize.width - definition.width) / 2)), 28, variantId);
+      const width = registryElement?.width ?? definition.width;
+      inserted = addUiLibraryComponent(libraryName, definitionId, Math.max(12, Math.round((editingSlotCanvasSize.width - width) / 2)), 28, variantId, editingSlot, registryElement);
     } else {
-      addUiLibraryComponent(libraryName, definitionId, Math.max(24, Math.round((breakpoint.width - definition.width) / 2)), 80, variantId);
+      const width = registryElement?.width ?? definition.width;
+      inserted = addUiLibraryComponent(libraryName, definitionId, Math.max(24, Math.round((breakpoint.width - width) / 2)), 80, variantId, editingSlot, registryElement);
     }
+    setVariantPickerTarget(undefined);
+    const compoundSlot = inserted?.library?.props.registryDemo && !inserted.library.props.registryElement
+      ? editableSlotsForUiComponent(inserted).find((slot) => slot.id === 'content')
+      : undefined;
+    if (inserted && compoundSlot) {
+      window.setTimeout(() => { void editComponentSlot(inserted!, compoundSlot.id, { compoundOnly: true }); }, 120);
+    }
+  }
+
+  function chooseUiLibraryPreviewElement(libraryName: WebDesignLibraryName, definitionId: string, variantId: string, registryElement: LibraryPreviewSelection) {
+    const replaceComponentId = variantPickerTarget?.replaceComponentId;
+    if (!replaceComponentId) {
+      insertUiLibraryComponent(libraryName, definitionId, variantId, registryElement);
+      return;
+    }
+    const library = uiLibraryByName(libraryName);
+    if (!library) return;
+    updateComponent(replaceComponentId, (component) => {
+      let next = bindLibraryPreviewElement(applyUiLibraryVariant(component, variantId), library.displayName, registryElement);
+      if (device !== 'desktop') next = updateComponentFrame(next, device, { width: next.width, height: next.height });
+      return next;
+    });
+    setVariantPickerTarget(undefined);
+    setSelectedId(replaceComponentId);
+    setSelectedIds([replaceComponentId]);
+    showToast(`已改为 ${registryElement.label}`);
+  }
+
+  function beginUiLibraryPreviewPointerDrag(
+    libraryName: WebDesignLibraryName,
+    definitionId: string,
+    variantId: string,
+    state: LibraryPreviewPointerEvent
+  ) {
+    const next: VariantPickerPointerDrag = {
+      selection: state.selection,
+      pointerId: state.pointerId,
+      clientX: state.clientX,
+      clientY: state.clientY,
+      libraryName,
+      definitionId,
+      variantId,
+      startClientX: state.clientX,
+      startClientY: state.clientY,
+      dragging: false
+    };
+    variantPickerDragRef.current = next;
+    flushSync(() => setVariantPickerDrag(next));
+  }
+
+  function moveUiLibraryPreviewPointerDragAt(clientX: number, clientY: number) {
+    const active = variantPickerDragRef.current;
+    if (!active) return;
+    const dragging = active.dragging
+      || Math.hypot(clientX - active.startClientX, clientY - active.startClientY) >= 5;
+    if (!dragging && clientX === active.clientX && clientY === active.clientY) return;
+    const next = { ...active, clientX, clientY, dragging };
+    variantPickerDragRef.current = next;
+    setVariantPickerDrag(next);
+  }
+
+  function finishUiLibraryPreviewPointerDragAt(clientX: number, clientY: number, cancelled = false) {
+    const active = variantPickerDragRef.current;
+    if (!active) return;
+    variantPickerDragRef.current = undefined;
+    setVariantPickerDrag(undefined);
+    if (cancelled) return;
+    if (!active.dragging) {
+      chooseUiLibraryPreviewElement(active.libraryName, active.definitionId, active.variantId, active.selection);
+      return;
+    }
+    dropUiLibraryPreviewElement(active.libraryName, active.definitionId, active.variantId, active.selection, {
+      clientX,
+      clientY
+    });
+  }
+
+  function handleUiLibraryPreviewPointerEvent(
+    libraryName: WebDesignLibraryName,
+    definitionId: string,
+    variantId: string,
+    event: LibraryPreviewPointerEvent
+  ) {
+    if (event.phase === 'start') beginUiLibraryPreviewPointerDrag(libraryName, definitionId, variantId, event);
+    else if (event.phase === 'move') moveUiLibraryPreviewPointerDragAt(event.clientX, event.clientY);
+    else finishUiLibraryPreviewPointerDragAt(event.clientX, event.clientY, event.phase === 'cancel');
+  }
+
+  function dropUiLibraryPreviewElement(
+    libraryName: WebDesignLibraryName,
+    definitionId: string,
+    variantId: string,
+    registryElement: LibraryPreviewSelection,
+    point: { clientX: number; clientY: number }
+  ) {
+    variantPickerDragRef.current = undefined;
+    setVariantPickerDrag(undefined);
+    if (variantPickerTarget?.replaceComponentId) {
+      chooseUiLibraryPreviewElement(libraryName, definitionId, variantId, registryElement);
+      return;
+    }
+    const canvasSelector = editingSlot ? '.slot-design-canvas' : '.design-canvas:not(.slot-design-canvas)';
+    const canvas = [...window.document.querySelectorAll<HTMLElement>(canvasSelector)].find((candidate) => {
+      const bounds = candidate.getBoundingClientRect();
+      return point.clientX >= bounds.left && point.clientX <= bounds.right
+        && point.clientY >= bounds.top && point.clientY <= bounds.bottom;
+    });
+    if (!canvas) {
+      showToast('请把元素拖到中间画布区域');
+      return;
+    }
+    const bounds = canvas.getBoundingClientRect();
+    const activeScale = editingSlot ? 1 : zoom;
+    const x = Math.max(0, Math.round((point.clientX - bounds.left) / activeScale - registryElement.width / 2));
+    const y = Math.max(0, Math.round((point.clientY - bounds.top) / activeScale - registryElement.height / 2));
+    addUiLibraryComponent(libraryName, definitionId, x, y, variantId, editingSlot, registryElement);
     setVariantPickerTarget(undefined);
   }
 
-  function editComponentSlot(component: WebDesignComponent, slotId: string) {
+  async function editComponentSlot(component: WebDesignComponent, slotId: string, options: { compoundOnly?: boolean } = {}): Promise<boolean> {
     if (interactionMode) setInteractionMode(false);
     const current = documentRef.current;
     const slot = editableSlotsForUiComponent(component).find((candidate) => candidate.id === slotId);
     let first = current ? componentsInSlot(current, component.id, slotId)[0] : undefined;
     if (current && slot && !first) {
-      const materialized = materializeExistingSlotContent(component, slot, pageId, device);
+      const officialDemo = await materializeOfficialDemoContent(component, slot, pageId, device);
+      const officialRoots = officialDemo.filter((candidate) => candidate.parentId === component.id);
+      if (options.compoundOnly && officialRoots.length < 2) return false;
+      const materialized = officialDemo.length > 0 ? officialDemo : materializeExistingSlotContent(component, slot, pageId, device);
+      if (options.compoundOnly && officialDemo.length === 0) return false;
       if (materialized.length > 0) {
         commitWithCanvasGrowth((active) => ({
           ...active,
           components: [
-            ...active.components.map((candidate) => candidate.id === component.id ? { ...candidate, content: '' } : candidate),
+            ...active.components.map((candidate) => candidate.id === component.id ? {
+              ...candidate,
+              content: '',
+              library: officialDemo.length > 0 && candidate.library ? {
+                ...candidate.library,
+                props: { ...candidate.library.props, editorDetachedContent: true }
+              } : candidate.library
+            } : candidate),
             ...materialized
           ]
         }));
-        first = materialized[0];
+        first = (officialDemo.length > 0
+          ? officialDemo.filter((candidate) => candidate.parentId === component.id)
+            .sort((left, right) => resolveComponent(left, device).y - resolveComponent(right, device).y)[0]
+          : undefined) ?? materialized[0];
       }
     }
     setEditingSlot({ componentId: component.id, slotId });
     setSelectedId(first?.id);
     setSelectedIds(first ? [first.id] : []);
+    return true;
   }
 
   function exitSlotEditor() {
@@ -961,10 +1481,12 @@ export function WebDesignStudioApp() {
     const libraryPayload = event.dataTransfer.getData('application/x-web-design-library');
     if (libraryPayload) {
       try {
-        const parsed = JSON.parse(libraryPayload) as VariantPickerTarget & { definitionId?: string };
+        const parsed = JSON.parse(libraryPayload) as VariantPickerTarget & { definitionId?: string; variantId?: string; registryElement?: LibraryPreviewSelection };
         const definitionId = parsed.definitionId ?? parsed.componentId;
         if (uiLibraryByName(parsed.library)?.components.some((item) => item.id === definitionId)) {
-          addUiLibraryComponent(parsed.library, definitionId, x, y);
+          addUiLibraryComponent(parsed.library, definitionId, x, y, parsed.variantId, editingSlot, parsed.registryElement);
+          setVariantPickerDrag(undefined);
+          if (parsed.registryElement) setVariantPickerTarget(undefined);
           return;
         }
       } catch { /* Ignore malformed drag payloads. */ }
@@ -992,8 +1514,18 @@ export function WebDesignStudioApp() {
 
   function beginInteraction(event: ReactPointerEvent, component: WebDesignComponent, kind: Interaction['kind']) {
     if (preview || interactionMode) return;
+    if (spacePressed.current || event.button === 1) return;
+    if (workspaceShell.activeTool === 'hand') return;
     event.preventDefault();
     event.stopPropagation();
+    if (workspaceShell.activeTool === 'comment') {
+      setSelectedId(component.id);
+      setSelectedIds([component.id]);
+      setInspectorTab('ai');
+      if (!workspaceShell.rightPanelOpen) dispatchWorkspaceShell({ type: 'toggle-right-panel' });
+      showToast(`已选择“${component.name}”，请在右侧添加批注`);
+      return;
+    }
     if (event.shiftKey || event.metaKey || event.ctrlKey) {
       const next = selectedIds.includes(component.id) ? selectedIds.filter((id) => id !== component.id) : [...selectedIds, component.id];
       setSelectedIds(next);
@@ -1020,6 +1552,21 @@ export function WebDesignStudioApp() {
       , scale: editingSlot ? 1 : zoom
       , scoped: Boolean(editingSlot)
     };
+  }
+
+  function beginCanvasPan(event: ReactPointerEvent<HTMLDivElement>) {
+    const handTool = event.button === 0 && workspaceShell.activeTool === 'hand';
+    if (preview || editingSlot || (event.button !== 1 && !(event.button === 0 && spacePressed.current) && !handTool)) return;
+    event.preventDefault();
+    const scroller = canvasScroll.current;
+    if (!scroller) return;
+    canvasPan.current = {
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      scrollLeft: scroller.scrollLeft,
+      scrollTop: scroller.scrollTop
+    };
+    setCanvasPanning(true);
   }
 
   function updateSelected(changes: Partial<WebDesignComponent>) {
@@ -1284,9 +1831,8 @@ export function WebDesignStudioApp() {
   function fitCanvasToWidth(targetWidth: number) {
     const scroller = canvasScroll.current;
     if (!scroller) return;
-    const nextZoom = Math.max(.05, Math.min(1, (scroller.clientWidth - 120) / targetWidth));
+    const nextZoom = Math.max(.05, Math.min(1, (scroller.clientWidth - 96) / targetWidth));
     setZoom(nextZoom);
-    window.setTimeout(() => scroller.scrollTo({ left: 0, top: 0, behavior: 'smooth' }), 0);
   }
 
   function fitCanvasWidth() {
@@ -1429,7 +1975,7 @@ export function WebDesignStudioApp() {
     const symbol = createSymbolFromSelection(current, selectedIds, name);
     commit((active) => ({ ...active, symbols: [...(active.symbols ?? []), symbol] }));
     setPersonalSymbols((symbols) => [...symbols.filter((candidate) => candidate.id !== symbol.id), structuredClone(symbol)]);
-    setLibraryTab('my');
+    chooseLibraryTab('my');
     showToast(`已保存到“我的”：${symbol.name}`);
   }
 
@@ -1497,7 +2043,29 @@ export function WebDesignStudioApp() {
 
   function applySelectedLibraryVariant(variantId: string) {
     if (!selected?.library) return;
-    updateComponent(selected.id, (component) => applyUiLibraryVariant(component, variantId));
+    if (selected.library.props.editorDetachedContent !== true) {
+      updateComponent(selected.id, (component) => applyUiLibraryVariant(component, variantId));
+      return;
+    }
+    if (!window.confirm('切换官方款式会替换当前已经拆分的内部设计，是否继续？')) return;
+    commit((current) => {
+      const slotRoots = current.components.filter((component) => component.parentId === selected.id && component.slot);
+      const removed = new Set(slotRoots.flatMap((component) => [component.id, ...descendantIds(current, component.id)]));
+      return {
+        ...current,
+        components: current.components
+          .filter((component) => !removed.has(component.id))
+          .map((component) => {
+            if (component.id !== selected.id || !component.library) return component;
+            const props = { ...component.library.props };
+            delete props.editorDetachedContent;
+            return applyUiLibraryVariant({ ...component, library: { ...component.library, props } }, variantId);
+          })
+      };
+    });
+    setSelectedId(selected.id);
+    setSelectedIds([selected.id]);
+    showToast('已切换官方款式；再次进入“内部内容”即可拆分编辑');
   }
 
   function detachSelectedSymbol() {
@@ -1705,22 +2273,11 @@ export function WebDesignStudioApp() {
     };
     commit((active) => ({ ...active, requests: [...active.requests, request] }));
     setAiInstruction('');
-    setAiPanelOpen(false);
     await save(true, true);
     showToast(target ? '已提交组件修改任务' : '已提交整页设计任务');
   }
 
   const storageBadge = <span className={`service-pill ${repository?.mode === 'server' ? 'online' : ''}`}>{repository?.mode === 'server' ? '本地服务' : '浏览器存储'}</span>;
-  const newProjectModal = newProjectOpen && <div className="studio-modal-backdrop" onPointerDown={() => setNewProjectOpen(false)}>
-    <section className="studio-modal project-create-modal" onPointerDown={(event) => event.stopPropagation()}>
-      <header><div><span className="eyebrow">WEB DESIGN STUDIO</span><h2>新建网站项目</h2><p>项目用于管理同一个产品、品牌或业务下的多份网站设计。</p></div><button onClick={() => setNewProjectOpen(false)}>×</button></header>
-      <div className="project-form-body">
-        <label>项目名称<input autoFocus maxLength={240} value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && newProjectName.trim()) void createProjectFromSheet(); }} placeholder="例如：Chatos 官方网站" /></label>
-        <label>项目说明<textarea rows={3} maxLength={4000} value={newProjectDescription} onChange={(event) => setNewProjectDescription(event.target.value)} placeholder="项目目标、品牌、受众或设计要求（可选）" /></label>
-      </div>
-      <footer className="project-modal-actions"><button className="quiet-button" onClick={() => setNewProjectOpen(false)}>取消</button><button className="primary-button" disabled={!newProjectName.trim()} onClick={() => void createProjectFromSheet()}>创建项目</button></footer>
-    </section>
-  </div>;
   const newDesignModal = newDesignOpen && activeProject && <div className="studio-modal-backdrop" onPointerDown={() => setNewDesignOpen(false)}>
     <section className="studio-modal project-create-modal" onPointerDown={(event) => event.stopPropagation()}>
       <header><div><span className="eyebrow">{activeProject.name}</span><h2>新建网站设计</h2><p>每份设计拥有独立页面、组件、响应式布局和设计系统。</p></div><button onClick={() => setNewDesignOpen(false)}>×</button></header>
@@ -1737,20 +2294,8 @@ export function WebDesignStudioApp() {
 
   if (!ready) return <div className="loading-screen"><div className="loading-dot" />正在准备 Web Design Studio…</div>;
 
-  if (screen === 'projects') return <div className="web-project-shell">
-    <header className="web-project-toolbar"><div className="brand"><span className="brand-mark">W</span><span>Web Design Studio</span>{storageBadge}</div><button className="primary-button" onClick={() => { setNewProjectName(''); setNewProjectDescription(''); setNewProjectOpen(true); }}>＋ 新建项目</button></header>
-    <main className="web-project-home">
-      <section className="web-project-intro"><div><span className="eyebrow">WEB DESIGN STUDIO</span><h1>网站项目</h1><p>一个项目可以包含多份网站设计，每份设计内部可以继续包含多个页面。</p></div><button className="web-project-new-card" onClick={() => setNewProjectOpen(true)}><span>＋</span><strong>新建网站项目</strong><small>先建立项目，再创建具体设计</small></button></section>
-      <section className="web-project-section"><div className="web-project-section-heading"><h2>所有项目</h2><span>{projects.length} 个项目</span></div>
-        {projects.length ? <div className="web-project-grid">{projects.map((project) => <button className="web-project-card" key={project.projectId} onClick={() => void openProject(project.projectId)}>
-          <span className="web-project-folder">⌘</span><span className="web-project-card-copy"><strong>{project.name}</strong><small>{project.designCount} 份网站设计{project.description ? ` · ${project.description}` : ''}</small></span><time>{formatProjectDate(project.updatedAt)}</time><b>›</b>
-        </button>)}</div> : <div className="web-project-empty"><span>⌘</span><strong>还没有网站项目</strong><p>创建项目后，可以把同一产品的官网、活动页和不同设计方案放在一起管理。</p><button className="primary-button" onClick={() => setNewProjectOpen(true)}>＋ 新建网站项目</button></div>}
-      </section>
-    </main>{newProjectModal}{toast && <div className="toast">{toast}</div>}
-  </div>;
-
   if (screen === 'project' && activeProject) return <div className="web-project-shell">
-    <header className="web-project-toolbar"><div className="brand"><button className="web-home-button" onClick={goToProjects} aria-label="返回项目列表">‹</button><span className="brand-mark">W</span><span>{activeProject.name}</span>{storageBadge}</div><button className="primary-button" onClick={() => void createNew()}>＋ 新建设计</button></header>
+    <header className="web-project-toolbar"><div className="brand"><span className="brand-mark">W</span><span>{activeProject.name}</span>{storageBadge}</div><button className="primary-button" onClick={() => void createNew()}>＋ 新建设计</button></header>
     <main className="web-project-home">
       <section className="web-project-intro"><div><span className="eyebrow">网站项目</span><h1>{activeProject.name}</h1><p>{activeProject.description || `项目内共有 ${activeProjectDocuments.length} 份网站设计。`}</p></div><button className="web-project-new-card" onClick={() => void createNew()}><span>＋</span><strong>新建网站设计</strong><small>创建空白网站或从完整模板开始</small></button></section>
       <section className="web-project-section"><div className="web-project-section-heading"><h2>项目设计</h2><span>{activeProjectDocuments.length} 份</span></div>
@@ -1771,7 +2316,14 @@ export function WebDesignStudioApp() {
   const selectedLibrary = uiLibraryByName(selected?.library?.name);
   const selectedLibraryDefinition = selected?.library ? selectedLibrary?.components.find((item) => item.id === selected.library?.component) : undefined;
   const selectedLibraryVariants = selected?.library ? variantsForBoundComponent(selected) : [];
+  const selectedRegistryElement = libraryPreviewSelection(selected?.library?.props.registryElement);
   const selectedEditableSlots = selected ? editableSlotsForUiComponent(selected) : [];
+  const inspectorCapabilities = selected ? resolveInspectorCapabilities(selected.type, {
+    library: Boolean(selected.library),
+    directChildCount,
+    editableSlotCount: selectedEditableSlots.length
+  }) : undefined;
+  const selectedInspectableLibraryProps = selected?.library ? inspectableLibraryProps(selected.library.props) : [];
   const aiTarget = selected ?? editingContainer;
   const normalizedPaletteQuery = paletteQuery.trim().toLowerCase();
   const filteredPalette = palette.filter((item) => !normalizedPaletteQuery
@@ -1784,6 +2336,9 @@ export function WebDesignStudioApp() {
   const variantPickerLibrary = variantPickerTarget ? uiLibraryByName(variantPickerTarget.library) : undefined;
   const variantPickerDefinition = variantPickerTarget ? variantPickerLibrary?.components.find((item) => item.id === variantPickerTarget.componentId) : undefined;
   const variantPickerVariants = variantPickerDefinition && variantPickerLibrary ? variantPickerLibrary.variants[variantPickerDefinition.id] ?? [{ id: 'default', label: '默认款式', props: {} }] : [];
+  const variantPickerPresentation = variantPickerDefinition && variantPickerLibrary
+    ? officialRuntimePresentation(variantPickerLibrary.id, String(variantPickerDefinition.props?.componentSlug ?? variantPickerDefinition.id))
+    : undefined;
   const aiQuickPrompts = aiTarget
     ? ['让这个组件更精致、更有层次', '优化尺寸、间距和对齐', '给我 3 个更好看的视觉方案']
     : ['设计一个像 Apple 官网一样克制高级的页面', '统一整页的字号、间距、圆角和色彩', '检查并修复页面中不协调的视觉细节'];
@@ -1807,7 +2362,7 @@ export function WebDesignStudioApp() {
         <details className="delivery-menu"><summary>交付</summary><div><button onClick={exportCurrentPage}>HTML</button><button onClick={exportReact}>React</button><button onClick={exportVue}>Vue</button></div></details>
         <button className="quiet-button" onClick={() => void refresh()}>刷新</button>
         <button className={`quiet-button ${preview ? 'active' : ''}`} onClick={toggleFullPreview}>{preview ? '退出预览' : '全屏预览'}</button>
-        <button className="ai-design-trigger" onClick={() => setAiPanelOpen(true)}>✦ AI 设计</button>
+        <button className="ai-design-trigger" onClick={() => activateWorkspaceArea('ai')}>✦ AI 设计</button>
         <button className="primary-button" disabled={!dirty || saving} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '已保存'}</button>
       </header>
 
@@ -1822,46 +2377,44 @@ export function WebDesignStudioApp() {
         <footer><button onClick={() => void createNew()}>＋ 在当前项目中新建设计</button><button onClick={goToActiveProject}>查看项目首页</button></footer>
       </div>}
 
-      <main className={`workspace ${preview ? 'preview-mode' : ''}`}>
-        {!preview && <aside className="palette-panel">
-          <div className="library-tabs">
-            <button className={libraryTab === 'antd' ? 'active' : ''} onClick={() => setLibraryTab('antd')}>AntD</button>
-            <button className={libraryTab === 'chakra' ? 'active' : ''} onClick={() => setLibraryTab('chakra')}>Chakra</button>
-            <button className={libraryTab === 'shadcn' ? 'active' : ''} onClick={() => setLibraryTab('shadcn')}>shadcn</button>
-            <button className={libraryTab === 'magicui' ? 'active' : ''} onClick={() => setLibraryTab('magicui')}>Magic</button>
-            <button className={libraryTab === 'spell' ? 'active' : ''} onClick={() => setLibraryTab('spell')}>Spell</button>
-            <button className={libraryTab === 'inspira' ? 'active' : ''} onClick={() => setLibraryTab('inspira')}>Inspira</button>
-            <button className={libraryTab === 'daisyui' ? 'active' : ''} onClick={() => setLibraryTab('daisyui')}>daisyUI</button>
-            <button className={libraryTab === 'components' ? 'active' : ''} onClick={() => setLibraryTab('components')}>图形</button>
-            <button className={libraryTab === 'my' ? 'active' : ''} onClick={() => setLibraryTab('my')}>我的</button>
-            <button className={libraryTab === 'layers' ? 'active' : ''} onClick={() => setLibraryTab('layers')}>图层</button>
-          </div>
+      <main className={`workspace workspace-v3-shell ${preview ? 'preview-mode' : ''}`} style={workspaceShellGridStyle(workspaceShell) as CSSProperties}>
+        {!preview && <WorkspaceNavigationBar activeArea={workspaceShell.activeArea} leftPanelOpen={workspaceShell.leftPanelOpen} onSelect={activateWorkspaceArea} onToggleLeft={() => dispatchWorkspaceShell({ type: 'toggle-left-panel' })} />}
+        {!preview && workspaceShell.leftPanelOpen && <aside className="palette-panel">
+          {workspaceShell.activeArea === 'assets' && <div className="library-tabs workspace-library-tabs">
+            <button className={libraryTab === 'antd' ? 'active' : ''} onClick={() => chooseLibraryTab('antd')}>AntD</button>
+            <button className={libraryTab === 'chakra' ? 'active' : ''} onClick={() => chooseLibraryTab('chakra')}>Chakra</button>
+            <button className={libraryTab === 'shadcn' ? 'active' : ''} onClick={() => chooseLibraryTab('shadcn')}>shadcn</button>
+            <button className={libraryTab === 'magicui' ? 'active' : ''} onClick={() => chooseLibraryTab('magicui')}>Magic</button>
+            <button className={libraryTab === 'spell' ? 'active' : ''} onClick={() => chooseLibraryTab('spell')}>Spell</button>
+            <button className={libraryTab === 'inspira' ? 'active' : ''} onClick={() => chooseLibraryTab('inspira')}>Inspira</button>
+            <button className={libraryTab === 'daisyui' ? 'active' : ''} onClick={() => chooseLibraryTab('daisyui')}>daisyUI</button>
+          </div>}
           <div className="palette-panel-content">
-            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索视觉原语…' : activeUiLibrary ? `搜索 ${activeUiLibrary.displayName} 组件…` : '搜索我的组件…'} />}
+            {['assets', 'tools', 'my'].includes(workspaceShell.activeArea) && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={workspaceShell.activeArea === 'tools' ? '搜索视觉原语…' : activeUiLibrary ? `搜索 ${activeUiLibrary.displayName} 组件…` : '搜索我的组件…'} />}
 
-            {libraryTab === 'components' && <>
+            {workspaceShell.activeArea === 'tools' && <>
               <div className="panel-intro"><strong>视觉原语</strong><span>用矩形、圆形和直线组合背景、光效、装饰与容器；产品控件使用成熟 UI 库</span></div>
               <div className="palette-grid shapes-grid">{filteredPalette.map((item) => <div key={item.id} className="palette-item" draggable onDragStart={(event) => onPaletteDrag(event, item.id)}><span className="palette-icon">{item.icon}</span><span>{item.label}</span></div>)}</div>
             </>}
 
-            {activeUiLibrary && <>
+            {workspaceShell.activeArea === 'assets' && activeUiLibrary && <>
               <div className={`ui-library-heading library-${activeUiLibrary.id}`}><div className="ui-library-logo-mark">{activeUiLibrary.brandMark}</div><div><strong>{activeUiLibrary.displayName}</strong><span>{activeUiLibrary.license ? `开源组件 · ${activeUiLibrary.license} · ${activeUiLibrary.version}` : activeUiLibrary.id === 'shadcn' ? `本地源码组件 · ${activeUiLibrary.version}` : `官方运行时 · v${activeUiLibrary.version}`}</span></div></div>
               <div className="panel-intro"><strong>{activeUiLibrary.displayName} 组件总览</strong><span>点击先预览不同款式，拖拽则直接插入默认款</span></div>
               {activeUiLibrary.categories.map((category) => {
                 const items = filteredUiLibraryComponents.filter((item) => item.category === category);
                 return items.length > 0 && <div key={category} className="ui-library-category"><div className="ui-library-category-title">{category}</div><div className="ui-library-component-list">
-                  {items.map((item) => <button key={item.id} draggable onDragStart={(event) => onUiLibraryDrag(event, activeUiLibrary.id, item.id)} onClick={() => setVariantPickerTarget({ library: activeUiLibrary.id, componentId: item.id })}><span className="ui-library-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{item.status === 'deprecated' ? `已废弃 · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : item.introduced ? `v${item.introduced} · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : (activeUiLibrary.variants[item.id]?.length ?? 1) > 1 ? `${activeUiLibrary.variants[item.id].length} 款` : '预览'}</em><b>›</b></button>)}
+                  {items.map((item) => <button key={item.id} draggable onDragStart={(event) => onUiLibraryDrag(event, activeUiLibrary.id, item.id)} onClick={() => setVariantPickerTarget({ library: activeUiLibrary.id, componentId: item.id })}><span className="ui-library-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{item.status === 'deprecated' ? `已废弃 · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : item.introduced ? `v${item.introduced} · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : `${activeUiLibrary.variants[item.id]?.length ?? 1} 款`}</em><b>›</b></button>)}
                 </div></div>;
               })}
             </>}
 
-            {libraryTab === 'my' && <>
+            {workspaceShell.activeArea === 'my' && <>
               <div className="panel-intro my-library-intro"><strong>我的组件</strong><span>把画布中设计好的单个组件或多个图层保存到这里，可在其他设计中继续使用。</span></div>
               {selectedIds.length > 0 && <button className="my-library-save" onClick={saveSelectionAsSymbol}><span>＋</span><div><strong>保存当前选中</strong><small>{selectedIds.length === 1 ? selected?.name : `${selectedIds.length} 个图层的组合`}</small></div></button>}
               {filteredPersonalSymbols.length > 0 ? <div className="my-library-grid">{filteredPersonalSymbols.map((symbol) => <article key={symbol.id} className="my-library-card"><button className="my-library-insert" onClick={() => insertSymbol(symbol)}><span className="my-library-preview"><i /><i /><i /></span><span><strong>{symbol.name}</strong><small>{symbol.components.length} 层 · 点击插入画布</small></span></button><footer><button onClick={() => renamePersonalSymbol(symbol)}>重命名</button><button className="danger" onClick={() => removePersonalSymbol(symbol.id)}>移除</button></footer></article>)}</div> : <div className="my-library-empty"><span>◇</span><strong>还没有保存的组件</strong><p>在画布中选择一个组件，或按住 Shift / Command 选择多个图层，再保存为自己的组合。</p></div>}
             </>}
 
-            {libraryTab === 'layers' && <>
+            {workspaceShell.activeArea === 'layers' && <>
               <div className="panel-title layer-title"><span>页面图层</span><small>{pageComponents.length}</small></div>
               <div className={`layer-group-actions ${selectedIds.length > 1 || canUngroup ? 'ready' : ''}`}>
                 <div><strong>{selectedIds.length > 1 ? `已选择 ${selectedIds.length} 个图层` : canUngroup ? '当前是一个分组' : '创建可整体移动的分组'}</strong><small>{selectedIds.length > 1 ? '创建后拖动外框，内部组件会一起移动' : canUngroup ? `${directChildCount} 个直接子组件` : '按住 Shift、Command 或 Ctrl 点击多个图层'}</small></div>
@@ -1898,14 +2451,30 @@ export function WebDesignStudioApp() {
               <input ref={assetInput} className="asset-input" type="file" accept="image/*" multiple onChange={(event) => void importAssets(event.target.files).catch((error) => showToast(String(error)))} />
               <button className="secondary-button" onClick={() => assetInput.current?.click()}>导入图片</button>
               <div className="asset-grid">{(document.assets ?? []).map((asset) => <button key={asset.id} title={`使用 ${asset.name}`} onClick={() => useAsset(asset)}><img src={asset.dataUrl} alt={asset.name} /><span>{asset.name}</span></button>)}</div>
-              {tokens && <><div className="panel-title section-title">设计 Token</div><div className="token-colors">
-                {(['primary', 'accent', 'surface', 'text', 'muted'] as const).map((key) => <label key={key} className="token-color"><span>{key}</span><input type="color" value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /><input value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /></label>)}
-              </div><div className="size-row"><NumberField label="基础字号" value={tokens.typography.baseFontSize} onChange={(baseFontSize) => updateTokens((current) => ({ ...current, typography: { ...current.typography, baseFontSize } }))} /><NumberField label="中圆角" value={tokens.radii.medium} onChange={(medium) => updateTokens((current) => ({ ...current, radii: { ...current.radii, medium } }))} /></div></>}
-              <div className="panel-title section-title">AI 待办</div>
-              <div className="request-summary">{document.requests.filter((request) => request.status === 'pending').length} 个待处理请求</div>
-              <p className="helper-text">保存后，在对话中让 AI“处理 Web Design Studio 的待办请求”。</p>
             </>}
+
+            {workspaceShell.activeArea === 'variables' && tokens && <div className="workspace-sidebar-section variables-sidebar">
+              <div className="panel-intro"><strong>Variables 与样式</strong><span>统一管理当前设计的语义颜色、排版和圆角。后续将直接映射到 Schema v2 Variable Collections 与 Modes。</span></div>
+              <div className="panel-title section-title">语义颜色</div>
+              <div className="token-colors">{(['primary', 'accent', 'surface', 'text', 'muted'] as const).map((key) => <label key={key} className="token-color"><span>{key}</span><input type="color" value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /><input value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /></label>)}</div>
+              <div className="panel-title section-title">排版与圆角</div>
+              <label className="field-label">字体族<input value={tokens.typography.fontFamily} onChange={(event) => updateTokens((current) => ({ ...current, typography: { ...current.typography, fontFamily: event.target.value } }))} /></label>
+              <div className="size-row"><NumberField label="基础字号" value={tokens.typography.baseFontSize} onChange={(baseFontSize) => updateTokens((current) => ({ ...current, typography: { ...current.typography, baseFontSize } }))} /><NumberField label="中圆角" value={tokens.radii.medium} onChange={(medium) => updateTokens((current) => ({ ...current, radii: { ...current.radii, medium } }))} /></div>
+              <button className="secondary-button variables-theme-button" onClick={() => setThemePickerOpen(true)}>打开整站设计风格</button>
+            </div>}
+
+            {workspaceShell.activeArea === 'ai' && <div className="workspace-sidebar-section ai-tasks-sidebar">
+              <div className="panel-intro"><strong>AI 设计任务</strong><span>AI 以当前项目、文档、页面和选区为稳定作用域；人的主要工作是审阅、批注和锁定。</span></div>
+              <div className="panel-title layer-title"><span>待处理</span><small>{document.requests.filter((request) => request.status === 'pending').length}</small></div>
+              <div className="ai-sidebar-request-list">{document.requests.filter((request) => request.status === 'pending').map((request) => <article key={request.id}><strong>{request.componentId ? document.components.find((component) => component.id === request.componentId)?.name ?? '目标组件' : currentPage?.name ?? '当前页面'}</strong><p>{request.instruction}</p><small>{new Date(request.createdAt).toLocaleString()}</small></article>)}</div>
+              {document.requests.every((request) => request.status !== 'pending') && <div className="ai-sidebar-empty"><span>✓</span><strong>没有待处理任务</strong><p>选择组件后写批注，或直接描述整页设计目标。</p></div>}
+              <div className="panel-title section-title">创建任务</div>
+              <div className="ai-quick-prompts sidebar-prompts">{aiQuickPrompts.map((prompt) => <button key={prompt} onClick={() => setAiInstruction(prompt)}>{prompt}</button>)}</div>
+              <textarea className="composer" rows={5} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} placeholder={aiTarget ? `告诉 AI 如何修改“${aiTarget.name}”…` : '描述网站目标、受众、内容和视觉方向…'} />
+              <button className="ai-button" disabled={!aiInstruction.trim()} onClick={() => void addAiRequest()}>提交给 AI</button>
+            </div>}
           </div>
+          <WorkspacePanelResizeHandle side="left" width={workspaceShell.leftPanelWidth} onResize={(width) => dispatchWorkspaceShell({ type: 'resize-left-panel', width })} />
         </aside>}
 
         <section className="canvas-stage">
@@ -1946,7 +2515,11 @@ export function WebDesignStudioApp() {
             {selectedIds.length > 1 && <><span /><button className="wide-tool" title="创建可整体移动的分组 ⌘G" onClick={groupSelected}>创建分组</button></>}
             {canUngroup && <button className="wide-tool" title="取消当前分组 ⇧⌘G" onClick={ungroupSelected}>取消分组</button>}
           </div>}
-          <div ref={canvasScroll} className={`canvas-scroll ${preview ? 'preview-canvas-scroll' : ''} ${editingSlot ? 'slot-editor-scroll' : ''}`}>
+          <div
+            ref={canvasScroll}
+            className={`canvas-scroll ${preview ? 'preview-canvas-scroll' : 'infinite-canvas-scroll'} ${editingSlot ? 'slot-editor-scroll' : ''} ${canvasPanReady || workspaceShell.activeTool === 'hand' ? 'pan-ready' : ''} ${canvasPanning ? 'panning' : ''}`}
+            onPointerDown={beginCanvasPan}
+          >
             {editingSlot && editingContainer && editingSlotDefinition && editingSlotCanvasSize ? <div className="slot-editor-centering"><div className="slot-editor-frame">
               <div className="slot-editor-heading"><div><span>可编辑内容区域</span><strong>{editingSlotDefinition.label}</strong><small>{editingSlotDefinition.description}</small></div><em>{Math.round(editingSlotCanvasSize.width)} × {Math.round(editingSlotCanvasSize.height)}</em></div>
               <div className="slot-editor-canvas-shell">
@@ -1957,11 +2530,23 @@ export function WebDesignStudioApp() {
                     const containerFrame = resolveComponent(editingContainer, device);
                     const resolved = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
                     if (resolved.hidden) return null;
-                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                    const editableSlot = editableSlotsForUiComponent(component)[0];
+                    return <WorkspaceCanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
                   })}
                 </div>
               </div>
-            </div></div> : <div className="canvas-scale" style={{ width: breakpoint.width * zoom, height: renderedCanvasHeight * zoom }}>
+            </div></div> : <div
+              className={preview ? 'preview-canvas-board' : 'infinite-canvas-board'}
+              style={preview ? undefined : { width: infiniteCanvasGeometry.width, height: infiniteCanvasGeometry.height }}
+            ><div className="canvas-scale" style={{
+              width: scaledCanvasWidth,
+              height: scaledCanvasHeight,
+              ...(preview ? {} : {
+                position: 'absolute',
+                left: infiniteCanvasGeometry.contentX,
+                top: infiniteCanvasGeometry.contentY
+              })
+            }}>
               {!preview && <div className="canvas-device-caption"><strong>{viewportLabel}{viewportSelection.orientation === 'rotated' ? ' · 横向' : ''}</strong><span>{breakpoint.width} × {previewViewportHeight} CSS px</span><em>页面高 {breakpoint.height}</em></div>}
               <div className={`design-canvas device-${device}`} style={{
                 width: breakpoint.width,
@@ -1978,24 +2563,33 @@ export function WebDesignStudioApp() {
                 '--radius-small': `${tokens?.radii.small ?? 8}px`,
                 '--radius-medium': `${tokens?.radii.medium ?? 16}px`,
                 '--radius-large': `${tokens?.radii.large ?? 28}px`
-              } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { if (!interactionMode) { setSelectedId(undefined); setSelectedIds([]); } }}>
+              } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { if (!interactionMode && workspaceShell.activeTool !== 'hand' && workspaceShell.activeTool !== 'comment') { setSelectedId(undefined); setSelectedIds([]); } }}>
                 {!preview && previewViewportHeight < renderedCanvasHeight && <div className="viewport-fold-line" style={{ top: previewViewportHeight }}><span>首屏结束 · {breakpoint.width} × {previewViewportHeight}</span></div>}
                 {snapGuides.x !== undefined && <div className="snap-guide vertical" style={{ left: snapGuides.x }} />}
                 {snapGuides.y !== undefined && <div className="snap-guide horizontal" style={{ top: snapGuides.y }} />}
                 {[...pageComponents].filter((component) => !contentContainerAncestor(document, component)).sort((left, right) => left.zIndex - right.zIndex).map((component) => {
                   const resolved = resolveComponent(component, device);
                   if (resolved.hidden) return null;
-                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} />;
+                  const editableSlot = editableSlotsForUiComponent(component)[0];
+                  return <WorkspaceCanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
                 })}
               </div>
-            </div>}
+            </div></div>}
           </div>
+          {!preview && <WorkspaceBottomToolbar activeTool={workspaceShell.activeTool} leftPanelOpen={workspaceShell.leftPanelOpen} rightPanelOpen={workspaceShell.rightPanelOpen} canvasMaximized={workspaceShell.canvasMaximized} onSelectTool={activateWorkspaceTool} onToggleLeft={() => dispatchWorkspaceShell({ type: 'toggle-left-panel' })} onToggleRight={() => dispatchWorkspaceShell({ type: 'toggle-right-panel' })} onToggleMaximize={() => dispatchWorkspaceShell({ type: 'toggle-canvas-maximized' })} />}
         </section>
 
-        {!preview && <aside className="inspector-panel">
+        {!preview && workspaceShell.rightPanelOpen && <aside className="inspector-panel">
+          <WorkspacePanelResizeHandle side="right" width={workspaceShell.rightPanelWidth} onResize={(width) => dispatchWorkspaceShell({ type: 'resize-right-panel', width })} />
           {selected && inspectedFrame ? <>
             <div className="inspector-heading"><div><span className="eyebrow">已选择 {selectedIds.length > 1 ? `${selectedIds.length} 项` : ''} · {device}</span><strong>{selected.name}</strong></div><button className="danger-link" onClick={deleteSelected}>删除</button></div>
             <div className="inspector-actions"><button onClick={duplicateSelected}>复制 ⌘D</button><button className={selected.locked ? 'active' : ''} onClick={() => toggleLocked(selected)}>{selected.locked ? '解锁' : '锁定'}</button><button className={inspectedFrame.hidden ? 'active' : ''} onClick={() => toggleHidden(selected)}>{inspectedFrame.hidden ? '显示' : '隐藏'}</button></div>
+            <div className="inspector-mode-tabs" role="tablist" aria-label="属性栏模式">
+              <button role="tab" aria-selected={inspectorTab === 'design'} className={inspectorTab === 'design' ? 'active' : ''} onClick={() => setInspectorTab('design')}>设计</button>
+              <button role="tab" aria-selected={inspectorTab === 'prototype'} className={inspectorTab === 'prototype' ? 'active' : ''} onClick={() => setInspectorTab('prototype')}>原型</button>
+              <button role="tab" aria-selected={inspectorTab === 'ai'} className={inspectorTab === 'ai' ? 'active' : ''} onClick={() => setInspectorTab('ai')}>批注与 AI</button>
+            </div>
+            {inspectorTab === 'design' && <>
             <button className="secondary-button save-symbol-button" onClick={saveSelectionAsSymbol}>保存到“我的”</button>
             {selectedSymbol && selected.symbolInstanceId && <div className="symbol-instance-panel">
               <div><span>实例来源</span><strong>{selectedSymbol.name}</strong></div>
@@ -2005,8 +2599,8 @@ export function WebDesignStudioApp() {
               <div className="symbol-instance-actions"><button onClick={updateSelectedSymbolDefinition}>用当前实例更新定义</button><button onClick={synchronizeSelectedSymbol}>同步全部实例</button><button className="danger" onClick={detachSelectedSymbol}>脱离组件库</button></div>
             </div>}
             <label className="field-label">组件名称<input value={selected.name} onChange={(event) => updateSelected({ name: event.target.value })} /></label>
-            <label className="field-label">内容<textarea rows={3} value={selected.content} onChange={(event) => updateSelected({ content: event.target.value })} /></label>
-            {selected.library && selectedLibrary && <div className={`ui-library-inspector library-${selected.library.name}`}>
+            {inspectorCapabilities?.content && <label className="field-label">{inspectorCapabilities.media ? '资源地址' : '内容'}<textarea rows={3} value={selected.content} onChange={(event) => updateSelected({ content: event.target.value })} /></label>}
+            {inspectorCapabilities?.library && selected.library && selectedLibrary && <div className={`ui-library-inspector library-${selected.library.name}`}>
               <div className="panel-title section-title">{selectedLibrary.displayName} 组件</div>
               <div className="antd-binding-summary"><span>组件</span><strong>{selected.library.component}</strong><small>{selected.library.name === 'shadcn' ? selected.library.version : `v${selected.library.version}`}</small></div>
               {selectedLibraryDefinition?.docsUrl && <a className="ui-library-doc-link" href={selectedLibraryDefinition.docsUrl} target="_blank" rel="noreferrer">查看当前官网文档 ↗</a>}
@@ -2015,17 +2609,21 @@ export function WebDesignStudioApp() {
                 <div className="content-slots-heading"><div><strong>内部内容</strong><span>像页面一样继续设计</span></div><em>{selectedEditableSlots.length} 个区域</em></div>
                 {selectedEditableSlots.map((slot) => {
                   const count = componentsInSlot(document, selected.id, slot.id).length;
-                  return <button key={slot.id} className={editingSlot?.componentId === selected.id && editingSlot.slotId === slot.id ? 'active' : ''} onClick={() => editComponentSlot(selected, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{count > 0 ? `${count} 个组件` : '空白'}</em><b>编辑 ›</b></button>;
+                  const officialDemo = Boolean(selected.library?.props.registryDemo);
+                  return <button key={slot.id} className={editingSlot?.componentId === selected.id && editingSlot.slotId === slot.id ? 'active' : ''} onClick={() => void editComponentSlot(selected, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{count > 0 ? `${count} 个组件` : officialDemo ? '尚未拆分' : '空白'}</em><b>{officialDemo && count === 0 ? '拆开并编辑 ›' : '进入编辑 ›'}</b></button>;
                 })}
               </div>}
-              <label className="field-label ui-library-variant-field">展现款式<select value={selected.library.variant ?? selectedLibraryVariants[0]?.id} onChange={(event) => applySelectedLibraryVariant(event.target.value)}>{selectedLibraryVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>
-              {Object.entries(selected.library.props).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => typeof value === 'boolean'
+              {selectedRegistryElement ? <div className="selected-registry-element-summary"><div><span>已选择的独立元素</span><strong>{selectedRegistryElement.label}</strong><small>{selected.library.variant ? `来源款式：${selectedLibraryVariants.find((variant) => variant.id === selected.library?.variant)?.label ?? selected.library.variant}` : '保留官方真实运行时'}</small></div><button onClick={() => setVariantPickerTarget({ library: selected.library!.name, componentId: selected.library!.component, replaceComponentId: selected.id })}>重新选择</button></div>
+                : <label className="field-label ui-library-variant-field">展现款式<select value={selected.library.variant ?? selectedLibraryVariants[0]?.id} onChange={(event) => applySelectedLibraryVariant(event.target.value)}>{selectedLibraryVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>}
+              {selectedInspectableLibraryProps.filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => typeof value === 'boolean'
                 ? <label key={key} className="ui-library-boolean-prop"><input type="checkbox" checked={value} onChange={(event) => updateSelectedLibraryProp(key, event.target.checked)} /><span>{key}</span></label>
                 : typeof value === 'number'
                   ? <NumberField key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />
                   : <label key={key} className="field-label">{key}<input value={String(value)} onChange={(event) => updateSelectedLibraryProp(key, event.target.value)} /></label>)}
-              {Object.entries(selected.library.props).some(([, value]) => value !== null && typeof value === 'object') && <div className="ui-library-data-editors"><div className="panel-title section-title">示例数据</div>{Object.entries(selected.library.props).filter(([, value]) => value !== null && typeof value === 'object').map(([key, value]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
+              {selectedInspectableLibraryProps.some(([, value]) => value !== null && typeof value === 'object') && <div className="ui-library-data-editors"><div className="panel-title section-title">示例数据</div>{selectedInspectableLibraryProps.filter(([, value]) => value !== null && typeof value === 'object').map(([key, value]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
             </div>}
+            </>}
+            {inspectorTab === 'prototype' && <>
             <div className="panel-title section-title">预览交互</div>
             <label className="field-label">点击行为<select value={selected.interaction?.type ?? 'none'} onChange={(event) => {
               const type = event.target.value;
@@ -2035,6 +2633,9 @@ export function WebDesignStudioApp() {
             }}><option value="none">无交互</option><option value="page">跳转页面</option><option value="url">打开 URL</option></select></label>
             {selected.interaction?.type === 'page' && <label className="field-label interaction-target">目标页面<select value={selected.interaction.target} onChange={(event) => updateSelected({ interaction: { type: 'page', target: event.target.value } })}>{pages.map((page) => <option key={page.id} value={page.id}>{page.name} · {page.slug}</option>)}</select></label>}
             {selected.interaction?.type === 'url' && <label className="field-label interaction-target">目标 URL<input value={selected.interaction.target} onChange={(event) => updateSelected({ interaction: { type: 'url', target: event.target.value } })} placeholder="https://example.com" /></label>}
+            <p className="helper-text inspector-prototype-help">在顶部进入“交互”或“全屏预览”即可验证跳转、输入、选择、弹层和官方组件行为。</p>
+            </>}
+            {inspectorTab === 'design' && <>
             <div className="size-row four">
               <NumberField label={editingSlot ? 'X · 内容' : 'X'} value={inspectedFrame.x} onChange={(x) => updateInspectedFrame({ x })} disabled={selected.locked} />
               <NumberField label={editingSlot ? 'Y · 内容' : 'Y'} value={inspectedFrame.y} onChange={(y) => updateInspectedFrame({ y })} disabled={selected.locked} />
@@ -2047,8 +2648,8 @@ export function WebDesignStudioApp() {
             <div className="size-constraints-grid"><NumberField label="最小宽" value={selected.constraints?.[device]?.minWidth ?? 16} min={16} onChange={(minWidth) => updateSelectedSizeConstraints({ minWidth: Math.max(16, minWidth) })} /><NumberField label="最大宽" value={selected.constraints?.[device]?.maxWidth ?? 100000} min={16} onChange={(maxWidth) => updateSelectedSizeConstraints({ maxWidth: Math.max(16, maxWidth) })} /><NumberField label="最小高" value={selected.constraints?.[device]?.minHeight ?? 16} min={16} onChange={(minHeight) => updateSelectedSizeConstraints({ minHeight: Math.max(16, minHeight) })} /><NumberField label="最大高" value={selected.constraints?.[device]?.maxHeight ?? 100000} min={16} onChange={(maxHeight) => updateSelectedSizeConstraints({ maxHeight: Math.max(16, maxHeight) })} /></div>
             <label className="ui-library-boolean-prop constraint-toggle"><input type="checkbox" checked={selected.constraints?.[device]?.lockAspectRatio === true} onChange={(event) => updateSelectedSizeConstraints({ lockAspectRatio: event.target.checked })} /><span>调整大小时保持当前宽高比</span></label>
             <div className="panel-title section-title">视觉设计 · {device}</div>
-            <div className="visual-state-switcher"><button className={inspectorVisualState === 'default' ? 'active' : ''} onClick={() => setInspectorVisualState('default')}>默认</button><button className={inspectorVisualState === 'hover' ? 'active' : ''} onClick={() => setInspectorVisualState('hover')}>悬停</button><button className={inspectorVisualState === 'active' ? 'active' : ''} onClick={() => setInspectorVisualState('active')}>按下</button><button className={inspectorVisualState === 'focus' ? 'active' : ''} onClick={() => setInspectorVisualState('focus')}>聚焦</button></div>
-            {inspectorVisualState !== 'default' && <div className="visual-state-help"><p className="helper-text">正在设计“{inspectorVisualState === 'hover' ? '悬停' : inspectorVisualState === 'active' ? '按下' : '聚焦'}”状态；画布会立即显示效果，预览时由真实交互触发。</p><button onClick={clearSelectedVisualState} disabled={!selected.states?.[inspectorVisualState]}>清除状态样式</button></div>}
+            {inspectorCapabilities?.visualStates && <div className="visual-state-switcher"><button className={inspectorVisualState === 'default' ? 'active' : ''} onClick={() => setInspectorVisualState('default')}>默认</button><button className={inspectorVisualState === 'hover' ? 'active' : ''} onClick={() => setInspectorVisualState('hover')}>悬停</button><button className={inspectorVisualState === 'active' ? 'active' : ''} onClick={() => setInspectorVisualState('active')}>按下</button><button className={inspectorVisualState === 'focus' ? 'active' : ''} onClick={() => setInspectorVisualState('focus')}>聚焦</button></div>}
+            {inspectorCapabilities?.visualStates && inspectorVisualState !== 'default' && <div className="visual-state-help"><p className="helper-text">正在设计“{inspectorVisualState === 'hover' ? '悬停' : inspectorVisualState === 'active' ? '按下' : '聚焦'}”状态；画布会立即显示效果，预览时由真实交互触发。</p><button onClick={clearSelectedVisualState} disabled={!selected.states?.[inspectorVisualState]}>清除状态样式</button></div>}
             <section className="design-inspector-group">
               <header><strong>填充</strong><span>颜色、渐变与透明材质</span></header>
               <ColorValueField label="背景" value={inspectedStyle?.background ?? ''} onChange={(background) => updateSelectedStyle({ background })} allowComplex />
@@ -2069,20 +2670,20 @@ export function WebDesignStudioApp() {
               <div className="size-row"><NumberField label="旋转 °" value={inspectedStyle?.rotate ?? 0} onChange={(rotate) => updateSelectedStyle({ rotate })} /><NumberField label="缩放" value={inspectedStyle?.scale ?? 1} step={0.05} min={0.01} onChange={(scale) => updateSelectedStyle({ scale: Math.max(0.01, scale) })} /></div>
               <div className="size-row"><label className="field-label">溢出<select value={inspectedStyle?.overflow ?? 'visible'} onChange={(event) => updateSelectedStyle({ overflow: event.target.value as NonNullable<WebComponentStyle['overflow']> })}><option value="visible">显示</option><option value="hidden">裁切</option><option value="auto">自动滚动</option><option value="scroll">始终滚动</option></select></label><label className="field-label">混合模式<select value={inspectedStyle?.mixBlendMode ?? 'normal'} onChange={(event) => updateSelectedStyle({ mixBlendMode: event.target.value as NonNullable<WebComponentStyle['mixBlendMode']> })}><option value="normal">正常</option><option value="multiply">正片叠底</option><option value="screen">滤色</option><option value="overlay">叠加</option><option value="difference">差值</option></select></label></div>
             </section>
-            <section className="design-inspector-group">
+            {inspectorCapabilities?.typography && <section className="design-inspector-group">
               <header><strong>排版</strong><span>所有文字型组件与 UI 内容</span></header>
               <ColorValueField label="文字颜色" value={inspectedStyle?.color ?? ''} onChange={(color) => updateSelectedStyle({ color })} />
               <div className="size-row"><NumberField label="字号" value={inspectedStyle?.fontSize ?? 16} onChange={(fontSize) => updateSelectedStyle({ fontSize: Math.max(6, fontSize) })} /><NumberField label="字重" value={inspectedStyle?.fontWeight ?? 400} step={50} min={100} max={1000} onChange={(fontWeight) => updateSelectedStyle({ fontWeight: Math.min(1000, Math.max(100, fontWeight)) })} /></div>
               <div className="size-row"><NumberField label="行高" value={inspectedStyle?.lineHeight ?? 1.2} step={0.05} min={0.5} max={5} onChange={(lineHeight) => updateSelectedStyle({ lineHeight })} /><NumberField label="字间距" value={inspectedStyle?.letterSpacing ?? 0} step={0.1} onChange={(letterSpacing) => updateSelectedStyle({ letterSpacing })} /></div>
               <div className="size-row"><label className="field-label">对齐<select value={inspectedStyle?.textAlign ?? 'left'} onChange={(event) => updateSelectedStyle({ textAlign: event.target.value as NonNullable<WebComponentStyle['textAlign']> })}><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option></select></label><label className="field-label">大小写<select value={inspectedStyle?.textTransform ?? 'none'} onChange={(event) => updateSelectedStyle({ textTransform: event.target.value as NonNullable<WebComponentStyle['textTransform']> })}><option value="none">保持</option><option value="uppercase">大写</option><option value="lowercase">小写</option><option value="capitalize">首字母大写</option></select></label></div>
-            </section>
-            {(selected.type === 'image' || selected.type === 'video' || selected.type === 'avatar') && <section className="design-inspector-group"><header><strong>媒体</strong><span>裁切与焦点</span></header><div className="size-row"><label className="field-label">适应方式<select value={inspectedStyle?.objectFit ?? 'cover'} onChange={(event) => updateSelectedStyle({ objectFit: event.target.value as NonNullable<WebComponentStyle['objectFit']> })}><option value="cover">覆盖裁切</option><option value="contain">完整显示</option><option value="fill">拉伸填充</option><option value="none">原始大小</option><option value="scale-down">自动缩小</option></select></label><label className="field-label">焦点<input value={inspectedStyle?.objectPosition ?? '50% 50%'} onChange={(event) => updateSelectedStyle({ objectPosition: event.target.value })} /></label></div></section>}
+            </section>}
+            {inspectorCapabilities?.media && <section className="design-inspector-group"><header><strong>媒体</strong><span>裁切与焦点</span></header><div className="size-row"><label className="field-label">适应方式<select value={inspectedStyle?.objectFit ?? 'cover'} onChange={(event) => updateSelectedStyle({ objectFit: event.target.value as NonNullable<WebComponentStyle['objectFit']> })}><option value="cover">覆盖裁切</option><option value="contain">完整显示</option><option value="fill">拉伸填充</option><option value="none">原始大小</option><option value="scale-down">自动缩小</option></select></label><label className="field-label">焦点<input value={inspectedStyle?.objectPosition ?? '50% 50%'} onChange={(event) => updateSelectedStyle({ objectPosition: event.target.value })} /></label></div></section>}
             <section className="design-inspector-group advanced-css-group">
               <header><strong>高级样式</strong><span>开放式 CSS，不受面板枚举限制</span></header>
               <AdvancedCssEditor value={inspectorVisualState === 'default' ? inspectedFrame?.style.customCss ?? {} : selected.states?.[inspectorVisualState]?.customCss ?? {}} onChange={updateSelectedCustomCss} />
             </section>
             <div className="token-apply-row"><button onClick={() => applyColorToken('background', 'primary')}>主色背景</button><button onClick={() => applyColorToken('background', 'surface')}>表面背景</button><button onClick={() => applyColorToken('color', 'text')}>正文色</button><button onClick={() => applyRadiusToken('medium')}>中圆角</button></div>
-            {(selected.type === 'section' || directChildCount > 0) && selectedEditableSlots.length === 0 && <>
+            {inspectorCapabilities?.layout && <>
               <div className="panel-title section-title">容器布局 · {directChildCount} 个子组件</div>
               <label className="field-label">布局方式<select value={selected.layout?.mode ?? 'free'} onChange={(event) => updateSelectedLayout({ mode: event.target.value as NonNullable<WebDesignComponent['layout']>['mode'] })}><option value="free">自由布局</option><option value="flex-row">Flex 横向</option><option value="flex-column">Flex 纵向</option><option value="grid">Grid 网格</option></select></label>
               <div className="size-row"><NumberField label="间距" value={selected.layout?.gap ?? 16} onChange={(gap) => updateSelectedLayout({ gap })} /><NumberField label="内边距" value={selected.layout?.padding ?? 16} onChange={(padding) => updateSelectedLayout({ padding })} /></div>
@@ -2091,39 +2692,47 @@ export function WebDesignStudioApp() {
               {selected.layout?.mode === 'flex-row' && <label className="ui-library-boolean-prop"><input type="checkbox" checked={selected.layout?.wrap === true} onChange={(event) => updateSelectedLayout({ wrap: event.target.checked })} /><span>空间不足时自动换行</span></label>}
               <button className="secondary-button" disabled={directChildCount === 0 || selected.layout?.mode === 'free'} onClick={applySelectedAutoLayout}>应用自动布局</button>
             </>}
+            </>}
+            {inspectorTab === 'ai' && <>
             <div className="panel-title section-title">组件批注</div>
             <div className="notes-list">{selected.annotations.length === 0 && <span className="empty-hint">还没有批注</span>}{selected.annotations.map((note) => <div key={note.id} className={`note-card ${note.status}`}><span>{note.text}</span><small>{note.status === 'open' ? '待处理' : '已完成'}</small></div>)}</div>
             <textarea className="composer" rows={3} placeholder="例如：这里的按钮再醒目一些" value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} /><button className="secondary-button" onClick={addAnnotation}>添加批注</button>
             <div className="panel-title section-title">与 AI 交互</div>
             <textarea className="composer" rows={4} placeholder={`告诉 AI 如何修改当前${device === 'desktop' ? '桌面' : device === 'tablet' ? '平板' : '手机'}组件…`} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} /><button className="ai-button" onClick={() => void addAiRequest()}>提交给 AI</button>
+            </>}
           </> : <div className="empty-inspector"><div className="empty-icon">↖</div><strong>选择一个组件</strong><p>在画布或图层中选择组件，然后编辑、对齐、锁定、批注或提交 AI 请求。</p></div>}
         </aside>}
       </main>
-      {variantPickerDefinition && variantPickerLibrary && <div className="studio-modal-backdrop" onPointerDown={() => setVariantPickerTarget(undefined)}>
-        <section className="studio-modal variant-picker" data-library-portal-host onPointerDown={(event) => event.stopPropagation()}>
-          <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>先看实际效果，再选择最适合当前页面的款式。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
-          <div className={`variant-preview-grid ${WIDE_VARIANT_PREVIEWS.has(variantPickerDefinition.id) ? 'wide-component-previews' : ''}`}>{variantPickerVariants.map((variant) => {
+      {variantPickerDefinition && variantPickerLibrary && <div className={`studio-side-surface-host ${variantPickerDrag?.dragging ? 'dragging-library-element' : ''}`}>
+        <section className="studio-modal studio-side-surface variant-picker" data-library-portal-host>
+          <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>移动到想要的元素上，点击直接插入，或按住拖到画布中的准确位置。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
+          <div className={`variant-preview-grid ${WIDE_VARIANT_PREVIEWS.has(variantPickerDefinition.id) || variantPickerPresentation?.previewSpan === 'wide' ? 'wide-component-previews' : ''} ${variantPickerVariants.length === 1 ? 'single-component-preview' : ''}`}>{variantPickerVariants.map((variant) => {
             const previewComponent = applyUiLibraryVariant(createComponentFromUiLibrary(variantPickerLibrary.id, variantPickerDefinition.id, 0, 0), variant.id);
+            previewComponent.id = `library-preview-${variantPickerLibrary.id}-${variantPickerDefinition.id}-${variant.id}`;
             const differences = variantDifferenceLabels(variant);
             const interactiveVariant = variantIsInteractive(variant, variantPickerDefinition.id);
             const openOverlayPreview = OPEN_OVERLAY_PREVIEWS.has(variantPickerDefinition.id);
             const inlinePickerPreview = variantPickerLibrary.id === 'chakra' && ['DatePicker', 'ColorPicker'].includes(variantPickerDefinition.id);
-            const previewHeight = inlinePickerPreview ? 440 : Math.max(openOverlayPreview ? 320 : 118, Math.min(360, previewComponent.height + 24));
-            return <article key={variant.id} className={`variant-preview-card ${interactiveVariant ? 'interactive-variant' : ''}`} style={{ minHeight: previewHeight + 58 }}><div data-library-portal-host className={`variant-live-preview ${openOverlayPreview ? 'overlay-showcase' : ''} ${inlinePickerPreview ? 'inline-picker-showcase' : ''} ${variant.props.bordered === false || variant.props.variant === 'borderless' ? 'contrast-surface' : ''}`} style={{ minHeight: previewHeight }}>{interactiveVariant && !openOverlayPreview && <span className="variant-interaction-hint">可交互 · 移入或点击查看</span>}<LibraryCanvasComponent component={previewComponent} preview showcase tokens={tokens} /></div><footer><div className="variant-preview-description"><strong>{variant.label}</strong><span>{differences.map((difference) => <small key={difference}>{difference}</small>)}</span></div><button onClick={() => insertUiLibraryComponent(variantPickerLibrary.id, variantPickerDefinition.id, variant.id)}>插入此款式</button></footer></article>;
+            const previewHeight = variantPickerPresentation?.previewHeight ?? (inlinePickerPreview || interactiveVariant
+              ? 440
+              : Math.max(openOverlayPreview ? 320 : 118, Math.min(360, previewComponent.height + 24)));
+            return <SelectableVariantCard key={variant.id} component={previewComponent} previewHeight={previewHeight} className={`variant-live-preview ${openOverlayPreview ? 'overlay-showcase' : ''} ${inlinePickerPreview ? 'inline-picker-showcase' : ''} ${variant.props.bordered === false || variant.props.variant === 'borderless' ? 'contrast-surface' : ''}`} interactive={interactiveVariant} variantLabel={variant.label} differences={differences} tokens={tokens} onPickItem={(selection) => chooseUiLibraryPreviewElement(variantPickerLibrary.id, variantPickerDefinition.id, variant.id, selection)} onPickPointerEvent={(event) => handleUiLibraryPreviewPointerEvent(variantPickerLibrary.id, variantPickerDefinition.id, variant.id, event)} />;
           })}</div>
         </section>
       </div>}
-      {themePickerOpen && <div className="studio-modal-backdrop" onPointerDown={() => setThemePickerOpen(false)}>
-        <section className="studio-modal theme-picker" onPointerDown={(event) => event.stopPropagation()}>
+      {variantPickerDrag?.dragging && <div
+        className="variant-picker-pointer-capture"
+        onPointerMove={(event) => { event.preventDefault(); event.stopPropagation(); moveUiLibraryPreviewPointerDragAt(event.clientX, event.clientY); }}
+        onPointerUp={(event) => { event.preventDefault(); event.stopPropagation(); finishUiLibraryPreviewPointerDragAt(event.clientX, event.clientY); }}
+        onPointerCancel={(event) => { event.preventDefault(); event.stopPropagation(); finishUiLibraryPreviewPointerDragAt(event.clientX, event.clientY, true); }}
+        onContextMenu={(event) => event.preventDefault()}
+      />}
+      {variantPickerDrag?.dragging && <div className="variant-picker-drag-ghost" style={{ left: variantPickerDrag.clientX, top: variantPickerDrag.clientY }}><strong>{variantPickerDrag.selection.label}</strong><small>{Math.round(variantPickerDrag.selection.width)} × {Math.round(variantPickerDrag.selection.height)}</small></div>}
+      {themePickerOpen && <div className="studio-side-surface-host">
+        <section className="studio-modal studio-side-surface theme-picker">
           <header><div><span className="eyebrow">Visual system</span><h2>选择整站设计风格</h2><p>一次统一颜色、字体、圆角、画布背景和全部 UI 组件主题。</p></div><button onClick={() => setThemePickerOpen(false)}>×</button></header>
           <div className="theme-preset-grid">{WEB_DESIGN_THEME_PRESETS.map((preset) => <button key={preset.id} onClick={() => applyDesignTheme(preset)}><div className="theme-preview" style={{ background: preset.canvasBackground }}><i style={{ background: preset.preview[1] }} /><b style={{ background: preset.preview[2] }} /><span style={{ color: preset.tokens.colors.text }}>Aa</span></div><strong>{preset.name}</strong><small>{preset.description}</small><div className="theme-swatches">{preset.preview.map((color) => <i key={color} style={{ background: color }} />)}</div></button>)}</div>
         </section>
-      </div>}
-      {aiPanelOpen && <div className="ai-command-panel">
-        <div className="ai-command-heading"><div><span>✦ AI 设计助手</span><strong>{editingSlotDefinition ? `正在设计：${editingSlotDefinition.label}` : aiTarget ? `正在修改：${aiTarget.name}` : `正在设计：${currentPage?.name ?? '当前页面'}`}</strong></div><button onClick={() => setAiPanelOpen(false)}>×</button></div>
-        <div className="ai-quick-prompts">{aiQuickPrompts.map((prompt) => <button key={prompt} onClick={() => setAiInstruction(prompt)}>{prompt}</button>)}</div>
-        <textarea autoFocus rows={4} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void addAiRequest(); }} placeholder={aiTarget ? '描述你希望这个组件或内容区域如何变化，也可以要求 AI 直接添加表单、详情或操作组件…' : '描述网站目标、受众、内容和你喜欢的视觉感觉…'} />
-        <div className="ai-command-footer"><span>{editingSlotDefinition ? `仅修改 ${editingSlotDefinition.label}` : aiTarget ? '仅修改当前组件' : `作用于 ${device} · 当前页面`}</span><button disabled={!aiInstruction.trim()} onClick={() => void addAiRequest()}>提交设计任务 <b>⌘↵</b></button></div>
       </div>}
       {toast && <div className="toast">{toast}</div>}
     </div>
@@ -2193,56 +2802,6 @@ function JsonPropertyEditor({ label, value, onChange }: { label: string; value: 
   return <div className="json-prop-editor"><div><strong>{label}</strong><button onClick={apply}>应用数据</button></div><textarea rows={Math.min(10, Math.max(4, draft.split('\n').length))} value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} />{error && <small>{error}</small>}</div>;
 }
 
-function CanvasComponentContent({ component, style = component.style, interactive, tokens, slotContent }: { component: WebDesignComponent; style?: WebComponentStyle; interactive: boolean; tokens?: WebDesignTokens; slotContent?: Record<string, ReactNode> }) {
-  const renderedComponent = style === component.style ? component : { ...component, style };
-  if (component.library) return <div className={`ui-library-canvas-content library-${component.library.name} ${interactive ? 'preview' : ''}`}><LibraryCanvasComponent component={renderedComponent} preview={interactive} tokens={tokens} slotContent={slotContent} /></div>;
-  if (component.type === 'image') return component.content ? <img src={component.content} alt={component.name} draggable={false} style={{ objectFit: style.objectFit, objectPosition: style.objectPosition }} /> : <span className="image-placeholder">图片</span>;
-  if (component.type === 'video') return component.content ? <video src={component.content} controls={interactive} muted style={{ objectFit: style.objectFit, objectPosition: style.objectPosition }} /> : <span className="media-placeholder">▶<small>视频</small></span>;
-  if (component.type === 'input') return <span className="input-placeholder">{component.content}</span>;
-  if (component.type === 'textarea') return <span className="input-placeholder textarea-placeholder">{component.content}</span>;
-  if (component.type === 'select') return <span className="select-placeholder"><span>{component.content.split('\n')[0]}</span><b>⌄</b></span>;
-  if (component.type === 'checkbox') return <span className="choice-control"><i>✓</i>{component.content}</span>;
-  if (component.type === 'switch') return <span className="choice-control"><i className="switch-track">●</i>{component.content}</span>;
-  if (component.type === 'divider') return null;
-  if (component.type === 'list') return <ul className="component-list">{component.content.split('\n').filter(Boolean).map((item, index) => <li key={index}>{item}</li>)}</ul>;
-  if (component.type === 'table') return <table className="component-table"><tbody>{component.content.split('\n').filter(Boolean).map((row, rowIndex) => <tr key={rowIndex}>{row.split('|').map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table>;
-  if (component.type === 'avatar' && /^(data:image\/|https?:\/\/)/.test(component.content)) return <img src={component.content} alt={component.name} draggable={false} />;
-  if (component.type === 'section') return null;
-  return <span className="component-copy">{component.content}</span>;
-}
-
-function CanvasComponent({ component, resolved, selected, primary, interactive, forcedState, tokens, slotContent, onPointerDown, onResizePointerDown, onPreviewActivate }: {
-  component: WebDesignComponent;
-  resolved: ResolvedWebDesignComponent;
-  selected: boolean;
-  primary: boolean;
-  interactive: boolean;
-  forcedState?: WebComponentVisualState;
-  tokens?: WebDesignTokens;
-  slotContent?: Record<string, ReactNode>;
-  onPointerDown: (event: ReactPointerEvent) => void;
-  onResizePointerDown: (event: ReactPointerEvent) => void;
-  onPreviewActivate: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const [pressed, setPressed] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const runtimeState: WebComponentVisualState | undefined = forcedState ?? (pressed ? 'active' : focused ? 'focus' : hovered ? 'hover' : undefined);
-  const effectiveStyle = mergeComponentStyles(resolved.style, runtimeState ? component.states?.[runtimeState] : undefined);
-  const style: CSSProperties = {
-    left: resolved.x, top: resolved.y, width: resolved.width, height: resolved.height, zIndex: component.zIndex,
-    ...(component.library ? componentEffectStyleToCss(effectiveStyle) : componentStyleToCss(effectiveStyle)),
-    transition: component.states ? 'background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease, opacity .18s ease, transform .18s ease' : undefined
-  };
-  return (
-    <div className={`canvas-component type-${component.type} ${component.library ? `library-component library-${component.library.name}` : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${interactive ? 'interactive' : ''}`} style={style} tabIndex={interactive && component.states?.focus ? 0 : undefined} onPointerEnter={() => interactive && setHovered(true)} onPointerLeave={() => { setHovered(false); setPressed(false); }} onPointerDown={(event) => { if (interactive) setPressed(true); onPointerDown(event); }} onPointerUp={() => setPressed(false)} onPointerCancel={() => setPressed(false)} onFocus={() => interactive && setFocused(true)} onBlur={() => setFocused(false)} onClick={(event) => { if (interactive && component.interaction) { event.stopPropagation(); onPreviewActivate(); } }}>
-      <CanvasComponentContent component={component} style={effectiveStyle} interactive={interactive} tokens={tokens} slotContent={slotContent} />
-      {!interactive && component.annotations.some((annotation) => annotation.status === 'open') && <span className="annotation-badge">{component.annotations.filter((annotation) => annotation.status === 'open').length}</span>}
-      {primary && !interactive && <><span className="selection-label">{component.locked ? '🔒 ' : ''}{component.name}</span>{!component.locked && <span className="resize-handle" onPointerDown={onResizePointerDown} />}</>}
-    </div>
-  );
-}
-
 function runtimeSlotContentMap(
   document: WebDesignDocument,
   component: WebDesignComponent,
@@ -2307,7 +2866,7 @@ function RuntimeSlotCanvasComponent({ component, frame, interactive, tokens, slo
       event.stopPropagation();
       onPreviewActivate();
     }
-  }}><CanvasComponentContent component={component} style={effectiveStyle} interactive={interactive} tokens={tokens} slotContent={slotContent} /></div>;
+  }}><WorkspaceCanvasComponentContent component={component} style={effectiveStyle} interactive={interactive} tokens={tokens} slotContent={slotContent} /></div>;
 }
 
 function formatProjectDate(value: string): string {

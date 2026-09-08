@@ -1,0 +1,61 @@
+{
+  "slug": "modal",
+  "title": "Modal",
+  "description": "Modal is used to show a dialog or a box when you click a button.",
+  "demos": [
+    {
+      "id": "modal-1",
+      "label": "Dialog modal",
+      "html": "<!-- Open the modal using ID.showModal() method -->\n<button class=\"btn\" onclick=\"my_modal_1.showModal()\">open modal</button>\n<dialog id=\"my_modal_1\" class=\"modal\">\n  <div class=\"modal-box\">\n    <h3 class=\"text-lg font-bold\">Hello!</h3>\n    <p class=\"py-4\">Press ESC key or click the button below to close</p>\n    <div class=\"modal-action\">\n      <form method=\"dialog\">\n        <!-- if there is a button in form, it will close the modal -->\n        <button class=\"btn\">Close</button>\n      </form>\n    </div>\n  </div>\n</dialog>"
+    },
+    {
+      "id": "modal-2",
+      "label": "Dialog modal, closes when clicked outside",
+      "html": "<!-- Open the modal using ID.showModal() method -->\n<button class=\"btn\" onclick=\"my_modal_2.showModal()\">open modal</button>\n<dialog id=\"my_modal_2\" class=\"modal\">\n  <div class=\"modal-box\">\n    <h3 class=\"text-lg font-bold\">Hello!</h3>\n    <p class=\"py-4\">Press ESC key or click outside to close</p>\n  </div>\n  <form method=\"dialog\" class=\"modal-backdrop\">\n    <button>close</button>\n  </form>\n</dialog>"
+    },
+    {
+      "id": "modal-3",
+      "label": "Dialog modal with a close button at corner",
+      "html": "<!-- You can open the modal using ID.showModal() method -->\n<button class=\"btn\" onclick=\"my_modal_3.showModal()\">open modal</button>\n<dialog id=\"my_modal_3\" class=\"modal\">\n  <div class=\"modal-box\">\n    <form method=\"dialog\">\n      <button class=\"btn btn-sm btn-circle btn-ghost absolute right-2 top-2\">✕</button>\n    </form>\n    <h3 class=\"text-lg font-bold\">Hello!</h3>\n    <p class=\"py-4\">Press ESC key or click on ✕ button to close</p>\n  </div>\n</dialog>"
+    },
+    {
+      "id": "modal-4",
+      "label": "Dialog modal with custom width",
+      "html": "<!-- You can open the modal using ID.showModal() method -->\n<button class=\"btn\" onclick=\"my_modal_4.showModal()\">open modal</button>\n<dialog id=\"my_modal_4\" class=\"modal\">\n  <div class=\"modal-box w-11/12 max-w-5xl\">\n    <h3 class=\"text-lg font-bold\">Hello!</h3>\n    <p class=\"py-4\">Click the button below to close</p>\n    <div class=\"modal-action\">\n      <form method=\"dialog\">\n        <!-- if there is a button, it will close the modal -->\n        <button class=\"btn\">Close</button>\n      </form>\n    </div>\n  </div>\n</dialog>"
+    },
+    {
+      "id": "modal-5",
+      "label": "Responsive",
+      "html": "<!-- Open the modal using ID.showModal() method -->\n<button class=\"btn\" onclick=\"my_modal_5.showModal()\">open modal</button>\n<dialog id=\"my_modal_5\" class=\"modal modal-bottom sm:modal-middle\">\n  <div class=\"modal-box\">\n    <h3 class=\"text-lg font-bold\">Hello!</h3>\n    <p class=\"py-4\">Press ESC key or click the button below to close</p>\n    <div class=\"modal-action\">\n      <form method=\"dialog\">\n        <!-- if there is a button in form, it will close the modal -->\n        <button class=\"btn\">Close</button>\n      </form>\n    </div>\n  </div>\n</dialog>"
+    },
+    {
+      "id": "modal-6",
+      "label": "Popover modal",
+      "html": "<!-- The button's popovertarget attribute points to the modal's ID. ID must be unique for each modal -->\n<button class=\"btn\" popovertarget=\"my-modal-1\">Open</button>\n\n<div class=\"modal\" id=\"my-modal-1\" popover>\n  <div class=\"modal-box\">\n    <h3 class=\"font-bold text-lg\">Hello!</h3>\n    <p class=\"py-4\">Press ESC key or click the button below to close</p>\n    <div class=\"modal-action\">\n      <button popovertarget=\"my-modal-1\" popovertargetaction=\"hide\">close</button>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "modal-7",
+      "label": "Popover modal closes when clicked outside",
+      "html": "<!-- The button's popovertarget attribute points to the modal's ID. ID must be unique for each modal -->\n<button class=\"btn\" popovertarget=\"my-modal-2\">Open</button>\n\n<div class=\"modal\" id=\"my-modal-2\" popover>\n  <div class=\"modal-box\">\n    <h3 class=\"font-bold text-lg\">Hello!</h3>\n    <p class=\"py-4\">Press ESC key or click the button below to close</p>\n  </div>\n  <div class=\"modal-backdrop\">\n    <button popovertarget=\"my-modal-2\" popovertargetaction=\"hide\">close</button>\n  </div>\n</div>"
+    },
+    {
+      "id": "modal-8",
+      "label": "Modal using checkbox",
+      "html": "<!-- The button to open modal -->\n<label for=\"my_modal_6\" class=\"btn\">open modal</label>\n\n<!-- Put this part before </body> tag -->\n<input type=\"checkbox\" id=\"my_modal_6\" class=\"modal-toggle\" />\n<div class=\"modal\" role=\"dialog\">\n  <div class=\"modal-box\">\n    <h3 class=\"text-lg font-bold\">Hello!</h3>\n    <p class=\"py-4\">This modal works with a hidden checkbox!</p>\n    <div class=\"modal-action\">\n      <label for=\"my_modal_6\" class=\"btn\">Close!</label>\n    </div>\n  </div>\n</div>"
+    },
+    {
+      "id": "modal-9",
+      "label": "Modal that closes when clicked outside",
+      "html": "<!-- The button to open modal -->\n<label for=\"my_modal_7\" class=\"btn\">open modal</label>\n\n<!-- Put this part before </body> tag -->\n<input type=\"checkbox\" id=\"my_modal_7\" class=\"modal-toggle\" />\n<div class=\"modal\" role=\"dialog\">\n  <div class=\"modal-box\">\n    <h3 class=\"text-lg font-bold\">Hello!</h3>\n    <p class=\"py-4\">This modal works with a hidden checkbox!</p>\n  </div>\n  <label class=\"modal-backdrop\" for=\"my_modal_7\">Close</label>\n</div>"
+    },
+    {
+      "id": "modal-10",
+      "label": "Modal using anchor link",
+      "html": "<!-- The button to open modal -->\n<a href=\"#my_modal_8\" class=\"btn\">open modal</a>\n\n<!-- Put this part before </body> tag -->\n<div class=\"modal\" role=\"dialog\" id=\"my_modal_8\">\n  <div class=\"modal-box\">\n    <h3 class=\"text-lg font-bold\">Hello!</h3>\n    <p class=\"py-4\">This modal works with anchor links</p>\n    <div class=\"modal-action\">\n      <a href=\"#\" class=\"btn\">Yay!</a>\n    </div>\n  </div>\n</div>"
+    }
+  ],
+  "layout": "fill",
+  "docsUrl": "https://daisyui.com/components/modal/",
+  "previewHeight": 380,
+  "previewSpan": "wide"
+}

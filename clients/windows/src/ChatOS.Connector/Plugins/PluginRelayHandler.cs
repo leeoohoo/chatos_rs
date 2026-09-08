@@ -86,6 +86,7 @@ internal sealed class PluginRelayHandler(
         var allowlist = StringArray(body, "tool_allowlist", required: false).ToHashSet(StringComparer.Ordinal);
         var blocklist = StringArray(body, "tool_blocklist", required: false).ToHashSet(StringComparer.Ordinal);
         var projectId = OptionalString(body, "project_id");
+        var projectName = OptionalString(body, "project_name");
         var scope = ResolveScope(request, permissionSnapshot);
 
         var enabled = (await pluginManagement.ListAsync(cancellationToken).ConfigureAwait(false))
@@ -147,6 +148,7 @@ internal sealed class PluginRelayHandler(
                 ?? throw new PluginRuntimeException("Plugin Connector device is unavailable."),
             scope.WorkspaceId,
             projectId,
+            projectName,
             cancellationToken).ConfigureAwait(false);
         var client = clientFactory.Create(launch);
         try

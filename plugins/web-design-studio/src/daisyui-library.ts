@@ -1,5 +1,6 @@
 import { applyUiComponentVariant, createUiLibraryComponent, defineUiComponent, variantsForUiComponent, type UiComponentDefinition, type UiComponentVariant, type UiLibraryCatalog } from './ui-library.js';
 import type { WebComponentType, WebDesignJsonValue } from './schema.js';
+import { DAISYUI_OFFICIAL_COMPONENT_VARIANTS } from './daisyui-registry.generated.js';
 
 export const DAISYUI_VERSION = '5.7.28';
 export const DAISYUI_LICENSE = 'MIT';
@@ -93,62 +94,6 @@ const seeds: DaisySeed[] = [
 const orderedSeeds = DAISYUI_CATEGORIES.flatMap((category) => seeds.filter((seed) => seed.category === category));
 export const DAISYUI_COMPONENT_SLUGS = orderedSeeds.map((seed) => seed.slug);
 
-function modeVariants(...items: Array<[string, string, string, string?]>): UiComponentVariant[] {
-  return items.map(([id, label, mode, className = '']) => ({ id, label, props: { mode, className } }));
-}
-
-const commonTone = () => modeVariants(['primary', '主色', 'primary', 'primary'], ['outline', '描边', 'outline', 'outline'], ['neutral', '中性色', 'neutral', 'neutral']);
-const defaultExample = () => modeVariants(['standard', '标准示例', 'standard']);
-
-const variantOverrides: Record<string, UiComponentVariant[]> = {
-  Accordion: modeVariants(['radio', '单项展开', 'radio', 'arrow'], ['arrow', '箭头折叠', 'arrow', 'arrow'], ['plus', '加号折叠', 'plus', 'plus']),
-  Alert: modeVariants(['info', '信息提示', 'info', 'alert-info'], ['success', '成功提示', 'success', 'alert-success'], ['warning', '警告提示', 'warning', 'alert-warning'], ['error', '错误提示', 'error', 'alert-error']),
-  Avatar: modeVariants(['single', '单头像', 'single'], ['ring', '带状态环', 'ring'], ['group', '头像组', 'group'], ['placeholder', '文字占位', 'placeholder']),
-  Badge: modeVariants(['primary', '主色徽章', 'primary', 'badge-primary'], ['outline', '描边徽章', 'outline', 'badge-outline'], ['soft', '柔和徽章', 'soft', 'badge-soft'], ['dash', '虚线徽章', 'dash', 'badge-dash']),
-  Button: modeVariants(['primary', '主按钮', 'primary', 'btn-primary'], ['secondary', '次按钮', 'secondary', 'btn-secondary'], ['outline', '描边按钮', 'outline', 'btn-outline'], ['soft', '柔和按钮', 'soft', 'btn-soft'], ['dash', '虚线按钮', 'dash', 'btn-dash'], ['wide', '宽按钮', 'wide', 'btn-wide']),
-  Card: modeVariants(['body', '基础卡片', 'body'], ['image', '图片卡片', 'image', 'image-full'], ['side', '横向卡片', 'side', 'card-side'], ['compact', '紧凑卡片', 'compact', 'card-sm']),
-  Carousel: modeVariants(['snap', '横向吸附', 'snap'], ['center', '居中轮播', 'center'], ['full', '全宽轮播', 'full']),
-  Checkbox: modeVariants(['primary', '主色复选', 'primary', 'checkbox-primary'], ['success', '成功复选', 'success', 'checkbox-success'], ['indeterminate', '半选状态', 'indeterminate'], ['list', '多选清单', 'list']),
-  Diff: modeVariants(['slider', '拖动对比', 'slider'], ['split', '左右分栏', 'split'], ['stacked', '上下审阅', 'stacked']),
-  Divider: modeVariants(['horizontal', '水平分隔', 'horizontal'], ['labeled', '带文字', 'labeled'], ['vertical', '垂直分隔', 'vertical']),
-  Drawer: modeVariants(['left', '左侧抽屉', 'left'], ['right', '右侧抽屉', 'right', 'drawer-end'], ['navigation', '导航抽屉', 'navigation']),
-  Dropdown: modeVariants(['menu', '基础菜单', 'menu'], ['hover', '悬停菜单', 'hover', 'dropdown-hover'], ['end', '右对齐菜单', 'end', 'dropdown-end']),
-  Fab: modeVariants(['single', '单按钮', 'single'], ['speed', '纵向 Speed Dial', 'speed'], ['flower', '花瓣操作组', 'flower']),
-  FileInput: modeVariants(['bordered', '标准上传', 'bordered', 'file-input-bordered'], ['primary', '主色上传', 'primary', 'file-input-primary'], ['ghost', '透明上传', 'ghost', 'file-input-ghost']),
-  Filter: modeVariants(['chips', '胶囊筛选', 'chips'], ['toolbar', '工具栏筛选', 'toolbar'], ['vertical', '纵向筛选', 'vertical']),
-  Hover3D: modeVariants(['product', '产品卡片', 'product'], ['poster', '海报卡片', 'poster'], ['metric', '指标卡片', 'metric']),
-  HoverGallery: modeVariants(['product', '商品画廊', 'product'], ['portfolio', '作品集画廊', 'portfolio'], ['editorial', '杂志画廊', 'editorial']),
-  Input: modeVariants(['bordered', '标准输入', 'bordered', 'input-bordered'], ['ghost', '透明输入', 'ghost', 'input-ghost'], ['error', '错误状态', 'error', 'input-error'], ['search', '搜索输入', 'search']),
-  Loading: modeVariants(['spinner', '旋转加载', 'spinner', 'loading-spinner'], ['dots', '点状加载', 'dots', 'loading-dots'], ['bars', '条形加载', 'bars', 'loading-bars'], ['ring', '环形加载', 'ring', 'loading-ring']),
-  Mask: modeVariants(['squircle', '圆方形', 'squircle', 'mask-squircle'], ['hexagon', '六边形', 'hexagon', 'mask-hexagon'], ['heart', '心形', 'heart', 'mask-heart'], ['star', '星形', 'star', 'mask-star']),
-  Modal: modeVariants(['dialog', '居中对话框', 'dialog'], ['bottom', '底部弹窗', 'bottom', 'modal-bottom'], ['sheet', '全宽面板', 'sheet']),
-  MockupBrowser: modeVariants(['website', '网站预览', 'website'], ['dashboard', '仪表盘预览', 'dashboard'], ['code', '开发预览', 'code']),
-  MockupCode: modeVariants(['terminal', '终端输出', 'terminal'], ['diff', '代码差异', 'diff'], ['install', '安装命令', 'install']),
-  MockupPhone: modeVariants(['app', '移动应用', 'app'], ['commerce', '电商应用', 'commerce'], ['social', '社交应用', 'social']),
-  MockupWindow: modeVariants(['canvas', '设计画布', 'canvas'], ['analytics', '数据窗口', 'analytics'], ['editor', '编辑器窗口', 'editor']),
-  Otp: modeVariants(['six', '六位验证码', 'six'], ['four', '四位验证码', 'four'], ['masked', '安全验证码', 'masked']),
-  Progress: modeVariants(['primary', '主色进度', 'primary', 'progress-primary'], ['success', '成功进度', 'success', 'progress-success'], ['steps', '分段进度', 'steps']),
-  RadialProgress: modeVariants(['primary', '主色环形', 'primary'], ['thick', '粗环形', 'thick'], ['metric', '指标环形', 'metric']),
-  Range: modeVariants(['primary', '主色滑块', 'primary', 'range-primary'], ['steps', '带刻度滑块', 'steps'], ['dual', '区间展示', 'dual']),
-  Rating: modeVariants(['stars', '星级评分', 'stars'], ['hearts', '心形评分', 'hearts', 'mask-heart'], ['half', '半星评分', 'half']),
-  Select: modeVariants(['bordered', '标准选择', 'bordered', 'select-bordered'], ['ghost', '透明选择', 'ghost', 'select-ghost'], ['error', '错误状态', 'error', 'select-error'], ['grouped', '分组选择', 'grouped']),
-  Steps: modeVariants(['horizontal', '横向步骤', 'horizontal'], ['vertical', '纵向步骤', 'vertical', 'steps-vertical'], ['progress', '状态步骤', 'progress']),
-  Tab: modeVariants(['border', '边框标签', 'border', 'tabs-border'], ['lift', '凸起标签', 'lift', 'tabs-lift'], ['box', '盒式标签', 'box', 'tabs-box']),
-  Table: modeVariants(['zebra', '斑马纹表格', 'zebra', 'table-zebra'], ['pinned', '固定表头', 'pinned', 'table-pin-rows'], ['compact', '紧凑表格', 'compact', 'table-sm']),
-  TextRotate: modeVariants(['inline', '行内轮换', 'inline'], ['hero', '主视觉轮换', 'hero'], ['badge', '徽章轮换', 'badge']),
-  ThemeController: modeVariants(['toggle', '开关主题', 'toggle'], ['buttons', '按钮主题', 'buttons'], ['cards', '主题卡片', 'cards']),
-  Timeline: modeVariants(['horizontal', '横向时间轴', 'horizontal'], ['vertical', '纵向时间轴', 'vertical', 'timeline-vertical'], ['compact', '紧凑记录', 'compact']),
-  Toast: modeVariants(['end', '右下通知', 'end', 'toast-end'], ['center', '顶部居中', 'center', 'toast-center toast-top'], ['stack', '通知堆叠', 'stack']),
-  Tooltip: modeVariants(['top', '顶部提示', 'top', 'tooltip-top'], ['right', '右侧提示', 'right', 'tooltip-right'], ['open', '常显提示', 'open', 'tooltip-open']),
-  Validator: modeVariants(['error', '错误校验', 'error'], ['success', '成功校验', 'success'], ['password', '密码规则', 'password'])
-};
-
-function variantsForSeed(seed: DaisySeed): UiComponentVariant[] {
-  if (variantOverrides[seed.id]) return variantOverrides[seed.id];
-  if (['button', 'badge', 'link', 'status', 'toggle', 'radio'].includes(seed.family)) return commonTone();
-  return defaultExample();
-}
-
 export const DAISYUI_COMPONENTS: UiComponentDefinition<DaisyUiCategory>[] = orderedSeeds.map((seed) => ({
   ...defineUiComponent(
     seed.id,
@@ -171,7 +116,10 @@ export const DAISYUI_COMPONENTS: UiComponentDefinition<DaisyUiCategory>[] = orde
   docsUrl: `https://daisyui.com/components/${seed.slug}/`
 }));
 
-export const DAISYUI_COMPONENT_VARIANTS: Record<string, UiComponentVariant[]> = Object.fromEntries(orderedSeeds.map((seed) => [seed.id, variantsForSeed(seed)]));
+export const DAISYUI_COMPONENT_VARIANTS: Record<string, UiComponentVariant[]> = Object.fromEntries(orderedSeeds.map((seed) => [
+  seed.id,
+  ((DAISYUI_OFFICIAL_COMPONENT_VARIANTS as Record<string, readonly UiComponentVariant[]>)[seed.id] ?? []).map((variant) => ({ ...variant, props: { ...variant.props } }))
+]));
 
 export const DAISYUI_LIBRARY: UiLibraryCatalog<DaisyUiCategory> = {
   id: 'daisyui',

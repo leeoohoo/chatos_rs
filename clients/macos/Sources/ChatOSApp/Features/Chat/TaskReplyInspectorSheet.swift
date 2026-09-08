@@ -84,10 +84,7 @@ struct TaskReplyInspectorContent: View {
                 switch viewModel.section {
                 case .process:
                     TaskProcessTimelineView(
-                        items: TaskProcessTimelineBuilder.build(
-                            processLog: task.processLog,
-                            taskStatus: task.status
-                        ),
+                        items: viewModel.processTimelineItems,
                         allowsTextSelection: false
                     )
                 case .detail:
