@@ -33,6 +33,13 @@ function DiamondHandles() {
   </>;
 }
 
+function MindMapHandles() {
+  return <>
+    <Handle type="source" position={Position.Left} id="left" />
+    <Handle type="source" position={Position.Right} id="right" />
+  </>;
+}
+
 export function DiagramNodeView({ data, selected }: NodeProps<DiagramNode>) {
   const style = {
     '--node-accent': data.color ?? '#4E7CC7',
@@ -41,6 +48,7 @@ export function DiagramNodeView({ data, selected }: NodeProps<DiagramNode>) {
     '--node-border-color': data.borderColor ?? data.color ?? '#4E7CC7',
     '--node-border-style': data.borderStyle ?? 'solid',
     '--node-border-width': `${data.borderWidth ?? 1}px`,
+    '--node-text-color': data.textColor ?? 'var(--text)',
     '--node-font-size': `${data.fontSize ?? (data.shape === 'text' ? 16 : 14)}px`,
     '--node-font-weight': data.fontWeight ?? (data.shape === 'text' ? 500 : 650)
   } as React.CSSProperties;
@@ -106,6 +114,21 @@ export function DiagramNodeView({ data, selected }: NodeProps<DiagramNode>) {
         <span>{data.label || 'alt'}</span>
       </div>
     );
+  }
+
+  if (data.shape === 'mindmap-root' || data.shape === 'mindmap-topic') {
+    const childCount = typeof data.mindmapChildCount === 'number' ? data.mindmapChildCount : 0;
+    const toggleCollapse = typeof data.onMindMapToggleCollapse === 'function'
+      ? data.onMindMapToggleCollapse as () => void
+      : undefined;
+    return <div className={`mindmap-node ${data.shape === 'mindmap-root' ? 'root' : 'topic'} ${selected ? 'selected' : ''}`} style={style}>
+      {resizer}
+      <MindMapHandles />
+      <strong>{data.label || (data.shape === 'mindmap-root' ? '中心主题' : '分支主题')}</strong>
+      {childCount > 0 && <button className="mindmap-collapse nodrag nopan" onClick={(event) => { event.stopPropagation(); toggleCollapse?.(); }} aria-label={data.mindmapCollapsed ? '展开分支' : '折叠分支'} title={data.mindmapCollapsed ? `展开 ${childCount} 个子主题` : `折叠 ${childCount} 个子主题`}>
+        {data.mindmapCollapsed ? childCount : '−'}
+      </button>}
+    </div>;
   }
 
   if (data.icon && data.showLabel === false) {

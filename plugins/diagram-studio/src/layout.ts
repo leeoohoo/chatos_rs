@@ -1,6 +1,7 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ElkNode } from 'elkjs/lib/elk-api.js';
 import type { DiagramDocument, DiagramEdge, DiagramNode } from './schema.js';
+import { layoutMindMap, mindMapNodeSize } from './mindmap.js';
 
 const elk = new ELK();
 
@@ -10,6 +11,7 @@ function nodeSize(node: DiagramNode): { width: number; height: number } {
   if (node.data.shape === 'activation') return { width: 14, height: 120 };
   if (node.data.shape === 'fragment') return { width: 620, height: 220 };
   if (node.data.shape === 'container') return { width: 300, height: 180 };
+  if (node.data.shape === 'mindmap-root' || node.data.shape === 'mindmap-topic') return mindMapNodeSize(node);
   if (node.data.icon && node.data.showLabel === false) return { width: 72, height: 72 };
   if (node.data.shape === 'diamond') return { width: 150, height: 110 };
   if (node.data.shape === 'circle') return { width: 116, height: 116 };
@@ -23,6 +25,7 @@ export async function layoutDiagram(
   direction?: 'RIGHT' | 'DOWN'
 ): Promise<DiagramDocument> {
   const next = structuredClone(document);
+  if (document.kind === 'mindmap') return layoutMindMap(next);
   if (document.kind === 'sequence') {
     const lifelines = next.nodes
       .filter((node) => node.data.shape === 'lifeline')

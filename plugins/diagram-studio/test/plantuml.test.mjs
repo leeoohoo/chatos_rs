@@ -4,11 +4,11 @@ import { createTemplate } from '../dist/test-helpers.mjs';
 import { detectPlantUmlDiagramKind, diagramToPlantUml, parsePlantUmlActivity, parsePlantUmlSequence, parsePlantUmlStructural, plantUmlToDiagram } from '../dist/plantuml.test.mjs';
 
 test('blank supported diagrams can open PlantUML and round-trip without placeholder nodes', () => {
-  for (const kind of ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence']) {
+  for (const kind of ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence', 'mindmap']) {
     const template = createTemplate(kind);
     const original = { ...template, title: `空白${kind}`, nodes: [], edges: [] };
     const source = diagramToPlantUml(original);
-    assert.match(source, /^@startuml/m);
+    assert.match(source, /^@start(?:uml|mindmap)/m);
     assert.match(source, /@diagram-studio-layout/);
 
     const restored = plantUmlToDiagram(source, { documentId: `${kind}-blank`, kind });

@@ -120,6 +120,16 @@ const paletteByKind: Record<DiagramKind, PaletteSection[]> = {
       { id: 'seq-note', label: '注释', category: 'note', shape: 'rounded', icon: 'note', color: '#8D96A6' },
       textItem
     ] }
+  ],
+  mindmap: [
+    { title: '思维导图结构', items: [
+      { id: 'mindmap-root', label: '中心主题', category: 'mindmap', shape: 'mindmap-root', color: '#5D6FCD', fillColor: '#5D6FCD', width: 200, height: 64, showLabel: true },
+      { id: 'mindmap-topic', label: '分支主题', category: 'mindmap', shape: 'mindmap-topic', color: '#4E7CC7', width: 150, height: 46, showLabel: true }
+    ] },
+    { title: '补充信息', items: [
+      textItem,
+      { id: 'mindmap-note', label: '备注', category: 'note', shape: 'rounded', icon: 'note', color: '#8D96A6', showLabel: true }
+    ] }
   ]
 };
 
@@ -168,6 +178,11 @@ export function TemplateSidebar({
           </div>
           <p className="sequence-help">选择消息类型，可从生命线任意高度拖出连线。参与者名称和图标可在检查器修改。</p>
         </section>}
+        {diagramKind === 'mindmap' && <section>
+          <div className="section-label">快速操作</div>
+          <div className="mindmap-shortcuts"><span><kbd>Tab</kbd> 子主题</span><span><kbd>Enter</kbd> 同级主题</span></div>
+          <p className="sequence-help">双击主题修改文字。选择主题后可快速扩展分支；折叠按钮只隐藏该分支，不删除内容。</p>
+        </section>}
         {visibleSections.map((section) => (
           <section key={section.title}>
             <div className="section-label">{section.title}</div>
@@ -185,6 +200,7 @@ export function TemplateSidebar({
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
+                      event.stopPropagation();
                       onAddNode(item);
                     }
                   }}
@@ -200,6 +216,8 @@ export function TemplateSidebar({
                           ? <span className="palette-fragment"><i>alt</i></span>
                           : item.icon
                             ? <Icon name={item.icon} />
+                            : item.shape === 'mindmap-root' || item.shape === 'mindmap-topic'
+                              ? <span className={`palette-mindmap ${item.shape === 'mindmap-root' ? 'root' : ''}`} />
                             : item.shape === 'text'
                               ? <span className="palette-text-symbol">T</span>
                               : item.shape === 'lane'
@@ -225,5 +243,6 @@ function kindName(kind: DiagramKind): string {
     case 'swimlane': return '泳道图';
     case 'topology': return '拓扑图';
     case 'sequence': return '时序图';
+    case 'mindmap': return '思维导图';
   }
 }

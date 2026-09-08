@@ -45,26 +45,33 @@ export function Inspector({
             <label>说明<textarea rows={4} value={node.data.description ?? ''} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, description: event.target.value } })} /></label>
           </FormSection>
           <FormSection title="样式">
-            {node.data.shape !== 'lifeline' && <label>类别<select value={node.data.category} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, category: event.target.value as DiagramNodeCategory } })}>
+            {node.data.shape === 'mindmap-topic' && <label>分支方向<select value={node.data.mindmapSide ?? 'right'} onChange={(event) => {
+              const mindmapSide = event.target.value as 'left' | 'right';
+              const color = mindmapSide === 'left' ? '#7967D8' : '#4E7CC7';
+              onUpdateNode({ ...node, data: { ...node.data, mindmapSide, color, borderColor: color } });
+            }}>
+              <option value="right">右侧</option><option value="left">左侧</option>
+            </select></label>}
+            {node.data.shape !== 'lifeline' && node.data.shape !== 'mindmap-root' && node.data.shape !== 'mindmap-topic' && <label>类别<select value={node.data.category} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, category: event.target.value as DiagramNodeCategory } })}>
               <option value="client">客户端</option><option value="service">服务</option><option value="database">数据库</option>
               <option value="queue">消息队列</option><option value="network">网络节点</option><option value="external">外部系统</option>
               <option value="process">流程步骤</option><option value="decision">判断</option><option value="terminal">开始 / 结束</option><option value="note">说明 / 文档</option>
               <option value="lane">泳道 / 参与者</option>
             </select></label>}
-            <label>形状<select value={node.data.shape} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, shape: event.target.value as DiagramNodeShape } })}>
+            {node.data.shape !== 'mindmap-root' && node.data.shape !== 'mindmap-topic' && <label>形状<select value={node.data.shape} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, shape: event.target.value as DiagramNodeShape } })}>
               <option value="rounded">圆角矩形</option><option value="rectangle">矩形</option><option value="circle">圆形</option>
               <option value="diamond">菱形</option><option value="cylinder">数据库</option><option value="text">纯文本</option>
               <option value="lane">泳道</option><option value="lifeline">参与者生命线</option><option value="activation">激活条</option><option value="fragment">组合片段</option>
-            </select></label>
-            <label>图标<select value={node.data.icon ?? ''} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, icon: (event.target.value || undefined) as DiagramNodeIcon | undefined } })}>
+            </select></label>}
+            {node.data.shape !== 'mindmap-root' && node.data.shape !== 'mindmap-topic' && <label>图标<select value={node.data.icon ?? ''} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, icon: (event.target.value || undefined) as DiagramNodeIcon | undefined } })}>
               <option value="">无图标</option><option value="user">用户</option><option value="terminal">桌面终端</option><option value="mobile">移动终端</option>
               <option value="browser">浏览器</option><option value="server">服务器</option><option value="api">API</option><option value="cloud">云服务</option>
               <option value="database">数据库</option><option value="cache">缓存</option><option value="storage">对象存储</option><option value="queue">消息队列</option>
               <option value="network">网络</option><option value="shield">安全</option><option value="container">容器</option><option value="cluster">集群</option>
               <option value="monitor">监控</option><option value="document">文档</option><option value="note">备注</option>
-            </select></label>
+            </select></label>}
             {(node.data.shape === 'text' || node.data.showLabel !== false) && <label>字号<select value={String(node.data.fontSize ?? (node.data.shape === 'text' ? 16 : 14))} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, fontSize: Number(event.target.value) } })}>
-              <option value="12">12</option><option value="14">14</option><option value="16">16</option><option value="20">20</option><option value="24">24</option><option value="32">32</option>
+              <option value="12">12</option><option value="14">14</option><option value="16">16</option><option value="17">17</option><option value="20">20</option><option value="24">24</option><option value="32">32</option>
             </select></label>}
             {node.data.shape !== 'text' && <label className="checkbox-row"><input type="checkbox" checked={node.data.showLabel !== false} onChange={(event) => onUpdateNode({ ...node, data: { ...node.data, showLabel: event.target.checked } })} />在图形内显示名称</label>}
             {node.data.shape !== 'text' && <LineStylePicker label="边框样式" value={node.data.borderStyle ?? 'solid'} includeNone onChange={(borderStyle) => onUpdateNode({ ...node, data: { ...node.data, borderStyle } })} />}

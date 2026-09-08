@@ -364,11 +364,15 @@ export function inspectGenerationContract(
 ): GenerationContractIssue[] {
   const primaryItems = document.kind === 'sequence'
     ? document.nodes.filter((node) => node.data.shape === 'lifeline').length
+    : document.kind === 'mindmap'
+      ? document.nodes.filter((node) => node.data.shape === 'mindmap-root' || node.data.shape === 'mindmap-topic').length
     : document.nodes.filter((node) => !['container', 'lane', 'activation', 'fragment', 'text'].includes(node.data.shape)).length;
   const structureItems = document.kind === 'sequence'
     ? document.nodes.filter((node) => node.data.shape === 'lifeline').length
     : document.kind === 'swimlane'
       ? document.nodes.filter((node) => node.data.shape === 'lane').length
+      : document.kind === 'mindmap'
+        ? document.edges.filter((edge) => document.nodes.some((node) => node.id === edge.source && node.data.shape === 'mindmap-root')).length
       : document.kind === 'architecture' || document.kind === 'topology'
         ? document.nodes.filter((node) => node.data.shape === 'container').length
         : undefined;
