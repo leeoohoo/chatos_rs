@@ -123,18 +123,23 @@ public actor ChatOSRealtimeClient: ConversationRealtimeStreaming, PetActivityStr
         let socket = session.webSocketTask(with: url)
         socket.resume()
         let heartbeat = Self.startHeartbeat(for: socket)
-        let reconciliation = Self.startConversationReconciliation(
-            sessionID: sessionID,
-            continuation: continuation
-        )
         defer {
             heartbeat.cancel()
-            reconciliation.cancel()
             socket.cancel(with: .goingAway, reason: nil)
         }
 
         try await socket.send(.string(Self.subscriptionMessage(sessionID: sessionID)))
+        try await Self.awaitConversationSubscriptionAcknowledgement(
+            from: socket,
+            sessionID: sessionID,
+            continuation: continuation
+        )
         continuation.yield(Self.reconcileSignal(sessionID: sessionID))
+        let reconciliation = Self.startConversationReconciliation(
+            sessionID: sessionID,
+            continuation: continuation
+        )
+        defer { reconciliation.cancel() }
 
         while !Task.isCancelled {
             let message = try await socket.receive()
@@ -143,6 +148,32 @@ public actor ChatOSRealtimeClient: ConversationRealtimeStreaming, PetActivityStr
                 continuation.yield(signal)
             }
         }
+    }
+
+    private static func awaitConversationSubscriptionAcknowledgement(
+        from socket: URLSessionWebSocketTask,
+        sessionID: String,
+        continuation: AsyncThrowingStream<ConversationRealtimeSignal, Error>.Continuation
+    ) async throws {
+        while !Task.isCancelled {
+            let message = try await socket.receive()
+            guard let data = message.data else { continue }
+            if isSubscriptionAcknowledgement(data) {
+                return
+            }
+            if let signal = try decodeSignal(data, sessionID: sessionID) {
+                continuation.yield(signal)
+            }
+        }
+        throw CancellationError()
+    }
+
+    static func isSubscriptionAcknowledgement(_ data: Data) -> Bool {
+        guard let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return value["type"] as? String == "ack"
+            && value["acked"] as? String == "subscribe"
     }
 
     private static func subscriptionMessage(sessionID: String) -> String {

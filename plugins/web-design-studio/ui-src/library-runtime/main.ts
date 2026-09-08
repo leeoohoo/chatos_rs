@@ -1,5 +1,5 @@
 import type { LibraryRuntimeAdapter, MountedLibraryComponent } from './types';
-import { applyPreviewElementContent, isolatePreviewElement, libraryPreviewSelection, LIBRARY_PREVIEW_POINTER_EVENT, resolvePreviewElement, type LibraryPreviewPointerEvent } from './element-selection';
+import { applyPreviewElementContent, isolatePreviewElement, libraryPreviewSelection, resolvePreviewElement, type LibraryPreviewPointerEvent } from './element-selection';
 import { installRuntimePreviewPicker } from './preview-picker';
 import './runtime.css';
 
@@ -32,9 +32,7 @@ function emit(event: string, detail?: unknown) {
 }
 
 function emitPreviewPointerEvent(state: LibraryPreviewPointerEvent) {
-  window.parent.dispatchEvent(new CustomEvent(LIBRARY_PREVIEW_POINTER_EVENT, {
-    detail: { instance, state }
-  }));
+  emit('preview-pointer', state);
 }
 
 function reportContentSize() {

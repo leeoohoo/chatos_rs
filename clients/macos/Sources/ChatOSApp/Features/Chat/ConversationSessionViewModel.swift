@@ -4,6 +4,16 @@ import Foundation
 @MainActor
 final class ConversationSessionViewModel: ObservableObject {
     private static let historyPageSize = 10
+    private static let realtimeRefreshDebounce: Duration = .milliseconds(250)
+
+    private enum LatestRefreshPresentation: Equatable {
+        case silent
+        case visible
+
+        func merged(with other: Self) -> Self {
+            self == .visible || other == .visible ? .visible : .silent
+        }
+    }
 
     let sessionID: String
     @Published var allowsPlanMode: Bool
@@ -46,8 +56,11 @@ final class ConversationSessionViewModel: ObservableObject {
     private var inFlightOlderCursor: String?
     private var realtimeTask: Task<Void, Never>?
     private var historyRetryTask: Task<Void, Never>?
+    private var latestRefreshDebounceTask: Task<Void, Never>?
+    private var latestRefreshDebouncePresentation: LatestRefreshPresentation?
     private var historyRetryAttempt = 0
-    private var latestRefreshPending = false
+    private var latestRefreshInFlight = false
+    private var latestRefreshPending: LatestRefreshPresentation?
     private var viewportUpdateGeneration: Int64 = 0
     private var taskGraphAvailabilityTasks: [String: Task<Void, Never>] = [:]
     private var taskGraphAvailabilityRevisions: [String: Int64] = [:]
@@ -86,6 +99,7 @@ final class ConversationSessionViewModel: ObservableObject {
     deinit {
         realtimeTask?.cancel()
         historyRetryTask?.cancel()
+        latestRefreshDebounceTask?.cancel()
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
     }
 
@@ -93,25 +107,70 @@ final class ConversationSessionViewModel: ObservableObject {
         historyRetryTask?.cancel()
         historyRetryTask = nil
         historyRetryAttempt = 0
-        refreshLatest(isAutomaticRetry: false)
+        enqueueLatestRefresh(presentation: .visible, debounce: false)
     }
 
     func activate() {
-        refreshLatest()
+        refreshLatestSilently()
         startRealtime()
     }
 
-    private func refreshLatest(isAutomaticRetry: Bool) {
+    func refreshLatestSilently() {
+        enqueueLatestRefresh(presentation: .silent, debounce: true)
+    }
+
+    private func enqueueLatestRefresh(
+        presentation: LatestRefreshPresentation,
+        debounce: Bool
+    ) {
         guard let remoteService else { return }
-        guard !isRefreshing else {
-            latestRefreshPending = true
+
+        if debounce {
+            let scheduledPresentation = latestRefreshDebouncePresentation?
+                .merged(with: presentation) ?? presentation
+            latestRefreshDebouncePresentation = scheduledPresentation
+            latestRefreshDebounceTask?.cancel()
+            latestRefreshDebounceTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: Self.realtimeRefreshDebounce)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, let self else { return }
+                self.latestRefreshDebounceTask = nil
+                self.latestRefreshDebouncePresentation = nil
+                self.performLatestRefresh(
+                    using: remoteService,
+                    presentation: scheduledPresentation
+                )
+            }
             return
         }
-        latestRefreshPending = false
+
+        latestRefreshDebounceTask?.cancel()
+        latestRefreshDebounceTask = nil
+        latestRefreshDebouncePresentation = nil
+        performLatestRefresh(using: remoteService, presentation: presentation)
+    }
+
+    private func performLatestRefresh(
+        using remoteService: any ConversationRemoteServicing,
+        presentation: LatestRefreshPresentation
+    ) {
+        guard !latestRefreshInFlight else {
+            latestRefreshPending = latestRefreshPending?
+                .merged(with: presentation) ?? presentation
+            return
+        }
+
+        latestRefreshInFlight = true
+        latestRefreshPending = nil
         requestGeneration += 1
         let generation = requestGeneration
-        isRefreshing = true
-        historyError = nil
+        if presentation == .visible {
+            isRefreshing = true
+            historyError = nil
+        }
 
         Task {
             do {
@@ -124,17 +183,25 @@ final class ConversationSessionViewModel: ObservableObject {
                 )
                 await historyStore.mergePage(page, sessionID: sessionID, origin: .latest)
                 await refreshSnapshot()
+                if historyError != nil {
+                    historyError = nil
+                }
                 historyRetryAttempt = 0
                 historyRetryTask?.cancel()
                 historyRetryTask = nil
             } catch {
-                historyError = error.localizedDescription
+                if historyError != error.localizedDescription {
+                    historyError = error.localizedDescription
+                }
                 scheduleHistoryRetry()
             }
-            isRefreshing = false
-            if latestRefreshPending {
-                latestRefreshPending = false
-                refreshLatest(isAutomaticRetry: false)
+            if presentation == .visible {
+                isRefreshing = false
+            }
+            latestRefreshInFlight = false
+            if let pending = latestRefreshPending {
+                latestRefreshPending = nil
+                enqueueLatestRefresh(presentation: pending, debounce: true)
             }
         }
     }
@@ -153,7 +220,7 @@ final class ConversationSessionViewModel: ObservableObject {
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self else { return }
             self.historyRetryTask = nil
-            self.refreshLatest(isAutomaticRetry: true)
+            self.enqueueLatestRefresh(presentation: .silent, debounce: false)
         }
     }
 
@@ -410,9 +477,9 @@ final class ConversationSessionViewModel: ObservableObject {
                         self.sendError = signal.processUpdate?.detail?.trimmingCharacters(
                             in: .whitespacesAndNewlines
                         ).nonEmptyValue ?? "AI 处理失败，请检查模型配置后重试。"
-                        self.refreshLatest()
+                        self.refreshLatestSilently()
                     case .reconcile, .persisted, .completed, .cancelled:
-                        self.refreshLatest()
+                        self.refreshLatestSilently()
                     case .started, .updated, .unknown:
                         break
                     }
@@ -426,11 +493,17 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func refreshSnapshot() async {
         let snapshot = await historyStore.snapshot(sessionID: sessionID)
-        turns = snapshot.turns
+        if turns != snapshot.turns {
+            turns = snapshot.turns
+        }
         preloadTaskGraphAvailability(for: snapshot.turns)
         olderCursor = snapshot.olderCursor
-        hasOlder = snapshot.hasOlder
-        unreadNewerCount = snapshot.unreadNewerCount
+        if hasOlder != snapshot.hasOlder {
+            hasOlder = snapshot.hasOlder
+        }
+        if unreadNewerCount != snapshot.unreadNewerCount {
+            unreadNewerCount = snapshot.unreadNewerCount
+        }
     }
 
     private func preloadTaskGraphAvailability(for turns: [ConversationTurn]) {

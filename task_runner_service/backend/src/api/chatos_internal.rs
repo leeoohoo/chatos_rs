@@ -424,17 +424,28 @@ async fn get_chatos_message_run(
         .await
         .map_err(InternalApiError::internal)?
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
-    let task = state
-        .task_service
-        .get_message_task_detail_for_chatos_source(
-            run.task_id.as_str(),
-            source_session_id,
-            source_user_message_id,
-            source_turn_id,
-        )
-        .await
-        .map_err(InternalApiError::internal)?
-        .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
+    let task_future = async {
+        state
+            .task_service
+            .get_message_task_detail_for_chatos_run_source(
+                &run,
+                source_session_id,
+                source_user_message_id,
+                source_turn_id,
+            )
+            .await
+            .map_err(InternalApiError::internal)?
+            .ok_or_else(|| InternalApiError::not_found("run not found for message"))
+    };
+    let model_config_future = async {
+        state
+            .model_config_service
+            .get_model_config(run.model_config_id.as_str())
+            .await
+            .map_err(InternalApiError::internal)
+            .map(|model| model.map(ChatosMessageModelConfigSummary::from))
+    };
+    let (task, model_config) = tokio::try_join!(task_future, model_config_future)?;
     let (events, events_total, events_has_more) = if query.include_events.unwrap_or(true) {
         let events = state
             .run_service
@@ -451,12 +462,6 @@ async fn get_chatos_message_run(
     } else {
         (Vec::new(), 0, false)
     };
-    let model_config = state
-        .model_config_service
-        .get_model_config(run.model_config_id.as_str())
-        .await
-        .map_err(InternalApiError::internal)?
-        .map(ChatosMessageModelConfigSummary::from);
     Ok(Json(redact_workspace_paths_internal(
         &state,
         ChatosMessageRunDetail {
@@ -738,7 +743,7 @@ async fn require_chatos_message_run(
         .ok_or_else(|| InternalApiError::not_found("run not found for message"))?;
     state
         .task_service
-        .get_message_task_detail_for_chatos_source(
+        .get_task_for_chatos_source(
             run.task_id.as_str(),
             source_session_id,
             source_user_message_id,

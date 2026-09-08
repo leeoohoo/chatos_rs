@@ -40,7 +40,7 @@ extension ConversationSessionViewModel {
                         attachments: attachments
                     )
                 )
-                refreshLatest()
+                refreshLatestSilently()
             } catch ConversationCommandError.guidanceTargetInactive {
                 sendNewTurn(text, attachments: attachments, using: service)
                 return
@@ -82,7 +82,7 @@ extension ConversationSessionViewModel {
                         planModeEnabled: allowsPlanMode && planModeEnabled
                     )
                 )
-                refreshLatest()
+                refreshLatestSilently()
             } catch {
                 await historyStore.discardOptimisticTurn(sessionID: sessionID, turnID: turn.id)
                 await refreshSnapshot()

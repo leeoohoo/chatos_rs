@@ -322,12 +322,38 @@ impl TaskService {
         else {
             return Ok(None);
         };
-        self.build_chatos_message_task_detail(task).await.map(Some)
+        self.build_chatos_message_task_detail(task, None)
+            .await
+            .map(Some)
+    }
+
+    pub async fn get_message_task_detail_for_chatos_run_source(
+        &self,
+        run: &TaskRunRecord,
+        source_session_id: &str,
+        source_user_message_id: Option<&str>,
+        source_turn_id: Option<&str>,
+    ) -> Result<Option<ChatosMessageTaskDetail>, String> {
+        let Some(task) = self
+            .get_task_for_chatos_source(
+                run.task_id.as_str(),
+                source_session_id,
+                source_user_message_id,
+                source_turn_id,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        self.build_chatos_message_task_detail(task, Some(run))
+            .await
+            .map(Some)
     }
 
     async fn build_chatos_message_task_detail(
         &self,
         task: TaskRecord,
+        known_run: Option<&TaskRunRecord>,
     ) -> Result<ChatosMessageTaskDetail, String> {
         let default_model_config_id = task.default_model_config_id.clone();
         let last_run_id = task.last_run_id.clone();
@@ -335,21 +361,23 @@ impl TaskService {
         let source_run_id = task.source_run_id.clone();
         let prerequisite_task_ids = task.prerequisite_task_ids.clone();
 
-        let default_model_config = self
-            .chatos_model_config_summary_for_id(default_model_config_id.as_deref())
-            .await?;
-        let last_run = self
-            .chatos_run_summary_for_id(last_run_id.as_deref())
-            .await?;
-        let parent_task = self
-            .chatos_task_summary_for_id(parent_task_id.as_deref())
-            .await?;
-        let source_run = self
-            .chatos_run_summary_for_id(source_run_id.as_deref())
-            .await?;
-        let prerequisite_tasks = self
-            .chatos_task_summaries_in_id_order(&prerequisite_task_ids)
-            .await?;
+        let known_last_run = known_run
+            .filter(|run| last_run_id.as_deref() == Some(run.id.as_str()))
+            .cloned()
+            .map(ChatosMessageTaskRunSummary::from);
+        let last_run_future = async {
+            match known_last_run {
+                Some(run) => Ok(Some(run)),
+                None => self.chatos_run_summary_for_id(last_run_id.as_deref()).await,
+            }
+        };
+        let (default_model_config, last_run, parent_task, source_run, prerequisite_tasks) = tokio::try_join!(
+            self.chatos_model_config_summary_for_id(default_model_config_id.as_deref()),
+            last_run_future,
+            self.chatos_task_summary_for_id(parent_task_id.as_deref()),
+            self.chatos_run_summary_for_id(source_run_id.as_deref()),
+            self.chatos_task_summaries_in_id_order(&prerequisite_task_ids),
+        )?;
 
         Ok(ChatosMessageTaskDetail::from_parts(
             task,

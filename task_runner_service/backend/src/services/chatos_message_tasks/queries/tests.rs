@@ -201,6 +201,33 @@ async fn active_message_sources_do_not_count_ready_tasks_as_running() {
 }
 
 #[tokio::test]
+async fn run_detail_reuses_already_loaded_run_for_last_run_summary() {
+    let service = test_service().await;
+    let mut task = create_chatos_task(&service, "reuse run").await;
+    let run = failed_run_for_task(&task, "run-known");
+    task.last_run_id = Some(run.id.clone());
+    service
+        .store
+        .save_task(task.clone())
+        .await
+        .expect("save task with last run");
+
+    let detail = service
+        .get_message_task_detail_for_chatos_run_source(&run, "session-1", Some("message-1"), None)
+        .await
+        .expect("load task detail")
+        .expect("task detail");
+
+    assert_eq!(
+        detail
+            .last_run
+            .as_ref()
+            .map(|last_run| last_run.id.as_str()),
+        Some("run-known")
+    );
+}
+
+#[tokio::test]
 async fn chatos_message_graph_excludes_subtasks_from_nodes_and_prerequisites() {
     let service = test_service().await;
     let root = create_chatos_task(&service, "root").await;

@@ -167,6 +167,14 @@ final class RealtimeDTOTests: XCTestCase {
         XCTAssertNil(signal.turnID)
     }
 
+    func testConversationSubscriptionAcknowledgementIsRecognized() {
+        let acknowledgement = Data(#"{"type":"ack","acked":"subscribe","topics":[]}"#.utf8)
+        let unrelated = Data(#"{"type":"pong"}"#.utf8)
+
+        XCTAssertTrue(ChatOSRealtimeClient.isSubscriptionAcknowledgement(acknowledgement))
+        XCTAssertFalse(ChatOSRealtimeClient.isSubscriptionAcknowledgement(unrelated))
+    }
+
     func testConversationConnectionPeriodicallyProducesReconcileSignal() async throws {
         let (stream, continuation) = AsyncThrowingStream.makeStream(
             of: ConversationRealtimeSignal.self,

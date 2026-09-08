@@ -45,7 +45,7 @@ extension ConversationSessionViewModel {
                     submission: submission
                 )
                 upsertAskUserPrompt(updated)
-                refreshLatest()
+                refreshLatestSilently()
             } catch {
                 askUserPromptErrors[prompt.id] = error.localizedDescription
                 await refreshAskUserPrompts()
@@ -68,7 +68,7 @@ extension ConversationSessionViewModel {
                     sessionID: sessionID
                 )
                 upsertAskUserPrompt(updated)
-                refreshLatest()
+                refreshLatestSilently()
             } catch {
                 askUserPromptErrors[prompt.id] = error.localizedDescription
                 await refreshAskUserPrompts()

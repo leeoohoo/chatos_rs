@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import {
   autoLayoutContainer,
@@ -72,7 +72,12 @@ import {
 import { createRepository, type DesignRepository, type DesignSummary } from './repository';
 import { LibraryCanvasComponent } from './LibraryCanvasComponent';
 import { componentEffectStyleToCss, componentStyleToCss, mergeComponentStyles } from './component-style';
+import { CanvasComponent as WorkspaceCanvasComponent, CanvasComponentContent as WorkspaceCanvasComponentContent } from './CanvasComponent';
 import { libraryPreviewSelection, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
+import { WorkspaceBottomToolbar, WorkspaceNavigationBar, WorkspacePanelResizeHandle } from './WorkspaceShellChrome';
+import { DEFAULT_WORKSPACE_SHELL, parseWorkspaceShellState, workspaceShellGridStyle, workspaceShellReducer, workspaceShellShortcut, type WorkspaceArea, type WorkspaceTool } from './workspace-shell-model';
+import { centeredCanvasScroll, createInfiniteCanvasGeometry, panCanvasScroll, type InfiniteCanvasGeometry } from './infinite-canvas-model';
+import { inspectorCapabilities as resolveInspectorCapabilities } from './inspector-model';
 
 type BasicShapeId = 'rectangle' | 'ellipse' | 'line';
 
@@ -502,6 +507,13 @@ type Interaction = {
   scoped: boolean;
 };
 
+type CanvasPan = {
+  pointerX: number;
+  pointerY: number;
+  scrollLeft: number;
+  scrollTop: number;
+};
+
 type LayerAction = 'front' | 'forward' | 'backward' | 'back';
 type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 type LibraryTab = 'components' | WebDesignLibraryName | 'my' | 'layers';
@@ -516,6 +528,7 @@ type VariantPickerPointerDrag = Omit<LibraryPreviewPointerEvent, 'phase'> & {
 };
 type EditingSlot = { componentId: string; slotId: string };
 type InspectorVisualState = 'default' | WebComponentVisualState;
+type InspectorTab = 'design' | 'prototype' | 'ai';
 
 const PERSONAL_SYMBOLS_STORAGE_KEY = 'web-design-studio:personal-symbols:v1';
 
@@ -636,12 +649,11 @@ function SelectableVariantCard({ component, previewHeight, className, interactiv
   const cardHeight = surfaceHeight + 58;
   return <article className={`variant-preview-card ${interactive ? 'interactive-variant' : ''}`} style={{ minHeight: cardHeight, height: cardHeight }}>
     <div data-library-portal-host className={className} style={{ minHeight: surfaceHeight, height: surfaceHeight }}>
-      <span className="variant-interaction-hint">点击选择 · 按住拖动</span>
       <LazyVariantPreview minHeight={surfaceHeight}>
         <LibraryCanvasComponent component={component} preview showcase tokens={tokens} pickItems onPickItem={onPickItem} onPickPointerEvent={onPickPointerEvent} onContentHeight={setContentHeight} />
       </LazyVariantPreview>
     </div>
-    <footer><div className="variant-preview-description"><strong>{variantLabel}</strong><span>{differences.map((difference) => <small key={difference}>{difference}</small>)}</span></div><span className="variant-item-pick-help">选择其中一个元素</span></footer>
+    <footer><div className="variant-preview-description"><strong>{variantLabel}</strong><span>{differences.map((difference) => <small key={difference}>{difference}</small>)}</span></div><span className="variant-item-pick-help">点击预览选择 · 拖到画布放置</span></footer>
   </article>;
 }
 
@@ -676,20 +688,30 @@ export function WebDesignStudioApp() {
   const [variantPickerTarget, setVariantPickerTarget] = useState<VariantPickerTarget>();
   const [variantPickerDrag, setVariantPickerDrag] = useState<VariantPickerPointerDrag>();
   const [themePickerOpen, setThemePickerOpen] = useState(false);
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [projectLibraryOpen, setProjectLibraryOpen] = useState(false);
   const [newDesignOpen, setNewDesignOpen] = useState(false);
   const [newDesignName, setNewDesignName] = useState('');
   const [newDesignBlank, setNewDesignBlank] = useState(true);
   const [editingSlot, setEditingSlot] = useState<EditingSlot>();
   const [inspectorVisualState, setInspectorVisualState] = useState<InspectorVisualState>('default');
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('design');
+  const [workspaceShell, dispatchWorkspaceShell] = useReducer(
+    workspaceShellReducer,
+    DEFAULT_WORKSPACE_SHELL,
+    () => parseWorkspaceShellState(window.localStorage.getItem('web-design-studio.workspace-shell.v1'))
+  );
   const interaction = useRef<Interaction | undefined>(undefined);
+  const canvasPan = useRef<CanvasPan | undefined>(undefined);
+  const spacePressed = useRef(false);
+  const canvasGeometrySnapshot = useRef<{ context: string; geometry: InfiniteCanvasGeometry } | undefined>(undefined);
   const variantPickerDragRef = useRef<VariantPickerPointerDrag | undefined>(undefined);
   const documentRef = useRef<WebDesignDocument | undefined>(undefined);
   const assetInput = useRef<HTMLInputElement | null>(null);
   const canvasScroll = useRef<HTMLDivElement | null>(null);
   const previewZoom = useRef(zoom);
   const interactionZoom = useRef(zoom);
+  const [canvasPanning, setCanvasPanning] = useState(false);
+  const [canvasPanReady, setCanvasPanReady] = useState(false);
 
   useEffect(() => { documentRef.current = document; }, [document]);
 
@@ -714,6 +736,12 @@ export function WebDesignStudioApp() {
     : viewportSelection.customHeight;
   const viewportLabel = viewportPreset?.label ?? '自定义视口';
   const renderedCanvasHeight = Math.max(breakpoint.height, previewViewportHeight);
+  const scaledCanvasWidth = breakpoint.width * zoom;
+  const scaledCanvasHeight = renderedCanvasHeight * zoom;
+  const infiniteCanvasGeometry = useMemo(
+    () => createInfiniteCanvasGeometry(scaledCanvasWidth, scaledCanvasHeight),
+    [scaledCanvasWidth, scaledCanvasHeight]
+  );
   const pages = useMemo(() => document ? pagesForDocument(document) : [], [document]);
   const activeProjectDocuments = useMemo(() => {
     const ids = new Set(activeProject?.designIds ?? []);
@@ -756,6 +784,10 @@ export function WebDesignStudioApp() {
   useEffect(() => {
     window.localStorage.setItem(PERSONAL_SYMBOLS_STORAGE_KEY, JSON.stringify(personalSymbols));
   }, [personalSymbols]);
+
+  useEffect(() => {
+    window.localStorage.setItem('web-design-studio.workspace-shell.v1', JSON.stringify(workspaceShell));
+  }, [workspaceShell]);
 
   useEffect(() => {
     if (!document?.symbols?.length) return;
@@ -801,6 +833,20 @@ export function WebDesignStudioApp() {
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
+      const activePan = canvasPan.current;
+      if (activePan) {
+        const scroller = canvasScroll.current;
+        if (!scroller) return;
+        const next = panCanvasScroll(
+          activePan.scrollLeft,
+          activePan.scrollTop,
+          event.clientX - activePan.pointerX,
+          event.clientY - activePan.pointerY
+        );
+        scroller.scrollLeft = next.left;
+        scroller.scrollTop = next.top;
+        return;
+      }
       const active = interaction.current;
       if (!active) return;
       const dx = (event.clientX - active.pointerX) / active.scale;
@@ -836,6 +882,10 @@ export function WebDesignStudioApp() {
       }
     };
     const onUp = () => {
+      if (canvasPan.current) {
+        canvasPan.current = undefined;
+        setCanvasPanning(false);
+      }
       const active = interaction.current;
       if (!active) return;
       setPast((items) => [...items.slice(-59), active.snapshot]);
@@ -855,7 +905,14 @@ export function WebDesignStudioApp() {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      if (event.code === 'Space' && !preview && !editingSlot) {
+        event.preventDefault();
+        spacePressed.current = true;
+        setCanvasPanReady(true);
+        return;
+      }
       const command = event.metaKey || event.ctrlKey;
+      const shellAction = workspaceShellShortcut(event.key, command);
       if (event.key === 'Escape' && preview) {
         event.preventDefault();
         toggleFullPreview();
@@ -886,6 +943,10 @@ export function WebDesignStudioApp() {
       } else if (command && event.key.toLowerCase() === 'v' && clipboard) {
         event.preventDefault();
         pasteClipboard();
+      } else if (shellAction) {
+        event.preventDefault();
+        if (shellAction.type === 'select-tool') activateWorkspaceTool(shellAction.tool);
+        else dispatchWorkspaceShell(shellAction);
       } else if ((event.key === 'Backspace' || event.key === 'Delete') && selectedIds.length > 0) {
         event.preventDefault();
         deleteSelected();
@@ -897,13 +958,90 @@ export function WebDesignStudioApp() {
         nudgeSelected(dx, dy);
       }
     };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== 'Space') return;
+      spacePressed.current = false;
+      setCanvasPanReady(false);
+    };
+    const onBlur = () => {
+      spacePressed.current = false;
+      canvasPan.current = undefined;
+      setCanvasPanReady(false);
+      setCanvasPanning(false);
+    };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedIds, past, future, dirty, saving, repository, persistedRevision, device, clipboard, pageId, preview, interactionMode, zoom, breakpoint.width]);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [selectedIds, past, future, dirty, saving, repository, persistedRevision, device, clipboard, pageId, preview, interactionMode, zoom, breakpoint.width, editingSlot]);
+
+  useEffect(() => {
+    if (screen !== 'editor' || preview || editingSlot) {
+      canvasGeometrySnapshot.current = undefined;
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const scroller = canvasScroll.current;
+      if (!scroller) return;
+      const context = `${document?.documentId ?? ''}:${pageId}:${device}:${zoom}`;
+      const previous = canvasGeometrySnapshot.current;
+      if (previous?.context === context) {
+        scroller.scrollLeft += infiniteCanvasGeometry.contentX - previous.geometry.contentX;
+        scroller.scrollTop += infiniteCanvasGeometry.contentY - previous.geometry.contentY;
+      } else {
+        const centered = centeredCanvasScroll(
+          infiniteCanvasGeometry,
+          scroller.clientWidth,
+          scroller.clientHeight,
+          scaledCanvasWidth,
+          scaledCanvasHeight
+        );
+        scroller.scrollTo({ left: centered.left, top: centered.top });
+      }
+      canvasGeometrySnapshot.current = { context, geometry: infiniteCanvasGeometry };
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [screen, preview, editingSlot, document?.documentId, pageId, device, zoom, scaledCanvasWidth, scaledCanvasHeight, infiniteCanvasGeometry]);
 
   function showToast(message: string) {
     setToast(message);
     window.setTimeout(() => setToast((current) => current === message ? undefined : current), 2600);
+  }
+
+  function chooseLibraryTab(tab: LibraryTab) {
+    setLibraryTab(tab);
+    const area: WorkspaceArea = tab === 'layers' ? 'layers' : tab === 'components' ? 'tools' : tab === 'my' ? 'my' : 'assets';
+    dispatchWorkspaceShell({ type: 'select-area', area });
+  }
+
+  function activateWorkspaceArea(area: WorkspaceArea) {
+    dispatchWorkspaceShell({ type: 'select-area', area });
+    if (area === 'layers' || area === 'variables' || area === 'ai') setLibraryTab('layers');
+    else if (area === 'tools') setLibraryTab('components');
+    else if (area === 'my') setLibraryTab('my');
+    else if (libraryTab === 'layers' || libraryTab === 'components' || libraryTab === 'my') setLibraryTab('antd');
+  }
+
+  function activateWorkspaceTool(tool: WorkspaceTool) {
+    dispatchWorkspaceShell({ type: 'select-tool', tool });
+    if (tool === 'ai') {
+      activateWorkspaceArea('ai');
+      return;
+    }
+    if (tool === 'insert') {
+      activateWorkspaceArea('tools');
+      showToast('从左侧选择元素，再拖到画布');
+      return;
+    }
+    if (tool === 'comment') {
+      setInspectorTab('ai');
+      if (!workspaceShell.rightPanelOpen) dispatchWorkspaceShell({ type: 'toggle-right-panel' });
+      showToast(selected ? '可以在右侧添加批注或让 AI 修改' : '批注工具已开启，请点击画布中的组件');
+    }
   }
 
   function setCurrent(next: WebDesignDocument) {
@@ -1376,8 +1514,18 @@ export function WebDesignStudioApp() {
 
   function beginInteraction(event: ReactPointerEvent, component: WebDesignComponent, kind: Interaction['kind']) {
     if (preview || interactionMode) return;
+    if (spacePressed.current || event.button === 1) return;
+    if (workspaceShell.activeTool === 'hand') return;
     event.preventDefault();
     event.stopPropagation();
+    if (workspaceShell.activeTool === 'comment') {
+      setSelectedId(component.id);
+      setSelectedIds([component.id]);
+      setInspectorTab('ai');
+      if (!workspaceShell.rightPanelOpen) dispatchWorkspaceShell({ type: 'toggle-right-panel' });
+      showToast(`已选择“${component.name}”，请在右侧添加批注`);
+      return;
+    }
     if (event.shiftKey || event.metaKey || event.ctrlKey) {
       const next = selectedIds.includes(component.id) ? selectedIds.filter((id) => id !== component.id) : [...selectedIds, component.id];
       setSelectedIds(next);
@@ -1404,6 +1552,21 @@ export function WebDesignStudioApp() {
       , scale: editingSlot ? 1 : zoom
       , scoped: Boolean(editingSlot)
     };
+  }
+
+  function beginCanvasPan(event: ReactPointerEvent<HTMLDivElement>) {
+    const handTool = event.button === 0 && workspaceShell.activeTool === 'hand';
+    if (preview || editingSlot || (event.button !== 1 && !(event.button === 0 && spacePressed.current) && !handTool)) return;
+    event.preventDefault();
+    const scroller = canvasScroll.current;
+    if (!scroller) return;
+    canvasPan.current = {
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      scrollLeft: scroller.scrollLeft,
+      scrollTop: scroller.scrollTop
+    };
+    setCanvasPanning(true);
   }
 
   function updateSelected(changes: Partial<WebDesignComponent>) {
@@ -1668,9 +1831,8 @@ export function WebDesignStudioApp() {
   function fitCanvasToWidth(targetWidth: number) {
     const scroller = canvasScroll.current;
     if (!scroller) return;
-    const nextZoom = Math.max(.05, Math.min(1, (scroller.clientWidth - 120) / targetWidth));
+    const nextZoom = Math.max(.05, Math.min(1, (scroller.clientWidth - 96) / targetWidth));
     setZoom(nextZoom);
-    window.setTimeout(() => scroller.scrollTo({ left: 0, top: 0, behavior: 'smooth' }), 0);
   }
 
   function fitCanvasWidth() {
@@ -1813,7 +1975,7 @@ export function WebDesignStudioApp() {
     const symbol = createSymbolFromSelection(current, selectedIds, name);
     commit((active) => ({ ...active, symbols: [...(active.symbols ?? []), symbol] }));
     setPersonalSymbols((symbols) => [...symbols.filter((candidate) => candidate.id !== symbol.id), structuredClone(symbol)]);
-    setLibraryTab('my');
+    chooseLibraryTab('my');
     showToast(`已保存到“我的”：${symbol.name}`);
   }
 
@@ -2111,7 +2273,6 @@ export function WebDesignStudioApp() {
     };
     commit((active) => ({ ...active, requests: [...active.requests, request] }));
     setAiInstruction('');
-    setAiPanelOpen(false);
     await save(true, true);
     showToast(target ? '已提交组件修改任务' : '已提交整页设计任务');
   }
@@ -2157,6 +2318,11 @@ export function WebDesignStudioApp() {
   const selectedLibraryVariants = selected?.library ? variantsForBoundComponent(selected) : [];
   const selectedRegistryElement = libraryPreviewSelection(selected?.library?.props.registryElement);
   const selectedEditableSlots = selected ? editableSlotsForUiComponent(selected) : [];
+  const inspectorCapabilities = selected ? resolveInspectorCapabilities(selected.type, {
+    library: Boolean(selected.library),
+    directChildCount,
+    editableSlotCount: selectedEditableSlots.length
+  }) : undefined;
   const selectedInspectableLibraryProps = selected?.library ? inspectableLibraryProps(selected.library.props) : [];
   const aiTarget = selected ?? editingContainer;
   const normalizedPaletteQuery = paletteQuery.trim().toLowerCase();
@@ -2196,7 +2362,7 @@ export function WebDesignStudioApp() {
         <details className="delivery-menu"><summary>交付</summary><div><button onClick={exportCurrentPage}>HTML</button><button onClick={exportReact}>React</button><button onClick={exportVue}>Vue</button></div></details>
         <button className="quiet-button" onClick={() => void refresh()}>刷新</button>
         <button className={`quiet-button ${preview ? 'active' : ''}`} onClick={toggleFullPreview}>{preview ? '退出预览' : '全屏预览'}</button>
-        <button className="ai-design-trigger" onClick={() => setAiPanelOpen(true)}>✦ AI 设计</button>
+        <button className="ai-design-trigger" onClick={() => activateWorkspaceArea('ai')}>✦ AI 设计</button>
         <button className="primary-button" disabled={!dirty || saving} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '已保存'}</button>
       </header>
 
@@ -2211,29 +2377,27 @@ export function WebDesignStudioApp() {
         <footer><button onClick={() => void createNew()}>＋ 在当前项目中新建设计</button><button onClick={goToActiveProject}>查看项目首页</button></footer>
       </div>}
 
-      <main className={`workspace ${preview ? 'preview-mode' : ''}`}>
-        {!preview && <aside className="palette-panel">
-          <div className="library-tabs">
-            <button className={libraryTab === 'antd' ? 'active' : ''} onClick={() => setLibraryTab('antd')}>AntD</button>
-            <button className={libraryTab === 'chakra' ? 'active' : ''} onClick={() => setLibraryTab('chakra')}>Chakra</button>
-            <button className={libraryTab === 'shadcn' ? 'active' : ''} onClick={() => setLibraryTab('shadcn')}>shadcn</button>
-            <button className={libraryTab === 'magicui' ? 'active' : ''} onClick={() => setLibraryTab('magicui')}>Magic</button>
-            <button className={libraryTab === 'spell' ? 'active' : ''} onClick={() => setLibraryTab('spell')}>Spell</button>
-            <button className={libraryTab === 'inspira' ? 'active' : ''} onClick={() => setLibraryTab('inspira')}>Inspira</button>
-            <button className={libraryTab === 'daisyui' ? 'active' : ''} onClick={() => setLibraryTab('daisyui')}>daisyUI</button>
-            <button className={libraryTab === 'components' ? 'active' : ''} onClick={() => setLibraryTab('components')}>图形</button>
-            <button className={libraryTab === 'my' ? 'active' : ''} onClick={() => setLibraryTab('my')}>我的</button>
-            <button className={libraryTab === 'layers' ? 'active' : ''} onClick={() => setLibraryTab('layers')}>图层</button>
-          </div>
+      <main className={`workspace workspace-v3-shell ${preview ? 'preview-mode' : ''}`} style={workspaceShellGridStyle(workspaceShell) as CSSProperties}>
+        {!preview && <WorkspaceNavigationBar activeArea={workspaceShell.activeArea} leftPanelOpen={workspaceShell.leftPanelOpen} onSelect={activateWorkspaceArea} onToggleLeft={() => dispatchWorkspaceShell({ type: 'toggle-left-panel' })} />}
+        {!preview && workspaceShell.leftPanelOpen && <aside className="palette-panel">
+          {workspaceShell.activeArea === 'assets' && <div className="library-tabs workspace-library-tabs">
+            <button className={libraryTab === 'antd' ? 'active' : ''} onClick={() => chooseLibraryTab('antd')}>AntD</button>
+            <button className={libraryTab === 'chakra' ? 'active' : ''} onClick={() => chooseLibraryTab('chakra')}>Chakra</button>
+            <button className={libraryTab === 'shadcn' ? 'active' : ''} onClick={() => chooseLibraryTab('shadcn')}>shadcn</button>
+            <button className={libraryTab === 'magicui' ? 'active' : ''} onClick={() => chooseLibraryTab('magicui')}>Magic</button>
+            <button className={libraryTab === 'spell' ? 'active' : ''} onClick={() => chooseLibraryTab('spell')}>Spell</button>
+            <button className={libraryTab === 'inspira' ? 'active' : ''} onClick={() => chooseLibraryTab('inspira')}>Inspira</button>
+            <button className={libraryTab === 'daisyui' ? 'active' : ''} onClick={() => chooseLibraryTab('daisyui')}>daisyUI</button>
+          </div>}
           <div className="palette-panel-content">
-            {libraryTab !== 'layers' && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={libraryTab === 'components' ? '搜索视觉原语…' : activeUiLibrary ? `搜索 ${activeUiLibrary.displayName} 组件…` : '搜索我的组件…'} />}
+            {['assets', 'tools', 'my'].includes(workspaceShell.activeArea) && <input className="component-search" value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder={workspaceShell.activeArea === 'tools' ? '搜索视觉原语…' : activeUiLibrary ? `搜索 ${activeUiLibrary.displayName} 组件…` : '搜索我的组件…'} />}
 
-            {libraryTab === 'components' && <>
+            {workspaceShell.activeArea === 'tools' && <>
               <div className="panel-intro"><strong>视觉原语</strong><span>用矩形、圆形和直线组合背景、光效、装饰与容器；产品控件使用成熟 UI 库</span></div>
               <div className="palette-grid shapes-grid">{filteredPalette.map((item) => <div key={item.id} className="palette-item" draggable onDragStart={(event) => onPaletteDrag(event, item.id)}><span className="palette-icon">{item.icon}</span><span>{item.label}</span></div>)}</div>
             </>}
 
-            {activeUiLibrary && <>
+            {workspaceShell.activeArea === 'assets' && activeUiLibrary && <>
               <div className={`ui-library-heading library-${activeUiLibrary.id}`}><div className="ui-library-logo-mark">{activeUiLibrary.brandMark}</div><div><strong>{activeUiLibrary.displayName}</strong><span>{activeUiLibrary.license ? `开源组件 · ${activeUiLibrary.license} · ${activeUiLibrary.version}` : activeUiLibrary.id === 'shadcn' ? `本地源码组件 · ${activeUiLibrary.version}` : `官方运行时 · v${activeUiLibrary.version}`}</span></div></div>
               <div className="panel-intro"><strong>{activeUiLibrary.displayName} 组件总览</strong><span>点击先预览不同款式，拖拽则直接插入默认款</span></div>
               {activeUiLibrary.categories.map((category) => {
@@ -2244,13 +2408,13 @@ export function WebDesignStudioApp() {
               })}
             </>}
 
-            {libraryTab === 'my' && <>
+            {workspaceShell.activeArea === 'my' && <>
               <div className="panel-intro my-library-intro"><strong>我的组件</strong><span>把画布中设计好的单个组件或多个图层保存到这里，可在其他设计中继续使用。</span></div>
               {selectedIds.length > 0 && <button className="my-library-save" onClick={saveSelectionAsSymbol}><span>＋</span><div><strong>保存当前选中</strong><small>{selectedIds.length === 1 ? selected?.name : `${selectedIds.length} 个图层的组合`}</small></div></button>}
               {filteredPersonalSymbols.length > 0 ? <div className="my-library-grid">{filteredPersonalSymbols.map((symbol) => <article key={symbol.id} className="my-library-card"><button className="my-library-insert" onClick={() => insertSymbol(symbol)}><span className="my-library-preview"><i /><i /><i /></span><span><strong>{symbol.name}</strong><small>{symbol.components.length} 层 · 点击插入画布</small></span></button><footer><button onClick={() => renamePersonalSymbol(symbol)}>重命名</button><button className="danger" onClick={() => removePersonalSymbol(symbol.id)}>移除</button></footer></article>)}</div> : <div className="my-library-empty"><span>◇</span><strong>还没有保存的组件</strong><p>在画布中选择一个组件，或按住 Shift / Command 选择多个图层，再保存为自己的组合。</p></div>}
             </>}
 
-            {libraryTab === 'layers' && <>
+            {workspaceShell.activeArea === 'layers' && <>
               <div className="panel-title layer-title"><span>页面图层</span><small>{pageComponents.length}</small></div>
               <div className={`layer-group-actions ${selectedIds.length > 1 || canUngroup ? 'ready' : ''}`}>
                 <div><strong>{selectedIds.length > 1 ? `已选择 ${selectedIds.length} 个图层` : canUngroup ? '当前是一个分组' : '创建可整体移动的分组'}</strong><small>{selectedIds.length > 1 ? '创建后拖动外框，内部组件会一起移动' : canUngroup ? `${directChildCount} 个直接子组件` : '按住 Shift、Command 或 Ctrl 点击多个图层'}</small></div>
@@ -2287,14 +2451,30 @@ export function WebDesignStudioApp() {
               <input ref={assetInput} className="asset-input" type="file" accept="image/*" multiple onChange={(event) => void importAssets(event.target.files).catch((error) => showToast(String(error)))} />
               <button className="secondary-button" onClick={() => assetInput.current?.click()}>导入图片</button>
               <div className="asset-grid">{(document.assets ?? []).map((asset) => <button key={asset.id} title={`使用 ${asset.name}`} onClick={() => useAsset(asset)}><img src={asset.dataUrl} alt={asset.name} /><span>{asset.name}</span></button>)}</div>
-              {tokens && <><div className="panel-title section-title">设计 Token</div><div className="token-colors">
-                {(['primary', 'accent', 'surface', 'text', 'muted'] as const).map((key) => <label key={key} className="token-color"><span>{key}</span><input type="color" value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /><input value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /></label>)}
-              </div><div className="size-row"><NumberField label="基础字号" value={tokens.typography.baseFontSize} onChange={(baseFontSize) => updateTokens((current) => ({ ...current, typography: { ...current.typography, baseFontSize } }))} /><NumberField label="中圆角" value={tokens.radii.medium} onChange={(medium) => updateTokens((current) => ({ ...current, radii: { ...current.radii, medium } }))} /></div></>}
-              <div className="panel-title section-title">AI 待办</div>
-              <div className="request-summary">{document.requests.filter((request) => request.status === 'pending').length} 个待处理请求</div>
-              <p className="helper-text">保存后，在对话中让 AI“处理 Web Design Studio 的待办请求”。</p>
             </>}
+
+            {workspaceShell.activeArea === 'variables' && tokens && <div className="workspace-sidebar-section variables-sidebar">
+              <div className="panel-intro"><strong>Variables 与样式</strong><span>统一管理当前设计的语义颜色、排版和圆角。后续将直接映射到 Schema v2 Variable Collections 与 Modes。</span></div>
+              <div className="panel-title section-title">语义颜色</div>
+              <div className="token-colors">{(['primary', 'accent', 'surface', 'text', 'muted'] as const).map((key) => <label key={key} className="token-color"><span>{key}</span><input type="color" value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /><input value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /></label>)}</div>
+              <div className="panel-title section-title">排版与圆角</div>
+              <label className="field-label">字体族<input value={tokens.typography.fontFamily} onChange={(event) => updateTokens((current) => ({ ...current, typography: { ...current.typography, fontFamily: event.target.value } }))} /></label>
+              <div className="size-row"><NumberField label="基础字号" value={tokens.typography.baseFontSize} onChange={(baseFontSize) => updateTokens((current) => ({ ...current, typography: { ...current.typography, baseFontSize } }))} /><NumberField label="中圆角" value={tokens.radii.medium} onChange={(medium) => updateTokens((current) => ({ ...current, radii: { ...current.radii, medium } }))} /></div>
+              <button className="secondary-button variables-theme-button" onClick={() => setThemePickerOpen(true)}>打开整站设计风格</button>
+            </div>}
+
+            {workspaceShell.activeArea === 'ai' && <div className="workspace-sidebar-section ai-tasks-sidebar">
+              <div className="panel-intro"><strong>AI 设计任务</strong><span>AI 以当前项目、文档、页面和选区为稳定作用域；人的主要工作是审阅、批注和锁定。</span></div>
+              <div className="panel-title layer-title"><span>待处理</span><small>{document.requests.filter((request) => request.status === 'pending').length}</small></div>
+              <div className="ai-sidebar-request-list">{document.requests.filter((request) => request.status === 'pending').map((request) => <article key={request.id}><strong>{request.componentId ? document.components.find((component) => component.id === request.componentId)?.name ?? '目标组件' : currentPage?.name ?? '当前页面'}</strong><p>{request.instruction}</p><small>{new Date(request.createdAt).toLocaleString()}</small></article>)}</div>
+              {document.requests.every((request) => request.status !== 'pending') && <div className="ai-sidebar-empty"><span>✓</span><strong>没有待处理任务</strong><p>选择组件后写批注，或直接描述整页设计目标。</p></div>}
+              <div className="panel-title section-title">创建任务</div>
+              <div className="ai-quick-prompts sidebar-prompts">{aiQuickPrompts.map((prompt) => <button key={prompt} onClick={() => setAiInstruction(prompt)}>{prompt}</button>)}</div>
+              <textarea className="composer" rows={5} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} placeholder={aiTarget ? `告诉 AI 如何修改“${aiTarget.name}”…` : '描述网站目标、受众、内容和视觉方向…'} />
+              <button className="ai-button" disabled={!aiInstruction.trim()} onClick={() => void addAiRequest()}>提交给 AI</button>
+            </div>}
           </div>
+          <WorkspacePanelResizeHandle side="left" width={workspaceShell.leftPanelWidth} onResize={(width) => dispatchWorkspaceShell({ type: 'resize-left-panel', width })} />
         </aside>}
 
         <section className="canvas-stage">
@@ -2335,7 +2515,11 @@ export function WebDesignStudioApp() {
             {selectedIds.length > 1 && <><span /><button className="wide-tool" title="创建可整体移动的分组 ⌘G" onClick={groupSelected}>创建分组</button></>}
             {canUngroup && <button className="wide-tool" title="取消当前分组 ⇧⌘G" onClick={ungroupSelected}>取消分组</button>}
           </div>}
-          <div ref={canvasScroll} className={`canvas-scroll ${preview ? 'preview-canvas-scroll' : ''} ${editingSlot ? 'slot-editor-scroll' : ''}`}>
+          <div
+            ref={canvasScroll}
+            className={`canvas-scroll ${preview ? 'preview-canvas-scroll' : 'infinite-canvas-scroll'} ${editingSlot ? 'slot-editor-scroll' : ''} ${canvasPanReady || workspaceShell.activeTool === 'hand' ? 'pan-ready' : ''} ${canvasPanning ? 'panning' : ''}`}
+            onPointerDown={beginCanvasPan}
+          >
             {editingSlot && editingContainer && editingSlotDefinition && editingSlotCanvasSize ? <div className="slot-editor-centering"><div className="slot-editor-frame">
               <div className="slot-editor-heading"><div><span>可编辑内容区域</span><strong>{editingSlotDefinition.label}</strong><small>{editingSlotDefinition.description}</small></div><em>{Math.round(editingSlotCanvasSize.width)} × {Math.round(editingSlotCanvasSize.height)}</em></div>
               <div className="slot-editor-canvas-shell">
@@ -2347,11 +2531,22 @@ export function WebDesignStudioApp() {
                     const resolved = { ...frame, x: frame.x - containerFrame.x, y: frame.y - containerFrame.y };
                     if (resolved.hidden) return null;
                     const editableSlot = editableSlotsForUiComponent(component)[0];
-                    return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
+                    return <WorkspaceCanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
                   })}
                 </div>
               </div>
-            </div></div> : <div className="canvas-scale" style={{ width: breakpoint.width * zoom, height: renderedCanvasHeight * zoom }}>
+            </div></div> : <div
+              className={preview ? 'preview-canvas-board' : 'infinite-canvas-board'}
+              style={preview ? undefined : { width: infiniteCanvasGeometry.width, height: infiniteCanvasGeometry.height }}
+            ><div className="canvas-scale" style={{
+              width: scaledCanvasWidth,
+              height: scaledCanvasHeight,
+              ...(preview ? {} : {
+                position: 'absolute',
+                left: infiniteCanvasGeometry.contentX,
+                top: infiniteCanvasGeometry.contentY
+              })
+            }}>
               {!preview && <div className="canvas-device-caption"><strong>{viewportLabel}{viewportSelection.orientation === 'rotated' ? ' · 横向' : ''}</strong><span>{breakpoint.width} × {previewViewportHeight} CSS px</span><em>页面高 {breakpoint.height}</em></div>}
               <div className={`design-canvas device-${device}`} style={{
                 width: breakpoint.width,
@@ -2368,7 +2563,7 @@ export function WebDesignStudioApp() {
                 '--radius-small': `${tokens?.radii.small ?? 8}px`,
                 '--radius-medium': `${tokens?.radii.medium ?? 16}px`,
                 '--radius-large': `${tokens?.radii.large ?? 28}px`
-              } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { if (!interactionMode) { setSelectedId(undefined); setSelectedIds([]); } }}>
+              } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { if (!interactionMode && workspaceShell.activeTool !== 'hand' && workspaceShell.activeTool !== 'comment') { setSelectedId(undefined); setSelectedIds([]); } }}>
                 {!preview && previewViewportHeight < renderedCanvasHeight && <div className="viewport-fold-line" style={{ top: previewViewportHeight }}><span>首屏结束 · {breakpoint.width} × {previewViewportHeight}</span></div>}
                 {snapGuides.x !== undefined && <div className="snap-guide vertical" style={{ left: snapGuides.x }} />}
                 {snapGuides.y !== undefined && <div className="snap-guide horizontal" style={{ top: snapGuides.y }} />}
@@ -2376,17 +2571,25 @@ export function WebDesignStudioApp() {
                   const resolved = resolveComponent(component, device);
                   if (resolved.hidden) return null;
                   const editableSlot = editableSlotsForUiComponent(component)[0];
-                  return <CanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
+                  return <WorkspaceCanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
                 })}
               </div>
-            </div>}
+            </div></div>}
           </div>
+          {!preview && <WorkspaceBottomToolbar activeTool={workspaceShell.activeTool} leftPanelOpen={workspaceShell.leftPanelOpen} rightPanelOpen={workspaceShell.rightPanelOpen} canvasMaximized={workspaceShell.canvasMaximized} onSelectTool={activateWorkspaceTool} onToggleLeft={() => dispatchWorkspaceShell({ type: 'toggle-left-panel' })} onToggleRight={() => dispatchWorkspaceShell({ type: 'toggle-right-panel' })} onToggleMaximize={() => dispatchWorkspaceShell({ type: 'toggle-canvas-maximized' })} />}
         </section>
 
-        {!preview && <aside className="inspector-panel">
+        {!preview && workspaceShell.rightPanelOpen && <aside className="inspector-panel">
+          <WorkspacePanelResizeHandle side="right" width={workspaceShell.rightPanelWidth} onResize={(width) => dispatchWorkspaceShell({ type: 'resize-right-panel', width })} />
           {selected && inspectedFrame ? <>
             <div className="inspector-heading"><div><span className="eyebrow">已选择 {selectedIds.length > 1 ? `${selectedIds.length} 项` : ''} · {device}</span><strong>{selected.name}</strong></div><button className="danger-link" onClick={deleteSelected}>删除</button></div>
             <div className="inspector-actions"><button onClick={duplicateSelected}>复制 ⌘D</button><button className={selected.locked ? 'active' : ''} onClick={() => toggleLocked(selected)}>{selected.locked ? '解锁' : '锁定'}</button><button className={inspectedFrame.hidden ? 'active' : ''} onClick={() => toggleHidden(selected)}>{inspectedFrame.hidden ? '显示' : '隐藏'}</button></div>
+            <div className="inspector-mode-tabs" role="tablist" aria-label="属性栏模式">
+              <button role="tab" aria-selected={inspectorTab === 'design'} className={inspectorTab === 'design' ? 'active' : ''} onClick={() => setInspectorTab('design')}>设计</button>
+              <button role="tab" aria-selected={inspectorTab === 'prototype'} className={inspectorTab === 'prototype' ? 'active' : ''} onClick={() => setInspectorTab('prototype')}>原型</button>
+              <button role="tab" aria-selected={inspectorTab === 'ai'} className={inspectorTab === 'ai' ? 'active' : ''} onClick={() => setInspectorTab('ai')}>批注与 AI</button>
+            </div>
+            {inspectorTab === 'design' && <>
             <button className="secondary-button save-symbol-button" onClick={saveSelectionAsSymbol}>保存到“我的”</button>
             {selectedSymbol && selected.symbolInstanceId && <div className="symbol-instance-panel">
               <div><span>实例来源</span><strong>{selectedSymbol.name}</strong></div>
@@ -2396,8 +2599,8 @@ export function WebDesignStudioApp() {
               <div className="symbol-instance-actions"><button onClick={updateSelectedSymbolDefinition}>用当前实例更新定义</button><button onClick={synchronizeSelectedSymbol}>同步全部实例</button><button className="danger" onClick={detachSelectedSymbol}>脱离组件库</button></div>
             </div>}
             <label className="field-label">组件名称<input value={selected.name} onChange={(event) => updateSelected({ name: event.target.value })} /></label>
-            <label className="field-label">内容<textarea rows={3} value={selected.content} onChange={(event) => updateSelected({ content: event.target.value })} /></label>
-            {selected.library && selectedLibrary && <div className={`ui-library-inspector library-${selected.library.name}`}>
+            {inspectorCapabilities?.content && <label className="field-label">{inspectorCapabilities.media ? '资源地址' : '内容'}<textarea rows={3} value={selected.content} onChange={(event) => updateSelected({ content: event.target.value })} /></label>}
+            {inspectorCapabilities?.library && selected.library && selectedLibrary && <div className={`ui-library-inspector library-${selected.library.name}`}>
               <div className="panel-title section-title">{selectedLibrary.displayName} 组件</div>
               <div className="antd-binding-summary"><span>组件</span><strong>{selected.library.component}</strong><small>{selected.library.name === 'shadcn' ? selected.library.version : `v${selected.library.version}`}</small></div>
               {selectedLibraryDefinition?.docsUrl && <a className="ui-library-doc-link" href={selectedLibraryDefinition.docsUrl} target="_blank" rel="noreferrer">查看当前官网文档 ↗</a>}
@@ -2419,6 +2622,8 @@ export function WebDesignStudioApp() {
                   : <label key={key} className="field-label">{key}<input value={String(value)} onChange={(event) => updateSelectedLibraryProp(key, event.target.value)} /></label>)}
               {selectedInspectableLibraryProps.some(([, value]) => value !== null && typeof value === 'object') && <div className="ui-library-data-editors"><div className="panel-title section-title">示例数据</div>{selectedInspectableLibraryProps.filter(([, value]) => value !== null && typeof value === 'object').map(([key, value]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
             </div>}
+            </>}
+            {inspectorTab === 'prototype' && <>
             <div className="panel-title section-title">预览交互</div>
             <label className="field-label">点击行为<select value={selected.interaction?.type ?? 'none'} onChange={(event) => {
               const type = event.target.value;
@@ -2428,6 +2633,9 @@ export function WebDesignStudioApp() {
             }}><option value="none">无交互</option><option value="page">跳转页面</option><option value="url">打开 URL</option></select></label>
             {selected.interaction?.type === 'page' && <label className="field-label interaction-target">目标页面<select value={selected.interaction.target} onChange={(event) => updateSelected({ interaction: { type: 'page', target: event.target.value } })}>{pages.map((page) => <option key={page.id} value={page.id}>{page.name} · {page.slug}</option>)}</select></label>}
             {selected.interaction?.type === 'url' && <label className="field-label interaction-target">目标 URL<input value={selected.interaction.target} onChange={(event) => updateSelected({ interaction: { type: 'url', target: event.target.value } })} placeholder="https://example.com" /></label>}
+            <p className="helper-text inspector-prototype-help">在顶部进入“交互”或“全屏预览”即可验证跳转、输入、选择、弹层和官方组件行为。</p>
+            </>}
+            {inspectorTab === 'design' && <>
             <div className="size-row four">
               <NumberField label={editingSlot ? 'X · 内容' : 'X'} value={inspectedFrame.x} onChange={(x) => updateInspectedFrame({ x })} disabled={selected.locked} />
               <NumberField label={editingSlot ? 'Y · 内容' : 'Y'} value={inspectedFrame.y} onChange={(y) => updateInspectedFrame({ y })} disabled={selected.locked} />
@@ -2440,8 +2648,8 @@ export function WebDesignStudioApp() {
             <div className="size-constraints-grid"><NumberField label="最小宽" value={selected.constraints?.[device]?.minWidth ?? 16} min={16} onChange={(minWidth) => updateSelectedSizeConstraints({ minWidth: Math.max(16, minWidth) })} /><NumberField label="最大宽" value={selected.constraints?.[device]?.maxWidth ?? 100000} min={16} onChange={(maxWidth) => updateSelectedSizeConstraints({ maxWidth: Math.max(16, maxWidth) })} /><NumberField label="最小高" value={selected.constraints?.[device]?.minHeight ?? 16} min={16} onChange={(minHeight) => updateSelectedSizeConstraints({ minHeight: Math.max(16, minHeight) })} /><NumberField label="最大高" value={selected.constraints?.[device]?.maxHeight ?? 100000} min={16} onChange={(maxHeight) => updateSelectedSizeConstraints({ maxHeight: Math.max(16, maxHeight) })} /></div>
             <label className="ui-library-boolean-prop constraint-toggle"><input type="checkbox" checked={selected.constraints?.[device]?.lockAspectRatio === true} onChange={(event) => updateSelectedSizeConstraints({ lockAspectRatio: event.target.checked })} /><span>调整大小时保持当前宽高比</span></label>
             <div className="panel-title section-title">视觉设计 · {device}</div>
-            <div className="visual-state-switcher"><button className={inspectorVisualState === 'default' ? 'active' : ''} onClick={() => setInspectorVisualState('default')}>默认</button><button className={inspectorVisualState === 'hover' ? 'active' : ''} onClick={() => setInspectorVisualState('hover')}>悬停</button><button className={inspectorVisualState === 'active' ? 'active' : ''} onClick={() => setInspectorVisualState('active')}>按下</button><button className={inspectorVisualState === 'focus' ? 'active' : ''} onClick={() => setInspectorVisualState('focus')}>聚焦</button></div>
-            {inspectorVisualState !== 'default' && <div className="visual-state-help"><p className="helper-text">正在设计“{inspectorVisualState === 'hover' ? '悬停' : inspectorVisualState === 'active' ? '按下' : '聚焦'}”状态；画布会立即显示效果，预览时由真实交互触发。</p><button onClick={clearSelectedVisualState} disabled={!selected.states?.[inspectorVisualState]}>清除状态样式</button></div>}
+            {inspectorCapabilities?.visualStates && <div className="visual-state-switcher"><button className={inspectorVisualState === 'default' ? 'active' : ''} onClick={() => setInspectorVisualState('default')}>默认</button><button className={inspectorVisualState === 'hover' ? 'active' : ''} onClick={() => setInspectorVisualState('hover')}>悬停</button><button className={inspectorVisualState === 'active' ? 'active' : ''} onClick={() => setInspectorVisualState('active')}>按下</button><button className={inspectorVisualState === 'focus' ? 'active' : ''} onClick={() => setInspectorVisualState('focus')}>聚焦</button></div>}
+            {inspectorCapabilities?.visualStates && inspectorVisualState !== 'default' && <div className="visual-state-help"><p className="helper-text">正在设计“{inspectorVisualState === 'hover' ? '悬停' : inspectorVisualState === 'active' ? '按下' : '聚焦'}”状态；画布会立即显示效果，预览时由真实交互触发。</p><button onClick={clearSelectedVisualState} disabled={!selected.states?.[inspectorVisualState]}>清除状态样式</button></div>}
             <section className="design-inspector-group">
               <header><strong>填充</strong><span>颜色、渐变与透明材质</span></header>
               <ColorValueField label="背景" value={inspectedStyle?.background ?? ''} onChange={(background) => updateSelectedStyle({ background })} allowComplex />
@@ -2462,20 +2670,20 @@ export function WebDesignStudioApp() {
               <div className="size-row"><NumberField label="旋转 °" value={inspectedStyle?.rotate ?? 0} onChange={(rotate) => updateSelectedStyle({ rotate })} /><NumberField label="缩放" value={inspectedStyle?.scale ?? 1} step={0.05} min={0.01} onChange={(scale) => updateSelectedStyle({ scale: Math.max(0.01, scale) })} /></div>
               <div className="size-row"><label className="field-label">溢出<select value={inspectedStyle?.overflow ?? 'visible'} onChange={(event) => updateSelectedStyle({ overflow: event.target.value as NonNullable<WebComponentStyle['overflow']> })}><option value="visible">显示</option><option value="hidden">裁切</option><option value="auto">自动滚动</option><option value="scroll">始终滚动</option></select></label><label className="field-label">混合模式<select value={inspectedStyle?.mixBlendMode ?? 'normal'} onChange={(event) => updateSelectedStyle({ mixBlendMode: event.target.value as NonNullable<WebComponentStyle['mixBlendMode']> })}><option value="normal">正常</option><option value="multiply">正片叠底</option><option value="screen">滤色</option><option value="overlay">叠加</option><option value="difference">差值</option></select></label></div>
             </section>
-            <section className="design-inspector-group">
+            {inspectorCapabilities?.typography && <section className="design-inspector-group">
               <header><strong>排版</strong><span>所有文字型组件与 UI 内容</span></header>
               <ColorValueField label="文字颜色" value={inspectedStyle?.color ?? ''} onChange={(color) => updateSelectedStyle({ color })} />
               <div className="size-row"><NumberField label="字号" value={inspectedStyle?.fontSize ?? 16} onChange={(fontSize) => updateSelectedStyle({ fontSize: Math.max(6, fontSize) })} /><NumberField label="字重" value={inspectedStyle?.fontWeight ?? 400} step={50} min={100} max={1000} onChange={(fontWeight) => updateSelectedStyle({ fontWeight: Math.min(1000, Math.max(100, fontWeight)) })} /></div>
               <div className="size-row"><NumberField label="行高" value={inspectedStyle?.lineHeight ?? 1.2} step={0.05} min={0.5} max={5} onChange={(lineHeight) => updateSelectedStyle({ lineHeight })} /><NumberField label="字间距" value={inspectedStyle?.letterSpacing ?? 0} step={0.1} onChange={(letterSpacing) => updateSelectedStyle({ letterSpacing })} /></div>
               <div className="size-row"><label className="field-label">对齐<select value={inspectedStyle?.textAlign ?? 'left'} onChange={(event) => updateSelectedStyle({ textAlign: event.target.value as NonNullable<WebComponentStyle['textAlign']> })}><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option></select></label><label className="field-label">大小写<select value={inspectedStyle?.textTransform ?? 'none'} onChange={(event) => updateSelectedStyle({ textTransform: event.target.value as NonNullable<WebComponentStyle['textTransform']> })}><option value="none">保持</option><option value="uppercase">大写</option><option value="lowercase">小写</option><option value="capitalize">首字母大写</option></select></label></div>
-            </section>
-            {(selected.type === 'image' || selected.type === 'video' || selected.type === 'avatar') && <section className="design-inspector-group"><header><strong>媒体</strong><span>裁切与焦点</span></header><div className="size-row"><label className="field-label">适应方式<select value={inspectedStyle?.objectFit ?? 'cover'} onChange={(event) => updateSelectedStyle({ objectFit: event.target.value as NonNullable<WebComponentStyle['objectFit']> })}><option value="cover">覆盖裁切</option><option value="contain">完整显示</option><option value="fill">拉伸填充</option><option value="none">原始大小</option><option value="scale-down">自动缩小</option></select></label><label className="field-label">焦点<input value={inspectedStyle?.objectPosition ?? '50% 50%'} onChange={(event) => updateSelectedStyle({ objectPosition: event.target.value })} /></label></div></section>}
+            </section>}
+            {inspectorCapabilities?.media && <section className="design-inspector-group"><header><strong>媒体</strong><span>裁切与焦点</span></header><div className="size-row"><label className="field-label">适应方式<select value={inspectedStyle?.objectFit ?? 'cover'} onChange={(event) => updateSelectedStyle({ objectFit: event.target.value as NonNullable<WebComponentStyle['objectFit']> })}><option value="cover">覆盖裁切</option><option value="contain">完整显示</option><option value="fill">拉伸填充</option><option value="none">原始大小</option><option value="scale-down">自动缩小</option></select></label><label className="field-label">焦点<input value={inspectedStyle?.objectPosition ?? '50% 50%'} onChange={(event) => updateSelectedStyle({ objectPosition: event.target.value })} /></label></div></section>}
             <section className="design-inspector-group advanced-css-group">
               <header><strong>高级样式</strong><span>开放式 CSS，不受面板枚举限制</span></header>
               <AdvancedCssEditor value={inspectorVisualState === 'default' ? inspectedFrame?.style.customCss ?? {} : selected.states?.[inspectorVisualState]?.customCss ?? {}} onChange={updateSelectedCustomCss} />
             </section>
             <div className="token-apply-row"><button onClick={() => applyColorToken('background', 'primary')}>主色背景</button><button onClick={() => applyColorToken('background', 'surface')}>表面背景</button><button onClick={() => applyColorToken('color', 'text')}>正文色</button><button onClick={() => applyRadiusToken('medium')}>中圆角</button></div>
-            {(selected.type === 'section' || directChildCount > 0) && selectedEditableSlots.length === 0 && <>
+            {inspectorCapabilities?.layout && <>
               <div className="panel-title section-title">容器布局 · {directChildCount} 个子组件</div>
               <label className="field-label">布局方式<select value={selected.layout?.mode ?? 'free'} onChange={(event) => updateSelectedLayout({ mode: event.target.value as NonNullable<WebDesignComponent['layout']>['mode'] })}><option value="free">自由布局</option><option value="flex-row">Flex 横向</option><option value="flex-column">Flex 纵向</option><option value="grid">Grid 网格</option></select></label>
               <div className="size-row"><NumberField label="间距" value={selected.layout?.gap ?? 16} onChange={(gap) => updateSelectedLayout({ gap })} /><NumberField label="内边距" value={selected.layout?.padding ?? 16} onChange={(padding) => updateSelectedLayout({ padding })} /></div>
@@ -2484,16 +2692,19 @@ export function WebDesignStudioApp() {
               {selected.layout?.mode === 'flex-row' && <label className="ui-library-boolean-prop"><input type="checkbox" checked={selected.layout?.wrap === true} onChange={(event) => updateSelectedLayout({ wrap: event.target.checked })} /><span>空间不足时自动换行</span></label>}
               <button className="secondary-button" disabled={directChildCount === 0 || selected.layout?.mode === 'free'} onClick={applySelectedAutoLayout}>应用自动布局</button>
             </>}
+            </>}
+            {inspectorTab === 'ai' && <>
             <div className="panel-title section-title">组件批注</div>
             <div className="notes-list">{selected.annotations.length === 0 && <span className="empty-hint">还没有批注</span>}{selected.annotations.map((note) => <div key={note.id} className={`note-card ${note.status}`}><span>{note.text}</span><small>{note.status === 'open' ? '待处理' : '已完成'}</small></div>)}</div>
             <textarea className="composer" rows={3} placeholder="例如：这里的按钮再醒目一些" value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} /><button className="secondary-button" onClick={addAnnotation}>添加批注</button>
             <div className="panel-title section-title">与 AI 交互</div>
             <textarea className="composer" rows={4} placeholder={`告诉 AI 如何修改当前${device === 'desktop' ? '桌面' : device === 'tablet' ? '平板' : '手机'}组件…`} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} /><button className="ai-button" onClick={() => void addAiRequest()}>提交给 AI</button>
+            </>}
           </> : <div className="empty-inspector"><div className="empty-icon">↖</div><strong>选择一个组件</strong><p>在画布或图层中选择组件，然后编辑、对齐、锁定、批注或提交 AI 请求。</p></div>}
         </aside>}
       </main>
-      {variantPickerDefinition && variantPickerLibrary && <div className={`studio-modal-backdrop ${variantPickerDrag?.dragging ? 'dragging-library-element' : ''}`} onPointerDown={() => setVariantPickerTarget(undefined)}>
-        <section className="studio-modal variant-picker" data-library-portal-host onPointerDown={(event) => event.stopPropagation()}>
+      {variantPickerDefinition && variantPickerLibrary && <div className={`studio-side-surface-host ${variantPickerDrag?.dragging ? 'dragging-library-element' : ''}`}>
+        <section className="studio-modal studio-side-surface variant-picker" data-library-portal-host>
           <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>移动到想要的元素上，点击直接插入，或按住拖到画布中的准确位置。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
           <div className={`variant-preview-grid ${WIDE_VARIANT_PREVIEWS.has(variantPickerDefinition.id) || variantPickerPresentation?.previewSpan === 'wide' ? 'wide-component-previews' : ''} ${variantPickerVariants.length === 1 ? 'single-component-preview' : ''}`}>{variantPickerVariants.map((variant) => {
             const previewComponent = applyUiLibraryVariant(createComponentFromUiLibrary(variantPickerLibrary.id, variantPickerDefinition.id, 0, 0), variant.id);
@@ -2509,7 +2720,7 @@ export function WebDesignStudioApp() {
           })}</div>
         </section>
       </div>}
-      {variantPickerDrag && <div
+      {variantPickerDrag?.dragging && <div
         className="variant-picker-pointer-capture"
         onPointerMove={(event) => { event.preventDefault(); event.stopPropagation(); moveUiLibraryPreviewPointerDragAt(event.clientX, event.clientY); }}
         onPointerUp={(event) => { event.preventDefault(); event.stopPropagation(); finishUiLibraryPreviewPointerDragAt(event.clientX, event.clientY); }}
@@ -2517,17 +2728,11 @@ export function WebDesignStudioApp() {
         onContextMenu={(event) => event.preventDefault()}
       />}
       {variantPickerDrag?.dragging && <div className="variant-picker-drag-ghost" style={{ left: variantPickerDrag.clientX, top: variantPickerDrag.clientY }}><strong>{variantPickerDrag.selection.label}</strong><small>{Math.round(variantPickerDrag.selection.width)} × {Math.round(variantPickerDrag.selection.height)}</small></div>}
-      {themePickerOpen && <div className="studio-modal-backdrop" onPointerDown={() => setThemePickerOpen(false)}>
-        <section className="studio-modal theme-picker" onPointerDown={(event) => event.stopPropagation()}>
+      {themePickerOpen && <div className="studio-side-surface-host">
+        <section className="studio-modal studio-side-surface theme-picker">
           <header><div><span className="eyebrow">Visual system</span><h2>选择整站设计风格</h2><p>一次统一颜色、字体、圆角、画布背景和全部 UI 组件主题。</p></div><button onClick={() => setThemePickerOpen(false)}>×</button></header>
           <div className="theme-preset-grid">{WEB_DESIGN_THEME_PRESETS.map((preset) => <button key={preset.id} onClick={() => applyDesignTheme(preset)}><div className="theme-preview" style={{ background: preset.canvasBackground }}><i style={{ background: preset.preview[1] }} /><b style={{ background: preset.preview[2] }} /><span style={{ color: preset.tokens.colors.text }}>Aa</span></div><strong>{preset.name}</strong><small>{preset.description}</small><div className="theme-swatches">{preset.preview.map((color) => <i key={color} style={{ background: color }} />)}</div></button>)}</div>
         </section>
-      </div>}
-      {aiPanelOpen && <div className="ai-command-panel">
-        <div className="ai-command-heading"><div><span>✦ AI 设计助手</span><strong>{editingSlotDefinition ? `正在设计：${editingSlotDefinition.label}` : aiTarget ? `正在修改：${aiTarget.name}` : `正在设计：${currentPage?.name ?? '当前页面'}`}</strong></div><button onClick={() => setAiPanelOpen(false)}>×</button></div>
-        <div className="ai-quick-prompts">{aiQuickPrompts.map((prompt) => <button key={prompt} onClick={() => setAiInstruction(prompt)}>{prompt}</button>)}</div>
-        <textarea autoFocus rows={4} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void addAiRequest(); }} placeholder={aiTarget ? '描述你希望这个组件或内容区域如何变化，也可以要求 AI 直接添加表单、详情或操作组件…' : '描述网站目标、受众、内容和你喜欢的视觉感觉…'} />
-        <div className="ai-command-footer"><span>{editingSlotDefinition ? `仅修改 ${editingSlotDefinition.label}` : aiTarget ? '仅修改当前组件' : `作用于 ${device} · 当前页面`}</span><button disabled={!aiInstruction.trim()} onClick={() => void addAiRequest()}>提交设计任务 <b>⌘↵</b></button></div>
       </div>}
       {toast && <div className="toast">{toast}</div>}
     </div>
@@ -2597,59 +2802,6 @@ function JsonPropertyEditor({ label, value, onChange }: { label: string; value: 
   return <div className="json-prop-editor"><div><strong>{label}</strong><button onClick={apply}>应用数据</button></div><textarea rows={Math.min(10, Math.max(4, draft.split('\n').length))} value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} />{error && <small>{error}</small>}</div>;
 }
 
-function CanvasComponentContent({ component, style = component.style, interactive, tokens, slotContent }: { component: WebDesignComponent; style?: WebComponentStyle; interactive: boolean; tokens?: WebDesignTokens; slotContent?: Record<string, ReactNode> }) {
-  const renderedComponent = style === component.style ? component : { ...component, style };
-  if (component.library) return <div className={`ui-library-canvas-content library-${component.library.name} ${interactive ? 'preview' : ''}`}><LibraryCanvasComponent component={renderedComponent} preview={interactive} tokens={tokens} slotContent={slotContent} /></div>;
-  if (component.type === 'image') return component.content ? <img src={component.content} alt={component.name} draggable={false} style={{ objectFit: style.objectFit, objectPosition: style.objectPosition }} /> : <span className="image-placeholder">图片</span>;
-  if (component.type === 'video') return component.content ? <video src={component.content} controls={interactive} muted style={{ objectFit: style.objectFit, objectPosition: style.objectPosition }} /> : <span className="media-placeholder">▶<small>视频</small></span>;
-  if (component.type === 'input') return <span className="input-placeholder">{component.content}</span>;
-  if (component.type === 'textarea') return <span className="input-placeholder textarea-placeholder">{component.content}</span>;
-  if (component.type === 'select') return <span className="select-placeholder"><span>{component.content.split('\n')[0]}</span><b>⌄</b></span>;
-  if (component.type === 'checkbox') return <span className="choice-control"><i>✓</i>{component.content}</span>;
-  if (component.type === 'switch') return <span className="choice-control"><i className="switch-track">●</i>{component.content}</span>;
-  if (component.type === 'divider') return null;
-  if (component.type === 'list') return <ul className="component-list">{component.content.split('\n').filter(Boolean).map((item, index) => <li key={index}>{item}</li>)}</ul>;
-  if (component.type === 'table') return <table className="component-table"><tbody>{component.content.split('\n').filter(Boolean).map((row, rowIndex) => <tr key={rowIndex}>{row.split('|').map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table>;
-  if (component.type === 'avatar' && /^(data:image\/|https?:\/\/)/.test(component.content)) return <img src={component.content} alt={component.name} draggable={false} />;
-  if (component.type === 'section') return null;
-  return <span className="component-copy">{component.content}</span>;
-}
-
-function CanvasComponent({ component, resolved, selected, primary, interactive, forcedState, tokens, slotContent, onPointerDown, onResizePointerDown, onPreviewActivate, onEditContents }: {
-  component: WebDesignComponent;
-  resolved: ResolvedWebDesignComponent;
-  selected: boolean;
-  primary: boolean;
-  interactive: boolean;
-  forcedState?: WebComponentVisualState;
-  tokens?: WebDesignTokens;
-  slotContent?: Record<string, ReactNode>;
-  onPointerDown: (event: ReactPointerEvent) => void;
-  onResizePointerDown: (event: ReactPointerEvent) => void;
-  onPreviewActivate: () => void;
-  onEditContents?: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const [pressed, setPressed] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const pointerOrigin = useRef<{ x: number; y: number } | null>(null);
-  const pointerMoved = useRef(false);
-  const runtimeState: WebComponentVisualState | undefined = forcedState ?? (pressed ? 'active' : focused ? 'focus' : hovered ? 'hover' : undefined);
-  const effectiveStyle = mergeComponentStyles(resolved.style, runtimeState ? component.states?.[runtimeState] : undefined);
-  const style: CSSProperties = {
-    left: resolved.x, top: resolved.y, width: resolved.width, height: resolved.height, zIndex: component.zIndex,
-    ...(component.library ? componentEffectStyleToCss(effectiveStyle) : componentStyleToCss(effectiveStyle)),
-    transition: component.states ? 'background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease, opacity .18s ease, transform .18s ease' : undefined
-  };
-  return (
-    <div data-component-id={component.id} className={`canvas-component type-${component.type} ${component.library ? `library-component library-${component.library.name}` : ''} ${selected ? 'selected' : ''} ${component.locked ? 'locked' : ''} ${interactive ? 'interactive' : ''}`} style={style} tabIndex={interactive && component.states?.focus ? 0 : undefined} onPointerEnter={() => interactive && setHovered(true)} onPointerLeave={() => { setHovered(false); setPressed(false); }} onPointerDown={(event) => { pointerOrigin.current = { x: event.clientX, y: event.clientY }; pointerMoved.current = false; if (interactive) setPressed(true); onPointerDown(event); }} onPointerUp={(event) => { const origin = pointerOrigin.current; pointerMoved.current = Boolean(origin && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 4); setPressed(false); }} onPointerCancel={() => { pointerOrigin.current = null; pointerMoved.current = false; setPressed(false); }} onFocus={() => interactive && setFocused(true)} onBlur={() => setFocused(false)} onDoubleClick={(event) => { event.preventDefault(); }} onClick={(event) => { if (!interactive && onEditContents && !pointerMoved.current) { event.stopPropagation(); onEditContents(); } else if (interactive && component.interaction) { event.stopPropagation(); onPreviewActivate(); } pointerOrigin.current = null; pointerMoved.current = false; }}>
-      <CanvasComponentContent component={component} style={effectiveStyle} interactive={interactive} tokens={tokens} slotContent={slotContent} />
-      {!interactive && component.annotations.some((annotation) => annotation.status === 'open') && <span className="annotation-badge">{component.annotations.filter((annotation) => annotation.status === 'open').length}</span>}
-      {primary && !interactive && <><span className="selection-label">{component.locked ? '🔒 ' : ''}{component.name}</span>{onEditContents && <span className="selection-edit-hint">拖动整体 · 点击编辑内部</span>}{!component.locked && <span className="resize-handle" onPointerDown={onResizePointerDown} />}</>}
-    </div>
-  );
-}
-
 function runtimeSlotContentMap(
   document: WebDesignDocument,
   component: WebDesignComponent,
@@ -2714,7 +2866,7 @@ function RuntimeSlotCanvasComponent({ component, frame, interactive, tokens, slo
       event.stopPropagation();
       onPreviewActivate();
     }
-  }}><CanvasComponentContent component={component} style={effectiveStyle} interactive={interactive} tokens={tokens} slotContent={slotContent} /></div>;
+  }}><WorkspaceCanvasComponentContent component={component} style={effectiveStyle} interactive={interactive} tokens={tokens} slotContent={slotContent} /></div>;
 }
 
 function formatProjectDate(value: string): string {

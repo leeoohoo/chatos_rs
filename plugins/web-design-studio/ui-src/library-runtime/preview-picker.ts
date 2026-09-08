@@ -126,7 +126,14 @@ export function installRuntimePreviewPicker(
   let activeElement: HTMLElement | undefined;
   let refreshTimer = 0;
   let suppressPointerClickUntil = 0;
-  let activePointer: { source: HTMLElement; selection: LibraryPreviewSelection; pointerId: number } | undefined;
+  let activePointer: {
+    source: HTMLElement;
+    selection: LibraryPreviewSelection;
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    dragging: boolean;
+  } | undefined;
 
   const refresh = () => {
     window.clearTimeout(refreshTimer);
@@ -144,9 +151,26 @@ export function installRuntimePreviewPicker(
       }
     }, 40);
   };
+  const pickableAtPoint = (clientX: number, clientY: number) => {
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+    return [...marked.keys()]
+      .filter((element) => {
+        const bounds = element.getBoundingClientRect();
+        return clientX >= bounds.left && clientX <= bounds.right
+          && clientY >= bounds.top && clientY <= bounds.bottom;
+      })
+      .sort((left, right) => {
+        const leftBounds = left.getBoundingClientRect();
+        const rightBounds = right.getBoundingClientRect();
+        return leftBounds.width * leftBounds.height - rightBounds.width * rightBounds.height;
+      })[0];
+  };
   const sourceForEvent = (event: Event) => {
     const target = event.target as (EventTarget & { closest?: (selector: string) => HTMLElement | null }) | null;
-    return typeof target?.closest === 'function' ? target.closest('[data-studio-pickable]') ?? undefined : undefined;
+    const closest = typeof target?.closest === 'function' ? target.closest('[data-studio-pickable]') ?? undefined : undefined;
+    if (closest) return closest;
+    const pointer = event as MouseEvent;
+    return pickableAtPoint(pointer.clientX, pointer.clientY);
   };
   const selectionForSource = (source?: HTMLElement) => {
     if (!source?.dataset.studioPickable) return;
@@ -156,18 +180,35 @@ export function installRuntimePreviewPicker(
     if (event.button !== 0) return;
     const selection = selectionForSource(sourceForEvent(event));
     if (!selection) return;
-    suppressPointerClickUntil = performance.now() + 1000;
     event.preventDefault();
     event.stopImmediatePropagation();
     const source = sourceForEvent(event)!;
-    activePointer = { source, selection, pointerId: event.pointerId };
+    activePointer = {
+      source,
+      selection,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      dragging: false
+    };
     source.setPointerCapture?.(event.pointerId);
-    emitPointerEvent({ selection, pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, phase: 'start' });
   };
   const pointermove = (event: PointerEvent) => {
     if (!activePointer || event.pointerId !== activePointer.pointerId) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (!activePointer.dragging) {
+      const distance = Math.hypot(event.clientX - activePointer.startClientX, event.clientY - activePointer.startClientY);
+      if (distance < 5) return;
+      activePointer.dragging = true;
+      emitPointerEvent({
+        selection: activePointer.selection,
+        pointerId: event.pointerId,
+        clientX: activePointer.startClientX,
+        clientY: activePointer.startClientY,
+        phase: 'start'
+      });
+    }
     emitPointerEvent({ selection: activePointer.selection, pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, phase: 'move' });
   };
   const finishPointer = (event: PointerEvent, cancelled: boolean) => {
@@ -177,7 +218,12 @@ export function installRuntimePreviewPicker(
     if (active.source.hasPointerCapture?.(event.pointerId)) active.source.releasePointerCapture(event.pointerId);
     event.preventDefault();
     event.stopImmediatePropagation();
-    emitPointerEvent({ selection: active.selection, pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, phase: cancelled ? 'cancel' : 'end' });
+    suppressPointerClickUntil = performance.now() + 1000;
+    if (active.dragging) {
+      emitPointerEvent({ selection: active.selection, pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, phase: cancelled ? 'cancel' : 'end' });
+    } else if (!cancelled) {
+      emitSelect(active.selection);
+    }
   };
   const pointerup = (event: PointerEvent) => finishPointer(event, false);
   const pointercancel = (event: PointerEvent) => finishPointer(event, true);

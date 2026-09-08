@@ -17,8 +17,6 @@ export interface LibraryPreviewPointerEvent {
   phase: 'start' | 'move' | 'end' | 'cancel';
 }
 
-export const LIBRARY_PREVIEW_POINTER_EVENT = 'web-design-library-preview-pointer';
-
 export function libraryPreviewSelection(value: unknown): LibraryPreviewSelection | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return;
   const candidate = value as Partial<LibraryPreviewSelection>;
@@ -26,6 +24,25 @@ export function libraryPreviewSelection(value: unknown): LibraryPreviewSelection
   if (typeof candidate.path !== 'string' || typeof candidate.label !== 'string' || numbers.some((item) => typeof item !== 'number' || !Number.isFinite(item))) return;
   if ((candidate.width ?? 0) <= 0 || (candidate.height ?? 0) <= 0 || (candidate.viewportWidth ?? 0) <= 0 || (candidate.viewportHeight ?? 0) <= 0) return;
   return candidate as LibraryPreviewSelection;
+}
+
+export function translateLibraryPreviewPointerEvent(
+  value: unknown,
+  frameLeft: number,
+  frameTop: number
+): LibraryPreviewPointerEvent | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const candidate = value as Partial<LibraryPreviewPointerEvent>;
+  const selection = libraryPreviewSelection(candidate.selection);
+  if (!selection || !['start', 'move', 'end', 'cancel'].includes(candidate.phase ?? '')) return;
+  if (![candidate.clientX, candidate.clientY, candidate.pointerId, frameLeft, frameTop].every((item) => typeof item === 'number' && Number.isFinite(item))) return;
+  return {
+    selection,
+    pointerId: candidate.pointerId!,
+    clientX: frameLeft + candidate.clientX!,
+    clientY: frameTop + candidate.clientY!,
+    phase: candidate.phase!
+  };
 }
 
 export function resolvePreviewElement(root: HTMLElement, path: string): HTMLElement | undefined {

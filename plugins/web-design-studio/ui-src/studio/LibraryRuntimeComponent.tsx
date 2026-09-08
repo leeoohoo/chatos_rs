@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { WebDesignComponent } from '../../src/schema';
-import { libraryPreviewSelection, LIBRARY_PREVIEW_POINTER_EVENT, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
+import { libraryPreviewSelection, translateLibraryPreviewPointerEvent, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
 
 export function LibraryRuntimeComponent({ component, preview, slotContent, layout = 'fill', autoSize = false, pickItems = false, onPickItem, onPickPointerEvent, onContentHeight }: {
   component: WebDesignComponent;
@@ -72,33 +72,18 @@ export function LibraryRuntimeComponent({ component, preview, slotContent, layou
         const selection = libraryPreviewSelection(message.data.detail);
         if (selection) onPickItemRef.current?.(selection);
       }
+      if (message.data.event === 'preview-pointer' && pickItems) {
+        const frame = frameRef.current;
+        if (!frame) return;
+        const bounds = frame.getBoundingClientRect();
+        const pointerEvent = translateLibraryPreviewPointerEvent(message.data.detail, bounds.left, bounds.top);
+        if (pointerEvent) onPickPointerEventRef.current?.(pointerEvent);
+      }
       if (message.data.event === 'error') setStatus('error');
     };
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);
   }, [autoSize, instance, onContentHeight, pickItems]);
-
-  useEffect(() => {
-    if (!pickItems) return;
-    const receivePointerEvent = (event: Event) => {
-      const detail = (event as CustomEvent<{ instance?: string; state?: LibraryPreviewPointerEvent }>).detail;
-      if (detail?.instance !== instance) return;
-      const state = detail.state;
-      const selection = libraryPreviewSelection(state?.selection);
-      const frame = frameRef.current;
-      if (!selection || !state || !frame) return;
-      const bounds = frame.getBoundingClientRect();
-      onPickPointerEventRef.current?.({
-        selection,
-        pointerId: state.pointerId,
-        clientX: bounds.left + state.clientX,
-        clientY: bounds.top + state.clientY,
-        phase: state.phase
-      });
-    };
-    window.addEventListener(LIBRARY_PREVIEW_POINTER_EVENT, receivePointerEvent);
-    return () => window.removeEventListener(LIBRARY_PREVIEW_POINTER_EVENT, receivePointerEvent);
-  }, [instance, pickItems]);
 
   useEffect(sendProps, [props, instance, component.content]);
 

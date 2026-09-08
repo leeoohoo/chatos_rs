@@ -1,4 +1,5 @@
 import ChatOSCore
+import Combine
 import Foundation
 import XCTest
 @testable import ChatOSApp
@@ -44,6 +45,93 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(requestedSessionIDs, ["session-1", "session-1"])
     }
 
+    func testRealtimeReconcileRefreshesSilently() async throws {
+        let remoteService = ConversationRemoteServiceStub()
+        let realtimeService = ConversationRealtimeServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            remoteService: remoteService,
+            realtimeService: realtimeService
+        )
+
+        try await waitUntil {
+            await remoteService.requestCount() == 1 && !viewModel.isRefreshing
+        }
+        await remoteService.setFetchDelay(milliseconds: 300)
+
+        await realtimeService.yield(Self.reconcileSignal(id: "reconcile-silent"))
+
+        try await waitUntil {
+            await remoteService.requestCount() == 2
+        }
+        XCTAssertFalse(viewModel.isRefreshing)
+    }
+
+    func testRealtimeSignalsAreCoalescedIntoOneRefresh() async throws {
+        let remoteService = ConversationRemoteServiceStub()
+        let realtimeService = ConversationRealtimeServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            remoteService: remoteService,
+            realtimeService: realtimeService
+        )
+
+        try await waitUntil {
+            let hasSubscriber = await realtimeService.hasSubscriber(sessionID: "session-1")
+            return await remoteService.requestCount() == 1
+                && !viewModel.isRefreshing
+                && hasSubscriber
+        }
+
+        await realtimeService.yield(Self.reconcileSignal(id: "reconcile-1"))
+        await realtimeService.yield(Self.reconcileSignal(id: "reconcile-2"))
+        await realtimeService.yield(Self.reconcileSignal(id: "reconcile-3"))
+
+        try await waitUntil {
+            await remoteService.requestCount() == 2
+        }
+        try await Task.sleep(for: .milliseconds(350))
+        let requestCount = await remoteService.requestCount()
+        XCTAssertEqual(requestCount, 2)
+    }
+
+    func testUnchangedSnapshotDoesNotPublishViewUpdates() async throws {
+        let turn = ConversationRemoteServiceStub.turn(revision: 1)
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [turn],
+            historyStore: ConversationHistoryStore()
+        )
+
+        try await waitUntil { viewModel.turns == [turn] }
+        try await Task.sleep(for: .milliseconds(50))
+        var updateCount = 0
+        let cancellable = viewModel.objectWillChange.sink {
+            updateCount += 1
+        }
+
+        await viewModel.refreshSnapshot()
+
+        XCTAssertEqual(updateCount, 0)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
+        ConversationRealtimeSignal(
+            eventID: id,
+            eventSequence: 0,
+            sessionID: "session-1",
+            turnID: nil,
+            kind: .reconcile,
+            eventName: "conversation.reconcile",
+            timestamp: "2026-09-03T08:00:00Z"
+        )
+    }
+
     private func waitUntil(
         timeoutIterations: Int = 100,
         condition: @escaping @MainActor () async -> Bool
@@ -58,10 +146,15 @@ final class ConversationSessionViewModelTests: XCTestCase {
 
 private actor ConversationRemoteServiceStub: ConversationRemoteServicing {
     private var queries: [ConversationHistoryQuery] = []
+    private var fetchDelayMilliseconds = 0
 
     func fetchHistory(_ query: ConversationHistoryQuery) async throws -> HistoryPage {
         queries.append(query)
         let revision = Int64(queries.count)
+        let delay = fetchDelayMilliseconds
+        if delay > 0 {
+            try await Task.sleep(for: .milliseconds(delay))
+        }
         return HistoryPage(
             turns: [Self.turn(revision: revision)],
             olderCursor: nil,
@@ -79,7 +172,15 @@ private actor ConversationRemoteServiceStub: ConversationRemoteServicing {
         queries.map(\.sessionID)
     }
 
-    private static func turn(revision: Int64) -> ConversationTurn {
+    func requestCount() -> Int {
+        queries.count
+    }
+
+    func setFetchDelay(milliseconds: Int) {
+        fetchDelayMilliseconds = milliseconds
+    }
+
+    static func turn(revision: Int64) -> ConversationTurn {
         ConversationTurn(
             id: "turn-1",
             sessionID: "session-1",

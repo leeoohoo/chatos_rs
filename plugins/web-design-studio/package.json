@@ -37,6 +37,15 @@
     "studio:dev": "npm run build && npm run studio",
     "mcp": "node dist/mcp-server.mjs mcp",
     "typecheck": "tsc --noEmit",
+    "baseline:v2": "npm run build && node --test test/v2-phase0-baseline.test.mjs",
+    "baseline:seed": "npm run build && node scripts/seed-v2-legacy-baseline.mjs",
+    "baseline:preview": "npm run build && node scripts/serve-v2-baseline-preview.mjs",
+    "baseline:capture": "npm run build && node scripts/capture-v2-baseline.mjs",
+    "baseline:report": "npm run build && node scripts/report-v2-baseline.mjs",
+    "phase2:run": "npm run build && node scripts/create-v2-phase2-run.mjs",
+    "phase2:preview": "npm run build && node scripts/serve-v2-phase2-preview.mjs",
+    "phase2:capture": "npm run build && node scripts/capture-v2-baseline.mjs --manifest .web-design-studio-baselines/phase2-current-run.json --output .web-design-studio-baselines",
+    "phase2:report": "node scripts/report-v2-phase2.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
     "pack:verify": "npm run test && npm pack --dry-run"
   },
@@ -134,8 +143,10 @@
     "@vitejs/plugin-react": "5.0.4",
     "@vitejs/plugin-vue": "6.0.1",
     "esbuild": "0.25.10",
+    "pngjs": "^7.0.0",
     "typescript": "5.9.2",
     "unplugin-auto-import": "20.2.0",
-    "vite": "7.3.6"
+    "vite": "7.3.6",
+    "ws": "^8.18.3"
   }
 }
