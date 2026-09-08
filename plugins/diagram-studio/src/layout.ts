@@ -45,6 +45,7 @@ export async function layoutDiagram(
         child.position = { x: 150 + index * 260, y: 48 };
       });
     });
+    refreshGenericEdgeHandles(next);
     return next;
   }
   if (next.nodes.some((node) => node.data.shape === 'container')) {
@@ -69,10 +70,15 @@ export async function layoutDiagram(
     layoutOptions: {
       'elk.algorithm': 'layered',
       'elk.direction': resolvedDirection,
+      'elk.edgeRouting': 'ORTHOGONAL',
       'elk.spacing.nodeNode': '72',
+      'elk.spacing.edgeNode': '28',
       'elk.layered.spacing.nodeNodeBetweenLayers': '96',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '28',
       'elk.padding': '[top=50,left=50,bottom=50,right=50]',
       'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
       ...(shouldWrapArchitecture
         ? {
             'elk.layered.wrapping.strategy': 'MULTI_EDGE',
@@ -95,7 +101,7 @@ export async function layoutDiagram(
     ...node,
     position: positions.get(node.id) ?? node.position
   }));
-  if (document.kind === 'architecture' || document.kind === 'topology') refreshGenericEdgeHandles(next);
+  refreshGenericEdgeHandles(next);
   return next;
 }
 
@@ -308,7 +314,12 @@ function refreshGenericEdgeHandles(document: DiagramDocument): void {
     const targetSize = nodeSize(target);
     const sourceCenter = { x: sourcePosition.x + sourceSize.width / 2, y: sourcePosition.y + sourceSize.height / 2 };
     const targetCenter = { x: targetPosition.x + targetSize.width / 2, y: targetPosition.y + targetSize.height / 2 };
-    const vertical = Math.abs(targetCenter.y - sourceCenter.y) >= Math.abs(targetCenter.x - sourceCenter.x);
+    const horizontalDistance = Math.abs(targetCenter.x - sourceCenter.x);
+    const verticalDistance = Math.abs(targetCenter.y - sourceCenter.y);
+    const prefersVerticalFlow = document.kind === 'flowchart' || document.kind === 'swimlane';
+    const vertical = prefersVerticalFlow
+      ? verticalDistance >= horizontalDistance * 0.65
+      : verticalDistance >= horizontalDistance;
     return {
       ...edge,
       sourceHandle: vertical ? (targetCenter.y >= sourceCenter.y ? 'bottom' : 'top') : (targetCenter.x >= sourceCenter.x ? 'right' : 'left'),

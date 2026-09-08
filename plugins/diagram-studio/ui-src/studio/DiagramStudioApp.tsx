@@ -823,9 +823,12 @@ export function DiagramStudioApp() {
       ? { width: node.width ?? 1120, height: node.height ?? 180 }
       : { width: node.width ?? defaultNodeSize(node).width, height: node.height ?? defaultNodeSize(node).height }
   })) ?? [], [document?.nodes, selectedNodeIds]);
-  const flowEdges = useMemo(() => document?.edges.map((edge, edgeIndex) => {
+  const flowEdges = useMemo(() => document ? runtimeEdgesForDocument(document).map((edge, edgeIndex) => {
     const isSequence = document.kind === 'sequence';
-    const useSmartRouting = (document.kind === 'architecture' || document.kind === 'topology')
+    const useSmartRouting = (document.kind === 'architecture'
+      || document.kind === 'topology'
+      || document.kind === 'flowchart'
+      || document.kind === 'swimlane')
       && edge.type !== 'straight'
       && edge.type !== 'bezier';
     const isReturnMessage = isSequence && (edge.data?.lineStyle === 'dashed' || edge.data?.dashed);
@@ -854,7 +857,7 @@ export function DiagramStudioApp() {
         : useSmartRouting
           ? {
               ...edge.data,
-              routingOffset: (edgeIndex % 13 - 6) * 9,
+              routingOffset: routingOffsetForEdge(document, edge, edgeIndex),
               routingObstacles: document.nodes
                 .filter((node) => node.id !== edge.source && node.id !== edge.target && node.data.shape !== 'container' && node.data.shape !== 'lane')
                 .map((node) => {
@@ -884,7 +887,7 @@ export function DiagramStudioApp() {
       labelBgPadding: [7, 5],
       labelBgBorderRadius: 6
     };
-  }) ?? [], [document?.edges, document?.kind, document?.nodes, selectedEdgeId]);
+  }) : [], [document?.edges, document?.kind, document?.nodes, selectedEdgeId]);
 
   const newProjectSheet = newProjectVisible && <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setNewProjectVisible(false); }}>
     <section className="new-project-sheet" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
@@ -1323,6 +1326,99 @@ type SmartEdgeRuntimeData = DiagramEdge['data'] & {
   routingObstacles?: RoutingObstacle[];
   routingOffset?: number;
 };
+
+function runtimeEdgesForDocument(document: DiagramDocument): DiagramEdge[] {
+  if (document.kind !== 'flowchart' && document.kind !== 'swimlane') return document.edges;
+  const edges = document.edges.map((edge) => ({ ...edge }));
+  const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
+  const generatedEdgeIndexes = new Set<number>();
+
+  edges.forEach((edge, edgeIndex) => {
+    if (typeof edge.data?.plantUmlId !== 'string') return;
+    const source = nodeById.get(edge.source);
+    const target = nodeById.get(edge.target);
+    if (!source || !target) return;
+    const sourcePosition = absoluteNodePosition(document.nodes, source);
+    const targetPosition = absoluteNodePosition(document.nodes, target);
+    const sourceSize = defaultNodeSize(source);
+    const targetSize = defaultNodeSize(target);
+    const sourceCenter = {
+      x: sourcePosition.x + (source.width ?? sourceSize.width) / 2,
+      y: sourcePosition.y + (source.height ?? sourceSize.height) / 2
+    };
+    const targetCenter = {
+      x: targetPosition.x + (target.width ?? targetSize.width) / 2,
+      y: targetPosition.y + (target.height ?? targetSize.height) / 2
+    };
+    const horizontalDistance = Math.abs(targetCenter.x - sourceCenter.x);
+    const verticalDistance = Math.abs(targetCenter.y - sourceCenter.y);
+    const vertical = verticalDistance >= horizontalDistance * 0.65;
+    edge.sourceHandle = vertical
+      ? targetCenter.y >= sourceCenter.y ? 'bottom' : 'top'
+      : targetCenter.x >= sourceCenter.x ? 'right' : 'left';
+    edge.targetHandle = vertical
+      ? targetCenter.y >= sourceCenter.y ? 'top' : 'bottom'
+      : targetCenter.x >= sourceCenter.x ? 'left' : 'right';
+    generatedEdgeIndexes.add(edgeIndex);
+  });
+
+  const groups = new Map<string, Array<{ edgeIndex: number; endpoint: 'source' | 'target'; otherNodeId: string; side: string }>>();
+  const addEndpoint = (entry: { edgeIndex: number; endpoint: 'source' | 'target'; nodeId: string; otherNodeId: string; side: string }) => {
+    const key = `${entry.nodeId}\u0000${entry.side}`;
+    const entries = groups.get(key) ?? [];
+    entries.push(entry);
+    groups.set(key, entries);
+  };
+  for (const edgeIndex of generatedEdgeIndexes) {
+    const edge = edges[edgeIndex];
+    addEndpoint({ edgeIndex, endpoint: 'source', nodeId: edge.source, otherNodeId: edge.target, side: baseHandleSide(edge.sourceHandle) });
+    addEndpoint({ edgeIndex, endpoint: 'target', nodeId: edge.target, otherNodeId: edge.source, side: baseHandleSide(edge.targetHandle) });
+  }
+  const center = (nodeId: string) => {
+    const node = nodeById.get(nodeId);
+    if (!node) return { x: 0, y: 0 };
+    const position = absoluteNodePosition(document.nodes, node);
+    const size = defaultNodeSize(node);
+    return { x: position.x + (node.width ?? size.width) / 2, y: position.y + (node.height ?? size.height) / 2 };
+  };
+  for (const endpoints of groups.values()) {
+    if (endpoints.length < 2) continue;
+    endpoints.sort((left, right) => {
+      const leftCenter = center(left.otherNodeId);
+      const rightCenter = center(right.otherNodeId);
+      return left.side === 'left' || left.side === 'right'
+        ? leftCenter.y - rightCenter.y
+        : leftCenter.x - rightCenter.x;
+    });
+    endpoints.forEach((endpoint, index) => {
+      const handle = `${endpoint.side}-${Math.round(index * 6 / Math.max(1, endpoints.length - 1))}`;
+      if (endpoint.endpoint === 'source') edges[endpoint.edgeIndex].sourceHandle = handle;
+      else edges[endpoint.edgeIndex].targetHandle = handle;
+    });
+  }
+  return edges;
+}
+
+function baseHandleSide(handle: string | undefined): 'left' | 'right' | 'top' | 'bottom' {
+  const side = handle?.split('-', 1)[0];
+  return side === 'left' || side === 'top' || side === 'bottom' ? side : 'right';
+}
+
+function routingOffsetForEdge(document: DiagramDocument, edge: DiagramEdge, edgeIndex: number): number {
+  const siblings = document.edges
+    .map((candidate, index) => ({ candidate, index }))
+    .filter(({ candidate }) => candidate.source === edge.source)
+    .sort((left, right) => {
+      const leftNode = document.nodes.find((node) => node.id === left.candidate.target);
+      const rightNode = document.nodes.find((node) => node.id === right.candidate.target);
+      const leftPosition = leftNode ? absoluteNodePosition(document.nodes, leftNode) : { x: 0, y: 0 };
+      const rightPosition = rightNode ? absoluteNodePosition(document.nodes, rightNode) : { x: 0, y: 0 };
+      return leftPosition.x - rightPosition.x || leftPosition.y - rightPosition.y || left.index - right.index;
+    });
+  if (siblings.length < 2) return 0;
+  const siblingIndex = siblings.findIndex(({ index }) => index === edgeIndex);
+  return (siblingIndex - (siblings.length - 1) / 2) * 12;
+}
 
 function SmartOrthogonalEdge({
   id,

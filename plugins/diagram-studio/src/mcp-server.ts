@@ -27,7 +27,7 @@ import {
 } from './generation-guides.js';
 
 const SERVER_NAME = 'chatos-diagram-studio';
-const SERVER_VERSION = '0.3.0';
+const SERVER_VERSION = '0.3.1';
 const store = new DiagramDocumentStore();
 const scopeKey = runtimeDataScopeFingerprint(store.rootDirectory);
 const generationScopeKey = runtimeGenerationScopeFingerprint(store.rootDirectory);

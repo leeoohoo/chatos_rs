@@ -43,3 +43,37 @@ order_domain ..> task_queue : Publish
   assert.ok(report.metrics.aspectRatio < 4, `expected a readable aspect ratio, received ${report.metrics.aspectRatio}`);
   assert.ok(topLevelRows.size > 1, 'expected compound boundaries to wrap across more than one row');
 });
+
+test('flowchart layout recomputes and distributes decision branch handles after moving nodes', async () => {
+  const source = `@startuml
+start
+:接收回调;
+if (回调范围匹配?) then (是)
+  if (任务执行成功?) then (是)
+    :记录成功结果;
+    stop
+  else (否)
+    :记录失败结果;
+    stop
+  endif
+else (否)
+  :拒绝回调并记录审计结果;
+  stop
+endif
+@enduml`;
+  const imported = plantUmlToDiagram(source, { documentId: 'flowchart-branch-routing', kind: 'flowchart' });
+  for (const edge of imported.edges) {
+    edge.sourceHandle = 'right';
+    edge.targetHandle = 'left';
+  }
+
+  const laidOut = await layoutDiagram(imported, 'DOWN');
+  const firstDecision = laidOut.nodes.find((node) => node.data.label === '回调范围匹配?');
+  assert.ok(firstDecision);
+  const branches = laidOut.edges.filter((edge) => edge.source === firstDecision.id);
+
+  assert.equal(branches.length, 2);
+  assert.equal(new Set(branches.map((edge) => edge.sourceHandle)).size, 2, 'decision branches should use separate handle slots');
+  assert.equal(branches.every((edge) => edge.sourceHandle?.startsWith('bottom-')), true);
+  assert.equal(branches.every((edge) => edge.targetHandle?.startsWith('top')), true);
+});
