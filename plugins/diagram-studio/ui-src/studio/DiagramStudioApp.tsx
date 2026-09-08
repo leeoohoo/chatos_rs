@@ -41,6 +41,7 @@ import { DiagramNodeView, LaneNodeView } from './DiagramNodes';
 import { componentDragType, TemplateSidebar, type PaletteItem, type SequenceMessagePreset } from './TemplateSidebar';
 import { Inspector } from './Inspector';
 import { Icon } from './Icons';
+import { measuredNode, rememberNodeMeasurements, type NodeMeasurementCache } from './node-measurements';
 
 const nodeTypes = { diagramNode: DiagramNodeView, laneNode: LaneNodeView };
 const edgeTypes = { sequenceMessage: SequenceMessageEdge, smartOrthogonal: SmartOrthogonalEdge };
@@ -56,6 +57,7 @@ export function DiagramStudioApp() {
   const resizeSnapshot = useRef<DiagramDocument | null>(null);
   const edgeMoveSnapshot = useRef<DiagramDocument | null>(null);
   const edgeMoveChanged = useRef(false);
+  const nodeMeasurements = useRef<NodeMeasurementCache>(new Map());
   const lastSequenceConnect = useRef<{ source: string; target: string; sourceSlot?: number; targetSlot?: number; at: number } | undefined>(undefined);
   const [repository, setRepository] = useState<Repository>();
   const [document, setDocument] = useState<DiagramDocument>();
@@ -384,6 +386,7 @@ export function DiagramStudioApp() {
 
   function onNodesChange(changes: NodeChange[]) {
     if (!document) return;
+    rememberNodeMeasurements(nodeMeasurements.current, document.documentId, changes);
     const selectionChanges = changes.filter((change): change is Extract<NodeChange, { type: 'select' }> => change.type === 'select');
     if (selectionChanges.length > 0) {
       setSelectedNodeIds((current) => {
@@ -972,7 +975,7 @@ export function DiagramStudioApp() {
   const flowNodes = useMemo(() => {
     if (!document) return [];
     const mindmap = document.kind === 'mindmap' ? analyzeMindMap(document) : undefined;
-    return document.nodes.map((node) => ({
+    return document.nodes.map((node) => measuredNode(nodeMeasurements.current, document.documentId, {
       ...node,
       hidden: mindmap?.hiddenNodeIds.has(node.id) ?? false,
       data: mindmap && ['mindmap-root', 'mindmap-topic'].includes(node.data.shape)

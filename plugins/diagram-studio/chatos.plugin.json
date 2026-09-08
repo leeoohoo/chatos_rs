@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-diagram-studio",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Create and edit architecture diagrams, flowcharts, swimlane diagrams, topology maps, sequence diagrams, and mind maps with complete PlantUML interoperability.",
   "author": {
     "name": "Chatos"
