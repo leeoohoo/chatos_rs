@@ -86,7 +86,7 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
         BuiltinMcpKind::RemoteConnectionController => McpBuiltinKindGuide {
             description: "远程服务器连接工具，适合通过用户已保存的 SSH 连接检查服务器、执行命令和读写远程文件。",
             use_cases: &["检查远程服务器", "执行 SSH 命令", "读取或上传远程文件", "验证远程连接"],
-            capabilities: &["列出并测试远程连接", "执行远程命令", "浏览和读取远程文件", "上传或下载文件"],
+            capabilities: &["测试已绑定远程连接", "执行远程命令", "浏览和读取远程文件", "上传或下载文件"],
         },
         BuiltinMcpKind::MemorySkillReader => McpBuiltinKindGuide {
             description: "记忆中的 skill 读取工具，适合查找当前上下文可复用的技能说明。",

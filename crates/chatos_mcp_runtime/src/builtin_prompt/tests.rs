@@ -100,8 +100,8 @@ fn remote_connection_prompt_lists_file_transfer_tools() {
     assert!(prompt.contains("`remote_connection_controller_download_file`"));
     assert!(prompt.contains("`remote_connection_controller_upload_file`"));
     assert!(!prompt.contains("remote_connection_controller_list_connections"));
-    assert!(prompt.contains("不要查询连接列表"));
-    assert!(prompt.contains("不要让用户或 AI 填写内部 ID"));
+    assert!(prompt.contains("当前远程连接和路由上下文由程序在任务开始前绑定"));
+    assert!(prompt.contains("内部路由配置始终由程序管理"));
 }
 
 #[test]
