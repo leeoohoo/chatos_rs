@@ -5,19 +5,13 @@ import Testing
 
 struct NativeMCPRemoteConnectionControllerTests {
     @Test
-    func listsConnectionsWithoutExposingCredentials() async throws {
-        let provider = RemoteRuntimeStub()
-        let controller = NativeMCPRemoteConnectionController(
-            provider: provider,
-            ssh: RemoteSSHStub()
-        )
+    func hidesConnectionDiscoveryAndInternalIDsFromToolDefinitions() {
+        let serialized = NativeJSONValue.array(
+            NativeMCPRemoteConnectionController.toolDefinitions
+        ).canonicalJSONString
 
-        let result = try await controller.call(name: "list_connections", arguments: [:])
-        let serialized = result.canonicalJSONString
-
-        #expect(serialized.contains("connection-1"))
-        #expect(serialized.contains("credentials_available"))
-        #expect(!serialized.contains("local-password"))
+        #expect(!serialized.contains("list_connections"))
+        #expect(!serialized.contains("connection_id"))
     }
 
     @Test
@@ -36,13 +30,30 @@ struct NativeMCPRemoteConnectionControllerTests {
         )
 
         #expect(result.canonicalJSONString.contains("remote-output"))
+        #expect(!result.canonicalJSONString.contains("connection_id"))
         #expect(await ssh.lastCommand() == "uname -a")
+    }
+
+    @Test
+    func directoryListingIncludesUsefulFileMetadataWithoutInternalIDs() async throws {
+        let controller = NativeMCPRemoteConnectionController(
+            provider: RemoteRuntimeStub(),
+            ssh: RemoteSSHStub()
+        )
+        let result = try await controller.call(
+            name: "list_directory",
+            arguments: ["connection_id": .string("connection-1")]
+        )
+        let serialized = result.canonicalJSONString
+
+        #expect(serialized.contains("size_bytes"))
+        #expect(serialized.contains("modified_at"))
+        #expect(serialized.contains("permissions"))
+        #expect(!serialized.contains("connection_id"))
     }
 }
 
 private actor RemoteRuntimeStub: NativeRemoteConnectionRuntimeProviding {
-    func listConnections() async throws -> [RemoteConnection] { [Self.connection] }
-
     func testSaved(id: String, verificationCode: String?) async throws -> RemoteConnectionTestResult {
         .init(success: true, message: "连接成功")
     }
@@ -115,7 +126,18 @@ private actor RemoteSSHStub: NativeRemoteSSHExecuting {
         draft: RemoteConnectionDraft,
         path: String,
         limit: Int
-    ) async throws -> [NativeRemoteDirectoryEntry] { [] }
+    ) async throws -> [NativeRemoteDirectoryEntry] {
+        [
+            .init(
+                name: "app.log",
+                path: "/srv/app/app.log",
+                type: "file",
+                size: 42,
+                modifiedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                permissions: "-rw-r--r--"
+            ),
+        ]
+    }
 
     func resolveDirectory(
         draft: RemoteConnectionDraft,

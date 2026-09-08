@@ -57,8 +57,6 @@ struct NativeRemoteFileServiceTests {
 }
 
 private actor RemoteFileRuntimeStub: NativeRemoteConnectionRuntimeProviding {
-    func listConnections() async throws -> [RemoteConnection] { [] }
-
     func testSaved(
         id: String,
         verificationCode: String?

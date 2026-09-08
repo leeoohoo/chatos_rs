@@ -9,18 +9,12 @@ pub(super) fn normalize_optional_string(value: Option<String>) -> Option<String>
         .filter(|item| !item.is_empty())
 }
 
-pub(super) fn resolve_connection_id(
-    ctx: &BoundContext,
-    explicit_connection_id: Option<String>,
-) -> Result<String, String> {
-    if let Some(connection_id) = normalize_optional_string(explicit_connection_id) {
-        return Ok(connection_id);
-    }
+pub(super) fn resolve_connection_id(ctx: &BoundContext) -> Result<String, String> {
     if let Some(connection_id) = normalize_optional_string(ctx.default_remote_connection_id.clone())
     {
         return Ok(connection_id);
     }
-    Err("缺少 connection_id，请先调用 list_connections 选择连接后再重试".to_string())
+    Err("远程连接未由程序绑定".to_string())
 }
 
 pub(super) fn required_user_id(ctx: &BoundContext) -> Result<String, String> {
@@ -121,25 +115,17 @@ mod tests {
     }
 
     #[test]
-    fn connection_id_prefers_explicit_over_default() {
+    fn connection_id_comes_only_from_program_binding() {
         let ctx = mock_ctx(Some("default_id"));
-        let resolved =
-            resolve_connection_id(&ctx, Some("explicit_id".to_string())).expect("resolve");
-        assert_eq!(resolved, "explicit_id");
-    }
-
-    #[test]
-    fn connection_id_uses_default_when_missing_explicit() {
-        let ctx = mock_ctx(Some("default_id"));
-        let resolved = resolve_connection_id(&ctx, None).expect("resolve");
+        let resolved = resolve_connection_id(&ctx).expect("resolve");
         assert_eq!(resolved, "default_id");
     }
 
     #[test]
-    fn connection_id_fails_when_both_missing() {
+    fn connection_id_fails_when_program_binding_is_missing() {
         let ctx = mock_ctx(None);
-        let err = resolve_connection_id(&ctx, None).expect_err("should fail");
-        assert!(err.contains("connection_id"));
+        let err = resolve_connection_id(&ctx).expect_err("should fail");
+        assert!(err.contains("程序绑定"));
     }
 
     #[test]

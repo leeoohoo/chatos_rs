@@ -5,6 +5,7 @@ pub const BUILTIN_KIND_CODE_MAINTAINER_READ: &str = "CodeMaintainerRead";
 pub const BUILTIN_KIND_CODE_MAINTAINER_WRITE: &str = "CodeMaintainerWrite";
 pub const BUILTIN_KIND_TERMINAL_CONTROLLER: &str = "TerminalController";
 pub const BUILTIN_KIND_LOCAL_COMMAND_APPROVAL: &str = "LocalCommandApproval";
+pub const BUILTIN_KIND_REMOTE_CONNECTION_CONTROLLER: &str = "RemoteConnectionController";
 
 pub const LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER: &str =
     "x-local-connector-enabled-builtin-kinds";
@@ -183,6 +184,7 @@ pub fn normalize_builtin_kind_name(value: &str) -> Option<&'static str> {
         "codemaintainerwrite" => Some(BUILTIN_KIND_CODE_MAINTAINER_WRITE),
         "terminalcontroller" => Some(BUILTIN_KIND_TERMINAL_CONTROLLER),
         "localcommandapproval" => Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL),
+        "remoteconnectioncontroller" => Some(BUILTIN_KIND_REMOTE_CONNECTION_CONTROLLER),
         _ => None,
     }
 }
@@ -224,6 +226,14 @@ mod tests {
         assert!(policy.code_write);
         assert!(policy.allows_tool("read_file_raw"));
         assert!(policy.allows_tool("commit_edit_session"));
+    }
+
+    #[test]
+    fn remote_connection_kind_is_preserved_for_native_connector_dispatch() {
+        assert_eq!(
+            builtin_kind_header_value(["remote_connection_controller"]),
+            BUILTIN_KIND_REMOTE_CONNECTION_CONTROLLER
+        );
     }
 
     #[test]

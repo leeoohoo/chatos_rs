@@ -13,10 +13,25 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         let credentialStore = NativeRemoteConnectionCredentialStore(
             secretStore: NativeConnectorSecretStore(rootURL: root)
         )
+        let connectorStateStore = NativeConnectorStateStore(
+            stateURL: root.appendingPathComponent("connector-state.json")
+        )
+        var connectorState = NativeConnectorPersistentState.empty
+        connectorState.deviceID = "device-current"
+        connectorState.workspaces = [
+            LocalConnectorWorkspace(
+                id: "workspace-current",
+                alias: "Mac",
+                absoluteRoot: "/Users/test",
+                fingerprint: "workspace-current"
+            ),
+        ]
+        try connectorStateStore.save(connectorState)
         let service = NativeRemoteConnectionService(
             upstream: upstream,
             tester: tester,
-            credentialStore: credentialStore
+            credentialStore: credentialStore,
+            connectorStateStore: connectorStateStore
         )
 
         let created = try await service.createConnection(Self.passwordDraft)
@@ -28,11 +43,11 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertNil(sentDraft.privateKeyPath)
         XCTAssertEqual(
             sentDraft.localConnectorDeviceID,
-            NativeRemoteConnectionService.nativeDeviceID
+            "device-current"
         )
         XCTAssertEqual(
             sentDraft.localConnectorWorkspaceID,
-            NativeRemoteConnectionService.nativeWorkspaceID
+            "workspace-current"
         )
 
         _ = try await service.testSaved(id: created.id, verificationCode: nil)
@@ -59,6 +74,41 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertFalse(config.contains("local_connector"))
         XCTAssertFalse(config.contains("local-secret"))
         XCTAssertFalse(config.contains("jump-secret"))
+    }
+
+    func testResolvedDraftCachesDirectConnectionLookupForConsecutiveTools() async throws {
+        let upstream = RemoteConnectionUpstreamStub()
+        let saved = try await upstream.createConnection(Self.passwordDraft)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-remote-cache-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = NativeRemoteConnectionService(
+            upstream: upstream,
+            tester: RemoteConnectionTesterSpy(),
+            credentialStore: NativeRemoteConnectionCredentialStore(
+                secretStore: NativeConnectorSecretStore(rootURL: root)
+            ),
+            connectionCacheTTL: 15
+        )
+
+        _ = try await service.resolvedDraft(id: saved.id)
+        _ = try await service.resolvedDraft(id: saved.id)
+
+        let getRequests = await upstream.getRequestCount()
+        let listRequests = await upstream.listRequestCount()
+        XCTAssertEqual(getRequests, 1)
+        XCTAssertEqual(listRequests, 0)
+    }
+
+    func testSSHConfigCanReuseAConnectionWithoutExposingTheControlPath() throws {
+        let config = try NativeSSHConnectionTester.sshConfig(
+            for: Self.passwordDraft,
+            controlPath: "/tmp/chatos-control-test"
+        )
+
+        XCTAssertTrue(config.contains("ControlMaster auto"))
+        XCTAssertTrue(config.contains("ControlPersist 120"))
+        XCTAssertTrue(config.contains("ControlPath \"/tmp/chatos-control-test\""))
     }
 
     func testRemoteTerminalOutputKeepsVisibleTextAndUpdatesWorkingDirectory() {
@@ -100,9 +150,17 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
 private actor RemoteConnectionUpstreamStub: RemoteConnectionServicing {
     private var connections: [RemoteConnection] = []
     private var createdDraft: RemoteConnectionDraft?
+    private var getRequests = 0
+    private var listRequests = 0
 
     func listConnections() async throws -> [RemoteConnection] {
-        connections
+        listRequests += 1
+        return connections
+    }
+
+    func getConnection(id: String) async throws -> RemoteConnection? {
+        getRequests += 1
+        return connections.first { $0.id == id }
     }
 
     func createConnection(_ draft: RemoteConnectionDraft) async throws -> RemoteConnection {
@@ -165,6 +223,10 @@ private actor RemoteConnectionUpstreamStub: RemoteConnectionServicing {
     func lastCreatedDraft() -> RemoteConnectionDraft? {
         createdDraft
     }
+
+    func getRequestCount() -> Int { getRequests }
+
+    func listRequestCount() -> Int { listRequests }
 }
 
 private actor RemoteConnectionTesterSpy: NativeRemoteConnectionTesting {

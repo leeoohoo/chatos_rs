@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::models::normalize_optional_text;
 use crate::models::{
     now_rfc3339, CurrentUser, HealthResponse, LocalConnectorSystemStatsResponse,
-    WORKSPACE_STATUS_DISABLED,
+    LocalConnectorWorkspace, WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_DISABLED,
 };
 use crate::relay::{
     plugin_artifact_relay_request, PluginArtifactRelayAction, RelayError, RelayRequest,
@@ -106,6 +106,8 @@ const MAX_USER_SERVICE_PROXY_BODY_BYTES: usize = 2 * 1024 * 1024;
 const STANDARD_MCP_RELAY_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 const MCP_TERMINAL_WAIT_TRANSPORT_GRACE_MS: u64 = 15_000;
 const MCP_TERMINAL_WAIT_MAX_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
+const NATIVE_REMOTE_CONNECTION_DEVICE_ALIAS: &str = "chatos-swift-native-client";
+const NATIVE_REMOTE_CONNECTION_WORKSPACE_ALIAS: &str = "local-machine";
 
 #[derive(Debug, Deserialize)]
 struct McpRelayQuery {
@@ -298,6 +300,9 @@ async fn mcp_relay(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let workspace_id = normalize_optional_text(query.workspace_id);
+    let (device_id, workspace_id) =
+        resolve_native_remote_connection_relay_target(&state, &user, device_id, workspace_id)
+            .await?;
     if let Some(workspace_id) = workspace_id.as_deref() {
         validate_device_workspace(&state, &user, device_id.as_str(), workspace_id).await?;
     } else if !has_inline_http_mcp_runtime_header(&headers) {
@@ -329,6 +334,49 @@ async fn mcp_relay(
     };
     let response = dispatch_relay(&state, request, relay_timeout).await?;
     Ok(relay_response_to_http(response))
+}
+
+async fn resolve_native_remote_connection_relay_target(
+    state: &AppState,
+    user: &CurrentUser,
+    device_id: String,
+    workspace_id: Option<String>,
+) -> Result<(String, Option<String>), ApiError> {
+    if device_id != NATIVE_REMOTE_CONNECTION_DEVICE_ALIAS
+        || workspace_id.as_deref() != Some(NATIVE_REMOTE_CONNECTION_WORKSPACE_ALIAS)
+    {
+        return Ok((device_id, workspace_id));
+    }
+    let owner_user_id = user.effective_owner_user_id();
+    let session = state
+        .store
+        .active_session(owner_user_id)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| {
+            ApiError::service_unavailable(
+                "no active Local Connector device is available for the selected remote connection",
+            )
+        })?;
+    let workspaces = state
+        .store
+        .list_workspaces(owner_user_id, Some(session.device_id.clone()))
+        .await
+        .map_err(ApiError::internal)?;
+    let workspace = active_remote_connection_workspace(workspaces.as_slice()).ok_or_else(|| {
+        ApiError::service_unavailable(
+            "the active Local Connector device has no available workspace for remote connection relay",
+        )
+    })?;
+    Ok((session.device_id, Some(workspace.id.clone())))
+}
+
+fn active_remote_connection_workspace(
+    workspaces: &[LocalConnectorWorkspace],
+) -> Option<&LocalConnectorWorkspace> {
+    workspaces
+        .iter()
+        .find(|workspace| workspace.status == WORKSPACE_STATUS_ACTIVE)
 }
 
 async fn plugin_prepare_relay(
@@ -874,8 +922,12 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        is_allowed_model_config_proxy_request, is_local_sandbox_mcp_path, is_plugin_hook_dispatch,
-        mcp_relay_timeout, plugin_relay_timeout, STANDARD_MCP_RELAY_TIMEOUT,
+        active_remote_connection_workspace, is_allowed_model_config_proxy_request,
+        is_local_sandbox_mcp_path, is_plugin_hook_dispatch, mcp_relay_timeout,
+        plugin_relay_timeout, STANDARD_MCP_RELAY_TIMEOUT,
+    };
+    use crate::models::{
+        LocalConnectorWorkspace, WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_DISABLED,
     };
     use axum::http::Method;
     use serde_json::json;
@@ -979,6 +1031,30 @@ mod tests {
                 STANDARD_MCP_RELAY_TIMEOUT
             );
         }
+    }
+
+    #[test]
+    fn remote_connection_alias_uses_only_an_active_workspace() {
+        let workspace = |id: &str, status: &str| LocalConnectorWorkspace {
+            id: id.to_string(),
+            owner_user_id: "owner-1".to_string(),
+            device_id: "device-1".to_string(),
+            display_name: id.to_string(),
+            local_path_alias: "/tmp".to_string(),
+            local_path_fingerprint: id.to_string(),
+            capabilities: Vec::new(),
+            status: status.to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let workspaces = vec![
+            workspace("disabled", WORKSPACE_STATUS_DISABLED),
+            workspace("active", WORKSPACE_STATUS_ACTIVE),
+        ];
+        assert_eq!(
+            active_remote_connection_workspace(workspaces.as_slice()).map(|item| item.id.as_str()),
+            Some("active")
+        );
     }
 
     #[test]

@@ -201,9 +201,16 @@ public struct RemoteVerificationChallenge: Error, Sendable, Equatable {
 
 public protocol RemoteConnectionServicing: Sendable {
     func listConnections() async throws -> [RemoteConnection]
+    func getConnection(id: String) async throws -> RemoteConnection?
     func createConnection(_ draft: RemoteConnectionDraft) async throws -> RemoteConnection
     func updateConnection(id: String, draft: RemoteConnectionDraft) async throws -> RemoteConnection
     func deleteConnection(id: String) async throws
     func testDraft(_ draft: RemoteConnectionDraft, verificationCode: String?) async throws -> RemoteConnectionTestResult
     func testSaved(id: String, verificationCode: String?) async throws -> RemoteConnectionTestResult
+}
+
+public extension RemoteConnectionServicing {
+    func getConnection(id: String) async throws -> RemoteConnection? {
+        try await listConnections().first { $0.id == id }
+    }
 }

@@ -79,6 +79,9 @@ pub fn materialize_runtime_tools_with_plugin_components(
                         resolved.resource.id
                     )
                 })?;
+            if is_bound_remote_connection_route(route) && original_name == "list_connections" {
+                continue;
+            }
             if !resource_allows_tool(resolved, route, original_name) {
                 continue;
             }
@@ -95,6 +98,9 @@ pub fn materialize_runtime_tools_with_plugin_components(
                     resolved.resource.id
                 )
             })?;
+            if is_bound_remote_connection_route(route) {
+                bind_remote_connection_tool_definition(object, original_name)?;
+            }
             object.insert("name".to_string(), Value::String(exposed_name.clone()));
             tools.push(RuntimeToolDescriptor {
                 exposed_name,
@@ -215,6 +221,48 @@ pub fn materialize_runtime_tools_with_plugin_components(
         tools,
         missing_required_tool_schemas,
     })
+}
+
+fn is_bound_remote_connection_route(route: &ResolvedMcpRoute) -> bool {
+    route.is_available()
+        && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
+            .is_some_and(|descriptor| descriptor.key == SystemMcpKey::RemoteConnectionController)
+}
+
+fn bind_remote_connection_tool_definition(
+    definition: &mut serde_json::Map<String, Value>,
+    tool_name: &str,
+) -> Result<(), String> {
+    let input_schema = definition
+        .get_mut("inputSchema")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| format!("remote connection tool {tool_name} has no object inputSchema"))?;
+    if let Some(properties) = input_schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    {
+        properties.remove("connection_id");
+    }
+    if let Some(required) = input_schema
+        .get_mut("required")
+        .and_then(Value::as_array_mut)
+    {
+        required.retain(|field| field.as_str() != Some("connection_id"));
+    }
+    let description = match tool_name {
+        "test_connection" => "Test whether the selected remote connection is available.",
+        "run_command" => "Run one SSH command on the selected remote host.",
+        "list_directory" => "List entries under a directory on the selected remote host.",
+        "read_file" => "Read a UTF-8 text file from the selected remote host.",
+        "download_file" => "Download file content from the selected remote host.",
+        "upload_file" => "Upload content to a file on the selected remote host.",
+        _ => return Ok(()),
+    };
+    definition.insert(
+        "description".to_string(),
+        Value::String(description.to_string()),
+    );
+    Ok(())
 }
 
 fn plugin_binding_allows_tool(binding: &PluginMcpRuntimeBinding, tool_name: &str) -> bool {

@@ -515,11 +515,32 @@ fn bound_remote_connection_materializes_its_tool_catalog() {
     .expect("materialize remote connection tools");
 
     assert!(tools.missing_required_tool_schemas.is_empty());
-    assert_eq!(tools.tools.len(), 7);
+    assert_eq!(tools.tools.len(), 6);
+    assert!(!tools
+        .tools
+        .iter()
+        .any(|tool| tool.original_name == "list_connections"));
     assert!(tools
         .tools
         .iter()
         .any(|tool| tool.original_name == "run_command"));
+    for tool in &tools.tools {
+        assert!(tool
+            .definition
+            .pointer("/inputSchema/properties/connection_id")
+            .is_none());
+        assert!(!tool
+            .definition
+            .pointer("/inputSchema/required")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|required| required.iter().any(|field| field == "connection_id")));
+        assert!(!tool
+            .definition
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .contains("connection_id"));
+    }
 }
 
 #[test]

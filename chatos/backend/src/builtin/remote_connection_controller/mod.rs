@@ -10,9 +10,8 @@ use serde_json::Value;
 use chatos_mcp::{RemoteConnectionControllerContext, RemoteConnectionControllerStore};
 
 use self::actions::{
-    download_file_with_context, list_connections_with_context, list_directory_with_context,
-    read_file_with_context, run_command_with_context, test_connection_with_context,
-    upload_file_with_context,
+    download_file_with_context, list_directory_with_context, read_file_with_context,
+    run_command_with_context, test_connection_with_context, upload_file_with_context,
 };
 
 #[derive(Clone)]
@@ -30,25 +29,16 @@ pub struct ChatosRemoteConnectionControllerStore;
 
 #[async_trait]
 impl RemoteConnectionControllerStore for ChatosRemoteConnectionControllerStore {
-    async fn list_connections(
-        &self,
-        context: RemoteConnectionControllerContext,
-    ) -> Result<Value, String> {
-        list_connections_with_context(bound_context(context)).await
-    }
-
     async fn test_connection(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
     ) -> Result<Value, String> {
-        test_connection_with_context(bound_context(context), connection_id).await
+        test_connection_with_context(bound_context(context)).await
     }
 
     async fn run_command(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         command: String,
         timeout_seconds: Option<u64>,
         allow_dangerous: bool,
@@ -56,7 +46,6 @@ impl RemoteConnectionControllerStore for ChatosRemoteConnectionControllerStore {
     ) -> Result<Value, String> {
         run_command_with_context(
             bound_context(context),
-            connection_id,
             command,
             timeout_seconds,
             allow_dangerous,
@@ -68,45 +57,34 @@ impl RemoteConnectionControllerStore for ChatosRemoteConnectionControllerStore {
     async fn list_directory(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         path: Option<String>,
         limit: Option<usize>,
     ) -> Result<Value, String> {
-        list_directory_with_context(bound_context(context), connection_id, path, limit).await
+        list_directory_with_context(bound_context(context), path, limit).await
     }
 
     async fn read_file(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         path: String,
         max_bytes: Option<usize>,
     ) -> Result<Value, String> {
-        read_file_with_context(bound_context(context), connection_id, path, max_bytes).await
+        read_file_with_context(bound_context(context), path, max_bytes).await
     }
 
     async fn download_file(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         path: String,
         encoding: String,
         max_bytes: Option<usize>,
     ) -> Result<Value, String> {
-        download_file_with_context(
-            bound_context(context),
-            connection_id,
-            path,
-            encoding,
-            max_bytes,
-        )
-        .await
+        download_file_with_context(bound_context(context), path, encoding, max_bytes).await
     }
 
     async fn upload_file(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         path: String,
         content: String,
         encoding: String,
@@ -115,7 +93,6 @@ impl RemoteConnectionControllerStore for ChatosRemoteConnectionControllerStore {
     ) -> Result<Value, String> {
         upload_file_with_context(
             bound_context(context),
-            connection_id,
             path,
             content,
             encoding,

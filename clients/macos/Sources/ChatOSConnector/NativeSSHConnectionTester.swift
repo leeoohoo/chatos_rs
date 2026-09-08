@@ -152,7 +152,10 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
         }
     }
 
-    static func sshConfig(for draft: RemoteConnectionDraft) throws -> String {
+    static func sshConfig(
+        for draft: RemoteConnectionDraft,
+        controlPath: String? = nil
+    ) throws -> String {
         var blocks: [String] = []
         var target = commonHostBlock(
             alias: "chatos-target",
@@ -166,6 +169,11 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             privateKeyPath: draft.privateKeyPath,
             certificatePath: draft.certificatePath
         ))
+        if let controlPath = controlPath?.trimmedNonEmpty {
+            target.append("  ControlMaster auto")
+            target.append("  ControlPersist 120")
+            target.append("  ControlPath \(sshConfigValue(controlPath))")
+        }
         if draft.jumpEnabled {
             guard let jumpHost = draft.jumpHost?.trimmedNonEmpty,
                   let jumpUsername = draft.jumpUsername?.trimmedNonEmpty else {

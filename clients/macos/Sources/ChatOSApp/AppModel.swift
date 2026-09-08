@@ -149,7 +149,8 @@ final class AppModel: ObservableObject {
         let historyStore = ConversationHistoryStore()
         let connectorTicketProvider = ChatOSLocalConnectorPairingTicketProvider(client: apiClient)
         let remoteConnectionService = NativeRemoteConnectionService(
-            upstream: ChatOSRemoteConnectionService(client: apiClient)
+            upstream: ChatOSRemoteConnectionService(client: apiClient),
+            connectorStateURL: RuntimeConfiguration.nativeConnectorStateURL
         )
         let localConnectorService = NativeLocalConnectorService(
             configuration: .init(

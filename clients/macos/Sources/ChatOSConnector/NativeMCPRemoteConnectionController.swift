@@ -3,64 +3,60 @@ import Foundation
 
 struct NativeMCPRemoteConnectionController: Sendable {
     static let toolNames: Set<String> = [
-        "list_connections", "test_connection", "run_command", "list_directory",
+        "test_connection", "run_command", "list_directory",
         "read_file", "download_file", "upload_file",
     ]
 
     static let toolDefinitions: [NativeJSONValue] = [
-        definition(name: "list_connections", description: "列出可用的远程连接。", properties: [:], required: []),
         definition(
             name: "test_connection",
-            description: "测试远程连接是否可用。",
-            properties: ["connection_id": .object(["type": .string("string")])],
-            required: ["connection_id"]
+            description: "测试当前选中的远程连接是否可用。",
+            properties: [:],
+            required: []
         ),
         definition(
             name: "run_command",
             description: "通过 SSH 在远程主机上执行命令。",
             properties: [
-                "connection_id": .object(["type": .string("string")]),
                 "command": .object(["type": .string("string")]),
                 "timeout_seconds": integer(minimum: 1, maximum: 120),
                 "allow_dangerous": .object(["type": .string("boolean")]),
                 "max_output_chars": integer(minimum: 1, maximum: 20_000),
             ],
-            required: ["connection_id", "command"]
+            required: ["command"]
         ),
         definition(
             name: "list_directory",
             description: "列出远程目录内容。",
             properties: [
-                "connection_id": .object(["type": .string("string")]),
                 "path": .object(["type": .string("string")]),
                 "limit": integer(minimum: 1, maximum: 1_000),
             ],
-            required: ["connection_id"]
+            required: []
         ),
         definition(
             name: "read_file",
             description: "读取远程文本文件。",
             properties: fileReadProperties(includeEncoding: false),
-            required: ["connection_id", "path"]
+            required: ["path"]
         ),
         definition(
             name: "download_file",
             description: "通过 SSH 下载远程文件内容。",
             properties: fileReadProperties(includeEncoding: true),
-            required: ["connection_id", "path"]
+            required: ["path"]
         ),
         definition(
             name: "upload_file",
             description: "通过 SSH 上传内容到远程文件。",
             properties: [
-                "connection_id": .object(["type": .string("string")]),
                 "path": .object(["type": .string("string")]),
                 "content": .object(["type": .string("string")]),
                 "encoding": .object(["type": .string("string"), "enum": .array([.string("text"), .string("base64")])]),
                 "create_parent_dirs": .object(["type": .string("boolean")]),
                 "overwrite": .object(["type": .string("boolean")]),
             ],
-            required: ["connection_id", "path", "content"]
+            required: ["path", "content"]
         ),
     ]
 
@@ -77,7 +73,6 @@ struct NativeMCPRemoteConnectionController: Sendable {
 
     func call(name: String, arguments: [String: NativeJSONValue]) async throws -> NativeJSONValue {
         switch name {
-        case "list_connections": return try await listConnections()
         case "test_connection": return try await testConnection(arguments)
         case "run_command": return try await runCommand(arguments)
         case "list_directory": return try await listDirectory(arguments)
@@ -88,32 +83,10 @@ struct NativeMCPRemoteConnectionController: Sendable {
         }
     }
 
-    private func listConnections() async throws -> NativeJSONValue {
-        let connections = try await provider.listConnections()
-        return .object([
-            "connections": .array(connections.map { connection in
-                .object([
-                    "id": .string(connection.id),
-                    "name": .string(connection.name),
-                    "host": .string(connection.host),
-                    "port": .number(Double(connection.port)),
-                    "username": .string(connection.username),
-                    "authentication_type": .string(connection.authenticationType.rawValue),
-                    "credentials_available": .bool(credentialsAvailable(connection)),
-                    "default_remote_path": connection.defaultRemotePath.map(NativeJSONValue.string) ?? .null,
-                    "jump_enabled": .bool(connection.jumpEnabled),
-                    "last_active_at": connection.lastActiveAt.map { .string(ISO8601DateFormatter().string(from: $0)) } ?? .null,
-                ])
-            }),
-            "count": .number(Double(connections.count)),
-        ])
-    }
-
     private func testConnection(_ arguments: [String: NativeJSONValue]) async throws -> NativeJSONValue {
         let id = try requiredString(arguments, "connection_id")
         let result = try await provider.testSaved(id: id, verificationCode: nil)
         return .object([
-            "connection_id": .string(id),
             "success": .bool(result.success),
             "message": result.message.map(NativeJSONValue.string) ?? .null,
         ])
@@ -132,7 +105,6 @@ struct NativeMCPRemoteConnectionController: Sendable {
             maximumOutputCharacters: clamp(arguments.integer("max_output_chars") ?? 20_000, 1, 20_000)
         )
         return .object([
-            "connection_id": .string(id),
             "command": .string(command),
             "exit_code": .number(Double(result.exitCode)),
             "success": .bool(result.exitCode == 0 && !result.timedOut),
@@ -152,8 +124,8 @@ struct NativeMCPRemoteConnectionController: Sendable {
             path: path,
             limit: clamp(arguments.integer("limit") ?? 200, 1, 1_000)
         )
+        let dateFormatter = ISO8601DateFormatter()
         return .object([
-            "connection_id": .string(id),
             "path": .string(path),
             "entries": .array(entries.map { entry in
                 .object([
@@ -161,6 +133,11 @@ struct NativeMCPRemoteConnectionController: Sendable {
                     "path": .string(entry.path),
                     "type": .string(entry.type),
                     "is_directory": .bool(entry.type == "directory"),
+                    "size_bytes": entry.size.map { .number(Double($0)) } ?? .null,
+                    "modified_at": entry.modifiedAt.map {
+                        .string(dateFormatter.string(from: $0))
+                    } ?? .null,
+                    "permissions": entry.permissions.map(NativeJSONValue.string) ?? .null,
                 ])
             }),
             "count": .number(Double(entries.count)),
@@ -192,7 +169,6 @@ struct NativeMCPRemoteConnectionController: Sendable {
             content = text
         }
         return .object([
-            "connection_id": .string(id),
             "path": .string(path),
             "encoding": .string(encoding),
             "size_bytes": .number(Double(data.count)),
@@ -226,20 +202,11 @@ struct NativeMCPRemoteConnectionController: Sendable {
             overwrite: arguments.bool("overwrite") ?? true
         )
         return .object([
-            "connection_id": .string(id),
             "path": .string(path),
             "encoding": .string(encoding),
             "size_bytes": .number(Double(data.count)),
             "uploaded": .bool(true),
         ])
-    }
-
-    private func credentialsAvailable(_ connection: RemoteConnection) -> Bool {
-        switch connection.authenticationType {
-        case .password: connection.hasPassword
-        case .privateKey: connection.hasPrivateKeyPath
-        case .privateKeyCertificate: connection.hasPrivateKeyPath && connection.hasCertificatePath
-        }
     }
 
     private func requiredString(_ values: [String: NativeJSONValue], _ key: String) throws -> String {
@@ -264,7 +231,6 @@ struct NativeMCPRemoteConnectionController: Sendable {
 
     private static func fileReadProperties(includeEncoding: Bool) -> [String: NativeJSONValue] {
         var values: [String: NativeJSONValue] = [
-            "connection_id": .object(["type": .string("string")]),
             "path": .object(["type": .string("string")]),
             "max_bytes": integer(minimum: 1, maximum: 262_144),
         ]

@@ -204,7 +204,6 @@
 
 ## [builtin_remote_connection_controller]
 当存在这些工具时，它们是远程 SSH / SFTP 主机的唯一标准入口：
-`remote_connection_controller_list_connections`
 `remote_connection_controller_test_connection`
 `remote_connection_controller_run_command`
 `remote_connection_controller_list_directory`
@@ -217,8 +216,8 @@
 2. 你需要拿到远程主机的真实状态，而不是本地猜测。
 
 推荐顺序：
-1. 不确定有哪些连接可用时，先 `remote_connection_controller_list_connections`。
-2. 不确定连接是否通、或者要先验证环境时，先 `remote_connection_controller_test_connection`。
+1. 当前远程连接由程序在任务开始前绑定；不要查询连接列表，也不要请求、猜测或传递连接 ID、设备 ID、工作区 ID。
+2. 不确定连接是否通、或者要先验证环境时，用 `remote_connection_controller_test_connection`。
 3. 执行远程检查或操作时，用 `remote_connection_controller_run_command`。
 4. 看远程目录结构时，用 `remote_connection_controller_list_directory`。
 5. 读远程文件内容时，用 `remote_connection_controller_read_file`。
@@ -229,8 +228,8 @@
 1. 远程问题不要落到本地终端或本地文件工具上。
 2. 危险命令只有在用户意图明确、上下文清楚时才考虑执行。
 3. 回答远程环境状态时，要明确这来自远程工具结果，而不是本地推断。
-4. 如果没有匹配的远程连接、连接缺少密码/密钥/私钥口令、认证失败、连接被禁用或权限不足，并且 AskUser 询问工具可用，必须先用 AskUser 询问工具向用户请求选择已有连接、补充认证信息，或提示用户在提供远程连接能力的客户端配置中创建/更新连接后再继续。
-5. 如果远程连接工具当前不能直接消费用户刚输入的临时密码或密钥，不要假装已经使用它；应让用户更新提供远程连接能力的客户端配置，随后重新 `list_connections` 或 `test_connection` 验证。
+4. 如果任务没有绑定远程连接，或连接缺少密码/密钥/私钥口令、认证失败、连接被禁用或权限不足，应提示用户在客户端选择或更新远程连接后再继续；不要让用户或 AI 填写内部 ID。
+5. 如果远程连接工具当前不能直接消费用户刚输入的临时密码或密钥，不要假装已经使用它；应让用户更新提供远程连接能力的客户端配置，随后用 `test_connection` 验证。
 6. 对“盘点服务器”“检查线上环境”“读取远程日志/配置”等任务，只有真实远程连接成功后的结果才能作为远程状态结论。无法连接时，应进入需要用户输入/配置的阻塞状态，而不是把公网可见信息包装成完整盘点。
 
 ## [builtin_notepad]

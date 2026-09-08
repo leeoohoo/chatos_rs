@@ -5,7 +5,6 @@ use std::cmp::Ordering;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::time::Duration;
 
@@ -21,18 +20,7 @@ use super::context::{
 };
 use super::BoundContext;
 
-#[derive(Debug, Serialize)]
-struct ConnectionSummary {
-    id: String,
-    name: String,
-    host: String,
-    port: i64,
-    username: String,
-    auth_type: String,
-    default_remote_path: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Debug, serde::Serialize)]
 struct RemoteEntry {
     path: String,
     name: String,
@@ -41,41 +29,13 @@ struct RemoteEntry {
     modified_at: Option<String>,
 }
 
-pub(super) async fn list_connections_with_context(ctx: BoundContext) -> Result<Value, String> {
-    let user_id = required_user_id(&ctx)?;
-    let mut list = RemoteConnectionService::list(Some(user_id)).await?;
-    list.sort_by_key(|entry| entry.name.to_lowercase());
-
-    let connections: Vec<ConnectionSummary> = list
-        .into_iter()
-        .map(|item| ConnectionSummary {
-            id: item.id,
-            name: item.name,
-            host: item.host,
-            port: item.port,
-            username: item.username,
-            auth_type: item.auth_type,
-            default_remote_path: item.default_remote_path,
-        })
-        .collect();
-
-    Ok(json!({
-        "count": connections.len(),
-        "connections": connections,
-    }))
-}
-
-pub(super) async fn test_connection_with_context(
-    ctx: BoundContext,
-    explicit_connection_id: Option<String>,
-) -> Result<Value, String> {
-    let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
+pub(super) async fn test_connection_with_context(ctx: BoundContext) -> Result<Value, String> {
+    let connection = resolve_owned_connection(&ctx).await?;
     let resolved_connection = resolve_jump_connection_snapshot(&connection).await?;
     let result = run_remote_connectivity_test(&resolved_connection, None).await?;
     let _ = RemoteConnectionService::touch(&connection.id).await;
 
     Ok(json!({
-        "connection_id": connection.id,
         "name": connection.name,
         "host": connection.host,
         "port": connection.port,
@@ -86,7 +46,6 @@ pub(super) async fn test_connection_with_context(
 
 pub(super) async fn run_command_with_context(
     ctx: BoundContext,
-    explicit_connection_id: Option<String>,
     command: String,
     timeout_seconds: Option<u64>,
     allow_dangerous: bool,
@@ -100,7 +59,7 @@ pub(super) async fn run_command_with_context(
         }
     }
 
-    let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
+    let connection = resolve_owned_connection(&ctx).await?;
     let timeout = timeout_seconds
         .unwrap_or(ctx.command_timeout_seconds)
         .clamp(1, ctx.max_command_timeout_seconds);
@@ -119,7 +78,6 @@ pub(super) async fn run_command_with_context(
     let _ = RemoteConnectionService::touch(&connection.id).await;
 
     Ok(json!({
-        "connection_id": connection.id,
         "name": connection.name,
         "host": connection.host,
         "port": connection.port,
@@ -134,11 +92,10 @@ pub(super) async fn run_command_with_context(
 
 pub(super) async fn list_directory_with_context(
     ctx: BoundContext,
-    explicit_connection_id: Option<String>,
     input_path: Option<String>,
     limit: Option<usize>,
 ) -> Result<Value, String> {
-    let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
+    let connection = resolve_owned_connection(&ctx).await?;
     let path = normalize_remote_path(
         input_path
             .as_deref()
@@ -176,7 +133,6 @@ pub(super) async fn list_directory_with_context(
 
     let _ = RemoteConnectionService::touch(&connection.id).await;
     Ok(json!({
-        "connection_id": connection.id,
         "path": path,
         "count": entries.len(),
         "entries_truncated": truncated,
@@ -186,11 +142,10 @@ pub(super) async fn list_directory_with_context(
 
 pub(super) async fn read_file_with_context(
     ctx: BoundContext,
-    explicit_connection_id: Option<String>,
     path: String,
     max_bytes: Option<usize>,
 ) -> Result<Value, String> {
-    let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
+    let connection = resolve_owned_connection(&ctx).await?;
     let normalized_path = normalize_remote_path(path.as_str());
     let read_limit = max_bytes
         .unwrap_or(ctx.max_read_file_bytes)
@@ -216,7 +171,6 @@ pub(super) async fn read_file_with_context(
     let _ = RemoteConnectionService::touch(&connection.id).await;
 
     Ok(json!({
-        "connection_id": connection.id,
         "path": normalized_path,
         "max_bytes": read_limit,
         "source_size_bytes": source_size,
@@ -227,12 +181,11 @@ pub(super) async fn read_file_with_context(
 
 pub(super) async fn download_file_with_context(
     ctx: BoundContext,
-    explicit_connection_id: Option<String>,
     path: String,
     encoding: String,
     max_bytes: Option<usize>,
 ) -> Result<Value, String> {
-    let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
+    let connection = resolve_owned_connection(&ctx).await?;
     let normalized_path = normalize_remote_path(path.as_str());
     let transfer_limit = max_bytes
         .unwrap_or(ctx.max_read_file_bytes)
@@ -256,7 +209,6 @@ pub(super) async fn download_file_with_context(
     let _ = RemoteConnectionService::touch(&connection.id).await;
 
     Ok(json!({
-        "connection_id": connection.id,
         "path": normalized_path,
         "encoding": encoding,
         "max_bytes": transfer_limit,
@@ -269,14 +221,13 @@ pub(super) async fn download_file_with_context(
 
 pub(super) async fn upload_file_with_context(
     ctx: BoundContext,
-    explicit_connection_id: Option<String>,
     path: String,
     content: String,
     encoding: String,
     create_parent_dirs: bool,
     overwrite: bool,
 ) -> Result<Value, String> {
-    let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
+    let connection = resolve_owned_connection(&ctx).await?;
     let normalized_path = normalize_remote_path(path.as_str());
     let bytes = match encoding.as_str() {
         "base64" => BASE64_STANDARD
@@ -307,7 +258,6 @@ pub(super) async fn upload_file_with_context(
     let _ = RemoteConnectionService::touch(&connection.id).await;
 
     Ok(json!({
-        "connection_id": connection.id,
         "path": normalized_path,
         "encoding": encoding,
         "bytes_written": bytes_written,
@@ -316,11 +266,8 @@ pub(super) async fn upload_file_with_context(
     }))
 }
 
-async fn resolve_owned_connection(
-    ctx: &BoundContext,
-    explicit_connection_id: Option<String>,
-) -> Result<RemoteConnection, String> {
-    let connection_id = resolve_connection_id(ctx, explicit_connection_id)?;
+async fn resolve_owned_connection(ctx: &BoundContext) -> Result<RemoteConnection, String> {
+    let connection_id = resolve_connection_id(ctx)?;
     let user_id = required_user_id(ctx)?;
     let connection = RemoteConnectionService::get_by_id(connection_id.as_str())
         .await?
