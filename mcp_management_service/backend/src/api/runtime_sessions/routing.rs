@@ -103,11 +103,10 @@ pub(super) fn bind_remote_connection_route(
     routes: &mut [ResolvedMcpRoute],
     target: Option<&chatos_mcp_management_sdk::RuntimeRemoteConnectionRouteTarget>,
 ) {
-    let resource_id =
-        chatos_mcp::system_mcp_descriptor(SystemMcpKey::RemoteConnectionController).resource_id;
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::RemoteConnectionController);
     for route in routes
         .iter_mut()
-        .filter(|route| route.resource_id == resource_id)
+        .filter(|route| route.resource_id == descriptor.resource_id)
     {
         let Some(target) = target else {
             route.provider_kind = McpProviderKind::Unavailable;
@@ -123,6 +122,8 @@ pub(super) fn bind_remote_connection_route(
             "device:{}/workspace:{}",
             target.device_id, target.workspace_id
         ));
+        route.allow_writes = descriptor.allow_writes;
+        route.retry_class = chatos_mcp_management_sdk::McpRetryClass::NoRetry;
         route.reason =
             "remote connection is pinned to its owning Local Connector device".to_string();
     }

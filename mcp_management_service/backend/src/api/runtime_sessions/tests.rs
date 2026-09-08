@@ -456,10 +456,70 @@ fn required_remote_connection_route_uses_the_final_bound_route_state() {
 
     assert!(required_unavailable_routes(&required_resource_ids, &[route.clone()]).is_empty());
     assert_eq!(route.provider_kind, McpProviderKind::LocalConnector);
+    assert!(route.allow_writes);
+    assert_eq!(
+        route.retry_class,
+        chatos_mcp_management_sdk::McpRetryClass::NoRetry
+    );
     assert_eq!(
         route.provider_ref.as_deref(),
         Some("device:device-1/workspace:workspace-1")
     );
+}
+
+#[test]
+fn bound_remote_connection_materializes_its_tool_catalog() {
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::RemoteConnectionController);
+    let mut resolved = resolved_mcp(descriptor.resource_id, true);
+    resolved.resource.runtime.kind = "system".to_string();
+    resolved.resource.runtime.system_key = Some(descriptor.key.as_str().to_string());
+    resolved.resource.security.allow_writes = Some(true);
+    let capabilities = ResolvedAgentCapabilities {
+        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+        owner_user_id: "user-1".to_string(),
+        policy_revision: "policy-1".to_string(),
+        generated_at: "now".to_string(),
+        agent_enabled: true,
+        mcps: vec![resolved],
+        skills: Vec::new(),
+        plugins: Vec::new(),
+        local_connector_requirements: Vec::new(),
+    };
+    let materialized = materialize_mcp_candidates(&capabilities).expect("materialize candidate");
+    let mut route_response =
+        crate::routing::RoutingEngine.resolve(chatos_mcp_management_sdk::ResolveMcpRoutesRequest {
+            context: user_conversation_execution_context("user-1"),
+            resources: materialized.resources,
+        });
+    assert_eq!(
+        route_response.unavailable_required_mcps,
+        vec![descriptor.resource_id.to_string()]
+    );
+
+    bind_remote_connection_route(
+        route_response.routes.as_mut_slice(),
+        Some(&RuntimeRemoteConnectionRouteTarget {
+            remote_connection_id: "connection-1".to_string(),
+            device_id: "device-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+        }),
+    );
+    let tools = materialize_runtime_tools_with_plugin_components(
+        &capabilities,
+        route_response.routes.as_slice(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+    )
+    .expect("materialize remote connection tools");
+
+    assert!(tools.missing_required_tool_schemas.is_empty());
+    assert_eq!(tools.tools.len(), 7);
+    assert!(tools
+        .tools
+        .iter()
+        .any(|tool| tool.original_name == "run_command"));
 }
 
 #[test]

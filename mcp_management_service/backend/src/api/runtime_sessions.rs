@@ -261,8 +261,13 @@ pub(super) async fn resolve_runtime_session(
             expected_project_task_ids.as_slice(),
             route_response.routes.as_slice(),
         )?;
+        let missing_required_tool_schemas = tool_result
+            .missing_required_tool_schemas
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
         let mut unavailable_required_mcps = materialized.unavailable_required_resources;
-        unavailable_required_mcps.extend(tool_result.missing_required_tool_schemas);
+        unavailable_required_mcps.extend(missing_required_tool_schemas.iter().cloned());
         let mut required_resource_ids = capabilities
             .mcps
             .iter()
@@ -305,7 +310,18 @@ pub(super) async fn resolve_runtime_session(
                 .routes
                 .iter()
                 .filter(|route| unavailable_set.contains(route.resource_id.as_str()))
-                .map(|route| format!("{}: {}", route.resource_id, route.reason))
+                .map(|route| {
+                    let reason = if !route.is_available() {
+                        route.reason.as_str()
+                    } else if missing_required_tool_schemas.contains(route.resource_id.as_str()) {
+                        "no tool schemas remain after applying the runtime policy"
+                    } else if !state.providers.supports(route) {
+                        "the final route has no registered provider adapter"
+                    } else {
+                        "the required MCP could not be materialized"
+                    };
+                    format!("{}: {reason}", route.resource_id)
+                })
                 .collect::<Vec<_>>();
             tracing::warn!(
                 unavailable_required_mcps = ?unavailable_required_mcps,
