@@ -43,17 +43,6 @@ pub(super) fn normalize_create_request(
         _ => return Err("不支持的 auth_type".to_string()),
     };
 
-    if !is_native_client_execution_target(
-        local_connector_device_id.as_str(),
-        local_connector_workspace_id.as_str(),
-    ) {
-        validate_auth_fields(
-            auth_type.as_str(),
-            password.as_deref(),
-            private_key_path.as_deref(),
-            certificate_path.as_deref(),
-        )?;
-    }
     let jump_host = normalize_non_empty(req.jump_host);
     let jump_username = normalize_non_empty(req.jump_username);
     let jump_port = req.jump_port.map(normalize_port).transpose()?.or(Some(22));
@@ -202,17 +191,6 @@ pub(super) fn normalize_update_request(
         None
     };
 
-    if !is_native_client_execution_target(
-        local_connector_device_id.as_str(),
-        local_connector_workspace_id.as_str(),
-    ) {
-        validate_auth_fields(
-            auth_type.as_str(),
-            password.as_deref(),
-            private_key_path.as_deref(),
-            certificate_path.as_deref(),
-        )?;
-    }
     if jump_enabled && (jump_host.is_none() || jump_username.is_none()) {
         return Err("启用跳板机时 jump_host 和 jump_username 为必填".to_string());
     }
@@ -294,34 +272,4 @@ fn normalize_host_key_policy(value: Option<String>) -> Result<String, String> {
         "strict" | "accept_new" => Ok(raw),
         _ => Err("host_key_policy 仅支持 strict 或 accept_new".to_string()),
     }
-}
-
-fn validate_auth_fields(
-    auth_type: &str,
-    password: Option<&str>,
-    private_key_path: Option<&str>,
-    certificate_path: Option<&str>,
-) -> Result<(), String> {
-    match auth_type {
-        "password" => {
-            if password.is_none() {
-                return Err("password 模式需要提供 password".to_string());
-            }
-        }
-        "private_key" => {
-            if private_key_path.is_none() {
-                return Err("private_key 模式需要提供 private_key_path".to_string());
-            }
-        }
-        "private_key_cert" => {
-            if private_key_path.is_none() {
-                return Err("private_key_cert 模式需要提供 private_key_path".to_string());
-            }
-            if certificate_path.is_none() {
-                return Err("private_key_cert 模式需要提供 certificate_path".to_string());
-            }
-        }
-        _ => return Err("不支持的 auth_type".to_string()),
-    }
-    Ok(())
 }
