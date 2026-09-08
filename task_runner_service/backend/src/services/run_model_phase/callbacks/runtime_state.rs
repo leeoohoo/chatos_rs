@@ -164,8 +164,11 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
                 reason: TASK_OUTCOME_REPORT_REQUIRED_REASON.to_string(),
             });
         };
+        let mut response = context.response;
+        response.content = normalized_task_final_response_content(response.content.as_str())
+            .unwrap_or_else(|| reported_outcome.reason.clone());
         let outcome = task_execution_outcome_from_ai_report(
-            context.response.content.as_str(),
+            response.content.as_str(),
             self.expected_acceptance_criteria.as_slice(),
             self.progress.confirmed_project_paths(),
             self.progress.confirmed_validation_commands(),
@@ -173,7 +176,7 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
             reported_outcome,
         );
         let mut state = self.state.lock();
-        state.visible_response = Some(context.response);
+        state.visible_response = Some(response);
         state.execution_outcome = Some(outcome);
         Ok(RuntimeFinalResponseAction::Accept)
     }
@@ -193,6 +196,25 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
             })
             .transpose()
     }
+}
+
+fn normalized_task_final_response_content(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+        return Some(content.to_string());
+    };
+    if value.get("type").and_then(Value::as_str) != Some("output_text") {
+        return Some(content.to_string());
+    }
+    value
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 impl TaskRunnerLifecycleHook {

@@ -1,5 +1,6 @@
 import ChatOSCore
 import Foundation
+import OSLog
 
 public protocol NativeRemoteConnectionRuntimeProviding: Sendable {
     func testSaved(id: String, verificationCode: String?) async throws -> RemoteConnectionTestResult
@@ -11,6 +12,10 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
     RemoteTerminalCommandServicing {
     public static let nativeDeviceID = "chatos-swift-native-client"
     public static let nativeWorkspaceID = "local-machine"
+    private static let logger = Logger(
+        subsystem: "com.chatos.swift-client",
+        category: "NativeRemoteConnection"
+    )
 
     private let upstream: any RemoteConnectionServicing
     private let tester: any NativeRemoteConnectionTesting
@@ -50,8 +55,13 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
 
     public func listConnections() async throws -> [RemoteConnection] {
         let connections = try await upstream.listConnections()
-        cache(connections)
-        return connections.map(decorateWithLocalCredentialState)
+        var resolved: [RemoteConnection] = []
+        resolved.reserveCapacity(connections.count)
+        for connection in connections {
+            resolved.append(await migrateLegacyRouteIfNeeded(connection))
+        }
+        cache(resolved)
+        return resolved.map(decorateWithLocalCredentialState)
     }
 
     public func getConnection(id: String) async throws -> RemoteConnection? {
@@ -288,12 +298,68 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
         if let cached = connectionCache[id], cached.expiresAt > now {
             return cached.connection
         }
-        guard let connection = try await upstream.getConnection(id: id) else {
+        guard let loaded = try await upstream.getConnection(id: id) else {
             connectionCache[id] = nil
             return nil
         }
+        let connection = await migrateLegacyRouteIfNeeded(loaded)
         cache(connection, now: now)
         return connection
+    }
+
+    private func migrateLegacyRouteIfNeeded(
+        _ connection: RemoteConnection
+    ) async -> RemoteConnection {
+        let route = currentLocalConnectorRoute()
+        guard route.deviceID != Self.nativeDeviceID,
+              route.workspaceID != Self.nativeWorkspaceID,
+              Self.isLegacyRoute(connection) else {
+            return connection
+        }
+        let draft = RemoteConnectionDraft(
+            name: connection.name,
+            host: connection.host,
+            port: connection.port,
+            username: connection.username,
+            authenticationType: connection.authenticationType,
+            password: nil,
+            privateKeyPath: nil,
+            certificatePath: nil,
+            defaultRemotePath: connection.defaultRemotePath,
+            hostKeyPolicy: connection.hostKeyPolicy,
+            localConnectorDeviceID: route.deviceID,
+            localConnectorWorkspaceID: route.workspaceID,
+            jumpEnabled: connection.jumpEnabled,
+            jumpConnectionID: connection.jumpConnectionID,
+            jumpHost: connection.jumpHost,
+            jumpPort: connection.jumpPort,
+            jumpUsername: connection.jumpUsername,
+            jumpPrivateKeyPath: nil,
+            jumpCertificatePath: nil,
+            jumpPassword: nil,
+            localCredentialReferenceID: nil
+        )
+        do {
+            let migrated = try await upstream.updateConnection(id: connection.id, draft: draft)
+            Self.logger.info(
+                "已迁移远端连接路由到当前 Local Connector：\(connection.id, privacy: .public)"
+            )
+            return migrated
+        } catch {
+            Self.logger.error(
+                "迁移远端连接路由失败，将继续使用兼容路由：\(error.localizedDescription, privacy: .public)"
+            )
+            return connection
+        }
+    }
+
+    private static func isLegacyRoute(_ connection: RemoteConnection) -> Bool {
+        let deviceID = connection.localConnectorDeviceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let workspaceID = connection.localConnectorWorkspaceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return deviceID.isEmpty
+            || workspaceID.isEmpty
+            || deviceID == nativeDeviceID
+            || workspaceID == nativeWorkspaceID
     }
 
     private func cache(_ connections: [RemoteConnection]) {

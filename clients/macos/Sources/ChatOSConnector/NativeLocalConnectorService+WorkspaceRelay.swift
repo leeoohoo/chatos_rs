@@ -31,8 +31,7 @@ extension NativeLocalConnectorService {
               let workspace = state.workspaces.first(where: { $0.id == request.workspaceID }) else {
             throw NativeWorkspaceRelayError.invalidContext
         }
-        let token = try requireAccessToken()
-        let runtime = try await gateway.managedRuntimeConfig(token: token)
+        let runtime = try await managedRuntimeConfig()
         try NativeRelayVerifier().verify(
             request,
             trust: runtime.remoteControlTrust,

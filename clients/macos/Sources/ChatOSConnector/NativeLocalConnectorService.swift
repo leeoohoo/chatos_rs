@@ -38,6 +38,9 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     private var cachedAccessToken: String?
     private var hasLoadedAccessToken = false
     private var cachedDeviceIdentity: NativeConnectorDeviceIdentity?
+    var managedRuntimeConfigCache: NativeManagedRuntimeConfigCache?
+    var managedRuntimeConfigRefresh: NativeManagedRuntimeConfigRefresh?
+    var managedRuntimeConfigGeneration = 0
     private var gatewayConnected = false
     var webSocket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
@@ -92,6 +95,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {
+        invalidateManagedRuntimeConfig()
         let resolvedName = deviceName?.trimmedNonEmpty ?? Host.current().localizedName ?? "Mac"
         let ticket = try await ticketProvider.issueLocalConnectorPairingTicket()
         let login = try await gateway.exchange(ticket: ticket, deviceName: resolvedName)
@@ -121,6 +125,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func disconnect() async throws -> LocalConnectorStatus {
+        invalidateManagedRuntimeConfig()
         shouldMaintainGatewayConnection = false
         gatewayReconnectFailureCount = 0
         let token = try accessToken()
@@ -452,6 +457,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     private func openGatewayConnection() async throws {
+        invalidateManagedRuntimeConfig()
         let token = try requireAccessToken()
         guard let deviceID = state.deviceID else { throw NativeConnectorError.notPaired }
         let identity = try deviceIdentity()
@@ -501,7 +507,12 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                             lastGatewayPongAt = Date()
                             gatewayReconnectFailureCount = 0
                             Self.logger.info("Local Connector 网关长连接已建立")
-                            try? await publishPluginInstallationStatus()
+                            Task { [weak self] in
+                                _ = try? await self?.managedRuntimeConfig()
+                            }
+                            Task { [weak self] in
+                                try? await self?.publishPluginInstallationStatus()
+                            }
                         case "pong":
                             lastGatewayPongAt = Date()
                         case "error":
@@ -586,6 +597,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         )
         if authenticationExpired {
             shouldMaintainGatewayConnection = false
+            invalidateManagedRuntimeConfig()
         }
         Self.logger.error("网关长连接中断：\(error.localizedDescription, privacy: .public)")
         recordGatewayReconnectFailure()

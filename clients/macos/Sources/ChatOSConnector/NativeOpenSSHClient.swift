@@ -1,5 +1,6 @@
 import ChatOSCore
 import CryptoKit
+import Darwin
 import Foundation
 
 protocol NativeRemoteSSHExecuting: Sendable {
@@ -446,7 +447,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         return try operation(.init(config: config, environment: environment))
     }
 
-    private static func persistentControlPath(for draft: RemoteConnectionDraft) throws -> URL {
+    static func persistentControlPath(for draft: RemoteConnectionDraft) throws -> URL {
         let identity = [
             draft.host,
             String(draft.port),
@@ -466,14 +467,28 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             .prefix(16)
             .map { String(format: "%02x", $0) }
             .joined()
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chatos-ssh-control", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
+        // macOS limits Unix-domain socket paths to roughly 104 bytes, and
+        // OpenSSH appends a temporary suffix while creating the master socket.
+        // NSTemporaryDirectory() is usually a long /var/folders/... path, so a
+        // short per-user directory under /tmp is required for reliable reuse.
+        let directory = URL(
+            fileURLWithPath: "/tmp/chatos-ssh-\(getuid())",
+            isDirectory: true
         )
-        try FileManager.default.setAttributes(
+        let fileManager = FileManager.default
+        if !fileManager.fileExists(atPath: directory.path) {
+            try fileManager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
+        let attributes = try fileManager.attributesOfItem(atPath: directory.path)
+        guard attributes[.type] as? FileAttributeType == .typeDirectory,
+              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else {
+            throw NativeOpenSSHError.launchFailed("SSH 复用目录的归属或类型不安全")
+        }
+        try fileManager.setAttributes(
             [.posixPermissions: 0o700],
             ofItemAtPath: directory.path
         )
