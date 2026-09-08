@@ -203,6 +203,8 @@ pub(crate) fn remove_internal_task_fields(value: &mut Value) {
                 "source_session_id",
                 "source_turn_id",
                 "source_user_message_id",
+                "remote_connection_id",
+                "default_remote_connection_id",
                 "agent_key",
                 "plugin_config",
                 "mcp_config",
