@@ -115,6 +115,25 @@ final class ConversationHistoryMapperTests: XCTestCase {
         XCTAssertEqual(replies[2].taskCallback?.event, "task.completed")
     }
 
+    func testTaskCallbackRemainsLatestReplyWhenServerPlacesPlanSummaryAfterIt() throws {
+        let response = try JSONDecoder().decode(
+            CompactHistoryResponseDTO.self,
+            from: Data(#"{"items":[{"id":"user-1","conversation_id":"conversation-1","revision":5,"role":"user","content":"执行任务","metadata":{"conversation_turn_id":"turn-1","historyProcess":{"finalAssistantMessageId":"assistant-summary"}}},{"id":"callback-completed","conversation_id":"conversation-1","revision":2,"role":"assistant","content":"任务已完成","message_mode":"task_runner_callback","metadata":{"task_runner_async":{"message_kind":"task_lifecycle_update","event":"task.completed","status":"succeeded","task_id":"task-1","run_id":"run-1","source_turn_id":"turn-1","source_user_message_id":"user-1"}}},{"id":"assistant-summary","conversation_id":"conversation-1","revision":1,"role":"assistant","content":"任务正在后台执行。","message_mode":"task_runner_async_plan","metadata":{"historyFinalForUserMessageId":"user-1","historyFinalForTurnId":"turn-1"}}],"has_more":false}"#.utf8)
+        )
+
+        let page = ConversationHistoryMapper.map(
+            response,
+            sessionID: "conversation-1",
+            requestGeneration: 1
+        )
+
+        XCTAssertEqual(
+            page.turns.first?.assistantReplies.map(\.message.id),
+            ["assistant-summary", "callback-completed"]
+        )
+        XCTAssertEqual(page.turns.first?.assistantReplies.last?.taskCallback?.taskID, "task-1")
+    }
+
     func testTerminalCallbackEventOverridesStaleRunningStatus() throws {
         let response = try JSONDecoder().decode(
             CompactHistoryResponseDTO.self,

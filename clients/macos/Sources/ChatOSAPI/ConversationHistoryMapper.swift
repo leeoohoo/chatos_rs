@@ -181,7 +181,14 @@ private struct AssistantLookup {
 
         var seen = Set<String>()
         return indexed
-            .sorted { $0.index < $1.index }
+            .sorted { lhs, rhs in
+                let lhsIsCallback = lhs.message.isTaskRunnerCallback
+                let rhsIsCallback = rhs.message.isTaskRunnerCallback
+                if lhsIsCallback != rhsIsCallback {
+                    return !lhsIsCallback
+                }
+                return lhs.index < rhs.index
+            }
             .compactMap { item in
                 guard seen.insert(item.message.id).inserted else { return nil }
                 return item.message
