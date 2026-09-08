@@ -24,6 +24,15 @@ function NodeHandles() {
   </>;
 }
 
+function DiamondHandles() {
+  return <>
+    <Handle type="source" position={Position.Left} id="left" style={{ left: 'calc(3% + 4px)' }} />
+    <Handle type="source" position={Position.Right} id="right" style={{ right: 'calc(3% + 4px)' }} />
+    <Handle type="source" position={Position.Top} id="top" style={{ top: 'calc(3% + 4px)' }} />
+    <Handle type="source" position={Position.Bottom} id="bottom" style={{ bottom: 'calc(3% + 4px)' }} />
+  </>;
+}
+
 export function DiagramNodeView({ data, selected }: NodeProps<DiagramNode>) {
   const style = {
     '--node-accent': data.color ?? '#4E7CC7',
@@ -114,7 +123,7 @@ export function DiagramNodeView({ data, selected }: NodeProps<DiagramNode>) {
     return (
       <div className={`diagram-node diamond ${selected ? 'selected' : ''}`} style={style}>
         {resizer}
-        <NodeHandles />
+        <DiamondHandles />
         <NodeSurface data={data} shape="diamond" />
         <div className="diamond-surface"><div className="diamond-content">{data.showLabel !== false && <strong>{data.label}</strong>}</div></div>
       </div>

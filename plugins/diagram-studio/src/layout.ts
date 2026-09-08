@@ -1,6 +1,6 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ElkNode } from 'elkjs/lib/elk-api.js';
-import type { DiagramDocument, DiagramNode } from './schema.js';
+import type { DiagramDocument, DiagramEdge, DiagramNode } from './schema.js';
 
 const elk = new ELK();
 
@@ -326,7 +326,52 @@ function refreshGenericEdgeHandles(document: DiagramDocument): void {
       targetHandle: vertical ? (targetCenter.y >= sourceCenter.y ? 'top' : 'bottom') : (targetCenter.x >= sourceCenter.x ? 'left' : 'right')
     };
   });
+  routeDecisionBranches(document);
   distributeEdgeHandles(document);
+}
+
+function routeDecisionBranches(document: DiagramDocument): void {
+  const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
+  const outgoing = new Map<string, Array<{ edge: DiagramEdge; targetCenter: { x: number; y: number } }>>();
+  for (const edge of document.edges) {
+    const source = nodeById.get(edge.source);
+    const target = nodeById.get(edge.target);
+    if (source?.data.shape !== 'diamond' || !target) continue;
+    const targetPosition = absoluteNodePosition(document.nodes, target);
+    const targetSize = nodeSize(target);
+    const entries = outgoing.get(source.id) ?? [];
+    entries.push({
+      edge,
+      targetCenter: {
+        x: targetPosition.x + targetSize.width / 2,
+        y: targetPosition.y + targetSize.height / 2
+      }
+    });
+    outgoing.set(source.id, entries);
+  }
+
+  for (const [sourceId, entries] of outgoing) {
+    if (entries.length < 2) continue;
+    const source = nodeById.get(sourceId)!;
+    const sourcePosition = absoluteNodePosition(document.nodes, source);
+    const sourceSize = nodeSize(source);
+    const sourceCenter = {
+      x: sourcePosition.x + sourceSize.width / 2,
+      y: sourcePosition.y + sourceSize.height / 2
+    };
+    const downward = entries
+      .filter((entry) => entry.targetCenter.y > sourceCenter.y)
+      .sort((left, right) => Math.abs(left.targetCenter.x - sourceCenter.x) - Math.abs(right.targetCenter.x - sourceCenter.x));
+    const primary = downward[0]
+      && Math.abs(downward[0].targetCenter.x - sourceCenter.x) <= sourceSize.width * 0.75
+      ? downward[0]
+      : undefined;
+    for (const entry of entries) {
+      entry.edge.sourceHandle = entry === primary
+        ? 'bottom'
+        : entry.targetCenter.x < sourceCenter.x ? 'left' : 'right';
+    }
+  }
 }
 
 function distributeEdgeHandles(document: DiagramDocument): void {
@@ -340,6 +385,7 @@ function distributeEdgeHandles(document: DiagramDocument): void {
   const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
   const groups = new Map<string, Endpoint[]>();
   const addEndpoint = (endpoint: Endpoint) => {
+    if (nodeById.get(endpoint.nodeId)?.data.shape === 'diamond') return;
     const key = `${endpoint.nodeId}\u0000${endpoint.side}`;
     const entries = groups.get(key) ?? [];
     entries.push(endpoint);

@@ -1362,8 +1362,51 @@ function runtimeEdgesForDocument(document: DiagramDocument): DiagramEdge[] {
     generatedEdgeIndexes.add(edgeIndex);
   });
 
+  const decisionOutgoing = new Map<string, Array<{ edgeIndex: number; targetCenter: { x: number; y: number } }>>();
+  for (const edgeIndex of generatedEdgeIndexes) {
+    const edge = edges[edgeIndex];
+    const source = nodeById.get(edge.source);
+    const target = nodeById.get(edge.target);
+    if (source?.data.shape !== 'diamond' || !target) continue;
+    const targetPosition = absoluteNodePosition(document.nodes, target);
+    const targetSize = defaultNodeSize(target);
+    const entries = decisionOutgoing.get(source.id) ?? [];
+    entries.push({
+      edgeIndex,
+      targetCenter: {
+        x: targetPosition.x + (target.width ?? targetSize.width) / 2,
+        y: targetPosition.y + (target.height ?? targetSize.height) / 2
+      }
+    });
+    decisionOutgoing.set(source.id, entries);
+  }
+  for (const [sourceId, entries] of decisionOutgoing) {
+    if (entries.length < 2) continue;
+    const source = nodeById.get(sourceId)!;
+    const sourcePosition = absoluteNodePosition(document.nodes, source);
+    const sourceSize = defaultNodeSize(source);
+    const sourceCenter = {
+      x: sourcePosition.x + (source.width ?? sourceSize.width) / 2,
+      y: sourcePosition.y + (source.height ?? sourceSize.height) / 2
+    };
+    const sourceWidth = source.width ?? sourceSize.width;
+    const downward = entries
+      .filter((entry) => entry.targetCenter.y > sourceCenter.y)
+      .sort((left, right) => Math.abs(left.targetCenter.x - sourceCenter.x) - Math.abs(right.targetCenter.x - sourceCenter.x));
+    const primary = downward[0]
+      && Math.abs(downward[0].targetCenter.x - sourceCenter.x) <= sourceWidth * 0.75
+      ? downward[0]
+      : undefined;
+    for (const entry of entries) {
+      edges[entry.edgeIndex].sourceHandle = entry === primary
+        ? 'bottom'
+        : entry.targetCenter.x < sourceCenter.x ? 'left' : 'right';
+    }
+  }
+
   const groups = new Map<string, Array<{ edgeIndex: number; endpoint: 'source' | 'target'; otherNodeId: string; side: string }>>();
   const addEndpoint = (entry: { edgeIndex: number; endpoint: 'source' | 'target'; nodeId: string; otherNodeId: string; side: string }) => {
+    if (nodeById.get(entry.nodeId)?.data.shape === 'diamond') return;
     const key = `${entry.nodeId}\u0000${entry.side}`;
     const entries = groups.get(key) ?? [];
     entries.push(entry);

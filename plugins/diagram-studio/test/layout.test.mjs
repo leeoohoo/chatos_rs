@@ -74,6 +74,8 @@ endif
 
   assert.equal(branches.length, 2);
   assert.equal(new Set(branches.map((edge) => edge.sourceHandle)).size, 2, 'decision branches should use separate handle slots');
-  assert.equal(branches.every((edge) => edge.sourceHandle?.startsWith('bottom-')), true);
+  assert.equal(branches.some((edge) => edge.sourceHandle === 'bottom'), true);
+  assert.equal(branches.some((edge) => edge.sourceHandle === 'left' || edge.sourceHandle === 'right'), true);
+  assert.equal(branches.every((edge) => !edge.sourceHandle?.includes('-')), true, 'diamond branches must stay on real vertices');
   assert.equal(branches.every((edge) => edge.targetHandle?.startsWith('top')), true);
 });
