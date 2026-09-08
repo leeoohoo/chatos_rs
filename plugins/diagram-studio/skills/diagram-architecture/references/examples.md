@@ -30,6 +30,20 @@ production_domain ..> task_queue : Publish
 
 Why it works: one system-level viewpoint, real boundaries, a visible request path, aggregated data responsibilities, and no implementation classes.
 
+## Negative: ChatOS everything-at-once overview
+
+Bad: one canvas contains Client, ChatOS Backend, model provider, MCP Management, Plugin Management, Task Runner, execution environment, project memory, MongoDB, RabbitMQ, plus separate create/query, callback, persistence, synchronization, publish, and consume relationships.
+
+Why it fails: it mixes a system-context view with Agent runtime and background-task process details. Reciprocal ChatOS ↔ Task Runner edges create a layout cycle, while both services connecting directly to every data dependency creates parallel edge stars.
+
+Repair as a diagram set:
+
+1. `ChatOS system context`: User → Client → ChatOS Core, with one relationship each to Model Provider, Tool Runtime, Background Tasks, and Data & Messaging.
+2. `Agent and MCP capability`: ChatOS Core, MCP Management, Plugin Management, and local/sandbox execution.
+3. `Background task execution`: ChatOS Core, Task Runner, execution environment, message broker, and result delivery.
+
+Do not preserve every relationship by merely spreading the nodes farther apart. Remove or aggregate relationships before layout.
+
 ## Negative: every implementation detail on one canvas
 
 Bad: a flat graph containing every User/Order/Inventory Controller, Service, Repository, table, endpoint, queue, and deployment node.

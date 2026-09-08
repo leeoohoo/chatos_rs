@@ -79,3 +79,60 @@ endif
   assert.equal(branches.every((edge) => !edge.sourceHandle?.includes('-')), true, 'diamond branches must stay on real vertices');
   assert.equal(branches.every((edge) => edge.targetHandle?.startsWith('top')), true);
 });
+
+test('cyclic architecture dependencies keep stable layered boundary columns', async () => {
+  const source = `@startuml
+left to right direction
+actor "项目用户" as user
+package "客户端边界" as client_boundary {
+  component "Web / 桌面客户端" as client
+}
+package "ChatOS 核心" as core_boundary {
+  component "ChatOS Backend" as core
+}
+package "能力控制平面" as capability_boundary {
+  component "MCP Management" as mcp
+  component "Plugin Management" as plugins
+}
+package "后台任务系统" as task_boundary {
+  component "Task Runner" as task
+  component "执行环境" as execution
+}
+package "业务支撑与数据" as data_boundary {
+  component "项目与记忆服务" as memory
+  database "MongoDB" as database
+  queue "RabbitMQ" as queue
+}
+package "外部系统" as external_boundary {
+  cloud "模型服务" as model
+}
+user --> client
+client --> core
+core --> model
+core --> mcp
+mcp --> plugins
+mcp --> execution
+core --> task
+task --> mcp
+task --> execution
+task --> memory
+core --> memory
+core --> database
+task --> database
+task ..> queue
+core ..> queue
+task ..> core
+@enduml`;
+  const imported = plantUmlToDiagram(source, { documentId: 'cyclic-architecture', kind: 'architecture' });
+  const laidOut = await layoutDiagram(imported, 'RIGHT');
+  const top = new Map(laidOut.nodes.filter((node) => !node.parentId).map((node) => [node.data.label, node]));
+  const report = inspectDiagramQuality(laidOut, 'architecture-overview');
+
+  assert.ok(top.get('项目用户').position.x < top.get('客户端边界').position.x);
+  assert.ok(top.get('客户端边界').position.x < top.get('ChatOS 核心').position.x);
+  assert.equal(top.get('ChatOS 核心').position.x, top.get('后台任务系统').position.x, 'reciprocal dependencies should share one stable layer');
+  assert.ok(top.get('ChatOS 核心').position.x < top.get('业务支撑与数据').position.x);
+  assert.ok(report.metrics.aspectRatio < 3, `expected compact layered architecture, received ${report.metrics.aspectRatio}`);
+  assert.equal(report.metrics.overlapCount, 0);
+  assert.equal(report.metrics.childOverflowCount, 0);
+});

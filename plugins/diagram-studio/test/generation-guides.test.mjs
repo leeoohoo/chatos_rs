@@ -10,7 +10,7 @@ import {
   verifyGenerationPermit
 } from '../dist/generation-guides.test.mjs';
 
-const architectureChecklist = ['single_architecture_viewpoint', 'boundaries_show_ownership', 'primary_path_is_visible', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'];
+const architectureChecklist = ['single_architecture_viewpoint', 'boundaries_show_ownership', 'primary_path_is_visible', 'relationships_are_aggregated', 'runtime_cycles_are_moved_to_detail', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'];
 const sequenceChecklist = ['single_runtime_scenario', 'participants_have_distinct_roles', 'message_order_is_causal', 'activation_intervals_are_bounded', 'fragments_do_not_hide_content', 'independent_scenarios_are_split'];
 
 test('persistent diagram scope is stable across runtime sessions while generation plans are session-bound', () => {

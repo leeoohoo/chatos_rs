@@ -858,13 +858,7 @@ export function DiagramStudioApp() {
           ? {
               ...edge.data,
               routingOffset: routingOffsetForEdge(document, edge, edgeIndex),
-              routingObstacles: document.nodes
-                .filter((node) => node.id !== edge.source && node.id !== edge.target && node.data.shape !== 'container' && node.data.shape !== 'lane')
-                .map((node) => {
-                  const position = absoluteNodePosition(document.nodes, node);
-                  const size = defaultNodeSize(node);
-                  return { x: position.x, y: position.y, width: node.width ?? size.width, height: node.height ?? size.height };
-                })
+              routingObstacles: routingObstaclesForEdge(document, edge)
             }
           : edge.data,
       selected: edge.id === selectedEdgeId,
@@ -1450,10 +1444,12 @@ function baseHandleSide(handle: string | undefined): 'left' | 'right' | 'top' | 
 function routingOffsetForEdge(document: DiagramDocument, edge: DiagramEdge, edgeIndex: number): number {
   const siblings = document.edges
     .map((candidate, index) => ({ candidate, index }))
-    .filter(({ candidate }) => candidate.source === edge.source)
+    .filter(({ candidate }) => candidate.source === edge.source || candidate.target === edge.target)
     .sort((left, right) => {
-      const leftNode = document.nodes.find((node) => node.id === left.candidate.target);
-      const rightNode = document.nodes.find((node) => node.id === right.candidate.target);
+      const leftOtherId = left.candidate.source === edge.source ? left.candidate.target : left.candidate.source;
+      const rightOtherId = right.candidate.source === edge.source ? right.candidate.target : right.candidate.source;
+      const leftNode = document.nodes.find((node) => node.id === leftOtherId);
+      const rightNode = document.nodes.find((node) => node.id === rightOtherId);
       const leftPosition = leftNode ? absoluteNodePosition(document.nodes, leftNode) : { x: 0, y: 0 };
       const rightPosition = rightNode ? absoluteNodePosition(document.nodes, rightNode) : { x: 0, y: 0 };
       return leftPosition.x - rightPosition.x || leftPosition.y - rightPosition.y || left.index - right.index;
@@ -1461,6 +1457,24 @@ function routingOffsetForEdge(document: DiagramDocument, edge: DiagramEdge, edge
   if (siblings.length < 2) return 0;
   const siblingIndex = siblings.findIndex(({ index }) => index === edgeIndex);
   return (siblingIndex - (siblings.length - 1) / 2) * 12;
+}
+
+function routingObstaclesForEdge(document: DiagramDocument, edge: DiagramEdge): RoutingObstacle[] {
+  const excluded = new Set<string>([edge.source, edge.target]);
+  for (const endpointId of [edge.source, edge.target]) {
+    let current = document.nodes.find((node) => node.id === endpointId);
+    while (current?.parentId && !excluded.has(current.parentId)) {
+      excluded.add(current.parentId);
+      current = document.nodes.find((node) => node.id === current!.parentId);
+    }
+  }
+  return document.nodes
+    .filter((node) => !excluded.has(node.id) && node.data.shape !== 'lane')
+    .map((node) => {
+      const position = absoluteNodePosition(document.nodes, node);
+      const size = defaultNodeSize(node);
+      return { x: position.x, y: position.y, width: node.width ?? size.width, height: node.height ?? size.height };
+    });
 }
 
 function SmartOrthogonalEdge({

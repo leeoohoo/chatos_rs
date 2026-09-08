@@ -15,8 +15,8 @@ An architecture diagram explains boundaries, ownership, responsibilities, and a 
 
 Use `overview` to answer questions such as “What are the system's major parts?” or “How does a request cross the main boundaries?”
 
-- Show 8–12 primary components and no more than 18 meaningful relationships.
-- Prefer 4–7 boundaries: users/external systems, clients, entry, business capabilities, data, and infrastructure.
+- Show 6–10 primary components and no more than 12 meaningful relationships.
+- Prefer 2–5 boundaries: clients, product core, supporting capabilities, data/infrastructure, and external systems.
 - Represent a business domain as one component.
 - Aggregate repeated gateway routes, persistence calls, and event publications.
 - Do not show Controller, Service, Repository, table, pod, or class detail.
@@ -25,7 +25,7 @@ Use `overview` to answer questions such as “What are the system's major parts?
 
 Use `detail` for one bounded context, service, layer, integration, or technical concern.
 
-- Show no more than 20 primary components and 28 relationships.
+- Show no more than 16 primary components and 22 relationships.
 - External dependencies may appear as boundary nodes, but do not redraw the whole system around the detail.
 - Controller → application service → domain service → repository → store is acceptable only when the selected subject is that one service or bounded context.
 
@@ -38,6 +38,10 @@ Inspect the relevant manifests, modules, routes, entrypoints, configuration, int
 Include an element only if removing it would make the selected architectural question harder to answer. Exclude implementation facts that do not change a boundary, responsibility, deployment dependency, or primary interaction.
 
 Split into separate diagrams when multiple independent domains need internal expansion, logical architecture and topology are both requested, a diagram exceeds its budget, repeated gateway/database edges dominate the drawing, or the title combines unrelated concerns. Never solve crowding by shrinking text or extending the canvas indefinitely.
+
+Treat verbs such as create, query, callback, retry, synchronize, publish result, and update status as a warning that a runtime process is leaking into the architecture overview. Keep only the stable dependency or responsibility in the overview, then create a flowchart or focused architecture detail for the runtime interaction.
+
+For a system comparable to ChatOS, do not put client access, model inference, MCP routing, plugin policy, task execution, callbacks, persistence, memory, and messaging on one overview. Prefer a small system-context overview plus focused capability and background-task diagrams.
 
 ## Element semantics
 
@@ -59,6 +63,16 @@ Do not use packages merely to decorate rows. Every boundary must communicate own
 - Establish one primary reading direction, normally left to right.
 - Place initiators before clients and entry boundaries, business capabilities in the center, and data/infrastructure after them.
 - Keep containers distinct and avoid edges crossing their titles.
+- In an overview, one component should normally participate in no more than four cross-boundary relationships.
+- Allow no more than two visible relationships between the same pair of boundaries. Aggregate the rest under a capability-level label.
+- A relationship label should describe one stable architectural dependency, not a slash-separated list of runtime steps.
+- Order boundaries before writing PlantUML: initiator/client → product core → supporting capability → data/infrastructure. External providers sit above or below the capability they serve instead of breaking the primary path.
+
+## Required decomposition decision
+
+Before preparing generation, write down the one architectural question and the primary path in reading order. For every candidate node or edge, choose exactly one outcome: keep in this view, aggregate into a capability, or move to a named detail diagram.
+
+If the draft contains a reciprocal edge pair, more than five boundaries, more than two edges between the same boundary pair, or a component with more than four cross-boundary relationships, do not submit it. Simplify or split it first.
 
 ## PlantUML rules
 
@@ -71,6 +85,8 @@ Read [positive and negative architecture examples](references/examples.md) befor
 - `single_architecture_viewpoint`: one level and viewpoint is used.
 - `boundaries_show_ownership`: containers express real architectural boundaries.
 - `primary_path_is_visible`: the central interaction can be followed quickly.
+- `relationships_are_aggregated`: shared persistence, messaging, gateway, and callback details are represented at capability level.
+- `runtime_cycles_are_moved_to_detail`: the overview has no request/callback reciprocal pair or process loop.
 - `implementation_detail_is_excluded`: lower-level detail is omitted from an overview.
 - `independent_concerns_are_split`: unrelated domains or scenarios are separate diagrams.
 - `code_evidence_is_mapped`: code-derived nodes have source references.
