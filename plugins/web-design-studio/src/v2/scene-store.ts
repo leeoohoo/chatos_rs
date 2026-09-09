@@ -37,6 +37,11 @@ export interface SceneHistoryStatus {
   nextRedoTransactionId?: string;
 }
 
+export interface SceneAppliedTransaction {
+  transaction: SceneTransaction;
+  summary: SceneTransactionSummary;
+}
+
 function fileNameFor(documentId: string): string {
   const digest = createHash('sha256').update(documentId).digest('hex');
   return `scene-v2-${digest}.json`;
@@ -142,6 +147,9 @@ export class SceneDocumentStore {
     return this.files.withLock(async () => {
       const record = await this.readRecord(documentId);
       if (transaction.baseRevision !== record.document.revision) throw new SceneRevisionConflictError(record.document.revision);
+      if (record.past.some((entry) => entry.transaction.transactionId === transaction.transactionId)) {
+        throw new Error(`Scene transaction already exists: ${transaction.transactionId}`);
+      }
       const before = structuredClone(record.document);
       const result = applySceneTransaction(record.document, transaction);
       const entry: SceneHistoryEntry = {
@@ -203,6 +211,13 @@ export class SceneDocumentStore {
       nextUndoTransactionId: record.past.at(-1)?.transaction.transactionId,
       nextRedoTransactionId: record.future.at(-1)?.transaction.transactionId
     };
+  }
+
+  async findAppliedTransaction(documentId: string, transactionId: string): Promise<SceneAppliedTransaction | undefined> {
+    const record = await this.readRecord(documentId);
+    const entry = record.past.find((candidate) => candidate.transaction.transactionId === transactionId);
+    if (!entry) return undefined;
+    return { transaction: structuredClone(entry.transaction), summary: structuredClone(entry.summary) };
   }
 
   async remove(documentId: string): Promise<void> {

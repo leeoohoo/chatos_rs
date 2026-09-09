@@ -97,6 +97,22 @@ test('the directory lock allows only one concurrent writer at the same revision'
   }
 });
 
+test('scene transaction identities cannot be reused at a later revision', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-transaction-id-'));
+  const store = new SceneDocumentStore(root);
+  try {
+    const created = await store.create(nestedWebsite());
+    const first = await store.apply(created.documentId, headlineTransaction(1, 'First identity', 'transaction-stable-id'));
+    await assert.rejects(
+      () => store.apply(created.documentId, headlineTransaction(first.document.revision, 'Reused identity', 'transaction-stable-id')),
+      /already exists/
+    );
+    assert.equal((await store.read(created.documentId)).revision, first.document.revision);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('history uses checksummed compressed snapshots and enforces count and byte budgets', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-compressed-history-'));
   const store = new SceneDocumentStore(root, 3, 6 * 1024);

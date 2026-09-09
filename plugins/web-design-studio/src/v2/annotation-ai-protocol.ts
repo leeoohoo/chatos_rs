@@ -13,6 +13,7 @@ export interface AnnotationAiTask {
   scope: DesignScope;
   annotationId: string;
   targetNodeId: string;
+  pageId: string;
   instruction: string;
   baseRevision: number;
   requiredViewportWidths: number[];
@@ -68,8 +69,9 @@ export function createAnnotationAiTask(document: SceneDocument, input: Annotatio
   assertScope(input.scope, document);
   assertViewportWidths(input.requiredViewportWidths);
   const index = indexSceneDocument(document);
-  const target = index.get(input.targetNodeId)?.node;
-  if (!target) throw new Error(`Annotation target node not found: ${input.targetNodeId}`);
+  const targetEntry = index.get(input.targetNodeId);
+  const target = targetEntry?.node;
+  if (!target || !targetEntry) throw new Error(`Annotation target node not found: ${input.targetNodeId}`);
   const annotation = target.annotations.find((candidate) => candidate.id === input.annotationId);
   if (!annotation) throw new Error(`Open annotation not found on target node: ${input.annotationId}`);
   if (annotation.status !== 'open') throw new Error(`Annotation ${input.annotationId} is already resolved.`);
@@ -95,6 +97,7 @@ export function createAnnotationAiTask(document: SceneDocument, input: Annotatio
     scope: structuredClone(input.scope),
     annotationId: annotation.id,
     targetNodeId: target.id,
+    pageId: targetEntry.pageId,
     instruction: annotation.body,
     baseRevision: document.revision,
     requiredViewportWidths: [...input.requiredViewportWidths],

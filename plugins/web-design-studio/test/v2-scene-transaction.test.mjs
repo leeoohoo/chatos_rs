@@ -160,6 +160,29 @@ test('design-system variable collections are inserted atomically with the scene 
   }), /modes are invalid/);
 });
 
+test('human variable editing replaces Scene collections instead of legacy document tokens', () => {
+  const source = nestedWebsite();
+  const previousId = source.variableCollections[0].id;
+  const result = applySceneTransaction(source, {
+    transactionId: 'transaction-replace-design-system',
+    baseRevision: source.revision,
+    author: 'human',
+    operations: [{
+      op: 'set-variable-collections',
+      collections: [{
+        id: 'variables-refresh',
+        name: 'Brand',
+        modes: [{ id: 'mode-light', name: 'Light' }],
+        variables: [{ id: 'variable-brand-primary', name: 'Primary', type: 'color', valuesByMode: { 'mode-light': '#0a84ff' } }]
+      }]
+    }]
+  });
+  assert.deepEqual(result.summary.insertedVariableCollectionIds, ['variables-refresh']);
+  assert.deepEqual(result.summary.removedVariableCollectionIds, [previousId]);
+  assert.equal(result.document.variableCollections[0].variables[0].valuesByMode['mode-light'], '#0a84ff');
+  assert.equal(source.variableCollections[0].id, previousId);
+});
+
 test('responsive rules are inserted atomically after their target nodes exist', () => {
   const source = nestedWebsite();
   const rule = {

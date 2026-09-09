@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { WebDesignComponent } from '../../src/schema';
 import { libraryPreviewSelection, translateLibraryPreviewPointerEvent, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
 
+export interface LibraryRuntimeDescriptor {
+  id: string;
+  width: number;
+  height: number;
+  content: string;
+  library?: {
+    name: string;
+    component: string;
+    props: Record<string, unknown>;
+  };
+}
+
 export function LibraryRuntimeComponent({ component, preview, slotContent, layout = 'fill', autoSize = false, pickItems = false, onPickItem, onPickPointerEvent, onContentHeight }: {
-  component: WebDesignComponent;
+  component: LibraryRuntimeDescriptor;
   preview: boolean;
   slotContent?: ReactNode;
   layout?: 'fill' | 'intrinsic';

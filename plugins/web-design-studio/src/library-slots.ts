@@ -1,7 +1,7 @@
 import { editableSlotsForAntdComponent } from './antd-slots.js';
 import { fitContentCanvasToComponents, resolveComponent, updateComponentFrame } from './editor-model.js';
 import { pageIdForComponent, type WebDesignComponent, type WebDesignDevice, type WebDesignDocument } from './schema.js';
-import { contentSlot, namedItemSlots, splitPanelSlots, type UiEditableSlot } from './ui-library.js';
+import { contentSlot, namedItemSlots, splitPanelSlots, type UiEditableSlot, type UiSlotComponentContract } from './ui-library.js';
 
 const OVERLAY_CONTENT_COMPONENTS = new Set(['Drawer', 'Modal', 'Dialog', 'Sheet', 'AlertDialog', 'Popover', 'HoverCard', 'ToggleTip', 'FloatingPanel', 'OverlayManager']);
 const FIXED_CONTENT_VIEWPORTS = new Set(['ScrollArea', 'Carousel', 'AspectRatio']);
@@ -40,7 +40,7 @@ const SHADCN_CONTENT_SLOTS: Record<string, [string, string]> = {
   Collapsible: ['折叠内容', '展开后展示的组件']
 };
 
-function overlaySlot(component: WebDesignComponent, label: string, description: string): UiEditableSlot[] {
+function overlaySlot(component: UiSlotComponentContract, label: string, description: string): UiEditableSlot[] {
   const side = component.library?.props.side ?? component.library?.props.placement;
   const horizontal = side === 'top' || side === 'bottom';
   return [contentSlot(component, 'content', label, description, {
@@ -49,7 +49,7 @@ function overlaySlot(component: WebDesignComponent, label: string, description: 
   })];
 }
 
-export function editableSlotsForUiComponent(component: WebDesignComponent): UiEditableSlot[] {
+export function editableSlotsForLibraryContract(component: UiSlotComponentContract): UiEditableSlot[] {
   const library = component.library?.name;
   const name = component.library?.component;
   if (!library || !name) return [];
@@ -119,6 +119,10 @@ export function editableSlotsForUiComponent(component: WebDesignComponent): UiEd
   }
 
   return [];
+}
+
+export function editableSlotsForUiComponent(component: WebDesignComponent): UiEditableSlot[] {
+  return editableSlotsForLibraryContract(component);
 }
 
 export function isUiContentContainer(component: WebDesignComponent): boolean {

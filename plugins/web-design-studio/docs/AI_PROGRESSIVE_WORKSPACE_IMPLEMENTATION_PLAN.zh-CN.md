@@ -6,12 +6,12 @@
 
 必须同时满足四个原则：
 
-1. AI 可以先规划整站，但默认一次只生成一个页面；页面内部一次只生成一个语义区块。
+1. AI 可以先规划整站，但一次只执行一个有明确边界、可以视觉验证的设计步骤；画板和页面都不是单次必须完成的单位。
 2. 每个步骤独立生成、布局、截图、检查、提交和恢复，任何失败不能污染已经确认的设计。
 3. 多画板只是组织和预览能力，不代表要求 AI 同时生成多个页面或多份响应式数据。
 4. 设计文档和视觉结果是主产物，代码导出与旧数据兼容都不作为本轮约束。
 
-还必须明确：这里的“生成一个页面”不是要求模型在一次调用中完成整页。Page 是持续迭代的设计对象，可以经过页面骨架、内容区块、视觉塑造、交互状态、响应式修复和最终抛光等多轮 AI 工作。AI 每一轮都读取当前 Scene 和真实渲染图片，在已有结果上继续，而不是重新生成整页。
+还必须明确：画板是持续迭代的设计对象，不是一次调用、一次会话甚至一次连续任务必须完成的对象。页面、弹窗、抽屉、菜单、浮层和界面状态都可以经过骨架、局部内容、视觉塑造、响应式修复和最终抛光等多轮 AI 工作。AI 每一轮只承诺完成当前有界步骤，并读取当前 Scene、最新真实渲染图片和历史步骤，在已有结果上继续，而不是重新生成整个画板。
 
 产品核心是视觉设计，不是交互原型或前端功能演示。AI 首先需要把网站设计得有明确的信息层级、构图、品牌气质、排版、色彩、图片策略、留白和节奏；只有视觉方案达到验收门槛后，才补充确有必要的交互状态。按钮能够点击、Drawer 能够打开，不能替代页面设计质量。
 
@@ -52,8 +52,8 @@ ChatOS Scope
   └─ Project                         项目归属，projectId 由宿主透传
       └─ Design Document             一份网站设计文件
           ├─ Site Plan               页面清单和生成计划，不等于立即执行
-          ├─ Page                    一个逻辑页面/路由
-          │   └─ Canonical Scene     页面唯一可编辑节点树
+          ├─ Artboard                页面、弹层或界面状态的长期设计面
+          │   └─ Canonical Scene     该画板唯一可编辑节点树
           │       └─ Root Frame
           │           └─ Section / Frame / Component / Text / Media...
           ├─ Workspace Layout        画板在自由工作区中的摆放
@@ -67,18 +67,18 @@ ChatOS Scope
 - MCP 工具不提供 `projectId` 入参；服务端每次读取和写入都验证 documentId 属于当前 projectId。
 - URL 中的 `studio-project` 只用于工作台定位，不能成为服务端授权依据。
 
-### 3.2 Document 与 Page
+### 3.2 Document 与 Artboard
 
 - 一个 Document 表示同一网站或同一设计方案。
-- Page 表示一个逻辑页面，例如首页、价格页、详情页，而不是一个设备截图。
-- 整站规划可以列出多个 Page，但规划本身不创建页面内容。
-- 同一时刻一个 Document 最多只有一个 Page 处于 AI `running` 状态。
+- Artboard 表示一个逻辑页面、Modal、Drawer、Popover、Menu 或界面状态，而不是一个设备截图。
+- 整站规划可以列出多个 Artboard，但规划本身不批量创建其内容。
+- 同一时刻最多只有一个有界 Step 处于 `generating/validating`；画板可以在安全步骤之间暂停、切换和稍后恢复，不要求先一次完善当前画板。
 
-### 3.3 Canonical Scene 与响应式画板
+### 3.3 Canonical Scene 与响应式检查
 
 - 每个 Page 只有一份 Canonical Scene，不复制 desktop/tablet/mobile 三套节点。
 - Root Frame 的宽度由当前预览视口输入，内容高度由布局引擎求解。
-- Desktop、Tablet、Mobile、4K 和自定义宽度都是同一 Scene 的投影视图。
+- Desktop、Tablet、Mobile、4K 和自定义宽度都是当前画板的响应式检查输入，不默认创建额外画板。
 - Breakpoint 只记录确实需要变化的规则：可见性、顺序、布局和变量 Mode。
 - 画板外框始终跟随求解结果；内容高度增加时画板向下增长。
 - 画板宽度由预览视口或用户明确设置，不因某个错误溢出的子节点自动变宽；这种情况应成为布局错误并进入修复步骤。
@@ -87,8 +87,8 @@ ChatOS Scope
 
 工作区和网页内容必须分离：
 
-- Workspace 使用世界坐标，承载 Page Artboard、响应式预览、组件拆解区和对比区。
-- Artboard 是对某个 Page + viewportWidth 的引用，不复制 Page Scene。
+- Workspace 使用世界坐标，承载页面、弹层、菜单和界面状态 Artboard，以及组件拆解区和对比区。
+- Artboard 引用一个独立设计面；`viewportWidth` 是该画板当前的检查宽度，不代表设备副本。
 - Workspace Section 只用于在画布上框住和命名一组 Artboard，不进入网页 DOM。
 - Scene Section 是页面内部的语义区块，例如 Hero、Features 和 Footer；它属于网页内容。
 - Group 让若干节点共同移动，边界跟随子节点。
@@ -112,7 +112,9 @@ interface WorkspaceCamera {
 interface WorkspacePlacement {
   artboardId: string;
   pageId: string;
+  surfaceKind: 'page' | 'modal' | 'drawer' | 'popover' | 'menu' | 'state';
   viewportWidth: number;
+  viewportHeight: number;
   worldX: number;
   worldY: number;
   label: string;
@@ -128,11 +130,11 @@ interface WorkspacePlacement {
 
 ### 4.2 画板布局
 
-- 新页面先创建空 Artboard，并在工作区当前视野中心出现。
-- 新的响应式预览默认放在当前页面画板右侧，而不是覆盖或复制内容。
+- 新页面、弹窗、抽屉、浮层、菜单或界面状态先创建空 Artboard，并出现在工作区可见区域。
+- 响应式检查只改变当前画板视口输入；需要比较时后续提供临时对比视图，不污染项目的流程画板清单。
 - Artboard 可以独立移动、重命名、聚焦和隐藏，但不能直接改变 Page Scene。
 - Root Frame 求解高度变化后，Artboard 外框同步变化，周围画板按用户选择保持位置或自动整理。
-- Drawer、Modal、Popover、Tabs 内容等嵌套结构使用“聚焦编辑”进入同一中心工作区，不使用尺寸固定的阻断弹窗。
+- Drawer、Modal、Popover、Menu 和重要 Tabs 状态优先作为独立画板设计；普通组件 Slot 仍使用中心工作区的聚焦编辑。
 
 ### 4.3 选择系统
 
@@ -463,7 +465,7 @@ AI 区域不再只是输入框，必须展示：
 
 - 左侧 Page 列表负责逻辑页面切换。
 - 工作区可以同时展示多个 Page Artboard，但 AI 任务侧栏只标记一个 Active Page。
-- 响应式预览通过“添加视口”创建投影视图，并显示 CSS 宽度，不复制页面。
+- 响应式检查直接改变当前画板的 CSS 视口输入，不把设备预览加入流程画板。
 - 空页面显示“规划此页面”和“开始生成第一个区块”，不自动生成所有页面。
 
 ### 10.4 内部内容编辑
@@ -477,7 +479,7 @@ AI 区域不再只是输入框，必须展示：
 
 每个阶段完成验收后再进入下一阶段，不并行堆 UI 和组件数量。
 
-### 阶段 A：协议收口和持久化计划
+### 阶段 A：协议收口和持久化计划（已完成）
 
 实施：
 
@@ -493,7 +495,9 @@ AI 区域不再只是输入框，必须展示：
 - 非法跨页、跨 Scope、越级状态转换全部被拒绝。
 - 同一幂等键重复调用不产生重复事务。
 
-### 阶段 B：候选执行器和单步提交
+完成记录见 `V3_PHASE_A_GENERATION_PLAN.zh-CN.md`。当前定向测试 14/14、插件全量测试 195/195 通过。
+
+### 阶段 B：候选执行器和单步提交（已完成）
 
 实施：
 
@@ -509,7 +513,9 @@ AI 区域不再只是输入框，必须展示：
 - 人工修改后旧候选不能提交。
 - 只提供节点清单而没有当前视觉产物的步骤不能进入视觉验收。
 
-### 阶段 C：高阶 MCP 工具
+完成记录见 `V3_PHASE_B_CANDIDATE_EXECUTION.zh-CN.md`。当前 TypeScript strict typecheck、生产构建和插件全量测试 `212/212` 均通过。
+
+### 阶段 C：高阶 MCP 工具（已完成）
 
 实施：
 
@@ -524,21 +530,25 @@ AI 区域不再只是输入框，必须展示：
 - MCP schema 中不存在可伪造的 projectId。
 - AI 可以用整页图、局部图和视觉 Diff 精确定位并修改节点。
 
-### 阶段 D：Camera 工作区和多画板投影
+已完成上下文、Site/Page 规划、单页启动、单步执行/重试/修复、Candidate 审阅/接受/拒绝、跳过、精确 Scene 回滚、页面完成和暂停/恢复入口；并接入 Chromium 整页/局部 PNG、Visual Grounding、before/after Diff 和点选定位。图片通过 MCP image content 直接返回，Artifact 按宿主 Scope 持久化隔离。完成记录见 `V3_PHASE_C_PROGRESSIVE_MCP.zh-CN.md`。
+
+### 阶段 D：Camera 与流程画板工作区（进行中）
 
 实施：
 
 - 用 Camera + CSS transform/world coordinate 替换固定大滚动层。
-- 新建 WorkspacePlacement Store、Artboard 投影和虚拟化。
+- 新建 WorkspacePlacement Store、流程 Artboard 和虚拟化。
 - 接入适应选择、适应画板、显示全部、指针锚点缩放。
-- 响应式画板引用同一 Canonical Scene。
+- 响应式宽度作为单画板检查输入，不生成默认设备画板。
 
 验收：
 
 - 在任意方向连续平移和 10%–800% 缩放无跳动。
 - 移动画板不改变页面内部节点坐标。
-- 同一 Page 的多个视口显示同一节点 ID 和不同 solved layout。
+- 页面、弹层和状态画板可以并排组织，并保持各自稳定设计内容和 World 坐标。
 - 页面内容增长时画板外框正确增长，保存刷新后位置不变。
+
+当前已删除固定 4800×3600 滚动层，接入 10%–800% Camera、指针锚定缩放、任意方向平移和按宿主 Scope 隔离的 Workspace Placement Store；默认设备三画板已撤除，工作区改为页面、弹窗、抽屉、浮层、菜单和界面状态的独立流程画板，支持选择、创建、移出、World 坐标移动、适应选择、适应当前画板和显示全部。Scene 节点到目标画板的原型关系已经进入正式 Scene schema、事务、复制、删除、Undo/Redo、属性栏、World 坐标贝塞尔箭头和预览导航/叠层渲染，不再读取旧组件交互作为 Scene 主路径。Form、Card、Drawer、Modal 等内部内容继续使用统一 Scene 容器、Camera、选择和布局能力。大量画板按 `anchor / shell / content / runtime` 四级距离分段挂载，离屏页面不会保留完整普通节点或第三方运行时。阶段 D 已完成，进度记录见 `V3_PHASE_D_CAMERA_WORKSPACE.zh-CN.md`。
 
 ### 阶段 E：Scene v2 编辑器接入
 
@@ -555,6 +565,8 @@ AI 区域不再只是输入框，必须展示：
 - 手工移动、缩放、分组和内部编辑保存刷新后像素与层级不变。
 - 不存在为了兼容旧文档而走的双写分支。
 
+阶段 E 已完成：实际画布、图层树、选择、工具栏、右属性栏、官方组件插入、批注、原型和响应式人工覆盖都读写 Scene v2；Move、八方向 Resize、Group、Frame、Auto Layout Frame、Ungroup、Align、Distribute、Reorder、复制画板、删除画板和 Undo/Redo 都通过同一套 revision-safe Scene Transaction。第三方 iframe 运行时在设计态有独立选择命中层，在原型态有独立关系命中层。旧 `components[]` 只保留为未创建 Scene 的历史文档表面，不参与 Scene 双写、渐进生成、Candidate、视觉验收或 Scene handoff。进度记录见 `V3_PHASE_E_SCENE_EDITOR.zh-CN.md`。
+
 ### 阶段 F：AI 计划、审阅和恢复 UI
 
 实施：
@@ -568,6 +580,8 @@ AI 区域不再只是输入框，必须展示：
 - 用户能看清 AI 正在做哪一页、哪一区块、为什么失败以及下一步会发生什么。
 - 不阅读说明书也能完成继续、重试、接受、拒绝、暂停和回滚。
 - AI 生成时不遮挡整个画布，已确认设计始终可查看。
+
+当前阶段 F 已完成 Plan/Step 状态读取、Candidate 截图与 Diff 审阅、接受、拒绝、暂停、恢复、回滚、重试入口、页面边界停止和人工保护冲突展示。生成状态作为右侧独立审阅面板，不替换或遮挡正式 Scene 画布。
 
 ### 阶段 G：Skill、真实任务和生产验收
 
@@ -585,6 +599,8 @@ AI 区域不再只是输入框，必须展示：
 - 任一步失败可恢复，已确认页面不受影响。
 - 人的手工修改和批注可驱动定向 AI 修改，不发生静默覆盖。
 - 通过安装后的客户端真实调用验证，而不只在开发浏览器中通过。
+
+当前阶段 G 的 Skill、MCP 强约束、12 类网站结构基准、渐进式多轮生成、截图与视觉 Grounding、失败不污染正式 Scene、人工批注和 projectId 隔离均已实现并进入自动化测试。发布前最后一步是完成插件校验、缓存版本更新、客户端重新安装及真实 projectId 透传冒烟验收。
 
 ## 12. 测试矩阵
 
@@ -627,14 +643,10 @@ AI 区域不再只是输入框，必须展示：
 - 不把 Scene 元素齐全误判为视觉设计完成；最终判断必须查看真实渲染图片。
 - 不用交互数量冒充设计质量；默认先做静态视觉设计，必要交互在视觉验收后补充。
 
-## 14. 推荐的实际开工顺序
+## 14. 3.0.1 发布收尾顺序
 
-下一步只开始阶段 A，不先做画布视觉效果：
-
-1. 定义 Plan、Page Run、Section Step、Attempt 和 Artifact schema。
-2. 写出完整状态转换和非法转换测试。
-3. 建立独立 Plan Store，验证重启恢复与 projectId 作用域。
-4. 把现有 Generation Executor 改为一次只执行一个 Step。
-5. 验证候选失败不修改正式 Scene 后，再进入 MCP 和工作区 UI。
-
-这是后续所有画布和 AI UI 的基础。如果先画多画板界面，仍会得到一个看起来像设计工具、实际却继续让 AI 一次提交大任务的 Demo。
+1. 运行 TypeScript、全量测试、打包 dry-run 和插件 manifest 校验。
+2. 清理只用于浏览器验收的临时设计数据。
+3. 用插件更新脚本刷新本地 marketplace cachebuster，不手改 marketplace 配置。
+4. 重新安装到客户端，验证传入 projectId、项目归属、设计打开、Scene 保存、AI Plan 恢复和截图产物。
+5. 只提交 `plugins/web-design-studio` 范围的 3.0.1 改动，避免带入工作树中其他客户端开发内容。

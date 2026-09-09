@@ -1,5 +1,5 @@
-import { isSceneContainer, isSceneSlotContainer, type SceneNode } from './scene-schema.js';
-import { solveSceneLayout, type SolvedSceneBox } from './layout-engine.js';
+import { isSceneContainer, isSceneSlotContainer, type SceneDocument, type SceneNode } from './scene-schema.js';
+import { solveSceneLayout, type SceneLayoutDiagnostic, type SolvedSceneBox } from './layout-engine.js';
 import { resolveResponsiveScene } from './responsive-scene.js';
 import type { Phase2LayoutBenchmark } from './phase2-layout-benchmarks.js';
 
@@ -8,8 +8,21 @@ export interface RenderedPhase2Scene {
   viewportWidth: number;
   height: number;
   nodeCount: number;
-  diagnostics: Array<{ nodeId: string; severity: string; code: string; message: string }>;
+  diagnostics: SceneLayoutDiagnostic[];
   html: string;
+}
+
+export interface RenderedSceneRoot {
+  documentId: string;
+  revision: number;
+  rootNodeId: string;
+  viewportWidth: number;
+  width: number;
+  height: number;
+  nodeCount: number;
+  diagnostics: SceneLayoutDiagnostic[];
+  html: string;
+  documentHtml: string;
 }
 
 function escapeHtml(value: string): string {
@@ -95,20 +108,37 @@ function renderNode(node: SceneNode, box: SolvedSceneBox, benchmarkId: string): 
 }
 
 export function renderPhase2BenchmarkScene(benchmark: Phase2LayoutBenchmark, viewportWidth: number): RenderedPhase2Scene {
-  const solved = solveSceneLayout(benchmark.document, { rootNodeId: benchmark.rootNodeId, viewportWidth });
-  const effective = resolveResponsiveScene(benchmark.document, viewportWidth).document;
-  const nodes = flatten(effective.pages.flatMap((page) => page.children));
-  const root = solved.boxes.get(benchmark.rootNodeId)!;
-  const html = nodes
-    .filter((node) => solved.boxes.has(node.id))
-    .map((node) => renderNode(node, solved.boxes.get(node.id)!, benchmark.benchmarkId))
-    .join('');
+  const rendered = renderSceneDocumentRoot(benchmark.document, benchmark.rootNodeId, viewportWidth, benchmark.benchmarkId);
   return {
     benchmarkId: benchmark.benchmarkId,
     viewportWidth,
+    height: rendered.height,
+    nodeCount: rendered.nodeCount,
+    diagnostics: rendered.diagnostics,
+    html: rendered.html
+  };
+}
+
+export function renderSceneDocumentRoot(document: SceneDocument, rootNodeId: string, viewportWidth: number, renderSeed = document.documentId): RenderedSceneRoot {
+  const solved = solveSceneLayout(document, { rootNodeId, viewportWidth });
+  const effective = resolveResponsiveScene(document, viewportWidth).document;
+  const nodes = flatten(effective.pages.flatMap((page) => page.children));
+  const root = solved.boxes.get(rootNodeId)!;
+  const html = nodes
+    .filter((node) => solved.boxes.has(node.id))
+    .map((node) => renderNode(node, solved.boxes.get(node.id)!, renderSeed))
+    .join('');
+  const sceneHtml = `<main id="phase2-scene" data-root-node-id="${escapeHtml(rootNodeId)}" data-scene-ready="true" style="position:relative;width:${format(root.width)}px;height:${format(root.height)}px;overflow:visible">${html}</main>`;
+  return {
+    documentId: document.documentId,
+    revision: document.revision,
+    rootNodeId,
+    viewportWidth,
+    width: root.width,
     height: root.height,
     nodeCount: solved.boxes.size,
-    diagnostics: solved.diagnostics.map((diagnostic) => ({ ...diagnostic })),
-    html: `<main id="phase2-scene" data-benchmark-id="${escapeHtml(benchmark.benchmarkId)}" data-scene-ready="true" style="position:relative;width:${format(root.width)}px;height:${format(root.height)}px;overflow:visible">${html}</main>`
+    diagnostics: solved.diagnostics.map((diagnostic): SceneLayoutDiagnostic => ({ ...diagnostic })),
+    html: sceneHtml,
+    documentHtml: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:#fff;overflow:auto}body{width:${format(root.width)}px;min-height:${format(root.height)}px}*{box-sizing:border-box}</style></head><body>${sceneHtml}</body></html>`
   };
 }

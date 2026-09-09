@@ -10,6 +10,20 @@ import { createComponentFromUiLibrary, UI_LIBRARIES } from './ui-libraries.js';
 import { WEB_DESIGN_THEME_PRESETS } from './design-themes.js';
 import { WEB_DESIGN_BLOCK_PRESETS, WEB_DESIGN_PAGE_TEMPLATES } from './component-library.js';
 import { runtimeScopeFingerprint } from './runtime-scope.js';
+import { GenerationCandidateStore } from './v2/generation-candidate-store.js';
+import { GenerationPlanRevisionConflictError, GenerationPlanStore } from './v2/generation-plan-store.js';
+import { GenerationSoftProtectionStore } from './v2/generation-soft-protection-store.js';
+import { GenerationVisualArtifactStore } from './v2/generation-visual-artifact-store.js';
+import { GenerationVisualService, type ToolImagePayload } from './v2/generation-visual-service.js';
+import { ChromiumSceneImageRenderer } from './v2/headless-scene-renderer.js';
+import { AnnotationAiService } from './v2/annotation-ai-service.js';
+import { ProgressiveGenerationService, type SubmittedStepVerification } from './v2/progressive-generation-service.js';
+import { executeSceneEditorCommand, sceneEditorCommandRequestSchema } from './v2/scene-editor-command.js';
+import { SceneQueryIndex, type SceneQuery } from './v2/scene-query.js';
+import { indexSceneDocument } from './v2/scene-schema.js';
+import { SceneDocumentStore, SceneRevisionConflictError } from './v2/scene-store.js';
+import type { CreateGenerationStepInput, GenerationArtifact, GenerationDesignIntent } from './v2/generation-plan-schema.js';
+import type { SceneTransactionOperation } from './v2/scene-transaction.js';
 import {
   assertHandoffQuality,
   componentPageId,
@@ -27,7 +41,7 @@ import {
 } from './schema.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '0.12.0';
+const SERVER_VERSION = '3.0.1';
 const store = new WebDesignDocumentStore();
 await store.initialize();
 const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
@@ -37,6 +51,51 @@ const defaultProject = await store.ensureScopedProject(
     ? process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 网站项目'
     : '公共网站设计'
 );
+const generationRepositories = {
+  plans: new GenerationPlanStore(store.rootDirectory),
+  scenes: new SceneDocumentStore(store.rootDirectory),
+  candidates: new GenerationCandidateStore(store.rootDirectory),
+  protections: new GenerationSoftProtectionStore(store.rootDirectory),
+  visualArtifacts: new GenerationVisualArtifactStore(store.rootDirectory)
+};
+
+async function assertGenerationDocumentInScope(documentId: string): Promise<{ name: string }> {
+  const document = await store.readInScope(documentId, scopeKey);
+  return { name: document.title };
+}
+
+function progressiveGenerationService(): ProgressiveGenerationService {
+  const projectId = process.env.CHATOS_PROJECT_ID;
+  if (!projectId) throw new Error('Progressive website generation requires a ChatOS project context with a host-injected projectId.');
+  return new ProgressiveGenerationService({
+    projectId,
+    repositories: generationRepositories,
+    assertDocumentInScope: assertGenerationDocumentInScope
+  });
+}
+
+function generationVisualService(): GenerationVisualService {
+  const projectId = process.env.CHATOS_PROJECT_ID;
+  if (!projectId) throw new Error('Visual website inspection requires a ChatOS project context with a host-injected projectId.');
+  return new GenerationVisualService({
+    projectId,
+    scenes: generationRepositories.scenes,
+    artifacts: generationRepositories.visualArtifacts,
+    renderer: new ChromiumSceneImageRenderer(),
+    assertDocumentInScope: async (documentId) => { await assertGenerationDocumentInScope(documentId); }
+  });
+}
+
+function annotationAiService(): AnnotationAiService {
+  const projectId = process.env.CHATOS_PROJECT_ID;
+  if (!projectId) throw new Error('Annotation AI tasks require a ChatOS project context with a host-injected projectId.');
+  return new AnnotationAiService({
+    projectId,
+    scenes: generationRepositories.scenes,
+    visuals: generationVisualService(),
+    assertDocumentInScope: async (documentId) => { await assertGenerationDocumentInScope(documentId); }
+  });
+}
 
 const policy = {
   'chatos/policyVersion': 1,
@@ -351,7 +410,509 @@ const patchOperationSchema = {
   ]
 } as const;
 
+const generationDesignIntentSchema = {
+  type: 'object',
+  description: 'Visual design intent is mandatory. Interaction intents are optional and cannot replace art direction or composition decisions.',
+  properties: {
+    artDirection: { type: 'string', minLength: 1, maxLength: 4000 },
+    compositionIntent: { type: 'string', minLength: 1, maxLength: 4000 },
+    typographyIntent: { type: 'string', minLength: 1, maxLength: 4000 },
+    imageStrategy: { type: 'string', minLength: 1, maxLength: 4000 },
+    contentHierarchy: { type: 'array', minItems: 1, maxItems: 40, items: { type: 'string', minLength: 1, maxLength: 1000 } },
+    designAcceptanceCriteria: { type: 'array', minItems: 2, maxItems: 40, items: { type: 'string', minLength: 1, maxLength: 1000 } },
+    interactionIntents: { type: 'array', maxItems: 40, items: { type: 'string', minLength: 1, maxLength: 1000 } }
+  },
+  required: ['artDirection', 'compositionIntent', 'typographyIntent', 'imageStrategy', 'contentHierarchy', 'designAcceptanceCriteria', 'interactionIntents'],
+  additionalProperties: false
+} as const;
+
+const generationStepSchema = {
+  type: 'object',
+  properties: {
+    stepId: { type: 'string', minLength: 1, maxLength: 160 },
+    title: { type: 'string', minLength: 1, maxLength: 240 },
+    kind: { type: 'string', enum: ['structure', 'section', 'visual', 'design-gate', 'interaction', 'responsive', 'polish', 'handoff'] },
+    required: { type: 'boolean', default: true },
+    dependsOn: { type: 'array', maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
+    target: {
+      type: 'object',
+      properties: {
+        sectionKey: { type: 'string', minLength: 1, maxLength: 160 },
+        nodeIds: { type: 'array', maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
+        viewportWidths: { type: 'array', maxItems: 12, uniqueItems: true, items: { type: 'integer', minimum: 240, maximum: 10000 } }
+      },
+      additionalProperties: false
+    }
+  },
+  required: ['stepId', 'title', 'kind'],
+  additionalProperties: false
+} as const;
+
+const generationArtifactSchema = {
+  type: 'object',
+  properties: {
+    artifactId: { type: 'string', minLength: 1, maxLength: 160 },
+    kind: { type: 'string', enum: ['candidate-transaction', 'scene-diff', 'layout', 'page-snapshot', 'region-crop', 'visual-grounding', 'visual-diff', 'calibration', 'quality-report'] },
+    revision: { type: 'integer', minimum: 0 },
+    createdAt: { type: 'string', minLength: 1, maxLength: 100 },
+    viewportWidth: { type: 'integer', minimum: 240, maximum: 10000 },
+    nodeIds: { type: 'array', maxItems: 256, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
+    uri: { type: 'string', minLength: 1, maxLength: 4000 },
+    sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+    metadata: { type: 'object', additionalProperties: { oneOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] } }
+  },
+  required: ['artifactId', 'kind', 'revision', 'createdAt'],
+  additionalProperties: false
+} as const;
+
+const generationSceneOperationSchema = {
+  oneOf: [
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'insert-node' }, parentId: { type: 'string', minLength: 1, maxLength: 160 },
+        index: { type: 'integer', minimum: 0, maximum: 100000 }, slot: { type: 'string', minLength: 1, maxLength: 160 },
+        node: { type: 'object', description: 'A complete Scene v2 node or detached subtree with stable semantic IDs.' }
+      },
+      required: ['op', 'parentId', 'index', 'node'], additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'update-node' }, nodeId: { type: 'string', minLength: 1, maxLength: 160 },
+        patches: {
+          type: 'array', minItems: 1, maxItems: 64,
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 160 } },
+              value: {}
+            },
+            required: ['path', 'value'], additionalProperties: false
+          }
+        }
+      },
+      required: ['op', 'nodeId', 'patches'], additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'remove-node' }, nodeId: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['op', 'nodeId'], additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: {
+        op: { const: 'move-node' }, nodeId: { type: 'string', minLength: 1, maxLength: 160 },
+        parentId: { type: 'string', minLength: 1, maxLength: 160 }, index: { type: 'integer', minimum: 0, maximum: 100000 },
+        slot: { type: 'string', minLength: 1, maxLength: 160 }
+      },
+      required: ['op', 'nodeId', 'parentId', 'index'], additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'insert-variable-collection' }, index: { type: 'integer', minimum: 0, maximum: 10000 }, collection: { type: 'object' } },
+      required: ['op', 'index', 'collection'], additionalProperties: false
+    },
+    {
+      type: 'object',
+      properties: { op: { const: 'insert-responsive-rule' }, index: { type: 'integer', minimum: 0, maximum: 10000 }, rule: { type: 'object' } },
+      required: ['op', 'index', 'rule'], additionalProperties: false
+    }
+  ]
+} as const;
+
+const generationVerificationSchema = {
+  type: 'object',
+  properties: {
+    passed: { type: 'boolean' },
+    qualitySummary: { type: 'string', minLength: 1, maxLength: 12000 },
+    issueIds: { type: 'array', maxItems: 256, items: { type: 'string', minLength: 1, maxLength: 240 } },
+    artifacts: { type: 'array', maxItems: 80, items: generationArtifactSchema },
+    error: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', enum: ['generation_error', 'scope_violation', 'layout_error', 'render_error', 'quality_reject', 'revision_conflict', 'cancelled'] },
+        message: { type: 'string', minLength: 1, maxLength: 12000 }, retryable: { type: 'boolean' },
+        issueIds: { type: 'array', maxItems: 256, items: { type: 'string', minLength: 1, maxLength: 240 } }
+      },
+      required: ['code', 'message', 'retryable', 'issueIds'], additionalProperties: false
+    }
+  },
+  required: ['passed', 'qualitySummary', 'issueIds', 'artifacts'],
+  additionalProperties: false
+} as const;
+
+const progressiveStepExecutionProperties = {
+  documentId: { type: 'string', minLength: 1, maxLength: 128 },
+  expectedPlanRevision: { type: 'integer', minimum: 0 },
+  attemptId: { type: 'string', minLength: 1, maxLength: 160 },
+  idempotencyKey: { type: 'string', minLength: 1, maxLength: 160 },
+  transactionId: { type: 'string', minLength: 1, maxLength: 160 },
+  operations: { type: 'array', minItems: 1, maxItems: 64, items: generationSceneOperationSchema },
+  visualInputs: { type: 'array', minItems: 2, maxItems: 40, items: generationArtifactSchema },
+  verification: generationVerificationSchema
+} as const;
+
+const visualRectSchema = {
+  type: 'object',
+  properties: {
+    x: { type: 'number', minimum: -100000, maximum: 100000 },
+    y: { type: 'number', minimum: -100000, maximum: 100000 },
+    width: { type: 'number', exclusiveMinimum: 0, maximum: 10000 },
+    height: { type: 'number', exclusiveMinimum: 0, maximum: 50000 }
+  },
+  required: ['x', 'y', 'width', 'height'],
+  additionalProperties: false
+} as const;
+
 const TOOL_DEFINITIONS_BASE = [
+  {
+    name: 'web_design_get_active_context',
+    description: 'Read the immutable ChatOS project scope, active document/page hints, current selection, pending human requests, and resumable generation plan. This tool accepts no projectId.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    _meta: policy
+  },
+  {
+    name: 'web_design_plan_site',
+    description: 'Create or revise only the website page inventory and site objective. This writes the Plan Store and never creates Scene nodes or page content.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        expectedPlanRevision: { type: 'integer', minimum: 0 },
+        planId: { type: 'string', minLength: 1, maxLength: 160 },
+        mode: { type: 'string', enum: ['guided', 'auto-current-page', 'review-sensitive'], default: 'auto-current-page' },
+        objective: { type: 'string', minLength: 1, maxLength: 12000 },
+        audience: { type: 'array', minItems: 1, maxItems: 40, items: { type: 'string', minLength: 1, maxLength: 1000 } },
+        pages: {
+          type: 'array', minItems: 1, maxItems: 100,
+          items: {
+            type: 'object',
+            properties: {
+              pageId: { type: 'string', minLength: 1, maxLength: 160 },
+              name: { type: 'string', minLength: 1, maxLength: 240 },
+              purpose: { type: 'string', minLength: 1, maxLength: 4000 }
+            },
+            required: ['pageId', 'name', 'purpose'], additionalProperties: false
+          }
+        }
+      },
+      required: ['documentId', 'objective', 'audience', 'pages'],
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_plan_page',
+    description: 'Plan one page only: save its visual direction, content hierarchy, acceptance criteria, and bounded step dependency graph. It does not execute any Scene transaction.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        expectedPlanRevision: { type: 'integer', minimum: 0 },
+        pageId: { type: 'string', minLength: 1, maxLength: 160 },
+        design: generationDesignIntentSchema,
+        steps: { type: 'array', minItems: 1, maxItems: 64, items: generationStepSchema }
+      },
+      required: ['documentId', 'expectedPlanRevision', 'pageId', 'design', 'steps'],
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_get_plan',
+    description: 'Read a compact generation-plan summary with stable IDs, current page/step, status counts, and exactly one recommended next action.',
+    inputSchema: {
+      type: 'object', properties: { documentId: { type: 'string', minLength: 1, maxLength: 128 } },
+      required: ['documentId'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_start_page',
+    description: 'Start exactly one planned page and ensure its empty canonical Scene root frame exists. It never starts another page or generates page sections.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        expectedPlanRevision: { type: 'integer', minimum: 0 },
+        pageId: { type: 'string', minLength: 1, maxLength: 160 },
+        viewportWidth: { type: 'integer', minimum: 240, maximum: 10000, default: 1440 }
+      },
+      required: ['documentId', 'expectedPlanRevision', 'pageId'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_capture_page',
+    description: 'Render one Scene v2 page with Chromium and return the actual PNG plus persistent snapshot, layout, grounding, and calibration artifacts for the exact Scene revision.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        pageId: { type: 'string', minLength: 1, maxLength: 160 },
+        viewportWidth: { type: 'integer', minimum: 240, maximum: 10000, default: 1440 }
+      },
+      required: ['documentId', 'pageId'], additionalProperties: false
+    },
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
+  },
+  {
+    name: 'web_design_capture_region',
+    description: 'Render and return a PNG crop from one page using either a stable Scene nodeId or an explicit page-space rectangle. Grounding coordinates are relative to the returned crop.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        pageId: { type: 'string', minLength: 1, maxLength: 160 },
+        viewportWidth: { type: 'integer', minimum: 240, maximum: 10000, default: 1440 },
+        nodeId: { type: 'string', minLength: 1, maxLength: 160 },
+        rect: visualRectSchema,
+        padding: { type: 'number', minimum: 0, maximum: 1000, default: 16 }
+      },
+      required: ['documentId', 'pageId'],
+      anyOf: [{ required: ['nodeId'] }, { required: ['rect'] }],
+      additionalProperties: false
+    },
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
+  },
+  {
+    name: 'web_design_prepare_annotation_task',
+    description: 'Prepare one open human Scene annotation as a revision-bound AI task and return a fresh PNG crop with stable-node grounding. Use this before editing the annotated target.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        nodeId: { type: 'string', minLength: 1, maxLength: 160 },
+        annotationId: { type: 'string', minLength: 1, maxLength: 160 },
+        viewportWidth: { type: 'integer', minimum: 240, maximum: 10000, default: 1440 },
+        dependencyNodeIds: { type: 'array', maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
+        padding: { type: 'number', minimum: 0, maximum: 1000, default: 24 }
+      },
+      required: ['documentId', 'nodeId', 'annotationId'], additionalProperties: false
+    },
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
+  },
+  {
+    name: 'web_design_get_visual_grounding',
+    description: 'Read the persistent mapping from stable Scene node IDs to rectangles for a previously captured PNG and return that same image for visual grounding.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        artifactId: { type: 'string', minLength: 1, maxLength: 160 }
+      },
+      required: ['documentId', 'artifactId'], additionalProperties: false
+    },
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
+  },
+  {
+    name: 'web_design_compare_snapshots',
+    description: 'Compare two persisted snapshots of the same page and viewport. Returns before, after, and highlighted Diff PNGs with changed regions and affected stable node IDs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        beforeArtifactId: { type: 'string', minLength: 1, maxLength: 160 },
+        afterArtifactId: { type: 'string', minLength: 1, maxLength: 160 }
+      },
+      required: ['documentId', 'beforeArtifactId', 'afterArtifactId'], additionalProperties: false
+    },
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
+  },
+  {
+    name: 'web_design_inspect_at_point',
+    description: 'Inspect a point in a captured PNG and return selectable stable Scene node candidates ordered from the smallest visible hit, including their ancestor path and the source image.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        artifactId: { type: 'string', minLength: 1, maxLength: 160 },
+        x: { type: 'number', minimum: 0, maximum: 10000 },
+        y: { type: 'number', minimum: 0, maximum: 50000 },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 12 }
+      },
+      required: ['documentId', 'artifactId', 'x', 'y'], additionalProperties: false
+    },
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
+  },
+  {
+    name: 'web_design_query_scene',
+    description: 'Read the current Scene v2 revision and a bounded set of editable nodes with stable IDs, parent/page paths, layout, appearance, protection, and library bindings. Use this before a focused Scene edit and after revision conflicts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        query: {
+          type: 'object',
+          properties: {
+            ids: { type: 'array', minItems: 1, maxItems: 256, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
+            pageIds: { type: 'array', minItems: 1, maxItems: 100, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
+            types: { type: 'array', minItems: 1, maxItems: 10, uniqueItems: true, items: { type: 'string', enum: ['section', 'frame', 'group', 'text', 'shape', 'media', 'library-instance', 'component-main', 'component-set', 'component-instance'] } },
+            roles: { type: 'array', minItems: 1, maxItems: 100, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
+            name: {
+              type: 'object',
+              properties: {
+                equals: { type: 'string', minLength: 1, maxLength: 240 },
+                contains: { type: 'string', minLength: 1, maxLength: 240 },
+                startsWith: { type: 'string', minLength: 1, maxLength: 240 },
+                caseSensitive: { type: 'boolean' }
+              },
+              oneOf: [{ required: ['equals'] }, { required: ['contains'] }, { required: ['startsWith'] }],
+              additionalProperties: false
+            },
+            visible: { type: 'boolean' }, locked: { type: 'boolean' }, aiEditable: { type: 'boolean' },
+            hasLockedFields: { type: 'boolean' }, limit: { type: 'integer', minimum: 1, maximum: 256, default: 100 }
+          },
+          additionalProperties: false
+        }
+      },
+      required: ['documentId'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_edit_scene',
+    description: 'Apply one atomic Scene v2 editor action through the same transaction path as the visual editor: move, resize, group, frame, Auto Layout frame, or ungroup. This is for focused revision-safe adjustments, not whole-page generation. Capture and inspect the affected page after editing.',
+    inputSchema: {
+      ...sceneEditorCommandRequestSchema,
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        ...sceneEditorCommandRequestSchema.properties
+      },
+      required: ['documentId', ...sceneEditorCommandRequestSchema.required]
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_run_next_step',
+    description: 'Submit and validate one Candidate Transaction for the next ready step on the active page. Requires current-revision visual inputs and candidate-revision layout, screenshots, grounding, visual Diff, calibration, and quality evidence. One call can advance at most one step.',
+    inputSchema: {
+      type: 'object', properties: progressiveStepExecutionProperties,
+      required: ['documentId', 'expectedPlanRevision', 'idempotencyKey', 'transactionId', 'operations', 'visualInputs', 'verification'],
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_retry_step',
+    description: 'Retry one explicit failed, rejected, stale, or rolled-back step using fresh current-revision visual inputs. Accepted steps are never replayed.',
+    inputSchema: {
+      type: 'object',
+      properties: { ...progressiveStepExecutionProperties, stepId: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['documentId', 'expectedPlanRevision', 'stepId', 'idempotencyKey', 'transactionId', 'operations', 'visualInputs', 'verification'],
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_repair_step',
+    description: 'Create one targeted repair Candidate for a failed Step using its recorded visual issue IDs and fresh current-revision visual evidence. It cannot broaden the Step target.',
+    inputSchema: {
+      type: 'object',
+      properties: { ...progressiveStepExecutionProperties, stepId: { type: 'string', minLength: 1, maxLength: 160 } },
+      required: ['documentId', 'expectedPlanRevision', 'stepId', 'idempotencyKey', 'transactionId', 'operations', 'visualInputs', 'verification'],
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_inspect_step',
+    description: 'Inspect one generation attempt with its target, Candidate Diff artifacts, screenshots, quality report, issue IDs, and protected-field conflicts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        stepId: { type: 'string', minLength: 1, maxLength: 160 },
+        attemptId: { type: 'string', minLength: 1, maxLength: 160 }
+      },
+      required: ['documentId', 'stepId'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_accept_step',
+    description: 'Commit one already validated Candidate Transaction. Soft-protected human fields require an explicit approval flag; no other step is executed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        expectedPlanRevision: { type: 'integer', minimum: 0 },
+        stepId: { type: 'string', minLength: 1, maxLength: 160 },
+        attemptId: { type: 'string', minLength: 1, maxLength: 160 },
+        approveSoftProtectionConflicts: { type: 'boolean', default: false }
+      },
+      required: ['documentId', 'expectedPlanRevision', 'stepId', 'attemptId'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_reject_step',
+    description: 'Reject and discard one reviewed Candidate while preserving the formal Scene and all accepted steps.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 }, expectedPlanRevision: { type: 'integer', minimum: 0 },
+        stepId: { type: 'string', minLength: 1, maxLength: 160 }, attemptId: { type: 'string', minLength: 1, maxLength: 160 },
+        reason: { type: 'string', minLength: 1, maxLength: 12000 }
+      },
+      required: ['documentId', 'expectedPlanRevision', 'stepId', 'attemptId', 'reason'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_skip_step',
+    description: 'Explicitly skip one ready optional Step on the active page. Required design, Design Gate, and handoff steps cannot be skipped.',
+    inputSchema: {
+      type: 'object', properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 }, expectedPlanRevision: { type: 'integer', minimum: 0 },
+        stepId: { type: 'string', minLength: 1, maxLength: 160 }
+      }, required: ['documentId', 'expectedPlanRevision', 'stepId'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_rollback_step',
+    description: 'Roll back one accepted Step only when its exact transaction is still the latest Scene change. This restores the prior Scene and marks dependent steps stale instead of overwriting later human work.',
+    inputSchema: {
+      type: 'object', properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 }, expectedPlanRevision: { type: 'integer', minimum: 0 },
+        stepId: { type: 'string', minLength: 1, maxLength: 160 }
+      }, required: ['documentId', 'expectedPlanRevision', 'stepId'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_complete_page',
+    description: 'Complete only the active page after its handoff Step and every required design Step are accepted. The plan stops at the page boundary and never starts the next page automatically.',
+    inputSchema: {
+      type: 'object', properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 }, expectedPlanRevision: { type: 'integer', minimum: 0 },
+        pageId: { type: 'string', minLength: 1, maxLength: 160 }
+      }, required: ['documentId', 'expectedPlanRevision', 'pageId'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_pause_plan',
+    description: 'Persistently pause the active page at a safe boundary. An active generating or reviewed step must be resolved first.',
+    inputSchema: {
+      type: 'object', properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 }, expectedPlanRevision: { type: 'integer', minimum: 0 }
+      }, required: ['documentId', 'expectedPlanRevision'], additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_resume_plan',
+    description: 'Resume the single paused page without starting a new page or executing a generation step.',
+    inputSchema: {
+      type: 'object', properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 }, expectedPlanRevision: { type: 'integer', minimum: 0 }
+      }, required: ['documentId', 'expectedPlanRevision'], additionalProperties: false
+    },
+    _meta: policy
+  },
   {
     name: 'web_design_list_documents',
     description: 'List editable website design documents in the current program-injected ChatOS scope.',
@@ -360,12 +921,11 @@ const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_create_document',
-    description: 'Create an editable website design in the current program-injected ChatOS scope, optionally as a blank canvas.',
+    description: 'Create an empty AI-first design workspace in the current program-injected ChatOS scope. It never inserts a demo page; plan the site and start one page next.',
     inputSchema: {
       type: 'object',
       properties: {
-        title: { type: 'string', minLength: 1, maxLength: 240 },
-        blank: { type: 'boolean', default: false }
+        title: { type: 'string', minLength: 1, maxLength: 240 }
       },
       additionalProperties: false
     },
@@ -632,7 +1192,7 @@ const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_list_requests',
-    description: 'List pending or all component-level AI design requests, optionally for one design document.',
+    description: 'List pending or all human design requests, including Scene v2 node annotations with stable node/page/revision context and the tool call needed to prepare visual evidence.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -677,6 +1237,18 @@ const TOOL_DEFINITIONS_BASE = [
 ] as const;
 
 function webDesignToolSkills(name: string): string[] {
+  if (name === 'web_design_get_active_context'
+    || name === 'web_design_plan_site' || name === 'web_design_plan_page' || name === 'web_design_get_plan'
+    || name === 'web_design_start_page' || name === 'web_design_run_next_step' || name === 'web_design_retry_step' || name === 'web_design_repair_step'
+    || name === 'web_design_inspect_step' || name === 'web_design_accept_step' || name === 'web_design_reject_step'
+    || name === 'web_design_skip_step' || name === 'web_design_rollback_step' || name === 'web_design_complete_page'
+    || name === 'web_design_pause_plan' || name === 'web_design_resume_plan'
+    || name === 'web_design_capture_page' || name === 'web_design_capture_region'
+    || name === 'web_design_get_visual_grounding' || name === 'web_design_compare_snapshots'
+    || name === 'web_design_inspect_at_point' || name === 'web_design_query_scene'
+    || name === 'web_design_edit_scene' || name === 'web_design_prepare_annotation_task') {
+    return ['web-design-progressive-generation'];
+  }
   if (name === 'web_design_replace_document'
     || name === 'web_design_insert_section' || name === 'web_design_apply_page_template') {
     return ['web-design-components', 'web-design-responsive-layout', 'web-design-visual-system'];
@@ -689,7 +1261,21 @@ function webDesignToolSkills(name: string): string[] {
   return ['web-design-documents'];
 }
 
-const TOOL_DEFINITIONS = TOOL_DEFINITIONS_BASE.map((tool) => ({
+const SCENE_V3_TOOL_NAMES = new Set([
+  'web_design_get_active_context',
+  'web_design_plan_site', 'web_design_plan_page', 'web_design_get_plan', 'web_design_start_page',
+  'web_design_capture_page', 'web_design_capture_region', 'web_design_prepare_annotation_task',
+  'web_design_get_visual_grounding', 'web_design_compare_snapshots', 'web_design_inspect_at_point',
+  'web_design_query_scene', 'web_design_edit_scene',
+  'web_design_run_next_step', 'web_design_retry_step', 'web_design_repair_step', 'web_design_inspect_step',
+  'web_design_accept_step', 'web_design_reject_step', 'web_design_skip_step', 'web_design_rollback_step',
+  'web_design_complete_page', 'web_design_pause_plan', 'web_design_resume_plan',
+  'web_design_list_documents', 'web_design_create_document',
+  'web_design_get_catalog', 'web_design_search_components', 'web_design_get_component_contract',
+  'web_design_list_requests'
+]);
+
+const TOOL_DEFINITIONS = TOOL_DEFINITIONS_BASE.filter((tool) => SCENE_V3_TOOL_NAMES.has(tool.name)).map((tool) => ({
   ...tool,
   _meta: {
     ...tool._meta,
@@ -766,27 +1352,277 @@ function changedIdsBetween(before: WebDesignDocument, after: WebDesignDocument, 
 
 async function requestEntries(documentId: string, includeResolved: boolean) {
   const document = await store.readInScope(documentId, scopeKey);
-  return document.requests
-    .filter((request) => includeResolved || request.status === 'pending')
-    .map((request) => ({
-      documentId,
-      documentTitle: document.title,
-      revision: document.revision,
-      request,
-      component: request.componentId
-        ? document.components.find((component) => component.id === request.componentId)
-        : undefined
-    }));
+  let sceneEntries: Array<Record<string, unknown>> = [];
+  try {
+    const scene = await generationRepositories.scenes.read(documentId);
+    const index = indexSceneDocument(scene);
+    sceneEntries = [...index.values()].flatMap((entry) => entry.node.annotations
+      .filter((annotation) => includeResolved || annotation.status === 'open')
+      .map((annotation) => ({
+        kind: 'scene-annotation',
+        documentId,
+        documentTitle: document.title,
+        revision: scene.revision,
+        pageId: entry.pageId,
+        request: {
+          id: annotation.id,
+          nodeId: entry.node.id,
+          instruction: annotation.body,
+          status: annotation.status === 'open' ? 'pending' : 'resolved',
+          author: annotation.author,
+          createdAt: annotation.createdAt,
+          ...(annotation.resolvedAt ? { resolvedAt: annotation.resolvedAt } : {})
+        },
+        target: {
+          id: entry.node.id,
+          name: entry.node.name,
+          type: entry.node.type,
+          role: entry.node.role,
+          frame: entry.node.frame
+        },
+        prepareWith: {
+          tool: 'web_design_prepare_annotation_task',
+          arguments: { documentId, nodeId: entry.node.id, annotationId: annotation.id, viewportWidth: 1440 }
+        }
+      })));
+  } catch (error) {
+    if (!isMissingFileError(error)) throw error;
+  }
+  return sceneEntries;
+}
+
+function activeSelectionIds(): string[] {
+  const source = process.env.CHATOS_ACTIVE_SELECTION?.trim();
+  if (!source) return [];
+  try {
+    const parsed: unknown = JSON.parse(source);
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) return [...new Set(parsed)];
+  } catch {
+    // Comma-separated IDs are accepted as a small host interoperability fallback.
+  }
+  return [...new Set(source.split(',').map((item) => item.trim()).filter(Boolean))];
+}
+
+async function activeProgressiveContext(): Promise<Record<string, unknown>> {
+  const projectId = process.env.CHATOS_PROJECT_ID;
+  if (!projectId) throw new Error('Web Design Studio is not running in a ChatOS project context.');
+  const documents = await store.listInProject(defaultProject.projectId, scopeKey);
+  const injectedDocumentId = process.env.CHATOS_ACTIVE_DOCUMENT_ID?.trim();
+  const documentId = injectedDocumentId || (documents.length === 1 ? documents[0].documentId : undefined);
+  if (documentId && !documents.some((document) => document.documentId === documentId)) {
+    throw new Error('The host-injected active document is outside the current ChatOS scope.');
+  }
+  const pageId = process.env.CHATOS_ACTIVE_PAGE_ID?.trim() || undefined;
+  let pendingRequests: Awaited<ReturnType<typeof requestEntries>> = [];
+  let plan: Record<string, unknown> | undefined;
+  if (documentId) {
+    pendingRequests = await requestEntries(documentId, false);
+    try { plan = (await progressiveGenerationService().getPlan(documentId)).plan as Record<string, unknown>; }
+    catch (error) { if (!isMissingFileError(error)) throw error; }
+  }
+  return {
+    scope: { projectId, kind: process.env.CHATOS_CONTEXT_SCOPE ?? 'project' },
+    active: { documentId, pageId, selectionNodeIds: activeSelectionIds() },
+    documents,
+    pendingRequests,
+    ...(plan ? { plan } : {}),
+    nextAction: plan
+      ? plan.nextAction
+      : documentId
+        ? { type: 'plan-site', tool: 'web_design_plan_site', documentId }
+        : { type: 'select-or-create-document', tool: 'web_design_list_documents' }
+  };
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 }
 
 async function callTool(name: string, rawArguments: unknown): Promise<Record<string, unknown>> {
   const argumentsValue = objectArguments(rawArguments);
   switch (name) {
+    case 'web_design_get_active_context':
+      return activeProgressiveContext();
+    case 'web_design_plan_site':
+      return progressiveGenerationService().planSite({
+        documentId: String(argumentsValue.documentId),
+        expectedPlanRevision: typeof argumentsValue.expectedPlanRevision === 'number' ? argumentsValue.expectedPlanRevision : undefined,
+        planId: typeof argumentsValue.planId === 'string' ? argumentsValue.planId : undefined,
+        mode: typeof argumentsValue.mode === 'string' ? argumentsValue.mode as 'guided' | 'auto-current-page' | 'review-sensitive' : undefined,
+        objective: String(argumentsValue.objective),
+        audience: argumentsValue.audience as string[],
+        pages: argumentsValue.pages as Array<{ pageId: string; name: string; purpose: string }>
+      });
+    case 'web_design_plan_page':
+      return progressiveGenerationService().planPage({
+        documentId: String(argumentsValue.documentId),
+        expectedPlanRevision: Number(argumentsValue.expectedPlanRevision),
+        pageId: String(argumentsValue.pageId),
+        design: argumentsValue.design as GenerationDesignIntent,
+        steps: argumentsValue.steps as CreateGenerationStepInput[]
+      });
+    case 'web_design_get_plan':
+      return progressiveGenerationService().getPlan(String(argumentsValue.documentId));
+    case 'web_design_start_page':
+      return progressiveGenerationService().startPage(
+        String(argumentsValue.documentId),
+        Number(argumentsValue.expectedPlanRevision),
+        String(argumentsValue.pageId),
+        typeof argumentsValue.viewportWidth === 'number' ? argumentsValue.viewportWidth : 1440
+      );
+    case 'web_design_capture_page':
+      return generationVisualService().capturePage(
+        String(argumentsValue.documentId), String(argumentsValue.pageId),
+        typeof argumentsValue.viewportWidth === 'number' ? argumentsValue.viewportWidth : 1440
+      );
+    case 'web_design_capture_region':
+      return generationVisualService().captureRegion({
+        documentId: String(argumentsValue.documentId),
+        pageId: String(argumentsValue.pageId),
+        viewportWidth: typeof argumentsValue.viewportWidth === 'number' ? argumentsValue.viewportWidth : 1440,
+        ...(typeof argumentsValue.nodeId === 'string' ? { nodeId: argumentsValue.nodeId } : {}),
+        ...(argumentsValue.rect && typeof argumentsValue.rect === 'object' ? { rect: argumentsValue.rect as { x: number; y: number; width: number; height: number } } : {}),
+        ...(typeof argumentsValue.padding === 'number' ? { padding: argumentsValue.padding } : {})
+      });
+    case 'web_design_prepare_annotation_task':
+      return annotationAiService().prepare({
+        documentId: String(argumentsValue.documentId),
+        nodeId: String(argumentsValue.nodeId),
+        annotationId: String(argumentsValue.annotationId),
+        viewportWidth: typeof argumentsValue.viewportWidth === 'number' ? argumentsValue.viewportWidth : 1440,
+        ...(Array.isArray(argumentsValue.dependencyNodeIds) ? { dependencyNodeIds: argumentsValue.dependencyNodeIds as string[] } : {}),
+        ...(typeof argumentsValue.padding === 'number' ? { padding: argumentsValue.padding } : {})
+      });
+    case 'web_design_get_visual_grounding':
+      return generationVisualService().getVisualGrounding(String(argumentsValue.documentId), String(argumentsValue.artifactId));
+    case 'web_design_compare_snapshots':
+      return generationVisualService().compareSnapshots(
+        String(argumentsValue.documentId), String(argumentsValue.beforeArtifactId), String(argumentsValue.afterArtifactId)
+      );
+    case 'web_design_inspect_at_point':
+      return generationVisualService().inspectAtPoint(
+        String(argumentsValue.documentId), String(argumentsValue.artifactId), Number(argumentsValue.x), Number(argumentsValue.y),
+        typeof argumentsValue.limit === 'number' ? argumentsValue.limit : 12
+      );
+    case 'web_design_query_scene': {
+      const documentId = String(argumentsValue.documentId);
+      await assertGenerationDocumentInScope(documentId);
+      const scene = await generationRepositories.scenes.read(documentId);
+      const query = argumentsValue.query && typeof argumentsValue.query === 'object'
+        ? structuredClone(argumentsValue.query) as SceneQuery
+        : { limit: 100 };
+      if (query.limit === undefined) query.limit = 100;
+      const results = new SceneQueryIndex(scene).query(query);
+      return {
+        scene: {
+          documentId: scene.documentId,
+          name: scene.name,
+          revision: scene.revision,
+          pages: scene.pages.map((page) => ({ pageId: page.id, name: page.name, rootNodeIds: page.children.map((node) => node.id) }))
+        },
+        resultCount: results.length,
+        results
+      };
+    }
+    case 'web_design_edit_scene': {
+      const documentId = String(argumentsValue.documentId);
+      await assertGenerationDocumentInScope(documentId);
+      const { documentId: _documentId, ...request } = argumentsValue;
+      const edited = await executeSceneEditorCommand(generationRepositories.scenes, documentId, request, 'ai');
+      const changedNodeIds = [...new Set([
+        ...edited.summary.insertedNodeIds,
+        ...edited.summary.updatedNodeIds,
+        ...edited.summary.movedNodeIds,
+        ...edited.summary.removedNodeIds
+      ])];
+      const remaining = changedNodeIds.length > 0
+        ? new SceneQueryIndex(edited.document).query({ ids: changedNodeIds, limit: 256 })
+        : [];
+      const affectedPageIds = [...new Set(remaining.map((entry) => entry.pageId))];
+      return {
+        scene: { documentId, revision: edited.document.revision },
+        commandType: edited.commandType,
+        transaction: edited.summary,
+        recovered: edited.recovered,
+        affectedNodeIds: changedNodeIds,
+        affectedPageIds,
+        nextRecommendedActions: [
+          ...(changedNodeIds.length > 0 ? [{ tool: 'web_design_query_scene', arguments: { documentId, query: { ids: changedNodeIds } } }] : []),
+          ...affectedPageIds.slice(0, 4).map((pageId) => ({ tool: 'web_design_capture_page', arguments: { documentId, pageId, viewportWidth: 1440 } }))
+        ]
+      };
+    }
+    case 'web_design_run_next_step':
+      return progressiveGenerationService().runNextStep({
+        documentId: String(argumentsValue.documentId),
+        expectedPlanRevision: Number(argumentsValue.expectedPlanRevision),
+        attemptId: typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined,
+        idempotencyKey: String(argumentsValue.idempotencyKey),
+        transactionId: String(argumentsValue.transactionId),
+        operations: argumentsValue.operations as SceneTransactionOperation[],
+        visualInputs: argumentsValue.visualInputs as GenerationArtifact[],
+        verification: argumentsValue.verification as SubmittedStepVerification
+      });
+    case 'web_design_retry_step':
+      return progressiveGenerationService().retryStep({
+        documentId: String(argumentsValue.documentId),
+        expectedPlanRevision: Number(argumentsValue.expectedPlanRevision),
+        stepId: String(argumentsValue.stepId),
+        attemptId: typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined,
+        idempotencyKey: String(argumentsValue.idempotencyKey),
+        transactionId: String(argumentsValue.transactionId),
+        operations: argumentsValue.operations as SceneTransactionOperation[],
+        visualInputs: argumentsValue.visualInputs as GenerationArtifact[],
+        verification: argumentsValue.verification as SubmittedStepVerification
+      });
+    case 'web_design_repair_step':
+      return progressiveGenerationService().repairStep({
+        documentId: String(argumentsValue.documentId),
+        expectedPlanRevision: Number(argumentsValue.expectedPlanRevision),
+        stepId: String(argumentsValue.stepId),
+        attemptId: typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined,
+        idempotencyKey: String(argumentsValue.idempotencyKey),
+        transactionId: String(argumentsValue.transactionId),
+        operations: argumentsValue.operations as SceneTransactionOperation[],
+        visualInputs: argumentsValue.visualInputs as GenerationArtifact[],
+        verification: argumentsValue.verification as SubmittedStepVerification
+      });
+    case 'web_design_inspect_step':
+      return progressiveGenerationService().inspectStep(
+        String(argumentsValue.documentId), String(argumentsValue.stepId),
+        typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined
+      );
+    case 'web_design_accept_step':
+      return progressiveGenerationService().acceptStep(
+        String(argumentsValue.documentId), Number(argumentsValue.expectedPlanRevision), String(argumentsValue.stepId),
+        String(argumentsValue.attemptId), argumentsValue.approveSoftProtectionConflicts === true
+      );
+    case 'web_design_reject_step':
+      return progressiveGenerationService().rejectStep(
+        String(argumentsValue.documentId), Number(argumentsValue.expectedPlanRevision), String(argumentsValue.stepId),
+        String(argumentsValue.attemptId), String(argumentsValue.reason)
+      );
+    case 'web_design_skip_step':
+      return progressiveGenerationService().skipStep(
+        String(argumentsValue.documentId), Number(argumentsValue.expectedPlanRevision), String(argumentsValue.stepId)
+      );
+    case 'web_design_rollback_step':
+      return progressiveGenerationService().rollbackStep(
+        String(argumentsValue.documentId), Number(argumentsValue.expectedPlanRevision), String(argumentsValue.stepId)
+      );
+    case 'web_design_complete_page':
+      return progressiveGenerationService().completePage(
+        String(argumentsValue.documentId), Number(argumentsValue.expectedPlanRevision), String(argumentsValue.pageId)
+      );
+    case 'web_design_pause_plan':
+      return progressiveGenerationService().pause(String(argumentsValue.documentId), Number(argumentsValue.expectedPlanRevision));
+    case 'web_design_resume_plan':
+      return progressiveGenerationService().resume(String(argumentsValue.documentId), Number(argumentsValue.expectedPlanRevision));
     case 'web_design_list_documents':
       return { documents: await store.listInProject(defaultProject.projectId, scopeKey) };
     case 'web_design_create_document': {
       const title = typeof argumentsValue.title === 'string' ? argumentsValue.title : undefined;
-      const document = await store.createInProject(defaultProject.projectId, title, argumentsValue.blank === true);
+      const document = await store.createInProject(defaultProject.projectId, title, true);
       return { document: designSummary(document) };
     }
     case 'web_design_get_document':
@@ -921,6 +1757,9 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const variants = library.variants[component.id] ?? [{ id: 'default', label: '默认款式', props: {} }];
       const defaultVariant = variants[0];
       const instance = createComponentFromUiLibrary(library.id, component.id, 0, 0);
+      const editableSlots = editableSlotsForUiComponent(instance);
+      const componentSlug = String(component.props?.componentSlug
+        ?? component.id.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z])([A-Z][a-z])/g, '$1-$2').toLowerCase());
       return {
         library: {
           id: library.id,
@@ -940,7 +1779,18 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
             variant: defaultVariant.id,
             props: { ...(component.props ?? {}), ...defaultVariant.props }
           },
-          editableSlots: editableSlotsForUiComponent(instance)
+          sceneBindingTemplate: {
+            type: 'library-instance',
+            library: library.id,
+            component: component.id,
+            variant: defaultVariant.id,
+            properties: { ...(component.props ?? {}), ...defaultVariant.props, componentSlug },
+            content: defaultVariant.content ?? component.content,
+            frame: { width: defaultVariant.width ?? component.width, height: defaultVariant.height ?? component.height },
+            layout: { position: 'absolute' },
+            slots: Object.fromEntries(editableSlots.map((slot) => [slot.id, []]))
+          },
+          editableSlots
         }
       };
     }
@@ -1097,9 +1947,14 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
 }
 
 function result(value: Record<string, unknown>, isError = false) {
+  const sourceImages = Array.isArray(value.__images) ? value.__images as ToolImagePayload[] : [];
+  const { __images: _discardedImages, ...structuredContent } = value;
   return {
-    content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
-    structuredContent: value,
+    content: [
+      { type: 'text' as const, text: JSON.stringify(structuredContent, null, 2) },
+      ...sourceImages.map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType }))
+    ],
+    structuredContent,
     isError
   };
 }
@@ -1115,7 +1970,9 @@ async function runMcp(): Promise<void> {
     } catch (error) {
       return result({
         error: error instanceof Error ? error.message : String(error),
-        ...(error instanceof RevisionConflictError ? { actualRevision: error.actualRevision } : {})
+        ...(error instanceof RevisionConflictError || error instanceof GenerationPlanRevisionConflictError || error instanceof SceneRevisionConflictError
+          ? { actualRevision: error.actualRevision }
+          : {})
       }, true);
     }
   });

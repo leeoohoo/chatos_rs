@@ -1,12 +1,12 @@
 import { memo, Suspense, type ReactNode } from 'react';
-import type { WebDesignComponent, WebDesignTokens } from '../../src/schema';
+import type { WebDesignTokens } from '../../src/schema';
 import type { LibraryPreviewPointerEvent, LibraryPreviewSelection } from '../library-runtime/element-selection';
 import { hasOfficialRuntimeComponent, officialRuntimePresentation } from '../library-runtime/registry';
-import { LibraryRuntimeComponent } from './LibraryRuntimeComponent';
+import { LibraryRuntimeComponent, type LibraryRuntimeDescriptor } from './LibraryRuntimeComponent';
 import { sameLibraryRuntimeBoundary } from './render-boundaries';
 
 interface LibraryCanvasComponentProps {
-  component: WebDesignComponent;
+  component: LibraryRuntimeDescriptor;
   preview: boolean;
   showcase?: boolean;
   tokens?: WebDesignTokens;

@@ -39,6 +39,7 @@ test('annotation tasks preserve scope and expose only the target subtree plus ex
   const document = annotatedDocument();
   const task = taskFor(document);
   assert.deepEqual(task.scope, { projectId: 'project-annotation', documentId: 'scene-test' });
+  assert.equal(task.pageId, 'page-home');
   assert.deepEqual(task.targetSubtreeNodeIds, ['group-hero-copy', 'text-hero-heading']);
   assert.deepEqual(task.dependencyNodeIds, ['frame-desktop']);
   assert.deepEqual(task.allowedExistingNodeIds, ['group-hero-copy', 'text-hero-heading', 'frame-desktop']);

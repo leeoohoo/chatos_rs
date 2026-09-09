@@ -1,5 +1,5 @@
 import { memo, useRef, type PointerEvent as ReactPointerEvent } from 'react';
-import { workspaceToolInstruction, type WorkspaceArea, type WorkspaceTool } from './workspace-shell-model';
+import { type WorkspaceArea, type WorkspaceTool } from './workspace-shell-model';
 
 const navigationItems: Array<{ area: WorkspaceArea; icon: string; label: string }> = [
   { area: 'layers', icon: '▤', label: '页面与图层' },
@@ -42,9 +42,7 @@ export const WorkspaceBottomToolbar = memo(function WorkspaceBottomToolbar({ act
   onToggleRight: () => void;
   onToggleMaximize: () => void;
 }) {
-  const active = tools.find((item) => item.tool === activeTool) ?? tools[0];
   return <div className="workspace-bottom-toolbar-shell">
-    <div className="workspace-tool-instruction" role="status"><strong>{active.label}</strong><span>{workspaceToolInstruction(activeTool)}</span></div>
     <div className="workspace-bottom-toolbar" role="toolbar" aria-label="画布工具">
       <button className="panel-toggle" title={leftPanelOpen ? '收起左侧栏' : '展开左侧栏'} aria-label={leftPanelOpen ? '收起左侧栏' : '展开左侧栏'} onClick={onToggleLeft}><b>{leftPanelOpen ? '◧' : '▯'}</b><em>左栏</em></button>
       <span />
