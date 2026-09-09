@@ -1,4 +1,4 @@
-# Web Design Studio 3.0.1
+# Web Design Studio 3.0.2
 
 Web Design Studio is an AI-first visual website design workbench and MCP server for ChatOS and Codex. The editable Scene is the product; interaction wiring and code export are optional handoff work.
 

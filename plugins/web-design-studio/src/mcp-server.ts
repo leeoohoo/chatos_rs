@@ -41,7 +41,7 @@ import {
 } from './schema.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '3.0.1';
+const SERVER_VERSION = '3.0.2';
 const store = new WebDesignDocumentStore();
 await store.initialize();
 const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
