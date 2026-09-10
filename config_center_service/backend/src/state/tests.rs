@@ -850,6 +850,24 @@ fn mcp_management_runtime_backfill_replaces_legacy_local_dispatch_mode() {
 }
 
 #[test]
+fn mcp_management_runtime_backfill_removes_retired_internal_callers() {
+    let definitions = builtin_definitions();
+    let defaults = mcp_management_service_default_values(&definitions);
+    let mut values = BTreeMap::from([(
+        MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY.to_string(),
+        json!("chatos,task-runner,project-service,configuration-center"),
+    )]);
+
+    let changed_keys = ensure_mcp_management_runtime_values(&mut values, &defaults);
+
+    assert!(changed_keys.contains(&MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY.to_string()));
+    assert_eq!(
+        values.get(MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY),
+        Some(&json!("chatos,task-runner,configuration-center"))
+    );
+}
+
+#[test]
 fn local_connector_runtime_backfill_adds_all_service_defaults() {
     let definitions = builtin_definitions();
     let defaults = local_connector_service_runtime_default_values(&definitions);

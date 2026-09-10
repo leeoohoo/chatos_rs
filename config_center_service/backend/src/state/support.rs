@@ -400,7 +400,7 @@ pub(super) fn ensure_mcp_management_runtime_values(
         ) {
             ensure_https_url_value(values, key, fallback)
         } else if key == MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY {
-            ensure_mcp_management_configuration_center_caller(values, key, fallback)
+            ensure_mcp_management_allowed_internal_callers(values, key, fallback)
         } else if !values.contains_key(key) {
             values.insert(key.clone(), fallback.clone());
             true
@@ -414,7 +414,7 @@ pub(super) fn ensure_mcp_management_runtime_values(
     changed_keys
 }
 
-fn ensure_mcp_management_configuration_center_caller(
+fn ensure_mcp_management_allowed_internal_callers(
     values: &mut BTreeMap<String, Value>,
     key: &str,
     fallback: &Value,
@@ -423,20 +423,27 @@ fn ensure_mcp_management_configuration_center_caller(
         values.insert(key.to_string(), fallback.clone());
         return true;
     };
-    let mut callers = current
-        .split(',')
-        .map(str::trim)
-        .filter(|caller| !caller.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    if callers
-        .iter()
-        .any(|caller| caller == "configuration-center")
-    {
+    let Some(expected) = fallback.as_str() else {
+        values.insert(key.to_string(), fallback.clone());
+        return true;
+    };
+    let normalize = |value: &str| {
+        let mut callers = value
+            .split(',')
+            .map(str::trim)
+            .filter(|caller| !caller.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        callers.sort();
+        callers.dedup();
+        callers
+    };
+    if normalize(current) == normalize(expected) {
         return false;
     }
-    callers.push("configuration-center".to_string());
-    values.insert(key.to_string(), json!(callers.join(",")));
+    // AppConfig intentionally accepts only this exact trust set. Normalize old releases and
+    // snapshots when a caller (for example the retired project-service) leaves the topology.
+    values.insert(key.to_string(), fallback.clone());
     true
 }
 
