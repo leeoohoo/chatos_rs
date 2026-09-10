@@ -112,9 +112,6 @@ pub(crate) fn shared_builtin_kind(
             Some(chatos_mcp_runtime::BuiltinMcpKind::TerminalController)
         }
         ChatosBuiltinMcpKind::TaskManager => None,
-        ChatosBuiltinMcpKind::ProjectManagement => {
-            Some(chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement)
-        }
         ChatosBuiltinMcpKind::Notepad => Some(chatos_mcp_runtime::BuiltinMcpKind::Notepad),
         ChatosBuiltinMcpKind::AgentBuilder => {
             Some(chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder)
@@ -171,9 +168,6 @@ pub(crate) fn chatos_builtin_kind(
             Some(ChatosBuiltinMcpKind::TerminalController)
         }
         chatos_mcp_runtime::BuiltinMcpKind::TaskManager => None,
-        chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
-            Some(ChatosBuiltinMcpKind::ProjectManagement)
-        }
         chatos_mcp_runtime::BuiltinMcpKind::Notepad => Some(ChatosBuiltinMcpKind::Notepad),
         chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder => {
             Some(ChatosBuiltinMcpKind::AgentBuilder)
@@ -226,7 +220,7 @@ mod tests {
     #[test]
     fn shared_http_server_preserves_headers_and_allowed_tools() {
         let server = ChatosHttpServer {
-            name: "project_management_service".to_string(),
+            name: "example_http_provider".to_string(),
             url: "http://127.0.0.1:3999/mcp".to_string(),
             headers: Some(HashMap::from([(
                 "X-Chatos-Project-Id".to_string(),
@@ -246,7 +240,7 @@ mod tests {
 
         let shared = shared_http_server(server);
 
-        assert_eq!(shared.name, "project_management_service");
+        assert_eq!(shared.name, "example_http_provider");
         assert_eq!(shared.timeout_ms, Some(30_000));
         assert_eq!(shared.tool_timeout_ms.get("wait"), Some(&60_000));
         assert!(shared.preserve_tool_names);

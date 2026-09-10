@@ -5,8 +5,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
-
 use super::*;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -45,7 +43,6 @@ fn snapshot() -> RuntimeSessionSnapshot {
         default_remote_connection_id: None,
         remote_connection_route: None,
         tool_result_max_chars: Some(40_000),
-        expected_project_task_ids: vec!["project-task-1".to_string()],
         workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: Some("project-1".to_string()),
@@ -158,7 +155,6 @@ fn grant_claims(snapshot: &RuntimeSessionSnapshot) -> crate::runtime::RuntimeGra
         contact_agent_id: snapshot.contact_agent_id.clone(),
         default_model_config_id: snapshot.default_model_config_id.clone(),
         default_remote_connection_id: snapshot.default_remote_connection_id.clone(),
-        expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
         policy_revision: snapshot.policy_revision.clone(),
         route_revision: snapshot.route_revision.clone(),
         allowed_resource_ids: snapshot
@@ -259,31 +255,37 @@ async fn single_tool_command_dispatches_and_returns_one_result() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        axum::serve(listener, Router::new().route("/mcp", post(provider)))
-            .await
-            .unwrap();
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/internal/mcp-management/mcp/task_runner_service",
+                post(provider),
+            ),
+        )
+        .await
+        .unwrap();
     });
     let mut config = crate::config::AppConfig::test();
-    config.project_service_base_url = format!("http://{address}");
+    config.task_runner_service_base_url = format!("http://{address}");
     let state = AppState::new(config).await.unwrap();
     let mut snapshot = snapshot();
     snapshot.routes = vec![ResolvedMcpRoute {
-        resource_id: "builtin_project_management".to_string(),
-        server_name: "project_management_service".to_string(),
+        resource_id: "system_mcp_chatos_task_runner".to_string(),
+        server_name: "task_runner_service".to_string(),
         provider_kind: McpProviderKind::InternalService,
-        provider_ref: Some("project_management_service".to_string()),
-        tool_namespace: "project_management_service".to_string(),
+        provider_ref: Some("task_runner_service".to_string()),
+        tool_namespace: "task_runner_service".to_string(),
         allow_writes: true,
         retry_class: McpRetryClass::NoRetry,
         cancel_supported: true,
         reason: "test".to_string(),
     }];
     snapshot.tools = vec![RuntimeToolDescriptor {
-        exposed_name: "project_management_service_list_requirements".to_string(),
-        original_name: "list_requirements".to_string(),
-        resource_id: "builtin_project_management".to_string(),
+        exposed_name: "task_runner_service_list_tasks".to_string(),
+        original_name: "list_tasks".to_string(),
+        resource_id: "system_mcp_chatos_task_runner".to_string(),
         definition: json!({
-            "name": "project_management_service_list_requirements",
+            "name": "task_runner_service_list_tasks",
             "inputSchema": {"type": "object"}
         }),
     }];
@@ -295,7 +297,7 @@ async fn single_tool_command_dispatches_and_returns_one_result() {
             invocation_id: "invocation-1".to_string(),
             tool_call_id: "call-1".to_string(),
             call_index: 0,
-            name: "project_management_service_list_requirements".to_string(),
+            name: "task_runner_service_list_tasks".to_string(),
             arguments: json!({"status": "draft"}),
             preflight_error: None,
         }],
@@ -311,7 +313,7 @@ async fn single_tool_command_dispatches_and_returns_one_result() {
     assert_eq!(
         response.items[0].result,
         Some(json!({
-            "called": "list_requirements",
+            "called": "list_tasks",
             "arguments": {"status": "draft"}
         }))
     );
@@ -345,7 +347,10 @@ async fn duplicate_ready_delivery_returns_the_durable_result_without_executing_t
         axum::serve(
             listener,
             Router::new()
-                .route("/mcp", post(provider))
+                .route(
+                    "/internal/mcp-management/mcp/task_runner_service",
+                    post(provider),
+                )
                 .with_state(ProviderState {
                     calls: server_calls,
                 }),
@@ -354,27 +359,28 @@ async fn duplicate_ready_delivery_returns_the_durable_result_without_executing_t
         .unwrap();
     });
     let mut config = crate::config::AppConfig::test();
-    config.project_service_base_url = format!("http://{address}");
+    config.task_runner_service_base_url = format!("http://{address}");
     let state = AppState::new(config).await.unwrap();
     let mut snapshot = snapshot();
     snapshot.routes = vec![ResolvedMcpRoute {
-        resource_id: "builtin_project_management".to_string(),
-        server_name: "project_management_service".to_string(),
+        resource_id: "system_mcp_chatos_task_runner".to_string(),
+        server_name: "task_runner_service".to_string(),
         provider_kind: McpProviderKind::InternalService,
-        provider_ref: Some("project_management_service".to_string()),
-        tool_namespace: "project_management_service".to_string(),
-        allow_writes: false,
+        provider_ref: Some("task_runner_service".to_string()),
+        tool_namespace: "task_runner_service".to_string(),
+        allow_writes: true,
         retry_class: McpRetryClass::IdempotentRead,
         cancel_supported: true,
         reason: "test".to_string(),
     }];
     snapshot.tools = vec![RuntimeToolDescriptor {
-        exposed_name: "project_management_service_list_requirements".to_string(),
-        original_name: "list_requirements".to_string(),
-        resource_id: "builtin_project_management".to_string(),
+        exposed_name: "task_runner_service_list_tasks".to_string(),
+        original_name: "list_tasks".to_string(),
+        resource_id: "system_mcp_chatos_task_runner".to_string(),
         definition: json!({
-            "name": "project_management_service_list_requirements",
-            "inputSchema": {"type": "object"}
+            "name": "task_runner_service_list_tasks",
+            "inputSchema": {"type": "object"},
+            "annotations": {"readOnlyHint": true}
         }),
     }];
     persist_runtime_session(&state, &snapshot).await;
@@ -385,7 +391,7 @@ async fn duplicate_ready_delivery_returns_the_durable_result_without_executing_t
             invocation_id: "invocation-duplicate-ready".to_string(),
             tool_call_id: "call-duplicate-ready".to_string(),
             call_index: 0,
-            name: "project_management_service_list_requirements".to_string(),
+            name: "task_runner_service_list_tasks".to_string(),
             arguments: json!({"status": "draft"}),
             preflight_error: None,
         }],
@@ -438,7 +444,10 @@ async fn tool_batch_executes_one_run_in_model_order() {
         axum::serve(
             listener,
             Router::new()
-                .route("/mcp", post(provider))
+                .route(
+                    "/internal/mcp-management/mcp/task_runner_service",
+                    post(provider),
+                )
                 .with_state(Capture {
                     started: started_tx,
                     release_first: server_release,
@@ -448,27 +457,28 @@ async fn tool_batch_executes_one_run_in_model_order() {
         .unwrap();
     });
     let mut config = crate::config::AppConfig::test();
-    config.project_service_base_url = format!("http://{address}");
+    config.task_runner_service_base_url = format!("http://{address}");
     let state = AppState::new(config).await.unwrap();
     let mut snapshot = snapshot();
     snapshot.routes = vec![ResolvedMcpRoute {
-        resource_id: "builtin_project_management".to_string(),
-        server_name: "project_management_service".to_string(),
+        resource_id: "system_mcp_chatos_task_runner".to_string(),
+        server_name: "task_runner_service".to_string(),
         provider_kind: McpProviderKind::InternalService,
-        provider_ref: Some("project_management_service".to_string()),
-        tool_namespace: "project_management_service".to_string(),
-        allow_writes: false,
+        provider_ref: Some("task_runner_service".to_string()),
+        tool_namespace: "task_runner_service".to_string(),
+        allow_writes: true,
         retry_class: McpRetryClass::IdempotentRead,
         cancel_supported: true,
         reason: "test".to_string(),
     }];
     snapshot.tools = vec![RuntimeToolDescriptor {
-        exposed_name: "project_management_service_list_requirements".to_string(),
-        original_name: "list_requirements".to_string(),
-        resource_id: "builtin_project_management".to_string(),
+        exposed_name: "task_runner_service_list_tasks".to_string(),
+        original_name: "list_tasks".to_string(),
+        resource_id: "system_mcp_chatos_task_runner".to_string(),
         definition: json!({
-            "name": "project_management_service_list_requirements",
-            "inputSchema": {"type": "object"}
+            "name": "task_runner_service_list_tasks",
+            "inputSchema": {"type": "object"},
+            "annotations": {"readOnlyHint": true}
         }),
     }];
     persist_runtime_session(&state, &snapshot).await;
@@ -481,7 +491,7 @@ async fn tool_batch_executes_one_run_in_model_order() {
                 invocation_id: "invocation-1".to_string(),
                 tool_call_id: "call-1".to_string(),
                 call_index: 0,
-                name: "project_management_service_list_requirements".to_string(),
+                name: "task_runner_service_list_tasks".to_string(),
                 arguments: json!({"label": "first"}),
                 preflight_error: None,
             },
@@ -489,7 +499,7 @@ async fn tool_batch_executes_one_run_in_model_order() {
                 invocation_id: "invocation-2".to_string(),
                 tool_call_id: "call-2".to_string(),
                 call_index: 1,
-                name: "project_management_service_list_requirements".to_string(),
+                name: "task_runner_service_list_tasks".to_string(),
                 arguments: json!({"label": "second"}),
                 preflight_error: None,
             },
@@ -584,20 +594,26 @@ async fn unknown_tool_fails_only_its_item_and_valid_call_still_executes() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        axum::serve(listener, Router::new().route("/mcp", post(provider)))
-            .await
-            .unwrap();
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/internal/mcp-management/mcp/task_runner_service",
+                post(provider),
+            ),
+        )
+        .await
+        .unwrap();
     });
     let mut config = crate::config::AppConfig::test();
-    config.project_service_base_url = format!("http://{address}");
+    config.task_runner_service_base_url = format!("http://{address}");
     let state = AppState::new(config).await.unwrap();
     let mut snapshot = snapshot();
-    snapshot.routes[0].resource_id = "builtin_project_management".to_string();
-    snapshot.routes[0].server_name = "project_management_service".to_string();
+    snapshot.routes[0].resource_id = "system_mcp_chatos_task_runner".to_string();
+    snapshot.routes[0].server_name = "task_runner_service".to_string();
     snapshot.routes[0].provider_kind = McpProviderKind::InternalService;
-    snapshot.routes[0].provider_ref = Some("project_management_service".to_string());
+    snapshot.routes[0].provider_ref = Some("task_runner_service".to_string());
     snapshot.routes[0].allow_writes = true;
-    snapshot.tools[0].resource_id = "builtin_project_management".to_string();
+    snapshot.tools[0].resource_id = "system_mcp_chatos_task_runner".to_string();
     snapshot.tools[0].original_name = "search".to_string();
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
@@ -649,20 +665,26 @@ async fn invalid_arguments_fail_only_their_item_and_valid_call_still_executes() 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        axum::serve(listener, Router::new().route("/mcp", post(provider)))
-            .await
-            .unwrap();
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/internal/mcp-management/mcp/task_runner_service",
+                post(provider),
+            ),
+        )
+        .await
+        .unwrap();
     });
     let mut config = crate::config::AppConfig::test();
-    config.project_service_base_url = format!("http://{address}");
+    config.task_runner_service_base_url = format!("http://{address}");
     let state = AppState::new(config).await.unwrap();
     let mut snapshot = snapshot();
-    snapshot.routes[0].resource_id = "builtin_project_management".to_string();
-    snapshot.routes[0].server_name = "project_management_service".to_string();
+    snapshot.routes[0].resource_id = "system_mcp_chatos_task_runner".to_string();
+    snapshot.routes[0].server_name = "task_runner_service".to_string();
     snapshot.routes[0].provider_kind = McpProviderKind::InternalService;
-    snapshot.routes[0].provider_ref = Some("project_management_service".to_string());
+    snapshot.routes[0].provider_ref = Some("task_runner_service".to_string());
     snapshot.routes[0].allow_writes = true;
-    snapshot.tools[0].resource_id = "builtin_project_management".to_string();
+    snapshot.tools[0].resource_id = "system_mcp_chatos_task_runner".to_string();
     snapshot.tools[0].original_name = "search".to_string();
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
@@ -723,20 +745,26 @@ async fn provider_failure_does_not_prevent_the_next_call_from_executing() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        axum::serve(listener, Router::new().route("/mcp", post(provider)))
-            .await
-            .unwrap();
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/internal/mcp-management/mcp/task_runner_service",
+                post(provider),
+            ),
+        )
+        .await
+        .unwrap();
     });
     let mut config = crate::config::AppConfig::test();
-    config.project_service_base_url = format!("http://{address}");
+    config.task_runner_service_base_url = format!("http://{address}");
     let state = AppState::new(config).await.unwrap();
     let mut snapshot = snapshot();
-    snapshot.routes[0].resource_id = "builtin_project_management".to_string();
-    snapshot.routes[0].server_name = "project_management_service".to_string();
+    snapshot.routes[0].resource_id = "system_mcp_chatos_task_runner".to_string();
+    snapshot.routes[0].server_name = "task_runner_service".to_string();
     snapshot.routes[0].provider_kind = McpProviderKind::InternalService;
-    snapshot.routes[0].provider_ref = Some("project_management_service".to_string());
+    snapshot.routes[0].provider_ref = Some("task_runner_service".to_string());
     snapshot.routes[0].allow_writes = true;
-    snapshot.tools[0].resource_id = "builtin_project_management".to_string();
+    snapshot.tools[0].resource_id = "system_mcp_chatos_task_runner".to_string();
     snapshot.tools[0].original_name = "search".to_string();
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
@@ -933,7 +961,10 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
         axum::serve(
             listener,
             Router::new()
-                .route("/mcp", post(provider))
+                .route(
+                    "/internal/mcp-management/mcp/task_runner_service",
+                    post(provider),
+                )
                 .with_state(Capture {
                     started: started_tx,
                     cancelled: cancelled_tx,
@@ -943,26 +974,26 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
         .unwrap();
     });
     let mut config = crate::config::AppConfig::test();
-    config.project_service_base_url = format!("http://{address}");
+    config.task_runner_service_base_url = format!("http://{address}");
     let state = AppState::new(config).await.unwrap();
     let mut snapshot = snapshot();
     snapshot.routes = vec![ResolvedMcpRoute {
-        resource_id: "builtin_project_management".to_string(),
-        server_name: "project_management_service".to_string(),
+        resource_id: "system_mcp_chatos_task_runner".to_string(),
+        server_name: "task_runner_service".to_string(),
         provider_kind: McpProviderKind::InternalService,
-        provider_ref: Some("project_management_service".to_string()),
-        tool_namespace: "project_management_service".to_string(),
-        allow_writes: false,
+        provider_ref: Some("task_runner_service".to_string()),
+        tool_namespace: "task_runner_service".to_string(),
+        allow_writes: true,
         retry_class: McpRetryClass::IdempotentRead,
         cancel_supported: true,
         reason: "test".to_string(),
     }];
     snapshot.tools = vec![RuntimeToolDescriptor {
-        exposed_name: "project_management_service_list_requirements".to_string(),
-        original_name: "list_requirements".to_string(),
-        resource_id: "builtin_project_management".to_string(),
+        exposed_name: "task_runner_service_list_tasks".to_string(),
+        original_name: "list_tasks".to_string(),
+        resource_id: "system_mcp_chatos_task_runner".to_string(),
         definition: json!({
-            "name": "project_management_service_list_requirements",
+            "name": "task_runner_service_list_tasks",
             "inputSchema": {"type": "object"},
             "annotations": {"readOnlyHint": true}
         }),
@@ -977,7 +1008,7 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
             invocation_id: "cancel-invocation-1".to_string(),
             tool_call_id: "upstream-call-1".to_string(),
             call_index: 0,
-            name: "project_management_service_list_requirements".to_string(),
+            name: "task_runner_service_list_tasks".to_string(),
             arguments: json!({}),
             preflight_error: None,
         }],
@@ -1138,7 +1169,7 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
     assert!(!grant_matches_snapshot(&wrong_agent, &snapshot));
 
     let mut wrong_task_profile = claims.clone();
-    wrong_task_profile.task_profile = Some(CHATOS_PLAN_TASK_PROFILE.to_string());
+    wrong_task_profile.task_profile = Some("unrelated-profile".to_string());
     assert!(!grant_matches_snapshot(&wrong_task_profile, &snapshot));
 
     let mut wrong_project = claims.clone();
@@ -1176,10 +1207,6 @@ fn runtime_grant_rejects_every_frozen_scope_and_resource_drift() {
     let mut wrong_model = claims.clone();
     wrong_model.default_model_config_id = Some("another-model".to_string());
     assert!(!grant_matches_snapshot(&wrong_model, &snapshot));
-
-    let mut wrong_project_tasks = claims.clone();
-    wrong_project_tasks.expected_project_task_ids = vec!["another-project-task".to_string()];
-    assert!(!grant_matches_snapshot(&wrong_project_tasks, &snapshot));
 
     let mut wrong_policy_revision = claims.clone();
     wrong_policy_revision.policy_revision = "another-policy".to_string();

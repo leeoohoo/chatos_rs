@@ -43,7 +43,6 @@ impl AppState {
         state.migrate_memory_engine_runtime_config().await?;
         state.migrate_platform_pressure_config().await?;
         state.migrate_internal_request_security_config().await?;
-        state.migrate_project_service_runtime_config().await?;
         state.migrate_plugin_management_runtime_config().await?;
         state.migrate_user_service_runtime_config().await?;
         state.migrate_user_service_smtp_config().await?;

@@ -221,10 +221,6 @@ services:
     environment:
       LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
 
-  project-management-backend:
-    environment:
-      PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
-
   memory-engine-backend:
     environment:
       MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
@@ -232,7 +228,7 @@ services:
   mcp-management-service-backend:
     environment:
       MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
-      MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS: ${MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS:-chatos,task-runner,project-service,configuration-center}
+      MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS: ${MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS:-chatos,task-runner,configuration-center}
 
   task-runner-backend:
     environment:

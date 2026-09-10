@@ -3,6 +3,18 @@ import XCTest
 @testable import ChatOSAPI
 
 final class ChatOSWorkspaceServiceTests: XCTestCase {
+    func testRelationsUseOnlyContactsAndConversations() async throws {
+        let transport = WorkspaceTransport()
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            accessToken: "token", transport: transport
+        )
+        let relations = try await ChatOSWorkspaceService(client: client).fetchWorkspaceRelations()
+        let paths = await transport.requestPaths()
+        XCTAssertEqual(Set(paths), ["/api/chatos/contacts", "/api/chatos/conversations"])
+        XCTAssertEqual(relations.conversations.first?.projectID, "project-1")
+    }
+
     func testWorkspaceLoadsGatewayResourcesAndResolvesConversationMetadata() async throws {
         let transport = WorkspaceTransport()
         let client = ChatOSAPIClient(
@@ -11,9 +23,8 @@ final class ChatOSWorkspaceServiceTests: XCTestCase {
             transport: transport
         )
 
-        let snapshot = try await ChatOSWorkspaceService(client: client).fetchWorkspace()
+        let snapshot = try await ChatOSWorkspaceService(client: client).fetchWorkspaceRelations()
 
-        XCTAssertEqual(snapshot.projects.first?.latestConversationID, "conversation-1")
         XCTAssertEqual(snapshot.contacts.first?.name, "叽咕狸")
         let conversation = try XCTUnwrap(snapshot.conversations.first)
         XCTAssertEqual(conversation.projectID, "project-1")
@@ -26,51 +37,12 @@ final class ChatOSWorkspaceServiceTests: XCTestCase {
         XCTAssertEqual(
             Set(paths),
             Set([
-                "/api/chatos/projects",
                 "/api/chatos/contacts",
                 "/api/chatos/conversations",
             ])
         )
     }
 
-    func testDeleteProjectUsesEncodedProjectPathAndDeleteMethod() async throws {
-        let transport = ProjectDeletionTransport()
-        let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
-            accessToken: "token",
-            transport: transport
-        )
-
-        try await ChatOSWorkspaceService(client: client).deleteProject(id: "project/1")
-
-        let recordedRequest = await transport.recordedRequest()
-        let request = try XCTUnwrap(recordedRequest)
-        XCTAssertEqual(request.method, "DELETE")
-        XCTAssertEqual(request.path, "/api/chatos/projects/project%2F1")
-    }
-}
-
-private actor ProjectDeletionTransport: HTTPTransport {
-    struct RecordedRequest: Sendable {
-        var method: String
-        var path: String
-    }
-
-    private var request: RecordedRequest?
-
-    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
-        self.request = .init(
-            method: request.method,
-            path: request.url.path(percentEncoded: true)
-        )
-        return HTTPResponse(
-            statusCode: 200,
-            headers: [:],
-            body: Data(#"{"success":true,"message":"项目已删除"}"#.utf8)
-        )
-    }
-
-    func recordedRequest() -> RecordedRequest? { request }
 }
 
 private actor WorkspaceTransport: HTTPTransport {
@@ -80,8 +52,6 @@ private actor WorkspaceTransport: HTTPTransport {
         paths.append(request.url.path)
         let body: String
         switch request.url.path {
-        case "/api/chatos/projects":
-            body = #"[{"id":"project-1","name":"Real Project","root_path":"/workspace/real","display_root_path":null,"latest_session_id":"conversation-1"}]"#
         case "/api/chatos/contacts":
             body = #"[{"id":"contact-1","agent_id":"agent-1","agent_name_snapshot":"叽咕狸","status":"active"}]"#
         case "/api/chatos/conversations":

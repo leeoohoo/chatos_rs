@@ -15,5 +15,4 @@ pub enum SystemMcpHost {
     Chatos,
     TaskRunner,
     LocalConnector,
-    ProjectManagementService,
 }

@@ -10,6 +10,7 @@ impl TaskService {
         owner_user_id: Option<&str>,
         agent_key: SystemAgentKey,
         project_id: Option<&str>,
+        project_context: Option<&chatos_mcp_management_sdk::ProjectContextAuthorization>,
         task_profile: Option<&str>,
         schedule_mode: Option<&str>,
     ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
@@ -21,11 +22,11 @@ impl TaskService {
         let owner_user_id = resolved_owner_user_id(current_user, owner_user_id)?;
         resolve_policy(
             client,
-            &self.config,
             owner_user_id,
             get_current_access_token().as_deref(),
             agent_key,
             project_id,
+            project_context,
             task_profile,
             schedule_mode,
         )
@@ -38,32 +39,33 @@ impl RunService {
         &self,
         task: &TaskRecord,
     ) -> Result<SystemAgentKey, String> {
-        Ok(crate::models::task_runner_agent_key_for(
-            task.task_profile.as_str(),
-            task.mcp_config.requires_execution,
-        ))
+        crate::models::normalize_task_profile(Some(&task.task_profile))?;
+        Ok(SystemAgentKey::TaskRunnerRunPhase)
     }
 
     pub(crate) async fn resolve_task_runner_policy_for_task(
         &self,
         task: &TaskRecord,
     ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
+        crate::models::normalize_task_profile(Some(&task.task_profile))?;
+        crate::services::task_service::project_context::revalidate_task_project_context(
+            task,
+            self.project_context_authorizer.as_ref(),
+        )
+        .await?;
         let Some(client) = self.plugin_management_client.as_ref() else {
             return Ok(None);
         };
         let owner_user_id = task_owner_user_id(task)
             .ok_or_else(|| "task owner user id is required for plugin policy".to_string())?;
-        let agent_key = crate::models::task_runner_agent_key_for(
-            task.task_profile.as_str(),
-            task.mcp_config.requires_execution,
-        );
+        let agent_key = chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase;
         resolve_policy(
             client,
-            &self.config,
             owner_user_id,
             None,
             agent_key,
             task.project_id.as_deref(),
+            task.project_context.as_ref(),
             Some(task.task_profile.as_str()),
             Some(task.schedule.mode.mode_key()),
         )
@@ -73,21 +75,20 @@ impl RunService {
 
 async fn resolve_policy(
     client: &PluginManagementClient,
-    config: &crate::config::AppConfig,
     owner_user_id: &str,
     access_token: Option<&str>,
     agent_key: SystemAgentKey,
     project_id: Option<&str>,
+    project_context: Option<&chatos_mcp_management_sdk::ProjectContextAuthorization>,
     task_profile: Option<&str>,
     schedule_mode: Option<&str>,
 ) -> Result<Option<TaskRunnerCapabilityPolicy>, String> {
     let runtime_context =
         crate::services::task_plugin_runtime_context::resolve_task_plugin_runtime_context(
-            config,
             owner_user_id,
             project_id,
-        )
-        .await?;
+            project_context,
+        )?;
     tracing::debug!(
         owner_user_id = runtime_context.owner_user_id.as_str(),
         project_id = runtime_context.project_id.as_deref().unwrap_or(""),

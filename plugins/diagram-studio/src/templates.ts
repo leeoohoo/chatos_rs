@@ -97,7 +97,7 @@ export function architectureTemplate(): DiagramDocument {
     node('web-app', '客户端应用', 260, 220, 'client', 'rounded', 'SwiftUI · WinUI', palette.blue, {}, { icon: 'terminal' }),
     node('api-gateway', 'API Gateway', 510, 220, 'network', 'rounded', 'HTTPS · WebSocket', palette.cyan, {}, { icon: 'api' }),
     node('identity', '身份服务', 770, 70, 'service', 'rounded', 'OAuth · Session', palette.purple, {}, { icon: 'shield' }),
-    node('project-service', '项目服务', 770, 220, 'service', 'rounded', 'REST · Events', palette.blue, {}, { icon: 'server' }),
+    node('order-service', '订单服务', 770, 220, 'service', 'rounded', 'REST · Events', palette.blue, {}, { icon: 'server' }),
     node('task-runner', '任务执行器', 770, 370, 'service', 'rounded', 'AI · MCP', palette.orange, {}, { icon: 'container' }),
     node('postgres', 'PostgreSQL', 1050, 110, 'database', 'rounded', 'Persistent data', palette.green, {}, { icon: 'database' }),
     node('redis', 'Redis', 1050, 260, 'database', 'rounded', 'Cache · Locks', palette.pink, {}, { icon: 'cache' }),
@@ -106,14 +106,14 @@ export function architectureTemplate(): DiagramDocument {
     edge('e-users-web', 'users', 'web-app'),
     edge('e-web-gateway', 'web-app', 'api-gateway', 'HTTPS'),
     edge('e-gateway-identity', 'api-gateway', 'identity', 'Auth'),
-    edge('e-gateway-project', 'api-gateway', 'project-service', 'REST'),
+    edge('e-gateway-order', 'api-gateway', 'order-service', 'REST'),
     edge('e-gateway-runner', 'api-gateway', 'task-runner', 'Tasks'),
     edge('e-identity-db', 'identity', 'postgres', 'SQL'),
-    edge('e-project-db', 'project-service', 'postgres', 'SQL'),
-    edge('e-project-cache', 'project-service', 'redis', 'Cache'),
+    edge('e-order-db', 'order-service', 'postgres', 'SQL'),
+    edge('e-order-cache', 'order-service', 'redis', 'Cache'),
     edge('e-runner-cache', 'task-runner', 'redis', 'Lease'),
     edge('e-runner-events', 'task-runner', 'event-bus', 'Publish'),
-    edge('e-events-project', 'event-bus', 'project-service', 'Consume', true)
+    edge('e-events-order', 'event-bus', 'order-service', 'Consume', true)
   ]);
 }
 

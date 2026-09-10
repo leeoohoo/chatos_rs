@@ -115,7 +115,6 @@ struct PetActivityInboxRecordDTO: Decodable, Sendable {
         case "chat": .chat
         case "task_board": .taskBoard
         case "task_runner": .taskRunner
-        case "project_execution": .projectExecution
         default: nil
         }
     }

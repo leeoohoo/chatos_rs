@@ -22,10 +22,7 @@ fn runtime(
 ) -> Result<CloudAgentServiceRuntime<CloudAgentProfileRegistry>, String> {
     let store = run_service.cloud_agent_store();
     let registry = CloudAgentProfileRegistry::new("task-runner", store).register(
-        [
-            SystemAgentKey::TaskRunnerPlanPhase.as_str(),
-            SystemAgentKey::TaskRunnerRunPhase.as_str(),
-        ],
+        [SystemAgentKey::TaskRunnerRunPhase.as_str()],
         crate::services::cloud_agent_profile(run_service),
     )?;
     Ok(CloudAgentServiceRuntime::new(

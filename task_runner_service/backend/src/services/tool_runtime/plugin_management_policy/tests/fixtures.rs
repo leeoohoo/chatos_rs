@@ -94,6 +94,7 @@ pub(super) fn task() -> TaskRecord {
         tenant_id: "tenant-1".to_string(),
         subject_id: "owner-1".to_string(),
         project_id: None,
+        project_context: None,
         task_profile: "default".to_string(),
         creator_user_id: Some("owner-1".to_string()),
         creator_username: None,

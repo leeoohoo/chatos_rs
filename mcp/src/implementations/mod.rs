@@ -7,11 +7,10 @@ use crate::CatalogSystemMcpDefinition;
 
 pub mod builtin;
 
-static SYSTEM_MCP_DEFINITIONS: [CatalogSystemMcpDefinition; 14] = [
+static SYSTEM_MCP_DEFINITIONS: [CatalogSystemMcpDefinition; 13] = [
     CatalogSystemMcpDefinition::new(SystemMcpKey::CodeMaintainerRead),
     CatalogSystemMcpDefinition::new(SystemMcpKey::CodeMaintainerWrite),
     CatalogSystemMcpDefinition::new(SystemMcpKey::TerminalController),
-    CatalogSystemMcpDefinition::new(SystemMcpKey::ProjectManagement),
     CatalogSystemMcpDefinition::new(SystemMcpKey::Notepad),
     CatalogSystemMcpDefinition::new(SystemMcpKey::AgentBuilder),
     CatalogSystemMcpDefinition::new(SystemMcpKey::AskUser),

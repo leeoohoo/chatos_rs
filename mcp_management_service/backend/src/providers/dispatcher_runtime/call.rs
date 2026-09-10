@@ -92,17 +92,6 @@ impl ProviderDispatcher {
             return result;
         }
         match route.provider_kind {
-            McpProviderKind::InternalService if self.project_service.supports(route) => {
-                self.project_service
-                    .call_tool(
-                        snapshot,
-                        route,
-                        original_tool_name,
-                        arguments,
-                        invocation_id,
-                    )
-                    .await
-            }
             McpProviderKind::InternalService if self.task_runner.supports(route) => {
                 self.task_runner
                     .call_tool(

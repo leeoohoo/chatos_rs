@@ -20,9 +20,9 @@ pub(super) const WORKSPACE_DIRECTORY_WRITE_SCOPE: &str = "workspace.directory.wr
 pub(super) const SANDBOX_ROUTING_READ_SCOPE: &str = "sandbox-routing.read";
 pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
 pub(super) const SYSTEM_STATS_READ_SCOPE: &str = "system.stats.read";
+pub(super) const PROJECT_CONTEXT_AUTHORIZE_SCOPE: &str = "project-context.authorize";
 
 const CHATOS_CALLER: &str = "chatos-backend";
-const PROJECT_SERVICE_CALLER: &str = "project-service";
 const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +147,12 @@ struct InternalAccess {
 fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAccess> {
     let parts = path.trim_matches('/').split('/').collect::<Vec<_>>();
     match (method, parts.as_slice()) {
+        (&Method::POST, ["api", "local-connectors", "project-context", "authorize"]) => {
+            Some(InternalAccess {
+                scope: PROJECT_CONTEXT_AUTHORIZE_SCOPE,
+                allowed_callers: &[MCP_MANAGEMENT_CALLER],
+            })
+        }
         (&Method::POST, ["api", "local-connectors", "relay", _, "mcp"]) => Some(InternalAccess {
             scope: MCP_RELAY_SCOPE,
             allowed_callers: &[MCP_MANAGEMENT_CALLER],
@@ -213,7 +219,7 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
         }),
         (&Method::GET, ["api", "local-connectors", "sandbox-pairings"]) => Some(InternalAccess {
             scope: SANDBOX_ROUTING_READ_SCOPE,
-            allowed_callers: &[PROJECT_SERVICE_CALLER, MCP_MANAGEMENT_CALLER],
+            allowed_callers: &[MCP_MANAGEMENT_CALLER],
         }),
         (&Method::GET, ["api", "local-connectors", "system", "stats"]) => Some(InternalAccess {
             scope: SYSTEM_STATS_READ_SCOPE,
@@ -224,12 +230,12 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
             ["api", "local-connectors", "sandbox-facade", _, "api", "local", "sandbox", "images", "mcp"],
         ) => Some(InternalAccess {
             scope: SANDBOX_SERVICE_SCOPE,
-            allowed_callers: &[PROJECT_SERVICE_CALLER, MCP_MANAGEMENT_CALLER],
+            allowed_callers: &[MCP_MANAGEMENT_CALLER],
         }),
         (&Method::GET, ["api", "local-connectors", "sandbox-facade", _, "api", "sandboxes", _]) => {
             Some(InternalAccess {
                 scope: SANDBOX_SERVICE_SCOPE,
-                allowed_callers: &[PROJECT_SERVICE_CALLER, MCP_MANAGEMENT_CALLER],
+                allowed_callers: &[MCP_MANAGEMENT_CALLER],
             })
         }
         (
@@ -238,10 +244,6 @@ fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAc
         ) => Some(InternalAccess {
             scope: SANDBOX_SERVICE_SCOPE,
             allowed_callers: &[MCP_MANAGEMENT_CALLER],
-        }),
-        (_, ["api", "local-connectors", "sandbox-facade", _, ..]) => Some(InternalAccess {
-            scope: SANDBOX_SERVICE_SCOPE,
-            allowed_callers: &[PROJECT_SERVICE_CALLER],
         }),
         (
             &Method::POST,
@@ -305,6 +307,78 @@ mod tests {
     const CHATOS_SECRET: &str = "a-long-chatos-local-connector-secret";
     const REMOVED_TASK_RUNNER: &str = "task-runner";
     const REMOVED_TASK_RUNNER_SECRET: &str = "a-long-task-runner-local-connector-secret";
+
+    #[test]
+    fn project_context_authorization_is_owner_scope_caller_and_method_bound() {
+        let mut config = test_config();
+        config
+            .internal_api_secrets
+            .insert(MCP_MANAGEMENT_CALLER.into(), MCP_SECRET.into());
+        config.internal_api_secrets.insert(
+            REMOVED_TASK_RUNNER.into(),
+            REMOVED_TASK_RUNNER_SECRET.into(),
+        );
+        let path = "/api/local-connectors/project-context/authorize";
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+            MCP_SECRET,
+            MCP_MANAGEMENT_CALLER,
+            TOKEN_AUDIENCE,
+            PROJECT_CONTEXT_AUTHORIZE_SCOPE,
+            60,
+            "user-1",
+        )
+        .unwrap();
+        let headers = signed_headers(MCP_MANAGEMENT_CALLER, &token);
+        let (user, identity) =
+            internal_service_auth_from_request(&config, &headers, &Method::POST, path)
+                .unwrap()
+                .unwrap();
+        assert_eq!(user.effective_owner_user_id(), "user-1");
+        assert_eq!(identity.scope, PROJECT_CONTEXT_AUTHORIZE_SCOPE);
+        assert!(internal_service_auth_from_request(&config, &headers, &Method::GET, path).is_err());
+        assert!(internal_service_auth_from_request(
+            &config,
+            &headers,
+            &Method::POST,
+            "/api/local-connectors/relay/device-1/mcp"
+        )
+        .is_err());
+        let wrong_owner = signed_headers_for_owner(MCP_MANAGEMENT_CALLER, &token, "user-2");
+        assert!(
+            internal_service_auth_from_request(&config, &wrong_owner, &Method::POST, path).is_err()
+        );
+        let no_owner = chatos_service_runtime::issue_internal_service_token(
+            MCP_SECRET,
+            MCP_MANAGEMENT_CALLER,
+            TOKEN_AUDIENCE,
+            PROJECT_CONTEXT_AUTHORIZE_SCOPE,
+            60,
+        )
+        .unwrap();
+        assert!(internal_service_auth_from_request(
+            &config,
+            &signed_headers(MCP_MANAGEMENT_CALLER, &no_owner),
+            &Method::POST,
+            path
+        )
+        .is_err());
+        let direct_task = chatos_service_runtime::issue_internal_service_token_for_owner(
+            REMOVED_TASK_RUNNER_SECRET,
+            REMOVED_TASK_RUNNER,
+            TOKEN_AUDIENCE,
+            PROJECT_CONTEXT_AUTHORIZE_SCOPE,
+            60,
+            "user-1",
+        )
+        .unwrap();
+        assert!(internal_service_auth_from_request(
+            &config,
+            &signed_headers(REMOVED_TASK_RUNNER, &direct_task),
+            &Method::POST,
+            path
+        )
+        .is_err());
+    }
 
     #[test]
     fn mcp_management_tokens_are_bound_to_caller_scope_owner_and_path() {

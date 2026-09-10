@@ -6,6 +6,38 @@ use serde_json::json;
 use super::*;
 use crate::{normalized_plugin_manifest_sha256, plugin_component_descriptors, PluginComponentKind};
 
+#[test]
+fn project_management_plugin_declares_only_bound_local_business_components() {
+    let manifest = parse_plugin_manifest(include_str!(
+        "../../../../plugins/project-management/chatos.plugin.json"
+    ))
+    .expect("project management manifest");
+    let runtime = manifest.runtime_context.as_ref().expect("project context");
+    assert_eq!(runtime.scope, PluginRuntimeContextScope::Project);
+    assert_eq!(
+        runtime.storage_isolation,
+        PluginRuntimeContextStorageIsolation::Project
+    );
+    assert_eq!(
+        runtime.missing_context,
+        PluginRuntimeContextMissingContext::Reject
+    );
+    assert_eq!(runtime.required, vec!["project.id"]);
+    assert_eq!(manifest.mcp_servers.len(), 1);
+    assert_eq!(manifest.ui.len(), 1);
+    assert_eq!(
+        manifest.ui[0].bridge_capabilities,
+        vec![
+            "host.context.read",
+            "task.batch.prepare",
+            "task.batch.status",
+            "task.workspace.open"
+        ]
+    );
+    assert_eq!(manifest.permissions.len(), 1);
+    assert_eq!(manifest.permissions[0].permission, "process.spawn");
+}
+
 fn manifest_with_mcp(server: serde_json::Value) -> String {
     json!({
         "schemaVersion": 3,
@@ -84,12 +116,12 @@ fn preserves_published_manifest_hashes() {
     let fixtures = [
         (
             include_str!("../../../../plugins/computer-use/chatos.plugin.json"),
-            "0238257797138f3c7bceb8ac697d087ab4ca6d7467216a57f8c211ff15f00d2a",
+            "444eb31564cc2aa0852c2b055874bc2f68edbbc15f7ae2685300437d03c4a205",
             false,
         ),
         (
             include_str!("../../../../plugins/document/chatos.plugin.json"),
-            "b09510774c58d9bed8fd5debe2c2f377b5f3ffb0d0af7ee50c068d56a7c6c9dd",
+            "0701a1f9a5cbb79b25e9c806ddddc83e1223759811335c276374b6e3902b4fc9",
             true,
         ),
     ];

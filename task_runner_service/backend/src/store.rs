@@ -23,10 +23,9 @@ use crate::models::{
     AskUserPromptTaskCountRecord, ChatosCallbackDeliveryState, ChatosCallbackDeliveryStatus,
     ModelConfigRecord, PaginatedResponse, PromptListFilters, RunEventPruneResult,
     RunExecutionStats, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord, TaskListFilters,
-    TaskPrerequisiteRecord, TaskProjectRecord, TaskProjectScopeFilter, TaskRecord,
-    TaskRunAttemptRecord, TaskRunAttemptStatus, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskScheduleConfig, TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
-    UserRecord,
+    TaskPrerequisiteRecord, TaskProjectScopeFilter, TaskRecord, TaskRunAttemptRecord,
+    TaskRunAttemptStatus, TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskScheduleConfig,
+    TaskScheduleMode, TaskStatsResponse, TaskStatus, TaskSummaryRecord, UserRecord,
 };
 
 mod app_models;
@@ -248,7 +247,6 @@ fn lost_run_claim_error(run_id: &str) -> String {
 #[derive(Default)]
 struct StoreData {
     tasks: BTreeMap<String, TaskRecord>,
-    task_projects: BTreeMap<String, TaskProjectRecord>,
     model_configs: BTreeMap<String, ModelConfigRecord>,
     runtime_settings: Option<RuntimeSettingsRecord>,
     runs: BTreeMap<String, TaskRunRecord>,
@@ -301,7 +299,6 @@ pub(crate) struct InMemoryStore {
 #[derive(Clone)]
 pub(crate) struct MongoStore {
     tasks: Collection<TaskRecord>,
-    task_projects: Collection<TaskProjectRecord>,
     user_service_model_source: UserServiceModelSource,
     runtime_settings: Collection<RuntimeSettingsRecord>,
     runs: Collection<TaskRunRecord>,

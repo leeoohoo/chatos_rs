@@ -9,13 +9,11 @@ import { AdminLayout } from '../layout/AdminLayout';
 import { ModuleErrorBoundary } from '../../shared/components/ModuleErrorBoundary';
 
 const UserServiceModule = lazy(() => import('../../modules/user-service/ModuleRoutes'));
-const ProjectManagementModule = lazy(() => import('../../modules/project-management/ModuleRoutes'));
 const TaskRunnerModule = lazy(() => import('../../modules/task-runner/ModuleRoutes'));
 const PluginManagementModule = lazy(() => import('../../modules/plugin-management/ModuleRoutes'));
 const MemoryEngineModule = lazy(() => import('../../modules/memory-engine/ModuleRoutes'));
 const ConfigCenterModule = lazy(() => import('../../modules/config-center/ModuleRoutes'));
 const UserModelsPage = lazy(() => import('../../modules/user-service/pages/ModelsPage').then((module) => ({ default: module.ModelsPage })));
-const ProjectsPage = lazy(() => import('../../modules/project-management/pages/ProjectsPage').then((module) => ({ default: module.ProjectsPage })));
 
 function ModuleBoundary({ className, children }: { className: string; children: React.ReactNode }) {
   const location = useLocation();
@@ -49,8 +47,6 @@ export function AppRoutes() {
         <Route path="users/*" element={isSuperAdmin(user.role)
           ? <ModuleBoundary className="user-service-module"><UserServiceModule /></ModuleBoundary>
           : <AccessDenied defaultPath={defaultPath} />} />
-        <Route path="projects/list" element={<ModuleBoundary className="project-management-module"><ProjectsPage /></ModuleBoundary>} />
-        <Route path="projects/*" element={<ModuleBoundary className="project-management-module"><ProjectManagementModule /></ModuleBoundary>} />
         <Route path="task-runner/*" element={<ModuleBoundary className="task-runner-module"><TaskRunnerModule /></ModuleBoundary>} />
         <Route path="plugins/*" element={<ModuleBoundary className="plugin-management-module"><PluginManagementModule /></ModuleBoundary>} />
         <Route path="memory/*" element={<ModuleBoundary className="memory-engine-module"><MemoryEngineModule /></ModuleBoundary>} />

@@ -21,9 +21,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     }
 
     let turn: ConversationTurn
-    @Published private(set) var executionContext: ProjectExecutionContext?
     @Published private(set) var executionActivity: [ConversationRealtimeProcessUpdate] = []
-    @Published private(set) var executionFailureReason: String?
     @Published private(set) var graph: MessageTaskGraphSnapshot?
     @Published private(set) var selectedTask: MessageTask?
     @Published var taskDetail: MessageTask?
@@ -35,16 +33,12 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     @Published var isLoadingRun = false
     @Published var isLoadingMoreRunEvents = false
     @Published private(set) var isRetrying = false
-    @Published var isMutatingPlan = false
-    @Published var isPlanStopped = false
     @Published var displayMode: MessageTaskGraphDisplayMode = .reduced
     @Published var inspectorSection: InspectorSection = .detail
     @Published var retryInstruction = ""
-    @Published var planActionMessage: String?
     @Published var errorMessage: String?
 
     let graphService: any MessageTaskGraphServicing
-    let projectExecutionService: (any ProjectExecutionServicing)?
     let realtimeService: (any ConversationRealtimeStreaming)?
     let initialTaskID: String?
     let initialRunID: String?
@@ -57,30 +51,15 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     init(
         turn: ConversationTurn,
         graphService: any MessageTaskGraphServicing,
-        projectExecutionService: (any ProjectExecutionServicing)?,
         realtimeService: (any ConversationRealtimeStreaming)? = nil,
         initialTaskID: String? = nil,
         initialRunID: String? = nil
     ) {
         self.turn = turn
-        self.executionContext = turn.projectExecutionContext
         self.graphService = graphService
-        self.projectExecutionService = projectExecutionService
         self.realtimeService = realtimeService
         self.initialTaskID = initialTaskID
         self.initialRunID = initialRunID
-        if turn.projectExecutionContext?.isProjectExecution == true {
-            inspectorSection = .process
-            executionActivity = [
-                ConversationRealtimeProcessUpdate(
-                    id: "execution-requested-\(turn.id)",
-                    title: "已提交执行计划生成请求",
-                    detail: "正在等待规划 Agent 返回实时进度",
-                    status: "running",
-                    timestamp: ISO8601DateFormatter().string(from: turn.startedAt)
-                ),
-            ]
-        }
         if initialRunID != nil {
             inspectorSection = .run
         }
@@ -96,14 +75,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     }
 
     var selectedTaskID: String? { selectedTask?.id }
-
-    var executionState: ProjectExecutionConfirmationState {
-        ProjectExecutionConfirmationState(
-            context: executionContext,
-            graph: graph,
-            conversationID: turn.sessionID
-        )
-    }
 
     func load() {
         guard !isLoading else { return }
@@ -188,7 +159,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
 
     var expectsTaskGraph: Bool {
         turn.messageTaskLookup != nil
-            || turn.projectExecutionContext != nil
             || initialTaskID != nil
             || initialRunID != nil
     }
@@ -247,62 +217,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         }
     }
 
-    func applyExecution(_ launch: ProjectRequirementExecutionLaunch) {
-        let previousStatus = normalizedExecutionStatus(executionContext?.overallStatus)
-        executionContext = ProjectExecutionContext(
-            projectID: launch.projectID,
-            requirementID: launch.requirementID,
-            executionGroupID: launch.executionGroupID,
-            contactID: launch.contactID,
-            mode: "project_requirement_execution",
-            executionKind: "project_requirement_execution",
-            confirmationStatus: launch.confirmationStatus,
-            overallStatus: launch.overallStatus
-        )
-        executionFailureReason = launch.failureReason
-
-        let nextStatus = normalizedExecutionStatus(launch.overallStatus ?? launch.confirmationStatus)
-        guard nextStatus != previousStatus else { return }
-        switch nextStatus {
-        case "awaiting_confirmation":
-            appendExecutionActivity(
-                title: "执行计划已生成",
-                detail: "请检查任务节点和依赖关系后确认执行",
-                status: "completed"
-            )
-        case "processing", "running", "confirmed", "executing", "in_progress":
-            appendExecutionActivity(
-                title: "已确认执行，任务开始运行",
-                detail: "任务将按照依赖顺序自动刷新",
-                status: "running"
-            )
-        case "completed":
-            planActionMessage = nil
-            appendExecutionActivity(title: "全部任务已完成", status: "completed")
-        case "failed", "error", "blocked":
-            planActionMessage = nil
-            appendExecutionActivity(
-                title: "执行计划失败",
-                detail: launch.failureReason,
-                status: "failed"
-            )
-        case "stopped", "cancelled", "canceled":
-            planActionMessage = nil
-            appendExecutionActivity(title: "执行计划已停止", status: "cancelled")
-        default:
-            break
-        }
-    }
-
-    func markExecutionStarted() {
-        executionContext?.confirmationStatus = "confirmed"
-        executionContext?.overallStatus = "processing"
-        appendExecutionActivity(
-            title: "已确认执行，正在启动根任务",
-            status: "running"
-        )
-    }
-
     func applyRealtimeSignal(_ signal: ConversationRealtimeSignal) {
         guard signal.turnID == turn.id,
               let update = signal.processUpdate else { return }
@@ -316,27 +230,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
                 executionActivity.removeFirst(executionActivity.count - 80)
             }
         }
-    }
-
-    private func appendExecutionActivity(
-        title: String,
-        detail: String? = nil,
-        status: String
-    ) {
-        let update = ConversationRealtimeProcessUpdate(
-            id: UUID().uuidString,
-            title: title,
-            detail: detail,
-            status: status,
-            timestamp: ISO8601DateFormatter().string(from: Date())
-        )
-        if executionActivity.last?.title != title {
-            executionActivity.append(update)
-        }
-    }
-
-    private func normalizedExecutionStatus(_ value: String?) -> String {
-        value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
     }
 
 }

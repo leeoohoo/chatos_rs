@@ -76,11 +76,6 @@ pub(super) fn resolve_runtime_session_prompt_metadata(
     }
 }
 
-#[cfg(test)]
-fn task_profile_uses_planning_guidance(task_profile: Option<&str>) -> bool {
-    task_profile.is_some_and(chatos_agent::is_chatos_plan_task_profile)
-}
-
 fn normalized_provider_prompt_locale(value: Option<&str>) -> Option<&str> {
     match value.map(str::trim) {
         Some("en-US") => Some("en-US"),
@@ -148,15 +143,6 @@ mod tests {
             resolve_runtime_session_prompt_metadata(&capabilities, &tools, Some("zh-CN"), None);
         assert_eq!(metadata.effective_mcp_ids, ["mcp-a", "mcp-b"]);
         assert!(metadata.provider_skills_prompt.is_none());
-    }
-
-    #[test]
-    fn task_runner_guidance_profile_is_selected_only_by_program_context() {
-        assert!(!task_profile_uses_planning_guidance(None));
-        assert!(!task_profile_uses_planning_guidance(Some("default")));
-        assert!(task_profile_uses_planning_guidance(Some(
-            chatos_agent::CHATOS_PLAN_TASK_PROFILE,
-        )));
     }
 
     #[test]

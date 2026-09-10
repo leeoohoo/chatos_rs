@@ -152,15 +152,6 @@ fn status_targets() -> Vec<StatusTarget> {
             "/api/health",
         ),
         target(
-            3,
-            "Project Management",
-            "需求、计划与项目任务",
-            "OFFICIAL_WEBSITE_STATUS_PROJECT_MANAGEMENT_URL",
-            "PROJECT_SERVICE_PORT",
-            39210,
-            "/api/health",
-        ),
-        target(
             5,
             "Task Runner",
             "异步任务执行与回调",

@@ -1,7 +1,7 @@
 # API Path Baseline
 
-main_backend_endpoint_count=266
-total_endpoint_count=266
+main_backend_endpoint_count=267
+total_endpoint_count=267
 
 ## chatos/backend endpoints (method + path)
 DELETE /api/agents/{agent_id}
@@ -255,6 +255,7 @@ POST /api/terminals/{id}/interrupt
 POST /internal/mcp-management/mcp/{system_key}
 POST /internal/mcp-management/mcp/{system_key}/prompts/{prompt_id}
 POST /internal/mcp-management/mcp/{system_key}/start
+POST /internal/mcp-management/remote-connections/{connection_id}/route
 PUT /api/ai-model-configs/{config_id}
 PUT /api/ai-model-providers/{provider_id}
 PUT /api/ai-model-settings

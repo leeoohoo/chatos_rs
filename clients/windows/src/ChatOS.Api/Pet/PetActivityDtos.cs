@@ -97,7 +97,6 @@ internal sealed record PetActivityInboxRecordDto
                 ["chat"] = PetActivitySource.Chat,
                 ["task_board"] = PetActivitySource.TaskBoard,
                 ["task_runner"] = PetActivitySource.TaskRunner,
-                ["project_execution"] = PetActivitySource.ProjectExecution,
             };
 
         public static readonly IReadOnlyDictionary<string, PetActivityKind> Kinds =

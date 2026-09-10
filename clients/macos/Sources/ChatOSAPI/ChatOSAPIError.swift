@@ -4,6 +4,7 @@ public enum ChatOSAPIError: Error, Sendable, Equatable {
     case invalidBaseURL
     case invalidEndpoint
     case invalidResponse
+    case invalidRequest(String)
     case invalidCredentials
     case unauthorized
     case server(statusCode: Int, message: String)
@@ -20,6 +21,8 @@ extension ChatOSAPIError: LocalizedError {
             "服务地址无效。"
         case .invalidResponse:
             "服务器返回了无法识别的响应。"
+        case let .invalidRequest(message):
+            message
         case .invalidCredentials:
             "请输入账号和密码。"
         case .unauthorized:

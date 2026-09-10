@@ -11,21 +11,14 @@ use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::CurrentUser;
 use crate::config::{AppConfig, StoreMode};
 use crate::models::{
-    ChatosSyncedModelConfigRequest, CreateTaskProjectRequest, CreateTaskRequest, ModelConfigRecord,
-    TaskMcpConfig, TaskMcpRequestConfig, TaskScheduleMode, TaskSourceContext, TaskStatus,
-    UpdateTaskRequest, UserRole, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+    ChatosSyncedModelConfigRequest, CreateTaskRequest, ModelConfigRecord, TaskMcpConfig,
+    TaskMcpRequestConfig, TaskScheduleMode, TaskSourceContext, TaskStatus, UpdateTaskRequest,
+    UserRole, TASK_PROFILE_DEFAULT,
 };
-use crate::services::{ModelConfigService, RunService, TaskProjectService, TaskService};
+use crate::services::{ModelConfigService, RunService, TaskService};
 use crate::store::AppStore;
-use axum::{
-    extract::{Path, State},
-    http::HeaderMap,
-    routing::{get, post},
-    Json, Router,
-};
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[path = "tests/plan_profile.rs"]
@@ -47,6 +40,7 @@ fn valid_planner_create_request() -> CreateTaskRequest {
         tags: None,
         default_model_config_id: Some("model-1".to_string()),
         project_id: None,
+        project_context: None,
         task_profile: None,
         tenant_id: None,
         subject_id: None,
@@ -62,23 +56,68 @@ fn valid_planner_create_request() -> CreateTaskRequest {
     }
 }
 
-async fn test_mcp_service() -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
+#[derive(Debug)]
+struct ClientProjectSnapshotInput {
+    name: String,
+    root_path: Option<String>,
+    git_url: Option<String>,
+    description: Option<String>,
+}
+
+#[derive(Debug)]
+struct ClientProjectFixture {
+    id: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClientProjectRegistryFixture;
+
+impl ClientProjectRegistryFixture {
+    async fn register_project(
+        &self,
+        input: ClientProjectSnapshotInput,
+        _current_user: &CurrentUser,
+    ) -> Result<ClientProjectFixture, String> {
+        if input.name.trim().is_empty() {
+            return Err("client project name is required".to_string());
+        }
+        let _client_owned_metadata = (input.root_path, input.git_url, input.description);
+        Ok(ClientProjectFixture {
+            id: format!("client-project-{}", uuid::Uuid::new_v4()),
+        })
+    }
+}
+
+async fn test_mcp_service() -> (
+    TaskRunnerMcpService,
+    TaskService,
+    ClientProjectRegistryFixture,
+) {
     let config = test_config();
     test_mcp_service_with_config(config).await
 }
 
 async fn test_mcp_service_with_config(
     config: AppConfig,
-) -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
+) -> (
+    TaskRunnerMcpService,
+    TaskService,
+    ClientProjectRegistryFixture,
+) {
     test_mcp_service_with_config_and_policy_mode(config, false).await
 }
 
 async fn test_mcp_service_with_config_and_policy_mode(
     config: AppConfig,
     allow_unresolved_plugin_policy: bool,
-) -> (TaskRunnerMcpService, TaskService, TaskProjectService) {
+) -> (
+    TaskRunnerMcpService,
+    TaskService,
+    ClientProjectRegistryFixture,
+) {
     let store = AppStore::new(&config).await.expect("store");
-    let task_service = TaskService::new(config.clone(), store.clone());
+    let task_service =
+        TaskService::new(config.clone(), store.clone()).with_test_project_authorizer();
     let task_service = if allow_unresolved_plugin_policy {
         task_service.with_unresolved_plugin_policy_for_test()
     } else {
@@ -86,8 +125,8 @@ async fn test_mcp_service_with_config_and_policy_mode(
     };
     let model_config_service = ModelConfigService::new(store.clone());
     let ask_user_prompt_service = AskUserPromptService::new(store.clone());
-    let run_service = RunService::new(config, store.clone(), ask_user_prompt_service.clone());
-    let task_project_service = TaskProjectService::new(store);
+    let run_service = RunService::new(config, store.clone(), ask_user_prompt_service.clone())
+        .with_test_project_authorizer();
     (
         TaskRunnerMcpService::new(
             task_service.clone(),
@@ -96,99 +135,8 @@ async fn test_mcp_service_with_config_and_policy_mode(
             ask_user_prompt_service,
         ),
         task_service,
-        task_project_service,
+        ClientProjectRegistryFixture,
     )
-}
-
-#[derive(Debug, Clone)]
-struct CapturedProjectSyncCall {
-    work_item_id: String,
-    payload: serde_json::Value,
-}
-
-type CapturedProjectSyncCalls = Arc<Mutex<Vec<CapturedProjectSyncCall>>>;
-
-async fn test_project_sync_server() -> (String, CapturedProjectSyncCalls) {
-    let calls = Arc::new(Mutex::new(Vec::new()));
-    let app = Router::new()
-        .route(
-            "/api/chatos-sync/work-items/{work_item_id}/task-runner-status",
-            post(capture_project_sync_status),
-        )
-        .route(
-            "/api/chatos-sync/projects/{project_id}",
-            get(get_project_sync_record),
-        )
-        .with_state(calls.clone());
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .await
-        .expect("bind project sync mock");
-    let addr = listener.local_addr().expect("project sync mock addr");
-    tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("project sync mock server");
-    });
-    (format!("http://{addr}"), calls)
-}
-
-async fn capture_project_sync_status(
-    State(calls): State<CapturedProjectSyncCalls>,
-    Path(work_item_id): Path<String>,
-    headers: HeaderMap,
-    Json(payload): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
-    assert_project_service_internal_headers(&headers, "project.sync");
-    calls
-        .lock()
-        .expect("project sync calls")
-        .push(CapturedProjectSyncCall {
-            work_item_id,
-            payload,
-        });
-    Json(json!({ "ok": true }))
-}
-
-async fn get_project_sync_record(
-    Path(project_id): Path<String>,
-    headers: HeaderMap,
-) -> Json<serde_json::Value> {
-    assert_project_service_internal_headers(&headers, "project.read");
-    assert!(!headers.contains_key("X-Project-Service-Sync-Secret"));
-    Json(json!({
-        "id": project_id,
-        "owner_user_id": "owner-a",
-        "owner_username": "owner-a-name",
-        "owner_display_name": "owner-a name",
-        "name": "Project A",
-        "root_path": null,
-        "git_url": null,
-        "description": null,
-        "status": "active",
-        "created_at": "2026-01-01T00:00:00Z",
-        "updated_at": "2026-01-01T00:00:00Z",
-        "archived_at": null
-    }))
-}
-
-fn assert_project_service_internal_headers(headers: &HeaderMap, scope: &str) {
-    let caller = headers
-        .get("X-Project-Service-Caller")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    assert_eq!(caller, "task-runner");
-    let token = headers
-        .get("X-Project-Service-Internal-Token")
-        .and_then(|value| value.to_str().ok())
-        .expect("signed project service token");
-    chatos_service_runtime::verify_internal_service_token(
-        token,
-        "project-sync-secret",
-        "task-runner",
-        "project-service",
-        scope,
-    )
-    .expect("valid project service token");
 }
 
 fn test_config() -> AppConfig {
@@ -220,7 +168,6 @@ fn test_config() -> AppConfig {
         default_tool_results_model_total_max_chars: 2000,
         chatos_callback_url: String::new(),
         chatos_callback_http_client: reqwest::Client::new(),
-        internal_api_secret: None,
         chatos_internal_api_secret: None,
         mcp_management_internal_api_secret: None,
         user_service_internal_api_secret: None,
@@ -230,11 +177,6 @@ fn test_config() -> AppConfig {
         admin_display_name: "Admin".to_string(),
         user_service_base_url: "http://127.0.0.1:39190".to_string(),
         user_service_request_timeout: Duration::from_millis(5000),
-        project_service_base_url: None,
-        project_service_internal_base_url: None,
-        project_service_internal_http_client: reqwest::Client::new(),
-        project_service_sync_secret: None,
-        project_service_request_timeout: Duration::from_millis(5000),
     }
 }
 
@@ -249,6 +191,7 @@ fn test_create_task_request(title: &str) -> CreateTaskRequest {
         tags: None,
         default_model_config_id: None,
         project_id: None,
+        project_context: None,
         task_profile: None,
         tenant_id: None,
         subject_id: None,

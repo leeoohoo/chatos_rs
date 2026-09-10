@@ -32,7 +32,6 @@ public sealed class ConversationSessionViewModelTests
         Assert.Single(viewModel.PendingPrompts);
         Assert.Equal("model-1", viewModel.SelectedModel?.Id);
         Assert.True(viewModel.ReasoningEnabled);
-        Assert.True(viewModel.PlanModeEnabled);
         Assert.Equal(2, services.SavedTurns.Count);
     }
 
@@ -324,7 +323,7 @@ public sealed class ConversationSessionViewModelTests
         public Task<ConversationRuntimeSettings> FetchAsync(
             string conversationId,
             CancellationToken cancellationToken = default) => Task.FromResult(
-            new ConversationRuntimeSettings("model-1", "Model", "high", true, true));
+            new ConversationRuntimeSettings("model-1", "Model", "high", true));
 
         public Task<IReadOnlyList<ConversationModelOption>> FetchAvailableModelsAsync(
             CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ConversationModelOption>>(
@@ -335,17 +334,11 @@ public sealed class ConversationSessionViewModelTests
             string modelId,
             CancellationToken cancellationToken = default) => FetchAsync(conversationId, cancellationToken);
 
-        public Task<ConversationRuntimeSettings> UpdatePlanModeAsync(
-            string conversationId,
-            bool enabled,
-            CancellationToken cancellationToken = default) => Task.FromResult(
-            new ConversationRuntimeSettings("model-1", "Model", "high", true, enabled));
-
         public Task<ConversationRuntimeSettings> UpdateReasoningAsync(
             string conversationId,
             bool enabled,
             CancellationToken cancellationToken = default) => Task.FromResult(
-            new ConversationRuntimeSettings("model-1", "Model", "high", enabled, true));
+            new ConversationRuntimeSettings("model-1", "Model", "high", enabled));
 
         public Task<IReadOnlyList<AskUserPrompt>> FetchPromptsAsync(
             string conversationId,

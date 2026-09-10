@@ -28,9 +28,6 @@ fn source_metadata_exposes_prompt_path_and_sections() {
     );
     let section_ids = builtin_mcp_prompt_section_ids(BuiltinMcpPromptLocale::ZhCn);
     assert!(section_ids.iter().any(|item| item == "global"));
-    assert!(section_ids
-        .iter()
-        .any(|item| item == "builtin_project_management"));
     assert!(section_ids.iter().any(|item| item == "runtime_limitations"));
 }
 
@@ -73,18 +70,6 @@ fn includes_global_and_selected_sections_only() {
     assert!(prompt.contains("`ask_user_prompt_choices`"));
     assert!(!prompt.contains("task_manager"));
     assert!(!prompt.contains("`code_maintainer_read_read_file`"));
-}
-
-#[test]
-fn includes_project_management_section_when_selected() {
-    let prompt = compose_builtin_mcp_system_prompt(
-        &[build_builtin_server(BuiltinMcpKind::ProjectManagement)],
-        BuiltinMcpPromptLocale::ZhCn,
-    )
-    .expect("prompt");
-
-    assert!(prompt.contains("`project_management_service_create_requirement`"));
-    assert!(prompt.contains("需求、变更或 bug 修复"));
 }
 
 #[test]

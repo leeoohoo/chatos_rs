@@ -38,8 +38,6 @@ pub const MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY: &s
     "mcp_management.security.configuration_center_internal_api_secret";
 pub const MCP_MANAGEMENT_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "mcp_management.downstream.plugin_management_internal_api_secret";
-pub const MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "mcp_management.downstream.project_service_internal_api_secret";
 pub const MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "mcp_management.downstream.task_runner_internal_api_secret";
 pub const MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
@@ -63,8 +61,6 @@ pub const MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET_CONFIG_KEY: &str =
     "mcp_management.runtime.session_encryption_secret";
 pub const MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "mcp_management.runtime.downstream_request_timeout_ms";
-pub const MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
-    "mcp_management.runtime.project_service_tool_timeout_ms";
 pub const MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
     "mcp_management.runtime.external_http_tool_timeout_ms";
 pub const MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS_CONFIG_KEY: &str =
@@ -99,8 +95,6 @@ pub const MCP_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY: &str =
     "mcp_management.runtime.public_base_url";
 pub const MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "mcp_management.downstream.plugin_management_service_base_url";
-pub const MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY: &str =
-    "mcp_management.downstream.project_service_base_url";
 pub const MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "mcp_management.downstream.task_runner_service_base_url";
 pub const MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY: &str =
@@ -111,8 +105,6 @@ pub const PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.task_runner_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.chatos_internal_api_secret";
-pub const PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "plugin_management.downstream.project_service_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.local_connector_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =

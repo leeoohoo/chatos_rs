@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ChatStreamRequest {
     #[serde(rename = "conversation_id", alias = "conversationId")]
     pub conversation_id: Option<String>,
@@ -16,8 +17,6 @@ pub(crate) struct ChatStreamRequest {
     pub user_role: Option<String>,
     pub attachments: Option<Vec<Value>>,
     pub reasoning_enabled: Option<bool>,
-    #[serde(default, alias = "planMode")]
-    pub plan_mode: bool,
     pub turn_id: Option<String>,
     pub contact_agent_id: Option<String>,
     pub project_id: Option<String>,
@@ -35,8 +34,22 @@ pub(crate) struct ChatStreamRequest {
     pub unsupported_plugin_agent_selection: Option<Value>,
     #[serde(skip_deserializing)]
     pub user_message_id: Option<String>,
-    #[serde(skip_deserializing)]
-    pub project_requirement_execution_planner: bool,
-    #[serde(skip_deserializing, default)]
-    pub project_requirement_execution_task_ids: Vec<String>,
+}
+
+#[cfg(test)]
+mod planning_mode_removal_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_removed_planning_fields_without_changing_reasoning() {
+        for key in ["plan_mode", "planMode", "plan_mode_enabled"] {
+            let request = serde_json::json!({"content": "hello", key: true});
+            assert!(serde_json::from_value::<ChatStreamRequest>(request).is_err());
+        }
+        let request: ChatStreamRequest = serde_json::from_value(serde_json::json!({
+            "content": "hello", "reasoning_enabled": true
+        }))
+        .unwrap();
+        assert_eq!(request.reasoning_enabled, Some(true));
+    }
 }

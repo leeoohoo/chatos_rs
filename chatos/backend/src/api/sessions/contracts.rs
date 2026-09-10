@@ -59,6 +59,7 @@ pub(super) struct CompactHistoryQuery {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct UpdateSessionRuntimeSettingsRequest {
     #[serde(alias = "selectedModelId")]
     pub(super) selected_model_id: Option<Option<String>>,
@@ -72,8 +73,26 @@ pub(super) struct UpdateSessionRuntimeSettingsRequest {
     pub(super) workspace_root: Option<Option<String>>,
     #[serde(alias = "reasoningEnabled")]
     pub(super) reasoning_enabled: Option<bool>,
-    #[serde(alias = "planModeEnabled")]
-    pub(super) plan_mode_enabled: Option<bool>,
     #[serde(alias = "autoCreateTask")]
     pub(super) auto_create_task: Option<bool>,
+}
+
+#[cfg(test)]
+mod planning_mode_removal_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_settings_reject_removed_planning_mode() {
+        for key in ["plan_mode_enabled", "planModeEnabled"] {
+            assert!(
+                serde_json::from_value::<UpdateSessionRuntimeSettingsRequest>(
+                    serde_json::json!({key: true})
+                )
+                .is_err()
+            );
+        }
+        let value: UpdateSessionRuntimeSettingsRequest =
+            serde_json::from_value(serde_json::json!({"reasoning_enabled": true})).unwrap();
+        assert_eq!(value.reasoning_enabled, Some(true));
+    }
 }

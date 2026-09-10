@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::core::auth::AuthUser;
-use crate::models::project::ProjectService;
-use crate::services::git::discover_repo_root;
 use crate::utils::workspace::resolve_workspace_dir;
 
 use super::super::roots::home_dir;
@@ -19,7 +17,6 @@ use super::{FsAllowedRoot, FsAllowedRootKind};
 pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
     let mut roots = Vec::new();
     let host_roots_enabled = host_fs_roots_enabled();
-    let allow_legacy_project_roots = legacy_project_roots_enabled() || host_roots_enabled;
     let user_roots = ensure_user_scoped_roots(auth);
 
     if let Some(user_roots) = user_roots.as_ref() {
@@ -41,25 +38,16 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
         }
 
         if let Ok(current_dir) = env::current_dir() {
-            match discover_repo_root(current_dir.as_path()).await {
-                Ok(Some(repo_root)) => {
-                    if let Some(parent) = repo_root.parent() {
-                        push_root(
-                            &mut roots,
-                            parent.to_path_buf(),
-                            FsAllowedRootKind::RepoParent,
-                        );
-                    }
-                }
-                _ => {
-                    if let Some(parent) = current_dir.parent() {
-                        push_root(
-                            &mut roots,
-                            parent.to_path_buf(),
-                            FsAllowedRootKind::RepoParent,
-                        );
-                    }
-                }
+            let repo_root = current_dir
+                .ancestors()
+                .find(|candidate| candidate.join(".git").exists())
+                .unwrap_or(current_dir.as_path());
+            if let Some(parent) = repo_root.parent() {
+                push_root(
+                    &mut roots,
+                    parent.to_path_buf(),
+                    FsAllowedRootKind::RepoParent,
+                );
             }
         }
 
@@ -89,33 +77,6 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
         }
     }
 
-    if let Ok(projects) = ProjectService::list(Some(auth.user_id.clone())).await {
-        for project in projects {
-            let root = project.root_path.trim();
-            if root.is_empty() {
-                continue;
-            }
-            let root_path = PathBuf::from(root);
-            let allowed_project_root = allow_legacy_project_roots
-                || user_roots
-                    .as_ref()
-                    .is_some_and(|scope| path_is_within_user_scope(root_path.as_path(), scope));
-            if !allowed_project_root {
-                continue;
-            }
-            if allow_legacy_project_roots {
-                if let Some(parent) = root_path.parent() {
-                    push_root(
-                        &mut roots,
-                        parent.to_path_buf(),
-                        FsAllowedRootKind::ProjectParent,
-                    );
-                }
-            }
-            push_root(&mut roots, root_path, FsAllowedRootKind::Project);
-        }
-    }
-
     roots.sort_by(|left, right| {
         left.kind
             .priority()
@@ -128,7 +89,6 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
 
 #[derive(Debug, Clone)]
 struct UserScopedRoots {
-    user_root: PathBuf,
     workspaces_root: PathBuf,
     public_root: PathBuf,
 }
@@ -146,7 +106,6 @@ fn ensure_user_scoped_roots(auth: &AuthUser) -> Option<UserScopedRoots> {
     set_private_dir_permissions(workspaces_root.as_path()).ok()?;
     set_private_dir_permissions(public_root.as_path()).ok()?;
     Some(UserScopedRoots {
-        user_root,
         workspaces_root,
         public_root,
     })
@@ -159,16 +118,6 @@ fn set_private_dir_permissions(_path: &Path) -> std::io::Result<()> {
         fs::set_permissions(_path, fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
-}
-
-fn path_is_within_user_scope(candidate: &Path, scope: &UserScopedRoots) -> bool {
-    let Ok(user_root) = canonicalize_existing_dir(scope.user_root.as_path()) else {
-        return false;
-    };
-    let Ok(candidate) = canonicalize_existing_dir(candidate) else {
-        return false;
-    };
-    crate::core::path_guard::path_is_within_root(candidate.as_path(), user_root.as_path())
 }
 
 pub(crate) fn user_path_component(user_id: &str) -> String {
@@ -218,10 +167,6 @@ fn host_fs_roots_enabled_for(node_env: Option<&str>, override_value: Option<bool
     !is_production_env_value(node_env)
 }
 
-fn legacy_project_roots_enabled() -> bool {
-    env_bool("CHATOS_ALLOW_LEGACY_PROJECT_ROOTS")
-}
-
 fn is_production_env_value(value: Option<&str>) -> bool {
     value
         .map(|value| value.trim().eq_ignore_ascii_case("production"))
@@ -232,13 +177,6 @@ fn env_bool_override(key: &str) -> Option<bool> {
     env::var(key)
         .ok()
         .map(|value| matches_env_bool(value.trim()))
-}
-
-fn env_bool(key: &str) -> bool {
-    env::var(key)
-        .ok()
-        .map(|value| matches_env_bool(value.trim()))
-        .unwrap_or(false)
 }
 
 fn matches_env_bool(value: &str) -> bool {

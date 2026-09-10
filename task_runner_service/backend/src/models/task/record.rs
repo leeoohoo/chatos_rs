@@ -19,6 +19,8 @@ pub struct TaskRecord {
     pub subject_id: String,
     #[serde(default)]
     pub project_id: Option<String>,
+    /// Immutable execution binding. Never populated from input_payload or Memory metadata.
+    pub project_context: Option<chatos_mcp_management_sdk::ProjectContextAuthorization>,
     #[serde(default = "default_task_profile")]
     pub task_profile: String,
     #[serde(default)]
@@ -66,6 +68,27 @@ pub struct TaskRecord {
 }
 
 impl TaskRecord {
+    pub(crate) fn validate_project_context(&self) -> Result<(), String> {
+        match (self.project_id.as_deref(), self.project_context.as_ref()) {
+            (None, None) => Ok(()),
+            (Some(project_id), Some(context)) => {
+                let owner = self
+                    .owner_user_id
+                    .as_deref()
+                    .ok_or_else(|| "project task requires an authenticated owner".to_string())?;
+                context.validate_expected(owner, &context.snapshot)?;
+                context.snapshot.validate_project_id(project_id)?;
+                if self.tenant_id != owner {
+                    return Err(
+                        "project task tenant does not match authenticated owner".to_string()
+                    );
+                }
+                Ok(())
+            }
+            _ => Err("project task requires a matching frozen project_context".to_string()),
+        }
+    }
+
     pub fn execution_scope(&self) -> crate::models::TaskExecutionScope {
         let owner_user_id = self
             .owner_user_id

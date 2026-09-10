@@ -22,8 +22,6 @@ use crate::core::ai_model_config::ResolvedChatModelConfig;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::internal_context_locale::InternalContextLocale;
 #[cfg(test)]
-use crate::modules::conversation_runtime::project_execution_planner::materialization_succeeded as project_execution_planner_terminal_tool_succeeded;
-#[cfg(test)]
 use crate::modules::conversation_runtime::task_board::TaskTurnFollowUpMode;
 #[cfg(test)]
 use crate::modules::conversation_runtime::task_board::TaskTurnReviewOutcome;
@@ -41,17 +39,12 @@ mod lifecycle;
 
 pub(crate) use lifecycle::{
     task_turn_review_metadata as cloud_task_turn_review_metadata,
-    track_project_execution_planner_completion as cloud_track_project_execution_planner_completion,
-    track_project_planning_integrity as cloud_track_project_planning_integrity,
     ChatosRuntimeLifecycleHook as CloudChatosRuntimeLifecycleHook,
     TaskTurnLifecycleState as CloudTaskTurnLifecycleState,
 };
 
 #[cfg(test)]
-use lifecycle::{
-    track_project_execution_planner_completion, track_project_planning_integrity,
-    ChatosRuntimeLifecycleHook, TaskTurnLifecycleState,
-};
+use lifecycle::{ChatosRuntimeLifecycleHook, TaskTurnLifecycleState};
 
 #[cfg(test)]
 use lifecycle::assistant_response_input_item;
@@ -235,7 +228,6 @@ pub fn effective_codex_gateway_mcp_passthrough(
     runtime_context: &ResolvedConversationRuntimeContext,
 ) -> bool {
     model_runtime.use_codex_gateway_mcp_passthrough
-        && !runtime_context.project_requirement_execution_planner
         && runtime_context.mcp_server_bundle.0.iter().all(|server| {
             server.name != "mcp_management"
                 && server.header_provider.is_none()

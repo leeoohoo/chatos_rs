@@ -190,7 +190,6 @@ extension NativeLocalConnectorService {
             do {
                 let token = try requireAccessToken()
                 async let model = gateway.modelConfig(token: token, id: modelID, includeSecret: true)
-                async let settings = gateway.modelSettings(token: token)
                 let decision = await NativeApprovalAgent().evaluate(
                     request: .init(
                         command: command,
@@ -203,8 +202,7 @@ extension NativeLocalConnectorService {
                         requestedPermissionsDescription: requestedPermissionsDescription
                     ),
                     model: try await model,
-                    thinkingLevel: state.commandApprovalThinkingLevel,
-                    maximumRetries: try await settings.modelRequestMaxRetries ?? 5
+                    thinkingLevel: state.commandApprovalThinkingLevel
                 )
                 if case let .askUser(reason) = decision {
                     return await requestUserApproval(

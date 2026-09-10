@@ -23,12 +23,6 @@ use crate::trace_context::InternalTraceContextExt;
 use super::http::{build_client_with_timeout, extract_error_message, normalized_url};
 
 mod identifiers;
-mod repo;
-
-pub use repo::{
-    create_harness_project_repo, get_harness_api_access_for_user, HarnessApiAccessResponse,
-    HarnessProjectRepoCreateRequest, HarnessProjectRepoResponse,
-};
 
 use identifiers::{
     harness_email_for_user, harness_project_pat_identifier, harness_space_identifier_for_user,

@@ -34,6 +34,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         owner_role: None,
         agent_key: agent_key.as_str().to_string(),
         project_id: crate::models::normalize_project_id(task.project_id.clone()),
+        project_context: task.project_context.clone(),
         run_id: Some(run.id.clone()),
         execution_group_id: run
             .workspace_execution
@@ -49,7 +50,6 @@ pub(super) async fn resolve_mcp_management_gateway(
         default_model_config_id: task.default_model_config_id.clone(),
         default_remote_connection_id: task.remote_connection_id.clone(),
         tool_result_max_chars: Some(tool_result_max_chars.max(1)),
-        expected_project_task_ids: Vec::new(),
         requested_mcp_ids: Some(run.effective_tools.requested_mcp_resource_ids.clone()),
         selected_plugins: task.plugin_config.selected_plugins.clone(),
         plugin_command_invocations: task.plugin_config.command_invocations.clone(),
@@ -169,7 +169,6 @@ mod tests {
         let config = TaskMcpConfig {
             enabled_builtin_kinds: vec![
                 "CodeMaintainerRead".to_string(),
-                "ProjectManagement".to_string(),
                 "CodeMaintainerRead".to_string(),
             ],
             external_mcp_config_ids: vec![
@@ -183,7 +182,6 @@ mod tests {
             requested_mcp_resource_ids(&config),
             vec![
                 "builtin_code_maintainer_read".to_string(),
-                "builtin_project_management".to_string(),
                 "external-mcp-1".to_string(),
                 "system_mcp_task_process_log".to_string(),
             ]

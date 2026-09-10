@@ -116,7 +116,7 @@ public enum PetActivityRecoveryMapper {
                 kind: mapping.kind,
                 title: mapping.title,
                 route: PetActivityRoute(
-                    projectID: projectID ?? turn.projectExecutionContext?.projectID,
+                    projectID: projectID,
                     conversationID: conversationID,
                     turnID: callback.sourceTurnID ?? turn.id,
                     messageID: reply.message.id,
@@ -128,33 +128,6 @@ public enum PetActivityRecoveryMapper {
             ))
         }
 
-        if let executionTurn = orderedTurns.last(where: {
-            $0.projectExecutionContext?.isProjectExecution == true
-        }), let context = executionTurn.projectExecutionContext,
-           let mapping = projectExecutionMapping(
-               context,
-               date: executionTurn.completedAt ?? executionTurn.startedAt,
-               now: now,
-               hasSpecificActivity: turnsWithSpecificActivity.contains(executionTurn.id)
-           ) {
-            activities.append(PetActivity(
-                id: "project-execution:\(context.executionGroupID ?? executionTurn.id)",
-                source: .projectExecution,
-                kind: mapping.kind,
-                title: mapping.title,
-                detail: mapping.detail,
-                route: PetActivityRoute(
-                    projectID: context.projectID ?? projectID,
-                    conversationID: conversationID,
-                    turnID: executionTurn.id,
-                    runID: context.executionGroupID
-                ),
-                updatedAt: executionTurn.completedAt ?? executionTurn.startedAt,
-                expiresAt: mapping.expiresAt
-            ))
-            turnsWithSpecificActivity.insert(executionTurn.id)
-        }
-
         if let latestTurn = orderedTurns.last,
            !turnsWithSpecificActivity.contains(latestTurn.id),
            let mapping = turnMapping(latestTurn, now: now) {
@@ -164,7 +137,7 @@ public enum PetActivityRecoveryMapper {
                 kind: mapping.kind,
                 title: mapping.title,
                 route: PetActivityRoute(
-                    projectID: latestTurn.projectExecutionContext?.projectID ?? projectID,
+                    projectID: projectID,
                     conversationID: conversationID,
                     turnID: latestTurn.id
                 ),
@@ -217,72 +190,6 @@ public enum PetActivityRecoveryMapper {
         }
         if status.contains("cancel") || status.contains("stopped") {
             return transient(.cancelled, title: "任务已取消", date: date, duration: 5, now: now)
-        }
-        return nil
-    }
-
-    private static func projectExecutionMapping(
-        _ context: ProjectExecutionContext,
-        date: Date,
-        now: Date,
-        hasSpecificActivity: Bool
-    ) -> (kind: PetActivityKind, title: String, detail: String?, expiresAt: Date?)? {
-        let status = normalized(context.overallStatus ?? context.confirmationStatus)
-        if ["awaiting_confirmation", "pending_confirmation", "review_required"].contains(status) {
-            return (
-                .waitingForUser,
-                "执行计划等待确认",
-                "请检查任务节点和依赖关系",
-                nil
-            )
-        }
-        if status == "blocked" {
-            guard !hasSpecificActivity,
-                  let transient = transient(
-                    .blocked,
-                    title: "执行计划被阻塞",
-                    date: date,
-                    duration: 60,
-                    now: now
-                  ) else { return nil }
-            return (transient.kind, transient.title, nil, transient.expiresAt)
-        }
-        if status == "failed" || status == "error" {
-            guard !hasSpecificActivity,
-                  let transient = transient(
-                    .failed,
-                    title: "执行计划失败",
-                    date: date,
-                    duration: 30,
-                    now: now
-                  ) else { return nil }
-            return (transient.kind, transient.title, nil, transient.expiresAt)
-        }
-        if ["confirmed", "processing", "running", "executing", "in_progress"].contains(status) {
-            // An execution group is only an aggregate container. Its cached
-            // status can lag behind the real task graph, so it must never be
-            // presented as a user-cancellable task by itself.
-            return nil
-        }
-        if status == "completed" {
-            guard let transient = transient(
-                .succeeded,
-                title: "执行计划已完成",
-                date: date,
-                duration: 7,
-                now: now
-            ) else { return nil }
-            return (transient.kind, transient.title, nil, transient.expiresAt)
-        }
-        if ["cancelled", "canceled", "stopped"].contains(status) {
-            guard let transient = transient(
-                .cancelled,
-                title: "执行计划已停止",
-                date: date,
-                duration: 5,
-                now: now
-            ) else { return nil }
-            return (transient.kind, transient.title, nil, transient.expiresAt)
         }
         return nil
     }

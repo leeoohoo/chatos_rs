@@ -1,76 +1,52 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
-
+use crate::core::auth::AuthUser;
+use crate::core::user_scope::resolve_user_id;
+use crate::core::validation::normalize_non_empty;
+use crate::models::remote_connection::RemoteConnection;
 use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_mcp_service::{
-    BUILTIN_KIND_CODE_MAINTAINER_READ, BUILTIN_KIND_TERMINAL_CONTROLLER,
-    LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
+    BUILTIN_KIND_CODE_MAINTAINER_READ, LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::time::Duration;
-use tracing::warn;
-
-use crate::api::projects::memory_sync::{sync_active_project, sync_archived_project};
-use crate::config::Config;
-use crate::core::auth::AuthUser;
-use crate::core::user_scope::resolve_user_id;
-use crate::core::user_visible_path::display_path;
-use crate::core::validation::normalize_non_empty;
-use crate::models::project::{Project, ProjectService};
-use crate::models::remote_connection::RemoteConnection;
-use crate::services::realtime::publish_projects_updated;
-use crate::services::{access_token_scope, project_management_api_client};
-
 mod connector_client;
 mod directory_payload;
-mod project_reconciliation;
 mod root_path;
 mod terminal_relay;
 mod types;
-
 use connector_client::{
-    connector_delete_json, connector_get_json, connector_post_json,
-    connector_post_json_with_headers, connector_post_json_with_headers_and_timeout,
-    connector_post_json_with_timeout, local_connector_mcp_relay_path,
+    connector_get_json, connector_post_json, connector_post_json_with_headers,
+    connector_post_json_with_headers_and_timeout, connector_post_json_with_timeout,
+    local_connector_mcp_relay_path,
 };
 pub(crate) use connector_client::{local_connector_tls_connector, local_connector_websocket_url};
 use directory_payload::local_connector_directory_list_payload;
-pub(crate) use project_reconciliation::reconcile_local_connector_project;
 pub(crate) use root_path::{
-    local_connector_display_path, local_connector_root_path, parse_local_connector_root_path,
-    LocalConnectorRootRef,
+    local_connector_root_path, parse_local_connector_root_path, LocalConnectorRootRef,
 };
-use root_path::{
-    local_relative_basename, sanitize_optional_local_relative_path,
-    sanitize_required_local_relative_path,
-};
+use root_path::{sanitize_optional_local_relative_path, sanitize_required_local_relative_path};
 pub(crate) use terminal_relay::{
     close_local_terminal_session, create_local_terminal_session, send_local_terminal_input,
 };
 use types::{
-    CreateLocalConnectorProjectRequest, CreateLocalDirectoryRequest, CreateProjectBindingRequest,
-    DeviceQuery, LocalConnectorDevice, LocalConnectorDirectoryCreateResponse,
-    LocalConnectorProjectBinding, LocalConnectorWorkspace, LocalFsQuery, McpToolCallParams,
-    McpToolCallRequest, RelayWorkspaceDirectoryCreateRequest, WorkspaceQuery,
+    CreateLocalDirectoryRequest, DeviceQuery, LocalConnectorDevice,
+    LocalConnectorDirectoryCreateResponse, LocalConnectorWorkspace, LocalFsQuery,
+    McpToolCallParams, McpToolCallRequest, RelayWorkspaceDirectoryCreateRequest, WorkspaceQuery,
 };
-const LOCAL_CONNECTOR_BINDING_MODE_MCP: &str = "local_mcp";
-const LOCAL_CONNECTOR_BINDING_MODE_TERMINAL: &str = "local_terminal";
 const LOCAL_CONNECTOR_DEVICE_ONLINE: &str = "online";
 const LOCAL_CONNECTOR_WORKSPACE_ACTIVE: &str = "active";
-const LOCAL_HARNESS_IMPORT_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 pub(crate) const LOCAL_CONNECTOR_BUILTIN_CODE_READ: &str = BUILTIN_KIND_CODE_MAINTAINER_READ;
-pub(crate) const LOCAL_CONNECTOR_BUILTIN_TERMINAL: &str = BUILTIN_KIND_TERMINAL_CONTROLLER;
 pub fn router() -> Router {
     Router::new()
         .route("/api/local-connectors/devices", get(list_devices))
         .route("/api/local-connectors/workspaces", get(list_workspaces))
         .route("/api/local-connectors/fs/list", get(list_directory))
         .route("/api/local-connectors/fs/mkdir", post(create_directory))
-        .route("/api/local-connectors/projects", post(create_project))
         .route(
             "/api/local-connectors/terminal/exec",
             post(terminal_relay::exec_terminal_command),
@@ -364,339 +340,6 @@ async fn create_directory(
     }
 }
 
-async fn create_project(
-    auth: AuthUser,
-    Json(req): Json<CreateLocalConnectorProjectRequest>,
-) -> (StatusCode, Json<Value>) {
-    let user_id = match resolve_user_id(req.user_id, &auth) {
-        Ok(user_id) => user_id,
-        Err(err) => return err,
-    };
-    let device_id = match required_text(req.device_id, "device_id") {
-        Ok(value) => value,
-        Err(err) => return err,
-    };
-    let workspace_id = match required_text(req.workspace_id, "workspace_id") {
-        Ok(value) => value,
-        Err(err) => return err,
-    };
-    let (device, workspace) =
-        match load_owned_online_workspace(device_id.as_str(), workspace_id.as_str()).await {
-            Ok(value) => value,
-            Err(err) => return err,
-        };
-    let relative_path = match sanitize_optional_local_relative_path(req.relative_path.as_deref()) {
-        Ok(value) => value,
-        Err(err) => return err,
-    };
-    if let Some(path) = relative_path.as_deref() {
-        if let Err(err) =
-            validate_local_connector_directory(device_id.as_str(), workspace_id.as_str(), path)
-                .await
-        {
-            return err;
-        }
-    }
-
-    let name = normalize_non_empty(req.name)
-        .or_else(|| relative_path.as_deref().and_then(local_relative_basename))
-        .or_else(|| normalize_non_empty(Some(workspace.display_name.clone())))
-        .or_else(|| normalize_non_empty(Some(workspace.local_path_alias.clone())))
-        .unwrap_or_else(|| "Local Project".to_string());
-    let root_path = local_connector_root_path(
-        device_id.as_str(),
-        workspace_id.as_str(),
-        relative_path.as_deref(),
-    );
-    let repository_mode = match parse_repository_mode(req.repository_mode.as_deref()) {
-        Ok(mode) => mode.to_string(),
-        Err(message) => {
-            return error(StatusCode::BAD_REQUEST, message);
-        }
-    };
-    let git_url = normalize_non_empty(req.git_url);
-    if repository_mode == "external" && git_url.is_none() {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "使用现有 Git 时必须提供当前目录的远程仓库地址",
-        );
-    }
-    let project = Project::new(
-        name,
-        root_path,
-        git_url,
-        repository_mode.clone(),
-        normalize_non_empty(req.description),
-        Some(user_id.clone()),
-    );
-    let saved_id = match ProjectService::create(project.clone()).await {
-        Ok(id) => id,
-        Err(err) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("创建项目失败: {err}"),
-            );
-        }
-    };
-    let saved = ProjectService::get_by_id(saved_id.as_str())
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| Project {
-            id: saved_id.clone(),
-            ..project
-        });
-    if repository_mode == "managed" {
-        if let Err(err) = import_local_project_to_harness(
-            saved.id.as_str(),
-            device_id.as_str(),
-            workspace_id.as_str(),
-            relative_path.as_deref(),
-        )
-        .await
-        {
-            let failure = error(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "error": "导入本地项目到 Harness 失败",
-                    "detail": err,
-                }),
-            );
-            return project_create_error_with_rollback(saved.clone(), &[], failure, true).await;
-        }
-    }
-
-    let mut bindings = Vec::new();
-    for mode in [
-        LOCAL_CONNECTOR_BINDING_MODE_MCP,
-        LOCAL_CONNECTOR_BINDING_MODE_TERMINAL,
-    ] {
-        match create_project_binding(
-            saved.id.as_str(),
-            device_id.as_str(),
-            workspace_id.as_str(),
-            mode,
-        )
-        .await
-        {
-            Ok(binding) => bindings.push(binding),
-            Err(err) => {
-                return project_create_error_with_rollback(
-                    saved.clone(),
-                    bindings.as_slice(),
-                    err,
-                    false,
-                )
-                .await;
-            }
-        }
-    }
-
-    if let Err(err) = sync_active_project(&saved).await {
-        warn!(
-            project_id = saved.id.as_str(),
-            error = err.as_str(),
-            "sync memory project failed after local connector project create"
-        );
-        let failure = error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({
-                "error": "sync memory project failed",
-                "detail": err,
-            }),
-        );
-        return project_create_error_with_rollback(
-            saved.clone(),
-            bindings.as_slice(),
-            failure,
-            true,
-        )
-        .await;
-    }
-
-    publish_projects_updated(
-        auth.user_id.as_str(),
-        "project_created",
-        Some(saved.id.as_str()),
-        Some(saved.clone()),
-    );
-    (
-        StatusCode::CREATED,
-        Json(project_value(
-            saved,
-            Some(json!({
-                "device": device,
-                "workspace": workspace,
-                "bindings": bindings,
-            })),
-        )),
-    )
-}
-
-async fn validate_local_connector_directory(
-    device_id: &str,
-    workspace_id: &str,
-    path: &str,
-) -> Result<(), (StatusCode, Json<Value>)> {
-    list_local_connector_directory(device_id, workspace_id, path)
-        .await
-        .map(|_| ())
-}
-
-pub(crate) async fn import_local_project_to_harness(
-    project_id: &str,
-    device_id: &str,
-    workspace_id: &str,
-    relative_path: Option<&str>,
-) -> Result<(), String> {
-    let sync_secret = project_sync_secret()?;
-    let access = project_management_api_client::get_project_harness_git_access(
-        sync_secret.as_str(),
-        project_id,
-        access_token_scope::get_current_access_token().as_deref(),
-    )
-    .await?;
-    if access.project_id.trim() != project_id.trim() {
-        return Err("Harness git access project identity mismatch".to_string());
-    }
-    if access.repo_path.trim().is_empty() || access.space_identifier.trim().is_empty() {
-        return Err("Harness git access metadata is incomplete".to_string());
-    }
-    let push_url = authenticated_harness_git_url(
-        access.git_url.as_str(),
-        access.access_username.as_str(),
-        access.access_token.as_str(),
-    )?;
-    let default_branch = access.default_branch.trim();
-    if default_branch.is_empty() {
-        return Err("Harness default branch is empty".to_string());
-    }
-    let _prefer_https_git_url = access.git_ssh_url.as_deref().is_none_or(str::is_empty);
-    let command = local_harness_import_command(push_url.as_str(), default_branch);
-    let value = call_local_mcp_tool_with_timeout(
-        device_id,
-        workspace_id,
-        relative_path,
-        &[LOCAL_CONNECTOR_BUILTIN_TERMINAL],
-        "execute_command",
-        json!({
-            "path": ".",
-            "common": command,
-            "background": false,
-            "timeout_ms": LOCAL_HARNESS_IMPORT_TIMEOUT_MS,
-        }),
-        Duration::from_millis(LOCAL_HARNESS_IMPORT_TIMEOUT_MS)
-            .saturating_add(Duration::from_secs(30)),
-    )
-    .await
-    .map_err(|err| {
-        let message = response_summary(&err.1 .0);
-        scrub_sensitive(
-            message.as_str(),
-            &[push_url.as_str(), access.access_token.as_str()],
-        )
-    })?;
-    let success = value
-        .get("success")
-        .and_then(Value::as_bool)
-        .unwrap_or_else(|| value.get("exit_code").and_then(Value::as_i64) == Some(0));
-    if success {
-        return Ok(());
-    }
-    let message = value
-        .get("stderr")
-        .or_else(|| value.get("stdout"))
-        .or_else(|| value.get("output"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Local Connector Harness import command failed");
-    Err(scrub_sensitive(
-        message,
-        &[push_url.as_str(), access.access_token.as_str()],
-    ))
-}
-
-fn project_sync_secret() -> Result<String, String> {
-    let cfg = Config::try_get()?;
-    cfg.project_service_sync_secret
-        .as_deref()
-        .or(cfg.task_runner_callback_secret.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| "project service sync secret is not configured".to_string())
-}
-
-fn authenticated_harness_git_url(
-    raw_url: &str,
-    username: &str,
-    token: &str,
-) -> Result<String, String> {
-    let mut url =
-        reqwest::Url::parse(raw_url).map_err(|err| format!("invalid harness git url: {err}"))?;
-    url.set_username(username.trim())
-        .map_err(|_| "failed to set harness git username".to_string())?;
-    url.set_password(Some(token.trim()))
-        .map_err(|_| "failed to set harness git token".to_string())?;
-    Ok(url.to_string())
-}
-
-fn local_harness_import_command(push_url: &str, default_branch: &str) -> String {
-    format!(
-        r#"set -e
-tmp="${{TMPDIR:-/tmp}}/chatos-harness-import-$(date +%s)-$$"
-rm -rf "$tmp"
-mkdir -p "$tmp"
-trap 'rm -rf "$tmp"' EXIT
-if command -v rsync >/dev/null 2>&1; then
-  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git ls-files -co --exclude-standard -z -- . \
-      | while IFS= read -r -d '' file; do
-          if [ -e "$file" ] || [ -L "$file" ]; then
-            printf '%s\0' "$file"
-          fi
-        done \
-      | rsync -a --from0 --files-from=- --exclude='.git/' --exclude='.chatos/' ./ "$tmp/"
-  else
-    rsync -a --delete \
-      --exclude='.git/' --exclude='.chatos/' \
-      --exclude='target/' --exclude='node_modules/' --exclude='.build/' \
-      --exclude='DerivedData/' --exclude='.swiftpm/' --exclude='.gradle/' \
-      --exclude='build/' --exclude='dist/' --exclude='.next/' \
-      --exclude='.venv/' --exclude='venv/' --exclude='__pycache__/' \
-      ./ "$tmp/"
-  fi
-else
-  tar \
-    --exclude='./.git' --exclude='./.git/*' --exclude='*/.git' --exclude='*/.git/*' \
-    --exclude='./.chatos' --exclude='./.chatos/*' --exclude='*/.chatos' --exclude='*/.chatos/*' \
-    --exclude='./target' --exclude='*/target' \
-    --exclude='./node_modules' --exclude='*/node_modules' \
-    --exclude='./.build' --exclude='*/.build' \
-    --exclude='./DerivedData' --exclude='*/DerivedData' \
-    --exclude='./.swiftpm' --exclude='*/.swiftpm' \
-    --exclude='./.gradle' --exclude='*/.gradle' \
-    --exclude='./build' --exclude='*/build' \
-    --exclude='./dist' --exclude='*/dist' \
-    --exclude='./.next' --exclude='*/.next' \
-    --exclude='./.venv' --exclude='*/.venv' \
-    --exclude='./venv' --exclude='*/venv' \
-    --exclude='./__pycache__' --exclude='*/__pycache__' \
-    -cf - . | (cd "$tmp" && tar -xf -)
-fi
-cd "$tmp"
-git init -b {branch} >/dev/null 2>&1 || {{ git init >/dev/null && git symbolic-ref HEAD refs/heads/{branch}; }}
-git add -A -- .
-git -c user.name=ChatOS -c user.email=chatos@example.invalid commit --allow-empty --no-verify -m 'Import local project into ChatOS Harness' >/dev/null
-git remote add origin {push_url}
-GIT_TERMINAL_PROMPT=0 git push --force origin HEAD:refs/heads/{branch}
-"#,
-        branch = shell_quote(default_branch),
-        push_url = shell_quote(push_url)
-    )
-}
-
 pub(crate) async fn call_local_mcp_tool(
     device_id: &str,
     workspace_id: &str,
@@ -713,27 +356,6 @@ pub(crate) async fn call_local_mcp_tool(
         name,
         arguments,
         None,
-    )
-    .await
-}
-
-async fn call_local_mcp_tool_with_timeout(
-    device_id: &str,
-    workspace_id: &str,
-    cwd: Option<&str>,
-    enabled_builtin_kinds: &[&str],
-    name: &str,
-    arguments: Value,
-    timeout: Duration,
-) -> Result<Value, (StatusCode, Json<Value>)> {
-    call_local_mcp_tool_with_optional_timeout(
-        device_id,
-        workspace_id,
-        cwd,
-        enabled_builtin_kinds,
-        name,
-        arguments,
-        Some(timeout),
     )
     .await
 }
@@ -780,24 +402,6 @@ async fn call_local_mcp_tool_with_optional_timeout(
         }
     };
     extract_mcp_tool_result(response)
-}
-
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn scrub_sensitive(value: &str, secrets: &[&str]) -> String {
-    let mut output = value.to_string();
-    for secret in secrets {
-        let secret = secret.trim();
-        if !secret.is_empty() {
-            output = output.replace(secret, "***");
-        }
-    }
-    output
 }
 
 fn extract_mcp_tool_result(response: Value) -> Result<Value, (StatusCode, Json<Value>)> {
@@ -859,19 +463,6 @@ pub(crate) async fn create_local_connector_directory(
     .await
 }
 
-pub(crate) async fn call_local_workspace_filesystem(
-    device_id: &str,
-    workspace_id: &str,
-    operation: Value,
-) -> Result<Value, (StatusCode, Json<Value>)> {
-    let relay_path = format!(
-        "/api/local-connectors/relay/{}/workspaces/{}/filesystem",
-        urlencoding::encode(device_id),
-        urlencoding::encode(workspace_id)
-    );
-    connector_post_json(relay_path.as_str(), &operation).await
-}
-
 async fn list_local_connector_directory(
     device_id: &str,
     workspace_id: &str,
@@ -883,25 +474,6 @@ async fn list_local_connector_directory(
         urlencoding::encode(workspace_id)
     );
     connector_get_json(relay_path.as_str(), &[("path", path.to_string())]).await
-}
-
-async fn create_project_binding(
-    project_id: &str,
-    device_id: &str,
-    workspace_id: &str,
-    mode: &str,
-) -> Result<LocalConnectorProjectBinding, (StatusCode, Json<Value>)> {
-    connector_post_json(
-        "/api/local-connectors/project-bindings",
-        &CreateProjectBindingRequest {
-            project_id,
-            device_id,
-            workspace_id,
-            mode,
-            enabled: true,
-        },
-    )
-    .await
 }
 
 async fn load_owned_device(
@@ -977,80 +549,6 @@ pub(crate) async fn validate_local_connector_execution_target(
     Ok(())
 }
 
-async fn project_create_error_with_rollback(
-    project: Project,
-    bindings: &[LocalConnectorProjectBinding],
-    err: (StatusCode, Json<Value>),
-    compensate_memory: bool,
-) -> (StatusCode, Json<Value>) {
-    let rollback_result =
-        rollback_local_connector_project(&project, bindings, compensate_memory).await;
-    match rollback_result {
-        Ok(()) => err,
-        Err(rollback_error) => rollback_incomplete_response(err, rollback_error),
-    }
-}
-
-async fn rollback_local_connector_project(
-    project: &Project,
-    bindings: &[LocalConnectorProjectBinding],
-    compensate_memory: bool,
-) -> Result<(), String> {
-    let mut failures = Vec::new();
-    for binding in bindings {
-        let path = format!(
-            "/api/local-connectors/project-bindings/{}",
-            urlencoding::encode(binding.id.as_str())
-        );
-        if let Err((status, detail)) = connector_delete_json(path.as_str()).await {
-            failures.push(format!(
-                "delete binding {} failed with {}: {}",
-                binding.id,
-                status,
-                response_summary(&detail.0)
-            ));
-        }
-    }
-    if let Err(err) = ProjectService::delete(project.id.as_str()).await {
-        failures.push(format!("delete project {} failed: {err}", project.id));
-    }
-    if compensate_memory {
-        if let Err(err) = sync_archived_project(project).await {
-            failures.push(format!("archive memory project failed: {err}"));
-        }
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; "))
-    }
-}
-
-fn rollback_incomplete_response(
-    err: (StatusCode, Json<Value>),
-    rollback_error: String,
-) -> (StatusCode, Json<Value>) {
-    let (status, Json(detail)) = err;
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({
-            "error": "Local Connector 项目创建失败，且回滚不完整",
-            "original_status": status.as_u16(),
-            "detail": detail,
-            "rollback_error": rollback_error,
-        })),
-    )
-}
-
-fn response_summary(value: &Value) -> String {
-    value
-        .get("error")
-        .and_then(Value::as_str)
-        .or_else(|| value.get("detail").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| value.to_string())
-}
-
 fn required_text(value: Option<String>, field: &str) -> Result<String, (StatusCode, Json<Value>)> {
     normalize_non_empty(value).ok_or_else(|| {
         (
@@ -1069,148 +567,10 @@ pub(crate) async fn validate_local_connector_workspace_ref(
     Ok(workspace.local_path_alias)
 }
 
-fn project_value(project: Project, local_connector: Option<Value>) -> Value {
-    let internal_root_path = project.root_path.clone();
-    let display_root_path = local_connector_display_path(project.root_path.as_str())
-        .unwrap_or_else(|| display_path(project.root_path.as_str()));
-    let mut value = serde_json::to_value(project).unwrap_or(Value::Null);
-    if let Value::Object(ref mut map) = value {
-        map.insert(
-            "root_path".to_string(),
-            Value::String(internal_root_path.clone()),
-        );
-        map.insert("rootPath".to_string(), Value::String(internal_root_path));
-        map.insert(
-            "display_root_path".to_string(),
-            Value::String(display_root_path),
-        );
-        if let Some(local_connector) = local_connector {
-            map.insert("local_connector".to_string(), local_connector.clone());
-            map.insert("localConnector".to_string(), local_connector);
-        }
-    }
-    value
-}
-
 fn error(status: StatusCode, payload: impl Into<Value>) -> (StatusCode, Json<Value>) {
     let payload = payload.into();
     match payload {
         Value::String(message) => (status, Json(json!({ "error": message }))),
         other => (status, Json(other)),
-    }
-}
-
-fn parse_repository_mode(value: Option<&str>) -> Result<&'static str, &'static str> {
-    match value.map(str::trim) {
-        Some("managed") => Ok("managed"),
-        Some("external") => Ok("external"),
-        Some(_) => Err("repository_mode must be managed or external"),
-        None => Err("请选择使用现有 Git 或 ChatOS 托管 Git"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{local_harness_import_command, parse_repository_mode};
-    use std::fs;
-    use std::process::Command;
-
-    #[test]
-    fn project_creation_requires_an_explicit_repository_mode() {
-        assert_eq!(parse_repository_mode(Some("managed")), Ok("managed"));
-        assert_eq!(parse_repository_mode(Some(" external ")), Ok("external"));
-        assert!(parse_repository_mode(None).is_err());
-        assert!(parse_repository_mode(Some("default")).is_err());
-    }
-
-    #[test]
-    fn harness_import_honors_gitignore_and_pushes_source_files() {
-        let root = std::env::temp_dir().join(format!(
-            "chatos-harness-import-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let source = root.join("source");
-        let remote = root.join("remote.git");
-        fs::create_dir_all(source.join("target")).expect("create test source");
-        fs::write(source.join(".gitignore"), "/target\n").expect("write gitignore");
-        fs::write(source.join("main.rs"), "fn main() {}\n").expect("write source file");
-        fs::write(source.join("deleted.rs"), "removed before import\n")
-            .expect("write deleted source file");
-        fs::write(source.join("target/large-artifact"), "ignored\n")
-            .expect("write ignored artifact");
-
-        assert!(Command::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(&source)
-            .status()
-            .expect("initialize source repository")
-            .success());
-        assert!(Command::new("git")
-            .args(["add", "--", "."])
-            .current_dir(&source)
-            .status()
-            .expect("stage source repository")
-            .success());
-        fs::remove_file(source.join("deleted.rs")).expect("remove staged source file");
-        assert!(Command::new("git")
-            .args([
-                "init",
-                "-q",
-                "--bare",
-                remote.to_str().expect("remote path"),
-            ])
-            .status()
-            .expect("initialize bare remote")
-            .success());
-
-        let script = local_harness_import_command(remote.to_str().expect("remote path"), "main");
-        let output = Command::new("/bin/zsh")
-            .args(["-lc", script.as_str()])
-            .current_dir(&source)
-            .output()
-            .expect("run Harness import command");
-        assert!(
-            output.status.success(),
-            "Harness import failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        assert!(Command::new("git")
-            .args([
-                "--git-dir",
-                remote.to_str().expect("remote path"),
-                "show",
-                "main:main.rs",
-            ])
-            .output()
-            .expect("read imported source")
-            .status
-            .success());
-        assert!(!Command::new("git")
-            .args([
-                "--git-dir",
-                remote.to_str().expect("remote path"),
-                "cat-file",
-                "-e",
-                "main:target/large-artifact",
-            ])
-            .output()
-            .expect("check ignored artifact")
-            .status
-            .success());
-        assert!(!Command::new("git")
-            .args([
-                "--git-dir",
-                remote.to_str().expect("remote path"),
-                "cat-file",
-                "-e",
-                "main:deleted.rs",
-            ])
-            .output()
-            .expect("check deleted source")
-            .status
-            .success());
-
-        fs::remove_dir_all(root).expect("remove test repositories");
     }
 }

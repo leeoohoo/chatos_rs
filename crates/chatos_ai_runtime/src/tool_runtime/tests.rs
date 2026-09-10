@@ -288,7 +288,7 @@ fn merge_pending_tool_turn_items_skips_outputs_without_calls() {
 #[test]
 fn merge_pending_tool_turn_items_replaces_budget_omission_with_latest_output() {
     let mut items = vec![
-        json!({"type":"function_call","call_id":"call_1","name":"project_management_list_project_tasks","arguments":"{}"}),
+        json!({"type":"function_call","call_id":"call_1","name":"task_runner_list_tasks","arguments":"{}"}),
         json!({
             "type":"function_call_output",
             "call_id":"call_1",
@@ -296,7 +296,7 @@ fn merge_pending_tool_turn_items_replaces_budget_omission_with_latest_output() {
         }),
     ];
     let pending_calls = vec![
-        json!({"type":"function_call","call_id":"call_1","name":"project_management_list_project_tasks","arguments":"{}"}),
+        json!({"type":"function_call","call_id":"call_1","name":"task_runner_list_tasks","arguments":"{}"}),
     ];
     let pending_outputs = vec![json!({
         "type":"function_call_output",

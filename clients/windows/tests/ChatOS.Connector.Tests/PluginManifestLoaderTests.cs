@@ -149,6 +149,58 @@ public sealed class PluginManifestLoaderTests : IDisposable
     }
 
     [Fact]
+    public async Task ListsAndPreparesProjectScopedWorkbenchApplication()
+    {
+        var installation = CreateInstallation();
+        Directory.CreateDirectory(Path.Combine(installation, "ui"));
+        await File.WriteAllTextAsync(Path.Combine(installation, "ui", "index.html"), "<html></html>");
+        await File.WriteAllTextAsync(
+            Path.Combine(installation, "chatos.plugin.json"),
+            """{"schemaVersion":3,"name":"test-plugin","version":"1.0.0","description":"fallback","interface":{"displayName":"Project Studio","shortDescription":"Requirements and plans","brandColor":"#2563EB"},"mcpServers":{"main":{"type":"stdio","bin":"test-plugin"}},"ui":[{"componentKey":"studio","source":"./ui/index.html","title":"Project Studio","surface":"workbench","bridgeCapabilities":["host.context.read","task.batch.prepare"],"runtime":{"type":"local_http","bin":"test-plugin","args":["studio"],"healthPath":"/api/health"}}],"permissions":[{"permission":"process.spawn","required":true,"components":["main","studio"]}],"runtimeContext":{"scope":"project","components":["studio"],"required":["project.id"],"storageIsolation":"project","missingContext":"reject"}}""");
+        var loader = new PluginManifestLoader(Path.Combine(_directory, "runtime-applications"));
+        var record = Record(installation) with { DeclaredPermissions = ["process.spawn"] };
+
+        var applications = await loader.ListApplicationsAsync(record);
+        var prepared = await loader.PrepareApplicationAsync(
+            record,
+            "studio",
+            new HashSet<string>(StringComparer.Ordinal) { "process.spawn" },
+            "owner-1",
+            "device-1",
+            "workspace-1",
+            _directory,
+            "project-1",
+            "Relay");
+
+        var application = Assert.Single(applications);
+        Assert.Equal("Requirements and plans", application.Description);
+        Assert.Equal(["host.context.read", "task.batch.prepare"], application.BridgeCapabilities);
+        Assert.Equal("project", application.ContextScope);
+        Assert.Equal("project-1", prepared.Environment["CHATOS_PROJECT_ID"]);
+        Assert.Equal("Relay", prepared.Environment["CHATOS_PROJECT_NAME"]);
+        Assert.NotNull(prepared.ExecutablePath);
+    }
+
+    [Fact]
+    public async Task ProjectWorkbenchRejectsMissingClientProjectContext()
+    {
+        var installation = CreateInstallation();
+        Directory.CreateDirectory(Path.Combine(installation, "ui"));
+        await File.WriteAllTextAsync(Path.Combine(installation, "ui", "index.html"), "<html></html>");
+        await File.WriteAllTextAsync(
+            Path.Combine(installation, "chatos.plugin.json"),
+            """{"schemaVersion":3,"name":"test-plugin","version":"1.0.0","ui":[{"componentKey":"studio","source":"./ui/index.html","surface":"workbench"}],"runtimeContext":{"scope":"project","components":["studio"],"required":["project.id"],"storageIsolation":"project","missingContext":"reject"}}""");
+        var loader = new PluginManifestLoader(Path.Combine(_directory, "runtime-required-app"));
+
+        await Assert.ThrowsAsync<PluginRuntimeException>(() => loader.PrepareApplicationAsync(
+            Record(installation),
+            "studio",
+            new HashSet<string>(StringComparer.Ordinal),
+            "owner-1",
+            "device-1"));
+    }
+
+    [Fact]
     public async Task RejectsMissingRequiredPermissionAndEscapingBin()
     {
         var installation = CreateInstallation();

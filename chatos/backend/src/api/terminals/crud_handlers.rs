@@ -11,12 +11,12 @@ use crate::api::local_connectors::{
     send_local_terminal_input, validate_local_connector_workspace_ref, LocalConnectorRootRef,
 };
 use crate::core::auth::AuthUser;
-use crate::core::project_access::{ensure_owned_project, map_project_access_error};
+use crate::core::project_access::{map_project_access_error, resolve_owned_project_root};
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::user_visible_path::display_path;
 use crate::core::validation::normalize_non_empty;
-use crate::models::terminal::{Terminal, TerminalService, TERMINAL_KIND_SHARED};
+use crate::models::terminal::{Terminal, TerminalService};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
 use crate::services::realtime::{
@@ -61,10 +61,10 @@ async fn ensure_local_cwd_matches_project(
     let Some(project_id) = project_id else {
         return Ok(());
     };
-    let project = ensure_owned_project(project_id, auth)
+    let project_root = resolve_owned_project_root(project_id, auth)
         .await
         .map_err(map_project_access_error)?;
-    if project.root_path.trim() != cwd.trim() {
+    if project_root.trim() != cwd.trim() {
         return Err((
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "Local Connector 终端必须绑定当前本地项目目录" })),
@@ -152,7 +152,6 @@ pub(super) async fn create_terminal(
     let terminal = Terminal::new(
         terminal_name,
         cwd.trim().to_string(),
-        TERMINAL_KIND_SHARED.to_string(),
         Some(user_id.clone()),
         normalized_project_id,
     );
@@ -325,7 +324,6 @@ pub(super) async fn dispatch_terminal_command(
         let terminal = Terminal::new(
             derive_terminal_name(alias.as_str()),
             cwd.trim().to_string(),
-            TERMINAL_KIND_SHARED.to_string(),
             Some(user_id.clone()),
             normalized_project_id,
         );
@@ -424,33 +422,20 @@ pub(super) async fn interrupt_terminal_command(
         Err(err) => return err,
     };
     let reason = normalize_non_empty(req.reason).unwrap_or_else(|| "manual_interrupt".to_string());
-    let result = if reason == "project_run_restart" {
-        close_local_terminal_session(
-            root_ref.device_id.as_str(),
-            root_ref.workspace_id.as_str(),
-            terminal.id.as_str(),
-        )
-        .await
-    } else {
-        send_local_terminal_input(
-            root_ref.device_id.as_str(),
-            root_ref.workspace_id.as_str(),
-            terminal.id.as_str(),
-            "\u{3}",
-        )
-        .await
-    };
+    let result = send_local_terminal_input(
+        root_ref.device_id.as_str(),
+        root_ref.workspace_id.as_str(),
+        terminal.id.as_str(),
+        "\u{3}",
+    )
+    .await;
     if let Err(err) = result {
         return (
             StatusCode::BAD_GATEWAY,
             Json(serde_json::json!({ "error": connector_error_message(err) })),
         );
     }
-    let signal = if reason == "project_run_restart" {
-        "close"
-    } else {
-        "SIGINT"
-    };
+    let signal = "SIGINT";
     let _ = TerminalLogService::create(TerminalLog::new(
         terminal.id.clone(),
         "signal".to_string(),

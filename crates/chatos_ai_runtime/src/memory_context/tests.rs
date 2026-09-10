@@ -329,7 +329,7 @@ fn compose_response_to_input_items_keeps_oldest_tool_output_prefix_stable() {
             "tool_calls": [{
                 "id": call_id,
                 "type": "function",
-                "function": {"name": "project_management_list_project_tasks", "arguments": "{}"}
+                "function": {"name": "task_runner_list_tasks", "arguments": "{}"}
             }]
         })),
         summary_status: "pending".to_string(),
@@ -350,7 +350,7 @@ fn compose_response_to_input_items_keeps_oldest_tool_output_prefix_stable() {
             structured_payload: None,
             metadata: Some(json!({
                 "tool_call_id": call_id,
-                "name": "project_management_list_project_tasks"
+                "name": "task_runner_list_tasks"
             })),
             summary_status: "pending".to_string(),
             summary_id: None,

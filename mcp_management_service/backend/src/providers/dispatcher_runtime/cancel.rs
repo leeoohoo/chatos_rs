@@ -28,11 +28,6 @@ impl ProviderDispatcher {
                 return result;
             }
             match route.provider_kind {
-                McpProviderKind::InternalService if self.project_service.supports(route) => {
-                    self.project_service
-                        .cancel_invocation(snapshot, route, invocation_id)
-                        .await
-                }
                 McpProviderKind::InternalService if self.task_runner.supports(route) => {
                     self.task_runner
                         .cancel_invocation(snapshot, route, invocation_id)

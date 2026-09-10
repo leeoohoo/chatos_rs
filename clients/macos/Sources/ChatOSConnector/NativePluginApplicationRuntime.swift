@@ -40,7 +40,10 @@ actor NativePluginApplicationRuntime {
             return .init(
                 application: application,
                 url: current.baseURL,
-                websiteDataStoreID: websiteDataStoreID
+                websiteDataStoreID: websiteDataStoreID,
+                releaseID: record.releaseID,
+                version: record.version,
+                artifactSHA256: record.artifactSHA256
             )
         }
         stop(key: key)
@@ -60,7 +63,10 @@ actor NativePluginApplicationRuntime {
             return .init(
                 application: application,
                 url: sourceURL,
-                websiteDataStoreID: websiteDataStoreID
+                websiteDataStoreID: websiteDataStoreID,
+                releaseID: record.releaseID,
+                version: record.version,
+                artifactSHA256: record.artifactSHA256
             )
         }
         guard runtime.type == "local_http" else {
@@ -144,7 +150,10 @@ actor NativePluginApplicationRuntime {
         return .init(
             application: application,
             url: baseURL,
-            websiteDataStoreID: websiteDataStoreID
+            websiteDataStoreID: websiteDataStoreID,
+            releaseID: record.releaseID,
+            version: record.version,
+            artifactSHA256: record.artifactSHA256
         )
     }
 

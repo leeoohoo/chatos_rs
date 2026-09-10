@@ -84,35 +84,8 @@ impl AppConfig {
             require_config_center_secret("TASK_RUNNER_USER_SERVICE_BASE_URL")?;
         let user_service_request_timeout_ms =
             require_config_center_u64("TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
-        let project_service_base_url = Some(require_config_center_secret(
-            "TASK_RUNNER_PROJECT_SERVICE_BASE_URL",
-        )?);
-        let project_service_internal_base_url = Some(require_config_center_secret(
-            "TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL",
-        )?);
-        require_https_base_url(
-            "TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL",
-            project_service_internal_base_url
-                .as_deref()
-                .unwrap_or_default(),
-        )?;
-        let project_service_sync_secret = Some(require_config_center_secret(
-            "TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET",
-        )?);
-        let project_service_request_timeout_ms =
-            require_config_center_u64("TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
-        let project_service_internal_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
-                project_service_request_timeout_ms,
-            )),
-            required_bootstrap_path("PROJECT_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
-            required_bootstrap_path("PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
-        )?;
         let admin_display_name = require_config_center_text("TASK_RUNNER_ADMIN_DISPLAY_NAME")?;
 
-        let internal_api_secret = Some(require_config_center_secret(
-            "PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
-        )?);
         let chatos_internal_api_secret = Some(require_config_center_secret(
             "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET",
         )?);
@@ -160,7 +133,6 @@ impl AppConfig {
             default_tool_results_model_total_max_chars,
             chatos_callback_url,
             chatos_callback_http_client,
-            internal_api_secret,
             chatos_internal_api_secret,
             mcp_management_internal_api_secret,
             user_service_internal_api_secret,
@@ -170,13 +142,6 @@ impl AppConfig {
             admin_display_name,
             user_service_base_url,
             user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
-            project_service_base_url,
-            project_service_internal_base_url,
-            project_service_internal_http_client,
-            project_service_sync_secret,
-            project_service_request_timeout: Duration::from_millis(
-                project_service_request_timeout_ms,
-            ),
         };
 
         validate_production_secret(
@@ -190,14 +155,6 @@ impl AppConfig {
             &[
                 DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
                 "change_me_task_runner_memory_engine_secret",
-            ],
-        )?;
-        validate_production_secret(
-            "PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
-            config.internal_api_secret.as_deref(),
-            &[
-                "change_me_task_runner_internal_secret",
-                "change_me_project_service_task_runner_secret",
             ],
         )?;
         validate_production_secret(

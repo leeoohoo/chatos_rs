@@ -102,12 +102,7 @@ pub fn normalize_thinking_level(
         _ => return Err("invalid thinking_level".to_string()),
     };
 
-    let allowed = match provider.as_str() {
-        "gpt" => ["none", "minimal", "low", "medium", "high", "xhigh"].as_slice(),
-        "deepseek" => ["none", "low", "medium", "high", "max"].as_slice(),
-        "kimi" => ["none", "auto", "low", "medium", "high", "xhigh"].as_slice(),
-        _ => ["none", "low", "medium", "high", "xhigh"].as_slice(),
-    };
+    let allowed = supported_thinking_levels(provider.as_str());
     if provider == "openai_compatible" && normalized == "minimal" {
         return Ok(Some("low".to_string()));
     }
@@ -115,6 +110,19 @@ pub fn normalize_thinking_level(
         return Err("invalid thinking_level".to_string());
     }
     Ok(Some(normalized.to_string()))
+}
+
+/// Returns the user-selectable reasoning levels accepted for a provider.
+///
+/// Keep UI capability responses backed by this function so clients never
+/// assume that every provider accepts the same vocabulary.
+pub fn supported_thinking_levels(provider: &str) -> &'static [&'static str] {
+    match normalize_provider(provider).as_str() {
+        "gpt" => &["none", "minimal", "low", "medium", "high", "xhigh"],
+        "deepseek" => &["none", "low", "medium", "high", "max"],
+        "kimi" => &["none", "auto", "low", "medium", "high", "xhigh"],
+        _ => &["none", "low", "medium", "high", "xhigh"],
+    }
 }
 
 pub fn reasoning_effort_for_provider(
@@ -169,8 +177,9 @@ pub fn thinking_mode_for_provider(
 mod tests {
     use super::{
         default_base_url_for_provider, effective_responses_support, normalize_provider,
-        normalize_thinking_level, reasoning_effort_for_provider, supports_previous_response_id,
-        supports_responses_input_token_count, thinking_mode_for_provider,
+        normalize_thinking_level, reasoning_effort_for_provider, supported_thinking_levels,
+        supports_previous_response_id, supports_responses_input_token_count,
+        thinking_mode_for_provider,
     };
 
     #[test]
@@ -251,6 +260,26 @@ mod tests {
         assert_eq!(
             reasoning_effort_for_provider(Some("openai_compatible"), Some("minimal")).as_deref(),
             Some("low")
+        );
+    }
+
+    #[test]
+    fn exposes_provider_specific_thinking_levels_for_clients() {
+        assert_eq!(
+            supported_thinking_levels("openai"),
+            &["none", "minimal", "low", "medium", "high", "xhigh"]
+        );
+        assert_eq!(
+            supported_thinking_levels("deepseek"),
+            &["none", "low", "medium", "high", "max"]
+        );
+        assert_eq!(
+            supported_thinking_levels("moonshot"),
+            &["none", "auto", "low", "medium", "high", "xhigh"]
+        );
+        assert_eq!(
+            supported_thinking_levels("glm"),
+            &["none", "low", "medium", "high", "xhigh"]
         );
     }
 

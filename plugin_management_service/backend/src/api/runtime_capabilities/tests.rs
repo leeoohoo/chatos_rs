@@ -24,28 +24,28 @@ fn runtime_binding_selection_prefers_the_matching_specific_variant() {
         BindingConditions::default(),
         &["list_tasks", "create_task"],
     );
-    let plan = test_binding(
-        "binding-plan",
+    let analysis = test_binding(
+        "binding-analysis",
         BINDING_SCOPE_SYSTEM_REQUIRED,
         11,
         BindingConditions {
-            task_profile: Some("chatos_plan".to_string()),
+            task_profile: Some("analysis".to_string()),
             ..BindingConditions::default()
         },
         &["list_tasks", "create_tasks_with_prerequisites"],
     );
 
     let selected = select_runtime_bindings(
-        vec![default, plan],
+        vec![default, analysis],
         &BindingConditions {
-            task_profile: Some("chatos_plan".to_string()),
+            task_profile: Some("analysis".to_string()),
             runtime_provider: Some("local_connector".to_string()),
             ..BindingConditions::default()
         },
     );
 
     assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].id, "binding-plan");
+    assert_eq!(selected[0].id, "binding-analysis");
     assert_eq!(
         selected[0].tool_allowlist,
         ["list_tasks", "create_tasks_with_prerequisites"]
@@ -61,19 +61,19 @@ fn runtime_binding_selection_keeps_default_outside_the_specific_context() {
         BindingConditions::default(),
         &["list_tasks", "create_task"],
     );
-    let plan = test_binding(
-        "binding-plan",
+    let analysis = test_binding(
+        "binding-analysis",
         BINDING_SCOPE_SYSTEM_REQUIRED,
         11,
         BindingConditions {
-            task_profile: Some("chatos_plan".to_string()),
+            task_profile: Some("analysis".to_string()),
             ..BindingConditions::default()
         },
         &["create_tasks_with_prerequisites"],
     );
 
     let selected = select_runtime_bindings(
-        vec![default, plan],
+        vec![default, analysis],
         &BindingConditions {
             task_profile: Some("default".to_string()),
             ..BindingConditions::default()
@@ -87,11 +87,11 @@ fn runtime_binding_selection_keeps_default_outside_the_specific_context() {
 #[test]
 fn runtime_binding_selection_prefers_admin_policy_over_stale_seed_data() {
     let seeded = test_binding(
-        "binding-seeded-plan",
+        "binding-seeded-analysis",
         BINDING_SCOPE_SYSTEM_REQUIRED,
         10,
         BindingConditions {
-            task_profile: Some("chatos_plan".to_string()),
+            task_profile: Some("analysis".to_string()),
             ..BindingConditions::default()
         },
         &["list_tasks"],
@@ -107,7 +107,7 @@ fn runtime_binding_selection_prefers_admin_policy_over_stale_seed_data() {
     let selected = select_runtime_bindings(
         vec![seeded, admin],
         &BindingConditions {
-            task_profile: Some("chatos_plan".to_string()),
+            task_profile: Some("analysis".to_string()),
             ..BindingConditions::default()
         },
     );

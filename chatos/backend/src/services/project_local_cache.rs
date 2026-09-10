@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use chatos_project_execution::LOCAL_CONNECTOR_ROOT_PREFIX;
+use chatos_local_workspace::LOCAL_CONNECTOR_ROOT_PREFIX;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -86,42 +86,11 @@ where
     fs::write(path, bytes).map_err(|err| err.to_string())
 }
 
-pub fn remove_cache_file(project_root: &str, relative_path: &str) -> Result<(), String> {
-    if is_local_connector_project_root(project_root) {
-        return Ok(());
-    }
-    let path = project_cache_file_path(project_root, relative_path)?;
-    if !path.exists() {
-        return Ok(());
-    }
-    fs::remove_file(path).map_err(|err| err.to_string())
-}
-
 pub fn cache_key(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.trim().as_bytes());
     let hex = hex::encode(hasher.finalize());
     hex.chars().take(24).collect()
-}
-
-pub fn is_project_local_cache_relative_path(path: &str) -> bool {
-    let normalized = path
-        .trim()
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .to_string();
-    normalized == ".chatos/cache" || normalized.starts_with(".chatos/cache/")
-}
-
-pub fn is_project_runtime_relative_path(path: &str) -> bool {
-    let normalized = path
-        .trim()
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .to_string();
-    normalized == ".chatos/project-run"
-        || normalized.starts_with(".chatos/project-run/")
-        || is_project_local_cache_relative_path(normalized.as_str())
 }
 
 #[cfg(test)]
@@ -145,7 +114,6 @@ mod tests {
             &serde_json::json!({"ok": true}),
         )
         .unwrap();
-        remove_cache_file(root, "project_run/catalog.json").unwrap();
     }
 
     #[test]

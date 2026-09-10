@@ -6,7 +6,6 @@ import 'antd/dist/reset.css';
 
 import App from './App';
 import './shared/styles/global.css';
-import './modules/project-management/styles.css';
 import './modules/task-runner/styles.css';
 import './modules/plugin-management/styles.css';
 import './modules/memory-engine/styles.css';

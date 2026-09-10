@@ -506,16 +506,14 @@ struct GatewayModelSettingsDTO: Decodable, Sendable {
     var modelRequestMaxRetries: Int?
     var memorySummaryModelConfigID: String?
     var memorySummaryThinkingLevel: String?
-    var projectManagementAgentModelConfigID: String?
-    var projectManagementAgentThinkingLevel: String?
+    var taskRunnerDefaultModelConfigID: String?
     var commandApprovalModelConfigID: String?
     var commandApprovalThinkingLevel: String?
     enum CodingKeys: String, CodingKey {
         case modelRequestMaxRetries = "model_request_max_retries"
         case memorySummaryModelConfigID = "memory_summary_model_config_id"
         case memorySummaryThinkingLevel = "memory_summary_thinking_level"
-        case projectManagementAgentModelConfigID = "project_management_agent_model_config_id"
-        case projectManagementAgentThinkingLevel = "project_management_agent_thinking_level"
+        case taskRunnerDefaultModelConfigID = "task_runner_default_model_config_id"
         case commandApprovalModelConfigID = "command_approval_model_config_id"
         case commandApprovalThinkingLevel = "command_approval_thinking_level"
     }
@@ -626,12 +624,8 @@ private struct GatewayModelSettingsUpdateRequest: Encodable {
         try container.encode(settings.memorySummaryModelConfigID, forKey: .memorySummaryModelConfigID)
         try container.encode(settings.memorySummaryThinkingLevel, forKey: .memorySummaryThinkingLevel)
         try container.encode(
-            settings.projectManagementAgentModelConfigID,
-            forKey: .projectManagementAgentModelConfigID
-        )
-        try container.encode(
-            settings.projectManagementAgentThinkingLevel,
-            forKey: .projectManagementAgentThinkingLevel
+            settings.taskRunnerDefaultModelConfigID ?? "",
+            forKey: .taskRunnerDefaultModelConfigID
         )
     }
 
@@ -639,8 +633,7 @@ private struct GatewayModelSettingsUpdateRequest: Encodable {
         case modelRequestMaxRetries = "model_request_max_retries"
         case memorySummaryModelConfigID = "memory_summary_model_config_id"
         case memorySummaryThinkingLevel = "memory_summary_thinking_level"
-        case projectManagementAgentModelConfigID = "project_management_agent_model_config_id"
-        case projectManagementAgentThinkingLevel = "project_management_agent_thinking_level"
+        case taskRunnerDefaultModelConfigID = "task_runner_default_model_config_id"
     }
 }
 

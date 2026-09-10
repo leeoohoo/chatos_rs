@@ -15,8 +15,9 @@ use super::components::{
     PLUGIN_RUNTIME_CONTEXT_MAX_FIELDS, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE,
     PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_DOWNLOAD, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_LIST,
     PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_READ, PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_UPDATE,
-    PLUGIN_UI_BRIDGE_CAPABILITY_HOST_CONTEXT_READ, PLUGIN_UI_MAX_ARTIFACT_MIME_TYPES,
-    PLUGIN_UI_MAX_ASSETS, PLUGIN_UI_MAX_BRIDGE_CAPABILITIES,
+    PLUGIN_UI_BRIDGE_CAPABILITY_HOST_CONTEXT_READ, PLUGIN_UI_BRIDGE_CAPABILITY_TASK_BATCH_PREPARE,
+    PLUGIN_UI_BRIDGE_CAPABILITY_TASK_BATCH_STATUS, PLUGIN_UI_BRIDGE_CAPABILITY_TASK_WORKSPACE_OPEN,
+    PLUGIN_UI_MAX_ARTIFACT_MIME_TYPES, PLUGIN_UI_MAX_ASSETS, PLUGIN_UI_MAX_BRIDGE_CAPABILITIES,
     PLUGIN_UI_RUNTIME_MAX_LAUNCH_TIMEOUT_MS, PLUGIN_UI_RUNTIME_MIN_LAUNCH_TIMEOUT_MS,
     PLUGIN_UI_SURFACE_ARTIFACT_VIEWER, PLUGIN_UI_SURFACE_DETAIL_PANEL,
     PLUGIN_UI_SURFACE_MESSAGE_PANEL, PLUGIN_UI_SURFACE_WORKBENCH,
@@ -199,16 +200,11 @@ pub fn validate_plugin_manifest(
             );
         }
         if let Some(target_agent) = command.target_agent.as_deref() {
-            if ![
-                SystemAgentKey::TaskRunnerPlanPhase.as_str(),
-                SystemAgentKey::TaskRunnerRunPhase.as_str(),
-            ]
-            .contains(&target_agent)
-            {
+            if ![SystemAgentKey::TaskRunnerRunPhase.as_str()].contains(&target_agent) {
                 issue(
                     &mut issues,
                     format!("commands[{index}].target_agent").as_str(),
-                    "target agent must be a task_runner planning or execution system agent",
+                    "target agent must be the task_runner execution system agent",
                 );
             }
         }
@@ -266,16 +262,11 @@ pub fn validate_plugin_manifest(
                 "description exceeds 4096 bytes",
             );
         }
-        if ![
-            SystemAgentKey::TaskRunnerPlanPhase.as_str(),
-            SystemAgentKey::TaskRunnerRunPhase.as_str(),
-        ]
-        .contains(&agent.base_agent.as_str())
-        {
+        if ![SystemAgentKey::TaskRunnerRunPhase.as_str()].contains(&agent.base_agent.as_str()) {
             issue(
                 &mut issues,
                 format!("agents[{index}].base_agent").as_str(),
-                "base agent must be a task_runner planning or execution system agent",
+                "base agent must be the task_runner execution system agent",
             );
         }
         validate_allowed_tools(
@@ -557,6 +548,9 @@ fn validate_ui_contribution(
         PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_DOWNLOAD,
         PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_CREATE,
         PLUGIN_UI_BRIDGE_CAPABILITY_ARTIFACT_UPDATE,
+        PLUGIN_UI_BRIDGE_CAPABILITY_TASK_BATCH_PREPARE,
+        PLUGIN_UI_BRIDGE_CAPABILITY_TASK_BATCH_STATUS,
+        PLUGIN_UI_BRIDGE_CAPABILITY_TASK_WORKSPACE_OPEN,
     ];
     let mut capabilities = HashSet::new();
     for (capability_index, capability) in ui.bridge_capabilities.iter().enumerate() {

@@ -43,10 +43,6 @@ pub struct Config {
     pub user_service_internal_http_client: reqwest::Client,
     pub user_service_internal_api_secret: Option<String>,
     pub user_service_request_timeout_ms: i64,
-    pub project_service_base_url: String,
-    pub project_service_internal_base_url: String,
-    pub project_service_internal_http_client: reqwest::Client,
-    pub project_service_sync_secret: Option<String>,
     pub task_runner_base_url: String,
     pub task_runner_internal_base_url: String,
     pub task_runner_internal_api_secret: Option<String>,
@@ -161,26 +157,6 @@ impl Config {
         let user_service_internal_api_secret = Some(require_config_center_value(
             "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
         )?);
-        let project_service_base_url =
-            require_config_center_value("CHATOS_PROJECT_SERVICE_BASE_URL")?;
-        let project_service_internal_base_url =
-            require_config_center_value("CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL")?;
-        require_https_base_url(
-            "CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL",
-            project_service_internal_base_url.as_str(),
-        )?;
-        let project_service_request_timeout_ms =
-            require_config_center_i64("CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
-        let project_service_internal_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
-                project_service_request_timeout_ms as u64,
-            )),
-            require_bootstrap_path("PROJECT_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
-            require_bootstrap_path("PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
-        )?;
-        let project_service_sync_secret = Some(require_config_center_value(
-            "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
-        )?);
         let task_runner_base_url = require_config_center_value("CHATOS_TASK_RUNNER_BASE_URL")?;
         let task_runner_internal_base_url =
             require_config_center_value("CHATOS_TASK_RUNNER_INTERNAL_BASE_URL")?;
@@ -285,14 +261,6 @@ impl Config {
             ],
         )?;
         validate_production_secret(
-            "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
-            project_service_sync_secret.as_deref(),
-            &[
-                "change_me_project_sync_secret",
-                "change_me_chatos_project_service_secret",
-            ],
-        )?;
-        validate_production_secret(
             "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
             user_service_internal_api_secret.as_deref(),
             &["change_me_chatos_user_service_secret"],
@@ -349,10 +317,6 @@ impl Config {
             user_service_internal_http_client,
             user_service_internal_api_secret,
             user_service_request_timeout_ms,
-            project_service_base_url,
-            project_service_internal_base_url,
-            project_service_internal_http_client,
-            project_service_sync_secret,
             task_runner_base_url,
             task_runner_internal_base_url,
             task_runner_internal_api_secret,
@@ -405,7 +369,7 @@ impl Config {
         };
 
         tracing::info!(
-            "当前配置:\n  - NODE_ENV: {}\n  - BACKEND_PORT: {}\n  - HOST: {}\n  - OPENAI_BASE_URL: {}\n  - OPENAI_API_KEY: {}\n  - LOG_LEVEL: {}\n  - 摘要配置:\n    • SUMMARY_ENABLED: {}\n    • DYNAMIC_SUMMARY_ENABLED: {}\n    • SUMMARY_MESSAGE_LIMIT: {}\n    • SUMMARY_MAX_CONTEXT_TOKENS: {}\n    • SUMMARY_KEEP_LAST_N: {}\n    • SUMMARY_TARGET_TOKENS: {}\n    • SUMMARY_MERGE_TARGET_TOKENS: {}\n    • SUMMARY_TEMPERATURE: {}\n    • SUMMARY_COOLDOWN_SECONDS: {}\n    • SUMMARY_BISECT_ENABLED: {}\n    • SUMMARY_BISECT_MAX_DEPTH: {}\n    • SUMMARY_BISECT_MIN_MESSAGES: {}\n    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}\n  - 认证配置:\n    • AUTH_JWT_SECRET: {}\n    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}\n    • AUTH_COMPAT_SECRET: {}\n  - Memory Engine 配置:\n    • PROJECT_SERVICE_BASE_URL: {}\n    • TASK_RUNNER_BASE_URL: {}\n    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}\n    • LOCAL_CONNECTOR_SERVICE_BASE_URL: {}\n    • CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_BASE_URL: {}\n    • MEMORY_ENGINE_OPERATOR_TOKEN: {}\n    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
+            "当前配置:\n  - NODE_ENV: {}\n  - BACKEND_PORT: {}\n  - HOST: {}\n  - OPENAI_BASE_URL: {}\n  - OPENAI_API_KEY: {}\n  - LOG_LEVEL: {}\n  - 摘要配置:\n    • SUMMARY_ENABLED: {}\n    • DYNAMIC_SUMMARY_ENABLED: {}\n    • SUMMARY_MESSAGE_LIMIT: {}\n    • SUMMARY_MAX_CONTEXT_TOKENS: {}\n    • SUMMARY_KEEP_LAST_N: {}\n    • SUMMARY_TARGET_TOKENS: {}\n    • SUMMARY_MERGE_TARGET_TOKENS: {}\n    • SUMMARY_TEMPERATURE: {}\n    • SUMMARY_COOLDOWN_SECONDS: {}\n    • SUMMARY_BISECT_ENABLED: {}\n    • SUMMARY_BISECT_MAX_DEPTH: {}\n    • SUMMARY_BISECT_MIN_MESSAGES: {}\n    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}\n  - 认证配置:\n    • AUTH_JWT_SECRET: {}\n    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}\n    • AUTH_COMPAT_SECRET: {}\n  - Runtime 配置:\n    • TASK_RUNNER_BASE_URL: {}\n    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}\n    • LOCAL_CONNECTOR_SERVICE_BASE_URL: {}\n    • CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_BASE_URL: {}\n    • MEMORY_ENGINE_OPERATOR_TOKEN: {}\n    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
             self.node_env,
             self.port,
             self.host,
@@ -428,7 +392,6 @@ impl Config {
             auth_jwt_secret_status,
             self.auth_access_token_ttl_seconds,
             auth_compat_secret_status,
-            self.project_service_base_url,
             self.task_runner_base_url,
             self.task_runner_request_timeout_ms,
             self.local_connector_service_base_url,

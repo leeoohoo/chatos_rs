@@ -31,11 +31,13 @@ extension NativeLocalConnectorService {
             guard parts.count >= 2 else { throw NativeConnectorError.workspaceUnavailable }
             let deviceID = parts[0]
             let workspaceID = parts[1]
-            guard deviceID == state.deviceID,
-                  let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else {
+            guard deviceID == state.deviceID else {
                 throw NativeConnectorError.workspaceUnavailable
             }
             let relative = parts.dropFirst(2).joined(separator: "/")
+            guard let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else {
+                return try resolveReauthorizedProjectPath(relativePath: relative)
+            }
             let filesystem = NativeWorkspaceFilesystem(workspace: workspace)
             let absoluteURL = try filesystem.resolveExistingURL(relative.isEmpty ? "." : relative)
             let prefix = "local://connector/\(deviceID)/\(workspaceID)"
@@ -64,5 +66,38 @@ extension NativeLocalConnectorService {
             absoluteURL: candidate,
             logicalPrefix: nil
         )
+    }
+
+    /// Recovers a client-owned project after Local Connector re-pairing replaced the
+    /// workspace grant ID. Every candidate is resolved through a current grant and an
+    /// existing directory. Distinct physical matches fail closed instead of guessing.
+    func resolveReauthorizedProjectPath(relativePath: String) throws -> NativeResolvedProjectPath {
+        guard let deviceID = state.deviceID else { throw NativeConnectorError.workspaceUnavailable }
+        var candidatesByPath: [String: [NativeResolvedProjectPath]] = [:]
+        for workspace in state.workspaces where
+            URL(fileURLWithPath: workspace.absoluteRoot).standardizedFileURL.resolvingSymlinksInPath().path == "/" {
+            let filesystem = NativeWorkspaceFilesystem(workspace: workspace)
+            guard let url = try? filesystem.resolveExistingURL(relativePath.isEmpty ? "." : relativePath),
+                  (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                continue
+            }
+            let canonical = url.standardizedFileURL.resolvingSymlinksInPath()
+            let prefix = "local://connector/\(deviceID)/\(workspace.id)"
+            candidatesByPath[canonical.path, default: []].append(.init(
+                workspace: workspace,
+                relativePath: relativePath.isEmpty ? "." : relativePath,
+                absoluteURL: canonical,
+                logicalPrefix: prefix
+            ))
+        }
+        guard candidatesByPath.count == 1, let matches = candidatesByPath.values.first else {
+            throw NativeConnectorError.workspaceUnavailable
+        }
+        return matches.sorted {
+            if $0.workspace.absoluteRoot.count != $1.workspace.absoluteRoot.count {
+                return $0.workspace.absoluteRoot.count > $1.workspace.absoluteRoot.count
+            }
+            return $0.workspace.id < $1.workspace.id
+        }[0]
     }
 }

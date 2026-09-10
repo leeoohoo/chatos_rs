@@ -10,12 +10,9 @@ use crate::config::AppConfig;
 use super::{error, forbidden};
 
 pub(super) const USER_SERVICE_TOKEN_AUDIENCE: &str = "user-service";
-pub(super) const PROJECT_SERVICE_CALLER: &str = "project-service";
 pub(super) const CHATOS_CALLER: &str = "chatos-backend";
 pub(super) const TASK_RUNNER_CALLER: &str = "task-runner";
 pub(super) const MEMORY_ENGINE_CALLER: &str = "memory-engine";
-pub(super) const HARNESS_REPO_WRITE_SCOPE: &str = "harness.repo.write";
-pub(super) const HARNESS_ACCESS_READ_SCOPE: &str = "harness.access.read";
 pub(super) const MODEL_SETTINGS_READ_SCOPE: &str = "model-settings.read";
 pub(super) const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 pub(super) const TASK_MODEL_CATALOG_READ_SCOPE: &str = "task-model-catalog.read";
@@ -37,35 +34,12 @@ pub(super) struct UserServiceInternalResourceAudit<'a> {
     pub outcome: &'a str,
 }
 
-pub(super) fn require_project_service_internal_request(
-    config: &AppConfig,
-    headers: &HeaderMap,
-    required_scope: &str,
-) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
-    let expected = config
-        .user_service_internal_api_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| forbidden("project service user API secret is not configured"))?;
-    verify_project_service_internal_request(headers, expected, required_scope)
-}
-
 pub(super) fn require_user_model_internal_request(
     config: &AppConfig,
     headers: &HeaderMap,
     required_scope: &str,
 ) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
     match header_text(headers, "x-user-service-caller") {
-        Some(PROJECT_SERVICE_CALLER) => {
-            let expected = config
-                .user_service_internal_api_secret
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| forbidden("project service user API secret is not configured"))?;
-            verify_internal_request(headers, expected, PROJECT_SERVICE_CALLER, required_scope)
-        }
         Some(CHATOS_CALLER) => {
             let expected = config
                 .chatos_internal_api_secret
@@ -103,14 +77,6 @@ pub(super) fn require_task_runner_internal_request(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| forbidden("task runner user API secret is not configured"))?;
     verify_internal_request(headers, expected, TASK_RUNNER_CALLER, required_scope)
-}
-
-fn verify_project_service_internal_request(
-    headers: &HeaderMap,
-    expected: &str,
-    required_scope: &str,
-) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
-    verify_internal_request(headers, expected, PROJECT_SERVICE_CALLER, required_scope)
 }
 
 fn verify_internal_request(
@@ -208,37 +174,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn signed_token_is_bound_to_project_service_audience_and_scope() {
+    fn signed_token_is_bound_to_chatos_audience_and_scope() {
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-project-user-service-secret",
-            PROJECT_SERVICE_CALLER,
+            "a-long-chatos-user-service-secret",
+            CHATOS_CALLER,
             USER_SERVICE_TOKEN_AUDIENCE,
-            HARNESS_ACCESS_READ_SCOPE,
+            MODEL_RUNTIME_READ_SCOPE,
             60,
         )
         .expect("issue token");
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-user-service-caller",
-            HeaderValue::from_static(PROJECT_SERVICE_CALLER),
+            HeaderValue::from_static(CHATOS_CALLER),
         );
         headers.insert(
             "x-user-service-internal-token",
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
 
-        let identity = verify_project_service_internal_request(
+        let identity = verify_internal_request(
             &headers,
-            "a-long-project-user-service-secret",
-            HARNESS_ACCESS_READ_SCOPE,
+            "a-long-chatos-user-service-secret",
+            CHATOS_CALLER,
+            MODEL_RUNTIME_READ_SCOPE,
         )
         .expect("matching signed request");
-        assert_eq!(identity.caller_service, PROJECT_SERVICE_CALLER);
-        assert_eq!(identity.scope, HARNESS_ACCESS_READ_SCOPE);
+        assert_eq!(identity.caller_service, CHATOS_CALLER);
+        assert_eq!(identity.scope, MODEL_RUNTIME_READ_SCOPE);
         uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("signed trace id");
-        let err = verify_project_service_internal_request(
+        let err = verify_internal_request(
             &headers,
-            "a-long-project-user-service-secret",
+            "a-long-chatos-user-service-secret",
+            CHATOS_CALLER,
             MODEL_SETTINGS_READ_SCOPE,
         )
         .expect_err("scope mismatch must fail");
@@ -280,7 +248,7 @@ mod tests {
         let wrong_caller = verify_internal_request(
             &headers,
             secret,
-            PROJECT_SERVICE_CALLER,
+            TASK_RUNNER_CALLER,
             MODEL_RUNTIME_READ_SCOPE,
         )
         .expect_err("caller mismatch must fail");
@@ -292,12 +260,13 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-user-service-internal-secret",
-            HeaderValue::from_static("a-long-project-user-service-secret"),
+            HeaderValue::from_static("a-long-chatos-user-service-secret"),
         );
-        let err = verify_project_service_internal_request(
+        let err = verify_internal_request(
             &headers,
-            "a-long-project-user-service-secret",
-            HARNESS_ACCESS_READ_SCOPE,
+            "a-long-chatos-user-service-secret",
+            CHATOS_CALLER,
+            MODEL_RUNTIME_READ_SCOPE,
         )
         .expect_err("legacy auth must fail in every environment");
         assert_eq!(err.0, StatusCode::UNAUTHORIZED);
@@ -306,10 +275,10 @@ mod tests {
     #[test]
     fn caller_is_required_when_a_signed_token_is_present() {
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-project-user-service-secret",
-            PROJECT_SERVICE_CALLER,
+            "a-long-chatos-user-service-secret",
+            CHATOS_CALLER,
             USER_SERVICE_TOKEN_AUDIENCE,
-            HARNESS_ACCESS_READ_SCOPE,
+            MODEL_RUNTIME_READ_SCOPE,
             60,
         )
         .expect("issue token");
@@ -318,10 +287,11 @@ mod tests {
             "x-user-service-internal-token",
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
-        let err = verify_project_service_internal_request(
+        let err = verify_internal_request(
             &headers,
-            "a-long-project-user-service-secret",
-            HARNESS_ACCESS_READ_SCOPE,
+            "a-long-chatos-user-service-secret",
+            CHATOS_CALLER,
+            MODEL_RUNTIME_READ_SCOPE,
         )
         .expect_err("caller is part of the signed request identity");
         assert_eq!(err.0, StatusCode::BAD_REQUEST);

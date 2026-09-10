@@ -74,6 +74,72 @@ impl McpManagementRuntimeSessionHandle {
 }
 
 impl McpManagementClient {
+    pub async fn authorize_project_context(
+        &self,
+        owner_user_id: &str,
+        snapshot: &crate::ClientProjectContextSnapshot,
+    ) -> Result<crate::ProjectContextAuthorization, McpManagementClientError> {
+        let response = self
+            .project_context_request(owner_user_id, snapshot)?
+            .send()
+            .await?;
+        let status = response.status();
+        let body =
+            chatos_service_runtime::http_body::read_response_bytes_limited(response, 16 * 1024)
+                .await
+                .map_err(|error| {
+                    McpManagementClientError::InvalidProjectContext(error.to_string())
+                })?;
+        if !status.is_success() {
+            return Err(McpManagementClientError::Rejected {
+                status: status.as_u16(),
+                message: "project context authorization rejected".into(),
+            });
+        }
+        let authorization: crate::ProjectContextAuthorization = serde_json::from_slice(&body)
+            .map_err(|error| McpManagementClientError::InvalidProjectContext(error.to_string()))?;
+        authorization
+            .validate_expected(owner_user_id, snapshot)
+            .map_err(McpManagementClientError::InvalidProjectContext)?;
+        Ok(authorization)
+    }
+
+    fn project_context_request(
+        &self,
+        owner_user_id: &str,
+        snapshot: &crate::ClientProjectContextSnapshot,
+    ) -> Result<reqwest::RequestBuilder, McpManagementClientError> {
+        snapshot
+            .validate_for_owner(owner_user_id)
+            .map_err(McpManagementClientError::InvalidProjectContext)?;
+        let secret = self
+            .config
+            .internal_api_secret
+            .as_deref()
+            .ok_or(McpManagementClientError::MissingInternalSecret)?;
+        let token = chatos_service_runtime::issue_internal_service_token_for_owner(
+            secret,
+            &self.config.caller_service,
+            INTERNAL_TOKEN_AUDIENCE,
+            "project-context.authorize",
+            60,
+            owner_user_id,
+        )
+        .map_err(McpManagementClientError::InternalToken)?;
+        Ok(self
+            .http
+            .post(format!(
+                "{}/api/internal/project-context/authorize",
+                self.config.base_url
+            ))
+            .header(INTERNAL_TOKEN_HEADER, token)
+            .header(CALLER_SERVICE_HEADER, &self.config.caller_service)
+            .json(&crate::AuthorizeProjectContextRequest {
+                owner_user_id: owner_user_id.to_string(),
+                snapshot: snapshot.clone(),
+            }))
+    }
+
     pub fn new(config: McpManagementClientConfig) -> Result<Self, McpManagementClientError> {
         let base_url = reqwest::Url::parse(config.base_url.as_str())
             .map_err(|err| McpManagementClientError::InvalidBaseUrl(err.to_string()))?;
@@ -385,6 +451,44 @@ mod tests {
         .expect("valid signed token");
         assert_eq!(claims.caller, caller_service);
         assert!(!claims.trace_id.is_empty());
+
+        let snapshot = crate::ClientProjectContextSnapshot {
+            schema_version: 1,
+            project_id: "local-project".into(),
+            project_name: "Local".into(),
+            project_revision: 1,
+            execution_target: crate::ClientProjectExecutionTarget {
+                device_id: "device".into(),
+                workspace_id: "workspace".into(),
+                relative_root: "repo".into(),
+            },
+        };
+        let authorization_request = client
+            .project_context_request("alice", &snapshot)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(
+            authorization_request.url().path(),
+            "/api/internal/project-context/authorize"
+        );
+        let claims = chatos_service_runtime::verify_internal_service_token(
+            authorization_request.headers()[INTERNAL_TOKEN_HEADER]
+                .to_str()
+                .unwrap(),
+            secret,
+            caller_service,
+            INTERNAL_TOKEN_AUDIENCE,
+            "project-context.authorize",
+        )
+        .unwrap();
+        assert_eq!(claims.owner_user_id.as_deref(), Some("alice"));
+        let sent: crate::AuthorizeProjectContextRequest =
+            serde_json::from_slice(authorization_request.body().unwrap().as_bytes().unwrap())
+                .unwrap();
+        assert_eq!(sent.snapshot, snapshot);
+        assert_eq!(sent.owner_user_id, "alice");
+        assert!(client.project_context_request(" ", &snapshot).is_err());
 
         let runtime_session_request = client
             .runtime_session_request(

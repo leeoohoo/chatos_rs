@@ -775,10 +775,6 @@ struct PetMessageView: View {
             return displayText(activity.route.conversationID) != nil
                 && displayText(activity.route.turnID) != nil
         }
-        if activity.source == .projectExecution {
-            return displayText(activity.route.conversationID) != nil
-                && displayText(activity.route.runID ?? activity.route.turnID) != nil
-        }
         return false
     }
 

@@ -251,11 +251,6 @@ fn append_external_mcp_runtime_notice(
 
 fn is_user_configured_external_tool(info: &chatos_mcp_runtime::ToolInfo) -> bool {
     matches!(info.server_type.as_str(), "http" | "stdio")
-        && info.server_name
-            != chatos_mcp::system_mcp_descriptor(
-                chatos_plugin_management_sdk::SystemMcpKey::ProjectManagement,
-            )
-            .server_name
 }
 
 #[cfg(test)]

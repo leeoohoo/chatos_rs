@@ -111,6 +111,12 @@ pub enum PluginUiBridgeMethod {
     ArtifactCreate,
     #[serde(rename = "artifact.update")]
     ArtifactUpdate,
+    #[serde(rename = "task.batch.prepare")]
+    TaskBatchPrepare,
+    #[serde(rename = "task.batch.status")]
+    TaskBatchStatus,
+    #[serde(rename = "task.workspace.open")]
+    TaskWorkspaceOpen,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

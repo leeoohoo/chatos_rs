@@ -15,7 +15,7 @@ mod workspace;
 use std::sync::{Arc, Mutex};
 
 use chatos_agent::ChatosAgentProfile;
-use chatos_mcp_management_sdk::McpManagementRuntimeSessionHandle;
+use chatos_mcp_management_sdk::{ClientProjectContextSnapshot, McpManagementRuntimeSessionHandle};
 use serde_json::Value;
 use tracing::warn;
 
@@ -31,7 +31,8 @@ use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
 use crate::core::chat_context::resolve_system_prompt;
 use crate::core::chat_runtime::{
     compose_contact_system_prompt, normalize_id, normalize_project_id,
-    resolve_project_runtime_context, ChatRuntimeMetadata, ContactSkillPromptMode,
+    project_context_from_metadata, resolve_project_runtime_context, ChatRuntimeMetadata,
+    ContactSkillPromptMode,
 };
 use crate::core::internal_context_locale::InternalContextLocale;
 use crate::core::mcp_runtime::{empty_mcp_server_bundle, McpServerBundle};
@@ -53,9 +54,6 @@ pub struct ConversationRuntimeRequest {
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
     pub task_plugin_preferences: Vec<String>,
-    pub plan_mode: bool,
-    pub project_requirement_execution_planner: bool,
-    pub project_requirement_execution_task_ids: Vec<String>,
     pub model_config_id: Option<String>,
     pub model_provider: String,
     pub prompt_vendor: Option<String>,
@@ -89,7 +87,6 @@ pub struct ResolvedConversationRuntimeContext {
     pub use_tools: bool,
     pub memory_summary_prompt: Option<String>,
     pub runtime_error: Option<String>,
-    pub project_requirement_execution_planner: bool,
 }
 
 pub type ToolMetadataMap = std::collections::HashMap<String, ToolInfo>;
@@ -131,6 +128,7 @@ pub async fn resolve_runtime_context(
         .as_ref()
         .and_then(|session| session.metadata.as_ref());
     let runtime_metadata = ChatRuntimeMetadata::from_metadata(session_metadata);
+    let client_project_context = project_context_from_metadata(session_metadata);
 
     let effective_user_id = req.effective_user_id.clone();
     let mut contact_agent_id = normalize_id(req.contact_agent_id.clone())
@@ -227,13 +225,34 @@ pub async fn resolve_runtime_context(
 
     let (mut http_servers, stdio_servers, builtin_servers) = empty_mcp_server_bundle();
     let mut runtime_error = None;
+    let client_project_context: Option<ClientProjectContextSnapshot> = match client_project_context
+    {
+        Ok(Some(snapshot))
+            if resolved_project_id.as_deref() == Some(snapshot.project_id.as_str()) =>
+        {
+            Some(snapshot)
+        }
+        Ok(Some(_)) => {
+            runtime_error =
+                Some("客户端项目上下文与当前项目不一致，请重新打开项目会话。".to_string());
+            None
+        }
+        Ok(None) if resolved_project_id.is_some() => {
+            runtime_error = Some("当前项目缺少客户端授权上下文，请重新打开项目会话。".to_string());
+            None
+        }
+        Ok(None) => None,
+        Err(error) => {
+            runtime_error = Some(format!("客户端项目上下文无效：{error}"));
+            None
+        }
+    };
     let mut effective_mcp_resource_ids = Vec::new();
     let mut gateway_provider_skills_prompt = None;
     let mut gateway_plugin_instruction_items = Vec::new();
     let mut mcp_management_runtime_session = None;
     let mut mcp_command_queue = None;
-    let agent_profile =
-        ChatosAgentProfile::from_flags(req.plan_mode, req.project_requirement_execution_planner);
+    let agent_profile = ChatosAgentProfile::for_runtime();
     let plugin_command_invocations_for_snapshot =
         Vec::<TurnRuntimeSnapshotPluginCommandInvocationDto>::new();
 
@@ -241,7 +260,7 @@ pub async fn resolve_runtime_context(
         agent_profile.key(),
         req.prompt_vendor.as_deref(),
         req.model_provider.as_str(),
-        agent_profile.task_runner_task_profile(),
+        None,
     )
     .await
     {
@@ -267,7 +286,6 @@ pub async fn resolve_runtime_context(
         if !requires_concrete_project || task_runner_project_id.is_some() {
             match resolve_task_plugin_catalog_prompt(
                 task_runner_project_id,
-                req.plan_mode,
                 req.task_plugin_preferences.as_slice(),
                 user_output_locale,
             )
@@ -294,13 +312,13 @@ pub async fn resolve_runtime_context(
             owner_role: req.owner_role.as_deref(),
             agent_profile,
             project_id: task_runner_project_id,
+            project_context: client_project_context.as_ref(),
             source_session_id: Some(session_id),
             turn_id: req.conversation_turn_id.as_deref(),
             source_user_message_id: req.source_user_message_id.as_deref(),
             contact_agent_id: contact_agent_id.as_deref(),
             default_model_config_id: req.model_config_id.as_deref(),
             default_remote_connection_id: default_remote_connection_id.as_deref(),
-            expected_project_task_ids: req.project_requirement_execution_task_ids.as_slice(),
             selected_plugins: Vec::new(),
             plugin_command_invocations: Vec::new(),
             locale: Some(if user_output_locale.is_english() {
@@ -384,7 +402,6 @@ pub async fn resolve_runtime_context(
         use_tools,
         memory_summary_prompt,
         runtime_error,
-        project_requirement_execution_planner: req.project_requirement_execution_planner,
     }
 }
 

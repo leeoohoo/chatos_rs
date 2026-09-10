@@ -6,7 +6,6 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  ProjectOutlined,
   RobotOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -105,15 +104,10 @@ function buildMenuItems(superAdmin: boolean, t: ReturnType<typeof useAdminI18n>[
     ] });
   }
   items.push(
-    { key: '/projects', icon: <ProjectOutlined />, label: t('nav.projects'), children: [
-      { key: '/projects/list', label: t('nav.projectList') },
-      { key: '/projects/config', label: t('nav.projectConfig') },
-    ] },
     { key: '/task-runner', icon: <RobotOutlined />, label: t('nav.taskRunner'), children: [
       { key: '/task-runner/tasks', label: t('nav.tasks') },
       { key: '/task-runner/runs', label: t('nav.runs') },
       { key: '/task-runner/prompts', label: t('nav.prompts') },
-      { key: '/task-runner/projects', label: t('nav.executionProjects') },
       { key: '/task-runner/mcp', label: t('nav.taskMcp') },
       { key: '/task-runner/tooling', label: t('nav.tooling') },
       { key: '/task-runner/users', label: t('nav.executionUsers') },

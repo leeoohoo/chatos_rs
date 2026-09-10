@@ -55,7 +55,6 @@ pub enum SystemMcpKey {
     CodeMaintainerWrite,
     TerminalController,
     TaskManager,
-    ProjectManagement,
     Notepad,
     AgentBuilder,
     AskUser,
@@ -69,11 +68,10 @@ pub enum SystemMcpKey {
 }
 
 impl SystemMcpKey {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 13] = [
         Self::CodeMaintainerRead,
         Self::CodeMaintainerWrite,
         Self::TerminalController,
-        Self::ProjectManagement,
         Self::Notepad,
         Self::AgentBuilder,
         Self::AskUser,
@@ -92,7 +90,6 @@ impl SystemMcpKey {
             Self::CodeMaintainerWrite => "code_maintainer_write",
             Self::TerminalController => "terminal_controller",
             Self::TaskManager => "task_manager",
-            Self::ProjectManagement => "project_management",
             Self::Notepad => "notepad",
             Self::AgentBuilder => "agent_builder",
             Self::AskUser => "ask_user",
@@ -129,8 +126,6 @@ impl std::str::FromStr for SystemMcpKey {
 #[serde(rename_all = "snake_case")]
 pub enum SystemAgentKey {
     ChatosConversationAgent,
-    ProjectRequirementExecutionPlannerAgent,
-    TaskRunnerPlanPhase,
     TaskRunnerRunPhase,
     LocalConnectorCommandApprovalAgent,
     MemoryEngineSummaryAgent,
@@ -141,10 +136,8 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 8] = [
         Self::ChatosConversationAgent,
-        Self::ProjectRequirementExecutionPlannerAgent,
-        Self::TaskRunnerPlanPhase,
         Self::TaskRunnerRunPhase,
         Self::LocalConnectorCommandApprovalAgent,
         Self::MemoryEngineSummaryAgent,
@@ -157,10 +150,6 @@ impl SystemAgentKey {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ChatosConversationAgent => "chatos_conversation_agent",
-            Self::ProjectRequirementExecutionPlannerAgent => {
-                "project_requirement_execution_planner_agent"
-            }
-            Self::TaskRunnerPlanPhase => "task_runner_plan_phase",
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
             Self::MemoryEngineSummaryAgent => "memory_engine_summary_agent",

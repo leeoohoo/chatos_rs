@@ -61,16 +61,6 @@ pub(super) fn build_task_prompt(
     };
     current_task_prompt.push_str("\n\n");
     current_task_prompt.push_str(task_output_language_policy(locale));
-    if crate::models::uses_task_runner_planning_agent(
-        task.task_profile.as_str(),
-        task.mcp_config.requires_execution,
-    ) {
-        current_task_prompt.push_str(if locale.is_english() {
-            "\n\nPlanning scope: use project facts as read-only evidence and deliver analysis, technical plans, implementation tasks, and dependency updates. Engineering changes and runtime validation follow in the execution stage."
-        } else {
-            "\n\n规划范围：以只读方式了解项目事实，交付分析、技术方案、实施任务和依赖关系；工程修改与运行验证由后续执行阶段承接。"
-        });
-    }
     append_retry_instruction(&mut current_task_prompt, retry_instruction, locale);
 
     if prerequisite_context.is_empty() {

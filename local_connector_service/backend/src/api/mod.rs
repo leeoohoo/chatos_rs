@@ -42,6 +42,7 @@ mod plugin_management_oauth;
 mod plugin_management_plugins;
 mod plugin_management_prompts;
 mod project_bindings;
+mod project_context;
 mod remote_connection_relay;
 mod router;
 mod sandbox_pairings;

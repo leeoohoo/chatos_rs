@@ -52,7 +52,6 @@ impl ProviderDispatcher {
         default_model_config_id: Option<&str>,
         default_remote_connection_id: Option<&str>,
         task_profile: Option<&str>,
-        expected_project_task_ids: &[String],
         expires_at_unix: i64,
     ) -> HashMap<String, Vec<Value>> {
         self.task_runner
@@ -70,7 +69,6 @@ impl ProviderDispatcher {
                 default_model_config_id,
                 default_remote_connection_id,
                 task_profile,
-                expected_project_task_ids,
                 expires_at_unix,
             )
             .await

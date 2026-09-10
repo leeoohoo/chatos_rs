@@ -17,24 +17,21 @@ use crate::ask_user_prompt_service::AskUserPromptService;
 use crate::auth::CurrentUser;
 use crate::config::AppConfig;
 use crate::models::{
-    normalize_project_id, now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem,
-    BatchTaskOperationResponse, BatchTaskRunRequest, BatchTaskStatusUpdateRequest,
-    CancelTaskRequest, CancelTaskResponse, ChatosProjectImportRequest, CreateTaskProjectRequest,
+    now_rfc3339, BatchTaskDeleteRequest, BatchTaskOperationItem, BatchTaskOperationResponse,
+    BatchTaskRunRequest, BatchTaskStatusUpdateRequest, CancelTaskRequest, CancelTaskResponse,
     CreateTaskRequest, HealthResponse, PaginatedResponse, RecordTaskProcessRequest,
     RunEventPruneResult, RunListFilters, RunSummaryRecord, RuntimeSettingsRecord,
     StartTaskRunRequest, SystemConfigResponse, TaskClosureState, TaskIndexResponse,
-    TaskListFilters, TaskMcpConfig, TaskMcpResolutionResponse, TaskProjectRecord,
-    TaskProjectStatus, TaskRecord, TaskRunEventRecord, TaskRunRecord, TaskRunStatus,
-    TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode, TaskSourceContext,
-    TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState, UpdateRuntimeSettingsRequest,
-    UpdateTaskProjectRequest, UpdateTaskRequest,
+    TaskListFilters, TaskMcpConfig, TaskMcpResolutionResponse, TaskRecord, TaskRunEventRecord,
+    TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse, TaskScheduleMode,
+    TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord, TaskToolState,
+    UpdateRuntimeSettingsRequest, UpdateTaskRequest,
 };
 use crate::platform_queue::TaskQueueTopology;
 use crate::store::AppStore;
 
 pub(crate) const MCP_RUN_FINALIZATION_ERROR_PREFIX: &str = "MCP runtime run finalization failed";
 pub(crate) const CLOUD_AGENT_DEPENDENCY_WAITING: &str = "cloud_agent_dependency_waiting";
-pub(crate) const WORKSPACE_INTEGRATION_RETRY_PREFIX: &str = "workspace integration retry";
 pub(crate) const RUN_POST_PROCESS_MODEL_PHASE_PENDING_ERROR: &str =
     "Task Run model phase has not reached a durable terminal state; post-process cannot finalize MCP or workspace resources";
 
@@ -59,8 +56,6 @@ mod plugin_management_policy;
 mod plugin_management_prompts;
 mod prerequisite_context;
 mod process_log_text;
-pub(crate) mod project_management_api_client;
-mod project_service;
 mod run_control;
 pub(crate) use run_control::cloud_agent_profile;
 mod run_execution_support;
@@ -79,12 +74,14 @@ mod task_memory;
 mod task_plugin_runtime_context;
 mod task_process_log;
 mod task_service;
+#[cfg(test)]
+pub(crate) use task_service::project_context::tests::snapshot as test_project_snapshot;
 mod task_tenant_scope;
 mod task_threads;
 mod tooling_state;
 mod verification_repair;
 mod workspace_execution;
-pub(crate) use workspace_execution::load_task_run_workspace_changes;
+pub(crate) use workspace_execution::{load_task_run_workspace_changes, RunWorkspaceChanges};
 #[path = "services/tool_runtime/workspace_mcp.rs"]
 mod workspace_mcp;
 
@@ -143,16 +140,10 @@ enum RunTriggerSource {
 pub struct TaskService {
     config: AppConfig,
     store: AppStore,
+    project_context_authorizer: Arc<dyn task_service::project_context::ProjectContextAuthorizer>,
     plugin_management_client: Option<PluginManagementClient>,
     #[cfg(test)]
     allow_unresolved_plugin_policy_for_test: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ClonedProjectExecutionTask {
-    pub(crate) old_task_id: String,
-    pub(crate) project_task_id: String,
-    pub(crate) task: TaskRecord,
 }
 
 #[derive(Clone)]
@@ -161,14 +152,9 @@ pub struct ModelConfigService {
 }
 
 #[derive(Clone)]
-pub struct TaskProjectService {
-    config: Option<AppConfig>,
-    store: AppStore,
-}
-
-#[derive(Clone)]
 pub struct RunService {
     config: AppConfig,
+    project_context_authorizer: Arc<dyn task_service::project_context::ProjectContextAuthorizer>,
     task_queue_topology: TaskQueueTopology,
     store: AppStore,
     plugin_management_client: Option<PluginManagementClient>,

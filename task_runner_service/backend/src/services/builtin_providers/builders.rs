@@ -29,9 +29,6 @@ pub(in crate::services) fn build_task_runner_builtin_provider(
         chatos_mcp_runtime::BuiltinMcpKind::AskUser => {
             build_ask_user_provider(server, ask_user_prompt_service)?
         }
-        chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
-            build_project_management_provider(server, task_service)?
-        }
         chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder => {
             build_agent_builder_provider(server, task_service)?
         }
@@ -95,23 +92,6 @@ fn build_ask_user_provider(
     Ok(TaskRunnerBuiltinProvider::new(
         server.name.clone(),
         TaskRunnerBuiltinToolService::AskUser(service),
-    ))
-}
-
-fn build_project_management_provider(
-    server: &McpBuiltinServer,
-    task_service: TaskService,
-) -> Result<TaskRunnerBuiltinProvider, String> {
-    let service = ProjectManagementBuiltinService::new(ProjectManagementOptions {
-        server_name: server.name.clone(),
-        base_url: task_service.config.project_service_base_url.clone(),
-        sync_secret: task_service.config.project_service_sync_secret.clone(),
-        owner_user_id: server.user_id.clone(),
-        project_id: server.project_id.clone(),
-    });
-    Ok(TaskRunnerBuiltinProvider::new(
-        server.name.clone(),
-        TaskRunnerBuiltinToolService::ProjectManagement(service),
     ))
 }
 

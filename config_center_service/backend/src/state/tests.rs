@@ -97,10 +97,9 @@ use crate::catalog::{
     PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-    PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-    TASK_RUNNER_ADMIN_DISPLAY_NAME_CONFIG_KEY, TASK_RUNNER_ADMIN_PASSWORD_CONFIG_KEY,
-    TASK_RUNNER_ADMIN_USERNAME_CONFIG_KEY, TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY, TASK_RUNNER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
+    TASK_RUNNER_ADMIN_PASSWORD_CONFIG_KEY, TASK_RUNNER_ADMIN_USERNAME_CONFIG_KEY,
+    TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY,
     TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
     TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
     TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS_CONFIG_KEY,
@@ -112,8 +111,6 @@ use crate::catalog::{
     TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
     TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
     TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
-    TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
-    TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
     TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
     TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
@@ -353,62 +350,6 @@ fn memory_engine_https_draft_migration_only_changes_explicit_http_values() {
 }
 
 #[test]
-fn project_service_internal_urls_are_forced_to_https_without_inserting_draft_keys() {
-    let definitions = builtin_definitions();
-    let cases = [
-        (
-            CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            chatos_service_default_values(&definitions),
-            ensure_chatos_runtime_values
-                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
-        ),
-        (
-            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            task_runner_service_default_values(&definitions),
-            ensure_task_runner_runtime_values,
-        ),
-        (
-            MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
-            mcp_management_service_default_values(&definitions),
-            ensure_mcp_management_runtime_values,
-        ),
-    ];
-
-    for (key, defaults, ensure_values) in cases {
-        let mut values = BTreeMap::from([(
-            key.to_string(),
-            json!("http://project-management-backend:39210"),
-        )]);
-        let changed_keys = ensure_values(&mut values, &defaults);
-        assert!(changed_keys.contains(&key.to_string()));
-        assert_eq!(values.get(key), defaults.get(key));
-
-        let mut draft = BTreeMap::new();
-        let fallback = defaults.get(key).expect("Project Service HTTPS default");
-        assert!(!migrate_https_url_draft(&mut draft, key, fallback));
-        assert!(!draft.contains_key(key));
-    }
-}
-
-#[test]
-fn user_service_internal_url_is_forced_to_https_without_inserting_draft_keys() {
-    let definitions = builtin_definitions();
-    let defaults = project_service_runtime_default_values(&definitions);
-    let key = PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY;
-    let mut values =
-        BTreeMap::from([(key.to_string(), json!("http://user-service-backend:39190"))]);
-
-    let changed_keys = ensure_project_service_runtime_values(&mut values, &defaults);
-
-    assert!(changed_keys.contains(&key.to_string()));
-    assert_eq!(values.get(key), defaults.get(key));
-    let mut draft = BTreeMap::new();
-    let fallback = defaults.get(key).expect("User Service HTTPS default");
-    assert!(!migrate_https_url_draft(&mut draft, key, fallback));
-    assert!(!draft.contains_key(key));
-}
-
-#[test]
 fn local_connector_internal_urls_are_forced_to_mtls_defaults() {
     let definitions = builtin_definitions();
     let cases = [
@@ -417,11 +358,6 @@ fn local_connector_internal_urls_are_forced_to_mtls_defaults() {
             chatos_service_default_values(&definitions),
             ensure_chatos_runtime_values
                 as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
-        ),
-        (
-            PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-            project_service_runtime_default_values(&definitions),
-            ensure_project_service_runtime_values,
         ),
         (
             MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
@@ -702,18 +638,6 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
             json!(5_000),
         ),
         (
-            TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39210"),
-        ),
-        (
-            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
-            json!("https://127.0.0.1:39212"),
-        ),
-        (
-            TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(6_000),
-        ),
-        (
             TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
             json!("http://127.0.0.1:7081/api/memory-engine/v1"),
         ),
@@ -795,18 +719,6 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
             .env
             .get("TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL"),
         Some(&"https://127.0.0.1:39192".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS"),
-        Some(&"6000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL"),
-        Some(&"https://127.0.0.1:39212".to_string())
     );
     assert_eq!(
         snapshot.env.get("TASK_RUNNER_MEMORY_ENGINE_BASE_URL"),
@@ -1653,13 +1565,12 @@ fn plugin_management_runtime_backfill_adds_all_service_defaults() {
 fn plugin_management_runtime_backfill_projects_shared_values_to_other_services() {
     let definitions = builtin_definitions();
     let defaults = plugin_management_service_runtime_default_values(&definitions);
-    let snapshot_defaults = plugin_management_snapshot_default_values(&defaults, "project-service");
+    let snapshot_defaults = plugin_management_snapshot_default_values(&defaults, "chatos-backend");
     let mut values = BTreeMap::new();
 
     let changed_keys = ensure_plugin_management_runtime_values(&mut values, &snapshot_defaults);
     let env = compatibility_env(&definitions, &values, |definition| {
-        definition.scope == "shared"
-            || definition.service_name.as_deref() == Some("project-service")
+        definition.scope == "shared" || definition.service_name.as_deref() == Some("chatos-backend")
     });
 
     assert_eq!(changed_keys.len(), 3);
@@ -2345,8 +2256,6 @@ fn chatos_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&CHATOS_BACKEND_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string()));
@@ -2424,18 +2333,6 @@ fn chatos_snapshot_exposes_runtime_environment_aliases() {
         (
             CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(5_000),
-        ),
-        (
-            CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39210"),
-        ),
-        (
-            CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
-            json!("https://127.0.0.1:39212"),
-        ),
-        (
-            CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(30_000),
         ),
         (
             CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string(),
@@ -2556,16 +2453,6 @@ fn chatos_snapshot_exposes_runtime_environment_aliases() {
     );
     assert_eq!(
         snapshot.env.get("CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS"),
-        Some(&"30000".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL"),
-        Some(&"https://127.0.0.1:39212".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS"),
         Some(&"30000".to_string())
     );
     assert_eq!(

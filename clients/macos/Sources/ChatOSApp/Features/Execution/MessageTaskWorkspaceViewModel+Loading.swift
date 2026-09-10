@@ -19,21 +19,6 @@ extension MessageTaskWorkspaceViewModel {
             errorMessage = error.localizedDescription
         }
 
-        if let service = projectExecutionService,
-           let identity = executionState.identity {
-            do {
-                if let launch = try await service.fetchExecution(identity) {
-                    guard refreshGeneration == workspaceRefreshGeneration else { return }
-                    applyExecution(launch)
-                }
-            } catch {
-                guard refreshGeneration == workspaceRefreshGeneration else { return }
-                if errorMessage == nil {
-                    errorMessage = "执行计划状态刷新失败：\(error.localizedDescription)"
-                }
-            }
-        }
-
         if refreshInspector {
             await refreshSelectedInspectorState()
         }
@@ -270,10 +255,8 @@ extension MessageTaskWorkspaceViewModel {
 
     func startPollingIfNeeded(force: Bool = false) {
         stopPolling()
-        let shouldPollExecution = executionState.isProjectExecution
-            && [.planning, .running].contains(executionState.phase)
         let shouldPollActiveTask = graph?.nodes.contains(where: { $0.task.isActive }) == true
-        let shouldPoll = shouldPollExecution || shouldPollActiveTask || shouldRetryEmptyGraph
+        let shouldPoll = shouldPollActiveTask || shouldRetryEmptyGraph
         guard force || shouldPoll else { return }
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -285,11 +268,8 @@ extension MessageTaskWorkspaceViewModel {
                 if isEmptyGraphRetry {
                     self.recordEmptyGraphRetryAttempt()
                 }
-                let shouldContinueExecution = self.executionState.isProjectExecution
-                    && [.planning, .running].contains(self.executionState.phase)
                 let hasActiveTask = self.graph?.nodes.contains(where: { $0.task.isActive }) == true
-                let shouldContinue = shouldContinueExecution
-                    || hasActiveTask
+                let shouldContinue = hasActiveTask
                     || self.shouldRetryEmptyGraph
                 if !shouldContinue {
                     return

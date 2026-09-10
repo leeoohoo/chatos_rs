@@ -33,19 +33,7 @@ impl TaskRunnerMcpService {
                 tool.get("name")
                     .and_then(Value::as_str)
                     .is_some_and(|name| {
-                        // This descriptor is the control-plane catalog shared by
-                        // every ChatOS Agent binding. The request-scoped Task
-                        // Runner endpoint still applies the exact tool profile,
-                        // but the catalog must contain the union of tools that
-                        // any supported ChatOS planner profile can receive. If
-                        // it only advertises the ordinary async-planner subset,
-                        // MCP Management cannot grant the requirement execution
-                        // planner its dedicated materialization tool.
                         agent_tool_allowed_for_profile(name, McpToolProfile::ChatosAsyncPlanner)
-                            || agent_tool_allowed_for_profile(
-                                name,
-                                McpToolProfile::ProjectRequirementExecutionPlanner,
-                            )
                     })
             })
             .collect::<Vec<_>>();
@@ -103,15 +91,6 @@ impl TaskRunnerMcpService {
                         .to_string(),
                     tool_names: tool_names_for_profile(&tools, McpToolProfile::ChatosAsyncPlanner),
                 },
-                McpServerToolProfileInfo {
-                    key: PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string(),
-                    label: "Project requirement execution planner".to_string(),
-                    description: "Tools used by Chatos to split project tasks into concrete Task Runner execution tasks.".to_string(),
-                    tool_names: tool_names_for_profile(
-                        &tools,
-                        McpToolProfile::ProjectRequirementExecutionPlanner,
-                    ),
-                },
             ],
         }
     }
@@ -161,12 +140,6 @@ impl TaskRunnerMcpService {
                 "task runner could not enrich MCP tool schemas with Agent-bound MCP choices"
             ),
         }
-        if tool_profile == McpToolProfile::ProjectRequirementExecutionPlanner {
-            enrich_project_execution_task_scope_schema(
-                &mut tools,
-                &request_context.expected_project_task_ids,
-            );
-        }
         Ok(tools
             .into_iter()
             .filter(|tool| {
@@ -198,44 +171,35 @@ impl TaskRunnerMcpService {
             .effective_owner_user_id()
             .ok_or_else(|| "current Agent is missing owner scope".to_string())?;
         let project_id = request_context.project_scope_id();
-        let targets = [
-            (crate::models::TASK_PROFILE_DEFAULT, true, "execution task"),
-            (
-                crate::models::TASK_PROFILE_CHATOS_PLAN,
-                false,
-                "planning task",
-            ),
-            (
-                crate::models::TASK_PROFILE_CHATOS_PLAN,
-                true,
-                "planning-profile execution task",
-            ),
-        ];
+        let project_context = self
+            .task_service
+            .authorize_task_project_context(
+                project_id.as_deref(),
+                request_context.project_context.as_ref(),
+                Some(owner_user_id),
+            )
+            .await?;
         let mut builtin = BTreeMap::<String, String>::new();
         let mut external = BTreeMap::<String, String>::new();
         let mut plugins = BTreeMap::<String, String>::new();
-        for (task_profile, requires_execution, target_label) in targets {
-            let agent_key =
-                crate::models::task_runner_agent_key_for(task_profile, requires_execution);
-            let Some(policy) = self
-                .task_service
-                .resolve_task_runner_policy_for_agent_project(
-                    Some(current_user),
-                    Some(owner_user_id),
-                    agent_key,
-                    project_id.as_deref(),
-                    Some(task_profile),
-                    None,
-                )
-                .await?
-            else {
-                continue;
-            };
+        if let Some(policy) = self
+            .task_service
+            .resolve_task_runner_policy_for_agent_project(
+                Some(current_user),
+                Some(owner_user_id),
+                chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
+                project_id.as_deref(),
+                project_context.as_ref(),
+                Some(crate::models::TASK_PROFILE_DEFAULT),
+                None,
+            )
+            .await?
+        {
             for (value, title) in policy.selectable_builtin_mcp_choices() {
-                merge_mcp_choice(&mut builtin, value, title, target_label);
+                merge_mcp_choice(&mut builtin, value, title, "task");
             }
             for (value, title) in policy.selectable_external_mcp_choices() {
-                merge_mcp_choice(&mut external, value, title, target_label);
+                merge_mcp_choice(&mut external, value, title, "task");
             }
             for plugin in policy.selectable_plugin_views() {
                 let title = format!(
@@ -246,7 +210,7 @@ impl TaskRunnerMcpService {
                         plugin.description.as_str(),
                     )
                 );
-                merge_mcp_choice(&mut plugins, plugin.plugin_key, title, target_label);
+                merge_mcp_choice(&mut plugins, plugin.plugin_key, title, "task");
             }
         }
         Ok((

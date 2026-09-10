@@ -73,7 +73,25 @@ struct NativePluginManifest: Decodable, Sendable {
         var source: PathReference
         var title: String?
         var surface: String?
+        var bridgeCapabilities: [String]
         var runtime: Runtime?
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            componentKey = try container.decode(String.self, forKey: .componentKey)
+            source = try container.decode(PathReference.self, forKey: .source)
+            title = try container.decodeIfPresent(String.self, forKey: .title)
+            surface = try container.decodeIfPresent(String.self, forKey: .surface)
+            bridgeCapabilities = try container.decodeIfPresent(
+                [String].self,
+                forKey: .bridgeCapabilities
+            ) ?? []
+            runtime = try container.decodeIfPresent(Runtime.self, forKey: .runtime)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case componentKey, source, title, surface, bridgeCapabilities, runtime
+        }
     }
 
     struct Permission: Decodable, Sendable {

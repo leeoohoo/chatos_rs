@@ -318,14 +318,6 @@ impl AppState {
                     })?,
             ) | migrate_https_url_draft(
                 &mut draft.changes,
-                TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-                task_runner_defaults
-                    .get(TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
-                    .ok_or_else(|| {
-                        "Task Runner Project Service HTTPS default is missing".to_string()
-                    })?,
-            ) | migrate_https_url_draft(
-                &mut draft.changes,
                 TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
                 task_runner_defaults
                     .get(TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
@@ -425,14 +417,6 @@ impl AppState {
                 defaults
                     .get(MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY)
                     .unwrap_or(&json!(DEFAULT_LOCAL_RABBITMQ_URL)),
-            ) | migrate_https_url_draft(
-                &mut draft.changes,
-                MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
-                defaults
-                    .get(MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY)
-                    .ok_or_else(|| {
-                        "MCP Management Project Service HTTPS default is missing".to_string()
-                    })?,
             ) | migrate_https_url_draft(
                 &mut draft.changes,
                 MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
@@ -727,7 +711,6 @@ impl AppState {
                 "local-connector-service",
                 "mcp-management-service",
                 "plugin-management-service",
-                "project-service",
                 "memory-engine",
                 "task-runner",
                 "chatos-backend",
@@ -797,7 +780,6 @@ impl AppState {
             local_connector_key = LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             mcp_management_key = MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             plugin_management_key = PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
-            project_service_key = PROJECT_SERVICE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             memory_engine_key = MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             "Internal request security configuration is present in configuration center releases and snapshots"
         );
@@ -954,103 +936,6 @@ impl AppState {
             task_runner_base_url_key = USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             harness_enabled_key = USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
             "User Service runtime configuration is present in configuration center releases and snapshots"
-        );
-        Ok(())
-    }
-
-    pub(super) async fn migrate_project_service_runtime_config(&self) -> Result<(), String> {
-        let definitions = self.store.list_definitions().await?;
-        let defaults = project_service_runtime_default_values(&definitions);
-        if defaults.is_empty() {
-            return Err(
-                "Project Service runtime configuration definitions are incomplete".to_string(),
-            );
-        }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys =
-                ensure_project_service_runtime_values(&mut release.values, &defaults);
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                defaults
-                    .iter()
-                    .map(|(key, fallback)| {
-                        (
-                            key.clone(),
-                            release
-                                .values
-                                .get(key)
-                                .cloned()
-                                .unwrap_or_else(|| fallback.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
-
-        for mut snapshot in self.store.list_all_snapshots().await? {
-            if snapshot.service_name != "project-service" {
-                continue;
-            }
-            let snapshot_defaults = values_by_release
-                .get(&(snapshot.environment.clone(), snapshot.revision))
-                .cloned()
-                .unwrap_or_else(|| defaults.clone());
-            let changed =
-                !ensure_project_service_runtime_values(&mut snapshot.values, &snapshot_defaults)
-                    .is_empty();
-            let previous_env = snapshot.env.clone();
-            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
-                definition.scope == "shared"
-                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
-            });
-            if changed || snapshot.env != previous_env {
-                snapshot.checksum = checksum(&json!({
-                    "values": snapshot.values,
-                    "env": snapshot.env,
-                }))?;
-                self.store.save_snapshot(&snapshot).await?;
-            }
-        }
-
-        for mut draft in self.store.list_drafts().await? {
-            let mut changed = false;
-            {
-                let key = PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY;
-                let replacement = defaults
-                    .get(key)
-                    .ok_or_else(|| format!("Project Service HTTPS default is missing: {key}"))?;
-                changed |= migrate_https_url_draft(&mut draft.changes, key, replacement);
-            }
-            if changed {
-                draft.validation_status = "pending".to_string();
-                draft.validation_errors.clear();
-                draft.updated_at = Utc::now().to_rfc3339();
-                self.store.save_draft(&draft).await?;
-            }
-        }
-
-        self.republish_active_releases_to_consul(
-            &definitions,
-            "add Project Service runtime configuration",
-        )
-        .await?;
-
-        tracing::info!(
-            user_service_base_url_key = PROJECT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
-            user_service_internal_base_url_key =
-                PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            local_connector_base_url_key =
-                PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-            task_runner_base_url_key = PROJECT_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-            "Project Service runtime configuration is present in releases and snapshots"
         );
         Ok(())
     }
@@ -1228,12 +1113,6 @@ impl AppState {
                         "ChatOS User Service internal HTTPS default is missing".to_string()
                     })?,
                 &["https://127.0.0.1:39192", "https://localhost:39192"],
-            ) | migrate_https_url_draft(
-                &mut draft.changes,
-                CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-                defaults
-                    .get(CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
-                    .ok_or_else(|| "ChatOS Project Service HTTPS default is missing".to_string())?,
             ) {
                 draft.validation_status = "pending".to_string();
                 draft.validation_errors.clear();
@@ -1251,7 +1130,6 @@ impl AppState {
         tracing::info!(
             user_service_base_url_key = CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
             user_service_internal_base_url_key = CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            project_service_base_url_key = CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
             task_runner_base_url_key = CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             memory_engine_base_url_key = CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             "ChatOS runtime configuration is present in releases and snapshots"

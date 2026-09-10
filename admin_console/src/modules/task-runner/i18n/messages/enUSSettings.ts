@@ -273,7 +273,6 @@ export const enUSSettings: MessageDictionary = {
   'runs.detail.pluginCloudRuntime': 'Cloud runtime',
   'runs.detail.pluginComponents': 'components',
   'runs.detail.pluginSnapshotSummary': '{version}, {target}, {componentCount} components',
-  'runs.detail.planningAgent': 'Task Runner Planning Agent',
   'runs.detail.executionAgent': 'Task Runner Execution Agent',
   'runs.detail.errorMessage': 'Error message',
   'runs.detail.totalDuration': 'Total duration',

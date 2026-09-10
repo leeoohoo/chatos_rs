@@ -1,0 +1,19 @@
+{
+  "name": "@chatos/project-management",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "engines": { "node": ">=22.13.0" },
+  "bin": { "chatos-project-management": "bin/chatos-project-management" },
+  "files": ["bin/", "dist/", "ui/", "skills/", "chatos.plugin.json", "README.md"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit && node --check ui/app.js",
+    "preview:fixture": "npm run build && node scripts/preview-fixture.mjs",
+    "test": "npm run build && npm run typecheck && node --test tests/*.test.mjs",
+    "pack:verify": "npm test && node scripts/verify-package.mjs"
+  },
+  "dependencies": { "@modelcontextprotocol/sdk": "1.30.0", "zod": "3.25.76", "zod-to-json-schema": "3.25.1" },
+  "devDependencies": { "@types/node": "24.5.2", "esbuild": "0.28.2", "typescript": "5.9.2" }
+}

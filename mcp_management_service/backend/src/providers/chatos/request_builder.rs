@@ -71,12 +71,6 @@ impl ChatosProvider {
                 request = request.header(header, value);
             }
         }
-        if !binding.expected_project_task_ids.is_empty() {
-            request = request.header(
-                "x-mcp-management-expected-project-task-ids",
-                binding.expected_project_task_ids.join(","),
-            );
-        }
         Ok(request.with_internal_trace_context())
     }
 }

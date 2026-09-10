@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="planning-session" content="__SESSION_TOKEN__">
+  <title>项目管理</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="studio-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark" data-icon="plans"></span><div><strong>项目管理</strong><small>Project Management</small></div></div>
+      <div class="sidebar-heading">项目资料</div>
+      <nav aria-label="规划模块">
+        <button data-tab="requirements" aria-current="page" title="需求"><span data-icon="requirements"></span><span class="nav-label">需求</span><span data-count="requirements">—</span></button>
+        <button data-tab="documents" title="规划文档"><span data-icon="documents"></span><span class="nav-label">规划文档</span><span data-count="documents">—</span></button>
+        <button data-tab="workItems" title="工作项"><span data-icon="workItems"></span><span class="nav-label">工作项</span><span data-count="workItems">—</span></button>
+        <button data-tab="relations" title="关系与范围"><span data-icon="relations"></span><span class="nav-label">关系与范围</span></button>
+        <button data-tab="plans" title="规划版本"><span data-icon="plans"></span><span class="nav-label">规划版本</span><span data-count="plans">—</span></button>
+        <button data-tab="executions" title="执行交接"><span data-icon="executions"></span><span class="nav-label">执行交接</span><span data-count="executionIntents">—</span></button>
+      </nav>
+      <div class="sidebar-bottom"><div class="local-label"><span data-icon="disk"></span><span>资料保存在本机</span></div><details><summary>关于项目管理</summary><p>项目身份和 Git 由客户端管理。需求、文档、工作项、依赖和规划由此插件管理。</p><p>执行交接只保存 Task Runner 引用，运行状态始终以 Task Runner 为准。</p></details></div>
+    </aside>
+    <div class="workspace">
+      <header class="window-toolbar">
+        <div class="breadcrumb"><span data-icon="folder"></span><strong id="project-name">项目管理</strong><span class="slash">/</span><span id="toolbar-section">需求</span></div>
+        <div class="toolbar-actions"><span id="save-status" role="status" aria-live="polite">正在读取…</span><button id="refresh" class="icon-button" type="button" aria-label="刷新资料" title="刷新资料"><span data-icon="refresh"></span></button><span class="toolbar-divider"></span><button id="create" class="primary" type="button" disabled><span data-icon="plus"></span><span id="create-label">新建需求</span></button></div>
+      </header>
+      <div id="message" class="message" role="alert" hidden></div>
+      <main>
+        <aside class="source-list" aria-label="资料列表">
+          <div class="list-heading"><h1 id="list-title">需求</h1><span id="list-count">—</span></div>
+          <label class="search"><span data-icon="search"></span><input id="search" type="search" aria-label="搜索当前列表" placeholder="搜索需求" disabled></label>
+          <div id="items"><p class="list-empty">正在读取项目资料…</p></div>
+          <div class="list-footer" id="revision">本地资料</div>
+        </aside>
+        <section class="detail-pane" aria-label="规划编辑器"><div id="editor" aria-busy="true"></div></section>
+      </main>
+    </div>
+  </div>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-body"><form method="dialog"><span class="dialog-icon" data-icon="plans"></span><h2 id="confirm-title"></h2><p id="confirm-body"></p><div class="actions"><button value="cancel" autofocus>取消</button><button id="confirm-accept" value="confirm" class="primary">确认</button></div></form></dialog>
+</body>
+</html>

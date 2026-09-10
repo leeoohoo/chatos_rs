@@ -14,7 +14,7 @@ command -v openssl >/dev/null 2>&1 || {
   exit 1
 }
 
-CALLERS=(chatos-backend task-runner project-service local-connector-service memory-engine mcp-management-service)
+CALLERS=(chatos-backend task-runner local-connector-service memory-engine mcp-management-service)
 
 material_is_current() {
   [[ -f "$OUTPUT_DIR/ca.crt" && -f "$OUTPUT_DIR/server.crt" && -f "$OUTPUT_DIR/server.key" ]] || return 1

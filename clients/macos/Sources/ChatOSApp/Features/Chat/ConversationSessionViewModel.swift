@@ -16,7 +16,6 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     let sessionID: String
-    @Published var allowsPlanMode: Bool
 
     @Published private(set) var turns: [ConversationTurn]
     @Published private(set) var hasOlder = false
@@ -27,7 +26,8 @@ final class ConversationSessionViewModel: ObservableObject {
     @Published private(set) var isUpdatingRuntimeSettings = false
     @Published private(set) var availableModels: [ConversationModelOption] = []
     @Published private(set) var selectedModelID: String?
-    @Published private(set) var planModeEnabled = false
+    @Published private(set) var selectedRemoteConnectionID: String?
+    @Published private(set) var selectedThinkingLevel: String?
     @Published private(set) var reasoningEnabled = false
     @Published private(set) var taskGraphAvailability: [String: Bool] = [:]
     @Published var historyError: String?
@@ -46,7 +46,6 @@ final class ConversationSessionViewModel: ObservableObject {
     let commandService: (any ConversationCommandServicing)?
     let turnProcessService: (any TurnProcessServicing)?
     let messageTaskGraphService: (any MessageTaskGraphServicing)?
-    let projectExecutionService: (any ProjectExecutionServicing)?
     private let remoteService: (any ConversationRemoteServicing)?
     let realtimeService: (any ConversationRealtimeStreaming)?
     private let runtimeSettingsService: (any ConversationRuntimeSettingsServicing)?
@@ -67,7 +66,6 @@ final class ConversationSessionViewModel: ObservableObject {
 
     init(
         sessionID: String,
-        allowsPlanMode: Bool = false,
         initialTurns: [ConversationTurn],
         historyStore: any ConversationHistoryStoring,
         remoteService: (any ConversationRemoteServicing)? = nil,
@@ -75,12 +73,10 @@ final class ConversationSessionViewModel: ObservableObject {
         commandService: (any ConversationCommandServicing)? = nil,
         turnProcessService: (any TurnProcessServicing)? = nil,
         messageTaskGraphService: (any MessageTaskGraphServicing)? = nil,
-        projectExecutionService: (any ProjectExecutionServicing)? = nil,
         runtimeSettingsService: (any ConversationRuntimeSettingsServicing)? = nil,
         askUserPromptService: (any AskUserPromptServicing)? = nil
     ) {
         self.sessionID = sessionID
-        self.allowsPlanMode = allowsPlanMode
         self.turns = initialTurns
         self.selectedTurnID = initialTurns.last?.id
         self.historyStore = historyStore
@@ -89,7 +85,6 @@ final class ConversationSessionViewModel: ObservableObject {
         self.commandService = commandService
         self.turnProcessService = turnProcessService
         self.messageTaskGraphService = messageTaskGraphService
-        self.projectExecutionService = projectExecutionService
         self.runtimeSettingsService = runtimeSettingsService
         self.askUserPromptService = askUserPromptService
 
@@ -309,8 +304,7 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func resolveTaskGraphAvailability(for turn: ConversationTurn) {
-        let isCandidate = turn.isTaskGraphAvailable
-            && (turn.messageTaskLookup != nil || turn.projectExecutionContext != nil)
+        let isCandidate = turn.isTaskGraphAvailable && turn.messageTaskLookup != nil
         guard isCandidate, let messageTaskGraphService else {
             guard taskGraphAvailabilityRevisions[turn.id] != turn.revision
                     || taskGraphAvailability[turn.id] != nil
@@ -362,33 +356,48 @@ final class ConversationSessionViewModel: ObservableObject {
         startRealtime()
     }
 
-    func setPlanModeEnabled(_ enabled: Bool) {
-        guard allowsPlanMode, let runtimeSettingsService else { return }
-        let previous = planModeEnabled
-        planModeEnabled = enabled
-        runtimeSettingsError = nil
-        isUpdatingRuntimeSettings = true
-        Task {
-            do {
-                let settings = try await runtimeSettingsService.updatePlanMode(
-                    sessionID: sessionID,
-                    enabled: enabled
-                )
-                applyRuntimeSettings(settings)
-            } catch {
-                planModeEnabled = previous
-                runtimeSettingsError = error.localizedDescription
-            }
-            isUpdatingRuntimeSettings = false
-        }
-    }
-
     var selectedModelDisplayName: String {
         if let selectedModelID,
            let selected = availableModels.first(where: { $0.id == selectedModelID }) {
             return selected.displayName
         }
         return availableModels.first?.displayName ?? "选择模型"
+    }
+
+    var selectedModelOption: ConversationModelOption? {
+        guard let selectedModelID else { return availableModels.first }
+        return availableModels.first(where: { $0.id == selectedModelID })
+            ?? availableModels.first
+    }
+
+    var reasoningLevels: [String] {
+        guard let selectedModelOption, selectedModelOption.supportsReasoning else { return [] }
+        return selectedModelOption.thinkingLevels
+    }
+
+    var effectiveReasoningLevel: String {
+        guard reasoningEnabled else { return "none" }
+        if let selectedThinkingLevel, reasoningLevels.contains(selectedThinkingLevel) {
+            return selectedThinkingLevel
+        }
+        return enabledReasoningLevel
+    }
+
+    var defaultReasoningLevel: String {
+        if let configured = selectedModelOption?.thinkingLevel,
+           reasoningLevels.contains(configured) {
+            return configured
+        }
+        if reasoningLevels.contains("auto") { return "auto" }
+        if reasoningLevels.contains("medium") { return "medium" }
+        return reasoningLevels.first(where: { $0 != "none" }) ?? "none"
+    }
+
+    private var enabledReasoningLevel: String {
+        if defaultReasoningLevel != "none" { return defaultReasoningLevel }
+        if reasoningLevels.contains("auto") { return "auto" }
+        if reasoningLevels.contains("medium") { return "medium" }
+        return reasoningLevels.first(where: { $0 != "none" }) ?? "none"
     }
 
     func setSelectedModelID(_ modelID: String) {
@@ -415,20 +424,57 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func setReasoningEnabled(_ enabled: Bool) {
-        guard let runtimeSettingsService else { return }
+        setReasoningLevel(enabled ? enabledReasoningLevel : "none")
+    }
+
+    func resetReasoningLevel() {
+        setReasoningLevel(defaultReasoningLevel)
+    }
+
+    func setReasoningLevel(_ level: String) {
+        guard let runtimeSettingsService,
+              reasoningLevels.contains(level) else { return }
+        let enabled = level != "none"
+        guard selectedThinkingLevel != level || reasoningEnabled != enabled else { return }
+        let previousLevel = selectedThinkingLevel
         let previous = reasoningEnabled
+        selectedThinkingLevel = level
         reasoningEnabled = enabled
         runtimeSettingsError = nil
         isUpdatingRuntimeSettings = true
         Task {
             do {
-                let settings = try await runtimeSettingsService.updateReasoning(
+                let settings = try await runtimeSettingsService.updateReasoningLevel(
                     sessionID: sessionID,
+                    level: level,
                     enabled: enabled
                 )
                 applyRuntimeSettings(settings)
             } catch {
+                selectedThinkingLevel = previousLevel
                 reasoningEnabled = previous
+                runtimeSettingsError = error.localizedDescription
+            }
+            isUpdatingRuntimeSettings = false
+        }
+    }
+
+    func setRemoteConnectionID(_ connectionID: String?) {
+        guard let runtimeSettingsService,
+              selectedRemoteConnectionID != connectionID else { return }
+        let previous = selectedRemoteConnectionID
+        selectedRemoteConnectionID = connectionID
+        runtimeSettingsError = nil
+        isUpdatingRuntimeSettings = true
+        Task {
+            do {
+                let settings = try await runtimeSettingsService.updateRemoteConnection(
+                    sessionID: sessionID,
+                    connectionID: connectionID
+                )
+                applyRuntimeSettings(settings)
+            } catch {
+                selectedRemoteConnectionID = previous
                 runtimeSettingsError = error.localizedDescription
             }
             isUpdatingRuntimeSettings = false
@@ -455,7 +501,8 @@ final class ConversationSessionViewModel: ObservableObject {
         } else {
             selectedModelID = availableModels.first?.id
         }
-        planModeEnabled = allowsPlanMode && settings.planModeEnabled
+        selectedRemoteConnectionID = settings.remoteConnectionID
+        selectedThinkingLevel = settings.selectedThinkingLevel
         reasoningEnabled = settings.reasoningEnabled
     }
 

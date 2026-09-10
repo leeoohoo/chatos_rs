@@ -44,8 +44,7 @@ struct AiModelSettingsRequest {
     model_request_max_retries: Option<i64>,
     memory_summary_model_config_id: Option<Option<String>>,
     memory_summary_thinking_level: Option<Option<String>>,
-    project_management_agent_model_config_id: Option<Option<String>>,
-    project_management_agent_thinking_level: Option<Option<String>>,
+    task_runner_default_model_config_id: Option<Option<String>>,
 }
 
 pub fn router() -> Router {

@@ -72,7 +72,6 @@ export function buildTaskTableColumns({
                 {taskProfileLabel(
                   record.task_profile,
                   t,
-                  record.mcp_config.requires_execution,
                 )}
               </Tag>
               {record.parent_task_id ? (

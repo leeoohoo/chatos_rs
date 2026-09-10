@@ -38,6 +38,10 @@ use super::{
 fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
     let auth_state = AuthState::from_app_state(state);
     let protected_api = Router::new()
+        .route(
+            "/api/local-connectors/project-context/authorize",
+            post(super::project_context::authorize_project_context),
+        )
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/model-configs", any(user_service_protected_proxy))
         .route(

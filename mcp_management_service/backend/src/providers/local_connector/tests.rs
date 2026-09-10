@@ -86,7 +86,6 @@ fn snapshot() -> RuntimeSessionSnapshot {
         default_remote_connection_id: None,
         remote_connection_route: None,
         tool_result_max_chars: None,
-        expected_project_task_ids: Vec::new(),
         workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
             default_tool_root: Some("backend".to_string()),
             owned_paths: vec!["README.md".to_string()],

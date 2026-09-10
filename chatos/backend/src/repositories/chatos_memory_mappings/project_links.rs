@@ -167,37 +167,6 @@ pub async fn touch_project_agent_link_session(
     .await
 }
 
-pub async fn delete_project_agent_link(
-    user_id: &str,
-    project_id: &str,
-    contact_id: Option<&str>,
-) -> Result<bool, String> {
-    let user_id = user_id.to_string();
-    let project_id = normalize_project_id(project_id);
-    let contact_id = contact_id.and_then(|value| normalize_optional_text(Some(value)));
-    with_db(|db| {
-        let user_id = user_id.clone();
-        let project_id = project_id.clone();
-        let contact_id = contact_id.clone();
-        Box::pin(async move {
-            let mut filter = doc! {
-                "user_id": &user_id,
-                "project_id": &project_id,
-            };
-            if let Some(contact_id) = contact_id.as_deref() {
-                filter.insert("contact_id", contact_id);
-            }
-            let result = db
-                .collection::<Document>("chatos_project_agent_links")
-                .delete_one(filter, None)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(result.deleted_count > 0)
-        })
-    })
-    .await
-}
-
 pub async fn list_project_agent_links_by_contact(
     user_id: &str,
     contact_id: &str,

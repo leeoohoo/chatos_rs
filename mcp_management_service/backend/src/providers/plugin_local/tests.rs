@@ -299,7 +299,6 @@ fn runtime_snapshot(
         default_remote_connection_id: None,
         remote_connection_route: None,
         tool_result_max_chars: None,
-        expected_project_task_ids: Vec::new(),
         workspace_route: None,
         project_context: context(),
         policy_revision: "policy-1".to_string(),

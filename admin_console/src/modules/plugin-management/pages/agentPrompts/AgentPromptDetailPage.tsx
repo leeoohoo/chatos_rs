@@ -181,9 +181,7 @@ export function AgentPromptDetailPage({
             onChange={(value) => setProfile(String(value))}
             options={profiles.map((item) => ({
               value: item,
-              label: item === 'chatos_plan'
-                ? t('agent.promptProfilePlanning')
-                : item === 'default'
+              label: item === 'default'
                   ? t('agent.promptProfileDefault')
                   : item,
             }))}

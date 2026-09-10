@@ -19,7 +19,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ConversationSessionFactory>();
         services.AddSingleton<ProjectFilesViewModel>();
         services.AddSingleton<ProjectGitViewModel>();
-        services.AddSingleton<ProjectPlanViewModel>();
         services.AddSingleton<ProjectRunViewModel>();
         services.AddSingleton<MessageTaskGraphViewModel>();
         services.AddSingleton<LocalizationViewModel>();

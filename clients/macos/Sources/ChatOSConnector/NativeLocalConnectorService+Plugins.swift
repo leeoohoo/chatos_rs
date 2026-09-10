@@ -27,20 +27,11 @@ extension NativeLocalConnectorService {
 
     public func launchPluginApplication(
         pluginID: String,
-        componentKey: String
-    ) async throws -> LocalConnectorPluginApplicationLaunch {
-        try await launchPluginApplication(
-            pluginID: pluginID,
-            componentKey: componentKey,
-            context: nil
-        )
-    }
-
-    public func launchPluginApplication(
-        pluginID: String,
         componentKey: String,
-        context: LocalConnectorPluginApplicationContext?
+        context: LocalConnectorPluginApplicationContext?,
+        expectedOwnerUserID: String
     ) async throws -> LocalConnectorPluginApplicationLaunch {
+        guard state.user?.id == expectedOwnerUserID else { throw CancellationError() }
         guard state.pluginPreferences[pluginID] ?? true else {
             throw NativeConnectorError.pluginInstallation("Plugin 已停用")
         }
@@ -333,7 +324,8 @@ extension NativeLocalConnectorService {
                 : nil,
             missingContext: manifest.runtimeContext?.applies(to: contribution.componentKey) == true
                 ? manifest.runtimeContext?.missingContext
-                : nil
+                : nil,
+            bridgeCapabilities: contribution.bridgeCapabilities
         )
     }
 

@@ -149,11 +149,7 @@ impl AppConfig {
             ),
         };
 
-        for caller in [
-            "chatos-backend",
-            "project-service",
-            "mcp-management-service",
-        ] {
+        for caller in ["chatos-backend", "mcp-management-service"] {
             if !config.internal_api_secrets.contains_key(caller) {
                 return Err(format!(
                     "dedicated Local Connector internal secret is required for {caller}"
@@ -184,7 +180,6 @@ impl AppConfig {
                     "change_me_task_runner_internal_secret",
                     "change_me_chatos_local_connector_secret",
                     "change_me_task_runner_local_connector_secret",
-                    "change_me_project_service_local_connector_secret",
                     "change_me_mcp_management_local_connector_secret",
                 ],
             )?;
@@ -246,10 +241,6 @@ fn caller_internal_api_secrets() -> HashMap<String, String> {
         (
             "chatos-backend",
             "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-        ),
-        (
-            "project-service",
-            "PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
         ),
         (
             "mcp-management-service",

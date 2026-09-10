@@ -12,8 +12,6 @@ use serde_json::Value;
 
 use crate::{agent_descriptor, AgentDescriptor, AgentIdentity};
 
-pub const TASK_RUNNER_PLAN_AGENT: TaskRunnerAgent =
-    TaskRunnerAgent::new(SystemAgentKey::TaskRunnerPlanPhase);
 pub const TASK_RUNNER_AGENT: TaskRunnerAgent =
     TaskRunnerAgent::new(SystemAgentKey::TaskRunnerRunPhase);
 
@@ -210,11 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn planning_and_execution_agents_have_distinct_identities() {
-        assert_eq!(
-            TASK_RUNNER_PLAN_AGENT.descriptor().key,
-            SystemAgentKey::TaskRunnerPlanPhase
-        );
+    fn task_runner_uses_execution_identity() {
         assert_eq!(
             TASK_RUNNER_AGENT.descriptor().key,
             SystemAgentKey::TaskRunnerRunPhase

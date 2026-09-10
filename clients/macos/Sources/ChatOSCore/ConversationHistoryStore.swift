@@ -13,7 +13,6 @@ public actor ConversationHistoryStore {
         var appliedEventIDs: Set<String> = []
         var viewportAnchor: ViewportAnchor?
         var unreadNewerCount = 0
-        var supersededExecutionGroupIDs: Set<String> = []
     }
 
     private var sessions: [String: SessionState] = [:]
@@ -142,31 +141,9 @@ public actor ConversationHistoryStore {
     ) -> Bool {
         var didChange = false
 
-        let newlySuperseded = Set(
-            incomingTurns.compactMap {
-                $0.projectExecutionContext?.replacedExecutionGroupID?.trimmedNonEmpty
-            }
-        )
-        if !newlySuperseded.isEmpty {
-            state.supersededExecutionGroupIDs.formUnion(newlySuperseded)
-            for (turnID, existingTurn) in state.turnsByID {
-                guard state.supersededExecutionGroupIDs.contains(existingTurn.executionGroupIdentity),
-                      existingTurn.isTaskGraphAvailable else {
-                    continue
-                }
-                var updatedTurn = existingTurn
-                updatedTurn.isTaskGraphAvailable = false
-                state.turnsByID[turnID] = updatedTurn
-                didChange = true
-            }
-        }
-
         for incomingTurn in incomingTurns {
             var turn = incomingTurn
             guard turn.sessionID == sessionID else { continue }
-            if state.supersededExecutionGroupIDs.contains(turn.executionGroupIdentity) {
-                turn.isTaskGraphAvailable = false
-            }
 
             guard let existing = state.turnsByID[turn.id] else {
                 state.turnsByID[turn.id] = turn
@@ -209,16 +186,5 @@ private extension ConversationTurn {
         }
 
         return lhs.id < rhs.id
-    }
-
-    var executionGroupIdentity: String {
-        projectExecutionContext?.executionGroupID?.trimmedNonEmpty ?? userMessage.id
-    }
-}
-
-private extension String {
-    var trimmedNonEmpty: String? {
-        let value = trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
     }
 }

@@ -1067,7 +1067,7 @@ mod tests {
     #[test]
     fn observation_and_task_bookkeeping_are_not_engineering_progress() {
         for name in [
-            "project_management_update_project_task",
+            "task_runner_update_task",
             "task_run_process_record_process",
             "code_maintainer_read_read_file_raw",
         ] {

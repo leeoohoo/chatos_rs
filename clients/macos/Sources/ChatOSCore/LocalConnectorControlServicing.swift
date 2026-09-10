@@ -43,12 +43,9 @@ public protocol LocalConnectorControlServicing: Sendable {
     func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication]
     func launchPluginApplication(
         pluginID: String,
-        componentKey: String
-    ) async throws -> LocalConnectorPluginApplicationLaunch
-    func launchPluginApplication(
-        pluginID: String,
         componentKey: String,
-        context: LocalConnectorPluginApplicationContext?
+        context: LocalConnectorPluginApplicationContext?,
+        expectedOwnerUserID: String
     ) async throws -> LocalConnectorPluginApplicationLaunch
     func installPlugin(id: String) async throws
     func uninstallPlugin(id: String) async throws
@@ -63,17 +60,11 @@ public extension LocalConnectorControlServicing {
 
     func launchPluginApplication(
         pluginID: String,
-        componentKey: String
+        componentKey: String,
+        context: LocalConnectorPluginApplicationContext?,
+        expectedOwnerUserID: String
     ) async throws -> LocalConnectorPluginApplicationLaunch {
         throw URLError(.unsupportedURL)
-    }
-
-    func launchPluginApplication(
-        pluginID: String,
-        componentKey: String,
-        context: LocalConnectorPluginApplicationContext?
-    ) async throws -> LocalConnectorPluginApplicationLaunch {
-        try await launchPluginApplication(pluginID: pluginID, componentKey: componentKey)
     }
 
     func fetchModelProviders() async throws -> [LocalConnectorModelProvider] { [] }

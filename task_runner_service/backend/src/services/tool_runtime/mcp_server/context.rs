@@ -1,28 +1,23 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeSet;
-
 use crate::models::{
     normalize_project_id, CreateTaskRequest, TaskProjectScopeFilter, TaskSourceContext,
-    TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+    TASK_PROFILE_DEFAULT,
 };
-use chatos_agent::{
-    is_chatos_plan_task_profile as is_chatos_plan_task_profile_key,
-    parse_chatos_task_runner_tool_profile, ChatosTaskRunnerToolProfile,
-};
+use chatos_agent::{parse_chatos_task_runner_tool_profile, ChatosTaskRunnerToolProfile};
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum McpToolProfile {
     Default,
     ChatosAsyncPlanner,
-    ProjectRequirementExecutionPlanner,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct McpRequestContext {
     pub project_id: Option<String>,
+    pub project_context: Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
     pub source_session_id: Option<String>,
     pub source_turn_id: Option<String>,
     pub source_user_message_id: Option<String>,
@@ -32,14 +27,13 @@ pub struct McpRequestContext {
     pub tool_profile: Option<String>,
     pub task_profile: Option<String>,
     pub builtin_prompt_locale: Option<String>,
-    pub chatos_plan_mode: bool,
-    pub expected_project_task_ids: BTreeSet<String>,
 }
 
 impl McpRequestContext {
     pub(super) fn task_source_context(&self) -> Result<Option<TaskSourceContext>, String> {
         if self.source_session_id.is_none()
             && self.project_id.is_none()
+            && self.project_context.is_none()
             && self.source_turn_id.is_none()
             && self.source_user_message_id.is_none()
             && self.remote_connection_id.is_none()
@@ -49,6 +43,7 @@ impl McpRequestContext {
         }
         Ok(Some(TaskSourceContext {
             project_id: self.project_id.clone(),
+            project_context: self.project_context.clone(),
             parent_task_id: None,
             source_run_id: None,
             source_session_id: self.source_session_id.clone(),
@@ -82,9 +77,6 @@ impl McpRequestContext {
             .as_deref()
             .and_then(parse_chatos_task_runner_tool_profile)
         {
-            Some(ChatosTaskRunnerToolProfile::ProjectRequirementExecutionPlanner) => {
-                McpToolProfile::ProjectRequirementExecutionPlanner
-            }
             Some(ChatosTaskRunnerToolProfile::AsyncPlanner) => McpToolProfile::ChatosAsyncPlanner,
             None if self.has_chatos_async_message_context() => McpToolProfile::ChatosAsyncPlanner,
             None => McpToolProfile::Default,
@@ -96,24 +88,13 @@ impl McpRequestContext {
             && has_non_empty_text(self.source_user_message_id.as_deref())
     }
 
-    pub(super) fn is_chatos_plan_task_profile(&self) -> bool {
-        self.task_profile
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(is_chatos_plan_task_profile_key)
-            || self.chatos_plan_mode
-    }
-
     pub(super) fn requested_task_profile(&self) -> &'static str {
-        if self.is_chatos_plan_task_profile() {
-            TASK_PROFILE_CHATOS_PLAN
-        } else {
-            TASK_PROFILE_DEFAULT
-        }
+        TASK_PROFILE_DEFAULT
     }
 
     pub(super) fn enforce_created_task_context(&self, input: &mut CreateTaskRequest) {
         input.project_id = self.project_scope_id();
+        input.project_context = self.project_context.clone();
         let has_explicit_model = input
             .default_model_config_id
             .as_deref()
@@ -129,13 +110,7 @@ impl McpRequestContext {
                 input.default_model_config_id = Some(model_config_id.to_string());
             }
         }
-        if !self.is_chatos_plan_task_profile() {
-            input.task_profile = Some(TASK_PROFILE_DEFAULT.to_string());
-            return;
-        }
-        input.task_profile = Some(TASK_PROFILE_CHATOS_PLAN.to_string());
-        let mcp_config = input.mcp_config.get_or_insert_with(Default::default);
-        mcp_config.requires_execution = Some(false);
+        input.task_profile = Some(TASK_PROFILE_DEFAULT.to_string());
     }
 
     pub(super) fn requested_builtin_prompt_locale(&self) -> String {

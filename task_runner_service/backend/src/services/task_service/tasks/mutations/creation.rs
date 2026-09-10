@@ -60,13 +60,38 @@ impl TaskService {
         let id = Uuid::new_v4().to_string();
         let now = now_rfc3339();
         let mut source_context = source_context.unwrap_or_default();
+        if let (Some(source), Some(requested)) = (&source_context.project_id, &input.project_id) {
+            if source != requested {
+                return Err("task project does not match trusted source context".to_string());
+            }
+        }
         if source_context.project_id.is_none() {
             source_context.project_id = input.project_id.clone();
         }
-        let project_id = normalize_project_id(source_context.project_id.clone());
-        if let Some(project_id) = project_id.as_deref() {
-            self.ensure_project_available_for_task(project_id, creator)
-                .await?;
+        let project_id = source_context.project_id.clone();
+        if let (Some(source), Some(requested)) =
+            (&source_context.project_context, &input.project_context)
+        {
+            if source != requested {
+                return Err(
+                    "task project snapshot does not match trusted source context".to_string(),
+                );
+            }
+        }
+        let project_context = self
+            .authorize_task_project_context(
+                project_id.as_deref(),
+                source_context
+                    .project_context
+                    .as_ref()
+                    .or(input.project_context.as_ref()),
+                task_owner_user_id.as_deref(),
+            )
+            .await?;
+        if let (Some(context), Some(audit)) = (&project_context, &plugin_selection_audit) {
+            if context.execution_context()?.revision != audit.project_context_revision {
+                return Err("project context changed during trusted Plugin selection".into());
+            }
         }
         let task_profile = normalize_task_profile(input.task_profile.as_deref())?;
         self.validate_task_prerequisites_for_project(
@@ -94,10 +119,7 @@ impl TaskService {
             mcp_config.builtin_prompt_locale = builtin_prompt_locale;
         }
         let mut mcp_config = sanitize_task_mcp_config(mcp_config);
-        let agent_key = crate::models::task_runner_agent_key_for(
-            task_profile.as_str(),
-            mcp_config.requires_execution,
-        );
+        let agent_key = chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase;
         let input_payload = input.input_payload;
         if let Some(workspace_dir) = normalized_optional(source_context.workspace_dir.clone()) {
             mcp_config.workspace_dir = Some(workspace_dir);
@@ -113,6 +135,7 @@ impl TaskService {
                 &mcp_config,
                 &plugin_config,
                 project_id.as_deref(),
+                project_context.as_ref(),
                 creator,
                 task_owner_user_id.as_deref(),
                 agent_key,
@@ -147,6 +170,7 @@ impl TaskService {
                 task_owner_user_id.as_deref(),
                 agent_key,
                 project_id.as_deref(),
+                project_context.as_ref(),
                 Some(task_profile.as_str()),
                 Some(schedule.mode.mode_key()),
             )
@@ -186,6 +210,7 @@ impl TaskService {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| self.config.default_subject_id.clone()),
             project_id,
+            project_context,
             task_profile,
             creator_user_id: creator.map(|user| user.id.clone()),
             creator_username: creator.map(|user| user.username.clone()),
@@ -221,6 +246,7 @@ impl TaskService {
             selected_plugin_ids = %task.plugin_config.selected_plugins.iter().map(|plugin| plugin.plugin_id.as_str()).collect::<Vec<_>>().join(","),
             "task runner created task with MCP, Skill, and Plugin selection"
         );
+        task.validate_project_context()?;
         self.ensure_task_thread(&task).await?;
         let saved = self.store.save_task(task).await?;
         self.store
@@ -236,6 +262,11 @@ mod tests {
     use super::*;
     use crate::config::{AppConfig, StoreMode};
     use crate::models::UserRole;
+    use crate::services::task_service::project_context::{
+        tests::snapshot, ProjectContextAuthorizer,
+    };
+    use chatos_mcp_management_sdk::{ClientProjectContextSnapshot, ProjectContextAuthorization};
+    use mongodb::bson;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -268,7 +299,6 @@ mod tests {
             default_tool_results_model_total_max_chars: 2000,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
-            internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
@@ -278,18 +308,13 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5000),
-            project_service_base_url: None,
-            project_service_internal_base_url: None,
-            project_service_internal_http_client: reqwest::Client::new(),
-            project_service_sync_secret: None,
-            project_service_request_timeout: Duration::from_millis(5000),
         }
     }
 
     async fn test_service() -> TaskService {
         let config = test_config();
         let store = AppStore::new(&config).await.expect("store");
-        TaskService::new(config, store)
+        TaskService::new(config, store).with_test_project_authorizer()
     }
 
     fn agent_user(owner_user_id: &str) -> CurrentUser {
@@ -304,39 +329,6 @@ mod tests {
         }
     }
 
-    async fn save_project(
-        service: &TaskService,
-        id: &str,
-        owner_user_id: &str,
-        status: TaskProjectStatus,
-    ) -> TaskProjectRecord {
-        let now = now_rfc3339();
-        service
-            .store
-            .save_task_project(TaskProjectRecord {
-                id: id.to_string(),
-                owner_user_id: Some(owner_user_id.to_string()),
-                owner_username: Some(format!("user-{owner_user_id}")),
-                owner_display_name: Some(format!("User {owner_user_id}")),
-                name: format!("Project {id}"),
-                root_path: Some(format!("/workspace/{id}")),
-                git_url: Some(format!("https://example.com/{id}.git")),
-                cloud_import_source: None,
-                import_status: None,
-                source_git_url: None,
-                harness_repo_identifier: None,
-                harness_git_url: None,
-                harness_default_branch: None,
-                description: None,
-                status,
-                created_at: now.clone(),
-                updated_at: now.clone(),
-                archived_at: (status == TaskProjectStatus::Archived).then_some(now),
-            })
-            .await
-            .expect("save project")
-    }
-
     fn create_task_request(title: &str) -> CreateTaskRequest {
         CreateTaskRequest {
             title: title.to_string(),
@@ -348,6 +340,7 @@ mod tests {
             tags: None,
             default_model_config_id: None,
             project_id: None,
+            project_context: None,
             task_profile: None,
             tenant_id: None,
             subject_id: None,
@@ -369,6 +362,7 @@ mod tests {
                 creator,
                 Some(TaskSourceContext {
                     project_id: project_id.map(ToOwned::to_owned),
+                    project_context: project_id.map(snapshot),
                     ..TaskSourceContext::default()
                 }),
             )
@@ -376,188 +370,261 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_task_persists_source_project_id() {
+    async fn create_task_persists_authorized_snapshot_without_project_database() {
         let service = test_service().await;
         let creator = agent_user("owner-a");
-        let project =
-            save_project(&service, "project-a", "owner-a", TaskProjectStatus::Active).await;
-
-        let task = create_task_with_project(&service, Some(" project-a "), Some(&creator))
+        let task = create_task_with_project(&service, Some("project-a"), Some(&creator))
             .await
-            .expect("create task");
-
-        assert_eq!(task.project_id.as_deref(), Some(project.id.as_str()));
-        let stored = service
-            .get_task(task.id.as_str())
-            .await
-            .expect("get task")
-            .expect("task");
-        assert_eq!(stored.project_id.as_deref(), Some(project.id.as_str()));
+            .unwrap();
+        task.validate_project_context().unwrap();
+        assert_eq!(task.tenant_id, "owner-a");
+        let frozen = task.project_context.as_ref().unwrap();
+        assert_eq!(frozen.snapshot, snapshot("project-a"));
+        assert_eq!(frozen.workspace_fingerprint, "test-binding-1");
+        let stored = service.get_task(&task.id).await.unwrap().unwrap();
+        assert_eq!(stored.project_context, task.project_context);
+        let json = serde_json::to_value(&stored).unwrap();
+        let decoded: TaskRecord = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.project_context, task.project_context);
+        let bson = bson::to_document(&stored).unwrap();
+        let decoded: TaskRecord = bson::from_document(bson).unwrap();
+        assert_eq!(decoded.project_context, task.project_context);
     }
 
     #[tokio::test]
-    async fn create_task_uses_none_for_user_conversation_scope() {
-        let service = test_service().await;
-
-        let task_without_context = service
-            .create_task(create_task_request("user conversation task"), None, None)
+    async fn user_conversation_needs_neither_snapshot_nor_authorizer() {
+        let config = test_config();
+        let store = AppStore::new(&config).await.unwrap();
+        let service = TaskService::new(config, store);
+        let task = service
+            .create_task(create_task_request("conversation"), None, None)
             .await
-            .expect("create task without context");
-        assert_eq!(task_without_context.project_id, None);
+            .unwrap();
+        assert!(task.project_context.is_none());
+        task.validate_project_context().unwrap();
+    }
 
-        assert!(create_task_with_project(&service, Some("0"), None)
+    #[tokio::test]
+    async fn rejects_missing_snapshot_owner_and_invalid_raw_identity() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+        let mut input = create_task_request("missing snapshot");
+        input.project_id = Some("project-a".into());
+        assert!(service
+            .create_task(input, Some(&creator), None)
+            .await
+            .unwrap_err()
+            .contains("project_context"));
+        let error = create_task_with_project(&service, Some("project-a"), None)
+            .await
+            .unwrap_err();
+        assert!(error.contains("authenticated owner"));
+        for invalid in ["", " project-a", "project-a\n"] {
+            assert!(
+                create_task_with_project(&service, Some(invalid), Some(&creator))
+                    .await
+                    .is_err()
+            );
+        }
+        let mut input = create_task_request("snapshot without project");
+        input.project_context = Some(snapshot("project-a"));
+        assert!(service
+            .create_task(input, Some(&creator), None)
             .await
             .is_err());
-
-        let task_with_empty = create_task_with_project(&service, Some("   "), None)
-            .await
-            .expect("create task with empty project");
-        assert_eq!(task_with_empty.project_id, None);
     }
 
     #[tokio::test]
-    async fn create_task_rejects_untrusted_plugin_config() {
+    async fn rejects_source_identity_or_snapshot_rebinding() {
         let service = test_service().await;
-        let mut request = create_task_request("Plugin task");
-        request.plugin_config.selected_plugins.push(
+        let creator = agent_user("owner-a");
+        let source = TaskSourceContext {
+            project_id: Some("project-a".into()),
+            project_context: Some(snapshot("project-a")),
+            ..Default::default()
+        };
+        let mut input = create_task_request("conflicting source");
+        input.project_id = Some("project-b".into());
+        input.project_context = Some(snapshot("project-b"));
+        assert!(service
+            .create_task(input.clone(), Some(&creator), Some(source.clone()))
+            .await
+            .unwrap_err()
+            .contains("trusted source"));
+        input.project_id = Some("project-a".into());
+        input.project_context = Some(snapshot("project-a"));
+        input
+            .project_context
+            .as_mut()
+            .unwrap()
+            .execution_target
+            .relative_root = "other".into();
+        assert!(service
+            .create_task(input, Some(&creator), Some(source))
+            .await
+            .unwrap_err()
+            .contains("trusted source"));
+    }
+
+    struct RejectedOrSubstitutedAuthorization(&'static str);
+    #[async_trait::async_trait]
+    impl ProjectContextAuthorizer for RejectedOrSubstitutedAuthorization {
+        async fn authorize(
+            &self,
+            owner: &str,
+            snapshot: &ClientProjectContextSnapshot,
+        ) -> Result<ProjectContextAuthorization, String> {
+            if self.0 == "denied" {
+                return Err("workspace access denied".into());
+            }
+            let mut result = ProjectContextAuthorization {
+                owner_user_id: owner.into(),
+                snapshot: snapshot.clone(),
+                workspace_fingerprint: "binding".into(),
+            };
+            match self.0 {
+                "owner" => result.owner_user_id = "attacker".into(),
+                "target" => result.snapshot.execution_target.workspace_id = "other".into(),
+                "fingerprint" => result.workspace_fingerprint.clear(),
+                _ => unreachable!(),
+            }
+            Ok(result)
+        }
+    }
+
+    #[tokio::test]
+    async fn authorization_failure_and_substitution_never_save_task() {
+        let creator = agent_user("owner-a");
+        for variant in ["denied", "owner", "target", "fingerprint"] {
+            let mut service = test_service().await;
+            service.project_context_authorizer =
+                std::sync::Arc::new(RejectedOrSubstitutedAuthorization(variant));
+            assert!(
+                create_task_with_project(&service, Some("project-a"), Some(&creator))
+                    .await
+                    .is_err(),
+                "{variant}"
+            );
+            assert!(service.store.list_tasks().await.unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn request_cannot_supply_authorization_as_proof() {
+        let mut input = serde_json::to_value(create_task_request("injection")).unwrap();
+        input["project_id"] = serde_json::json!("project-a");
+        input["project_context"] = serde_json::json!({
+            "snapshot": snapshot("project-a"), "owner_user_id": "owner-a", "workspace_fingerprint": "forged"
+        });
+        assert!(serde_json::from_value::<CreateTaskRequest>(input).is_err());
+    }
+
+    #[tokio::test]
+    async fn mutable_payload_cannot_replace_frozen_snapshot() {
+        let service = test_service().await;
+        let creator = agent_user("owner-a");
+        let task = create_task_with_project(&service, Some("project-a"), Some(&creator))
+            .await
+            .unwrap();
+        let updated = service.update_task(&task.id, UpdateTaskRequest {
+            input_payload: Some(serde_json::json!({"project_context": snapshot("attacker"), "owner_user_id": "attacker"})),
+            ..Default::default()
+        }, Some(&creator)).await.unwrap().unwrap();
+        assert_eq!(updated.project_context, task.project_context);
+        updated.validate_project_context().unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_untrusted_plugin_selection() {
+        let service = test_service().await;
+        let mut input = create_task_request("Plugin task");
+        input.plugin_config.selected_plugins.push(
             chatos_plugin_management_sdk::SelectedPluginRef {
-                plugin_id: "plugin-browser".to_string(),
-                selected_skill_ids: Vec::new(),
-                selected_command_ids: Vec::new(),
-                selected_agent_ids: Vec::new(),
+                plugin_id: "plugin-browser".into(),
+                selected_skill_ids: vec![],
+                selected_command_ids: vec![],
+                selected_agent_ids: vec![],
             },
         );
-
-        let error = service
-            .create_task(request, None, None)
+        assert!(service
+            .create_task(input, None, None)
             .await
-            .expect_err("untrusted Plugin config must fail closed");
-
-        assert!(error.contains("trusted Task Runner selector"));
+            .unwrap_err()
+            .contains("trusted Task Runner selector"));
     }
 
     #[tokio::test]
-    async fn create_task_rejects_missing_project() {
+    async fn prerequisites_remain_project_scoped_without_project_database() {
         let service = test_service().await;
         let creator = agent_user("owner-a");
-
-        let err = create_task_with_project(&service, Some("missing-project"), Some(&creator))
+        let first = create_task_with_project(&service, Some("project-a"), Some(&creator))
             .await
-            .expect_err("missing project should be rejected");
-
-        assert!(err.contains("项目不存在"));
+            .unwrap();
+        let same = create_task_with_project(&service, Some("project-a"), Some(&creator))
+            .await
+            .unwrap();
+        service
+            .set_task_prerequisites(&same.id, vec![first.id.clone()], Some(&creator))
+            .await
+            .unwrap();
+        let other = create_task_with_project(&service, Some("project-b"), Some(&creator))
+            .await
+            .unwrap();
+        assert!(service
+            .set_task_prerequisites(&other.id, vec![first.id], Some(&creator))
+            .await
+            .unwrap_err()
+            .contains("前置任务必须属于同一项目"));
     }
 
     #[tokio::test]
-    async fn create_task_rejects_archived_project() {
+    async fn execution_rechecks_frozen_workspace_and_never_refreshes_it() {
+        use crate::services::task_service::project_context::{
+            revalidate_task_project_context, tests::TestAuthorizer,
+        };
         let service = test_service().await;
         let creator = agent_user("owner-a");
-        save_project(
-            &service,
-            "archived-project",
-            "owner-a",
-            TaskProjectStatus::Archived,
+        let task = create_task_with_project(&service, Some("project-a"), Some(&creator))
+            .await
+            .unwrap();
+        revalidate_task_project_context(&task, &TestAuthorizer)
+            .await
+            .unwrap();
+        assert!(revalidate_task_project_context(
+            &task,
+            &RejectedOrSubstitutedAuthorization("denied")
         )
-        .await;
-
-        let err = create_task_with_project(&service, Some("archived-project"), Some(&creator))
+        .await
+        .is_err());
+        let mut old_binding = task.clone();
+        old_binding
+            .project_context
+            .as_mut()
+            .unwrap()
+            .workspace_fingerprint = "previous-binding".into();
+        let error = revalidate_task_project_context(&old_binding, &TestAuthorizer)
             .await
-            .expect_err("archived project should be rejected");
-
-        assert!(err.contains("项目已归档"));
-    }
-
-    #[tokio::test]
-    async fn create_task_rejects_project_owned_by_another_user() {
-        let service = test_service().await;
-        let creator = agent_user("owner-b");
-        save_project(
-            &service,
-            "project-owned-by-a",
-            "owner-a",
-            TaskProjectStatus::Active,
-        )
-        .await;
-
-        let err = create_task_with_project(&service, Some("project-owned-by-a"), Some(&creator))
-            .await
-            .expect_err("other owner's project should be rejected");
-
-        assert!(err.contains("无权访问"));
-    }
-
-    #[tokio::test]
-    async fn create_task_allows_prerequisites_from_same_project() {
-        let service = test_service().await;
-        let creator = agent_user("owner-a");
-        save_project(&service, "project-a", "owner-a", TaskProjectStatus::Active).await;
-        let prerequisite = create_task_with_project(&service, Some("project-a"), Some(&creator))
-            .await
-            .expect("create prerequisite");
-        let mut request = create_task_request("dependent task");
-        request.prerequisite_task_ids = Some(vec![prerequisite.id.clone()]);
-
-        let task = service
-            .create_task(
-                request,
-                Some(&creator),
-                Some(TaskSourceContext {
-                    project_id: Some("project-a".to_string()),
-                    ..TaskSourceContext::default()
-                }),
-            )
-            .await
-            .expect("create dependent task");
-
-        assert_eq!(task.project_id.as_deref(), Some("project-a"));
-        assert_eq!(task.prerequisite_task_ids, vec![prerequisite.id]);
-    }
-
-    #[tokio::test]
-    async fn create_task_rejects_prerequisites_from_another_project() {
-        let service = test_service().await;
-        let creator = agent_user("owner-a");
-        save_project(&service, "project-a", "owner-a", TaskProjectStatus::Active).await;
-        save_project(&service, "project-b", "owner-a", TaskProjectStatus::Active).await;
-        let prerequisite = create_task_with_project(&service, Some("project-a"), Some(&creator))
-            .await
-            .expect("create prerequisite");
-        let mut request = create_task_request("dependent task");
-        request.prerequisite_task_ids = Some(vec![prerequisite.id]);
-
-        let err = service
-            .create_task(
-                request,
-                Some(&creator),
-                Some(TaskSourceContext {
-                    project_id: Some("project-b".to_string()),
-                    ..TaskSourceContext::default()
-                }),
-            )
-            .await
-            .expect_err("cross-project prerequisite should fail");
-
-        assert!(err.contains("前置任务必须属于同一项目"));
-    }
-
-    #[tokio::test]
-    async fn set_task_prerequisites_rejects_prerequisites_from_another_project() {
-        let service = test_service().await;
-        let creator = agent_user("owner-a");
-        save_project(&service, "project-a", "owner-a", TaskProjectStatus::Active).await;
-        save_project(&service, "project-b", "owner-a", TaskProjectStatus::Active).await;
-        let prerequisite = create_task_with_project(&service, Some("project-a"), Some(&creator))
-            .await
-            .expect("create prerequisite");
-        let dependent = create_task_with_project(&service, Some("project-b"), Some(&creator))
-            .await
-            .expect("create dependent");
-
-        let err = service
-            .set_task_prerequisites(dependent.id.as_str(), vec![prerequisite.id], Some(&creator))
-            .await
-            .expect_err("cross-project prerequisite should fail");
-
-        assert!(err.contains("前置任务必须属于同一项目"));
+            .unwrap_err();
+        assert!(error.contains("binding changed"));
+        assert_eq!(
+            old_binding.project_context.unwrap().workspace_fingerprint,
+            "previous-binding"
+        );
+        for variant in ["missing", "owner", "tenant", "project"] {
+            let mut invalid = task.clone();
+            match variant {
+                "missing" => invalid.project_context = None,
+                "owner" => invalid.owner_user_id = Some("attacker".into()),
+                "tenant" => invalid.tenant_id = "attacker".into(),
+                "project" => invalid.project_id = Some("attacker".into()),
+                _ => unreachable!(),
+            }
+            assert!(
+                revalidate_task_project_context(&invalid, &TestAuthorizer)
+                    .await
+                    .is_err(),
+                "{variant}"
+            );
+        }
     }
 }

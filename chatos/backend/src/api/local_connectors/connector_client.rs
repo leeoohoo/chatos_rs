@@ -54,21 +54,6 @@ pub(super) async fn connector_post_json_with_timeout<T: DeserializeOwned, B: Ser
     send_connector_json(request).await
 }
 
-pub(super) async fn connector_put_json<T: DeserializeOwned, B: Serialize + ?Sized>(
-    path: &str,
-    body: &B,
-) -> Result<T, (StatusCode, Json<Value>)> {
-    let token = current_access_token()?;
-    let cfg = Config::get();
-    let request = cfg
-        .local_connector_http_client
-        .put(connector_url(cfg, path))
-        .bearer_auth(token)
-        .json(body)
-        .timeout(connector_timeout(cfg));
-    send_connector_json(request).await
-}
-
 pub(super) async fn connector_post_json_with_headers<T: DeserializeOwned, B: Serialize + ?Sized>(
     path: &str,
     body: &B,
@@ -97,17 +82,6 @@ pub(super) async fn connector_post_json_with_headers_and_timeout<
     for (key, value) in headers {
         request = request.header(*key, value.as_str());
     }
-    send_connector_json(request).await
-}
-
-pub(super) async fn connector_delete_json(path: &str) -> Result<Value, (StatusCode, Json<Value>)> {
-    let token = current_access_token()?;
-    let cfg = Config::get();
-    let request = cfg
-        .local_connector_http_client
-        .delete(connector_url(cfg, path))
-        .bearer_auth(token)
-        .timeout(connector_timeout(cfg));
     send_connector_json(request).await
 }
 

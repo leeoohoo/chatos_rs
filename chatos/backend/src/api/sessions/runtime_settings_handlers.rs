@@ -165,9 +165,6 @@ pub(super) async fn update_session_runtime_settings(
     if let Some(value) = req.reasoning_enabled {
         next.reasoning_enabled = value;
     }
-    if let Some(value) = req.plan_mode_enabled {
-        next.plan_mode_enabled = value;
-    }
     if let Some(value) = req.auto_create_task {
         next.auto_create_task = value;
     }

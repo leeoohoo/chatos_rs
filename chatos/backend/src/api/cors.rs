@@ -10,7 +10,7 @@ use axum::http::{
 };
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
-use crate::core::project_execution::{
+use crate::core::session_project_scope::{
     CHATOS_CLIENT_SURFACE_HEADER, LOCAL_CONNECTOR_DESKTOP_SURFACE,
 };
 
@@ -117,7 +117,7 @@ mod tests {
     use super::{
         allowed_headers, is_bundled_desktop_origin, origin_is_allowed, request_has_desktop_surface,
     };
-    use crate::core::project_execution::{
+    use crate::core::session_project_scope::{
         CHATOS_CLIENT_SURFACE_HEADER, LOCAL_CONNECTOR_DESKTOP_SURFACE,
     };
 

@@ -11,7 +11,6 @@ public sealed class PetActivityCoordinator
         PetActivitySource.Chat,
         PetActivitySource.TaskBoard,
         PetActivitySource.TaskRunner,
-        PetActivitySource.ProjectExecution,
     ];
 
     private readonly IPetActivityInboxService _inboxService;

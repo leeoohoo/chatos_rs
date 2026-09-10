@@ -28,7 +28,6 @@ public sealed class ConversationHistoryServiceTests
                       "created_at":"2026-08-30T10:00:00Z",
                       "metadata":{
                         "historyProcess":{"finalAssistantMessageId":"assistant-1","processMessageCount":2},
-                        "project_requirement_execution":{"project_id":"project-1","requirement_id":"req-1","execution_group_id":"group-1"},
                         "attachments":[{"id":"file-1","name":"spec.md","mimeType":"text/markdown","size":12,"type":"file","viewUrl":"https://files/spec.md"}]
                       }
                     },
@@ -82,7 +81,6 @@ public sealed class ConversationHistoryServiceTests
         Assert.Equal("completed", turn.AssistantReplies[1].TaskCallback?.Status);
         Assert.DoesNotContain(turn.AssistantReplies, reply => reply.Message.Id == "callback-cancelled");
         Assert.Equal("spec.md", Assert.Single(turn.UserMessage.Attachments).Name);
-        Assert.Equal("group-1", turn.ProjectExecutionContext?.ExecutionGroupId);
         Assert.Single(turn.ProcessEvents);
         Assert.True(page.HasOlder);
         Assert.Equal("cursor-older", page.OlderCursor);

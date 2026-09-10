@@ -35,7 +35,6 @@ import type {
   TaskMcpResolutionResponse,
   TaskSummaryRecord,
   TaskListFilters,
-  TaskProjectRecord,
   TaskRecord,
   TaskRunEventRecord,
   TaskRunRecord,
@@ -137,17 +136,12 @@ export const api = {
   getTaskStats: () => request<TaskStatsResponse>('/api/tasks/stats'),
   getTaskIndex: () => request<TaskIndexResponse>('/api/tasks/index'),
   listTaskCapabilityCatalog: (options?: {
-    task_profile?: 'default' | 'chatos_plan';
-    requires_execution?: boolean;
+    task_profile?: 'default';
     project_id?: string;
   }) =>
     request<TaskCapabilityCatalogResponse>(
       withQuery('/api/tasks/capabilities/catalog', {
         task_profile: options?.task_profile,
-        requires_execution:
-          options?.requires_execution === undefined
-            ? undefined
-            : String(options.requires_execution),
         project_id: options?.project_id,
       }),
     ),
@@ -167,15 +161,6 @@ export const api = {
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
       }),
     ),
-  listProjects: (status?: TaskProjectRecord['status']) =>
-    request<TaskProjectRecord[]>(
-      withQuery('/api/projects', {
-        status,
-      }),
-    ),
-  getProject: (id: string) => request<TaskProjectRecord>(`/api/projects/${id}`),
-  listProjectTasks: (id: string) =>
-    request<TaskRecord[]>(`/api/projects/${encodeURIComponent(id)}/tasks`),
   getTask: (id: string) => request<TaskRecord>(`/api/tasks/${id}`),
   createTask: (payload: CreateTaskPayload) =>
     request<TaskRecord>('/api/tasks', {

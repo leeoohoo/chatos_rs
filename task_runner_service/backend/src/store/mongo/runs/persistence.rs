@@ -78,34 +78,6 @@ impl MongoStore {
         }
     }
 
-    pub(in crate::store) async fn set_queued_runs_dispatch_paused(
-        &self,
-        task_ids: &[String],
-        paused: bool,
-    ) -> Result<u64, String> {
-        if task_ids.is_empty() {
-            return Ok(0);
-        }
-        self.runs
-            .update_many(
-                doc! {
-                    "task_id": { "$in": task_ids },
-                    "status": "queued",
-                },
-                doc! {
-                    "$set": {
-                        "dispatch_paused": paused,
-                        "dispatch_event_pending": !paused,
-                        "updated_at": Utc::now().to_rfc3339(),
-                    }
-                },
-                None,
-            )
-            .await
-            .map(|result| result.modified_count)
-            .map_err(|err| err.to_string())
-    }
-
     pub(in crate::store) async fn list_pending_run_post_processes(
         &self,
         limit: usize,

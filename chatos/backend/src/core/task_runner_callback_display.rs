@@ -465,7 +465,6 @@ fn callback_detail_is_internal_platform_error(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     [
         "task_runner_run_phase failed",
-        "task_runner_plan_phase failed",
         "resolve published prompt",
         "agent_prompt_",
         "plugin management request",

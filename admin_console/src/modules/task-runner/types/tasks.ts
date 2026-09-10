@@ -16,8 +16,7 @@ export type TaskMcpInitMode = 'full' | 'disabled';
 export type TaskBuiltinPromptMode = 'configured' | 'effective';
 export type TaskScheduleMode = 'manual' | 'once' | 'interval' | 'contact_async';
 export type TaskProcessLogOperation = 'append' | 'replace' | 'clear';
-export type TaskProfile = 'default' | 'chatos_plan';
-export type TaskProjectStatus = 'active' | 'archived';
+export type TaskProfile = 'default';
 
 export interface TaskMcpConfig {
   enabled: boolean;
@@ -118,9 +117,7 @@ export interface TaskPluginConnectorsResponse {
 }
 
 export interface TaskCapabilityCatalogResponse {
-  agent_key:
-    | 'task_runner_plan_phase'
-    | 'task_runner_run_phase';
+  agent_key: 'task_runner_run_phase';
   policy_revision: string;
   selectable_plugins: SelectableTaskPlugin[];
 }
@@ -270,21 +267,6 @@ export interface TaskListFilters {
   task_profile?: TaskProfile;
   limit?: number;
   offset?: number;
-}
-
-export interface TaskProjectRecord {
-  id: string;
-  owner_user_id?: string | null;
-  owner_username?: string | null;
-  owner_display_name?: string | null;
-  name: string;
-  root_path?: string | null;
-  git_url?: string | null;
-  description?: string | null;
-  status: TaskProjectStatus;
-  created_at: string;
-  updated_at: string;
-  archived_at?: string | null;
 }
 
 export interface TaskStatsResponse {

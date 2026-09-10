@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeSet;
-
 use crate::models::{
     now_rfc3339, TaskRunnerQueueStatsSnapshot, TaskRunnerRunStatsSnapshot,
     TaskRunnerRuntimeStatsSnapshot, TaskRunnerSystemStatsResponse,
@@ -14,17 +12,11 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::internal_auth::{
-    require_task_runner_internal_request, EXECUTION_OPTIONS_READ_SCOPE, MCP_MANAGEMENT_CALLER,
-    PROJECT_SERVICE_CALLER, SYSTEM_STATS_READ_SCOPE,
+    require_task_runner_internal_request, MCP_MANAGEMENT_CALLER, SYSTEM_STATS_READ_SCOPE,
 };
 use super::*;
 
 const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
-
-#[derive(Debug, Serialize)]
-pub(super) struct InternalExecutionOptionsResponse {
-    pub model_config_ids: Vec<String>,
-}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ReplayRunPostProcessRequest {
@@ -81,42 +73,6 @@ pub(super) async fn replay_run_post_process(
     }))
 }
 
-pub(super) async fn get_user_execution_options(
-    Path(owner_user_id): Path<String>,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<InternalExecutionOptionsResponse>, ApiError> {
-    require_task_runner_internal_request(
-        &state.config,
-        &headers,
-        &[PROJECT_SERVICE_CALLER],
-        EXECUTION_OPTIONS_READ_SCOPE,
-    )
-    .map_err(|err| ApiError {
-        status: err.status,
-        message: err.message,
-    })?;
-    let owner_user_id = owner_user_id.trim();
-    if owner_user_id.is_empty() {
-        return Err(ApiError::bad_request("owner_user_id is required"));
-    }
-
-    let model_config_ids = state
-        .model_config_service
-        .list_model_configs()
-        .await
-        .map_err(ApiError::bad_request)?
-        .into_iter()
-        .filter(|model| model.enabled)
-        .filter(|model| owns_resource(model.owner_user_id.as_deref(), owner_user_id))
-        .map(|model| model.id)
-        .collect::<BTreeSet<_>>();
-
-    Ok(Json(InternalExecutionOptionsResponse {
-        model_config_ids: model_config_ids.into_iter().collect(),
-    }))
-}
-
 pub(super) async fn get_system_stats(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -124,7 +80,7 @@ pub(super) async fn get_system_stats(
     require_task_runner_internal_request(
         &state.config,
         &headers,
-        &[PROJECT_SERVICE_CALLER, MCP_MANAGEMENT_CALLER],
+        &[MCP_MANAGEMENT_CALLER],
         SYSTEM_STATS_READ_SCOPE,
     )
     .map_err(|err| ApiError {
@@ -505,13 +461,6 @@ async fn task_runner_rabbitmq_queue_stats(state: &AppState) -> RabbitMqQueueRunt
         ));
     }
     inspector.inspect(specs.as_slice()).await
-}
-
-fn owns_resource(owner_user_id: Option<&str>, expected_owner_user_id: &str) -> bool {
-    owner_user_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        == Some(expected_owner_user_id)
 }
 
 #[cfg(test)]

@@ -313,20 +313,14 @@ fn resource_allows_tool(
         && route_allows_system_tool(route, original_tool_name)
 }
 
-pub fn route_allows_system_tool(route: &ResolvedMcpRoute, original_tool_name: &str) -> bool {
+pub fn route_allows_system_tool(route: &ResolvedMcpRoute, _original_tool_name: &str) -> bool {
     let Some(descriptor) = system_mcp_descriptor_by_resource_id(route.resource_id.as_str()) else {
         return true;
     };
     if route.allow_writes || !descriptor.allow_writes {
         return true;
     }
-    match descriptor.key {
-        SystemMcpKey::ProjectManagement => {
-            chatos_mcp::project_management_contract::tools::PROJECT_MANAGEMENT_READ_ONLY_TOOL_NAMES
-                .contains(&original_tool_name)
-        }
-        _ => false,
-    }
+    false
 }
 
 pub fn runtime_route_revision(
@@ -719,22 +713,5 @@ mod tests {
             runtime_route_revision("base-route", "policy-1", &[route], &[]).unwrap(),
             runtime_route_revision("base-route", "policy-1", &[another], &[]).unwrap()
         );
-    }
-
-    #[test]
-    fn read_only_project_management_route_blocks_mutating_tools() {
-        let route = ResolvedMcpRoute {
-            resource_id: "builtin_project_management".to_string(),
-            server_name: "project_management_service".to_string(),
-            provider_kind: McpProviderKind::InternalService,
-            provider_ref: Some("project_management_service".to_string()),
-            tool_namespace: "project_management_service".to_string(),
-            allow_writes: false,
-            retry_class: McpRetryClass::IdempotentRead,
-            cancel_supported: true,
-            reason: "test".to_string(),
-        };
-        assert!(route_allows_system_tool(&route, "list_requirements"));
-        assert!(!route_allows_system_tool(&route, "create_requirement"));
     }
 }

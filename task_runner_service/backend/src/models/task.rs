@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::is_chatos_plan_task_profile;
-pub use chatos_agent::CHATOS_PLAN_TASK_PROFILE as TASK_PROFILE_CHATOS_PLAN;
 use chatos_ai_runtime::{TaskBuiltinMcpPromptMode, TaskMcpInitMode};
 use chatos_mcp_runtime::BuiltinMcpPromptLocale;
 use chatos_plugin_management_sdk::TaskPluginConfig;
@@ -30,45 +28,22 @@ pub fn normalize_task_profile(value: Option<&str>) -> Result<String, String> {
     if value.eq_ignore_ascii_case(TASK_PROFILE_DEFAULT) {
         return Ok(TASK_PROFILE_DEFAULT.to_string());
     }
-    if is_chatos_plan_task_profile(value) {
-        return Ok(TASK_PROFILE_CHATOS_PLAN.to_string());
-    }
     Err(format!("unknown task_profile: {value}"))
 }
 
-pub fn uses_task_runner_planning_agent(task_profile: &str, requires_execution: bool) -> bool {
-    is_chatos_plan_task_profile(task_profile) && !requires_execution
-}
-
-pub fn task_runner_agent_key_for(
-    task_profile: &str,
-    requires_execution: bool,
-) -> chatos_plugin_management_sdk::SystemAgentKey {
-    if uses_task_runner_planning_agent(task_profile, requires_execution) {
-        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerPlanPhase
-    } else {
-        chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase
-    }
-}
-
 #[cfg(test)]
-mod task_runner_agent_routing_tests {
+mod task_profile_tests {
     use super::*;
-    use chatos_plugin_management_sdk::SystemAgentKey;
 
     #[test]
-    fn only_non_executing_plan_tasks_use_the_planning_agent() {
+    fn obsolete_planning_profiles_are_rejected() {
+        for profile in ["chatos_plan", " CHATOS_PLAN ", "unknown"] {
+            assert!(normalize_task_profile(Some(profile)).is_err());
+        }
+        assert_eq!(normalize_task_profile(None).unwrap(), TASK_PROFILE_DEFAULT);
         assert_eq!(
-            task_runner_agent_key_for(TASK_PROFILE_CHATOS_PLAN, false),
-            SystemAgentKey::TaskRunnerPlanPhase
-        );
-        assert_eq!(
-            task_runner_agent_key_for(TASK_PROFILE_CHATOS_PLAN, true),
-            SystemAgentKey::TaskRunnerRunPhase
-        );
-        assert_eq!(
-            task_runner_agent_key_for(TASK_PROFILE_DEFAULT, false),
-            SystemAgentKey::TaskRunnerRunPhase
+            normalize_task_profile(Some(" default ")).unwrap(),
+            TASK_PROFILE_DEFAULT
         );
     }
 }

@@ -113,15 +113,15 @@ fn external_http_is_local_and_internal_services_remain_managed() {
     );
     assert_eq!(external.provider_kind, McpProviderKind::LocalConnector);
 
-    let project = resolve_one(
+    let managed = resolve_one(
         context(WorkspaceProviderKind::None),
         resource(
             McpRouteResourceKind::System,
-            Some("project_management"),
+            Some("task_runner_service"),
             true,
         ),
     );
-    assert_eq!(project.provider_kind, McpProviderKind::InternalService);
+    assert_eq!(managed.provider_kind, McpProviderKind::InternalService);
 }
 
 #[test]

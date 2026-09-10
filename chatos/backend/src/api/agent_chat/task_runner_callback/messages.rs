@@ -479,12 +479,7 @@ fn cancellation_actor_is_program_managed(value: Option<&str>) -> bool {
     else {
         return false;
     };
-    value.starts_with("mcp-management:")
-        || value.starts_with("mcp-management-")
-        || value.contains(
-            chatos_plugin_management_sdk::SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-                .as_str(),
-        )
+    value.starts_with("mcp-management:") || value.starts_with("mcp-management-")
 }
 
 fn cancellation_reason_describes_replacement(value: Option<&str>) -> bool {

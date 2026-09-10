@@ -6,9 +6,9 @@ use serde_json::{json, Value};
 use crate::core::auth::AuthUser;
 use crate::models::ai_model_config::AiModelConfig;
 use crate::services::user_service_api_client;
-use crate::utils::model_config::normalize_provider;
 #[cfg(test)]
 use crate::utils::model_config::normalize_thinking_level;
+use crate::utils::model_config::{normalize_provider, supported_thinking_levels};
 
 use super::super::AiModelConfigRequest;
 
@@ -135,6 +135,11 @@ pub(super) fn to_user_service_update_request(
 }
 
 pub(super) fn to_response_value(cfg: &AiModelConfig) -> Value {
+    let thinking_levels = if cfg.supports_reasoning {
+        supported_thinking_levels(cfg.provider.as_str())
+    } else {
+        &[]
+    };
     let mut value = json!({
         "id": cfg.id,
         "name": cfg.name,
@@ -153,6 +158,7 @@ pub(super) fn to_response_value(cfg: &AiModelConfig) -> Value {
         "task_enabled": cfg.task_enabled,
         "supports_images": cfg.supports_images,
         "supports_reasoning": cfg.supports_reasoning,
+        "thinking_levels": thinking_levels,
         "supports_responses": cfg.supports_responses,
         "created_at": cfg.created_at,
         "updated_at": cfg.updated_at
@@ -179,8 +185,7 @@ pub(super) fn model_settings_response_value(
         "model_request_max_retries": settings.model_request_max_retries,
         "memory_summary_model_config_id": settings.memory_summary_model_config_id,
         "memory_summary_thinking_level": settings.memory_summary_thinking_level,
-        "project_management_agent_model_config_id": settings.project_management_agent_model_config_id,
-        "project_management_agent_thinking_level": settings.project_management_agent_thinking_level,
+        "task_runner_default_model_config_id": settings.task_runner_default_model_config_id,
         "updated_at": settings.updated_at,
     });
     if !settings.sync_warnings.is_empty() {
@@ -316,6 +321,7 @@ mod tests {
     use super::{build_model_config, to_response_value};
     use crate::api::configs::AiModelConfigRequest;
     use crate::models::ai_model_config::AiModelConfig;
+    use serde_json::json;
 
     fn sample_request() -> AiModelConfigRequest {
         AiModelConfigRequest {
@@ -377,6 +383,12 @@ mod tests {
         assert_eq!(
             value.get("has_api_key").and_then(|item| item.as_bool()),
             Some(true)
+        );
+        assert_eq!(
+            value.get("thinking_levels"),
+            Some(&json!([
+                "none", "minimal", "low", "medium", "high", "xhigh"
+            ]))
         );
     }
 

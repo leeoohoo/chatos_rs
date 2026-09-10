@@ -82,12 +82,6 @@ impl RoutingEngine {
                 resource,
                 "local command approval is local-only and is not exposed through MCP Management",
             ),
-            SystemMcpKey::ProjectManagement => internal_service_route(
-                resource,
-                descriptor,
-                "project management capabilities are owned by their internal service",
-                allow_writes,
-            ),
             SystemMcpKey::TaskProcessLog | SystemMcpKey::TaskRunnerService => {
                 internal_service_route(
                     resource,

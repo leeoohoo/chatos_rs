@@ -17,7 +17,7 @@ public sealed class ConversationCommandServiceTests
         var client = ApiTestClient.Create(store, request => request.RequestUri?.AbsolutePath switch
         {
             "/api/chatos/conversations/c%2F1/runtime-settings" => StubHttpMessageHandler.Json("""
-                {"selected_model_id":"model-2","reasoning_enabled":true,"plan_mode_enabled":false,"remote_connection_id":"remote-1","workspace_root":"C:\\repo"}
+                {"selected_model_id":"model-2","reasoning_enabled":true,"remote_connection_id":"remote-1","workspace_root":"C:\\repo"}
                 """),
             "/api/chatos/ai-model-configs" => StubHttpMessageHandler.Json("""
                 [
@@ -34,15 +34,14 @@ public sealed class ConversationCommandServiceTests
             "c/1",
             "turn-client-1",
             "开始实现",
-            Array.Empty<ConversationAttachmentDraft>(),
-            PlanModeEnabled: true));
+            Array.Empty<ConversationAttachmentDraft>()));
 
         Assert.Equal("turn-server-1", acknowledgement.TurnId);
         Assert.Equal("message-1", acknowledgement.UserMessageId);
         using var document = JsonDocument.Parse(sendBody!);
         var root = document.RootElement;
         Assert.True(root.GetProperty("reasoning_enabled").GetBoolean());
-        Assert.True(root.GetProperty("plan_mode").GetBoolean());
+        Assert.False(root.TryGetProperty("plan_mode", out _));
         Assert.Equal("model-2", root.GetProperty("model_config_id").GetString());
         Assert.Equal("gpt-test", root.GetProperty("ai_model_config").GetProperty("model_name").GetString());
         Assert.Equal("remote-1", root.GetProperty("remote_connection_id").GetString());

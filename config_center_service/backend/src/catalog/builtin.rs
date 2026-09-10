@@ -26,8 +26,6 @@ mod mcp_management;
 mod memory_engine;
 #[path = "builtin/plugin_management.rs"]
 mod plugin_management;
-#[path = "builtin/project_service.rs"]
-mod project_service;
 #[path = "builtin/shared_chatos.rs"]
 mod shared_chatos;
 #[path = "builtin/task_runner.rs"]
@@ -43,7 +41,6 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     definitions.extend(local_connector::definitions(&now));
     definitions.extend(mcp_management::definitions(&now));
     definitions.extend(plugin_management::definitions(&now));
-    definitions.extend(project_service::definitions(&now));
     definitions.extend(memory_engine::definitions(&now));
     definitions.extend(user_service::definitions(&now));
     definitions.extend(memory_policy_definitions(&now));

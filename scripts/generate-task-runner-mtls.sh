@@ -14,7 +14,7 @@ if ! command -v openssl >/dev/null 2>&1; then
   exit 1
 fi
 
-CALLERS=(chatos mcp-management-service project-service user-service)
+CALLERS=(chatos mcp-management-service user-service)
 
 material_is_current() {
   [[ -f "$OUTPUT_DIR/ca.crt" ]] || return 1

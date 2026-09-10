@@ -20,7 +20,6 @@ use crate::state::AppState;
 
 mod agents;
 mod auth;
-mod harness;
 mod internal_auth;
 mod internal_models;
 mod invite_codes;
@@ -138,27 +137,8 @@ pub fn build_public_router(state: AppState) -> Router {
 }
 
 pub fn build_internal_router(state: AppState) -> Router {
-    let protected_internal = Router::new()
-        .route(
-            "/api/internal/harness/repos",
-            post(harness::create_project_repo),
-        )
-        .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
-    let internal_harness_repo_write = Router::new()
-        .route(
-            "/api/internal/harness/users/{user_id}/repos",
-            post(harness::create_project_repo_for_user),
-        )
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            require_harness_repo_write_internal,
-        ));
     apply_common_layers(
         Router::new()
-            .route(
-                "/api/internal/harness/users/{user_id}/access",
-                get(harness::get_user_harness_access),
-            )
             .route(
                 "/api/internal/users/{user_id}/model-configs/{model_config_id}/runtime",
                 get(internal_models::get_user_model_runtime_config),
@@ -175,8 +155,6 @@ pub fn build_internal_router(state: AppState) -> Router {
                 "/api/internal/task-runner/model-configs/{model_config_id}",
                 get(internal_models::get_task_model_config),
             )
-            .merge(internal_harness_repo_write)
-            .merge(protected_internal)
             .with_state(state),
         "internal",
     )
@@ -243,22 +221,6 @@ pub async fn require_auth(
     refresh_principal_identity(&state, &mut principal).await?;
 
     request.extensions_mut().insert(principal);
-    Ok(next.run(request).await)
-}
-
-async fn require_harness_repo_write_internal(
-    State(state): State<AppState>,
-    request: Request,
-    next: Next,
-) -> Result<Response, (StatusCode, Json<Value>)> {
-    if request.method() == Method::OPTIONS {
-        return Ok(next.run(request).await);
-    }
-    internal_auth::require_project_service_internal_request(
-        &state.config,
-        request.headers(),
-        internal_auth::HARNESS_REPO_WRITE_SCOPE,
-    )?;
     Ok(next.run(request).await)
 }
 
@@ -396,7 +358,6 @@ mod tests {
             harness_space_prefix: "u-".to_string(),
             harness_request_timeout_ms: 5000,
             harness_project_pat_prefix: "chatos-project".to_string(),
-            user_service_internal_api_secret: Some("test-project-service-secret".to_string()),
             chatos_internal_api_secret: Some("test-chatos-service-secret".to_string()),
             smtp_host: None,
             smtp_port: 587,
@@ -438,15 +399,6 @@ mod tests {
         let (base_url, server) = spawn_router(build_public_router(test_state().await)).await;
         let client = reqwest::Client::new();
         for (method, path) in [
-            (reqwest::Method::POST, "/api/internal/harness/repos"),
-            (
-                reqwest::Method::POST,
-                "/api/internal/harness/users/user-1/repos",
-            ),
-            (
-                reqwest::Method::GET,
-                "/api/internal/harness/users/user-1/access",
-            ),
             (
                 reqwest::Method::GET,
                 "/api/internal/users/user-1/model-settings",
@@ -492,15 +444,6 @@ mod tests {
             assert_eq!(status, StatusCode::NOT_FOUND, "unexpected route: {path}");
         }
         for (method, path) in [
-            (reqwest::Method::POST, "/api/internal/harness/repos"),
-            (
-                reqwest::Method::POST,
-                "/api/internal/harness/users/user-1/repos",
-            ),
-            (
-                reqwest::Method::GET,
-                "/api/internal/harness/users/user-1/access",
-            ),
             (
                 reqwest::Method::GET,
                 "/api/internal/users/user-1/model-settings",

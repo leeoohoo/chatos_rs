@@ -63,9 +63,6 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
             .map(|service| location_neutral_workspace_catalog(service.list_tools()))
         }
         BuiltinMcpKind::TaskManager => Err("TaskManager builtin MCP has been removed".to_string()),
-        BuiltinMcpKind::ProjectManagement => {
-            Ok(crate::project_management_contract::schemas::task_runner_builtin_tool_definitions())
-        }
         BuiltinMcpKind::Notepad => NotepadBuiltinService::new(NotepadOptions {
             server_name,
             store: NotepadStoreRef::new(store),
@@ -370,7 +367,6 @@ mod tests {
             CodeMaintainerRead,
             CodeMaintainerWrite,
             TerminalController,
-            ProjectManagement,
             Notepad,
             AgentBuilder,
             AskUser,

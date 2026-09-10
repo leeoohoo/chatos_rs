@@ -69,7 +69,7 @@ while IFS= read -r dirty_line; do
   [[ -n "$dirty_line" ]] || continue
   dirty_path="${dirty_line:3}"
   case "$dirty_path" in
-    clients/macos/*|clients/windows/*|plugins/web-design-studio/*)
+    clients/macos/*|clients/windows/*|plugins/web-design-studio/*|plugins/project-management/*)
       ignored_dirty_count=$((ignored_dirty_count + 1))
       ;;
     *)

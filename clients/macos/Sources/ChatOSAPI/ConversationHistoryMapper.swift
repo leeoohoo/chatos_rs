@@ -47,7 +47,6 @@ enum ConversationHistoryMapper {
             assistant?.messageTaskLookup,
             sessionID: sessionID
         )
-        let projectExecutionContext = user.projectExecutionContext ?? assistant?.projectExecutionContext
         let status = turnStatus(user: user, assistant: assistant)
 
         return ConversationTurn(
@@ -69,7 +68,6 @@ enum ConversationHistoryMapper {
                 )
             },
             messageTaskLookup: taskLookup,
-            projectExecutionContext: projectExecutionContext,
             status: status,
             startedAt: startedAt,
             completedAt: completedAt

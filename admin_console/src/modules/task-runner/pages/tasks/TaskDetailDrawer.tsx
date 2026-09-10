@@ -159,7 +159,7 @@ export function TaskDetailDrawer({
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.detail.taskProfile')}>
               <Tag color={taskProfileColorMap[task.task_profile] || 'default'}>
-                {taskProfileLabel(task.task_profile, t, task.mcp_config.requires_execution)}
+                {taskProfileLabel(task.task_profile, t)}
               </Tag>
             </Descriptions.Item>
             <Descriptions.Item label={t('tasks.column.creator')}>

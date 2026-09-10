@@ -60,6 +60,9 @@ struct ProjectMessagesView: View {
             }
         }
         .workspaceFill()
+        .task(id: projectID) {
+            model.prepareProjectChat(projectID: projectID)
+        }
     }
 }
 

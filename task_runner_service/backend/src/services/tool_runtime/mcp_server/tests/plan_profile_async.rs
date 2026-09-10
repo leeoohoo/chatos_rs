@@ -1,130 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::{CHATOS_ASYNC_PLANNER_TOOL_PROFILE, CHATOS_PLAN_TASK_PROFILE};
+use chatos_agent::CHATOS_ASYNC_PLANNER_TOOL_PROFILE;
 
 use super::*;
-
-#[tokio::test]
-async fn chatos_async_reuse_is_scoped_by_task_profile() {
-    let (mcp_service, task_service, project_service) = test_mcp_service().await;
-    let current_user = agent_user("owner-a");
-    let _model = mcp_service
-        .model_config_service
-        .upsert_chatos_model_config(ChatosSyncedModelConfigRequest {
-            id: "model-1".to_string(),
-            owner_user_id: Some("owner-a".to_string()),
-            name: "Task Model".to_string(),
-            provider: "openai".to_string(),
-            prompt_vendor: Some("gpt".to_string()),
-            base_url: "https://api.example.test/v1".to_string(),
-            api_key: "test-key".to_string(),
-            model: "gpt-test".to_string(),
-            usage_scenario: Some("task planning".to_string()),
-            temperature: None,
-            max_output_tokens: None,
-            model_request_max_retries: 5,
-            thinking_level: None,
-            supports_images: None,
-            supports_reasoning: None,
-            enabled: Some(true),
-            supports_responses: Some(true),
-        })
-        .await
-        .expect("create model config");
-    let project = project_service
-        .create_project(
-            CreateTaskProjectRequest {
-                name: "Project A".to_string(),
-                root_path: None,
-                git_url: None,
-                description: None,
-            },
-            &current_user,
-        )
-        .await
-        .expect("create project");
-    let source_context = TaskSourceContext {
-        project_id: Some(project.id.clone()),
-        source_session_id: Some("session-1".to_string()),
-        source_user_message_id: Some("message-1".to_string()),
-        ..TaskSourceContext::default()
-    };
-    let default_task = task_service
-        .create_task(
-            CreateTaskRequest {
-                project_id: Some(project.id.clone()),
-                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
-                default_model_config_id: Some("model-1".to_string()),
-                ..test_create_task_request("default task")
-            },
-            Some(&current_user),
-            Some(source_context),
-        )
-        .await
-        .expect("create default task");
-
-    let plan_result = mcp_service
-        .call_tool(
-            "create_task",
-            json!({
-                "title": "plan task",
-                "objective": "define implementation plan",
-                "default_model_config_id": "model-1",
-            }),
-            &current_user,
-            &McpRequestContext {
-                project_id: Some(project.id.clone()),
-                source_session_id: Some("session-1".to_string()),
-                source_user_message_id: Some("message-1".to_string()),
-                tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
-                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
-                ..McpRequestContext::default()
-            },
-        )
-        .await
-        .expect("create plan task");
-
-    let created_plan_task_id = plan_result
-        .get("_structured_result")
-        .and_then(|value| value.get("id"))
-        .and_then(|value| value.as_str())
-        .expect("plan task id")
-        .to_string();
-    assert_ne!(created_plan_task_id, default_task.id);
-
-    let reused_plan_result = mcp_service
-        .call_tool(
-            "create_task",
-            json!({
-                "title": "plan task",
-                "objective": "define implementation plan",
-                "default_model_config_id": "model-1",
-            }),
-            &current_user,
-            &McpRequestContext {
-                project_id: Some(project.id.clone()),
-                source_session_id: Some("session-1".to_string()),
-                source_user_message_id: Some("message-1".to_string()),
-                tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
-                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
-                ..McpRequestContext::default()
-            },
-        )
-        .await
-        .expect("reuse plan task");
-    let reused_plan_task_id = reused_plan_result
-        .get("_structured_result")
-        .and_then(|value| value.get("id"))
-        .and_then(|value| value.as_str())
-        .expect("reused plan task id");
-
-    assert_eq!(reused_plan_task_id, created_plan_task_id);
-}
+use crate::services::test_project_snapshot as snapshot;
 
 #[tokio::test]
 async fn chatos_async_create_task_preserves_ai_selected_task_model() {
-    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let (mcp_service, task_service, project_registry) = test_mcp_service().await;
     let current_user = agent_user("owner-a");
     for (id, name) in [
         ("model-selected", "Selected Model"),
@@ -154,9 +38,9 @@ async fn chatos_async_create_task_preserves_ai_selected_task_model() {
             .await
             .expect("create model config");
     }
-    let project = project_service
-        .create_project(
-            CreateTaskProjectRequest {
+    let project = project_registry
+        .register_project(
+            ClientProjectSnapshotInput {
                 name: "Project A".to_string(),
                 root_path: None,
                 git_url: None,
@@ -173,16 +57,19 @@ async fn chatos_async_create_task_preserves_ai_selected_task_model() {
             json!({
                 "title": "plan task",
                 "objective": "define implementation plan",
+                "requires_execution": false,
+                "enabled_builtin_kinds": [],
                 "default_model_config_id": "model-other",
             }),
             &current_user,
             &McpRequestContext {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
                 default_model_config_id: Some("model-selected".to_string()),
                 tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
-                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -204,11 +91,11 @@ async fn chatos_async_create_task_preserves_ai_selected_task_model() {
 
 #[tokio::test]
 async fn mcp_agent_cannot_update_task_execution_status() {
-    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let (mcp_service, task_service, project_registry) = test_mcp_service().await;
     let current_user = agent_user("owner-a");
-    let project = project_service
-        .create_project(
-            CreateTaskProjectRequest {
+    let project = project_registry
+        .register_project(
+            ClientProjectSnapshotInput {
                 name: "Project A".to_string(),
                 root_path: None,
                 git_url: None,
@@ -221,6 +108,7 @@ async fn mcp_agent_cannot_update_task_execution_status() {
     let task = task_service
         .create_task(
             CreateTaskRequest {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
                 status: Some(TaskStatus::Succeeded),
                 ..test_create_task_request("completed task")
@@ -240,6 +128,7 @@ async fn mcp_agent_cannot_update_task_execution_status() {
             }),
             &current_user,
             &McpRequestContext {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
                 ..McpRequestContext::default()
             },
@@ -258,11 +147,11 @@ async fn mcp_agent_cannot_update_task_execution_status() {
 
 #[tokio::test]
 async fn mcp_agent_cannot_start_completed_historical_task() {
-    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let (mcp_service, task_service, project_registry) = test_mcp_service().await;
     let current_user = agent_user("owner-a");
-    let project = project_service
-        .create_project(
-            CreateTaskProjectRequest {
+    let project = project_registry
+        .register_project(
+            ClientProjectSnapshotInput {
                 name: "Project A".to_string(),
                 root_path: None,
                 git_url: None,
@@ -275,6 +164,7 @@ async fn mcp_agent_cannot_start_completed_historical_task() {
     let task = task_service
         .create_task(
             CreateTaskRequest {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
                 status: Some(TaskStatus::Succeeded),
                 ..test_create_task_request("completed task")
@@ -291,6 +181,7 @@ async fn mcp_agent_cannot_start_completed_historical_task() {
             json!({ "task_id": task.id.clone() }),
             &current_user,
             &McpRequestContext {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
                 ..McpRequestContext::default()
             },
@@ -309,7 +200,7 @@ async fn mcp_agent_cannot_start_completed_historical_task() {
 
 #[tokio::test]
 async fn chatos_async_create_task_does_not_reuse_succeeded_task() {
-    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let (mcp_service, task_service, project_registry) = test_mcp_service().await;
     let current_user = agent_user("owner-a");
     let _model = mcp_service
         .model_config_service
@@ -334,9 +225,9 @@ async fn chatos_async_create_task_does_not_reuse_succeeded_task() {
         })
         .await
         .expect("create model config");
-    let project = project_service
-        .create_project(
-            CreateTaskProjectRequest {
+    let project = project_registry
+        .register_project(
+            ClientProjectSnapshotInput {
                 name: "Project A".to_string(),
                 root_path: None,
                 git_url: None,
@@ -349,14 +240,16 @@ async fn chatos_async_create_task_does_not_reuse_succeeded_task() {
     let existing_task = task_service
         .create_task(
             CreateTaskRequest {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
-                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
                 default_model_config_id: Some("model-1".to_string()),
                 status: Some(TaskStatus::Succeeded),
                 ..test_create_task_request("previous plan task")
             },
             Some(&current_user),
             Some(TaskSourceContext {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
@@ -372,15 +265,18 @@ async fn chatos_async_create_task_does_not_reuse_succeeded_task() {
             json!({
                 "title": "new plan task",
                 "objective": "define implementation plan",
+                "requires_execution": false,
+                "enabled_builtin_kinds": [],
                 "default_model_config_id": "model-1",
             }),
             &current_user,
             &McpRequestContext {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
                 tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
-                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
                 ..McpRequestContext::default()
             },
         )
@@ -404,7 +300,7 @@ async fn chatos_async_create_task_does_not_reuse_succeeded_task() {
 
 #[tokio::test]
 async fn chatos_async_batch_create_does_not_reuse_succeeded_task() {
-    let (mcp_service, task_service, project_service) = test_mcp_service().await;
+    let (mcp_service, task_service, project_registry) = test_mcp_service().await;
     let current_user = agent_user("owner-a");
     let _model = mcp_service
         .model_config_service
@@ -429,9 +325,9 @@ async fn chatos_async_batch_create_does_not_reuse_succeeded_task() {
         })
         .await
         .expect("create model config");
-    let project = project_service
-        .create_project(
-            CreateTaskProjectRequest {
+    let project = project_registry
+        .register_project(
+            ClientProjectSnapshotInput {
                 name: "Project A".to_string(),
                 root_path: None,
                 git_url: None,
@@ -444,14 +340,16 @@ async fn chatos_async_batch_create_does_not_reuse_succeeded_task() {
     let existing_task = task_service
         .create_task(
             CreateTaskRequest {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
-                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
                 default_model_config_id: Some("model-1".to_string()),
                 status: Some(TaskStatus::Succeeded),
                 ..test_create_task_request("previous plan task")
             },
             Some(&current_user),
             Some(TaskSourceContext {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
@@ -470,17 +368,20 @@ async fn chatos_async_batch_create_does_not_reuse_succeeded_task() {
                         "client_ref": "root",
                         "title": "new root plan task",
                         "objective": "define implementation plan",
+                "requires_execution": false,
+                "enabled_builtin_kinds": [],
                         "default_model_config_id": "model-1"
                     }
                 ]
             }),
             &current_user,
             &McpRequestContext {
+                project_context: Some(snapshot(&project.id)),
                 project_id: Some(project.id.clone()),
                 source_session_id: Some("session-1".to_string()),
                 source_user_message_id: Some("message-1".to_string()),
                 tool_profile: Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE.to_string()),
-                task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
+                task_profile: Some(TASK_PROFILE_DEFAULT.to_string()),
                 ..McpRequestContext::default()
             },
         )

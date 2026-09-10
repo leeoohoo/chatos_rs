@@ -15,14 +15,6 @@ pub const CHATOS_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "chatos.security.user_service_internal_api_secret";
 pub const CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "chatos.downstream.user_service_request_timeout_ms";
-pub const CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY: &str =
-    "chatos.downstream.project_service_base_url";
-pub const CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
-    "chatos.downstream.project_service_internal_base_url";
-pub const CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "chatos.downstream.project_service_request_timeout_ms";
-pub const CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "chatos.downstream.project_service_internal_api_secret";
 pub const CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY: &str = "chatos.downstream.task_runner_base_url";
 pub const CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY: &str =
     "chatos.downstream.task_runner_internal_base_url";

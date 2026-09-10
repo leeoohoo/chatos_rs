@@ -2,7 +2,6 @@ import { buildApiUrl } from '@chatos/frontend-runtime';
 
 export const ADMIN_SERVICE_BASES = {
   userService: '/api/admin/user-service',
-  projectService: '/api/admin/project-service',
   taskRunner: '/api/admin/task-runner',
   pluginManagement: '/api/admin/plugin-management',
   memoryEngine: '/api/admin/memory-engine',

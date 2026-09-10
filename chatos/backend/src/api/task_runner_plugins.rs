@@ -22,8 +22,6 @@ pub fn router() -> Router {
 #[derive(Debug, Deserialize)]
 struct AvailablePluginsQuery {
     project_id: Option<String>,
-    #[serde(default)]
-    plan_mode: bool,
 }
 
 async fn list_available_plugins(
@@ -49,7 +47,6 @@ async fn list_available_plugins(
         config.task_runner_base_url.as_str(),
         access_token.as_str(),
         project_id,
-        query.plan_mode,
     )
     .await
     {

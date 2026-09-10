@@ -23,10 +23,7 @@ pub fn system_mcp_provider_skills(key: SystemMcpKey) -> Vec<SystemMcpProviderSki
         return Vec::new();
     }
     if key == SystemMcpKey::TaskRunnerService {
-        return vec![
-            task_runner_provider_skill(false),
-            task_runner_provider_skill(true),
-        ];
+        return vec![task_runner_provider_skill()];
     }
     let descriptor = system_mcp_descriptor(key);
     if let Some(kind) = descriptor.embedded_kind {
@@ -35,33 +32,17 @@ pub fn system_mcp_provider_skills(key: SystemMcpKey) -> Vec<SystemMcpProviderSki
     service_provider_skill(key).into_iter().collect()
 }
 
-pub fn task_runner_provider_skill(planning: bool) -> SystemMcpProviderSkill {
-    let (id, name, description, instructions) = if planning {
-        (
-            "task_runner_planning_usage",
-            "规划模式异步任务工具使用指南",
-            "指导 AI 将当前规划需求委派给 Task Runner 规划阶段并等待后台回传。",
-            include_str!("../provider_skills/task-runner-planning-service.md"),
-        )
-    } else {
-        (
-            "task_runner_usage",
-            "普通模式异步任务工具使用指南",
-            "指导 AI 把当前用户和项目需求安排为可持续执行和回传结果的后台任务。",
-            include_str!("../provider_skills/task-runner-service.md"),
-        )
-    };
+pub fn task_runner_provider_skill() -> SystemMcpProviderSkill {
     SystemMcpProviderSkill {
-        id: id.to_string(),
-        name: name.to_string(),
-        description: description.to_string(),
-        instructions: instructions.trim().to_string(),
+        id: "task_runner_usage".to_string(),
+        name: "异步任务工具使用指南".to_string(),
+        description: "指导 AI 把当前用户和项目需求安排为可持续执行和回传结果的后台任务。"
+            .to_string(),
+        instructions: include_str!("../provider_skills/task-runner-service.md")
+            .trim()
+            .to_string(),
         locale: None,
-        task_profiles: vec![if planning {
-            "chatos_plan".to_string()
-        } else {
-            "default".to_string()
-        }],
+        task_profiles: vec!["default".to_string()],
     }
 }
 
@@ -157,15 +138,11 @@ mod tests {
     }
 
     #[test]
-    fn task_runner_guidance_is_split_by_program_task_profile() {
-        let ordinary = task_runner_provider_skill(false);
-        let planning = task_runner_provider_skill(true);
-
-        assert!(ordinary.instructions.contains("普通模式"));
-        assert!(!ordinary.instructions.contains("自由文本规划"));
-        assert!(planning.instructions.contains("规划模式"));
-        assert!(planning.instructions.contains("不得用自由文本规划"));
-        assert!(planning.instructions.contains("wait_for_task_completion"));
-        assert_ne!(ordinary.id, planning.id);
+    fn task_runner_guidance_has_no_planning_mode_variant() {
+        let skills = system_mcp_provider_skills(SystemMcpKey::TaskRunnerService);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].task_profiles, ["default"]);
+        assert!(!skills[0].instructions.contains("规划模式"));
+        assert!(skills[0].instructions.contains("wait_for_task_completion"));
     }
 }

@@ -145,7 +145,6 @@ struct LocalConnectorModelsView: View {
             var nextSettings = settingsDraft
             let enabledIDs = Set(updates.compactMap { $0.value.taskEnabled ? $0.key : nil })
             clearDisabledSelection(\.memorySummaryModelConfigID, thinking: \.memorySummaryThinkingLevel, in: &nextSettings, enabledIDs: enabledIDs)
-            clearDisabledSelection(\.projectManagementAgentModelConfigID, thinking: \.projectManagementAgentThinkingLevel, in: &nextSettings, enabledIDs: enabledIDs)
             clearDisabledSelection(\.commandApprovalModelConfigID, thinking: \.commandApprovalThinkingLevel, in: &nextSettings, enabledIDs: enabledIDs)
             validationMessage = nil
             viewModel.saveModelConfiguration(settings: nextSettings, updates: updates)

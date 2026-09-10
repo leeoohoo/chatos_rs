@@ -2,62 +2,6 @@ import XCTest
 @testable import ChatOSCore
 
 final class ConversationHistoryStoreTests: XCTestCase {
-    func testReplacementBatchKeepsHistoryAndDisablesOnlyOldTaskGraph() async {
-        let store = ConversationHistoryStore()
-        let old = projectExecutionTurn(id: "old-group", replacedGroupID: nil, sequence: 1)
-        let replacement = projectExecutionTurn(
-            id: "new-group",
-            replacedGroupID: "old-group",
-            sequence: 2
-        )
-
-        await store.mergeCachedTurns([old, replacement], sessionID: "session-a")
-
-        let snapshot = await store.snapshot(sessionID: "session-a")
-        XCTAssertEqual(snapshot.turns.map(\.id), ["old-group", "new-group"])
-        XCTAssertFalse(snapshot.turns[0].isTaskGraphAvailable)
-        XCTAssertTrue(snapshot.turns[1].isTaskGraphAvailable)
-    }
-
-    func testOlderPageRestoresSupersededHistoryWithoutTaskGraph() async {
-        let store = ConversationHistoryStore()
-        let replacement = projectExecutionTurn(
-            id: "new-group",
-            replacedGroupID: "old-group",
-            sequence: 2
-        )
-        await store.mergeCachedTurns([replacement], sessionID: "session-a")
-        await store.mergeCachedTurns(
-            [projectExecutionTurn(id: "old-group", replacedGroupID: nil, sequence: 1)],
-            sessionID: "session-a"
-        )
-
-        let snapshot = await store.snapshot(sessionID: "session-a")
-        XCTAssertEqual(snapshot.turns.map(\.id), ["old-group", "new-group"])
-        XCTAssertFalse(snapshot.turns[0].isTaskGraphAvailable)
-        XCTAssertTrue(snapshot.turns[1].isTaskGraphAvailable)
-    }
-
-    func testNewerRevisionCannotRestoreSupersededTaskGraphButton() async {
-        let store = ConversationHistoryStore()
-        let old = projectExecutionTurn(id: "old-group", replacedGroupID: nil, sequence: 1)
-        let replacement = projectExecutionTurn(
-            id: "new-group",
-            replacedGroupID: "old-group",
-            sequence: 2
-        )
-        await store.mergeCachedTurns([old, replacement], sessionID: "session-a")
-
-        var refreshedOld = old
-        refreshedOld.revision = 2
-        refreshedOld.isTaskGraphAvailable = true
-        await store.mergeCachedTurns([refreshedOld], sessionID: "session-a")
-
-        let snapshot = await store.snapshot(sessionID: "session-a")
-        XCTAssertEqual(snapshot.turns.map(\.id), ["old-group", "new-group"])
-        XCTAssertFalse(snapshot.turns[0].isTaskGraphAvailable)
-    }
-
     func testDiscardOptimisticTurnNeverDeletesPersistedTurn() async {
         let store = ConversationHistoryStore()
         let optimistic = turn(
@@ -481,27 +425,4 @@ final class ConversationHistoryStoreTests: XCTestCase {
         )
     }
 
-    private func projectExecutionTurn(
-        id: String,
-        replacedGroupID: String?,
-        sequence: Int64
-    ) -> ConversationTurn {
-        let date = Date(timeIntervalSince1970: TimeInterval(sequence))
-        return ConversationTurn(
-            id: id,
-            sessionID: "session-a",
-            sequence: sequence,
-            revision: 1,
-            userMessage: ChatMessage(id: id, role: .user, text: "执行批次", createdAt: date),
-            projectExecutionContext: ProjectExecutionContext(
-                projectID: "project-1",
-                requirementID: "requirement-1",
-                executionGroupID: id,
-                replacedExecutionGroupID: replacedGroupID
-            ),
-            status: .completed,
-            startedAt: date,
-            completedAt: date
-        )
-    }
 }

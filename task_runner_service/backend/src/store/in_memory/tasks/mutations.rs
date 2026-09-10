@@ -10,25 +10,6 @@ impl InMemoryStore {
         task
     }
 
-    pub(in crate::store) fn set_tasks_execution_paused(
-        &self,
-        task_ids: &[String],
-        paused: bool,
-    ) -> usize {
-        let task_ids = task_ids.iter().map(String::as_str).collect::<BTreeSet<_>>();
-        let mut data = self.inner.write();
-        let mut updated = 0;
-        for task in data.tasks.values_mut() {
-            if !task_ids.contains(task.id.as_str()) {
-                continue;
-            }
-            task.task_tool_state.execution_paused = paused;
-            task.updated_at = now_rfc3339();
-            updated += 1;
-        }
-        updated
-    }
-
     pub(in crate::store) fn update_task_schedule_if_next_run_at(
         &self,
         task_id: &str,
@@ -171,6 +152,7 @@ mod tests {
             tenant_id: "tenant".to_string(),
             subject_id: "subject".to_string(),
             project_id: None,
+            project_context: None,
             task_profile: crate::models::TASK_PROFILE_DEFAULT.to_string(),
             creator_user_id: None,
             creator_username: None,

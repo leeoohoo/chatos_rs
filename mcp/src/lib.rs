@@ -11,7 +11,6 @@ mod system_tool_catalog;
 mod task_types;
 mod tool_catalog;
 
-pub use contracts::project_management as project_management_contract;
 pub(crate) use implementations::builtin::tool_registry;
 pub use implementations::builtin::{
     agent_builder, ask_user, bundled_tools, code_maintainer, memory_readers, notepad,

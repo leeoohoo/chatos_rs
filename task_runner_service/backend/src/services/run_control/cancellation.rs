@@ -261,9 +261,6 @@ impl RunService {
                 }
             }
         }
-        self.ensure_project_execution_retry_configuration_changed(&run, &task)
-            .await?;
-
         let prompt_override = run
             .input_snapshot
             .get("prompt_override")
@@ -279,66 +276,6 @@ impl RunService {
         };
         Ok(Some(restarted))
     }
-
-    async fn ensure_project_execution_retry_configuration_changed(
-        &self,
-        run: &TaskRunRecord,
-        task: &TaskRecord,
-    ) -> Result<(), String> {
-        if !matches!(run.status, TaskRunStatus::Blocked | TaskRunStatus::Failed)
-            || task
-                .input_payload
-                .as_ref()
-                .and_then(|payload| payload.get("source"))
-                .and_then(Value::as_str)
-                != Some("chatos_project_requirement_execution")
-        {
-            return Ok(());
-        }
-        let mut runtime_task = task.clone();
-        if let Some(policy) = self.resolve_task_runner_policy_for_task(task).await? {
-            policy.validate_task_plugin_selection_for_run(&runtime_task)?;
-            policy.apply_to_task(&mut runtime_task)?;
-        }
-        let effective_tools =
-            crate::services::workspace_execution::effective_task_tool_snapshot_for_scope(
-                &runtime_task.mcp_config,
-                &runtime_task.execution_scope(),
-            );
-        let Err(contract_error) =
-            crate::services::workspace_execution::validate_project_execution_task_runtime_contract(
-                &runtime_task,
-                &effective_tools,
-            )
-        else {
-            return Ok(());
-        };
-        let current_fingerprint =
-            crate::services::workspace_execution::task_runtime_capability_fingerprint(
-                &runtime_task,
-            );
-        if retry_capability_configuration_unchanged(
-            &run.input_snapshot,
-            current_fingerprint.as_str(),
-        ) {
-            return Err(format!(
-                "platform_configuration_unchanged: project execution task capability configuration is still invalid and unchanged for run {}: {contract_error}",
-                run.id
-            ));
-        }
-        Ok(())
-    }
-}
-
-fn retry_capability_configuration_unchanged(
-    previous_input_snapshot: &Value,
-    current_fingerprint: &str,
-) -> bool {
-    previous_input_snapshot
-        .get("task_runtime_capability_fingerprint")
-        .and_then(Value::as_str)
-        .map(|previous| previous == current_fingerprint)
-        .unwrap_or(false)
 }
 
 fn retry_request_with_current_task_config(
@@ -359,8 +296,7 @@ fn retry_request_with_current_task_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{retry_capability_configuration_unchanged, retry_request_with_current_task_config};
-    use serde_json::json;
+    use super::retry_request_with_current_task_config;
 
     #[test]
     fn retry_uses_current_task_model_configuration() {
@@ -375,21 +311,5 @@ mod tests {
             request.retry_instruction.as_deref(),
             Some("use the repaired configuration")
         );
-    }
-
-    #[test]
-    fn retry_requires_a_changed_runtime_capability_fingerprint() {
-        assert!(retry_capability_configuration_unchanged(
-            &json!({"task_runtime_capability_fingerprint": "fnv1a64:same"}),
-            "fnv1a64:same",
-        ));
-        assert!(!retry_capability_configuration_unchanged(
-            &json!({"task_runtime_capability_fingerprint": "fnv1a64:old"}),
-            "fnv1a64:new",
-        ));
-        assert!(!retry_capability_configuration_unchanged(
-            &json!({}),
-            "fnv1a64:new",
-        ));
     }
 }

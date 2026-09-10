@@ -228,23 +228,6 @@ fn baseline_prompts() -> Vec<(&'static str, &'static str, &'static str)> {
             include_str!("../../seed_data/agent_prompts/chatos_conversation_agent.md"),
         ),
         (
-            SystemAgentKey::ChatosConversationAgent.as_str(),
-            chatos_agent::CHATOS_PLAN_TASK_PROFILE,
-            include_str!("../../seed_data/agent_prompts/chatos_plan_profile.md"),
-        ),
-        (
-            SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
-            DEFAULT_AGENT_PROMPT_PROFILE,
-            include_str!(
-                "../../seed_data/agent_prompts/project_requirement_execution_planner_agent.md"
-            ),
-        ),
-        (
-            SystemAgentKey::TaskRunnerPlanPhase.as_str(),
-            DEFAULT_AGENT_PROMPT_PROFILE,
-            include_str!("../../seed_data/agent_prompts/task_runner_plan_phase.md"),
-        ),
-        (
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
             DEFAULT_AGENT_PROMPT_PROFILE,
             include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
@@ -308,75 +291,27 @@ mod tests {
     #[test]
     fn baseline_catalog_covers_all_system_agents() {
         let prompts = baseline_prompts();
-        assert_eq!(
-            prompts.len(),
-            chatos_agent::system_agent_catalog().len() + 1
-        );
+        assert_eq!(prompts.len(), chatos_agent::system_agent_catalog().len());
         assert!(prompts
             .iter()
             .all(|(_, _, content)| !content.trim().is_empty()));
     }
 
     #[test]
-    fn chatos_agents_publish_distinct_default_and_plan_profiles() {
-        {
-            let agent_key = SystemAgentKey::ChatosConversationAgent.as_str();
-            assert_eq!(
-                agent_prompt_profiles_for_agent(agent_key),
-                vec![
-                    DEFAULT_AGENT_PROMPT_PROFILE,
-                    chatos_agent::CHATOS_PLAN_TASK_PROFILE
-                ]
-            );
-            let plan = baseline_prompts()
-                .into_iter()
-                .find(|(key, profile, _)| {
-                    *key == agent_key && *profile == chatos_agent::CHATOS_PLAN_TASK_PROFILE
-                })
-                .map(|(_, _, content)| content)
-                .expect("plan prompt");
-            assert!(plan.contains("不能用一篇自由文本规划代替"));
-            assert!(plan.contains("wait_for_task_completion"));
-        }
-    }
-
-    #[test]
-    fn execution_planner_prompts_require_terminal_for_dependency_manifests() {
-        let prompts = baseline_prompts();
-        {
-            let agent_key = SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str();
-            let content = prompts
-                .iter()
-                .find(|(key, profile, _)| {
-                    *key == agent_key && *profile == DEFAULT_AGENT_PROMPT_PROFILE
-                })
-                .map(|(_, _, content)| *content)
-                .unwrap_or_else(|| panic!("missing prompt: {agent_key}"));
-            assert!(content.contains("package.json"));
-            assert!(content.contains("lockfile 验证"));
-            assert!(content.contains("供应链审计"));
-            assert!(content.contains("TerminalController"));
-            assert!(content.contains("enabled_builtin_kinds"));
-        }
+    fn conversation_agent_publishes_only_default_profile() {
+        assert_eq!(
+            agent_prompt_profiles_for_agent(SystemAgentKey::ChatosConversationAgent.as_str()),
+            vec![DEFAULT_AGENT_PROMPT_PROFILE]
+        );
     }
 
     #[test]
     fn managed_prompts_assign_network_plugins_per_task() {
         let prompts = baseline_prompts();
-        for (agent_key, profile) in [
-            (
-                SystemAgentKey::ChatosConversationAgent.as_str(),
-                DEFAULT_AGENT_PROMPT_PROFILE,
-            ),
-            (
-                SystemAgentKey::ChatosConversationAgent.as_str(),
-                chatos_agent::CHATOS_PLAN_TASK_PROFILE,
-            ),
-            (
-                SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
-                DEFAULT_AGENT_PROMPT_PROFILE,
-            ),
-        ] {
+        for (agent_key, profile) in [(
+            SystemAgentKey::ChatosConversationAgent.as_str(),
+            DEFAULT_AGENT_PROMPT_PROFILE,
+        )] {
             let content = prompts
                 .iter()
                 .find(|(key, candidate_profile, _)| {
@@ -407,8 +342,6 @@ mod tests {
         let prompts = baseline_prompts();
         for agent_key in [
             SystemAgentKey::ChatosConversationAgent.as_str(),
-            SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
-            SystemAgentKey::TaskRunnerPlanPhase.as_str(),
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
         ] {
             let content = prompts
@@ -420,21 +353,6 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing prompt: {agent_key}"));
             assert!(content.contains("用户语言") || content.contains("用户当前语言"));
             assert!(content.contains("代码标识符"));
-            if [SystemAgentKey::TaskRunnerPlanPhase.as_str()].contains(&agent_key) {
-                assert!(content.contains("你是项目规划助手"));
-                assert!(content.contains("源码修改、构建、测试、部署和环境启动由后续执行阶段承接"));
-                assert!(content.contains("当前项目的身份和名称属于用户已确认的上下文"));
-                assert!(content.contains("使用工具真实返回的标识建立依赖关系"));
-                assert!(content.contains("在项目空间中真实创建或更新规划产物"));
-                assert!(content.contains("一份非空技术文档"));
-                assert!(content.contains("重新读取需求、技术文档和任务依赖图"));
-                assert!(content.contains("作为独立的项目资料直接交付给用户"));
-                assert!(content.contains("只描述项目自身的业务目标"));
-                assert!(content.contains("脱离当前会话后仍能自然阅读"));
-                assert!(content.contains("没有额外业务信息时留空"));
-                assert!(content.contains("最终回执控制在三段以内"));
-                assert!(content.contains("直接陈述交付结果"));
-            }
             if [SystemAgentKey::TaskRunnerRunPhase.as_str()].contains(&agent_key) {
                 assert!(content.contains("都针对同一个当前项目工作区"));
                 assert!(content.contains("自动收集工作区输出"));

@@ -146,8 +146,7 @@ public struct LocalConnectorModelSettings: Codable, Sendable, Equatable {
     public var modelRequestMaxRetries: Int?
     public var memorySummaryModelConfigID: String?
     public var memorySummaryThinkingLevel: String?
-    public var projectManagementAgentModelConfigID: String?
-    public var projectManagementAgentThinkingLevel: String?
+    public var taskRunnerDefaultModelConfigID: String?
     public var commandApprovalModelConfigID: String?
     public var commandApprovalThinkingLevel: String?
 
@@ -155,16 +154,14 @@ public struct LocalConnectorModelSettings: Codable, Sendable, Equatable {
         modelRequestMaxRetries: Int?,
         memorySummaryModelConfigID: String? = nil,
         memorySummaryThinkingLevel: String? = nil,
-        projectManagementAgentModelConfigID: String? = nil,
-        projectManagementAgentThinkingLevel: String? = nil,
+        taskRunnerDefaultModelConfigID: String? = nil,
         commandApprovalModelConfigID: String?,
         commandApprovalThinkingLevel: String?
     ) {
         self.modelRequestMaxRetries = modelRequestMaxRetries
         self.memorySummaryModelConfigID = memorySummaryModelConfigID
         self.memorySummaryThinkingLevel = memorySummaryThinkingLevel
-        self.projectManagementAgentModelConfigID = projectManagementAgentModelConfigID
-        self.projectManagementAgentThinkingLevel = projectManagementAgentThinkingLevel
+        self.taskRunnerDefaultModelConfigID = taskRunnerDefaultModelConfigID
         self.commandApprovalModelConfigID = commandApprovalModelConfigID
         self.commandApprovalThinkingLevel = commandApprovalThinkingLevel
     }

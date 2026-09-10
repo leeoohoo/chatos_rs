@@ -18,6 +18,7 @@ fn request() -> CreateRuntimeSessionRequest {
         owner_role: None,
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
         project_id: Some("project-1".to_string()),
+        project_context: None,
         run_id: Some("run-1".to_string()),
         execution_group_id: None,
         turn_id: None,
@@ -30,7 +31,6 @@ fn request() -> CreateRuntimeSessionRequest {
         default_model_config_id: None,
         default_remote_connection_id: None,
         tool_result_max_chars: Some(40_000),
-        expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
         selected_plugins: Vec::new(),
         plugin_command_invocations: Vec::new(),
@@ -219,7 +219,6 @@ fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
     validate_task_runner_provider_context(
         SystemAgentKey::TaskRunnerRunPhase,
         &request,
-        &[],
         std::slice::from_ref(&route),
     )
     .expect("bound Task Runner run should be accepted");
@@ -229,7 +228,6 @@ fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
     let error = validate_task_runner_provider_context(
         SystemAgentKey::TaskRunnerRunPhase,
         &missing_run,
-        &[],
         std::slice::from_ref(&route),
     )
     .expect_err("run binding is required");
@@ -238,7 +236,6 @@ fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
     assert!(validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &request,
-        &[],
         &[route],
     )
     .is_err());
@@ -257,7 +254,6 @@ async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope(
     validate_task_runner_provider_context(
         SystemAgentKey::TaskRunnerRunPhase,
         &request(),
-        &[],
         routes.as_slice(),
     )
     .expect("bound Task Runner Ask User route should be accepted");
@@ -267,7 +263,6 @@ async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope(
     let error = validate_task_runner_provider_context(
         SystemAgentKey::TaskRunnerRunPhase,
         &missing_task,
-        &[],
         routes.as_slice(),
     )
     .expect_err("task binding is required");
@@ -290,7 +285,6 @@ async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope(
     validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &chatos_request,
-        &[],
         routes.as_slice(),
     )
     .expect("bound ChatOS Ask User route should be accepted");
@@ -299,7 +293,6 @@ async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope(
     let error = validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &chatos_request,
-        &[],
         routes.as_slice(),
     )
     .expect_err("ChatOS turn binding is required");
@@ -352,7 +345,6 @@ fn task_runner_service_session_requires_chatos_source_scope() {
     assert!(validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &request,
-        &[],
         std::slice::from_ref(&route),
     )
     .is_err());
@@ -362,19 +354,9 @@ fn task_runner_service_session_requires_chatos_source_scope() {
     validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &request,
-        &[],
         std::slice::from_ref(&route),
     )
     .expect("complete Chatos source binding should be accepted");
-
-    let error = validate_task_runner_provider_context(
-        SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
-        &request,
-        &[],
-        &[route],
-    )
-    .expect_err("project execution scope is required");
-    assert!(format!("{error:?}").contains("expected_project_task_ids"));
 }
 
 #[test]
@@ -398,7 +380,7 @@ fn capability_response_must_match_the_requested_identity() {
     .unwrap();
     assert!(validate_capability_identity(
         &capabilities,
-        SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+        SystemAgentKey::ChatosConversationAgent.as_str(),
         "user-1",
     )
     .is_err());

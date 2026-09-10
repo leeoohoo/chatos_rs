@@ -50,14 +50,6 @@ struct ProjectWorkspaceView: View {
                 .id(project?.rootPath ?? projectID)
             case .messages:
                 ProjectMessagesView(projectID: projectID)
-            case .plan:
-                ProjectPlanView(
-                    projectID: projectID,
-                    service: model.projectPlanService,
-                    graphService: model.messageTaskGraphService,
-                    executionService: model.projectExecutionService,
-                    realtimeService: model.realtimeService
-                )
             case .settings:
                 ProjectRunSettingsView(
                     projectID: projectID,

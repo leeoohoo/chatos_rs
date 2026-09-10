@@ -16,7 +16,6 @@ use crate::models::memory_runtime_types::{
     ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto,
 };
 use crate::models::pet_activity_inbox::PetActivityInboxRecord;
-use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnection;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
@@ -26,10 +25,7 @@ use crate::services::task_manager::{TaskDraft, TaskRecord};
 use super::types::{
     AskUserPromptRealtimePayload, ChatStreamRealtimePayload, ContactsUpdatedRealtimePayload,
     ConversationSummariesUpdatedRealtimePayload, NotepadUpdatedRealtimePayload,
-    PetActivityInboxRealtimePayload, ProjectChangeSummaryRealtimePayload,
-    ProjectMembersUpdatedRealtimePayload, ProjectRunCatalogRealtimePayload,
-    ProjectRunInstanceRealtimePayload, ProjectRunStateRealtimePayload,
-    ProjectsUpdatedRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
+    PetActivityInboxRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
     RemoteConnectionsUpdatedRealtimePayload, ReviewRepairRealtimePayload,
     SequencedRealtimeEventEnvelope, SessionsUpdatedRealtimePayload, TaskBoardRealtimePayload,
     TerminalListInvalidatedRealtimePayload, TerminalStateRealtimePayload,
@@ -87,11 +83,6 @@ fn next_realtime_event_sequence() -> u64 {
             Err(observed) => previous = observed,
         }
     }
-}
-
-fn project_for_realtime(mut project: Project) -> Project {
-    project.root_path = display_path(project.root_path.as_str());
-    project
 }
 
 fn terminal_for_realtime(terminal: &Terminal) -> Terminal {
@@ -231,29 +222,6 @@ pub fn publish_review_repair_failed(
     );
 }
 
-pub fn publish_project_change_summary_updated(
-    user_id: &str,
-    project_id: &str,
-    reason: &str,
-    conversation_id: Option<&str>,
-    path: Option<&str>,
-) {
-    REALTIME_HUB.send(RealtimeEventEnvelope {
-        message_type: "event",
-        event: "project.change_summary.updated",
-        user_id: user_id.to_string(),
-        conversation_id: conversation_id.map(|value| value.to_string()),
-        project_id: Some(project_id.to_string()),
-        payload: RealtimeEventPayload::ProjectChangeSummary(ProjectChangeSummaryRealtimePayload {
-            project_id: project_id.to_string(),
-            reason: reason.to_string(),
-            conversation_id: conversation_id.map(|value| value.to_string()),
-            path: path.map(display_path),
-        }),
-        ts: now_rfc3339(),
-    });
-}
-
 pub fn publish_contacts_updated(
     user_id: &str,
     reason: &str,
@@ -295,27 +263,6 @@ pub fn publish_notepad_updated(
             folder: folder.map(|value| value.to_string()),
             from: from.map(|value| value.to_string()),
             to: to.map(|value| value.to_string()),
-        }),
-        ts: now_rfc3339(),
-    });
-}
-
-pub fn publish_projects_updated(
-    user_id: &str,
-    reason: &str,
-    project_id: Option<&str>,
-    project: Option<Project>,
-) {
-    REALTIME_HUB.send(RealtimeEventEnvelope {
-        message_type: "event",
-        event: "projects.updated",
-        user_id: user_id.to_string(),
-        conversation_id: None,
-        project_id: project_id.map(|value| value.to_string()),
-        payload: RealtimeEventPayload::ProjectsUpdated(ProjectsUpdatedRealtimePayload {
-            reason: reason.to_string(),
-            project_id: project_id.map(|value| value.to_string()),
-            project: project.map(project_for_realtime),
         }),
         ts: now_rfc3339(),
     });
@@ -419,114 +366,6 @@ pub fn publish_terminal_list_invalidated(
                 project_id: project_id.map(|value| value.to_string()),
                 reason: reason.to_string(),
                 terminal: terminal.map(terminal_for_realtime),
-            },
-        ),
-        ts: now_rfc3339(),
-    });
-}
-
-pub fn publish_project_run_state_changed(
-    user_id: &str,
-    project_id: &str,
-    terminal: Option<&Terminal>,
-    busy: bool,
-    running: bool,
-    status: &str,
-    reason: &str,
-    exit_code: Option<i32>,
-) {
-    let payload = ProjectRunStateRealtimePayload {
-        project_id: project_id.to_string(),
-        terminal_id: terminal.map(|value| value.id.clone()),
-        terminal_name: terminal.map(|value| value.name.clone()),
-        cwd: terminal.map(|value| display_path(value.cwd.as_str())),
-        status: status.to_string(),
-        busy,
-        running,
-        reason: reason.to_string(),
-        exit_code,
-    };
-    REALTIME_HUB.send(RealtimeEventEnvelope {
-        message_type: "event",
-        event: "project.run.state_changed",
-        user_id: user_id.to_string(),
-        conversation_id: None,
-        project_id: Some(project_id.to_string()),
-        payload: RealtimeEventPayload::ProjectRunState(payload),
-        ts: now_rfc3339(),
-    });
-}
-
-pub fn publish_project_run_instance_changed(
-    user_id: &str,
-    project_id: &str,
-    terminal: &Terminal,
-    busy: bool,
-    running: bool,
-    status: &str,
-    reason: &str,
-    exit_code: Option<i32>,
-) {
-    let payload = ProjectRunInstanceRealtimePayload {
-        project_id: project_id.to_string(),
-        terminal_id: terminal.id.clone(),
-        terminal_name: terminal.name.clone(),
-        cwd: display_path(terminal.cwd.as_str()),
-        status: status.to_string(),
-        busy,
-        running,
-        reason: reason.to_string(),
-        exit_code,
-    };
-    REALTIME_HUB.send(RealtimeEventEnvelope {
-        message_type: "event",
-        event: "project.run.instance_changed",
-        user_id: user_id.to_string(),
-        conversation_id: None,
-        project_id: Some(project_id.to_string()),
-        payload: RealtimeEventPayload::ProjectRunInstance(payload),
-        ts: now_rfc3339(),
-    });
-}
-
-pub fn publish_project_run_catalog_updated(
-    user_id: &str,
-    project_id: &str,
-    reason: &str,
-    path: Option<&str>,
-) {
-    REALTIME_HUB.send(RealtimeEventEnvelope {
-        message_type: "event",
-        event: "project.run.catalog.updated",
-        user_id: user_id.to_string(),
-        conversation_id: None,
-        project_id: Some(project_id.to_string()),
-        payload: RealtimeEventPayload::ProjectRunCatalog(ProjectRunCatalogRealtimePayload {
-            project_id: project_id.to_string(),
-            reason: reason.to_string(),
-            path: path.map(display_path),
-        }),
-        ts: now_rfc3339(),
-    });
-}
-
-pub fn publish_project_members_updated(
-    user_id: &str,
-    project_id: &str,
-    reason: &str,
-    contact_id: Option<&str>,
-) {
-    REALTIME_HUB.send(RealtimeEventEnvelope {
-        message_type: "event",
-        event: "project.members.updated",
-        user_id: user_id.to_string(),
-        conversation_id: None,
-        project_id: Some(project_id.to_string()),
-        payload: RealtimeEventPayload::ProjectMembersUpdated(
-            ProjectMembersUpdatedRealtimePayload {
-                project_id: project_id.to_string(),
-                reason: reason.to_string(),
-                contact_id: contact_id.map(|value| value.to_string()),
             },
         ),
         ts: now_rfc3339(),

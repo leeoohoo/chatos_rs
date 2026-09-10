@@ -1,3 +1,4 @@
+import ChatOSAgentRuntime
 import Foundation
 
 enum NativeApprovalDecision: Sendable, Equatable {
@@ -19,153 +20,69 @@ struct NativeApprovalAgentRequest: Sendable {
 
 struct NativeApprovalAgent: Sendable {
     private let tools = NativeApprovalAgentTools()
-    private let maximumIterations = 8
+    private let settingsStore: AgentSettingsStore
+
+    init(settingsStore: AgentSettingsStore = .init()) { self.settingsStore = settingsStore }
 
     func evaluate(
         request: NativeApprovalAgentRequest,
         model: GatewayModelConfigDTO,
-        thinkingLevel: String?,
-        maximumRetries: Int
+        thinkingLevel: String?
     ) async -> NativeApprovalDecision {
         do {
-            return try await run(
-                request: request,
-                model: model,
-                thinkingLevel: thinkingLevel,
-                maximumRetries: min(max(0, maximumRetries), 1)
-            )
+            let policy = try settingsStore.load().effective(.approval)
+            guard model.enabled != false,
+                  let apiKey = model.apiKey?.trimmedNonEmpty,
+                  let baseURLText = model.baseURL?.trimmedNonEmpty,
+                  let baseURL = URL(string: baseURLText), !model.model.isEmpty else {
+                throw NativeApprovalAgentError.invalidModelConfiguration
+            }
+            let reserve = (policy.context ?? .init()).outputReserveTokens
+            let client = try AgentChatModelClient(baseURL: baseURL, model: model.model, apiKey: apiKey,
+                thinking: thinkingLevel, maximumOutputTokens: min(max(1, model.maxOutputTokens ?? 1_200), reserve),
+                temperature: model.temperature ?? 0)
+            return await evaluate(request: request, modelClient: client, policy: policy)
         } catch {
             return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
         }
     }
 
-    private func run(
-        request: NativeApprovalAgentRequest,
-        model: GatewayModelConfigDTO,
-        thinkingLevel: String?,
-        maximumRetries: Int
-    ) async throws -> NativeApprovalDecision {
-        guard let apiKey = model.apiKey?.trimmedNonEmpty,
-              let baseURLText = model.baseURL?.trimmedNonEmpty,
-              let baseURL = URL(string: baseURLText),
-              !model.model.isEmpty else {
-            throw NativeApprovalAgentError.invalidModelConfiguration
-        }
-
-        var messages: [[String: Any]] = [
-            ["role": "system", "content": Self.systemPrompt],
-            ["role": "user", "content": prompt(for: request)],
-        ]
-        var requestedDecisionRetry = false
-
-        for _ in 0..<maximumIterations {
-            let message = try await complete(
-                baseURL: baseURL,
-                apiKey: apiKey,
-                model: model,
-                thinkingLevel: thinkingLevel,
-                maximumRetries: maximumRetries,
-                messages: messages
-            )
-            messages.append(message)
-            let toolCalls = message["tool_calls"] as? [[String: Any]] ?? []
-            if toolCalls.isEmpty {
-                if !requestedDecisionRetry {
-                    requestedDecisionRetry = true
-                    messages.append([
-                        "role": "user",
-                        "content": "你还没有调用 approval_decision。现在必须调用它，并且只能返回 approve、deny 或 ask_user。",
-                    ])
-                    continue
+    /// Shared loop, separate read-only registry. No automatic cloud memory upload of local files.
+    func evaluate(request: NativeApprovalAgentRequest, modelClient: any AgentModelClient,
+                  policy: AgentRunPolicy) async -> NativeApprovalDecision {
+        do {
+            let definitions = try Self.toolSchemas.map { schema -> AgentToolDefinition in
+                guard let function = schema["function"] as? [String: Any],
+                      let name = function["name"] as? String,
+                      let description = function["description"] as? String,
+                      let parameters = function["parameters"] as? [String: Any] else {
+                    throw NativeApprovalAgentError.invalidToolArguments
                 }
-                return .askUser(reason: "本机审批 Agent 没有形成有效的工具决策。")
+                return .init(name: name, description: description,
+                    schema: try JSONSerialization.data(withJSONObject: parameters),
+                    effect: name == "approval_decision" ? .terminal : .readOnly)
             }
-
-            for call in toolCalls {
-                guard let callID = call["id"] as? String,
-                      let function = call["function"] as? [String: Any],
-                      let name = function["name"] as? String else {
-                    continue
-                }
-                let argumentsText = function["arguments"] as? String ?? "{}"
-                let arguments = try decodeArguments(argumentsText)
-                if name == "approval_decision" {
-                    return try decision(from: arguments)
-                }
-                let result = tools.execute(
-                    name: name,
-                    arguments: arguments,
-                    projectRoot: request.projectRoot
-                )
-                messages.append([
-                    "role": "tool",
-                    "tool_call_id": callID,
-                    "name": name,
-                    "content": result,
-                ])
+            let checkpoint = AgentRunCheckpoint(scope: "approval:\(UUID())", messages: [
+                .init(role: .system, content: Self.systemPrompt),
+                .init(role: .user, content: prompt(for: request)),
+            ])
+            let result = try await AgentRuntime().run(checkpoint: checkpoint, scope: checkpoint.scope, policy: policy,
+                model: modelClient, tools: definitions, execute: { call in
+                    let arguments = try decodeArguments(call.arguments)
+                    if call.name == "approval_decision" {
+                        _ = try decision(from: arguments)
+                        return .init(call.arguments)
+                    }
+                    let output = tools.execute(name: call.name, arguments: arguments, projectRoot: request.projectRoot)
+                    return output.hasPrefix("工具执行失败：") ? .failure(output) : .init(output)
+                })
+            guard result.status == .completed, let output = result.result else {
+                return .askUser(reason: result.stopReason ?? "本机审批 Agent 未形成有效结论，已转交人工确认。")
             }
+            return try decision(from: decodeArguments(output))
+        } catch {
+            return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
         }
-        return .askUser(reason: "本机审批 Agent 超过最大检查轮次。")
-    }
-
-    private func complete(
-        baseURL: URL,
-        apiKey: String,
-        model: GatewayModelConfigDTO,
-        thinkingLevel: String?,
-        maximumRetries: Int,
-        messages: [[String: Any]]
-    ) async throws -> [String: Any] {
-        let endpoint = chatCompletionsURL(baseURL)
-        var payload: [String: Any] = [
-            "model": model.model,
-            "messages": messages,
-            "tools": Self.toolSchemas,
-            "tool_choice": "auto",
-            "temperature": model.temperature ?? 0,
-            "max_tokens": model.maxOutputTokens ?? 1_200,
-        ]
-        if let thinkingLevel = thinkingLevel?.trimmedNonEmpty,
-           thinkingLevel != "none" {
-            payload["reasoning_effort"] = thinkingLevel
-        }
-        let body = try JSONSerialization.data(withJSONObject: payload)
-        var lastError: Error?
-        for attempt in 0...maximumRetries {
-            do {
-                var request = URLRequest(url: endpoint)
-                request.httpMethod = "POST"
-                request.timeoutInterval = 45
-                request.httpBody = body
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse else {
-                    throw NativeApprovalAgentError.invalidResponse
-                }
-                guard (200..<300).contains(http.statusCode) else {
-                    let detail = String(decoding: data, as: UTF8.self)
-                    throw NativeApprovalAgentError.upstream(http.statusCode, detail)
-                }
-                guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let choices = root["choices"] as? [[String: Any]],
-                      let message = choices.first?["message"] as? [String: Any] else {
-                    throw NativeApprovalAgentError.invalidResponse
-                }
-                return message
-            } catch {
-                lastError = error
-                if attempt < maximumRetries { continue }
-            }
-        }
-        throw lastError ?? NativeApprovalAgentError.invalidResponse
-    }
-
-    private func chatCompletionsURL(_ baseURL: URL) -> URL {
-        if baseURL.path.hasSuffix("/chat/completions") { return baseURL }
-        return baseURL
-            .appendingPathComponent("chat", isDirectory: true)
-            .appendingPathComponent("completions")
     }
 
     private func decodeArguments(_ text: String) throws -> [String: Any] {

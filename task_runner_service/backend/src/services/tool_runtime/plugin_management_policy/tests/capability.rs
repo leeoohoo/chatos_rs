@@ -74,11 +74,11 @@ fn disabled_task_process_log_policy_turns_off_run_scoped_process_mcp() {
 }
 
 #[test]
-fn planning_policy_materializes_its_configured_mcp_set() {
+fn non_execution_policy_materializes_its_configured_mcp_set() {
     let mut policy = policy();
-    policy.capabilities.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
+    policy.capabilities.agent_key = SystemAgentKey::TaskRunnerRunPhase.as_str().to_string();
     for item in &mut policy.capabilities.mcps {
-        item.binding.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
+        item.binding.agent_key = SystemAgentKey::TaskRunnerRunPhase.as_str().to_string();
         if item.resource.id == "external-1" {
             item.resource.security.allow_writes = Some(true);
         }
@@ -89,14 +89,13 @@ fn planning_policy_materializes_its_configured_mcp_set() {
         }
     }
     let mut task = task();
-    task.task_profile = crate::models::TASK_PROFILE_CHATOS_PLAN.to_string();
     task.mcp_config.requires_execution = false;
     task.mcp_config.enabled_builtin_kinds = vec![
         "CodeMaintainerRead".to_string(),
         "CodeMaintainerWrite".to_string(),
     ];
 
-    policy.apply_to_task(&mut task).expect("apply plan policy");
+    policy.apply_to_task(&mut task).expect("apply policy");
 
     assert!(task
         .mcp_config
@@ -121,15 +120,15 @@ fn planning_policy_materializes_its_configured_mcp_set() {
 }
 
 #[test]
-fn planning_policy_accepts_explicitly_configured_mutating_tools() {
+fn non_execution_policy_accepts_explicitly_configured_mutating_tools() {
     let mut capabilities = policy().capabilities;
-    capabilities.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
+    capabilities.agent_key = SystemAgentKey::TaskRunnerRunPhase.as_str().to_string();
     let write = capabilities
         .mcps
         .iter_mut()
         .find(|item| item.resource.id == "write")
         .expect("write capability");
-    write.binding.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
+    write.binding.agent_key = SystemAgentKey::TaskRunnerRunPhase.as_str().to_string();
     write.binding.required = true;
     write.available = true;
     write.status = "available".to_string();

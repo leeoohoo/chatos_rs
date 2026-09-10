@@ -4,23 +4,16 @@
 use chatos_plugin_management_sdk::{AgentToolPlane, SystemAgentKey};
 
 pub const CHATOS_ASYNC_PLANNER_TOOL_PROFILE: &str = "chatos_async_planner";
-pub const PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE: &str =
-    "project_requirement_execution_planner";
-pub const CHATOS_PLAN_TASK_PROFILE: &str = "chatos_plan";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatosTaskRunnerToolProfile {
     AsyncPlanner,
-    ProjectRequirementExecutionPlanner,
 }
 
 impl ChatosTaskRunnerToolProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::AsyncPlanner => CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
-            Self::ProjectRequirementExecutionPlanner => {
-                PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE
-            }
         }
     }
 }
@@ -70,27 +63,6 @@ pub static CHATOS_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescript
     "chatos",
     "Runs normal Chat OS conversations while applying the selected contact as user-specific role context.",
     false,
-    AgentToolPlane::Managed,
-    AgentExecutionLocation::ServerOrchestrated,
-);
-
-pub static PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR: AgentDescriptor =
-    AgentDescriptor::new(
-        SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
-        "Project Requirement Execution Planner Agent",
-        "chatos",
-        "Splits project-management work items into concrete Task Runner execution tasks for Chat OS project requirement execution.",
-        true,
-        AgentToolPlane::Managed,
-        AgentExecutionLocation::ServerOrchestrated,
-    );
-
-pub static TASK_RUNNER_PLAN_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
-    SystemAgentKey::TaskRunnerPlanPhase,
-    "Task Runner Planning Agent",
-    "task-runner",
-    "Runs non-mutating Task Runner planning tasks with a planning-specific Prompt and capability boundary.",
-    true,
     AgentToolPlane::Managed,
     AgentExecutionLocation::ServerOrchestrated,
 );
@@ -166,10 +138,8 @@ pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = Agent
     AgentExecutionLocation::ServerOrchestrated,
 );
 
-static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 10] = [
+static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 8] = [
     &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-    &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR,
-    &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
     &TASK_RUNNER_AGENT_DESCRIPTOR,
     &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR,
     &MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR,
@@ -192,40 +162,19 @@ pub fn parse_system_agent_key(value: &str) -> Option<SystemAgentKey> {
 
 pub fn parse_chatos_task_runner_tool_profile(value: &str) -> Option<ChatosTaskRunnerToolProfile> {
     let normalized = value.trim();
-    if normalized.eq_ignore_ascii_case(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE) {
-        Some(ChatosTaskRunnerToolProfile::ProjectRequirementExecutionPlanner)
-    } else if normalized.eq_ignore_ascii_case(CHATOS_ASYNC_PLANNER_TOOL_PROFILE) {
+    if normalized.eq_ignore_ascii_case(CHATOS_ASYNC_PLANNER_TOOL_PROFILE) {
         Some(ChatosTaskRunnerToolProfile::AsyncPlanner)
     } else {
         None
     }
 }
 
-pub fn is_chatos_plan_task_profile(value: &str) -> bool {
-    value.trim().eq_ignore_ascii_case(CHATOS_PLAN_TASK_PROFILE)
-}
-
 pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
-    matches!(
-        key,
-        SystemAgentKey::ChatosConversationAgent
-            | SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-    )
-}
-
-pub const fn is_project_requirement_execution_planner_agent(key: SystemAgentKey) -> bool {
-    matches!(key, SystemAgentKey::ProjectRequirementExecutionPlannerAgent)
+    matches!(key, SystemAgentKey::ChatosConversationAgent)
 }
 
 pub const fn is_task_runner_phase_agent(key: SystemAgentKey) -> bool {
-    matches!(
-        key,
-        SystemAgentKey::TaskRunnerPlanPhase | SystemAgentKey::TaskRunnerRunPhase
-    )
-}
-
-pub const fn is_task_runner_planning_agent(key: SystemAgentKey) -> bool {
-    matches!(key, SystemAgentKey::TaskRunnerPlanPhase)
+    matches!(key, SystemAgentKey::TaskRunnerRunPhase)
 }
 
 pub const fn is_task_runner_execution_agent(key: SystemAgentKey) -> bool {
@@ -241,26 +190,16 @@ pub const fn uses_chatos_browser_callback(key: SystemAgentKey) -> bool {
 }
 
 pub const fn chatos_task_runner_tool_profile(key: SystemAgentKey) -> Option<&'static str> {
-    if is_project_requirement_execution_planner_agent(key) {
-        Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
-    } else if is_chatos_callback_agent(key) {
+    if is_chatos_callback_agent(key) {
         Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
     } else {
         None
     }
 }
 
-pub const fn requires_expected_project_task_ids(key: SystemAgentKey) -> bool {
-    is_project_requirement_execution_planner_agent(key)
-}
-
 pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
     match key {
         SystemAgentKey::ChatosConversationAgent => &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-        SystemAgentKey::ProjectRequirementExecutionPlannerAgent => {
-            &PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_DESCRIPTOR
-        }
-        SystemAgentKey::TaskRunnerPlanPhase => &TASK_RUNNER_PLAN_AGENT_DESCRIPTOR,
         SystemAgentKey::TaskRunnerRunPhase => &TASK_RUNNER_AGENT_DESCRIPTOR,
         SystemAgentKey::LocalConnectorCommandApprovalAgent => {
             &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR
@@ -293,14 +232,12 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = keys.iter().copied().collect::<HashSet<_>>();
 
-        assert_eq!(keys.len(), 10);
+        assert_eq!(keys.len(), 8);
         assert_eq!(unique.len(), keys.len());
         assert_eq!(
             keys,
             vec![
                 "chatos_conversation_agent",
-                "project_requirement_execution_planner_agent",
-                "task_runner_plan_phase",
                 "task_runner_run_phase",
                 "local_connector_command_approval_agent",
                 "memory_engine_summary_agent",
@@ -347,17 +284,8 @@ mod tests {
 
     #[test]
     fn callback_groups_live_with_agent_catalog() {
-        for key in [
-            SystemAgentKey::ChatosConversationAgent,
-            SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
-        ] {
-            assert!(is_chatos_callback_agent(key));
-        }
-        assert!(is_task_runner_phase_agent(
-            SystemAgentKey::TaskRunnerPlanPhase
-        ));
-        assert!(is_task_runner_planning_agent(
-            SystemAgentKey::TaskRunnerPlanPhase
+        assert!(is_chatos_callback_agent(
+            SystemAgentKey::ChatosConversationAgent
         ));
         assert!(is_task_runner_execution_agent(
             SystemAgentKey::TaskRunnerRunPhase
@@ -375,37 +303,16 @@ mod tests {
 
     #[test]
     fn parser_and_chatos_semantics_are_centralized() {
-        assert_eq!(
-            parse_system_agent_key(" task_runner_plan_phase "),
-            Some(SystemAgentKey::TaskRunnerPlanPhase)
-        );
+        assert_eq!(parse_system_agent_key(" task_runner_plan_phase "), None);
         assert_eq!(parse_system_agent_key("unknown"), None);
         assert_eq!(
             parse_chatos_task_runner_tool_profile(" chatos_async_planner "),
             Some(ChatosTaskRunnerToolProfile::AsyncPlanner)
         );
         assert_eq!(
-            parse_chatos_task_runner_tool_profile("project_requirement_execution_planner"),
-            Some(ChatosTaskRunnerToolProfile::ProjectRequirementExecutionPlanner)
-        );
-        assert!(is_chatos_plan_task_profile(" chatos_plan "));
-        assert!(!is_chatos_plan_task_profile("default"));
-        assert_eq!(
             chatos_task_runner_tool_profile(SystemAgentKey::ChatosConversationAgent),
             Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
         );
-        assert_eq!(
-            chatos_task_runner_tool_profile(
-                SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-            ),
-            Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE)
-        );
-        assert!(requires_expected_project_task_ids(
-            SystemAgentKey::ProjectRequirementExecutionPlannerAgent
-        ));
-        assert!(!requires_expected_project_task_ids(
-            SystemAgentKey::ChatosConversationAgent
-        ));
     }
 
     #[test]

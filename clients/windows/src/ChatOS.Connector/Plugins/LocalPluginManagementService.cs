@@ -42,7 +42,8 @@ internal sealed class LocalPluginManagementService(
     IInstalledPluginStore store,
     PluginCredentialVault credentials,
     PluginOAuthBroker oauth,
-    PluginRuntimeSessionStore sessions) : ILocalPluginManagementService
+    PluginRuntimeSessionStore sessions,
+    WindowsPluginApplicationRuntime applications) : ILocalPluginManagementService
 {
     public async Task<IReadOnlyList<LocalConnectorPlugin>> ListAsync(
         CancellationToken cancellationToken = default)
@@ -160,6 +161,7 @@ internal sealed class LocalPluginManagementService(
     {
         var state = runtime.Snapshot.State;
         await sessions.TerminatePluginAsync(pluginId).ConfigureAwait(false);
+        await applications.StopPluginAsync(pluginId).ConfigureAwait(false);
         if (state is not null)
         {
             await oauth.PurgePluginAsync(
@@ -197,6 +199,7 @@ internal sealed class LocalPluginManagementService(
         if (!enabled)
         {
             await sessions.TerminatePluginAsync(pluginId).ConfigureAwait(false);
+            await applications.StopPluginAsync(pluginId).ConfigureAwait(false);
         }
     }
 

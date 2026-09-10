@@ -30,7 +30,6 @@ fn doc_to_settings(doc: &Document) -> Option<SessionRuntimeSettings> {
             .map(ToOwned::to_owned),
         workspace_root: doc.get_str("workspace_root").ok().map(ToOwned::to_owned),
         reasoning_enabled: doc.get_bool("reasoning_enabled").unwrap_or(false),
-        plan_mode_enabled: doc.get_bool("plan_mode_enabled").unwrap_or(false),
         auto_create_task: doc.get_bool("auto_create_task").unwrap_or(false),
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
@@ -79,7 +78,6 @@ pub async fn upsert_session_runtime_settings(
                 "session_id": &mongo_settings.session_id,
                 "user_id": &mongo_settings.user_id,
                 "reasoning_enabled": mongo_settings.reasoning_enabled,
-                "plan_mode_enabled": mongo_settings.plan_mode_enabled,
                 "auto_create_task": mongo_settings.auto_create_task,
                 "updated_at": &mongo_settings.updated_at,
             };

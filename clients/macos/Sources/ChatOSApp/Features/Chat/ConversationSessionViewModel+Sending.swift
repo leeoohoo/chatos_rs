@@ -78,8 +78,7 @@ extension ConversationSessionViewModel {
                         turnID: turn.id,
                         content: text,
                         attachments: attachments,
-                        reasoningEnabled: reasoningEnabled,
-                        planModeEnabled: allowsPlanMode && planModeEnabled
+                        reasoningEnabled: reasoningEnabled
                     )
                 )
                 refreshLatestSilently()

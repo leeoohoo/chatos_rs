@@ -47,17 +47,6 @@ public sealed record MessageTaskLookup(
     string? TurnId,
     string? SourceUserMessageId);
 
-public sealed record ProjectExecutionContext(
-    string? ProjectId = null,
-    string? RequirementId = null,
-    string? ExecutionGroupId = null,
-    string? ReplacedExecutionGroupId = null,
-    string? ContactId = null,
-    string? Mode = null,
-    string? ExecutionKind = null,
-    string? ConfirmationStatus = null,
-    string? OverallStatus = null);
-
 public sealed record ConversationTurn(
     string Id,
     string ConversationId,
@@ -71,8 +60,7 @@ public sealed record ConversationTurn(
     bool IsTaskGraphAvailable,
     TurnStatus Status,
     DateTimeOffset StartedAt,
-    DateTimeOffset? CompletedAt,
-    ProjectExecutionContext? ProjectExecutionContext = null);
+    DateTimeOffset? CompletedAt);
 
 public sealed record ConversationHistoryQuery(
     string ConversationId,

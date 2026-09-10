@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::models::{TaskMcpConfig, TASK_PROFILE_CHATOS_PLAN};
+use crate::models::TaskMcpConfig;
 
 #[test]
 fn required_write_adds_required_read_with_same_source() {
@@ -15,7 +15,6 @@ fn required_write_adds_required_read_with_same_source() {
 
     let resolution = resolve_mcp_config(TaskMcpResolutionInput {
         mcp_config: &config,
-        task_profile: "default",
         schedule_mode: TaskScheduleMode::Manual,
         source_session_id: None,
         source_user_message_id: None,
@@ -54,7 +53,6 @@ fn required_capability_routes_to_active_host() {
     };
     let resolution = resolve_mcp_config(TaskMcpResolutionInput {
         mcp_config: &config,
-        task_profile: "default",
         schedule_mode: TaskScheduleMode::Manual,
         source_session_id: None,
         source_user_message_id: None,
@@ -163,7 +161,6 @@ fn non_execution_task_is_read_only_and_does_not_expose_terminal_controller() {
 
     let resolution = resolve_mcp_config(TaskMcpResolutionInput {
         mcp_config: &config,
-        task_profile: "default",
         schedule_mode: TaskScheduleMode::Manual,
         source_session_id: None,
         source_user_message_id: None,
@@ -204,68 +201,6 @@ fn chatos_async_source_does_not_require_task_manager() {
 }
 
 #[test]
-fn plan_profile_requirements_are_fixed_and_host_routable() {
-    let config = TaskMcpConfig {
-        enabled_builtin_kinds: Vec::new(),
-        requires_execution: false,
-        ..TaskMcpConfig::default()
-    };
-    let resolution = resolve_mcp_config(TaskMcpResolutionInput {
-        mcp_config: &config,
-        task_profile: TASK_PROFILE_CHATOS_PLAN,
-        schedule_mode: TaskScheduleMode::Manual,
-        source_session_id: None,
-        source_user_message_id: None,
-        active_host_backends: &[BuiltinHostBackend::HarnessCode],
-        caller_requirements: &[],
-    });
-
-    assert!(resolution.required_builtin_kinds.iter().any(|required| {
-        required.kind == BuiltinMcpKind::ProjectManagement
-            && required.source == McpCapabilityRequirementSource::TaskProfileChatosPlan
-    }));
-    assert_eq!(
-        hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::HarnessCode),
-        vec![BuiltinMcpKind::CodeMaintainerRead]
-    );
-    assert!(resolution
-        .server_local_builtin_kinds
-        .contains(&BuiltinMcpKind::ProjectManagement));
-    assert!(!resolution
-        .server_local_builtin_kinds
-        .contains(&BuiltinMcpKind::CodeMaintainerRead));
-}
-
-#[test]
-fn legacy_plan_profile_with_execution_uses_implementation_capabilities() {
-    let config = TaskMcpConfig {
-        enabled_builtin_kinds: vec!["CodeMaintainerWrite".to_string()],
-        requires_execution: true,
-        ..TaskMcpConfig::default()
-    };
-    let resolution = resolve_mcp_config(TaskMcpResolutionInput {
-        mcp_config: &config,
-        task_profile: TASK_PROFILE_CHATOS_PLAN,
-        schedule_mode: TaskScheduleMode::Manual,
-        source_session_id: None,
-        source_user_message_id: None,
-        active_host_backends: &[BuiltinHostBackend::HarnessCode],
-        caller_requirements: &[],
-    });
-
-    assert!(!resolution.required_builtin_kinds.iter().any(|required| {
-        required.source == McpCapabilityRequirementSource::TaskProfileChatosPlan
-    }));
-    assert_eq!(
-        hosted_builtin_kinds_for(&resolution, BuiltinHostBackend::HarnessCode),
-        vec![
-            BuiltinMcpKind::CodeMaintainerRead,
-            BuiltinMcpKind::CodeMaintainerWrite,
-        ]
-    );
-}
-
-#[test]
 fn legacy_host_headers_cannot_select_capabilities() {
     let config = TaskMcpConfig {
         enabled_builtin_kinds: Vec::new(),
@@ -283,7 +218,6 @@ fn legacy_host_headers_cannot_select_capabilities() {
 
     let resolution = resolve_mcp_config(TaskMcpResolutionInput {
         mcp_config: &config,
-        task_profile: "default",
         schedule_mode: TaskScheduleMode::Manual,
         source_session_id: None,
         source_user_message_id: None,
@@ -312,6 +246,7 @@ fn sample_task(mcp_config: TaskMcpConfig) -> TaskRecord {
         tenant_id: "tenant".to_string(),
         subject_id: "subject".to_string(),
         project_id: None,
+        project_context: None,
         task_profile: crate::models::TASK_PROFILE_DEFAULT.to_string(),
         creator_user_id: None,
         creator_username: None,

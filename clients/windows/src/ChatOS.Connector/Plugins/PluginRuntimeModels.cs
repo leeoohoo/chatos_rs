@@ -51,3 +51,37 @@ internal sealed record PluginRuntimeIdentity(
     string AdapterSessionId,
     string? WorkspaceId,
     string? ProjectId = null);
+
+public sealed record LocalPluginApplication(
+    string PluginId,
+    string ComponentKey,
+    string DisplayName,
+    string Description,
+    string? BrandColor,
+    bool RequiresLocalRuntime,
+    string? ContextScope,
+    string? MissingContext,
+    IReadOnlyList<string> BridgeCapabilities,
+    string? IconPath = null)
+{
+    public string Id => $"{PluginId}:{ComponentKey}";
+}
+
+public sealed record LocalPluginApplicationLaunch(
+    LocalPluginApplication Application,
+    Uri Url,
+    string ReleaseId,
+    string Version,
+    string ArtifactSha256);
+
+internal sealed record PreparedPluginApplication(
+    LocalPluginApplication Application,
+    InstalledPluginRecord Record,
+    string ContextKey,
+    string InstallationPath,
+    string SourcePath,
+    string? ExecutablePath,
+    IReadOnlyList<string> Arguments,
+    IReadOnlyDictionary<string, string> Environment,
+    string HealthPath,
+    int LaunchTimeoutMilliseconds);

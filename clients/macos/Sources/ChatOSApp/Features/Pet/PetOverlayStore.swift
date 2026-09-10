@@ -216,7 +216,6 @@ final class PetOverlayStore: ObservableObject {
         .chat,
         .taskBoard,
         .taskRunner,
-        .projectExecution,
     ]
 
     private static func source(forActivityID id: String) -> PetActivitySource? {
@@ -227,7 +226,6 @@ final class PetOverlayStore: ObservableObject {
         if id.hasPrefix("chat:") { return .chat }
         if id.hasPrefix("task-review:") || id.hasPrefix("task-board:") { return .taskBoard }
         if id.hasPrefix("task-runner:") { return .taskRunner }
-        if id.hasPrefix("project-execution:") { return .projectExecution }
         return nil
     }
 

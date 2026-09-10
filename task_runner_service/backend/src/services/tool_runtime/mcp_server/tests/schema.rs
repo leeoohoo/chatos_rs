@@ -2,16 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::mcp_server::support::{
-    create_project_execution_tasks_schema, create_tasks_with_prerequisites_schema,
-    validate_create_project_execution_tasks_arguments,
-};
-use crate::mcp_server::PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE;
-use crate::mcp_server::{
-    reject_ai_runtime_config, support::remove_internal_task_fields, CreateProjectExecutionTasksArgs,
-};
+use crate::mcp_server::support::create_tasks_with_prerequisites_schema;
+use crate::mcp_server::{reject_ai_runtime_config, support::remove_internal_task_fields};
 use serde_json::Value;
-use std::collections::BTreeSet;
 
 #[test]
 fn create_task_schema_hides_memory_scope_fields() {
@@ -50,114 +43,6 @@ fn task_creation_schemas_leave_task_nature_to_request_context() {
     assert!(batch
         .pointer("/properties/tasks/items/properties/is_planning_task")
         .is_none());
-
-    let project = create_project_execution_tasks_schema();
-    assert!(project.pointer("/properties/execution_group_id").is_none());
-    assert!(project
-        .pointer("/properties/tasks/items/properties/is_planning_task")
-        .is_none());
-    assert!(project
-        .pointer("/properties/tasks/items/properties/requires_execution")
-        .is_some());
-    let required = project
-        .pointer("/properties/tasks/items/required")
-        .and_then(|value| value.as_array())
-        .expect("project execution task required fields");
-    assert!(!required
-        .iter()
-        .any(|value| value.as_str() == Some("is_planning_task")));
-    assert!(required
-        .iter()
-        .any(|value| value.as_str() == Some("requires_execution")));
-    assert!(required
-        .iter()
-        .any(|value| value.as_str() == Some("enabled_builtin_kinds")));
-    assert!(project
-        .pointer("/properties/tasks/items/properties/owned_paths")
-        .is_some());
-    assert!(required
-        .iter()
-        .any(|value| value.as_str() == Some("owned_paths")));
-}
-
-#[test]
-fn project_execution_schema_example_matches_the_wire_contract() {
-    let schema = create_project_execution_tasks_schema();
-    let task = schema
-        .pointer("/properties/tasks/items/examples/0")
-        .cloned()
-        .expect("project execution task example");
-    let arguments = json!({
-        "project_id": "project-1",
-        "requirement_id": "requirement-1",
-        "tasks": [task]
-    });
-
-    validate_create_project_execution_tasks_arguments(&arguments)
-        .expect("schema example must pass aggregate validation");
-    serde_json::from_value::<CreateProjectExecutionTasksArgs>(arguments)
-        .expect("schema example must decode through the wire type");
-}
-
-#[test]
-fn project_execution_argument_validation_reports_all_schema_errors_once() {
-    let error = validate_create_project_execution_tasks_arguments(&json!({
-        "project_id": "project-1",
-        "unknown_root": true,
-        "tasks": [{
-            "ref": "task-1",
-            "project_task_id": "project-task-1",
-            "title": "",
-            "objective": "implement",
-            "acceptance_criteria": "done",
-            "task_role": "quality",
-            "requires_execution": "yes",
-            "enabled_builtin_kinds": [],
-            "owned_paths": []
-        }]
-    }))
-    .expect_err("invalid batch must be rejected");
-
-    for expected in [
-        "arguments.unknown_root 是未知字段",
-        "requirement_id 缺失",
-        "tasks[0].ref 是未知字段",
-        "tasks[0].client_ref 缺失",
-        "tasks[0].project_task_ref 缺失",
-        "tasks[0].title 不能为空",
-        "tasks[0].acceptance_criteria 必须是字符串数组",
-        "tasks[0].task_role 必须是 implementation 或 verification",
-        "tasks[0].requires_execution 必须是布尔值",
-    ] {
-        assert!(
-            error.contains(expected),
-            "missing error: {expected}\n{error}"
-        );
-    }
-}
-
-#[test]
-fn project_execution_schema_exposes_program_owned_project_task_refs() {
-    let mut tools = vec![serde_json::json!({
-        "name": "create_project_execution_tasks",
-        "inputSchema": create_project_execution_tasks_schema(),
-    })];
-    super::super::support::enrich_project_execution_task_scope_schema(
-        &mut tools,
-        &BTreeSet::from(["project-task-a".to_string(), "project-task-b".to_string()]),
-    );
-
-    let values = tools[0]
-        .pointer("/inputSchema/properties/tasks/items/properties/project_task_ref/enum")
-        .and_then(Value::as_array)
-        .expect("request-scoped project task enum");
-    assert_eq!(
-        values,
-        &vec![
-            Value::String("project_task_001".to_string()),
-            Value::String("project_task_002".to_string()),
-        ]
-    );
 }
 
 #[test]
@@ -615,7 +500,7 @@ fn async_planner_profile_exposes_only_planning_tools() {
 }
 
 #[tokio::test]
-async fn provider_descriptor_exposes_all_chatos_planner_profile_tools() {
+async fn provider_descriptor_exposes_all_async_planner_profile_tools() {
     let (service, _, _) = test_mcp_service().await;
     let descriptor = service.provider_descriptor();
     let tool_names = descriptor
@@ -624,13 +509,12 @@ async fn provider_descriptor_exposes_all_chatos_planner_profile_tools() {
         .filter_map(|tool| tool.get("name").and_then(serde_json::Value::as_str))
         .collect::<Vec<_>>();
 
-    assert_eq!(tool_names.len(), 8);
+    assert_eq!(tool_names.len(), 7);
     for expected in [
         "list_tasks",
         "get_task",
         "create_task",
         "create_tasks_with_prerequisites",
-        "create_project_execution_tasks",
         "cancel_task",
         "wait_for_task_completion",
         "get_task_dependency_graph",
@@ -678,6 +562,7 @@ fn async_planner_preserves_only_execution_intent_before_programmatic_resolution(
         tags: None,
         default_model_config_id: None,
         project_id: None,
+        project_context: None,
         task_profile: None,
         tenant_id: None,
         subject_id: None,
@@ -858,67 +743,52 @@ fn mcp_request_context_keeps_user_conversation_scope_projectless() {
 
 #[test]
 fn mcp_request_context_applies_project_scope_before_trusted_plugin_selection() {
+    let snapshot = crate::services::test_project_snapshot("project-1");
     let context = McpRequestContext {
         project_id: Some("project-1".to_string()),
+        project_context: Some(snapshot.clone()),
         ..McpRequestContext::default()
     };
     let mut request = valid_planner_create_request();
+    request.project_context = Some(crate::services::test_project_snapshot("injected-project"));
 
     context.enforce_created_task_context(&mut request);
 
     assert_eq!(request.project_id.as_deref(), Some("project-1"));
-    assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
-}
-
-#[test]
-fn mcp_request_context_detects_chatos_plan_task_profile() {
-    let context = McpRequestContext {
-        task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
-        ..McpRequestContext::default()
-    };
-    assert!(context.is_chatos_plan_task_profile());
-    assert_eq!(context.requested_task_profile(), TASK_PROFILE_CHATOS_PLAN);
-
-    let context = McpRequestContext {
-        chatos_plan_mode: true,
-        ..McpRequestContext::default()
-    };
-    assert!(context.is_chatos_plan_task_profile());
-    assert_eq!(context.requested_task_profile(), TASK_PROFILE_CHATOS_PLAN);
-}
-
-#[test]
-fn chatos_plan_context_forces_created_tasks_to_plan_phase() {
-    let context = McpRequestContext {
-        task_profile: Some(TASK_PROFILE_CHATOS_PLAN.to_string()),
-        ..McpRequestContext::default()
-    };
-    let mut request = valid_planner_create_request();
-
-    context.enforce_created_task_context(&mut request);
-
+    assert_eq!(request.project_context, Some(snapshot.clone()));
     assert_eq!(
-        request.task_profile.as_deref(),
-        Some(TASK_PROFILE_CHATOS_PLAN)
+        context
+            .task_source_context()
+            .unwrap()
+            .unwrap()
+            .project_context,
+        Some(snapshot)
     );
-    let mcp_config = request.mcp_config.as_ref().expect("plan MCP config");
-    assert_eq!(mcp_config.requires_execution, Some(false));
-    assert!(mcp_config.enabled_builtin_kinds.is_empty());
-    assert!(mcp_config.external_mcp_config_ids.is_empty());
+    assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
 }
 
 #[test]
-fn project_execution_planner_always_creates_ordinary_execution_tasks() {
-    let context = McpRequestContext {
-        tool_profile: Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string()),
-        ..McpRequestContext::default()
-    };
+fn agent_tool_results_hide_frozen_project_authorization() {
+    let mut result =
+        json!({"task": {"title": "Task", "project_context": {"workspace_fingerprint": "binding"}}});
+    remove_internal_task_fields(&mut result);
+    assert!(result["task"].get("project_context").is_none());
+    assert_eq!(result["task"]["title"], "Task");
+}
 
-    let mut request = valid_planner_create_request();
-
-    context.enforce_created_task_context(&mut request);
-
-    assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
+#[test]
+fn created_task_context_preserves_explicit_execution_permissions() {
+    let context = McpRequestContext::default();
+    for requires_execution in [false, true] {
+        let mut request = valid_planner_create_request();
+        request.mcp_config.as_mut().unwrap().requires_execution = Some(requires_execution);
+        context.enforce_created_task_context(&mut request);
+        assert_eq!(request.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
+        assert_eq!(
+            request.mcp_config.unwrap().requires_execution,
+            Some(requires_execution)
+        );
+    }
 }
 
 #[test]

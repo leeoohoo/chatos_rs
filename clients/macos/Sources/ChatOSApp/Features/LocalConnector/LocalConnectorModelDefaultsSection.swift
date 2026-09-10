@@ -26,14 +26,13 @@ struct LocalConnectorModelDefaultsSection: View {
                     thinking: binding(\.memorySummaryThinkingLevel)
                 )
                 Divider()
-                defaultModelRow(
-                    title: appModel.localized("项目管理 Agent", english: "Project Management Agent"),
+                defaultModelSelectionRow(
+                    title: appModel.localized("Task Runner", english: "Task Runner"),
                     subtitle: appModel.localized(
-                        "用于拆解需求、规划任务节点和推进项目。",
-                        english: "Breaks down requirements, plans task nodes, and advances projects."
+                        "插件和客户端创建的通用任务默认使用此模型；模型选择由宿主控制。",
+                        english: "The host uses this model for general tasks created by plugins and the client."
                     ),
-                    modelID: binding(\.projectManagementAgentModelConfigID),
-                    thinking: binding(\.projectManagementAgentThinkingLevel)
+                    modelID: binding(\.taskRunnerDefaultModelConfigID)
                 )
                 Divider()
                 defaultModelRow(
@@ -99,6 +98,31 @@ struct LocalConnectorModelDefaultsSection: View {
                 .frame(width: 170)
                 .disabled(selected == nil)
             }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func defaultModelSelectionRow(
+        title: String,
+        subtitle: String,
+        modelID: Binding<String?>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).appFont(.headline)
+                Text(subtitle).appFont(.caption).foregroundStyle(.secondary)
+            }
+            Picker(appModel.localized("模型", english: "Model"), selection: Binding(
+                get: { modelID.wrappedValue ?? "" },
+                set: { modelID.wrappedValue = $0.isEmpty ? nil : $0 }
+            )) {
+                Text(appModel.localized("未配置", english: "Not configured")).tag("")
+                ForEach(runnableModels) { model in
+                    Text("\(model.name) · \(model.modelName)").tag(model.id)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
         }
         .padding(.vertical, 2)
     }

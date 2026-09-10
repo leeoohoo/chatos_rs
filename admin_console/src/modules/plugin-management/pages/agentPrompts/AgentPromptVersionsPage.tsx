@@ -87,9 +87,9 @@ export function AgentPromptVersionsPage({
             <Space wrap size={[6, 6]}>
               {record.vendor_revisions.map((item) => (
                 <Tag key={`${item.profile}:${item.vendor}`}>
-                  {item.profile === 'chatos_plan'
-                    ? t('agent.promptProfilePlanning')
-                    : t('agent.promptProfileDefault')} · {agentPromptVendorLabel(item.vendor)} · r{item.revision}
+                  {item.profile === 'default'
+                    ? t('agent.promptProfileDefault')
+                    : item.profile} · {agentPromptVendorLabel(item.vendor)} · r{item.revision}
                 </Tag>
               ))}
             </Space>
@@ -116,9 +116,9 @@ export function AgentPromptVersionsPage({
                 <Typography.Text type="secondary" className="prompt-version-change">
                   {record.changed_profile
                     ? t('agent.promptVersionChangedProfileVendor', {
-                      profile: record.changed_profile === 'chatos_plan'
-                        ? t('agent.promptProfilePlanning')
-                        : t('agent.promptProfileDefault'),
+                      profile: record.changed_profile === 'default'
+                        ? t('agent.promptProfileDefault')
+                        : record.changed_profile,
                       vendor: agentPromptVendorLabel(record.changed_vendor),
                     })
                     : t('agent.promptVersionChangedVendor', {

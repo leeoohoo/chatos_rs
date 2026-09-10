@@ -40,7 +40,6 @@ struct ConversationTimelineView: View {
                 MessageTaskWorkspaceSheet(
                     turn: turn,
                     graphService: graphService,
-                    projectExecutionService: conversation.projectExecutionService,
                     realtimeService: conversation.realtimeService,
                     initialTaskID: requestedTaskID,
                     initialRunID: requestedRunID
@@ -141,6 +140,28 @@ struct ConversationTimelineView: View {
                         .buttonStyle(.borderedProminent)
                         .padding(.bottom, 10)
                     }
+
+                    if selectedTaskReply != nil {
+                        HStack {
+                            Spacer()
+                            Button(
+                                model.localized("收起详情", english: "Collapse Details"),
+                                systemImage: "chevron.up"
+                            ) {
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    selectedTaskReply = nil
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(AppPalette.ai)
+                            .help(model.localized(
+                                "收起当前任务详情或执行过程",
+                                english: "Collapse the current task details or execution process"
+                            ))
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                    }
                 }
                 .onAppear {
                     positionInitialTimeline(using: proxy)
@@ -230,6 +251,7 @@ struct ConversationTimelineView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 AssistantReplyView(reply: reply, projectRootPath: projectRootPath)
             }

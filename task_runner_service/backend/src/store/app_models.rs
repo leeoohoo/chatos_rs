@@ -35,28 +35,4 @@ impl AppStore {
             Self::Mongo(store) => store.get_runtime_settings().await,
         }
     }
-
-    pub async fn list_task_projects(&self) -> Result<Vec<TaskProjectRecord>, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.list_task_projects()),
-            Self::Mongo(store) => store.list_task_projects().await,
-        }
-    }
-
-    pub async fn get_task_project(&self, id: &str) -> Result<Option<TaskProjectRecord>, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.get_task_project(id)),
-            Self::Mongo(store) => store.get_task_project(id).await,
-        }
-    }
-
-    pub async fn save_task_project(
-        &self,
-        project: TaskProjectRecord,
-    ) -> Result<TaskProjectRecord, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.save_task_project(project)),
-            Self::Mongo(store) => store.save_task_project(project).await,
-        }
-    }
 }

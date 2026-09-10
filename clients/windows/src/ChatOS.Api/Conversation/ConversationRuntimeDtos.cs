@@ -23,15 +23,11 @@ internal sealed record RuntimeSettingsDto
     [JsonPropertyName("reasoning_enabled")]
     public bool ReasoningEnabled { get; init; }
 
-    [JsonPropertyName("plan_mode_enabled")]
-    public bool PlanModeEnabled { get; init; }
-
     public ConversationRuntimeSettings ToDomain() => new(
         SelectedModelId,
         SelectedModelName,
         SelectedThinkingLevel,
-        ReasoningEnabled,
-        PlanModeEnabled);
+        ReasoningEnabled);
 }
 
 internal sealed record ModelConfigDto
@@ -63,6 +59,9 @@ internal sealed record ModelConfigDto
     [JsonPropertyName("task_enabled")]
     public bool? TaskEnabled { get; init; }
 
+    [JsonPropertyName("has_api_key")]
+    public bool? HasApiKey { get; init; }
+
     public string ModelName =>
         ModelNameValue.TrimmedOrNull() ?? Model.TrimmedOrNull() ?? Name;
 
@@ -71,7 +70,8 @@ internal sealed record ModelConfigDto
         Name.TrimmedOrNull() ?? ModelName,
         ModelName,
         ThinkingLevel.TrimmedOrNull(),
-        TaskEnabled != false);
+        TaskEnabled != false,
+        HasApiKey != false);
 }
 
 internal static class ConversationStringExtensions

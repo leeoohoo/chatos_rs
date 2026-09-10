@@ -478,19 +478,19 @@ mod tests {
 
     #[test]
     fn codex_gateway_request_tools_skips_internal_per_request_signing() {
-        let server = McpHttpServer::new("project", "http://127.0.0.1:39210/mcp").with_headers(
+        let server = McpHttpServer::new("local", "http://127.0.0.1:39230/mcp").with_headers(
             HashMap::from([
                 (
-                    "X-Project-Service-Sync-Secret".to_string(),
-                    "a-long-project-service-secret".to_string(),
+                    "X-Local-Connector-Internal-Secret".to_string(),
+                    "a-long-local-connector-secret".to_string(),
                 ),
                 (
-                    "X-Project-Service-Caller".to_string(),
+                    "X-Local-Connector-Caller".to_string(),
                     "chatos-backend".to_string(),
                 ),
                 (
-                    "X-Project-Service-Internal-Scope".to_string(),
-                    "project.mcp".to_string(),
+                    "X-Local-Connector-Internal-Scope".to_string(),
+                    "relay.mcp".to_string(),
                 ),
             ]),
         );

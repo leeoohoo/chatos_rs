@@ -44,45 +44,6 @@ fn final_response_context(response: AiResponse) -> RuntimeFinalResponseContext {
     }
 }
 
-fn dependency_write_tool_call(task_id: &str, dependency_id: &str) -> Value {
-    json!({
-        "id": format!("call-{task_id}"),
-        "type": "function",
-        "function": {
-            "name": "project_management_service_set_project_task_dependencies",
-            "arguments": serde_json::to_string(&json!({
-                "project_task_id": task_id,
-                "depends_on_project_task_ids": [dependency_id],
-            }))
-            .expect("dependency arguments"),
-        }
-    })
-}
-
-fn successful_dependency_write_result() -> Value {
-    json!({
-        "name": "project_management_service_set_project_task_dependencies",
-        "success": true,
-        "is_error": false,
-    })
-}
-
-fn successful_dependency_graph_result() -> Value {
-    json!({
-        "name": "project_management_service_get_project_dependency_graph",
-        "success": true,
-        "is_error": false,
-    })
-}
-
-fn successful_planning_delegation_result(name: &str) -> Value {
-    json!({
-        "name": name,
-        "success": true,
-        "is_error": false,
-    })
-}
-
 fn model_runtime(use_codex_gateway_mcp_passthrough: bool) -> ResolvedChatModelConfig {
     ResolvedChatModelConfig {
         model_config_id: Some("model-config-1".to_string()),
@@ -103,11 +64,9 @@ fn model_runtime(use_codex_gateway_mcp_passthrough: bool) -> ResolvedChatModelCo
     }
 }
 
-fn runtime_context(
-    project_requirement_execution_planner: bool,
-) -> ResolvedConversationRuntimeContext {
+fn runtime_context() -> ResolvedConversationRuntimeContext {
     ResolvedConversationRuntimeContext {
-        agent_profile: ChatosAgentProfile::from_flags(false, project_requirement_execution_planner),
+        agent_profile: ChatosAgentProfile::for_runtime(),
         internal_context_locale: InternalContextLocale::ZhCn,
         user_output_locale: InternalContextLocale::ZhCn,
         contact_agent_id: None,
@@ -131,34 +90,19 @@ fn runtime_context(
         use_tools: true,
         memory_summary_prompt: None,
         runtime_error: None,
-        project_requirement_execution_planner,
     }
-}
-
-#[test]
-fn requirement_execution_planner_disables_codex_gateway_mcp_passthrough() {
-    let model = model_runtime(true);
-
-    assert!(effective_codex_gateway_mcp_passthrough(
-        &model,
-        &runtime_context(false)
-    ));
-    assert!(!effective_codex_gateway_mcp_passthrough(
-        &model,
-        &runtime_context(true)
-    ));
 }
 
 #[test]
 fn per_request_mcp_auth_disables_codex_gateway_passthrough() {
     let model = model_runtime(true);
-    let mut context = runtime_context(false);
+    let mut context = runtime_context();
     context.mcp_server_bundle.0.push(McpHttpServer {
-        name: "project".to_string(),
-        url: "http://127.0.0.1:39210/mcp".to_string(),
+        name: "local_connector".to_string(),
+        url: "http://127.0.0.1:39230/mcp".to_string(),
         headers: Some(HashMap::from([(
-            "x-project-service-internal-scope".to_string(),
-            "project.mcp".to_string(),
+            "x-local-connector-internal-scope".to_string(),
+            "relay.mcp".to_string(),
         )])),
         timeout_ms: None,
         tool_timeout_ms: HashMap::new(),
@@ -175,7 +119,7 @@ fn per_request_mcp_auth_disables_codex_gateway_passthrough() {
 #[test]
 fn mcp_management_gateway_is_always_executed_by_chatos_runtime() {
     let model = model_runtime(true);
-    let mut context = runtime_context(false);
+    let mut context = runtime_context();
     context.mcp_server_bundle.0.push(McpHttpServer {
         name: "mcp_management".to_string(),
         url: "http://127.0.0.1:39280/mcp".to_string(),
@@ -197,7 +141,7 @@ fn mcp_management_gateway_is_always_executed_by_chatos_runtime() {
 
 #[test]
 fn project_context_prompt_contains_only_dynamic_project_facts() {
-    let mut context = runtime_context(false);
+    let mut context = runtime_context();
     context.resolved_project_name = Some("CubeSandbox".to_string());
     context.resolved_project_root = None;
     context.workspace_root = None;
@@ -214,7 +158,7 @@ fn project_context_prompt_contains_only_dynamic_project_facts() {
 
 #[test]
 fn plugin_instruction_items_are_injected_once_before_other_runtime_context() {
-    let mut context = runtime_context(false);
+    let mut context = runtime_context();
     context.plugin_instruction_items = vec![json!({
         "type": "message",
         "role": "system",
@@ -247,7 +191,7 @@ fn plugin_instruction_items_are_injected_once_before_other_runtime_context() {
 
 #[test]
 fn agent_instructions_apply_user_language_to_project_artifacts() {
-    let mut chinese_context = runtime_context(false);
+    let mut chinese_context = runtime_context();
     chinese_context.internal_context_locale = InternalContextLocale::EnUs;
     chinese_context.user_output_locale = InternalContextLocale::ZhCn;
     let chinese = compose_agent_instructions(&chinese_context, &model_runtime(false))
@@ -263,7 +207,7 @@ fn agent_instructions_apply_user_language_to_project_artifacts() {
     assert!(chinese.contains("concise product delivery note"));
     assert!(chinese.contains("names and concepts a customer sees"));
 
-    let mut english_context = runtime_context(false);
+    let mut english_context = runtime_context();
     english_context.internal_context_locale = InternalContextLocale::ZhCn;
     english_context.user_output_locale = InternalContextLocale::EnUs;
     let english = compose_agent_instructions(&english_context, &model_runtime(false))
@@ -338,11 +282,11 @@ fn hidden_planning_turn_hides_assistant_and_tool_records_until_confirmation() {
 }
 
 #[test]
-fn merges_persisted_execution_metadata_with_generated_turn_metadata() {
+fn merges_persisted_user_metadata_with_generated_turn_metadata() {
     let metadata = merge_user_record_metadata(
         Some(json!({
-            "project_requirement_execution": {
-                "requirement_title": "JDK 21 upgrade"
+            "client_context": {
+                "source": "desktop"
             }
         })),
         Some(json!({"conversation_turn_id": "turn-1"})),
@@ -350,8 +294,8 @@ fn merges_persisted_execution_metadata_with_generated_turn_metadata() {
     .expect("merged metadata");
 
     assert_eq!(
-        metadata["project_requirement_execution"]["requirement_title"].as_str(),
-        Some("JDK 21 upgrade")
+        metadata["client_context"]["source"].as_str(),
+        Some("desktop")
     );
     assert_eq!(metadata["conversation_turn_id"].as_str(), Some("turn-1"));
 }
@@ -420,659 +364,6 @@ async fn runtime_lifecycle_hook_keeps_empty_guidance_non_intrusive() {
     assert!(directive.input_items.is_empty());
     assert!(directive.stream_output);
     assert!(directive.tools_enabled);
-}
-
-#[test]
-fn planner_completion_tracker_requires_the_exact_successful_materializer_tool() {
-    assert!(project_execution_planner_terminal_tool_succeeded(&json!({
-        "tool_results": [{
-            "name": "task_runner_service_create_project_execution_tasks",
-            "success": true,
-            "is_error": false
-        }]
-    })));
-    assert!(!project_execution_planner_terminal_tool_succeeded(&json!({
-        "tool_results": [{
-            "name": "task_runner_service_create_project_execution_tasks",
-            "success": false,
-            "is_error": true
-        }]
-    })));
-    assert!(!project_execution_planner_terminal_tool_succeeded(&json!({
-        "tool_results": [{
-            "name": "project_management_create_project_task",
-            "success": true,
-            "is_error": false
-        }]
-    })));
-}
-
-#[test]
-fn planner_completion_tracker_preserves_existing_tools_end_callback() {
-    let state = Arc::new(Mutex::new(TaskTurnLifecycleState::default()));
-    let observed = Arc::new(Mutex::new(Vec::new()));
-    let callbacks = track_project_execution_planner_completion(
-        RuntimeCallbacks {
-            on_tools_end: Some(Arc::new({
-                let observed = Arc::clone(&observed);
-                move |payload| observed.lock().expect("observed").push(payload)
-            })),
-            ..RuntimeCallbacks::default()
-        },
-        Arc::clone(&state),
-    );
-    let payload = json!({
-        "tool_results": [{
-            "name": "task_runner_service_create_project_execution_tasks",
-            "success": true,
-            "is_error": false
-        }]
-    });
-
-    callbacks.on_tools_end.expect("tools end callback")(payload.clone());
-
-    assert!(
-        state
-            .lock()
-            .expect("state")
-            .project_execution_plan_materialized
-    );
-    assert_eq!(observed.lock().expect("observed").as_slice(), &[payload]);
-}
-
-#[test]
-fn planning_integrity_tracker_requires_repair_then_later_graph_verification() {
-    let state = Arc::new(Mutex::new(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        ..TaskTurnLifecycleState::default()
-    }));
-    let callbacks =
-        track_project_planning_integrity(RuntimeCallbacks::default(), Arc::clone(&state));
-    let callback = callbacks.on_tools_end.expect("tools end callback");
-
-    callback(json!({
-        "tool_results": [{
-            "name": "project_management_service_set_project_task_dependencies",
-            "success": false,
-            "is_error": true,
-            "content": "项目任务不存在: mistyped-id"
-        }]
-    }));
-    assert_eq!(
-        state
-            .lock()
-            .expect("state")
-            .project_planning_write_failures
-            .len(),
-        1
-    );
-
-    callback(json!({
-        "tool_results": [
-            {
-                "name": "project_management_service_set_project_task_dependencies",
-                "success": true,
-                "is_error": false
-            },
-            {
-                "name": "project_management_service_get_project_dependency_graph",
-                "success": true,
-                "is_error": false
-            }
-        ]
-    }));
-    {
-        let state = state.lock().expect("state");
-        assert_eq!(state.project_planning_write_failures.len(), 1);
-        assert!(state.project_planning_repair_mutation_succeeded);
-    }
-
-    callback(json!({
-        "tool_results": [{
-            "name": "project_management_service_get_project_dependency_graph",
-            "success": true,
-            "is_error": false
-        }]
-    }));
-    let state = state.lock().expect("state");
-    assert!(state.project_planning_write_failures.is_empty());
-    assert!(!state.project_planning_repair_mutation_succeeded);
-}
-
-#[test]
-fn planning_integrity_tracker_records_task_creation_and_background_acknowledgement() {
-    let state = Arc::new(Mutex::new(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        ..TaskTurnLifecycleState::default()
-    }));
-    let callbacks =
-        track_project_planning_integrity(RuntimeCallbacks::default(), Arc::clone(&state));
-    let callback = callbacks.on_tools_end.expect("tools end callback");
-
-    callback(json!({
-        "tool_results": [
-            successful_planning_delegation_result("task_runner_service_create_task"),
-            successful_planning_delegation_result(
-                "task_runner_service_wait_for_task_completion"
-            )
-        ]
-    }));
-
-    let state = state.lock().expect("state");
-    assert!(state.project_planning_task_created);
-    assert!(state.project_planning_background_acknowledged);
-}
-
-#[test]
-fn planning_integrity_tracker_finalizes_a_repeated_successful_dependency_batch_after_verification()
-{
-    let state = Arc::new(Mutex::new(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        ..TaskTurnLifecycleState::default()
-    }));
-    let callbacks =
-        track_project_planning_integrity(RuntimeCallbacks::default(), Arc::clone(&state));
-    let on_tools_start = callbacks
-        .on_tools_start
-        .as_ref()
-        .expect("tools start callback")
-        .clone();
-    let on_tools_end = callbacks
-        .on_tools_end
-        .as_ref()
-        .expect("tools end callback")
-        .clone();
-    let batch = json!([dependency_write_tool_call("task-2", "task-1")]);
-
-    for _ in 0..2 {
-        on_tools_start(batch.clone());
-        on_tools_end(json!({
-            "tool_results": [successful_dependency_write_result()]
-        }));
-    }
-    on_tools_start(json!([{
-        "function": {
-            "name": "project_management_service_get_project_dependency_graph",
-            "arguments": "{}"
-        }
-    }]));
-    on_tools_end(json!({
-        "tool_results": [successful_dependency_graph_result()]
-    }));
-
-    let state = state.lock().expect("state");
-    assert!(state.project_planning_force_finalization);
-    assert!(state.project_planning_dependency_write_cycle.is_empty());
-    assert_eq!(
-        state.project_planning_last_verified_dependency_cycle.len(),
-        1
-    );
-}
-
-#[test]
-fn planning_integrity_tracker_finalizes_when_two_verified_cycles_repeat() {
-    let state = Arc::new(Mutex::new(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        ..TaskTurnLifecycleState::default()
-    }));
-    let callbacks =
-        track_project_planning_integrity(RuntimeCallbacks::default(), Arc::clone(&state));
-    let on_tools_start = callbacks
-        .on_tools_start
-        .as_ref()
-        .expect("tools start callback")
-        .clone();
-    let on_tools_end = callbacks
-        .on_tools_end
-        .as_ref()
-        .expect("tools end callback")
-        .clone();
-    let batch = json!([dependency_write_tool_call("task-2", "task-1")]);
-    let graph_read = json!([{
-        "function": {
-            "name": "project_management_service_get_project_dependency_graph",
-            "arguments": "{}"
-        }
-    }]);
-
-    for cycle in 0..2 {
-        on_tools_start(batch.clone());
-        on_tools_end(json!({
-            "tool_results": [successful_dependency_write_result()]
-        }));
-        on_tools_start(graph_read.clone());
-        on_tools_end(json!({
-            "tool_results": [successful_dependency_graph_result()]
-        }));
-        assert_eq!(
-            state
-                .lock()
-                .expect("state")
-                .project_planning_force_finalization,
-            cycle == 1
-        );
-    }
-}
-
-#[test]
-fn planning_integrity_tracker_does_not_finalize_distinct_verified_writes() {
-    let state = Arc::new(Mutex::new(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        ..TaskTurnLifecycleState::default()
-    }));
-    let callbacks =
-        track_project_planning_integrity(RuntimeCallbacks::default(), Arc::clone(&state));
-    let on_tools_start = callbacks
-        .on_tools_start
-        .as_ref()
-        .expect("tools start callback")
-        .clone();
-    let on_tools_end = callbacks
-        .on_tools_end
-        .as_ref()
-        .expect("tools end callback")
-        .clone();
-    let graph_read = json!([{
-        "function": {
-            "name": "project_management_service_get_project_dependency_graph",
-            "arguments": "{}"
-        }
-    }]);
-
-    for batch in [
-        dependency_write_tool_call("task-2", "task-1"),
-        dependency_write_tool_call("task-3", "task-2"),
-    ] {
-        on_tools_start(json!([batch]));
-        on_tools_end(json!({
-            "tool_results": [successful_dependency_write_result()]
-        }));
-        on_tools_start(graph_read.clone());
-        on_tools_end(json!({
-            "tool_results": [successful_dependency_graph_result()]
-        }));
-    }
-
-    assert!(
-        !state
-            .lock()
-            .expect("state")
-            .project_planning_force_finalization
-    );
-}
-
-#[tokio::test]
-async fn planning_integrity_guard_rejects_a_false_success_summary() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        project_planning_write_failures: vec![
-            "project_management_service_set_project_task_dependencies: bad id".to_string(),
-        ],
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response("规划已经全部完成。")))
-        .await
-        .expect("integrity repair continuation");
-
-    match action {
-        RuntimeFinalResponseAction::Continue {
-            input_items,
-            reason,
-        } => {
-            assert_eq!(reason, "project_planning_integrity_repair");
-            assert!(input_items.iter().any(|item| {
-                item.get("role").and_then(Value::as_str) == Some("system")
-                    && item.to_string().contains("不要总结完成")
-            }));
-        }
-        _ => panic!("expected planning repair continuation"),
-    }
-}
-
-#[tokio::test]
-async fn planning_mode_without_task_creation_continues_instead_of_succeeding() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response(
-            "下面是完整的游戏需求、技术方案和任务拆分。",
-        )))
-        .await
-        .expect("planning delegation continuation");
-
-    match action {
-        RuntimeFinalResponseAction::Continue {
-            input_items,
-            reason,
-        } => {
-            assert_eq!(reason, "project_planning_delegation_repair");
-            assert!(input_items.iter().any(|item| {
-                item.get("role").and_then(Value::as_str) == Some("system")
-                    && item.to_string().contains("不要用自由文本规划代替任务")
-            }));
-        }
-        _ => panic!("expected planning delegation continuation"),
-    }
-}
-
-#[tokio::test]
-async fn legacy_planning_finalization_cannot_bypass_task_delegation() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        project_planning_force_finalization: true,
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let directive = hook
-        .before_model_request(RuntimeIterationContext {
-            conversation_id: Some("session-1".to_string()),
-            conversation_turn_id: Some("turn-1".to_string()),
-            iteration: 3,
-            reason: "tool_results".to_string(),
-            input: json!([]),
-        })
-        .await
-        .expect("planning delegation remains enabled");
-    assert!(directive.tools_enabled);
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response("规划完成。")))
-        .await
-        .expect("planning delegation continuation");
-    assert!(matches!(
-        action,
-        RuntimeFinalResponseAction::Continue { reason, .. }
-            if reason == "project_planning_delegation_repair"
-    ));
-}
-
-#[tokio::test]
-async fn planning_mode_with_created_task_requires_background_wait() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        project_planning_task_created: true,
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response("规划任务已创建。")))
-        .await
-        .expect("background wait continuation");
-
-    match action {
-        RuntimeFinalResponseAction::Continue {
-            input_items,
-            reason,
-        } => {
-            assert_eq!(reason, "project_planning_delegation_repair");
-            assert!(input_items
-                .iter()
-                .any(|item| item.to_string().contains("wait_for_task_completion")));
-        }
-        _ => panic!("expected background wait continuation"),
-    }
-}
-
-#[tokio::test]
-async fn completed_planning_delegation_enters_tool_free_finalization() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        project_planning_task_created: true,
-        project_planning_background_acknowledged: true,
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let directive = hook
-        .before_model_request(RuntimeIterationContext {
-            conversation_id: Some("session-1".to_string()),
-            conversation_turn_id: Some("turn-1".to_string()),
-            iteration: 3,
-            reason: "tool_results".to_string(),
-            input: json!([]),
-        })
-        .await
-        .expect("planning delegation finalization directive");
-
-    assert!(!directive.tools_enabled);
-    assert!(directive.input_items.iter().any(|item| {
-        item.to_string()
-            .contains("Planning Delegation Finalization")
-            && item.to_string().contains("planning has started")
-    }));
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response(
-            "规划已开始，完成后会正常回传结果。",
-        )))
-        .await
-        .expect("planning delegation final response");
-    assert!(matches!(action, RuntimeFinalResponseAction::Accept));
-}
-
-#[tokio::test]
-async fn planning_mode_fails_after_three_missing_delegation_repairs() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        project_planning_delegation_repair_rounds: 3,
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let error = hook
-        .after_final_response(final_response_context(ai_response("规划完成。")))
-        .await
-        .expect_err("missing planning delegation must fail");
-
-    assert!(error.contains("不能标记为完成"));
-    assert!(error.contains("未创建 Task Runner 规划任务"));
-}
-
-#[tokio::test]
-async fn ordinary_mode_is_not_blocked_by_planning_delegation_guard() {
-    let mut hook = lifecycle_hook_with_state(TaskTurnLifecycleState::default());
-    hook.max_task_follow_up_rounds = 0;
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response("普通回复。")))
-        .await
-        .expect("ordinary final response");
-
-    assert!(matches!(action, RuntimeFinalResponseAction::Accept));
-}
-
-#[tokio::test]
-async fn repeated_planning_writes_enter_a_tool_free_finalization_iteration() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        project_planning_force_finalization: true,
-        project_planning_task_created: true,
-        project_planning_background_acknowledged: true,
-        mode: Some(TaskTurnFollowUpMode::ContinueExecution),
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let directive = hook
-        .before_model_request(RuntimeIterationContext {
-            conversation_id: Some("session-1".to_string()),
-            conversation_turn_id: Some("turn-1".to_string()),
-            iteration: 5,
-            reason: "tool_results".to_string(),
-            input: json!([]),
-        })
-        .await
-        .expect("planning finalization directive");
-
-    assert!(!directive.tools_enabled);
-    assert!(directive.stream_output);
-    assert!(directive.input_items.iter().any(|item| {
-        item.get("role").and_then(Value::as_str) == Some("system")
-            && item
-                .to_string()
-                .contains("Planning Delegation Finalization")
-            && item.to_string().contains("Do not call more tools")
-    }));
-}
-
-#[tokio::test]
-async fn repeated_planning_writes_accept_the_first_final_response() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        project_planning_force_finalization: true,
-        project_planning_task_created: true,
-        project_planning_background_acknowledged: true,
-        mode: Some(TaskTurnFollowUpMode::ContinueExecution),
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response(
-            "已经按照最新依赖图完成规划复核。",
-        )))
-        .await
-        .expect("planning final response");
-
-    assert!(matches!(action, RuntimeFinalResponseAction::Accept));
-    assert!(hook.task_turn_state().expect("state").mode.is_none());
-}
-
-#[tokio::test]
-async fn planning_write_failure_takes_priority_over_loop_finalization() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_planning_integrity_guard: true,
-        project_planning_force_finalization: true,
-        project_planning_write_failures: vec![
-            "project_management_service_set_project_task_dependencies: bad id".to_string(),
-        ],
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let directive = hook
-        .before_model_request(RuntimeIterationContext {
-            conversation_id: Some("session-1".to_string()),
-            conversation_turn_id: Some("turn-1".to_string()),
-            iteration: 5,
-            reason: "tool_results".to_string(),
-            input: json!([]),
-        })
-        .await
-        .expect("planning repair directive");
-    assert!(directive.tools_enabled);
-    assert!(!directive
-        .input_items
-        .iter()
-        .any(|item| item.to_string().contains("Project Planning Finalization")));
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response("规划已经全部完成。")))
-        .await
-        .expect("integrity repair continuation");
-    assert!(matches!(
-        action,
-        RuntimeFinalResponseAction::Continue { reason, .. }
-            if reason == "project_planning_integrity_repair"
-    ));
-}
-
-#[tokio::test]
-async fn materialized_execution_plan_enters_a_tool_free_finalization_iteration() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_execution_plan_materialized: true,
-        mode: Some(TaskTurnFollowUpMode::ContinueExecution),
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let directive = hook
-        .before_model_request(RuntimeIterationContext {
-            conversation_id: Some("session-1".to_string()),
-            conversation_turn_id: Some("turn-1".to_string()),
-            iteration: 3,
-            reason: "tool_results".to_string(),
-            input: json!([]),
-        })
-        .await
-        .expect("planner finalization directive");
-
-    assert!(!directive.tools_enabled);
-    assert!(directive.stream_output);
-    assert!(directive.input_items.iter().any(|item| {
-        item.get("role").and_then(Value::as_str) == Some("system")
-            && item
-                .to_string()
-                .contains("execution task graph was persisted")
-            && item.to_string().contains("Do not call any more tools")
-    }));
-}
-
-#[tokio::test]
-async fn materialized_execution_plan_accepts_the_first_final_response() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_execution_plan_materialized: true,
-        mode: Some(TaskTurnFollowUpMode::ContinueExecution),
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response(
-            "执行计划已经生成，可以预览并确认执行。",
-        )))
-        .await
-        .expect("planner final response");
-
-    assert!(matches!(action, RuntimeFinalResponseAction::Accept));
-    assert!(hook.task_turn_state().expect("state").mode.is_none());
-}
-
-#[tokio::test]
-async fn execution_planner_without_materialized_tasks_is_forced_to_continue() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_execution_planner_guard: true,
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let action = hook
-        .after_final_response(final_response_context(ai_response(
-            "执行任务图已经生成，可以确认执行。",
-        )))
-        .await
-        .expect("materialization repair continuation");
-
-    match action {
-        RuntimeFinalResponseAction::Continue {
-            input_items,
-            reason,
-        } => {
-            assert_eq!(reason, "project_execution_plan_materialization_repair");
-            assert!(input_items.iter().any(|item| {
-                item.get("role").and_then(Value::as_str) == Some("system")
-                    && item
-                        .to_string()
-                        .contains("task_runner_service_create_project_execution_tasks")
-            }));
-        }
-        _ => panic!("expected execution-plan materialization repair"),
-    }
-}
-
-#[tokio::test]
-async fn execution_planner_rejects_success_after_materialization_retries_are_exhausted() {
-    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
-        project_execution_planner_guard: true,
-        project_execution_planner_repair_rounds: 2,
-        ..TaskTurnLifecycleState::default()
-    });
-
-    let error = hook
-        .after_final_response(final_response_context(ai_response(
-            "执行任务图已经生成，可以确认执行。",
-        )))
-        .await
-        .expect_err("zero-task planner must fail");
-
-    assert!(error.contains("未创建任何执行任务"));
 }
 
 #[tokio::test]

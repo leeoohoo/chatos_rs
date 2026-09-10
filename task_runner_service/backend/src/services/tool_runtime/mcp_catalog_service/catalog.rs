@@ -111,12 +111,7 @@ impl McpCatalogService {
                             default_allow_writes: kind.default_allow_writes(),
                             available_tool_names,
                             unavailable_tools,
-                            message: match kind {
-                                chatos_mcp_runtime::BuiltinMcpKind::ProjectManagement => {
-                                    Some("规划任务运行时会自动启用；普通任务不可选择。".to_string())
-                                }
-                                _ => None,
-                            },
+                            message: None,
                         }
                     }
                     Err(err) => McpCatalogEntry {

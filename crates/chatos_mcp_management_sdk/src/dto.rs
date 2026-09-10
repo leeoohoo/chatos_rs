@@ -206,6 +206,8 @@ pub struct CreateRuntimeSessionRequest {
     pub agent_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_context: Option<crate::ProjectContextAuthorization>,
     #[serde(default)]
     pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -224,8 +226,6 @@ pub struct CreateRuntimeSessionRequest {
     pub default_remote_connection_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_result_max_chars: Option<usize>,
-    #[serde(default)]
-    pub expected_project_task_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_mcp_ids: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

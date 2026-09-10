@@ -7,7 +7,6 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
-use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
     McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
@@ -113,10 +112,6 @@ async fn provider_uses_signed_service_identity_and_forwards_immutable_session_bi
     assert_eq!(
         headers["x-mcp-management-contact-agent-id"],
         "chatos-agent-1"
-    );
-    assert_eq!(
-        headers["x-mcp-management-expected-project-task-ids"],
-        "project-task-1"
     );
     let token = headers["x-task-runner-internal-token"]
         .to_str()
@@ -231,7 +226,6 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
     )
     .expect("provider");
     let mut routes = vec![route(SystemMcpKey::TaskRunnerService)];
-    let expected_project_task_ids = vec!["project-task-1".to_string()];
     let snapshots = provider
         .prepare_routes(
             routes.as_mut_slice(),
@@ -246,8 +240,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
             Some("message-1"),
             Some("model-1"),
             None,
-            Some(CHATOS_PLAN_TASK_PROFILE),
-            expected_project_task_ids.as_slice(),
+            Some("default"),
             i64::MAX,
         )
         .await;
@@ -269,10 +262,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
     );
     assert_eq!(headers["x-mcp-management-project-id"], "project-1");
     assert_eq!(headers["x-mcp-management-turn-id"], "turn-1");
-    assert_eq!(
-        headers["x-mcp-management-task-profile"],
-        CHATOS_PLAN_TASK_PROFILE
-    );
+    assert_eq!(headers["x-mcp-management-task-profile"], "default");
     assert_eq!(
         headers["x-mcp-management-source-session-id"],
         "source-session-1"
@@ -304,7 +294,6 @@ fn provider_supports_task_runner_owned_and_callback_system_mcps() {
     assert!(provider.supports(&route(SystemMcpKey::TaskRunnerService)));
     assert!(provider.supports(&route(SystemMcpKey::TaskProcessLog)));
     assert!(provider.supports(&route(SystemMcpKey::AskUser)));
-    assert!(!provider.supports(&route(SystemMcpKey::ProjectManagement)));
 }
 
 fn route(key: SystemMcpKey) -> ResolvedMcpRoute {
@@ -353,7 +342,6 @@ fn snapshot() -> RuntimeSessionSnapshot {
         default_remote_connection_id: None,
         remote_connection_route: None,
         tool_result_max_chars: None,
-        expected_project_task_ids: vec!["project-task-1".to_string()],
         workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: Some("project-1".to_string()),

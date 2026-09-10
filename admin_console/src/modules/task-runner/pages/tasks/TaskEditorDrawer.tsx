@@ -144,7 +144,6 @@ export function TaskEditorDrawer({
                 {taskProfileLabel(
                   editingTask.task_profile,
                   t,
-                  editingTask.mcp_config.requires_execution,
                 )}
               </Tag>
             </Descriptions.Item>

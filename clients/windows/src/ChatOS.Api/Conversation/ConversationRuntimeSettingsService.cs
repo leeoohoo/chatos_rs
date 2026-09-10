@@ -61,15 +61,6 @@ public sealed class ConversationRuntimeSettingsService : IConversationRuntimeSet
             new ModelUpdateDto(modelId),
             cancellationToken);
 
-    public Task<ConversationRuntimeSettings> UpdatePlanModeAsync(
-        string conversationId,
-        bool enabled,
-        CancellationToken cancellationToken = default) =>
-        UpdateAsync(
-            conversationId,
-            new PlanModeUpdateDto(enabled),
-            cancellationToken);
-
     public Task<ConversationRuntimeSettings> UpdateReasoningAsync(
         string conversationId,
         bool enabled,
@@ -94,9 +85,6 @@ public sealed class ConversationRuntimeSettingsService : IConversationRuntimeSet
 
 internal sealed record ModelUpdateDto(
     [property: JsonPropertyName("selected_model_id")] string SelectedModelId);
-
-internal sealed record PlanModeUpdateDto(
-    [property: JsonPropertyName("plan_mode_enabled")] bool PlanModeEnabled);
 
 internal sealed record ReasoningUpdateDto(
     [property: JsonPropertyName("reasoning_enabled")] bool ReasoningEnabled);

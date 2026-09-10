@@ -204,13 +204,6 @@ struct PetStateReducerTests {
             route: route
         )))
         reducer.apply(.upsert(.init(
-            id: "execution-progress",
-            source: .projectExecution,
-            kind: .working,
-            title: "执行计划正在运行",
-            route: route
-        )))
-        reducer.apply(.upsert(.init(
             id: "task-progress",
             source: .taskRunner,
             kind: .working,

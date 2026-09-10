@@ -36,7 +36,6 @@ pub(super) struct TaskRunnerRequestBinding<'a> {
     default_model_config_id: Option<&'a str>,
     default_remote_connection_id: Option<&'a str>,
     task_profile: Option<&'a str>,
-    expected_project_task_ids: &'a [String],
 }
 
 impl<'a> From<&'a RuntimeSessionSnapshot> for TaskRunnerRequestBinding<'a> {
@@ -57,7 +56,6 @@ impl<'a> From<&'a RuntimeSessionSnapshot> for TaskRunnerRequestBinding<'a> {
             default_model_config_id: snapshot.default_model_config_id.as_deref(),
             default_remote_connection_id: snapshot.default_remote_connection_id.as_deref(),
             task_profile: snapshot.task_profile.as_deref(),
-            expected_project_task_ids: snapshot.expected_project_task_ids.as_slice(),
         }
     }
 }

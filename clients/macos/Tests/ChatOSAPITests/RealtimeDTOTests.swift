@@ -133,7 +133,7 @@ final class RealtimeDTOTests: XCTestCase {
 
         let signal = try XCTUnwrap(envelope.signal(expectedSessionID: "conversation-1"))
         let update = try XCTUnwrap(signal.processUpdate)
-        XCTAssertEqual(update.title, "正在调用工具：create_project_execution_tasks")
+        XCTAssertEqual(update.title, "正在调用工具：create_tasks_with_prerequisites")
         XCTAssertEqual(update.status, "running")
     }
 
@@ -270,7 +270,7 @@ final class RealtimeDTOTests: XCTestCase {
           "type": "tools_start",
           "data": {
             "tool_calls": [
-              {"function": {"name": "create_project_execution_tasks"}}
+              {"function": {"name": "create_tasks_with_prerequisites"}}
             ]
           }
         }

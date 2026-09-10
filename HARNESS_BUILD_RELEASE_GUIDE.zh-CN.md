@@ -29,7 +29,6 @@ bash docker/deploy.sh build-services
 ```text
 user-service-backend
 memory-engine-backend
-project-management-backend
 plugin-management-backend
 local-connector-service-backend
 task-runner-backend

@@ -3,7 +3,7 @@
 
 use crate::models::{
     now_rfc3339, TaskEphemeralHttpMcpServer, TaskMcpConfig, TaskRecord, TaskScheduleConfig,
-    TaskStatus, TASK_PROFILE_CHATOS_PLAN, TASK_PROFILE_DEFAULT,
+    TaskStatus, TASK_PROFILE_DEFAULT,
 };
 
 use super::{
@@ -29,9 +29,9 @@ fn default_config_has_no_optional_builtin_selection() {
 }
 
 #[test]
-fn plan_task_builtin_selection_uses_fixed_allowlist() {
+fn non_execution_task_keeps_selected_read_only_capabilities() {
     let mut task = sample_task(
-        TASK_PROFILE_CHATOS_PLAN,
+        TASK_PROFILE_DEFAULT,
         vec![
             "CodeMaintainerWrite".to_string(),
             "AgentBuilder".to_string(),
@@ -43,10 +43,9 @@ fn plan_task_builtin_selection_uses_fixed_allowlist() {
 
     assert!(selected.contains(&BuiltinMcpKind::CodeMaintainerRead));
     assert!(!selected.contains(&BuiltinMcpKind::TaskManager));
-    assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
     assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
     assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
-    assert!(!selected.contains(&BuiltinMcpKind::AgentBuilder));
+    assert!(selected.contains(&BuiltinMcpKind::AgentBuilder));
 }
 
 #[test]
@@ -95,8 +94,8 @@ fn legacy_harness_endpoint_cannot_suppress_selected_capabilities() {
 }
 
 #[test]
-fn legacy_harness_endpoint_cannot_change_plan_capabilities() {
-    let mut task = sample_task(TASK_PROFILE_CHATOS_PLAN, Vec::new());
+fn legacy_harness_endpoint_cannot_grant_non_execution_capabilities() {
+    let mut task = sample_task(TASK_PROFILE_DEFAULT, vec!["CodeMaintainerRead".to_string()]);
     task.mcp_config.requires_execution = false;
     task.mcp_config
         .ephemeral_http_servers
@@ -108,7 +107,6 @@ fn legacy_harness_endpoint_cannot_change_plan_capabilities() {
     assert!(!selected.contains(&BuiltinMcpKind::CodeMaintainerWrite));
     assert!(!selected.contains(&BuiltinMcpKind::TerminalController));
     assert!(!selected.contains(&BuiltinMcpKind::TaskManager));
-    assert!(selected.contains(&BuiltinMcpKind::ProjectManagement));
 }
 
 #[test]
@@ -127,11 +125,7 @@ fn workspace_base_check_rejects_relative_parent_escape() {
 #[test]
 fn normalized_config_preserves_explicit_selection_for_policy_validation() {
     let config = TaskMcpConfig {
-        enabled_builtin_kinds: vec![
-            "ProjectManagement".to_string(),
-            "AskUser".to_string(),
-            "CodeMaintainerWrite".to_string(),
-        ],
+        enabled_builtin_kinds: vec!["AskUser".to_string(), "CodeMaintainerWrite".to_string()],
         ..TaskMcpConfig::default()
     };
 
@@ -139,11 +133,7 @@ fn normalized_config_preserves_explicit_selection_for_policy_validation() {
 
     assert_eq!(
         sanitized.enabled_builtin_kinds,
-        vec![
-            "ProjectManagement".to_string(),
-            "AskUser".to_string(),
-            "CodeMaintainerWrite".to_string(),
-        ]
+        vec!["AskUser".to_string(), "CodeMaintainerWrite".to_string()]
     );
 }
 
@@ -163,6 +153,7 @@ fn sample_task(task_profile: &str, enabled_builtin_kinds: Vec<String>) -> TaskRe
         tenant_id: "tenant".to_string(),
         subject_id: "subject".to_string(),
         project_id: Some("project-1".to_string()),
+        project_context: None,
         task_profile: task_profile.to_string(),
         creator_user_id: None,
         creator_username: None,
@@ -204,6 +195,6 @@ fn harness_code_server() -> TaskEphemeralHttpMcpServer {
         name: "harness_code".to_string(),
         url: "http://127.0.0.1:39210/api/chatos-sync/projects/project-1/harness/mcp".to_string(),
         headers,
-        auth_mode: Some("project_service_sync".to_string()),
+        auth_mode: Some("legacy_static_sync".to_string()),
     }
 }

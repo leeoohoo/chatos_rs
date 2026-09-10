@@ -78,9 +78,7 @@ fn chatos_dependencies(
             dependencies.memory_reader_store =
                 Some(MemoryReaderStoreRef::new(Arc::new(ChatosMemoryReaderStore)));
         }
-        BuiltinMcpKind::CodeMaintainerRead
-        | BuiltinMcpKind::TaskManager
-        | BuiltinMcpKind::ProjectManagement => {}
+        BuiltinMcpKind::CodeMaintainerRead | BuiltinMcpKind::TaskManager => {}
     }
     Ok(dependencies)
 }

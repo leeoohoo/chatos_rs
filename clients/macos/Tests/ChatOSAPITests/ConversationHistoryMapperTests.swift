@@ -23,8 +23,6 @@ final class ConversationHistoryMapperTests: XCTestCase {
         XCTAssertEqual(page.turns[0].assistantReplies.map(\.message.text), ["已经开始检查。"])
         XCTAssertEqual(page.turns[0].processEvents.count, 1)
         XCTAssertEqual(page.turns[0].status, .completed)
-        XCTAssertEqual(page.turns[0].projectExecutionContext?.projectID, "project-1")
-        XCTAssertEqual(page.turns[0].projectExecutionContext?.executionGroupID, "group-1")
         XCTAssertEqual(page.turns[0].messageTaskLookup?.sourceUserMessageID, "group-1")
         XCTAssertEqual(page.turns[0].messageTaskLookup?.turnID, "turn-1")
         XCTAssertEqual(page.turns[0].revision, 6)
@@ -200,18 +198,10 @@ final class ConversationHistoryMapperTests: XCTestCase {
           "updated_at": "2026-08-24T03:00:01.000Z",
           "metadata": {
             "conversation_turn_id": "turn-1",
-            "project_requirement_execution": {
-              "project_id": "project-1",
-              "requirement_id": "requirement-1",
-              "execution_group_id": "group-1",
-              "contact_id": "contact-1"
-            },
             "task_runner_async": {
-              "mode": "project_requirement_execution",
               "source_user_message_id": "group-1",
               "source_turn_id": "turn-1",
-              "confirmation_status": "awaiting_confirmation",
-              "overall_status": "awaiting_confirmation"
+              "overall_status": "processing"
             },
             "historyProcess": {
               "turnId": "turn-1",

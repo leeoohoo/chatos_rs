@@ -39,8 +39,7 @@ pub(in crate::api) async fn get_model_settings(
             model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
             memory_summary_model_config_id: None,
             memory_summary_thinking_level: None,
-            project_management_agent_model_config_id: None,
-            project_management_agent_thinking_level: None,
+            task_runner_default_model_config_id: None,
             updated_at: now_rfc3339(),
         });
 
@@ -66,8 +65,7 @@ pub(in crate::api) async fn put_model_settings(
             model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
             memory_summary_model_config_id: None,
             memory_summary_thinking_level: None,
-            project_management_agent_model_config_id: None,
-            project_management_agent_thinking_level: None,
+            task_runner_default_model_config_id: None,
             updated_at: now_rfc3339(),
         });
     let model_request_max_retries = resolve_model_request_max_retries(
@@ -79,19 +77,14 @@ pub(in crate::api) async fn put_model_settings(
         input.memory_summary_model_config_id,
         current.memory_summary_model_config_id,
     );
-    let project_management_agent_model_config_id = resolve_optional_update(
-        input.project_management_agent_model_config_id,
-        current.project_management_agent_model_config_id,
+    let task_runner_default_model_config_id = resolve_optional_update(
+        input.task_runner_default_model_config_id,
+        current.task_runner_default_model_config_id,
     );
     let memory_summary_thinking_level_input = resolve_thinking_level_update(
         input.memory_summary_thinking_level,
         current.memory_summary_thinking_level,
         memory_summary_model_config_id.as_deref(),
-    );
-    let project_management_agent_thinking_level_input = resolve_thinking_level_update(
-        input.project_management_agent_thinking_level,
-        current.project_management_agent_thinking_level,
-        project_management_agent_model_config_id.as_deref(),
     );
 
     let memory_summary_model_config = validate_settings_model_config(
@@ -101,18 +94,36 @@ pub(in crate::api) async fn put_model_settings(
         "memory_summary_model_config_id",
     )
     .await?;
-    let project_management_agent_model_config = validate_settings_model_config(
+    let task_runner_default_model_config = validate_settings_model_config(
         &state,
         user_id.as_str(),
-        project_management_agent_model_config_id.as_deref(),
-        "project_management_agent_model_config_id",
+        task_runner_default_model_config_id.as_deref(),
+        "task_runner_default_model_config_id",
     )
     .await?;
+    if let Some(model_config) = task_runner_default_model_config.as_ref() {
+        if !model_config.enabled_for_tasks() {
+            return Err(bad_request(
+                "task_runner_default_model_config_id is disabled for tasks",
+            ));
+        }
+        if model_config
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(str::is_empty)
+            || model_config
+                .base_url
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+        {
+            return Err(bad_request(
+                "task_runner_default_model_config_id requires cloud-resident credentials",
+            ));
+        }
+    }
     let memory_summary_provider = memory_summary_model_config
-        .as_ref()
-        .map(|model_config| model_config.provider.as_str())
-        .unwrap_or("gpt");
-    let project_management_agent_provider = project_management_agent_model_config
         .as_ref()
         .map(|model_config| model_config.provider.as_str())
         .unwrap_or("gpt");
@@ -125,11 +136,7 @@ pub(in crate::api) async fn put_model_settings(
             memory_summary_provider,
             memory_summary_thinking_level_input.as_deref(),
         )?,
-        project_management_agent_model_config_id,
-        project_management_agent_thinking_level: normalize_thinking_level_input(
-            project_management_agent_provider,
-            project_management_agent_thinking_level_input.as_deref(),
-        )?,
+        task_runner_default_model_config_id,
         updated_at: now_rfc3339(),
     };
     let saved = state

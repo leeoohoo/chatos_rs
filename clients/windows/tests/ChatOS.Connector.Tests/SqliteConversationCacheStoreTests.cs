@@ -24,7 +24,6 @@ public sealed class SqliteConversationCacheStoreTests
 
             Assert.Equal(turn.Id, loaded.Id);
             Assert.Equal(turn.FinalAssistantMessage?.Text, loaded.FinalAssistantMessage?.Text);
-            Assert.Equal("group-1", loaded.ProjectExecutionContext?.ExecutionGroupId);
 
             await store.DeleteAsync("conversation-a");
             Assert.Empty(await store.LoadAsync("conversation-a"));
@@ -61,7 +60,6 @@ public sealed class SqliteConversationCacheStoreTests
             true,
             TurnStatus.Completed,
             timestamp,
-            timestamp,
-            new ProjectExecutionContext(ExecutionGroupId: "group-1"));
+            timestamp);
     }
 }

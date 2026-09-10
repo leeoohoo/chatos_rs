@@ -32,8 +32,7 @@ extension NativeLocalConnectorService {
                 modelRequestMaxRetries: settings?.modelRequestMaxRetries ?? 5,
                 memorySummaryModelConfigID: settings?.memorySummaryModelConfigID,
                 memorySummaryThinkingLevel: settings?.memorySummaryThinkingLevel,
-                projectManagementAgentModelConfigID: settings?.projectManagementAgentModelConfigID,
-                projectManagementAgentThinkingLevel: settings?.projectManagementAgentThinkingLevel,
+                taskRunnerDefaultModelConfigID: settings?.taskRunnerDefaultModelConfigID,
                 commandApprovalModelConfigID: state.commandApprovalModelConfigID,
                 commandApprovalThinkingLevel: state.commandApprovalThinkingLevel
             )
@@ -85,6 +84,17 @@ extension NativeLocalConnectorService {
 
     public func updateModelSettings(_ settings: LocalConnectorModelSettings) async throws {
         let token = try requireAccessToken()
+        if let taskRunnerID = settings.taskRunnerDefaultModelConfigID?.trimmedNonEmpty {
+            let model = try await gateway.modelConfig(token: token, id: taskRunnerID, includeSecret: false)
+            guard model.enabled ?? true,
+                  model.taskEnabled ?? (model.enabled ?? true),
+                  model.hasAPIKey ?? false else {
+                throw NativeConnectorError.server(
+                    status: 409,
+                    message: "Task Runner 默认模型必须已启用、允许执行任务并配置凭据。"
+                )
+            }
+        }
         if let approvalID = settings.commandApprovalModelConfigID?.trimmedNonEmpty {
             let model = try await gateway.modelConfig(token: token, id: approvalID, includeSecret: false)
             guard model.enabled ?? true,

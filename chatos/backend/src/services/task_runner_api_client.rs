@@ -3,7 +3,6 @@
 
 use crate::config::Config;
 use bytes::BytesMut;
-use chatos_agent::CHATOS_PLAN_TASK_PROFILE;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,7 +30,7 @@ pub use message_tasks::{
 };
 pub use types::{
     CancelTaskRunnerPromptRequest, CancelTaskRunnerTaskRequest, SubmitTaskRunnerPromptRequest,
-    TaskRunnerTaskRecord, UserServiceTaskRunnerExchange,
+    UserServiceTaskRunnerExchange,
 };
 
 use types::UserServiceTaskRunnerTokenResponse;
@@ -63,42 +62,12 @@ pub async fn exchange_task_runner_token_via_user_service(
     Ok(token.to_string())
 }
 
-pub async fn get_task_runner_task(
-    base_url: &str,
-    access_token: &str,
-    task_id: &str,
-) -> Result<TaskRunnerTaskRecord, String> {
-    let path = format!("/api/tasks/{}", urlencoding::encode(task_id.trim()));
-    task_runner_json(
-        base_url,
-        access_token,
-        reqwest::Method::GET,
-        path.as_str(),
-        None::<&()>,
-    )
-    .await
-}
-
 pub async fn list_task_runner_available_plugins(
     base_url: &str,
     access_token: &str,
     project_id: Option<&str>,
-    plan_mode: bool,
 ) -> Result<Value, String> {
-    let mut query = vec![
-        (
-            "task_profile",
-            if plan_mode {
-                CHATOS_PLAN_TASK_PROFILE
-            } else {
-                "default"
-            },
-        ),
-        (
-            "requires_execution",
-            if plan_mode { "false" } else { "true" },
-        ),
-    ];
+    let mut query = vec![("task_profile", "default")];
     if let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) {
         query.push(("project_id", project_id));
     }
@@ -198,24 +167,6 @@ pub async fn cancel_task_runner_prompt(
 async fn send_json<T: for<'de> Deserialize<'de>>(
     request: reqwest::RequestBuilder,
 ) -> Result<T, String> {
-    send_task_runner_response(request).await
-}
-
-async fn task_runner_json<T, B>(
-    base_url: &str,
-    access_token: &str,
-    method: reqwest::Method,
-    path: &str,
-    body: Option<&B>,
-) -> Result<T, String>
-where
-    T: for<'de> Deserialize<'de>,
-    B: Serialize + ?Sized,
-{
-    let mut request = task_runner_request(base_url, access_token, method, path).await;
-    if let Some(body) = body {
-        request = request.json(body);
-    }
     send_task_runner_response(request).await
 }
 
@@ -393,159 +344,6 @@ fn signed_chatos_internal_request_with_secret_and_scope(
     Ok(request
         .header("X-Task-Runner-Caller", "chatos-backend")
         .header("X-Task-Runner-Internal-Token", token))
-}
-
-#[derive(Debug, Serialize)]
-struct ConfirmProjectExecutionRequest<'a> {
-    project_id: &'a str,
-    requirement_id: &'a str,
-    source_session_id: &'a str,
-    source_user_message_id: &'a str,
-}
-
-type MutateProjectExecutionRequest<'a> = ConfirmProjectExecutionRequest<'a>;
-
-pub async fn confirm_project_execution(
-    base_url: &str,
-    project_id: &str,
-    requirement_id: &str,
-    source_session_id: &str,
-    source_user_message_id: &str,
-) -> Result<Value, String> {
-    post_internal_json_with_scope(
-        base_url,
-        "/internal/chatos/project-execution/confirm",
-        &ConfirmProjectExecutionRequest {
-            project_id,
-            requirement_id,
-            source_session_id,
-            source_user_message_id,
-        },
-        "chatos.execution.start",
-    )
-    .await
-}
-
-pub async fn pause_project_execution(
-    base_url: &str,
-    project_id: &str,
-    requirement_id: &str,
-    source_session_id: &str,
-    source_user_message_id: &str,
-) -> Result<Value, String> {
-    mutate_project_execution_dispatch(
-        base_url,
-        "/internal/chatos/project-execution/pause",
-        project_id,
-        requirement_id,
-        source_session_id,
-        source_user_message_id,
-    )
-    .await
-}
-
-pub async fn resume_project_execution(
-    base_url: &str,
-    project_id: &str,
-    requirement_id: &str,
-    source_session_id: &str,
-    source_user_message_id: &str,
-) -> Result<Value, String> {
-    mutate_project_execution_dispatch(
-        base_url,
-        "/internal/chatos/project-execution/resume",
-        project_id,
-        requirement_id,
-        source_session_id,
-        source_user_message_id,
-    )
-    .await
-}
-
-async fn mutate_project_execution_dispatch(
-    base_url: &str,
-    path: &str,
-    project_id: &str,
-    requirement_id: &str,
-    source_session_id: &str,
-    source_user_message_id: &str,
-) -> Result<Value, String> {
-    post_internal_json_with_scope(
-        base_url,
-        path,
-        &MutateProjectExecutionRequest {
-            project_id,
-            requirement_id,
-            source_session_id,
-            source_user_message_id,
-        },
-        "chatos.execution.start",
-    )
-    .await
-}
-
-#[derive(Debug, Serialize)]
-struct CloneProjectExecutionRequest<'a> {
-    project_id: &'a str,
-    requirement_id: &'a str,
-    old_source_session_id: &'a str,
-    old_source_user_message_id: &'a str,
-    new_source_session_id: &'a str,
-    new_source_user_message_id: &'a str,
-}
-
-pub async fn clone_project_execution(
-    base_url: &str,
-    project_id: &str,
-    requirement_id: &str,
-    old_source_session_id: &str,
-    old_source_user_message_id: &str,
-    new_source_session_id: &str,
-    new_source_user_message_id: &str,
-) -> Result<Value, String> {
-    post_internal_json_with_scope(
-        base_url,
-        "/internal/chatos/project-execution/clone",
-        &CloneProjectExecutionRequest {
-            project_id,
-            requirement_id,
-            old_source_session_id,
-            old_source_user_message_id,
-            new_source_session_id,
-            new_source_user_message_id,
-        },
-        "chatos.execution.start",
-    )
-    .await
-}
-
-#[derive(Debug, Serialize)]
-struct RetireProjectExecutionRequest<'a> {
-    project_id: &'a str,
-    requirement_id: &'a str,
-    source_session_id: &'a str,
-    source_user_message_id: &'a str,
-}
-
-pub async fn retire_project_execution(
-    base_url: &str,
-    project_id: &str,
-    requirement_id: &str,
-    source_session_id: &str,
-    source_user_message_id: &str,
-) -> Result<Value, String> {
-    post_internal_json_with_scope(
-        base_url,
-        "/internal/chatos/project-execution/retire",
-        &RetireProjectExecutionRequest {
-            project_id,
-            requirement_id,
-            source_session_id,
-            source_user_message_id,
-        },
-        "chatos.execution.start",
-    )
-    .await
 }
 
 async fn resolve_task_runner_base_url(base_url: &str) -> String {

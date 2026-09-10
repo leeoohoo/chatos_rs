@@ -25,11 +25,22 @@ public sealed class ChatOSApiClient
     public Task<T> GetAsync<T>(string path, CancellationToken cancellationToken = default) =>
         SendAsync<T>(HttpMethod.Get, path, null, cancellationToken);
 
+    public Task<T> GetTaskRunnerAsync<T>(
+        string path,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<T>(HttpMethod.Get, TaskRunnerPath(path), null, cancellationToken);
+
     public Task<T> PostAsync<T>(
         string path,
         object? body = null,
         CancellationToken cancellationToken = default) =>
         SendAsync<T>(HttpMethod.Post, path, body, cancellationToken);
+
+    public Task<T> PostTaskRunnerAsync<T>(
+        string path,
+        object? body = null,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<T>(HttpMethod.Post, TaskRunnerPath(path), body, cancellationToken);
 
     public Task<T> PostAsync<T>(
         string path,
@@ -125,6 +136,39 @@ public sealed class ChatOSApiClient
     }
 
     private static string NormalizePath(string path) => path.TrimStart('/');
+
+    private string TaskRunnerPath(string path)
+    {
+        var baseAddress = _httpClient.BaseAddress
+            ?? throw new ChatOSApiException("ChatOS API base URL is not configured.");
+        var builder = new UriBuilder(baseAddress);
+        if (!string.IsNullOrEmpty(builder.Query) || !string.IsNullOrEmpty(builder.Fragment) ||
+            !string.IsNullOrEmpty(builder.UserName) || !string.IsNullOrEmpty(builder.Password))
+        {
+            throw new ChatOSApiException("ChatOS API base URL is invalid for Task Runner routing.");
+        }
+        var prefix = builder.Path.TrimEnd('/');
+        const string chatOsSuffix = "/api/chatos";
+        if (prefix.EndsWith(chatOsSuffix, StringComparison.Ordinal))
+        {
+            prefix = prefix[..^chatOsSuffix.Length];
+        }
+        else if (prefix.Length > 0)
+        {
+            throw new ChatOSApiException("ChatOS API base URL cannot be routed to Task Runner.");
+        }
+        var normalizedPath = path.TrimStart('/');
+        var querySeparator = normalizedPath.IndexOf('?');
+        var route = querySeparator >= 0
+            ? normalizedPath[..querySeparator]
+            : normalizedPath;
+        var query = querySeparator >= 0
+            ? normalizedPath[(querySeparator + 1)..]
+            : string.Empty;
+        builder.Path = $"{prefix}/api/task/{route}";
+        builder.Query = query;
+        return builder.Uri.AbsoluteUri;
+    }
 
     private static string ResolveErrorMessage(string payload, HttpStatusCode statusCode)
     {

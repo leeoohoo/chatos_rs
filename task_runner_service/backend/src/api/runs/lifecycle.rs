@@ -66,10 +66,7 @@ pub(in crate::api) async fn get_run_workspace_changes(
     Path(id): Path<String>,
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
-) -> Result<
-    Json<crate::services::project_management_api_client::GetRunWorkspaceChangesResponse>,
-    ApiError,
-> {
+) -> Result<Json<crate::services::RunWorkspaceChanges>, ApiError> {
     let run = state
         .run_service
         .get_run(&id)

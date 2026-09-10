@@ -47,14 +47,9 @@ impl TaskService {
                 ));
             }
             if let Some(auth_mode) = server.auth_mode.as_deref() {
-                if !matches!(
-                    auth_mode,
-                    crate::models::TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC
-                ) {
-                    return Err(format!(
-                        "unsupported ephemeral HTTP MCP auth_mode for {name}: {auth_mode}"
-                    ));
-                }
+                return Err(format!(
+                    "ephemeral HTTP MCP auth_mode is not supported for {name}: {auth_mode}"
+                ));
             }
         }
         Ok(())
@@ -65,6 +60,7 @@ impl TaskService {
         config: &TaskMcpConfig,
         plugin_config: &chatos_plugin_management_sdk::TaskPluginConfig,
         project_id: Option<&str>,
+        project_context: Option<&chatos_mcp_management_sdk::ProjectContextAuthorization>,
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey,
@@ -76,6 +72,7 @@ impl TaskService {
                 config,
                 plugin_config,
                 project_id,
+                project_context,
                 current_user,
                 task_owner_user_id,
                 agent_key,
@@ -98,6 +95,7 @@ impl TaskService {
         config: &TaskMcpConfig,
         plugin_config: &chatos_plugin_management_sdk::TaskPluginConfig,
         project_id: Option<&str>,
+        project_context: Option<&chatos_mcp_management_sdk::ProjectContextAuthorization>,
         current_user: Option<&CurrentUser>,
         task_owner_user_id: Option<&str>,
         agent_key: chatos_plugin_management_sdk::SystemAgentKey,
@@ -110,6 +108,7 @@ impl TaskService {
                 task_owner_user_id,
                 agent_key,
                 project_id,
+                project_context,
                 Some(task_profile),
                 Some(schedule_mode),
             )

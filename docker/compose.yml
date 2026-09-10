@@ -50,10 +50,6 @@ x-config-center-mtls-chatos-secrets: &config-center-mtls-chatos-secrets
     target: task_runner_mtls_ca
   - source: task_runner_mtls_chatos_identity
     target: task_runner_mtls_client_identity
-  - source: project_service_mtls_ca
-    target: project_service_mtls_ca
-  - source: project_service_mtls_chatos_identity
-    target: project_service_mtls_client_identity
   - source: user_service_mtls_ca
     target: user_service_mtls_ca
   - source: user_service_mtls_chatos_identity
@@ -108,10 +104,6 @@ x-config-center-mtls-mcp-management-secrets: &config-center-mtls-mcp-management-
     target: task_runner_mtls_ca
   - source: task_runner_mtls_mcp_management_identity
     target: task_runner_mtls_client_identity
-  - source: project_service_mtls_ca
-    target: project_service_mtls_ca
-  - source: project_service_mtls_mcp_management_identity
-    target: project_service_mtls_client_identity
   - source: plugin_management_mtls_ca
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_mcp_management_identity
@@ -169,34 +161,6 @@ x-config-center-mtls-plugin-management-secrets: &config-center-mtls-plugin-manag
   - source: plugin_management_mtls_server_key
     target: plugin_management_mtls_server_key
 
-x-config-center-mtls-project-service-secrets: &config-center-mtls-project-service-secrets
-  - source: config_center_mtls_ca
-    target: config_center_mtls_ca
-  - source: config_center_mtls_project_service_identity
-    target: config_center_mtls_client_identity
-  - source: mcp_management_mtls_ca
-    target: mcp_management_mtls_ca
-  - source: mcp_management_mtls_project_service_identity
-    target: mcp_management_mtls_client_identity
-  - source: project_service_mtls_ca
-    target: project_service_mtls_ca
-  - source: project_service_mtls_server_cert
-    target: project_service_mtls_server_cert
-  - source: project_service_mtls_server_key
-    target: project_service_mtls_server_key
-  - source: user_service_mtls_ca
-    target: user_service_mtls_ca
-  - source: user_service_mtls_project_service_identity
-    target: user_service_mtls_client_identity
-  - source: plugin_management_mtls_ca
-    target: plugin_management_mtls_ca
-  - source: plugin_management_mtls_project_service_identity
-    target: plugin_management_mtls_client_identity
-  - source: local_connector_mtls_ca
-    target: local_connector_mtls_ca
-  - source: local_connector_mtls_project_service_identity
-    target: local_connector_mtls_client_identity
-
 x-config-center-mtls-task-runner-secrets: &config-center-mtls-task-runner-secrets
   - source: config_center_mtls_ca
     target: config_center_mtls_ca
@@ -210,10 +174,6 @@ x-config-center-mtls-task-runner-secrets: &config-center-mtls-task-runner-secret
     target: memory_engine_mtls_ca
   - source: memory_engine_mtls_task_runner_identity
     target: memory_engine_mtls_client_identity
-  - source: project_service_mtls_ca
-    target: project_service_mtls_ca
-  - source: project_service_mtls_task_runner_identity
-    target: project_service_mtls_client_identity
   - source: plugin_management_mtls_ca
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_task_runner_identity
@@ -246,10 +206,6 @@ x-config-center-mtls-task-runner-api-secrets: &config-center-mtls-task-runner-ap
     target: memory_engine_mtls_ca
   - source: memory_engine_mtls_task_runner_identity
     target: memory_engine_mtls_client_identity
-  - source: project_service_mtls_ca
-    target: project_service_mtls_ca
-  - source: project_service_mtls_task_runner_identity
-    target: project_service_mtls_client_identity
   - source: plugin_management_mtls_ca
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_task_runner_identity
@@ -452,7 +408,6 @@ services:
       CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET:-change_me_config_center_memory_engine_signing_secret}
       CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET:-change_me_config_center_official_website_signing_secret}
       CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_plugin_management_signing_secret}
-      CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_project_service_signing_secret}
       CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET:-change_me_config_center_task_runner_signing_secret}
       CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_user_service_signing_secret}
       CONFIG_CENTER_CONSUL_REQUIRED: ${CONFIG_CENTER_CONSUL_REQUIRED:-false}
@@ -554,7 +509,6 @@ services:
       USER_SERVICE_JWT_ISSUER: ${USER_SERVICE_JWT_ISSUER:-user_service}
       USER_SERVICE_USER_AUDIENCE: ${USER_SERVICE_USER_AUDIENCE:-user_service}
       USER_SERVICE_TASK_RUNNER_AUDIENCE: ${USER_SERVICE_TASK_RUNNER_AUDIENCE:-task_runner}
-      PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET: ${PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET:-change_me_project_service_user_service_secret}
       CHATOS_USER_SERVICE_INTERNAL_API_SECRET: ${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}
       USER_SERVICE_SMTP_HOST: ${USER_SERVICE_SMTP_HOST:-}
       USER_SERVICE_SMTP_PORT: ${USER_SERVICE_SMTP_PORT:-587}
@@ -675,57 +629,6 @@ services:
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
       MEMORY_ENGINE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
 
-  project-management-backend:
-    <<: *rust-service
-    image: ${PROJECT_MANAGEMENT_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-project-management-backend:${CHATOS_IMAGE_TAG:-latest}}
-    secrets: *config-center-mtls-project-service-secrets
-    environment:
-      <<: *service-runtime-env
-      CHATOS_SERVICE_NAME: project-service
-      CONFIG_CENTER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_PROJECT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_project_service_signing_secret}
-      CHATOS_SERVICE_ID: project-service-docker
-      CHATOS_SERVICE_ADDRESS: project-management-backend
-      CHATOS_SERVICE_PORT: 39210
-      CHATOS_SERVICE_HEALTH_PATH: /api/health
-      PROJECT_SERVICE_HOST: 0.0.0.0
-      PROJECT_SERVICE_PORT: 39210
-      PROJECT_SERVICE_INTERNAL_MTLS_PORT: 39212
-      PROJECT_SERVICE_MTLS_SERVER_CERT_PATH: /run/secrets/project_service_mtls_server_cert
-      PROJECT_SERVICE_MTLS_SERVER_KEY_PATH: /run/secrets/project_service_mtls_server_key
-      PROJECT_SERVICE_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
-      PROJECT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/project_management_service?authSource=admin&replicaSet=rs0
-      PROJECT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL: https://user-service-backend:39192
-      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
-      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      PROJECT_SERVICE_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
-      PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL: https://local-connector-service-backend:39232
-      LOCAL_CONNECTOR_MTLS_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
-      LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/local_connector_mtls_client_identity
-      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_project_service_secret}
-      PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_project_service_local_connector_secret}
-      PROJECT_SERVICE_SYNC_SECRET: ${CHATOS_PROJECT_SERVICE_SYNC_SECRET:-}
-      CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET: ${CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_project_service_secret}
-      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
-      PROJECT_SERVICE_SELF_INTERNAL_API_SECRET: ${PROJECT_SERVICE_SELF_INTERNAL_API_SECRET:-change_me_project_service_self_secret}
-      MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_mcp_management_project_service_secret}
-      MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS:-7200000}
-      MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
-      MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
-      MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
-      PROJECT_SERVICE_USER_SERVICE_INTERNAL_SECRET: ${PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET:-change_me_project_service_user_service_secret}
-      PROJECT_SERVICE_TASK_RUNNER_INTERNAL_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
-      CHATOS_RUN_WORKSPACE_ROOT: /data/chatos/run-workspaces
-    depends_on:
-      plugin-management-backend:
-        condition: service_healthy
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PROJECT_SERVICE_PORT:-39210}:39210"
-    volumes:
-      - chatos-data:/data/chatos
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39210/api/health"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -754,7 +657,6 @@ services:
       PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       PLUGIN_MANAGEMENT_CORS_ORIGINS: ${PLUGIN_MANAGEMENT_CORS_ORIGINS:-http://127.0.0.1:39261,http://localhost:39261}
       PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_plugin_management_task_runner_secret}
-      PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_project_service_secret}
       PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_local_connector_secret}
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
       PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}
@@ -811,7 +713,6 @@ services:
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID:-}
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS:-86400}
       CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
-      PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_project_service_local_connector_secret}
       MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_mcp_management_local_connector_secret}
       LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
@@ -863,10 +764,6 @@ services:
       MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS: ${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}
       MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL: https://plugin-management-backend:39262
       PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}
-      MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL: https://project-management-backend:39212
-      PROJECT_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
-      PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/project_service_mtls_client_identity
-      MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_mcp_management_project_service_secret}
       MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL: https://task-runner-backend:39092
       TASK_RUNNER_MTLS_CA_CERT_PATH: /run/secrets/task_runner_mtls_ca
       TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/task_runner_mtls_client_identity
@@ -890,8 +787,6 @@ services:
       mongodb:
         condition: service_healthy
       valkey:
-        condition: service_healthy
-      project-management-backend:
         condition: service_healthy
       plugin-management-backend:
         condition: service_healthy
@@ -936,11 +831,6 @@ services:
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
       USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
-      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL: https://project-management-backend:39212
-      PROJECT_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
-      PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/project_service_mtls_client_identity
-      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
       TASK_RUNNER_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
       MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
@@ -955,7 +845,6 @@ services:
       TASK_RUNNER_CHATOS_CALLBACK_URL: https://chatos-backend:3999/api/agent/chat/task-runner/callback
       CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
       CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
-      PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
       CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
       MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
       USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_user_service_task_runner_secret}
@@ -973,8 +862,6 @@ services:
       user-service-backend:
         condition: service_healthy
       memory-engine-backend:
-        condition: service_healthy
-      project-management-backend:
         condition: service_healthy
       plugin-management-backend:
         condition: service_healthy
@@ -1016,11 +903,6 @@ services:
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
       USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
-      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL: https://project-management-backend:39212
-      PROJECT_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
-      PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/project_service_mtls_client_identity
-      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
       TASK_RUNNER_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
       MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
@@ -1035,7 +917,6 @@ services:
       TASK_RUNNER_CHATOS_CALLBACK_URL: https://chatos-backend:3999/api/agent/chat/task-runner/callback
       CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
       CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
-      PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
       CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
       MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -1050,8 +931,6 @@ services:
       user-service-backend:
         condition: service_healthy
       memory-engine-backend:
-        condition: service_healthy
-      project-management-backend:
         condition: service_healthy
       plugin-management-backend:
         condition: service_healthy
@@ -1080,11 +959,6 @@ services:
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
       USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      TASK_RUNNER_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
-      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL: https://project-management-backend:39212
-      PROJECT_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
-      PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/project_service_mtls_client_identity
-      TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET: ${TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_task_runner_project_service_secret}
       TASK_RUNNER_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
       MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
@@ -1099,7 +973,6 @@ services:
       TASK_RUNNER_CHATOS_CALLBACK_URL: https://chatos-backend:3999/api/agent/chat/task-runner/callback
       CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
       CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
-      PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_project_service_task_runner_secret}
       CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
       MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -1114,8 +987,6 @@ services:
       user-service-backend:
         condition: service_healthy
       memory-engine-backend:
-        condition: service_healthy
-      project-management-backend:
         condition: service_healthy
       plugin-management-backend:
         condition: service_healthy
@@ -1170,15 +1041,9 @@ services:
       CHATOS_USER_SERVICE_INTERNAL_API_SECRET: ${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
       USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      CHATOS_PROJECT_SERVICE_BASE_URL: http://project-management-backend:39210
-      CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL: https://project-management-backend:39212
-      CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS: ${CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS:-30000}
-      PROJECT_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/project_service_mtls_ca
-      PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/project_service_mtls_client_identity
       CHATOS_TASK_RUNNER_INTERNAL_BASE_URL: https://task-runner-backend:39092
       TASK_RUNNER_MTLS_CA_CERT_PATH: /run/secrets/task_runner_mtls_ca
       TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/task_runner_mtls_client_identity
-      CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET: ${CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_project_service_secret}
       CHATOS_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
       MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
@@ -1221,8 +1086,6 @@ services:
       user-service-backend:
         condition: service_healthy
       task-runner-backend:
-        condition: service_healthy
-      project-management-backend:
         condition: service_healthy
       memory-engine-backend:
         condition: service_healthy
@@ -1269,7 +1132,6 @@ services:
       MAIN_BACKEND_PORT: ${MAIN_BACKEND_PORT:-3997}
       MEMORY_ENGINE_PORT: ${MEMORY_ENGINE_PORT:-7081}
       USER_SERVICE_PORT: ${USER_SERVICE_PORT:-39190}
-      PROJECT_SERVICE_PORT: ${PROJECT_SERVICE_PORT:-39210}
       TASK_RUNNER_BACKEND_PORT: ${TASK_RUNNER_BACKEND_PORT:-39090}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -1297,8 +1159,6 @@ services:
       user-service-backend:
         condition: service_healthy
       memory-engine-backend:
-        condition: service_healthy
-      project-management-backend:
         condition: service_healthy
       plugin-management-backend:
         condition: service_healthy
@@ -1342,8 +1202,6 @@ secrets:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/official-website.identity.pem
   config_center_mtls_plugin_management_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/plugin-management-service.identity.pem
-  config_center_mtls_project_service_identity:
-    file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/project-service.identity.pem
   config_center_mtls_task_runner_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/task-runner.identity.pem
   config_center_mtls_user_service_identity:
@@ -1358,8 +1216,6 @@ secrets:
     file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/chatos.identity.pem
   mcp_management_mtls_task_runner_identity:
     file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/task-runner.identity.pem
-  mcp_management_mtls_project_service_identity:
-    file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/project-service.identity.pem
   mcp_management_mtls_configuration_center_identity:
     file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/configuration-center.identity.pem
   task_runner_mtls_ca:
@@ -1372,8 +1228,6 @@ secrets:
     file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/chatos.identity.pem
   task_runner_mtls_mcp_management_identity:
     file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/mcp-management-service.identity.pem
-  task_runner_mtls_project_service_identity:
-    file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/project-service.identity.pem
   task_runner_mtls_user_service_identity:
     file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/user-service.identity.pem
   memory_engine_mtls_ca:
@@ -1388,18 +1242,6 @@ secrets:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/chatos-backend.identity.pem
   memory_engine_mtls_task_runner_identity:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/task-runner.identity.pem
-  project_service_mtls_ca:
-    file: ${PROJECT_SERVICE_MTLS_DIR:-./secrets/project-service-mtls}/ca.crt
-  project_service_mtls_server_cert:
-    file: ${PROJECT_SERVICE_MTLS_DIR:-./secrets/project-service-mtls}/server.crt
-  project_service_mtls_server_key:
-    file: ${PROJECT_SERVICE_MTLS_DIR:-./secrets/project-service-mtls}/server.key
-  project_service_mtls_chatos_identity:
-    file: ${PROJECT_SERVICE_MTLS_DIR:-./secrets/project-service-mtls}/chatos-backend.identity.pem
-  project_service_mtls_task_runner_identity:
-    file: ${PROJECT_SERVICE_MTLS_DIR:-./secrets/project-service-mtls}/task-runner.identity.pem
-  project_service_mtls_mcp_management_identity:
-    file: ${PROJECT_SERVICE_MTLS_DIR:-./secrets/project-service-mtls}/mcp-management-service.identity.pem
   local_connector_mtls_ca:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/ca.crt
   local_connector_mtls_server_cert:
@@ -1408,8 +1250,6 @@ secrets:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/server.key
   local_connector_mtls_chatos_identity:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/chatos-backend.identity.pem
-  local_connector_mtls_project_service_identity:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/project-service.identity.pem
   local_connector_mtls_mcp_management_identity:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/mcp-management-service.identity.pem
   chatos_mtls_ca:
@@ -1428,8 +1268,6 @@ secrets:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/server.crt
   user_service_mtls_server_key:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/server.key
-  user_service_mtls_project_service_identity:
-    file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/project-service.identity.pem
   user_service_mtls_chatos_identity:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/chatos-backend.identity.pem
   user_service_mtls_task_runner_identity:
@@ -1444,8 +1282,6 @@ secrets:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/chatos-backend.identity.pem
   plugin_management_mtls_task_runner_identity:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/task-runner.identity.pem
-  plugin_management_mtls_project_service_identity:
-    file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/project-service.identity.pem
   plugin_management_mtls_local_connector_identity:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/local-connector-service.identity.pem
   plugin_management_mtls_memory_engine_identity:

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_mcp_management_sdk::ClientProjectContextSnapshot;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -92,6 +93,32 @@ fn metadata_bool_with_source(metadata: Option<&Value>, path: &[&str]) -> Option<
         let source_path = with_source_metadata_prefix(path);
         metadata_bool(metadata, source_path.as_slice())
     })
+}
+
+fn metadata_value_with_source<'a>(metadata: Option<&'a Value>, path: &[&str]) -> Option<&'a Value> {
+    let value_at = |path: &[&str]| {
+        let mut cursor = metadata?;
+        for key in path {
+            cursor = cursor.get(*key)?;
+        }
+        Some(cursor)
+    };
+    value_at(path).or_else(|| {
+        let source_path = with_source_metadata_prefix(path);
+        value_at(source_path.as_slice())
+    })
+}
+
+pub fn project_context_from_metadata(
+    metadata: Option<&Value>,
+) -> Result<Option<ClientProjectContextSnapshot>, String> {
+    let value = metadata_value_with_source(metadata, &["chat_runtime", "project_context"])
+        .or_else(|| metadata_value_with_source(metadata, &["chat_runtime", "projectContext"]));
+    let Some(value) = value else { return Ok(None) };
+    let snapshot = serde_json::from_value::<ClientProjectContextSnapshot>(value.clone())
+        .map_err(|error| format!("invalid client project context metadata: {error}"))?;
+    snapshot.validate()?;
+    Ok(Some(snapshot))
 }
 
 impl ChatRuntimeMetadata {

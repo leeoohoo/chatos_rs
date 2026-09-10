@@ -44,8 +44,7 @@ pub struct InternalUserModelSettingsResponse {
     pub model_request_max_retries: i64,
     pub memory_summary_model_config_id: Option<String>,
     pub memory_summary_thinking_level: Option<String>,
-    pub project_management_agent_model_config_id: Option<String>,
-    pub project_management_agent_thinking_level: Option<String>,
+    pub task_runner_default_model_config_id: Option<String>,
     pub updated_at: String,
 }
 
@@ -289,10 +288,7 @@ pub async fn get_user_model_settings(
                 model_request_max_retries: settings.model_request_max_retries,
                 memory_summary_model_config_id: settings.memory_summary_model_config_id,
                 memory_summary_thinking_level: settings.memory_summary_thinking_level,
-                project_management_agent_model_config_id: settings
-                    .project_management_agent_model_config_id,
-                project_management_agent_thinking_level: settings
-                    .project_management_agent_thinking_level,
+                task_runner_default_model_config_id: settings.task_runner_default_model_config_id,
                 updated_at: settings.updated_at,
             },
             None => InternalUserModelSettingsResponse {
@@ -300,8 +296,7 @@ pub async fn get_user_model_settings(
                 model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
                 memory_summary_model_config_id: None,
                 memory_summary_thinking_level: None,
-                project_management_agent_model_config_id: None,
-                project_management_agent_thinking_level: None,
+                task_runner_default_model_config_id: None,
                 updated_at: now_rfc3339(),
             },
         }))

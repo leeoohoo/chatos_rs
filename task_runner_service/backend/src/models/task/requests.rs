@@ -25,6 +25,7 @@ pub struct TaskMcpRequestConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateTaskRequest {
     pub title: String,
     pub description: Option<String>,
@@ -36,6 +37,8 @@ pub struct CreateTaskRequest {
     pub default_model_config_id: Option<String>,
     #[serde(default)]
     pub project_id: Option<String>,
+    /// Client declaration; authorized by the authenticated service before persistence.
+    pub project_context: Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
     #[serde(default)]
     pub task_profile: Option<String>,
     pub tenant_id: Option<String>,
@@ -51,6 +54,7 @@ pub struct CreateTaskRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskSourceContext {
     pub project_id: Option<String>,
+    pub project_context: Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
     pub parent_task_id: Option<String>,
     pub source_run_id: Option<String>,
     pub source_session_id: Option<String>,
@@ -69,6 +73,7 @@ pub enum TaskProjectScopeFilter {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
@@ -78,8 +83,6 @@ pub struct UpdateTaskRequest {
     pub priority: Option<i32>,
     pub tags: Option<Vec<String>>,
     pub default_model_config_id: Option<String>,
-    #[serde(default)]
-    pub project_id: Option<String>,
     #[serde(default)]
     pub task_profile: Option<String>,
     pub schedule: Option<TaskScheduleConfig>,

@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSAPI
 import ChatOSCore
 import SwiftUI
 import WebKit
@@ -140,6 +141,8 @@ struct PluginApplicationHostView: View {
     @State private var contextChosen = false
     @State private var selectedProjectID: String?
     @State private var launchContext: LocalConnectorPluginApplicationContext?
+    @State private var launchTask: Task<Void, Never>?
+    @State private var taskWorkspace: PluginTaskWorkspaceContext?
 
     private var requiresContextSelection: Bool {
         application.contextScope == "project" || application.contextScope == "workspace"
@@ -149,7 +152,7 @@ struct PluginApplicationHostView: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Button {
-                    model.selection = .applications
+                    close()
                 } label: {
                     Image(systemName: "chevron.left")
                 }
@@ -167,6 +170,7 @@ struct PluginApplicationHostView: View {
                         .padding(.vertical, 4)
                         .background(.quaternary, in: Capsule())
                     Button(model.localized("切换", english: "Switch")) {
+                        launchTask?.cancel()
                         launch = nil
                         errorMessage = nil
                         launchContext = nil
@@ -196,9 +200,11 @@ struct PluginApplicationHostView: View {
                     contextPicker
                 } else if let launch {
                     RestrictedPluginWebView(
-                        url: launch.url,
-                        websiteDataStoreID: launch.websiteDataStoreID,
-                        reloadToken: reloadToken
+                        launch: launch,
+                        projectContext: launchContext,
+                        reloadToken: reloadToken,
+                        model: model,
+                        onOpenWorkspace: { taskWorkspace = $0 }
                     )
                 } else if let errorMessage {
                     ContentUnavailableView {
@@ -213,7 +219,7 @@ struct PluginApplicationHostView: View {
                             start(context: launchContext)
                         }
                         Button(model.localized("返回应用列表", english: "Back to Applications")) {
-                            model.selection = .applications
+                            close()
                         }
                     }
                 } else {
@@ -233,6 +239,13 @@ struct PluginApplicationHostView: View {
                 contextChosen = true
                 start(context: nil)
             }
+        }
+        .onDisappear { launchTask?.cancel() }
+        .sheet(item: $taskWorkspace) { workspace in
+            PluginTaskWorkspaceView(
+                workspace: workspace,
+                service: model.taskRunnerHostService
+            )
         }
     }
 
@@ -323,15 +336,24 @@ struct PluginApplicationHostView: View {
     }
 
     private func start(context: LocalConnectorPluginApplicationContext? = nil) {
+        launchTask?.cancel()
         launch = nil
         errorMessage = nil
-        Task {
+        launchTask = Task {
             do {
-                launch = try await model.launchPluginApplication(application, context: context)
+                let result = try await model.launchPluginApplication(application, context: context)
+                guard !Task.isCancelled else { return }
+                launch = result
             } catch {
+                guard !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func close() {
+        launchTask?.cancel()
+        model.selection = .applications
     }
 }
 
@@ -363,46 +385,257 @@ private struct PluginApplicationIcon: View {
 }
 
 private struct RestrictedPluginWebView: NSViewRepresentable {
-    var url: URL
-    var websiteDataStoreID: UUID?
+    var launch: LocalConnectorPluginApplicationLaunch
+    var projectContext: LocalConnectorPluginApplicationContext?
     var reloadToken: Int
+    let model: AppModel
+    let onOpenWorkspace: @MainActor (PluginTaskWorkspaceContext) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(allowedURL: url) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            launch: launch,
+            projectContext: projectContext,
+            model: model,
+            onOpenWorkspace: onOpenWorkspace
+        )
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = websiteDataStoreID.map(WKWebsiteDataStore.init(forIdentifier:))
+        configuration.websiteDataStore = launch.websiteDataStoreID.map(WKWebsiteDataStore.init(forIdentifier:))
             ?? .nonPersistent()
         configuration.preferences.isElementFullscreenEnabled = true
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Coordinator.bootstrapScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        configuration.userContentController.add(context.coordinator, name: Coordinator.handlerName)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
-        context.coordinator.load(url, in: webView, reloadToken: reloadToken)
+        context.coordinator.load(launch.url, in: webView, reloadToken: reloadToken)
         return webView
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.allowedURL = url
-        context.coordinator.load(url, in: webView, reloadToken: reloadToken)
+        context.coordinator.update(
+            launch: launch,
+            projectContext: projectContext,
+            onOpenWorkspace: onOpenWorkspace
+        )
+        context.coordinator.load(launch.url, in: webView, reloadToken: reloadToken)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.handlerName)
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        static let handlerName = "chatosPluginBridge"
+        static let bootstrapScript = #"""
+        (() => {
+          const pending = new Map();
+          let ready = null;
+          window.__chatosReceiveHostMessage = message => {
+            if (!message || typeof message !== 'object') return;
+            if (message.type === 'chatos.plugin_ui.ready') {
+              ready = message;
+              window.dispatchEvent(new CustomEvent('chatos:host-ready', { detail: message }));
+              return;
+            }
+            if (message.type !== 'chatos.plugin_ui.response') return;
+            const callback = pending.get(message.request_id);
+            if (!callback) return;
+            pending.delete(message.request_id);
+            message.ok ? callback.resolve(message.result) : callback.reject(Object.assign(new Error(message.error_message || 'Host request failed'), { code: message.error_code }));
+          };
+          window.chatosHost = Object.freeze({
+            capabilities: () => ready ? [...ready.capabilities] : [],
+            request: (method, payload = {}) => new Promise((resolve, reject) => {
+              if (!ready) return reject(new Error('ChatOS host bridge is not ready'));
+              if (!ready.capabilities.includes(method)) return reject(new Error(`Host capability is not granted: ${method}`));
+              const request_id = crypto.randomUUID();
+              pending.set(request_id, { resolve, reject });
+              window.webkit.messageHandlers.chatosPluginBridge.postMessage({
+                type: 'chatos.plugin_ui.request', protocol_version: 1,
+                adapter_session_id: ready.adapter_session_id,
+                host_session_nonce: ready.host_session_nonce,
+                request_id, method, payload
+              });
+            })
+          });
+        })();
+        """#
+
+        private(set) var launch: LocalConnectorPluginApplicationLaunch
+        private var projectContext: LocalConnectorPluginApplicationContext?
+        private let model: AppModel
+        private var onOpenWorkspace: @MainActor (PluginTaskWorkspaceContext) -> Void
         var allowedURL: URL
         private var loadedURL: URL?
         private var loadedReloadToken: Int?
+        private let adapterSessionID = UUID().uuidString.lowercased()
+        private let hostSessionNonce = UUID().uuidString.lowercased() + UUID().uuidString.lowercased()
+        private var webView: WKWebView?
 
-        init(allowedURL: URL) {
-            self.allowedURL = allowedURL
+        init(
+            launch: LocalConnectorPluginApplicationLaunch,
+            projectContext: LocalConnectorPluginApplicationContext?,
+            model: AppModel,
+            onOpenWorkspace: @escaping @MainActor (PluginTaskWorkspaceContext) -> Void
+        ) {
+            self.launch = launch
+            self.projectContext = projectContext
+            self.model = model
+            self.onOpenWorkspace = onOpenWorkspace
+            self.allowedURL = launch.url
+        }
+
+        func update(
+            launch: LocalConnectorPluginApplicationLaunch,
+            projectContext: LocalConnectorPluginApplicationContext?,
+            onOpenWorkspace: @escaping @MainActor (PluginTaskWorkspaceContext) -> Void
+        ) {
+            self.launch = launch
+            self.projectContext = projectContext
+            self.onOpenWorkspace = onOpenWorkspace
+            allowedURL = launch.url
         }
 
         func load(_ url: URL, in webView: WKWebView, reloadToken: Int) {
             guard loadedURL != url || loadedReloadToken != reloadToken else { return }
             loadedURL = url
             loadedReloadToken = reloadToken
+            self.webView = webView
             if url.isFileURL {
                 webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
             } else {
                 webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
             }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            sendReady(to: webView)
+        }
+
+        nonisolated func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            Task { @MainActor [weak self] in self?.receive(message) }
+        }
+
+        private func receive(_ message: WKScriptMessage) {
+            guard message.name == Self.handlerName,
+                  message.frameInfo.isMainFrame,
+                  message.webView === webView,
+                  let currentURL = message.webView?.url,
+                  allows(currentURL),
+                  let value = message.body as? [String: Any],
+                  let data = try? JSONSerialization.data(withJSONObject: value),
+                  data.count <= 256 * 1_024,
+                  value["type"] as? String == "chatos.plugin_ui.request",
+                  (value["protocol_version"] as? NSNumber)?.intValue == 1,
+                  value["adapter_session_id"] as? String == adapterSessionID,
+                  value["host_session_nonce"] as? String == hostSessionNonce,
+                  let requestID = validIdentifier(value["request_id"] as? String),
+                  let method = value["method"] as? String,
+                  launch.application.bridgeCapabilities.contains(method),
+                  let payload = value["payload"] as? [String: Any] else {
+                return
+            }
+            Task {
+                do {
+                    let result = try await handle(method: method, payload: payload)
+                    respond(requestID: requestID, ok: true, result: result)
+                } catch {
+                    respond(
+                        requestID: requestID,
+                        ok: false,
+                        result: [:],
+                        errorCode: "host_request_failed",
+                        errorMessage: error.localizedDescription
+                    )
+                }
+            }
+        }
+
+        private func handle(method: String, payload: [String: Any]) async throws -> Any {
+            switch method {
+            case "host.context.read":
+                return [
+                    "projectId": projectContext?.projectID as Any,
+                    "projectName": projectContext?.projectName as Any,
+                    "capabilities": launch.application.bridgeCapabilities,
+                ]
+            case "task.batch.prepare":
+                guard let projectContext else { throw ChatOSAPIError.invalidRequest("插件未绑定项目") }
+                let data = try JSONSerialization.data(withJSONObject: payload)
+                let request = try JSONDecoder().decode(PluginHostTaskBatchRequest.self, from: data)
+                return try jsonObject(await model.preparePluginTaskBatch(request, launch: launch, context: projectContext))
+            case "task.batch.status":
+                guard let projectContext,
+                      let taskIDs = payload["taskIds"] as? [String] else {
+                    throw ChatOSAPIError.invalidRequest("任务状态请求无效")
+                }
+                return try jsonObject(await model.pluginTaskStatuses(taskIDs: taskIDs, context: projectContext))
+            case "task.workspace.open":
+                guard let projectContext, let projectID = projectContext.projectID,
+                      let batchID = validIdentifier(payload["batchId"] as? String),
+                      let taskIDs = payload["taskIds"] as? [String],
+                      !taskIDs.isEmpty else {
+                    throw ChatOSAPIError.invalidRequest(String(localized: "任务工作区请求无效"))
+                }
+                _ = try await model.pluginTaskStatuses(taskIDs: taskIDs, context: projectContext)
+                onOpenWorkspace(.init(batchID: batchID, taskIDs: taskIDs, projectID: projectID))
+                return ["opened": true]
+            default:
+                throw ChatOSAPIError.invalidRequest("宿主能力未实现")
+            }
+        }
+
+        private func sendReady(to webView: WKWebView) {
+            deliver([
+                "type": "chatos.plugin_ui.ready",
+                "protocol_version": 1,
+                "adapter_session_id": adapterSessionID,
+                "host_session_nonce": hostSessionNonce,
+                "capabilities": launch.application.bridgeCapabilities,
+            ], to: webView)
+        }
+
+        private func respond(
+            requestID: String,
+            ok: Bool,
+            result: Any,
+            errorCode: String? = nil,
+            errorMessage: String? = nil
+        ) {
+            var response: [String: Any] = [
+                "type": "chatos.plugin_ui.response", "protocol_version": 1,
+                "adapter_session_id": adapterSessionID, "host_session_nonce": hostSessionNonce,
+                "request_id": requestID, "ok": ok, "result": result,
+            ]
+            if let errorCode { response["error_code"] = errorCode }
+            if let errorMessage { response["error_message"] = errorMessage }
+            if let webView { deliver(response, to: webView) }
+        }
+
+        private func deliver(_ value: [String: Any], to webView: WKWebView) {
+            guard let data = try? JSONSerialization.data(withJSONObject: value),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            webView.evaluateJavaScript("window.__chatosReceiveHostMessage(\(json))")
+        }
+
+        private func jsonObject<T: Encodable>(_ value: T) throws -> Any {
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
+        }
+
+        private func validIdentifier(_ value: String?) -> String? {
+            guard let value, !value.isEmpty, value.utf8.count <= 256,
+                  value.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { return nil }
+            return value
         }
 
         @MainActor func webView(
@@ -428,6 +661,121 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
                 && destination.host == allowedURL.host
                 && destination.port == allowedURL.port
         }
+    }
+}
+
+struct PluginTaskWorkspaceContext: Identifiable, Equatable {
+    let batchID: String
+    let taskIDs: [String]
+    let projectID: String
+    var id: String { batchID }
+}
+
+private struct PluginTaskWorkspaceView: View {
+    let workspace: PluginTaskWorkspaceContext
+    let service: ChatOSTaskRunnerHostService
+    @Environment(\.dismiss) private var dismiss
+    @State private var tasks: [PluginHostTaskReference] = []
+    @State private var isLoading = true
+    @State private var isStarting = false
+    @State private var errorMessage: String?
+    @State private var showStartConfirmation = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("任务工作区").font(.headline)
+                    Text("Task Runner 是运行状态的唯一来源").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("刷新", systemImage: "arrow.clockwise") { Task { await load() } }
+                    .disabled(isLoading || isStarting)
+                Button("开始执行", systemImage: "play.fill") { showStartConfirmation = true }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(tasks.isEmpty || isLoading || isStarting || !tasks.contains(where: { $0.status == "ready" }))
+                Button("关闭", action: dismiss.callAsFunction)
+            }
+            .padding(16)
+            Divider()
+            if isLoading && tasks.isEmpty {
+                ProgressView("正在读取真实任务状态…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if tasks.isEmpty {
+                ContentUnavailableView(
+                    "任务不可用",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(errorMessage ?? String(localized: "Task Runner 没有返回任务"))
+                )
+            } else {
+                List(tasks) { task in
+                    HStack(spacing: 12) {
+                        Circle().fill(statusColor(task.status)).frame(width: 9, height: 9)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(task.title).font(.system(size: 13, weight: .medium))
+                            Text(task.taskID).font(.caption2.monospaced()).foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        Text(statusTitle(task.status)).font(.caption.weight(.medium))
+                            .foregroundStyle(statusColor(task.status))
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(statusColor(task.status).opacity(0.1), in: Capsule())
+                    }
+                    .padding(.vertical, 5)
+                }
+                .listStyle(.inset)
+                if let errorMessage {
+                    Text(errorMessage).font(.caption).foregroundStyle(.red).padding(10)
+                }
+            }
+        }
+        .frame(minWidth: 760, minHeight: 520)
+        .task { await load() }
+        .confirmationDialog("开始执行这个任务批次？", isPresented: $showStartConfirmation, titleVisibility: .visible) {
+            Button("开始执行", role: .none) { Task { await start() } }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("Task Runner 会按依赖关系调度已就绪任务。关闭项目管理插件不会停止任务。")
+        }
+    }
+
+    private func load() async {
+        isLoading = true; errorMessage = nil
+        do { tasks = try await service.taskStatuses(taskIDs: workspace.taskIDs, projectID: workspace.projectID) }
+        catch { errorMessage = error.localizedDescription }
+        isLoading = false
+    }
+
+    private func start() async {
+        isStarting = true; errorMessage = nil
+        do {
+            let results = try await service.startBatch(taskIDs: workspace.taskIDs, projectID: workspace.projectID)
+            let failures = results.filter { !$0.ok }
+            if !failures.isEmpty { errorMessage = failures.compactMap(\.message).joined(separator: "；") }
+            await load()
+        } catch { errorMessage = error.localizedDescription }
+        isStarting = false
+    }
+
+    private func statusTitle(_ status: String) -> String {
+        switch status {
+        case "draft": String(localized: "草稿")
+        case "ready": String(localized: "待执行")
+        case "queued": String(localized: "排队中")
+        case "running": String(localized: "运行中")
+        case "succeeded": String(localized: "已完成")
+        case "failed": String(localized: "失败")
+        case "blocked": String(localized: "阻塞")
+        case "cancelled": String(localized: "已取消")
+        case "archived": String(localized: "已归档")
+        default: status
+        }
+    }
+
+    private func statusColor(_ status: String) -> Color {
+        switch status { case "succeeded": .green; case "failed", "cancelled": .red; case "blocked": .orange; case "running", "queued": .blue; default: .secondary }
     }
 }
 

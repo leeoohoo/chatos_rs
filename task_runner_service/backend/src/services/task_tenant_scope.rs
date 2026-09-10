@@ -51,6 +51,10 @@ pub(super) async fn save_task_if_tenant_aligned(
     store: &AppStore,
     mut task: TaskRecord,
 ) -> Result<TaskRecord, String> {
+    if task.project_id.is_some() || task.project_context.is_some() {
+        task.validate_project_context()?;
+        return Ok(task);
+    }
     if align_task_tenant_to_owner(&mut task) {
         task.updated_at = now_rfc3339();
         return store.save_task(task).await;
@@ -104,6 +108,7 @@ mod tests {
             tenant_id: tenant_id.to_string(),
             subject_id: "subject".to_string(),
             project_id: None,
+            project_context: None,
             task_profile: TASK_PROFILE_DEFAULT.to_string(),
             creator_user_id: None,
             creator_username: None,

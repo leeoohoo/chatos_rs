@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
+using ChatOS.Core.State;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ChatOS.Presentation.Chat;
@@ -13,8 +14,14 @@ namespace ChatOS.Desktop.AppShell;
 public sealed partial class MainWindowViewModel : ObservableObject
 {
     private readonly IAuthenticationService _authenticationService;
-    private readonly IWorkspaceService _workspaceService;
-    private readonly IWorkspaceResourceCreationService _resourceCreationService;
+    private readonly IWorkspaceRelationsService _workspaceRelations;
+    private readonly IProjectRegistry _projectRegistry;
+    private readonly ILocalProjectsService _localProjects;
+    private string? _ownerUserId;
+    private long _accountGeneration;
+    private long _refreshGeneration;
+    private CancellationTokenSource _accountCancellation = new();
+    private readonly IProjectConversationService _projectConversations;
     private readonly ILocalConnectorControlService _localConnectorControl;
     private WorkspaceSnapshot _workspaceSnapshot = WorkspaceSnapshot.Empty;
     private CancellationTokenSource? _selectionCancellation;
@@ -23,30 +30,33 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public MainWindowViewModel(
         IAuthenticationService authenticationService,
-        IWorkspaceService workspaceService,
-        IWorkspaceResourceCreationService resourceCreationService,
+        IWorkspaceRelationsService workspaceRelations,
+        IProjectRegistry projectRegistry,
+        ILocalProjectsService localProjects,
+        IProjectConversationService projectConversations,
         ILocalConnectorControlService localConnectorControl,
         ConversationSessionViewModel conversation,
         ProjectFilesViewModel projectFiles,
         ProjectGitViewModel projectGit,
-        ProjectPlanViewModel projectPlan,
         ProjectRunViewModel projectRun,
         RemoteConnectionsViewModel remoteConnections,
         LocalizationViewModel localization)
     {
         _authenticationService = authenticationService;
-        _workspaceService = workspaceService;
-        _resourceCreationService = resourceCreationService;
+        _workspaceRelations = workspaceRelations;
+        _projectRegistry = projectRegistry;
+        _localProjects = localProjects;
+        _projectConversations = projectConversations;
         _localConnectorControl = localConnectorControl;
         Conversation = conversation;
         ProjectFiles = projectFiles;
         ProjectGit = projectGit;
-        ProjectPlan = projectPlan;
         ProjectRun = projectRun;
         RemoteConnections = remoteConnections;
         Localization = localization;
         RemoteConnections.Connections.CollectionChanged += (_, _) => RebuildRemoteResources();
         Localization.PropertyChanged += (_, _) => RelocalizeResources();
+        ApplicationResources.Add(CreateApplicationsResource());
     }
 
     public ConversationSessionViewModel Conversation { get; }
@@ -54,8 +64,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ProjectFilesViewModel ProjectFiles { get; }
 
     public ProjectGitViewModel ProjectGit { get; }
-
-    public ProjectPlanViewModel ProjectPlan { get; }
 
     public ProjectRunViewModel ProjectRun { get; }
 
@@ -66,6 +74,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<ShellResourceViewModel> Contacts { get; } = [];
 
     public ObservableCollection<ShellResourceViewModel> Projects { get; } = [];
+
+    public ObservableCollection<ShellResourceViewModel> ApplicationResources { get; } = [];
 
     public ObservableCollection<ShellResourceViewModel> LocalResources { get; } = [];
 
@@ -93,9 +103,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
         string projectId,
         CancellationToken cancellationToken = default)
     {
+        var generation = AccountGeneration;
+        var owner = RequireAccount(generation);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _accountCancellation.Token);
+        cancellationToken = linked.Token;
         await _conversationPreparationGate.WaitAsync(cancellationToken);
         try
         {
+            RequireAccount(generation);
+            var localProject = await _projectRegistry.GetAsync(owner, projectId, cancellationToken);
+            RequireAccount(generation);
+            if (localProject?.Status != LocalProjectStatus.Active)
+                throw new InvalidOperationException("The local project is unavailable.");
             var resource = Projects.FirstOrDefault(value =>
                 value.Kind == WorkspaceResourceKind.Project &&
                 string.Equals(value.Id, projectId, StringComparison.Ordinal));
@@ -105,23 +124,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 ?? throw new KeyNotFoundException(Localization.Text(
                     "所选项目已不在当前工作区中。",
                     "The selected project is no longer in the current workspace."));
+            project = project with
+            {
+                ProjectContext = await _localProjects.ResolveContextAsync(owner, projectId, cancellationToken),
+            };
+            if (project.LatestConversationId is { Length: > 0 } cached) return cached;
             var contact = _workspaceSnapshot.Contacts.FirstOrDefault(value =>
                     string.Equals(value.AgentId, "jiguli", StringComparison.OrdinalIgnoreCase))
                 ?? _workspaceSnapshot.Contacts.FirstOrDefault()
                 ?? throw new InvalidOperationException(Localization.Text(
                     "没有找到可用于项目会话的联系人。",
                     "No contact is available for the project conversation."));
-            var conversationId = await _resourceCreationService.EnsureConversationAsync(
+            var conversationId = await _projectConversations.EnsureConversationAsync(
                 project,
                 contact,
                 cancellationToken);
-            var resourceIndex = Projects.ToList().FindIndex(value =>
-                string.Equals(value.Id, projectId, StringComparison.Ordinal));
-            if (resourceIndex >= 0)
-            {
-                Projects[resourceIndex] = Projects[resourceIndex] with { ConversationId = conversationId };
-            }
-
+            RequireAccount(generation);
+            var current = await _projectRegistry.GetAsync(owner, projectId, cancellationToken);
+            RequireAccount(generation);
+            if (current?.Status != LocalProjectStatus.Active)
+                throw new InvalidOperationException("The local project was removed while preparing the conversation.");
             _workspaceSnapshot = _workspaceSnapshot with
             {
                 Projects = _workspaceSnapshot.Projects.Select(value =>
@@ -135,6 +157,70 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             _conversationPreparationGate.Release();
         }
+    }
+
+    public long AccountGeneration => _accountGeneration;
+    public string? CurrentOwnerUserId => IsAuthenticated ? _ownerUserId : null;
+    public bool IsPublishingWorkspace { get; private set; }
+
+    private string RequireAccount(long generation)
+    {
+        if (generation != AccountGeneration || !IsAuthenticated || _ownerUserId is null)
+            throw new OperationCanceledException("The signed-in account changed.");
+        return _ownerUserId;
+    }
+
+    private bool IsCurrent(long account, long refresh) =>
+        IsAuthenticated && account == AccountGeneration && refresh == _refreshGeneration;
+
+    public async Task<LocalProjectRecord> GetLocalProjectAsync(long account, string projectId)
+    {
+        var owner = RequireAccount(account);
+        var project = await _projectRegistry.GetAsync(owner, projectId);
+        RequireAccount(account);
+        return project is { Status: LocalProjectStatus.Active } ? project
+            : throw new InvalidOperationException("The local project is unavailable.");
+    }
+
+    public async Task CreateProjectAsync(long account, LocalProjectDraft draft, string expectedWorkspaceRoot)
+    {
+        var owner = RequireAccount(account);
+        var project = await _localProjects.CreateAsync(owner, draft, expectedWorkspaceRoot, _accountCancellation.Token);
+        RequireAccount(account);
+        await ReloadLocalProjectsAsync(account);
+        RequireAccount(account);
+        SelectedResource = Projects.FirstOrDefault(value => value.Id == project.Id);
+    }
+
+    public async Task RenameProjectAsync(long account, LocalProjectRecord project, string name)
+    {
+        var owner = RequireAccount(account);
+        if (project.OwnerUserId != owner) throw new InvalidOperationException("Project account mismatch.");
+        await _localProjects.RenameAsync(owner, project.Id, project.Revision, name, _accountCancellation.Token);
+        RequireAccount(account);
+        await ReloadLocalProjectsAsync(account);
+    }
+
+    public async Task RemoveProjectAsync(long account, LocalProjectRecord project)
+    {
+        var owner = RequireAccount(account);
+        if (project.OwnerUserId != owner) throw new InvalidOperationException("Project account mismatch.");
+        await _localProjects.RemoveAsync(owner, project.Id, project.Revision, _accountCancellation.Token);
+        RequireAccount(account);
+        await ReloadLocalProjectsAsync(account);
+    }
+
+    private async Task ReloadLocalProjectsAsync(long account)
+    {
+        var cancellationToken = _accountCancellation.Token;
+        var owner = RequireAccount(account);
+        var refresh = ++_refreshGeneration;
+        var deviceId = await _localProjects.GetDeviceIdAsync(owner, cancellationToken);
+        RequireAccount(account);
+        var snapshot = await new ClientOwnedWorkspaceLoader(_projectRegistry, _workspaceRelations, owner)
+            .LoadLocalAsync(deviceId, cancellationToken);
+        if (!IsCurrent(account, refresh)) return;
+        PublishWorkspace(snapshot with { Contacts = _workspaceSnapshot.Contacts, Conversations = _workspaceSnapshot.Conversations });
     }
 
     [ObservableProperty]
@@ -178,13 +264,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
+            var authenticationGeneration = AccountGeneration;
             var session = await _authenticationService.RestoreSessionAsync(cancellationToken);
+            if (authenticationGeneration != AccountGeneration) return;
             if (session is not null)
             {
                 ApplySession(session);
                 await ReloadWorkspaceCoreAsync(cancellationToken);
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception exception)
         {
             ErrorMessage = exception.Message;
@@ -208,11 +297,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
+            var authenticationGeneration = AccountGeneration;
             var session = await _authenticationService.LoginAsync(Username, Password);
+            if (authenticationGeneration != AccountGeneration) return;
             Password = string.Empty;
             ApplySession(session);
             await ReloadWorkspaceCoreAsync();
         }
+        catch (OperationCanceledException) { }
         catch (Exception exception)
         {
             ErrorMessage = exception.Message;
@@ -237,6 +329,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             await ReloadWorkspaceCoreAsync();
         }
+        catch (OperationCanceledException) { }
         catch (Exception exception)
         {
             ErrorMessage = exception.Message;
@@ -251,12 +344,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private async Task LogoutAsync()
     {
         CancelSelectionActivation();
-        await _authenticationService.LogoutAsync();
+        _accountCancellation.Cancel();
+        _accountCancellation.Dispose();
+        _accountCancellation = new();
+        _accountGeneration++;
+        _refreshGeneration++;
+        _ownerUserId = null;
+        _workspaceSnapshot = WorkspaceSnapshot.Empty;
+        LocalConnectorStatus = null;
+        IsAuthenticated = false;
         Contacts.Clear();
         Projects.Clear();
         LocalResources.Clear();
         RemoteResources.Clear();
         SelectedResource = null;
+        await _authenticationService.LogoutAsync();
         await ProjectRun.CloseAsync();
         await ProjectGit.CloseAsync();
         await Conversation.OpenAsync(null, "ChatOS");
@@ -268,7 +370,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     partial void OnSelectedResourceChanged(ShellResourceViewModel? value)
     {
         WorkspaceTitle = value?.Title ?? "ChatOS";
-        if (_suppressSelectionActivation) return;
+        if (_suppressSelectionActivation || IsPublishingWorkspace) return;
         CancelSelectionActivation();
         _selectionCancellation = new CancellationTokenSource();
         _ = ActivateResourceSafelyAsync(value, _selectionCancellation.Token);
@@ -276,73 +378,127 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void ApplySession(AuthSession session)
     {
+        if (_ownerUserId != session.User.Id)
+        {
+            CancelSelectionActivation();
+            _accountCancellation.Cancel();
+            _accountCancellation.Dispose();
+            _accountCancellation = new();
+            _accountGeneration++;
+            _refreshGeneration++;
+            _workspaceSnapshot = WorkspaceSnapshot.Empty;
+            Contacts.Clear();
+            Projects.Clear();
+            LocalResources.Clear();
+            RemoteResources.Clear();
+            LocalConnectorStatus = null;
+            SelectedResource = null;
+        }
+        _ownerUserId = session.User.Id;
         CurrentUserLabel = session.User.EffectiveDisplayName;
         IsAuthenticated = true;
     }
 
     private async Task ReloadWorkspaceCoreAsync(CancellationToken cancellationToken = default)
     {
-        var snapshot = await _workspaceService.FetchWorkspaceAsync(cancellationToken);
-        _workspaceSnapshot = snapshot;
-        var activeConversations = snapshot.Conversations
-            .Where(static conversation => !conversation.IsArchived)
-            .OrderByDescending(static conversation => conversation.UpdatedAt)
-            .ToArray();
-
-        Contacts.Clear();
-        foreach (var contact in snapshot.Contacts)
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _accountCancellation.Token);
+        cancellationToken = linked.Token;
+        var account = AccountGeneration;
+        var owner = RequireAccount(account);
+        var refresh = ++_refreshGeneration;
+        var deviceId = await _localProjects.GetDeviceIdAsync(owner, cancellationToken);
+        if (!IsCurrent(account, refresh)) return;
+        var loader = new ClientOwnedWorkspaceLoader(_projectRegistry, _workspaceRelations, owner);
+        var local = await loader.LoadLocalAsync(deviceId, cancellationToken);
+        if (!IsCurrent(account, refresh)) return;
+        PublishWorkspace(local with { Contacts = _workspaceSnapshot.Contacts, Conversations = _workspaceSnapshot.Conversations });
+        var result = await loader.RefreshAsync(deviceId, cancellationToken);
+        if (!IsCurrent(account, refresh)) return;
+        var snapshot = result.RemoteError is null ? result.Snapshot : result.Snapshot with
         {
-            var conversation = activeConversations.FirstOrDefault(value =>
-                value.ProjectId is null &&
-                (string.Equals(value.ContactId, contact.Id, StringComparison.Ordinal) ||
-                 string.Equals(value.ContactAgentId, contact.AgentId, StringComparison.Ordinal)));
-            Contacts.Add(new ShellResourceViewModel(
-                contact.Id,
-                WorkspaceResourceKind.Contact,
-                contact.Name,
-                ContactSubtitle(contact.Status),
-                "\uE77B",
-                conversation?.Id));
-        }
-
-        if (!snapshot.Contacts.Any(static contact =>
-                string.Equals(contact.AgentId, "jiguli", StringComparison.OrdinalIgnoreCase)))
-        {
-            var conversation = activeConversations.FirstOrDefault(value =>
-                string.Equals(value.ContactAgentId, "jiguli", StringComparison.OrdinalIgnoreCase));
-            Contacts.Insert(0, new ShellResourceViewModel(
-                "jiguli",
-                WorkspaceResourceKind.Contact,
-                Localization.Text("叽咕狸", "Jiguli"),
-                Localization.Text("和叽咕狸开始对话", "Start a conversation with Jiguli"),
-                "\uE77B",
-                conversation?.Id));
-        }
-
-        Projects.Clear();
-        foreach (var project in snapshot.Projects)
-        {
-            var conversationId = project.LatestConversationId
-                ?? activeConversations.FirstOrDefault(value =>
-                    string.Equals(value.ProjectId, project.Id, StringComparison.Ordinal))?.Id;
-            Projects.Add(new ShellResourceViewModel(
-                project.Id,
-                WorkspaceResourceKind.Project,
-                project.Name,
-                project.DisplayRootPath ?? project.RootPath ?? Localization.Projects,
-                "\uE8B7",
-                conversationId));
-        }
-
+            Contacts = _workspaceSnapshot.Contacts,
+            Conversations = _workspaceSnapshot.Conversations,
+        };
+        PublishWorkspace(snapshot);
+        ErrorMessage = result.RemoteError;
         await RefreshLocalConnectorAsync(cancellationToken);
+        if (!IsCurrent(account, refresh)) return;
         await RemoteConnections.OpenAsync(cancellationToken);
+        if (!IsCurrent(account, refresh)) return;
         RebuildRemoteResources();
+    }
 
-        if (SelectedResource is not null)
+    private void PublishWorkspace(WorkspaceSnapshot snapshot)
+    {
+        var previous = SelectedResource;
+        IsPublishingWorkspace = true;
+        try
         {
-            SelectedResource = Contacts.Concat(Projects).Concat(LocalResources).Concat(RemoteResources)
-                .FirstOrDefault(value =>
-                    value.Kind == SelectedResource.Kind && value.Id == SelectedResource.Id);
+            _workspaceSnapshot = snapshot;
+            var activeConversations = snapshot.Conversations
+                .Where(static conversation => !conversation.IsArchived)
+                .OrderByDescending(static conversation => conversation.UpdatedAt)
+                .ToArray();
+
+            Contacts.Clear();
+            foreach (var contact in snapshot.Contacts)
+            {
+                var conversation = activeConversations.FirstOrDefault(value =>
+                    value.ProjectId is null &&
+                    (string.Equals(value.ContactId, contact.Id, StringComparison.Ordinal) ||
+                     string.Equals(value.ContactAgentId, contact.AgentId, StringComparison.Ordinal)));
+                Contacts.Add(new ShellResourceViewModel(
+                    contact.Id,
+                    WorkspaceResourceKind.Contact,
+                    contact.Name,
+                    ContactSubtitle(contact.Status),
+                    "\uE77B",
+                    conversation?.Id));
+            }
+
+            if (!snapshot.Contacts.Any(static contact =>
+                    string.Equals(contact.AgentId, "jiguli", StringComparison.OrdinalIgnoreCase)))
+            {
+                var conversation = activeConversations.FirstOrDefault(value =>
+                    string.Equals(value.ContactAgentId, "jiguli", StringComparison.OrdinalIgnoreCase));
+                Contacts.Insert(0, new ShellResourceViewModel(
+                    "jiguli",
+                    WorkspaceResourceKind.Contact,
+                    Localization.Text("叽咕狸", "Jiguli"),
+                    Localization.Text("和叽咕狸开始对话", "Start a conversation with Jiguli"),
+                    "\uE77B",
+                    conversation?.Id));
+            }
+
+            Projects.Clear();
+            foreach (var project in snapshot.Projects)
+            {
+                var conversationId = project.LatestConversationId
+                    ?? activeConversations.FirstOrDefault(value =>
+                        string.Equals(value.ProjectId, project.Id, StringComparison.Ordinal))?.Id;
+                Projects.Add(new ShellResourceViewModel(
+                    project.Id,
+                    WorkspaceResourceKind.Project,
+                    project.Name,
+                    project.DisplayRootPath ?? project.RootPath ?? Localization.Projects,
+                    "\uE8B7",
+                    conversationId));
+            }
+
+            SelectedResource = previous is null ? null :
+                Contacts.Concat(Projects).Concat(ApplicationResources).Concat(LocalResources).Concat(RemoteResources)
+                    .FirstOrDefault(value => value.Kind == previous.Kind && value.Id == previous.Id);
+        }
+        finally
+        {
+            IsPublishingWorkspace = false;
+        }
+        OnPropertyChanged(nameof(SelectedResource));
+        if (previous?.Kind != SelectedResource?.Kind || previous?.Id != SelectedResource?.Id)
+        {
+            CancelSelectionActivation();
+            _selectionCancellation = new CancellationTokenSource();
+            _ = ActivateResourceSafelyAsync(SelectedResource, _selectionCancellation.Token);
         }
     }
 
@@ -359,6 +515,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         if (resource.Kind == WorkspaceResourceKind.LocalConnector)
+        {
+            return;
+        }
+        if (resource.Kind == WorkspaceResourceKind.Applications)
         {
             return;
         }
@@ -392,81 +552,45 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var filesTask = ProjectFiles.OpenAsync(project, cancellationToken);
-        var gitTask = ProjectGit.OpenAsync(project, cancellationToken);
-        var planTask = ProjectPlan.OpenAsync(project, cancellationToken);
-        var runTask = ProjectRun.OpenAsync(project, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(resource.ConversationId))
-        {
-            await Task.WhenAll(
-                filesTask,
-                gitTask,
-                planTask,
-                runTask,
-                Conversation.OpenAsync(resource.ConversationId, resource.Title, cancellationToken));
-            return;
-        }
-
-        var contact = _workspaceSnapshot.Contacts.FirstOrDefault(value =>
-                string.Equals(value.AgentId, "jiguli", StringComparison.OrdinalIgnoreCase))
-            ?? _workspaceSnapshot.Contacts.FirstOrDefault();
-        if (contact is null)
-        {
-            ErrorMessage = Localization.Text(
-                "没有找到可用于项目会话的联系人，请刷新工作区。",
-                "No contact is available for the project conversation. Refresh the workspace.");
-            await Conversation.OpenAsync(null, resource.Title, cancellationToken);
-            await Task.WhenAll(filesTask, gitTask, planTask, runTask);
-            return;
-        }
-
-        IsPreparingConversation = true;
-        ErrorMessage = null;
+        await ProjectRun.CloseAsync(cancellationToken);
+        await ProjectGit.CloseAsync(cancellationToken);
         await Conversation.OpenAsync(null, resource.Title, cancellationToken);
+        await ProjectFiles.OpenAsync(project, cancellationToken);
+    }
+
+    public async Task OpenProjectTabAsync(string tab)
+    {
+        var resource = SelectedResource;
+        if (resource?.Kind != WorkspaceResourceKind.Project) return;
+        var project = _workspaceSnapshot.Projects.FirstOrDefault(value => value.Id == resource.Id);
+        if (project is null) return;
+        var token = _selectionCancellation?.Token ?? CancellationToken.None;
         try
         {
-            var conversationTask = _resourceCreationService.EnsureConversationAsync(
-                project,
-                contact,
-                cancellationToken);
-            await Task.WhenAll(filesTask, gitTask, planTask, runTask, conversationTask);
-            var conversationId = conversationTask.Result;
-            cancellationToken.ThrowIfCancellationRequested();
-            if (SelectedResource is not { } selected ||
-                selected.Kind != resource.Kind ||
-                !string.Equals(selected.Id, resource.Id, StringComparison.Ordinal))
+            switch (tab)
             {
-                return;
+                case "chat":
+                    IsPreparingConversation = true;
+                    var conversationId = await EnsureProjectConversationAsync(project.Id, token);
+                    token.ThrowIfCancellationRequested();
+                    await Conversation.OpenAsync(conversationId, project.Name, token);
+                    break;
+                case "git":
+                    await ProjectGit.OpenAsync(project, token);
+                    break;
+                case "run":
+                    await ProjectRun.OpenAsync(project, token);
+                    break;
             }
-
-            var updated = resource with { ConversationId = conversationId };
-            var index = Projects.IndexOf(resource);
-            if (index >= 0)
-            {
-                Projects[index] = updated;
-            }
-
-            SetSelectedResourceWithoutActivation(updated);
-            await Conversation.OpenAsync(conversationId, resource.Title, cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
+        catch (OperationCanceledException) { }
         catch (Exception exception)
         {
-            if (!cancellationToken.IsCancellationRequested)
-            {
-                ErrorMessage = Localization.Text(
-                    $"准备项目会话失败：{exception.Message}",
-                    $"Unable to prepare the project conversation: {exception.Message}");
-            }
+            if (!token.IsCancellationRequested) ErrorMessage = exception.Message;
         }
         finally
         {
-            if (!cancellationToken.IsCancellationRequested)
-            {
-                IsPreparingConversation = false;
-            }
+            if (!token.IsCancellationRequested) IsPreparingConversation = false;
         }
     }
 
@@ -508,12 +632,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task RefreshLocalConnectorAsync(CancellationToken cancellationToken = default)
     {
+        var account = AccountGeneration;
         try
         {
-            ApplyLocalConnectorStatus(await _localConnectorControl.GetStatusAsync(cancellationToken));
+            var status = await _localConnectorControl.GetStatusAsync(cancellationToken);
+            if (account != AccountGeneration || !IsAuthenticated) return;
+            ApplyLocalConnectorStatus(status);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            if (account != AccountGeneration || !IsAuthenticated) return;
             var resource = new ShellResourceViewModel(
                 "local-connector",
                 WorkspaceResourceKind.LocalConnector,
@@ -611,6 +739,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void RelocalizeResources()
     {
+        ApplicationResources.Clear();
+        ApplicationResources.Add(CreateApplicationsResource());
         for (var index = 0; index < Contacts.Count; index++)
         {
             var current = Contacts[index];
@@ -650,8 +780,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         if (SelectedResource is { } selected)
         {
-            SetSelectedResourceWithoutActivation(Contacts.Concat(Projects).Concat(LocalResources).Concat(RemoteResources)
+            SetSelectedResourceWithoutActivation(Contacts.Concat(Projects).Concat(ApplicationResources).Concat(LocalResources).Concat(RemoteResources)
                 .FirstOrDefault(value => value.Kind == selected.Kind && value.Id == selected.Id));
         }
     }
+
+    private ShellResourceViewModel CreateApplicationsResource() => new(
+        "applications",
+        WorkspaceResourceKind.Applications,
+        Localization.Applications,
+        Localization.InstalledPluginApplications,
+        "\uE71D");
 }

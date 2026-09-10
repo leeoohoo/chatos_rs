@@ -6,7 +6,7 @@ use axum::Json;
 use serde_json::Value;
 
 use super::error;
-pub(crate) type LocalConnectorRootRef = chatos_project_execution::LocalConnectorWorkspaceRef;
+pub(crate) type LocalConnectorRootRef = chatos_local_workspace::LocalConnectorWorkspaceRef;
 
 pub(super) fn sanitize_optional_local_relative_path(
     value: Option<&str>,
@@ -17,7 +17,7 @@ pub(super) fn sanitize_optional_local_relative_path(
     let Some(normalized) = normalize_local_relative_path(Some(value)) else {
         return Ok(None);
     };
-    if chatos_project_execution::local_connector_relative_path_is_safe(normalized.as_str()) {
+    if chatos_local_workspace::local_connector_relative_path_is_safe(normalized.as_str()) {
         Ok(Some(normalized))
     } else {
         Err(error(
@@ -38,19 +38,11 @@ pub(super) fn sanitize_required_local_relative_path(
 }
 
 pub(super) fn normalize_local_relative_path(value: Option<&str>) -> Option<String> {
-    chatos_project_execution::normalize_local_connector_relative_path(value)
-}
-
-pub(super) fn local_relative_basename(path: &str) -> Option<String> {
-    normalize_local_relative_path(Some(path)).and_then(|path| {
-        path.rsplit('/')
-            .find(|part| !part.trim().is_empty())
-            .map(ToOwned::to_owned)
-    })
+    chatos_local_workspace::normalize_local_connector_relative_path(value)
 }
 
 pub(crate) fn parse_local_connector_root_path(root_path: &str) -> Option<LocalConnectorRootRef> {
-    chatos_project_execution::parse_local_connector_workspace_root(root_path)
+    chatos_local_workspace::parse_local_connector_workspace_root(root_path)
 }
 
 pub(crate) fn local_connector_root_path(
@@ -58,7 +50,7 @@ pub(crate) fn local_connector_root_path(
     workspace_id: &str,
     relative_path: Option<&str>,
 ) -> String {
-    match chatos_project_execution::local_connector_workspace_root(
+    match chatos_local_workspace::local_connector_workspace_root(
         device_id,
         workspace_id,
         relative_path,
@@ -71,35 +63,14 @@ pub(crate) fn local_connector_root_path(
     }
 }
 
-pub(crate) fn local_connector_display_path(root_path: &str) -> Option<String> {
-    let root_ref = parse_local_connector_root_path(root_path)?;
-    Some(match root_ref.relative_path {
-        Some(relative_path) => format!("/{relative_path}"),
-        None => "/".to_string(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{local_connector_display_path, local_connector_root_path};
-
-    #[test]
-    fn display_path_hides_connector_routing_ids() {
-        let root = local_connector_root_path("device-1", "workspace-1", Some("apps/my backend"));
-        assert_eq!(
-            local_connector_display_path(root.as_str()).as_deref(),
-            Some("/apps/my backend")
-        );
-        assert_eq!(
-            local_connector_display_path("local://connector/device-1/workspace-1").as_deref(),
-            Some("/")
-        );
-    }
+    use super::{local_connector_root_path, parse_local_connector_root_path};
 
     #[test]
     fn invalid_root_parts_fail_closed_to_an_unparseable_local_reference() {
         let root = local_connector_root_path("", "workspace-1", None);
         assert_eq!(root, "local://connector/invalid");
-        assert!(local_connector_display_path(root.as_str()).is_none());
+        assert!(parse_local_connector_root_path(root.as_str()).is_none());
     }
 }

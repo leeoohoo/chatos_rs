@@ -11,7 +11,7 @@ use crate::providers::decode_cancel_notification_response;
 use crate::providers::{ProviderCallOutcome, ProviderCancelOutcome};
 use crate::runtime::RuntimeSessionSnapshot;
 
-use super::super::project_service::decode_jsonrpc_response;
+use super::super::decode_jsonrpc_response;
 use super::{LocalConnectorProvider, ProviderCallError};
 use crate::providers::managed_tool_call_params;
 use chatos_mcp_management_sdk::ResolvedMcpRoute;

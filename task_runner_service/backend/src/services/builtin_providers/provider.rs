@@ -9,7 +9,6 @@ pub(super) enum TaskRunnerBuiltinToolService {
     Notepad(NotepadBuiltinService),
     TerminalController(TerminalControllerService),
     AskUser(AskUserService),
-    ProjectManagement(ProjectManagementBuiltinService),
 }
 
 impl TaskRunnerBuiltinToolService {
@@ -19,7 +18,6 @@ impl TaskRunnerBuiltinToolService {
             Self::Notepad(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
             Self::AskUser(service) => service.list_tools(),
-            Self::ProjectManagement(service) => service.list_tools(),
         }
     }
 
@@ -45,7 +43,6 @@ impl TaskRunnerBuiltinToolService {
                     Arc::new(move |chunk| callback(chunk)) as chatos_mcp::AskUserStreamChunkCallback
                 }),
             ),
-            Self::ProjectManagement(service) => service.call_tool(name, args).await,
         }
     }
 
@@ -55,7 +52,6 @@ impl TaskRunnerBuiltinToolService {
             Self::Notepad(_) => Vec::new(),
             Self::TerminalController(_) => Vec::new(),
             Self::AskUser(_) => Vec::new(),
-            Self::ProjectManagement(service) => service.unavailable_tools(),
         }
     }
 }

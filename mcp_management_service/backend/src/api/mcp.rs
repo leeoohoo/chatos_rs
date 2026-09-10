@@ -1510,7 +1510,6 @@ fn grant_matches_snapshot(
         && claims.source_user_message_id == snapshot.source_user_message_id
         && claims.contact_agent_id == snapshot.contact_agent_id
         && claims.default_model_config_id == snapshot.default_model_config_id
-        && claims.expected_project_task_ids == snapshot.expected_project_task_ids
         && claims.policy_revision == snapshot.policy_revision
         && claims.route_revision == snapshot.route_revision
         && i64::try_from(claims.exp).ok() == Some(snapshot.expires_at_unix)

@@ -5,5 +5,5 @@ mod factory;
 mod mongodb;
 mod types;
 
-pub use factory::{get_db, get_db_sync, init_global};
+pub use factory::{get_db, init_global};
 pub use types::Database;
