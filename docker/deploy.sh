@@ -582,7 +582,8 @@ ensure_user_service_mtls_material() {
   for required_file in \
     ca.crt server.crt server.key \
     chatos-backend.identity.pem \
-    task-runner.identity.pem
+    task-runner.identity.pem \
+    memory-engine.identity.pem
   do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
       failures=1
@@ -610,7 +611,8 @@ ensure_user_service_mtls_material() {
   fi
   for required_file in \
     chatos-backend.identity.pem \
-    task-runner.identity.pem
+    task-runner.identity.pem \
+    memory-engine.identity.pem
   do
     if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
       "$resolved_dir/$required_file" >/dev/null; then

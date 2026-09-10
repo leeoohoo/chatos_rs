@@ -550,7 +550,7 @@ final class StoryStudioViewModel: ObservableObject {
         guard let project else { return }
         run("启动分步剧情规划") { owner, token in
             let draft = try StoryAgentRun(project: project, owner: owner, stage: stage, targetIDs: targets,
-                                           cloudMemory: true, policy: self.effectiveAgentPolicy())
+                                           policy: self.effectiveAgentPolicy())
             try await self.executeAgent(draft, resume: false, owner: owner, token: token)
         }
     }

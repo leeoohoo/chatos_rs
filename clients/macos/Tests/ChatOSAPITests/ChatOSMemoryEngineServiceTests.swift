@@ -99,6 +99,19 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         }
     }
 
+    func testSummaryFailurePreservesServerErrorMessage() async throws {
+        let detail = "user_service model runtime request failed: 404"
+        let (scope, _, client) = try fixture(summaryError: detail)
+        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
+
+        let status = try await service.startSummary(reason: "active_context_budget")
+
+        XCTAssertTrue(status.failed)
+        XCTAssertEqual(status.errorMessage, detail)
+        XCTAssertEqual(AgentContextError.summaryFailed(status.errorMessage).localizedDescription,
+                       "Memory Engine 摘要任务失败：\(detail)")
+    }
+
     func testUnsupportedBasePathDoesNotGuessOrLeakToken() async throws {
         let (scope, transport, _) = try fixture()
         let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/unknown-api")!), accessToken: "token", transport: transport)
@@ -109,9 +122,11 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(count, 0)
     }
 
-    private func fixture(refreshToken: Bool = false, foreignTenant: Bool = false, statusCode: Int = 200) throws -> (AgentMemoryScope, MemoryTransport, ChatOSAPIClient) {
+    private func fixture(refreshToken: Bool = false, foreignTenant: Bool = false, statusCode: Int = 200,
+                         summaryError: String? = nil) throws -> (AgentMemoryScope, MemoryTransport, ChatOSAPIClient) {
         let scope = try AgentMemoryScope(tenantID: "user/a?&b", profile: "story", projectID: UUID(), runID: UUID(), runtimeScope: "story:v1")
-        let transport = MemoryTransport(scope: scope, refreshToken: refreshToken, foreignTenant: foreignTenant, statusCode: statusCode)
+        let transport = MemoryTransport(scope: scope, refreshToken: refreshToken, foreignTenant: foreignTenant,
+                                        statusCode: statusCode, summaryError: summaryError)
         let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/prefix/api/chatos")!), accessToken: "user-token", transport: transport)
         return (scope, transport, client)
     }
@@ -131,10 +146,13 @@ private actor MemoryTransport: HTTPTransport {
     let refreshToken: Bool
     let foreignTenant: Bool
     let statusCode: Int
+    let summaryError: String?
     var requests: [HTTPRequest] = []
     var stored: [[String: Any]] = []
-    init(scope: AgentMemoryScope, refreshToken: Bool, foreignTenant: Bool, statusCode: Int) {
-        self.scope = scope; self.refreshToken = refreshToken; self.foreignTenant = foreignTenant; self.statusCode = statusCode
+    init(scope: AgentMemoryScope, refreshToken: Bool, foreignTenant: Bool, statusCode: Int,
+         summaryError: String?) {
+        self.scope = scope; self.refreshToken = refreshToken; self.foreignTenant = foreignTenant
+        self.statusCode = statusCode; self.summaryError = summaryError
     }
     func send(_ request: HTTPRequest) throws -> HTTPResponse {
         requests.append(request)
@@ -155,7 +173,8 @@ private actor MemoryTransport: HTTPTransport {
                       "meta": ["summary_count": 0, "recent_record_count": stored.count]]
         } else if path.contains("/active-summary/") {
             result = ["thread_id": scope.threadID, "job_run_id": "job/a?b", "running": false,
-                      "completed": true, "failed": false, "compacted": true]
+                      "completed": summaryError == nil, "failed": summaryError != nil, "compacted": summaryError == nil,
+                      "error_message": summaryError as Any? ?? NSNull()]
         } else if path.contains("/records/") {
             result = ["item": stored.first { $0["id"] as? String == request.url.lastPathComponent } as Any? ?? NSNull()]
         } else {

@@ -54,4 +54,5 @@ struct MemorySummaryDTO: Decodable, Sendable {
     let completed: Bool
     let failed: Bool
     let compacted: Bool
+    let error_message: String?
 }

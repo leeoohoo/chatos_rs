@@ -48,10 +48,11 @@ public struct AgentSummaryStatus: Sendable {
     public var completed: Bool
     public var failed: Bool
     public var compacted: Bool
+    public var errorMessage: String?
     public init(jobID: String? = nil, running: Bool = false, completed: Bool = false,
-                failed: Bool = false, compacted: Bool = false) {
+                failed: Bool = false, compacted: Bool = false, errorMessage: String? = nil) {
         self.jobID = jobID; self.running = running; self.completed = completed
-        self.failed = failed; self.compacted = compacted
+        self.failed = failed; self.compacted = compacted; self.errorMessage = errorMessage
     }
 }
 
@@ -100,13 +101,18 @@ public struct AgentContextPolicy: Codable, Equatable, Sendable {
 }
 
 public enum AgentContextError: LocalizedError, Sendable {
-    case unavailable, invalidHistory, syncUncertain, summaryFailed, summaryTimedOut, noImprovement, budgetExceeded
+    case unavailable, invalidHistory, syncUncertain, summaryFailed(String?), summaryTimedOut, noImprovement, budgetExceeded
     public var errorDescription: String? {
         switch self {
         case .unavailable: "Memory Engine 同步或上下文服务不可用，运行已暂停。"
         case .invalidHistory: "运行历史或记忆范围不一致，已暂停，不能丢弃记录或重放工具。"
         case .syncUncertain: "部分运行记录尚未确认写入，已暂停。请稍后恢复核对；不会自动重发并重置已有摘要。"
-        case .summaryFailed: "Memory Engine 摘要任务失败，请检查摘要 Agent 模型与策略配置。"
+        case let .summaryFailed(detail):
+            if let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty {
+                "Memory Engine 摘要任务失败：\(detail)"
+            } else {
+                "Memory Engine 摘要任务失败，请检查摘要 Agent 模型与策略配置。"
+            }
         case .summaryTimedOut: "等待上下文压缩超时，已保存摘要任务，可稍后继续。"
         case .noImprovement: "压缩没有缩小上下文，已暂停；请检查摘要配置或缩小单次输入。"
         case .budgetExceeded: "上下文仍超过设置的窗口预算，已暂停，未继续调用模型。"

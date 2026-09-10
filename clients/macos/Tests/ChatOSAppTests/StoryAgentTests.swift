@@ -175,7 +175,7 @@ final class StoryAgentTests: XCTestCase {
             .init(id: $0.element, title: $0.element, synopsis: $0.element,
                   sourceRange: .init(start: $0.offset, end: $0.offset + 1))
         }
-        let run = try StoryAgentRun(project: project, owner: "alice", stage: .refine, targetIDs: ["s1", "s2"], cloudMemory: false, policy: .init())
+        let run = try StoryAgentRun(project: project, owner: "alice", stage: .refine, targetIDs: ["s1", "s2"], policy: .init())
         let session = StoryAgentSession(run: run, store: store, publish: { _ in })
         let forbidden = try await session.execute(call("story_update_segment", ["segmentID": "s3", "detail": detail]))
         XCTAssertTrue(forbidden.isError)
@@ -206,7 +206,7 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertLessThan(try AgentContextBudget.estimate(messages: state.checkpoint.messages, tools: definitions), AgentContextPolicy().hardInputLimit)
     }
 
-    func testViewModelUsesVisibleBudgetAndRestartsLocalRunWithoutMemory() async throws {
+    func testViewModelUsesVisibleBudgetAndResumesWithMemoryByDefault() async throws {
         let store = fixture(); let project = project()
         let suite = "StoryAgentTests-\(UUID())"
         addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
@@ -220,6 +220,7 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertTrue(created); XCTAssertTrue(vm.supportsAgentPlanning)
         vm.planOutline(); try await idle(vm)
         XCTAssertEqual(vm.latestAgentRun?.checkpoint.status, .limitReached)
+        XCTAssertEqual(vm.latestAgentRun?.cloudMemory, true)
         XCTAssertEqual(vm.latestAgentRun?.checkpoint.modelCalls, 2)
         XCTAssertTrue(vm.project?.segments.isEmpty == true, "Unfinished draft must not replace canonical project")
         let id = try XCTUnwrap(vm.latestAgentRun?.id)
@@ -232,7 +233,7 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertTrue(reopened.latestAgentRun?.applied == true, reopened.errorMessage ?? "")
         XCTAssertEqual(reopened.project?.totalSeconds, 30)
         let events = await service.events()
-        XCTAssertEqual(events, ["model:text:2", "model:text:600"])
+        XCTAssertEqual(events, ["memory", "model:text:2", "memory", "model:text:600"])
     }
 
     func testViewModelCloudConsentBindsScopeAndCompletedDraftAppliesOffline() async throws {
@@ -295,7 +296,7 @@ final class StoryAgentTests: XCTestCase {
         project.source = "起承转合"; return project
     }
     private func run(_ project: StoryProject) throws -> StoryAgentRun {
-        try .init(project: project, owner: "alice", stage: .outline, targetIDs: [], cloudMemory: false, policy: .init())
+        try .init(project: project, owner: "alice", stage: .outline, targetIDs: [], policy: .init())
     }
     private func call(_ name: String, _ arguments: [String: Any]) -> AgentToolCall {
         .init(id: UUID().uuidString, name: name, arguments: String(decoding: try! JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]), as: UTF8.self))
@@ -376,6 +377,6 @@ private actor StoryLoopMemory: AgentMemoryServicing {
     func ensureThread() async throws {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws { self.entries += entries }
     func compose() async throws -> AgentMemoryContext { .init(summaries: [], recentRecordIDs: entries.map(\.id)) }
-    func startSummary(reason: String) async throws -> AgentSummaryStatus { throw AgentContextError.summaryFailed }
-    func summaryStatus(jobID: String?) async throws -> AgentSummaryStatus { throw AgentContextError.summaryFailed }
+    func startSummary(reason: String) async throws -> AgentSummaryStatus { throw AgentContextError.summaryFailed(nil) }
+    func summaryStatus(jobID: String?) async throws -> AgentSummaryStatus { throw AgentContextError.summaryFailed(nil) }
 }

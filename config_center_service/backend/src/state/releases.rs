@@ -365,7 +365,10 @@ impl AppState {
                 ));
             }
         }
-        for key in [TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY] {
+        for key in [
+            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+        ] {
             let is_https = values
                 .get(key)
                 .and_then(Value::as_str)

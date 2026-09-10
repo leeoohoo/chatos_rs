@@ -7,6 +7,7 @@ struct StoryRelationGraphView: View {
     let selectedSegmentID: String?
     let openAsset: (String) -> Void
     let openSegment: (String) -> Void
+    @State private var showsWholeStory = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -17,6 +18,8 @@ struct StoryRelationGraphView: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Toggle(appModel.localized("显示全剧", english: "Show Full Story"), isOn: $showsWholeStory)
+                    .toggleStyle(.switch).controlSize(.small).disabled(selectedSegmentID == nil)
                 legend
             }
             if project.segments.isEmpty && project.resources.isEmpty {
@@ -94,19 +97,23 @@ struct StoryRelationGraphView: View {
     }
 
     private var layout: GraphLayout {
-        let segmentNodes = project.segments.map {
+        let visibleSegments = showsWholeStory || selectedSegmentID == nil
+            ? project.segments
+            : project.segments.filter { $0.id == selectedSegmentID }
+        let visibleResourceIDs = Set(visibleSegments.flatMap(\.resourceIDs))
+        let segmentNodes = visibleSegments.map {
             GraphNode(id: "segment:\($0.id)", entityID: $0.id, kind: .segment, name: $0.title,
                       summary: $0.synopsis, complete: $0.video != nil, isSelected: $0.id == selectedSegmentID)
         }
-        let characterNodes = project.characters.map {
+        let characterNodes = project.characters.filter { showsWholeStory || selectedSegmentID == nil || visibleResourceIDs.contains($0.id) }.map {
             GraphNode(id: "character:\($0.id)", entityID: $0.id, kind: .character, name: $0.name,
                       summary: $0.profile.roleInStory, complete: $0.media.confirmedImage != nil, isSelected: false)
         }
-        let sceneNodes = project.scenes.map {
+        let sceneNodes = project.scenes.filter { showsWholeStory || selectedSegmentID == nil || visibleResourceIDs.contains($0.id) }.map {
             GraphNode(id: "scene:\($0.id)", entityID: $0.id, kind: .scene, name: $0.name,
                       summary: $0.profile.setting, complete: $0.media.confirmedImage != nil, isSelected: false)
         }
-        let propNodes = project.props.map {
+        let propNodes = project.props.filter { showsWholeStory || selectedSegmentID == nil || visibleResourceIDs.contains($0.id) }.map {
             GraphNode(id: "prop:\($0.id)", entityID: $0.id, kind: .prop, name: $0.name,
                       summary: $0.description, complete: $0.media.confirmedImage != nil, isSelected: false)
         }
@@ -118,12 +125,12 @@ struct StoryRelationGraphView: View {
             }
         }
         var edges: [GraphEdge] = []
-        for segment in project.segments {
+        for segment in visibleSegments {
             for id in segment.characterIDs { edges.append(.init(from: "segment:\(segment.id)", to: "character:\(id)")) }
             for id in segment.sceneIDs { edges.append(.init(from: "segment:\(segment.id)", to: "scene:\(id)")) }
             for id in segment.propIDs { edges.append(.init(from: "segment:\(segment.id)", to: "prop:\(id)")) }
         }
-        for relation in project.relations {
+        for relation in project.relations where visibleSegments.contains(where: { alter in alter.id == relation.segmentID }) {
             edges.append(.init(from: "character:\(relation.characterID)", to: "scene:\(relation.sceneID)", relation: true,
                                label: "\(relation.action) · \(relation.startSecond)–\(relation.endSecond)s"))
         }

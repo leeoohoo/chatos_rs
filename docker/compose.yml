@@ -126,6 +126,10 @@ x-config-center-mtls-memory-engine-secrets: &config-center-mtls-memory-engine-se
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_memory_engine_identity
     target: plugin_management_mtls_client_identity
+  - source: user_service_mtls_ca
+    target: user_service_mtls_ca
+  - source: user_service_mtls_memory_engine_identity
+    target: user_service_mtls_client_identity
 
 x-config-center-mtls-memory-engine-api-secrets: &config-center-mtls-memory-engine-api-secrets
   - source: config_center_mtls_ca
@@ -142,6 +146,10 @@ x-config-center-mtls-memory-engine-api-secrets: &config-center-mtls-memory-engin
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_memory_engine_identity
     target: plugin_management_mtls_client_identity
+  - source: user_service_mtls_ca
+    target: user_service_mtls_ca
+  - source: user_service_mtls_memory_engine_identity
+    target: user_service_mtls_client_identity
 
 x-config-center-mtls-official-website-secrets: &config-center-mtls-official-website-secrets
   - source: config_center_mtls_ca
@@ -588,6 +596,9 @@ services:
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
       MEMORY_ENGINE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL: https://user-service-backend:39192
+      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
+      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
     ports:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MEMORY_ENGINE_PORT:-7081}:7081"
     healthcheck:
@@ -628,6 +639,9 @@ services:
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
       MEMORY_ENGINE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
+      MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL: https://user-service-backend:39192
+      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
+      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
 
       interval: 10s
       timeout: 5s
@@ -1272,6 +1286,8 @@ secrets:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/chatos-backend.identity.pem
   user_service_mtls_task_runner_identity:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/task-runner.identity.pem
+  user_service_mtls_memory_engine_identity:
+    file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/memory-engine.identity.pem
   plugin_management_mtls_ca:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/ca.crt
   plugin_management_mtls_server_cert:

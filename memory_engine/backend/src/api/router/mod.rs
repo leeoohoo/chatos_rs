@@ -249,6 +249,8 @@ mod tests {
             internal_api_secrets,
             require_signed_internal_requests: true,
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
+            user_service_internal_base_url: "https://127.0.0.1:39192".to_string(),
+            user_service_internal_http: reqwest::Client::new(),
             user_service_request_timeout_ms: 300,
         }
     }

@@ -152,12 +152,22 @@ final class AgentMemoryContextTests: XCTestCase {
     func testCancellationWhileWaitingPreservesSummaryJobForResume() async throws {
         let (initial, scope) = try fixture()
         let memory = TestMemory(scope: scope, waitsForSummary: true)
-        let provider = AgentMemoryContextProvider(scope: scope, service: memory, sleep: { _ in throw CancellationError() })
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
         var checkpoint = try provider.bind(initial)
         for index in 0..<20 { checkpoint.messages.append(.init(role: .assistant, content: "\(index)" + String(repeating: "x", count: 250))) }
+        var policy = contextPolicy
+        policy.summaryPollSeconds = 1
+        policy.summaryTimeoutSeconds = 5
+        let definitions = tools
+        let preparedCheckpoint = checkpoint
+        let task = Task {
+            try await provider.prepare(checkpoint: preparedCheckpoint, tools: definitions, policy: policy,
+                                       deadline: Date().addingTimeInterval(10), record: { _, _ in })
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
         do {
-            _ = try await provider.prepare(checkpoint: checkpoint, tools: tools, policy: contextPolicy,
-                deadline: Date().addingTimeInterval(60), record: { _, _ in })
+            _ = try await task.value
             XCTFail("Should pause while waiting")
         } catch let failure as AgentContextPreparationFailure {
             XCTAssertTrue(failure.cancelled)
@@ -176,19 +186,49 @@ final class AgentMemoryContextTests: XCTestCase {
 
     func testDefaultSummaryPollingSleepCompletesWithoutCrashingRuntime() async throws {
         var (checkpoint, scope) = try fixture()
+        let memory = TestMemory(scope: scope, summaryPollsBeforeCompletion: 1)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+        checkpoint = try provider.bind(checkpoint)
         for index in 0..<20 {
             checkpoint.messages.append(.init(role: .assistant, content: "\(index)" + String(repeating: "x", count: 250)))
         }
-        let memory = TestMemory(scope: scope, summaryPollsBeforeCompletion: 1)
-        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
         var policy = contextPolicy
         policy.summaryPollSeconds = 1
         policy.summaryTimeoutSeconds = 5
-        let result = try await provider.prepare(checkpoint: provider.bind(checkpoint), tools: tools, policy: policy,
+        let result = try await provider.prepare(checkpoint: checkpoint, tools: tools, policy: policy,
                                                 deadline: Date().addingTimeInterval(10), record: { _, _ in })
         XCTAssertGreaterThan(result.checkpoint.memory?.compactions ?? 0, 0)
         let polls = await memory.summaryStatusPolls
         XCTAssertEqual(polls, 1)
+    }
+
+    func testCancellingDefaultSummaryPollingSleepDoesNotCrashRuntime() async throws {
+        var (checkpoint, scope) = try fixture()
+        let memory = TestMemory(scope: scope, waitsForSummary: true)
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+        checkpoint = try provider.bind(checkpoint)
+        for index in 0..<20 {
+            checkpoint.messages.append(.init(role: .assistant, content: "\(index)" + String(repeating: "x", count: 250)))
+        }
+        var policy = contextPolicy
+        policy.summaryPollSeconds = 1
+        policy.summaryTimeoutSeconds = 5
+        let definitions = tools
+        let preparedCheckpoint = checkpoint
+        let task = Task {
+            try await provider.prepare(checkpoint: preparedCheckpoint, tools: definitions, policy: policy,
+                                       deadline: Date().addingTimeInterval(10), record: { _, _ in })
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("Cancelled polling should stop context preparation")
+        } catch let failure as AgentContextPreparationFailure {
+            XCTAssertTrue(failure.cancelled)
+            XCTAssertEqual(failure.checkpoint.memory?.summaryRequested, true)
+            XCTAssertEqual(failure.checkpoint.memory?.summaryJobID, "existing")
+        }
     }
 
     private var contextPolicy: AgentContextPolicy {

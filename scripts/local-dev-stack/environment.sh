@@ -183,6 +183,7 @@ export_local_env() {
   export LEGACY_AUTH_MONGODB_DATABASE="${LEGACY_AUTH_MONGODB_DATABASE:-legacy_auth}"
 
   export MEMORY_ENGINE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
+  export MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${USER_SERVICE_INTERNAL_MTLS_PORT}"
   export CONFIG_CENTER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export MEMORY_ENGINE_BASE_URL="http://127.0.0.1:${MEMORY_ENGINE_PORT}/api/memory-engine/v1"
   export MEMORY_ENGINE_INTERNAL_BASE_URL="https://127.0.0.1:${MEMORY_ENGINE_INTERNAL_MTLS_PORT}/api/memory-engine/v1"
@@ -302,7 +303,7 @@ local_connector_identity_path() {
 user_service_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    chatos-backend|task-runner)
+    chatos-backend|task-runner|memory-engine)
       printf '%s/%s.identity.pem' "$USER_SERVICE_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;

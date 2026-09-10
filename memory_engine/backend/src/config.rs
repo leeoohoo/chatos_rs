@@ -51,6 +51,8 @@ pub struct AppConfig {
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
     pub user_service_base_url: String,
+    pub user_service_internal_base_url: String,
+    pub user_service_internal_http: reqwest::Client,
     pub user_service_request_timeout_ms: u64,
 }
 
@@ -124,8 +126,22 @@ impl AppConfig {
         let rollup_lock_timeout_secs =
             required_i64("MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS")?.max(30);
         let user_service_base_url = required_text("MEMORY_ENGINE_USER_SERVICE_BASE_URL")?;
+        let user_service_internal_base_url =
+            required_text("MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL")?;
+        if !user_service_internal_base_url.starts_with("https://") {
+            return Err(
+                "MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL must use https://".to_string(),
+            );
+        }
         let user_service_request_timeout_ms =
             required_u64("MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
+        let user_service_internal_http = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                user_service_request_timeout_ms,
+            )),
+            required_runtime_path("USER_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
+            required_runtime_path("USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let config = Self {
             host,
             port,
@@ -172,6 +188,8 @@ impl AppConfig {
                 "MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS",
             )?,
             user_service_base_url,
+            user_service_internal_base_url,
+            user_service_internal_http,
             user_service_request_timeout_ms,
         };
 
@@ -236,6 +254,12 @@ fn required_managed_bool(key: &str) -> Result<bool, String> {
 fn required_runtime_bool(key: &str) -> Result<bool, String> {
     let value = env_text(key).ok_or_else(|| format!("{key} is required from runtime env"))?;
     parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
+}
+
+fn required_runtime_path(key: &str) -> Result<std::path::PathBuf, String> {
+    env_text(key)
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| format!("{key} is required from runtime env"))
 }
 
 fn required_text(key: &str) -> Result<String, String> {

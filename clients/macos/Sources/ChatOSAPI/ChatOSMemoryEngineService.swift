@@ -95,7 +95,7 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
     private func status(_ value: MemorySummaryDTO) throws -> AgentSummaryStatus {
         guard value.thread_id == scope.threadID, !(value.running && value.completed) else { throw AgentRuntimeError.scopeMismatch }
         return .init(jobID: value.job_run_id, running: value.running, completed: value.completed,
-                     failed: value.failed, compacted: value.compacted)
+                     failed: value.failed, compacted: value.compacted, errorMessage: value.error_message)
     }
     private func request<T: Decodable & Sendable>(_ path: String) async throws -> T {
         try await client.request(path, timeoutInterval: 30, service: .memoryEngine, expectedAuthenticationSessionID: sessionID)

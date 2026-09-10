@@ -598,6 +598,7 @@ impl AppState {
 
         tracing::info!(
             user_service_base_url_key = MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY,
+            user_service_internal_base_url_key = MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
             user_service_timeout_key = MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "Memory Engine runtime configuration is present in configuration center releases and snapshots"
         );

@@ -1175,6 +1175,10 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
         Some(&json!("http://127.0.0.1:39190"))
     );
     assert_eq!(
+        values.get(MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY),
+        Some(&json!("https://user-service-backend:39192"))
+    );
+    assert_eq!(
         values.get(MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY),
         Some(&json!(5_000))
     );
@@ -1224,6 +1228,9 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
+    assert!(
+        changed_keys.contains(&MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string())
+    );
     assert!(changed_keys
         .contains(&MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string()));
     assert!(
@@ -1308,6 +1315,10 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
         (
             MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
             json!("http://127.0.0.1:39190"),
+        ),
+        (
+            MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
+            json!("https://user-service-backend:39192"),
         ),
         (
             MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
@@ -1477,6 +1488,12 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("MEMORY_ENGINE_USER_SERVICE_BASE_URL"),
         Some(&"http://127.0.0.1:39190".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL"),
+        Some(&"https://user-service-backend:39192".to_string())
     );
     assert_eq!(
         snapshot

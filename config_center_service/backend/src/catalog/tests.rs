@@ -1701,6 +1701,12 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             false,
         ),
         (
+            MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            "MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL",
+            "string",
+            false,
+        ),
+        (
             MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS",
             "duration_ms",

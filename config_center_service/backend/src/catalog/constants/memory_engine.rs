@@ -27,6 +27,8 @@ pub const MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY: &str =
     "memory_engine.runtime.mongodb_database";
 pub const MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "memory_engine.downstream.user_service_base_url";
+pub const MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
+    "memory_engine.downstream.user_service_internal_base_url";
 pub const MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "memory_engine.downstream.user_service_request_timeout_ms";
 pub const MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY: &str =

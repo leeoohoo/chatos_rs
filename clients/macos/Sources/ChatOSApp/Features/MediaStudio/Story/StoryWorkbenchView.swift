@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 struct StoryWorkbenchView: View {
     private enum Section: String, CaseIterable {
-        case source, portraits, segments, graph
+        case source, style, portraits, segments, graph
     }
     @EnvironmentObject private var appModel: AppModel
     @ObservedObject var viewModel: StoryStudioViewModel
@@ -118,6 +118,7 @@ struct StoryWorkbenchView: View {
     private var sectionBar: some View {
         HStack(spacing: 8) {
             sectionButton(.source, "剧情原文", "Story", "doc.text", nil)
+            sectionButton(.style, "画面风格", "Visual Style", "paintpalette", nil)
             sectionButton(.portraits, "角色画像", "Portraits", "person.crop.rectangle.stack", project.resources.count)
             sectionButton(.segments, "拍摄分段", "Shot Segments", "rectangle.stack", project.segments.count)
             sectionButton(.graph, "关系图谱", "Relationship Graph", "point.3.connected.trianglepath.dotted", project.relations.count)
@@ -148,6 +149,7 @@ struct StoryWorkbenchView: View {
     @ViewBuilder private var workspaceContent: some View {
         switch section {
         case .source: sourcePanel
+        case .style: stylePanel
         case .portraits: portraitsPanel
         case .segments: segmentsPanel
         case .graph:
@@ -162,70 +164,89 @@ struct StoryWorkbenchView: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(appModel.localized("剧情原文与视觉基调", english: "Story and Visual Direction")).font(.title2.bold())
-                        Text(appModel.localized("在这里完成创作输入；保存后再生成角色画像和整部影片的连续分段。", english: "Prepare the creative source here, then generate portraits and continuous segments for the full story."))
+                        Text(appModel.localized("剧情原文", english: "Complete Story")).font(.title2.bold())
+                        Text(appModel.localized("集中打磨完整剧情、人物动机和叙事节奏；画面风格在单独页面设置。", english: "Refine the narrative, character motivations and pacing here. Visual direction has its own page."))
                             .font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if viewModel.isBusy { ProgressView().controlSize(.small); Text(viewModel.operation).font(.caption) }
                 }
-                GroupBox(appModel.localized("完整剧情", english: "Complete Story")) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        TextEditor(text: $source).font(.body).frame(minHeight: 300)
-                            .padding(8).background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
-                            .disabled(!project.segments.isEmpty || viewModel.isBusy)
-                        HStack {
-                            Text("\(source.count) / 80000").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                            Spacer()
-                            Button { viewModel.optimizeSourceDraft(source, style: style, target: .source) } label: {
-                                Label(appModel.localized("AI 优化剧情", english: "Improve Story with AI"), systemImage: "wand.and.stars")
-                            }.disabled(viewModel.isBusy || !project.segments.isEmpty || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                TextEditor(text: $source).font(.body).frame(minHeight: 480)
+                    .padding(12).background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08)))
+                    .disabled(!project.segments.isEmpty || viewModel.isBusy)
+                HStack {
+                    Text("\(source.count) / 80000").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { viewModel.optimizeSourceDraft(source, style: style, target: .source) } label: {
+                        Label(appModel.localized("AI 优化剧情", english: "Improve Story with AI"), systemImage: "wand.and.stars")
+                    }.disabled(viewModel.isBusy || !project.segments.isEmpty || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button(appModel.localized("保存剧情原文", english: "Save Story Text")) {
+                        viewModel.saveSource(source, style: style, ratio: ratio)
+                    }.buttonStyle(.borderedProminent).tint(.purple)
+                        .disabled(viewModel.isBusy || !project.segments.isEmpty || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if viewModel.optimizationTarget == .source { optimizationSuggestion }
+                if let error = viewModel.errorMessage { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+                Text(appModel.localized("AI 优化只生成候选文本，必须由你点击采用；不会直接覆盖原文，也不会生成图片或视频。", english: "AI improvement creates a suggestion only. You must apply it explicitly; it never overwrites the source or generates images or video."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(16)
+        }.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var stylePanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(appModel.localized("画面风格", english: "Visual Style")).font(.title2.bold())
+                        Text(appModel.localized("单独定义全剧的美术方向、光线、色彩、镜头质感和画幅。", english: "Define the film-wide art direction, lighting, color, camera texture and aspect ratio."))
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if viewModel.isBusy { ProgressView().controlSize(.small); Text(viewModel.operation).font(.caption) }
+                }
+                TextEditor(text: $style).font(.body).frame(minHeight: 360)
+                    .padding(12).background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08)))
+                    .disabled(!project.segments.isEmpty || viewModel.isBusy)
+                HStack {
+                    Text("\(style.count) / 2000").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { viewModel.optimizeSourceDraft(source, style: style, target: .style) } label: {
+                        Label(appModel.localized("AI 优化风格", english: "Improve Style with AI"), systemImage: "wand.and.stars")
+                    }.disabled(viewModel.isBusy || !project.segments.isEmpty || style.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                GroupBox(appModel.localized("画幅与全剧规划", english: "Format and Story Planning")) {
+                    HStack(alignment: .center, spacing: 18) {
+                        Picker(appModel.localized("比例", english: "Ratio"), selection: $ratio) {
+                            ForEach(["16:9", "9:16", "1:1"], id: \.self) { Text($0).tag($0) }
+                        }.frame(width: 220)
+                        Spacer()
+                        if project.segments.isEmpty {
+                            Button(appModel.localized("保存画面风格", english: "Save Visual Style")) {
+                                viewModel.saveSource(source, style: style, ratio: ratio)
+                            }.disabled(viewModel.isBusy || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button(appModel.localized("分析全剧并拆分计划", english: "Analyze and Plan Entire Story")) {
+                                confirmPlanning(.outline, targets: [])
+                            }.buttonStyle(.borderedProminent).tint(.purple)
+                                .disabled(viewModel.isBusy || project.source.isEmpty || source != project.source || style != project.style || ratio != project.ratio)
+                        } else {
+                            Text("\(project.segments.count) × 15s = \(project.totalSeconds)s")
+                                .font(.headline.monospacedDigit()).foregroundStyle(.purple)
                         }
                     }.padding(8)
                 }
-                HStack(alignment: .top, spacing: 18) {
-                    GroupBox(appModel.localized("统一画面风格", english: "Visual Style")) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            TextEditor(text: $style).frame(minHeight: 120)
-                                .padding(8).background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
-                                .disabled(!project.segments.isEmpty || viewModel.isBusy)
-                            HStack {
-                                Text("\(style.count) / 2000").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                                Spacer()
-                                Button { viewModel.optimizeSourceDraft(source, style: style, target: .style) } label: {
-                                    Label(appModel.localized("AI 优化风格", english: "Improve Style with AI"), systemImage: "wand.and.stars")
-                                }.disabled(viewModel.isBusy || !project.segments.isEmpty || style.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            }
-                        }.padding(8)
-                    }.frame(maxWidth: .infinity)
-                    GroupBox(appModel.localized("画幅与规划", english: "Format and Planning")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Picker(appModel.localized("比例", english: "Ratio"), selection: $ratio) {
-                                ForEach(["16:9", "9:16", "1:1"], id: \.self) { Text($0).tag($0) }
-                            }
-                            if project.segments.isEmpty {
-                                Button(appModel.localized("保存剧情原文", english: "Save Story Text")) { viewModel.saveSource(source, style: style, ratio: ratio) }
-                                    .disabled(viewModel.isBusy || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                                Button(appModel.localized("分析全剧并拆分计划", english: "Analyze and Plan Entire Story")) { confirmPlanning(.outline, targets: []) }
-                                    .buttonStyle(.borderedProminent).tint(.purple)
-                                    .disabled(viewModel.isBusy || project.source.isEmpty || source != project.source || style != project.style || ratio != project.ratio)
-                            } else {
-                                Text("\(project.segments.count) × 15s = \(project.totalSeconds)s")
-                                    .font(.headline.monospacedDigit()).foregroundStyle(.purple)
-                                Text(appModel.localized("规划完成后原文锁定，避免已生成画像与分段失去依据。", english: "The source is locked after planning so portraits and segments retain a stable basis."))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }.padding(8).frame(minWidth: 270, alignment: .leading)
-                    }
-                }
-                optimizationSuggestion
+                if viewModel.optimizationTarget == .style { optimizationSuggestion }
                 HStack(alignment: .top, spacing: 18) {
                     StoryAgentRunPanel(viewModel: viewModel).frame(maxWidth: .infinity, alignment: .topLeading)
                     StoryMediaBatchPanel(viewModel: viewModel).frame(maxWidth: .infinity, alignment: .topLeading)
                 }
+                if !project.segments.isEmpty {
+                    Text(appModel.localized("规划完成后剧情和风格会锁定，避免已生成画像与分段失去一致性依据。", english: "Story and style are locked after planning so generated portraits and segments retain a stable consistency basis."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if let error = viewModel.errorMessage { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
-                Text(appModel.localized("AI 优化只生成候选文本，必须由你点击采用；不会直接覆盖原文，也不会生成图片或视频。", english: "AI improvement creates a suggestion only. You must apply it explicitly; it never overwrites the source or generates images or video."))
-                    .font(.caption).foregroundStyle(.secondary)
             }.padding(16)
         }.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }

@@ -28,7 +28,7 @@ struct StoryAgentRun: Codable, Equatable, Identifiable, Sendable {
     var applied = false
     var updatedAt = Date()
 
-    init(project: StoryProject, owner: String, stage: Stage, targetIDs: [String], cloudMemory: Bool, policy: AgentRunPolicy) throws {
+    init(project: StoryProject, owner: String, stage: Stage, targetIDs: [String], policy: AgentRunPolicy) throws {
         try project.validate(); try policy.validate()
         guard !project.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw StoryError.invalidProject }
         if stage == .outline {
@@ -38,7 +38,7 @@ struct StoryAgentRun: Codable, Equatable, Identifiable, Sendable {
                   targetIDs.allSatisfy({ id in project.segments.contains { $0.id == id && $0.detail == nil && $0.attempt == nil && $0.video == nil } }) else { throw StoryError.invalidPlan }
         }
         self.owner = owner; self.projectID = project.id; self.stage = stage; self.targetIDs = targetIDs
-        self.baseDigest = try Self.digest(project); self.cloudMemory = cloudMemory; self.consentAt = Date()
+        self.baseDigest = try Self.digest(project); self.cloudMemory = true; self.consentAt = Date()
         self.policy = policy; self.draft = project
         self.checkpoint = .init(scope: "story:\(owner):\(project.id):\(baseDigest):\(UUID())", messages: [
             .init(role: .system, content: StoryAgentTools.systemPrompt),

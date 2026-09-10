@@ -84,6 +84,21 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertFalse(events.contains("video")); XCTAssertFalse(events.contains("image"))
     }
 
+    func testAIOptimizationReturnsSuggestionWithoutOverwritingSavedStory() async throws {
+        let (vm, _, service) = try await fixture()
+        var draft = makeProject(); draft.source = "Original ending stays unchanged."
+        _ = await vm.create(draft, availableModels: models)
+        vm.optimizeSourceDraft(draft.source, style: draft.style, target: .source)
+        try await idle(vm)
+        XCTAssertEqual(vm.project?.source, draft.source)
+        XCTAssertEqual(vm.optimizationTarget, .source)
+        XCTAssertEqual(vm.optimizationSuggestion?.optimizedText, "Improved candidate")
+        let events = await service.events()
+        XCTAssertTrue(events.contains("story_suggest_optimized_text"))
+        vm.clearOptimizationSuggestion()
+        XCTAssertNil(vm.optimizationSuggestion)
+    }
+
     func testInvalidOutlineDoesNotOverwriteProject() throws {
         var project = makeProject(); project.source = "Story"
         let invalid = Data(#"{"summary":"summary","props":[],"segments":[{"id":"s1","title":"one","synopsis":"one","propIDs":["missing"]}]}"#.utf8)
@@ -309,6 +324,10 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertEqual(outline.toolName, "story_save_outline")
         XCTAssertTrue(outline.context.contains(project.source))
         XCTAssertFalse(String(decoding: outline.schema, as: UTF8.self).contains("submit_batch"))
+        let optimization = try StoryPlanningTools.optimizationRequest(project, source: project.source,
+                                                                       style: project.style, target: .source)
+        XCTAssertEqual(optimization.toolName, "story_suggest_optimized_text")
+        XCTAssertFalse(String(decoding: optimization.schema, as: UTF8.self).contains("generate"))
         project.segments = [.init(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))]
         let detail = try StoryPlanningTools.detailRequest(project, segmentID: "s1")
         XCTAssertEqual(detail.toolName, "story_update_segment")
@@ -389,6 +408,9 @@ private actor StoryTestService: ResumableVideoGenerationServicing, StoryPlanning
     func plan(_ request: StoryPlanningRequest) async throws -> Data {
         calls.append(request.toolName)
         if delayed { try await Task.sleep(for: .milliseconds(50)) }
+        if request.toolName == "story_suggest_optimized_text" {
+            return Data(#"{"optimizedText":"Improved candidate","rationale":"Clearer pacing"}"#.utf8)
+        }
         if request.toolName == "story_save_outline" {
             return Data(#"{"summary":"beginning to ending","props":[],"segments":[{"id":"s1","title":"opening","synopsis":"start","propIDs":[]},{"id":"s2","title":"middle","synopsis":"middle","propIDs":[]},{"id":"s3","title":"ending","synopsis":"end","propIDs":[]}]}"#.utf8)
         }
