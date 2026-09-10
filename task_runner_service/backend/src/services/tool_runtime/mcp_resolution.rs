@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::{is_chatos_plan_task_profile, CHATOS_ASYNC_PLANNER_TOOL_PROFILE};
+use chatos_agent::CHATOS_ASYNC_PLANNER_TOOL_PROFILE;
 use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 use chatos_mcp_service::BuiltinHostBackend;
 use chatos_plugin_management_sdk::SystemAgentKey;
@@ -16,7 +16,6 @@ use crate::models::{
 pub(super) enum AgentMcpCaller {
     ChatosAsyncPlanner,
     LocalConnectorClientAgent,
-    TaskRunnerPlanPhase,
     TaskRunnerRunPhase,
 }
 
@@ -24,7 +23,6 @@ pub(super) enum AgentMcpCaller {
 #[allow(dead_code)]
 pub(super) enum McpCapabilityRequirementSource {
     CallerContract(AgentMcpCaller),
-    TaskProfileChatosPlan,
     RuntimeInternal,
 }
 
@@ -63,7 +61,6 @@ pub(super) struct TaskMcpResolution {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TaskMcpResolutionInput<'a> {
     pub mcp_config: &'a TaskMcpConfig,
-    pub task_profile: &'a str,
     pub schedule_mode: TaskScheduleMode,
     pub source_session_id: Option<&'a str>,
     pub source_user_message_id: Option<&'a str>,
@@ -86,15 +83,8 @@ pub(super) fn resolve_task_mcp(
     task: &TaskRecord,
     active_host_backends: &[BuiltinHostBackend],
 ) -> TaskMcpResolution {
-    let caller = if crate::models::uses_task_runner_planning_agent(
-        task.task_profile.as_str(),
-        task.mcp_config.requires_execution,
-    ) {
-        AgentMcpCaller::TaskRunnerPlanPhase
-    } else {
-        AgentMcpCaller::TaskRunnerRunPhase
-    };
-    let caller_requirements = caller_builtin_capability_requirements(caller);
+    let caller_requirements =
+        caller_builtin_capability_requirements(AgentMcpCaller::TaskRunnerRunPhase);
     resolve_task_mcp_with_requirements(task, active_host_backends, caller_requirements.as_slice())
 }
 
@@ -105,7 +95,6 @@ pub(super) fn resolve_task_mcp_with_requirements(
 ) -> TaskMcpResolution {
     resolve_mcp_config(TaskMcpResolutionInput {
         mcp_config: &task.mcp_config,
-        task_profile: task.task_profile.as_str(),
         schedule_mode: task.schedule.mode,
         source_session_id: task.source_session_id.as_deref(),
         source_user_message_id: task.source_user_message_id.as_deref(),
@@ -116,12 +105,7 @@ pub(super) fn resolve_task_mcp_with_requirements(
 
 pub(super) fn resolve_mcp_config(input: TaskMcpResolutionInput<'_>) -> TaskMcpResolution {
     let mut requested_builtin_kinds = selected_builtin_kinds_from_config(input.mcp_config);
-    requested_builtin_kinds.retain(|kind| {
-        !matches!(
-            kind,
-            BuiltinMcpKind::ProjectManagement | BuiltinMcpKind::AskUser
-        )
-    });
+    requested_builtin_kinds.retain(|kind| *kind != BuiltinMcpKind::AskUser);
     remove_execution_only_kinds(
         &mut requested_builtin_kinds,
         input.mcp_config.requires_execution,
@@ -132,15 +116,11 @@ pub(super) fn resolve_mcp_config(input: TaskMcpResolutionInput<'_>) -> TaskMcpRe
         .map(|requirement| requirement.kind)
         .collect::<Vec<_>>();
 
-    let mut effective_kinds = if is_chatos_plan_profile(input) {
-        required_kinds
-    } else {
-        requested_builtin_kinds
-            .iter()
-            .copied()
-            .chain(required_kinds)
-            .collect::<Vec<_>>()
-    };
+    let mut effective_kinds = requested_builtin_kinds
+        .iter()
+        .copied()
+        .chain(required_kinds)
+        .collect::<Vec<_>>();
     effective_kinds = complete_builtin_kind_dependencies(effective_kinds);
     remove_execution_only_kinds(&mut effective_kinds, input.mcp_config.requires_execution);
 
@@ -229,10 +209,6 @@ fn requirement_source_key(source: McpCapabilityRequirementSource) -> &'static st
         McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::TaskRunnerRunPhase) => {
             SystemAgentKey::TaskRunnerRunPhase.as_str()
         }
-        McpCapabilityRequirementSource::CallerContract(AgentMcpCaller::TaskRunnerPlanPhase) => {
-            SystemAgentKey::TaskRunnerPlanPhase.as_str()
-        }
-        McpCapabilityRequirementSource::TaskProfileChatosPlan => "task_profile_chatos_plan",
         McpCapabilityRequirementSource::RuntimeInternal => "runtime_internal",
     }
 }
@@ -263,9 +239,6 @@ fn required_builtin_capabilities(
     input: TaskMcpResolutionInput<'_>,
 ) -> Vec<RequiredBuiltinCapability> {
     let mut requirements = Vec::new();
-    if is_chatos_plan_profile(input) {
-        requirements.extend(chatos_plan_profile_requirements());
-    }
     if is_chatos_async_context(input) {
         requirements.extend(chatos_async_planner_requirements());
     }
@@ -280,7 +253,7 @@ pub(super) fn caller_builtin_capability_requirements(
     use BuiltinMcpKind::*;
 
     let kinds: &[BuiltinMcpKind] = match caller {
-        ChatosAsyncPlanner | TaskRunnerPlanPhase | TaskRunnerRunPhase => &[AskUser],
+        ChatosAsyncPlanner | TaskRunnerRunPhase => &[AskUser],
         LocalConnectorClientAgent => &[],
     };
     kinds
@@ -290,19 +263,6 @@ pub(super) fn caller_builtin_capability_requirements(
             McpCapabilityRequirement::new(
                 kind,
                 McpCapabilityRequirementSource::CallerContract(caller),
-            )
-        })
-        .collect()
-}
-
-fn chatos_plan_profile_requirements() -> Vec<McpCapabilityRequirement> {
-    use BuiltinMcpKind::*;
-    [CodeMaintainerRead, ProjectManagement, Notepad, AskUser]
-        .into_iter()
-        .map(|kind| {
-            McpCapabilityRequirement::new(
-                kind,
-                McpCapabilityRequirementSource::TaskProfileChatosPlan,
             )
         })
         .collect()
@@ -387,10 +347,6 @@ fn remove_hosted_builtin_kinds(
             .iter()
             .any(|host| host.replaces_builtin_kind_name(kind.kind_name()))
     });
-}
-
-fn is_chatos_plan_profile(input: TaskMcpResolutionInput<'_>) -> bool {
-    is_chatos_plan_task_profile(input.task_profile) && !input.mcp_config.requires_execution
 }
 
 fn is_chatos_async_context(input: TaskMcpResolutionInput<'_>) -> bool {

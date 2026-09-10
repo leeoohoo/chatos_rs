@@ -44,6 +44,11 @@ await Promise.all([
   }),
   build({
     ...common,
+    entryPoints: ['ui-src/studio/node-measurements.ts'],
+    outfile: 'dist/node-measurements.test.mjs'
+  }),
+  build({
+    ...common,
     entryPoints: ['src/quality.ts'],
     outfile: 'dist/quality.test.mjs'
   }),
@@ -51,6 +56,11 @@ await Promise.all([
     ...common,
     entryPoints: ['src/layout.ts'],
     outfile: 'dist/layout.test.mjs'
+  }),
+  build({
+    ...common,
+    entryPoints: ['src/mindmap.ts'],
+    outfile: 'dist/mindmap.test.mjs'
   }),
   build({
     ...common,

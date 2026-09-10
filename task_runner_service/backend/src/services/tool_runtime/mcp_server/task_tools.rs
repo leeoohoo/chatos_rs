@@ -13,13 +13,13 @@ use super::chatos_async_planner::{
 };
 use super::support::{
     ensure_task_status_update_allowed_from_mcp, task_creator_filter, task_for_agent_tool,
-    tasks_for_agent_tool, validate_create_project_execution_tasks_arguments, value_for_agent_tool,
+    tasks_for_agent_tool, value_for_agent_tool,
 };
 use super::{
     decode_args, reject_ai_runtime_config, text_result, BatchTaskDeleteArgs,
-    BatchTaskStatusUpdateArgs, CancelTaskArgs, CreateProjectExecutionTasksArgs, CreateTaskArgs,
-    CreateTasksWithPrerequisitesArgs, McpRequestContext, McpToolProfile, SetTaskPrerequisitesArgs,
-    TaskIdArgs, TaskRunnerMcpService, UpdateTaskArgs,
+    BatchTaskStatusUpdateArgs, CancelTaskArgs, CreateTaskArgs, CreateTasksWithPrerequisitesArgs,
+    McpRequestContext, McpToolProfile, SetTaskPrerequisitesArgs, TaskIdArgs, TaskRunnerMcpService,
+    UpdateTaskArgs,
 };
 
 impl TaskRunnerMcpService {
@@ -142,14 +142,6 @@ impl TaskRunnerMcpService {
                 let args: CreateTasksWithPrerequisitesArgs = decode_args(args)?;
                 let result = self
                     .create_tasks_with_prerequisites(args, current_user, request_context)
-                    .await?;
-                Ok(text_result(result))
-            }
-            "create_project_execution_tasks" => {
-                validate_create_project_execution_tasks_arguments(&args)?;
-                let args: CreateProjectExecutionTasksArgs = decode_args(args)?;
-                let result = self
-                    .create_project_execution_tasks(args, current_user, request_context)
                     .await?;
                 Ok(text_result(result))
             }

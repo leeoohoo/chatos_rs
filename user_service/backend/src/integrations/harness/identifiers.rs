@@ -25,12 +25,6 @@ pub(super) fn harness_project_pat_identifier(state: &AppState, user: &UserRecord
     truncate_harness_identifier(format!("{prefix}-{user_part}-{suffix}").as_str())
 }
 
-pub(super) fn harness_repo_identifier(project_name: &str, project_id: &str) -> String {
-    let name = sanitize_harness_identifier_part(project_name, "project");
-    let suffix = compact_user_id(project_id);
-    truncate_harness_identifier(format!("{name}-{suffix}").as_str())
-}
-
 pub(super) fn harness_email_for_user(
     user: &UserRecord,
     uid: &str,

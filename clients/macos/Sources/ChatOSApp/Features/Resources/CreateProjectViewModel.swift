@@ -9,39 +9,25 @@ final class CreateProjectViewModel: ObservableObject {
     @Published private(set) var parentPath: String?
     @Published private(set) var isLoadingDirectory = false
     @Published private(set) var isSaving = false
-    @Published private(set) var pendingCreatedProject: WorkspaceProject?
     @Published private(set) var showsHiddenDirectories = false
-    @Published private(set) var detectedGitRemotes: [ProjectGitRemote] = []
-    @Published private(set) var isInspectingGit = false
-    @Published private(set) var gitInspectionMessage: String?
     private(set) var selectedWorkspaceID: String
     @Published var projectName = ""
-    @Published var repositoryMode: LocalProjectRepositoryMode?
-    @Published var selectedGitRemoteName: String?
     @Published var errorMessage: String?
 
-    let deviceID: String?
     let workspaces: [LocalConnectorWorkspace]
 
-    private let defaultContact: WorkspaceContact?
     private let filesystemService: any ProjectFilesystemServicing
-    private let gitService: any ProjectGitServicing
-    private let creationService: any WorkspaceResourceCreating
+    private let creationService: any LocalProjectCreating
     private var userEditedProjectName = false
     private var allDirectoryEntries: [ProjectFileEntry] = []
 
     init(
         connectorStatus: LocalConnectorStatus?,
-        defaultContact: WorkspaceContact?,
         filesystemService: any ProjectFilesystemServicing,
-        gitService: any ProjectGitServicing,
-        creationService: any WorkspaceResourceCreating
+        creationService: any LocalProjectCreating
     ) {
-        deviceID = connectorStatus?.deviceID
         workspaces = connectorStatus?.workspaces ?? []
-        self.defaultContact = defaultContact
         self.filesystemService = filesystemService
-        self.gitService = gitService
         self.creationService = creationService
         selectedWorkspaceID = connectorStatus?.defaultWorkspaceID
             ?? connectorStatus?.workspaces.first?.id
@@ -52,46 +38,15 @@ final class CreateProjectViewModel: ObservableObject {
         workspaces.first(where: { $0.id == selectedWorkspaceID })
     }
 
-    var hasDefaultContact: Bool { defaultContact != nil }
-
     var canCreate: Bool {
-        !normalizedProjectName.isEmpty
-            && deviceID != nil
-            && selectedWorkspace != nil
-            && defaultContact != nil
-            && repositoryMode != nil
-            && externalGitURLIsReady
-            && !isLoadingDirectory
-            && (repositoryMode != .external || !isInspectingGit)
-            && !isSaving
-    }
-
-    var saveButtonTitle: String {
-        pendingCreatedProject == nil ? "创建项目" : "重试绑定"
+        !normalizedProjectName.isEmpty && selectedWorkspace != nil && !currentPath.isEmpty
+            && !isLoadingDirectory && !isSaving
     }
 
     var displayedLocation: String {
         guard let workspace = selectedWorkspace else { return "没有可用工作区" }
         guard let currentRelativePath else { return workspace.alias }
         return workspace.alias + "/" + currentRelativePath
-    }
-
-    var selectedGitRemote: ProjectGitRemote? {
-        guard let selectedGitRemoteName else { return nil }
-        return detectedGitRemotes.first(where: { $0.name == selectedGitRemoteName })
-    }
-
-    var externalGitURLIsReady: Bool {
-        repositoryMode != .external || selectedGitRemote?.url.trimmedNonEmpty != nil
-    }
-
-    func selectRepositoryMode(_ mode: LocalProjectRepositoryMode) {
-        repositoryMode = mode
-        errorMessage = nil
-    }
-
-    func selectGitRemote(named name: String) {
-        selectedGitRemoteName = name
     }
 
     func loadInitialDirectory() async {
@@ -153,71 +108,21 @@ final class CreateProjectViewModel: ObservableObject {
     }
 
     func save() async -> WorkspaceProject? {
-        guard let deviceID else {
-            errorMessage = "本机还没有连接到 ChatOS 网关。"
+        guard !isSaving else { return nil }
+        guard let workspace = selectedWorkspace, !currentPath.isEmpty else {
+            errorMessage = "请选择可访问的本机项目目录。"
             return nil
         }
-        guard let workspace = selectedWorkspace else {
-            errorMessage = "没有可用于创建项目的本机工作区。"
-            return nil
-        }
-        guard let defaultContact else {
-            errorMessage = "没有找到默认联系人“叽咕狸”，请先刷新资源或检查账号初始化状态。"
-            return nil
-        }
-        guard !normalizedProjectName.isEmpty else {
-            errorMessage = "请输入项目名称。"
-            return nil
-        }
-        guard let repositoryMode else {
-            errorMessage = "请选择代码托管方式。"
-            return nil
-        }
-        let gitURL = repositoryMode == .external
-            ? selectedGitRemote?.url.trimmedNonEmpty
-            : nil
-        if repositoryMode == .external, gitURL == nil {
-            errorMessage = "使用现有 Git 时，所选目录必须已经配置远程仓库。"
-            return nil
-        }
-
+        let draft = LocalProjectDraft(name: normalizedProjectName, workspaceID: workspace.id,
+                                      relativeRoot: currentRelativePath ?? "")
         isSaving = true
+        defer { isSaving = false }
         errorMessage = nil
         do {
-            var project: WorkspaceProject
-            if let pendingCreatedProject {
-                project = pendingCreatedProject
-            } else {
-                project = try await creationService.createLocalProject(
-                    LocalProjectCreationDraft(
-                        name: normalizedProjectName,
-                        deviceID: deviceID,
-                        workspaceID: workspace.id,
-                        relativePath: currentRelativePath,
-                        repositoryMode: repositoryMode,
-                        gitURL: gitURL
-                    )
-                )
-                pendingCreatedProject = project
-            }
-            try await creationService.bindContact(
-                projectID: project.id,
-                contactID: defaultContact.id
-            )
-            project.latestConversationID = try await creationService.ensureConversation(
-                project: project,
-                contact: defaultContact
-            )
-            pendingCreatedProject = nil
-            isSaving = false
-            return project
+            try draft.validate()
+            return try await creationService.createProject(draft)
         } catch {
-            if pendingCreatedProject != nil {
-                errorMessage = "项目已经创建，但准备默认联系人“叽咕狸”的会话失败：\(error.localizedDescription)\n请点击“重试”，不会重复创建项目。"
-            } else {
-                errorMessage = error.localizedDescription
-            }
-            isSaving = false
+            errorMessage = error.localizedDescription
             return nil
         }
     }
@@ -227,8 +132,8 @@ final class CreateProjectViewModel: ObservableObject {
     }
 
     private var workspaceRootPath: String? {
-        guard let deviceID, let workspace = selectedWorkspace else { return nil }
-        return "local://connector/\(deviceID)/\(workspace.id)"
+        guard let workspace = selectedWorkspace else { return nil }
+        return workspace.absoluteRoot
     }
 
     private func loadDirectory(
@@ -249,7 +154,6 @@ final class CreateProjectViewModel: ObservableObject {
             allDirectoryEntries = listing.entries.filter(\.isDirectory)
             applyDirectoryFilter()
             applySuggestedProjectName()
-            await inspectGitRepository(projectRoot: listing.path)
         } catch {
             errorMessage = error.localizedDescription
             allDirectoryEntries = []
@@ -278,7 +182,7 @@ final class CreateProjectViewModel: ObservableObject {
     private func relativePath(for logicalPath: String) -> String? {
         guard let root = workspaceRootPath else { return nil }
         if logicalPath == root { return nil }
-        let prefix = root + "/"
+        let prefix = root.hasSuffix("/") ? root : root + "/"
         guard logicalPath.hasPrefix(prefix) else { return currentRelativePath }
         let value = String(logicalPath.dropFirst(prefix.count))
         return value.isEmpty || value == "." ? nil : value
@@ -290,9 +194,6 @@ final class CreateProjectViewModel: ObservableObject {
         parentPath = nil
         allDirectoryEntries = []
         entries = []
-        detectedGitRemotes = []
-        selectedGitRemoteName = nil
-        gitInspectionMessage = nil
     }
 
     private func openInitialDirectory() async {
@@ -333,36 +234,6 @@ final class CreateProjectViewModel: ObservableObject {
         }
     }
 
-    private func inspectGitRepository(projectRoot: String) async {
-        isInspectingGit = true
-        defer { isInspectingGit = false }
-        do {
-            let snapshot = try await gitService.snapshot(projectRoot: projectRoot)
-            guard snapshot.isRepository else {
-                detectedGitRemotes = []
-                selectedGitRemoteName = nil
-                gitInspectionMessage = "所选目录不是 Git 仓库。"
-                return
-            }
-            detectedGitRemotes = snapshot.remotes.filter { $0.url.trimmedNonEmpty != nil }
-            if let selectedGitRemoteName,
-               detectedGitRemotes.contains(where: { $0.name == selectedGitRemoteName }) {
-                // Keep the user's current choice.
-            } else {
-                selectedGitRemoteName = detectedGitRemotes
-                    .first(where: { $0.name == "origin" })?.name
-                    ?? detectedGitRemotes.first?.name
-            }
-            gitInspectionMessage = detectedGitRemotes.isEmpty
-                ? "Git 仓库还没有配置远程仓库。"
-                : nil
-        } catch {
-            detectedGitRemotes = []
-            selectedGitRemoteName = nil
-            gitInspectionMessage = "无法读取所选目录的 Git 配置：\(error.localizedDescription)"
-        }
-    }
-
     private var isSystemRootDirectory: Bool {
         selectedWorkspace?.absoluteRoot == "/" && currentRelativePath == nil
     }
@@ -379,11 +250,4 @@ final class CreateProjectViewModel: ObservableObject {
     private static let userSystemDirectoryNames: Set<String> = [
         "Applications", "Applications (Parallels)", "Library", "bin", "opt",
     ]
-}
-
-private extension String {
-    var trimmedNonEmpty: String? {
-        let value = trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
-    }
 }

@@ -1,7 +1,7 @@
 # API Surface Baseline
 
-main_backend_route_count=213
-total_route_count=213
+main_backend_route_count=214
+total_route_count=214
 
 ## chatos/backend/src/api (.route lines)
 chatos/backend/src/api/agent_chat.rs: .route(
@@ -91,6 +91,7 @@ chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/fs/lis
 chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/fs/mkdir", post(create_directory))
 chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/projects", post(create_project))
 chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/workspaces", get(list_workspaces))
+chatos/backend/src/api/mcp_management.rs: .route(
 chatos/backend/src/api/mcp_management.rs: .route(
 chatos/backend/src/api/mcp_management.rs: .route(
 chatos/backend/src/api/mcp_management.rs: .route(

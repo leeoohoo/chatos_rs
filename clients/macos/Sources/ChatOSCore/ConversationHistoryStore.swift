@@ -13,7 +13,6 @@ public actor ConversationHistoryStore {
         var appliedEventIDs: Set<String> = []
         var viewportAnchor: ViewportAnchor?
         var unreadNewerCount = 0
-        var supersededExecutionGroupIDs: Set<String> = []
     }
 
     private var sessions: [String: SessionState] = [:]
@@ -22,7 +21,12 @@ public actor ConversationHistoryStore {
 
     public func mergeCachedTurns(_ turns: [ConversationTurn], sessionID: String) {
         var state = sessions[sessionID] ?? SessionState()
-        merge(turns, sessionID: sessionID, into: &state)
+        merge(
+            turns,
+            sessionID: sessionID,
+            replacingChangedEqualRevisions: false,
+            into: &state
+        )
         sessions[sessionID] = state
     }
 
@@ -32,7 +36,14 @@ public actor ConversationHistoryStore {
         origin: ConversationHistoryPageOrigin = .latest
     ) {
         var state = sessions[sessionID] ?? SessionState()
-        let didChange = merge(page.turns, sessionID: sessionID, into: &state)
+        let acceptsLatestSnapshot = origin == .latest
+            && page.requestGeneration >= state.newestAcceptedLatestGeneration
+        let didChange = merge(
+            page.turns,
+            sessionID: sessionID,
+            replacingChangedEqualRevisions: acceptsLatestSnapshot,
+            into: &state
+        )
 
         if didChange,
            origin == .latest,
@@ -72,7 +83,12 @@ public actor ConversationHistoryStore {
 
         state.appliedEventIDs.insert(event.eventID)
         state.lastAppliedEventSequence = max(state.lastAppliedEventSequence, event.eventSequence)
-        let didChange = merge([event.turn], sessionID: sessionID, into: &state)
+        let didChange = merge(
+            [event.turn],
+            sessionID: sessionID,
+            replacingChangedEqualRevisions: false,
+            into: &state
+        )
 
         if didChange, userIsReadingOlderContent {
             state.unreadNewerCount += 1
@@ -120,35 +136,14 @@ public actor ConversationHistoryStore {
     private func merge(
         _ incomingTurns: [ConversationTurn],
         sessionID: String,
+        replacingChangedEqualRevisions: Bool,
         into state: inout SessionState
     ) -> Bool {
         var didChange = false
 
-        let newlySuperseded = Set(
-            incomingTurns.compactMap {
-                $0.projectExecutionContext?.replacedExecutionGroupID?.trimmedNonEmpty
-            }
-        )
-        if !newlySuperseded.isEmpty {
-            state.supersededExecutionGroupIDs.formUnion(newlySuperseded)
-            for (turnID, existingTurn) in state.turnsByID {
-                guard state.supersededExecutionGroupIDs.contains(existingTurn.executionGroupIdentity),
-                      existingTurn.isTaskGraphAvailable else {
-                    continue
-                }
-                var updatedTurn = existingTurn
-                updatedTurn.isTaskGraphAvailable = false
-                state.turnsByID[turnID] = updatedTurn
-                didChange = true
-            }
-        }
-
         for incomingTurn in incomingTurns {
             var turn = incomingTurn
             guard turn.sessionID == sessionID else { continue }
-            if state.supersededExecutionGroupIDs.contains(turn.executionGroupIdentity) {
-                turn.isTaskGraphAvailable = false
-            }
 
             guard let existing = state.turnsByID[turn.id] else {
                 state.turnsByID[turn.id] = turn
@@ -156,7 +151,10 @@ public actor ConversationHistoryStore {
                 continue
             }
 
-            if turn.revision > existing.revision {
+            if turn.revision > existing.revision
+                || (replacingChangedEqualRevisions
+                    && turn.revision == existing.revision
+                    && turn != existing) {
                 if !existing.isTaskGraphAvailable {
                     turn.isTaskGraphAvailable = false
                 }
@@ -188,16 +186,5 @@ private extension ConversationTurn {
         }
 
         return lhs.id < rhs.id
-    }
-
-    var executionGroupIdentity: String {
-        projectExecutionContext?.executionGroupID?.trimmedNonEmpty ?? userMessage.id
-    }
-}
-
-private extension String {
-    var trimmedNonEmpty: String? {
-        let value = trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
     }
 }

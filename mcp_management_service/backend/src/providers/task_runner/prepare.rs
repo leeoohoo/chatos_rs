@@ -14,7 +14,7 @@ use super::{
     ProviderCallError, TaskRunnerProvider, TaskRunnerRequestBinding, TASK_RUNNER_MCP_LIST_SCOPE,
     TASK_RUNNER_OWNER_SERVICE,
 };
-use crate::providers::project_service::decode_jsonrpc_response;
+use crate::providers::decode_jsonrpc_response;
 
 impl TaskRunnerProvider {
     #[allow(clippy::too_many_arguments)]
@@ -33,7 +33,6 @@ impl TaskRunnerProvider {
         default_model_config_id: Option<&str>,
         default_remote_connection_id: Option<&str>,
         task_profile: Option<&str>,
-        expected_project_task_ids: &[String],
         expires_at_unix: i64,
     ) -> HashMap<String, Vec<Value>> {
         let mut tool_snapshots = HashMap::new();
@@ -53,7 +52,6 @@ impl TaskRunnerProvider {
             default_model_config_id,
             default_remote_connection_id,
             task_profile,
-            expected_project_task_ids,
         };
         for route in routes
             .iter_mut()

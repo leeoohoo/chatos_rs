@@ -35,16 +35,6 @@ services:
         BIN_NAME: memory_engine
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
-  project-management-backend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.rust-service
-      args:
-        MANIFEST_PATH: Cargo.toml
-        PACKAGE_NAME: project_management_service_backend
-        BIN_NAME: project_management_service_backend
-        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
-
   plugin-management-backend:
     build:
       context: ..

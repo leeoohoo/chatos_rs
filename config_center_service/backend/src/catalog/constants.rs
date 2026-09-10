@@ -2,8 +2,8 @@
 mod chatos;
 #[path = "constants/mcp_plugin.rs"]
 mod mcp_plugin;
-#[path = "constants/project_memory.rs"]
-mod project_memory;
+#[path = "constants/memory_engine.rs"]
+mod memory_engine;
 #[path = "constants/sandbox_local_connector.rs"]
 mod sandbox_local_connector;
 #[path = "constants/shared.rs"]
@@ -15,7 +15,7 @@ mod user_service;
 
 pub use chatos::*;
 pub use mcp_plugin::*;
-pub use project_memory::*;
+pub use memory_engine::*;
 pub use sandbox_local_connector::*;
 pub use shared::*;
 pub use task_runner::*;

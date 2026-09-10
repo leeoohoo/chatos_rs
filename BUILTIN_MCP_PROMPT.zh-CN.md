@@ -49,35 +49,6 @@
 
 拿到工具结果后，要基于结果继续推进；不要把大段原始 JSON 直接丢给用户，除非用户明确要求原始结果。
 
-## [builtin_project_management]
-当存在这些工具时，说明当前任务可以写入 Project Management 项目空间：
-`project_management_service_get_project_overview`
-`project_management_service_initialize_project`
-`project_management_service_list_requirements`
-`project_management_service_create_requirement`
-`project_management_service_update_requirement`
-`project_management_service_set_requirement_dependencies`
-`project_management_service_list_requirement_technical_documents`
-`project_management_service_get_requirement_technical_document`
-`project_management_service_upsert_requirement_technical_document`
-`project_management_service_list_project_tasks`
-`project_management_service_create_project_task`
-`project_management_service_update_project_task`
-`project_management_service_set_project_task_dependencies`
-`project_management_service_get_project_dependency_graph`
-
-默认在规划任务中使用 Project Management：
-1. 需要把用户需求落成项目里的需求、变更或 bug 修复时，使用 `project_management_service_create_requirement`，并正确填写 `requirement_type`。
-2. 需要沉淀实现方案、总体技术说明、架构图、流程图、时序图或验收口径时，先用 `project_management_service_list_requirement_technical_documents` 查看已有文档，再用 `project_management_service_upsert_requirement_technical_document` 创建或更新聚焦文档。
-3. 每个新建或本轮更新的可执行需求都必须有对应项目任务；不要只给第一个需求建任务。创建项目任务前先确保该需求至少已有一份非空技术文档，再用 `project_management_service_create_project_task`。
-4. 需要表达顺序关系、阻塞关系或前置条件时，使用 dependency 工具维护依赖，不要只写在自然语言里。
-5. 写入前先查询现有项目内容，避免重复创建同一需求或任务。
-6. 收尾前用 `project_management_service_list_project_tasks` 和 `project_management_service_get_project_dependency_graph` 检查每个可执行需求都有任务覆盖；发现缺口就继续补齐，不要直接结束。
-
-边界：
-1. 这些工具用于项目规划和项目管理数据，不用于直接修改代码仓库。
-2. 普通任务没有这些工具时，不要假装已经写入 Project Management；应明确说明当前任务未接入项目管理工具。
-
 ## [builtin_ask_user]
 当存在这些工具时，优先用它们收集用户输入，而不是仅用自然语言追问：
 `ask_user_prompt_key_values`
@@ -204,7 +175,6 @@
 
 ## [builtin_remote_connection_controller]
 当存在这些工具时，它们是远程 SSH / SFTP 主机的唯一标准入口：
-`remote_connection_controller_list_connections`
 `remote_connection_controller_test_connection`
 `remote_connection_controller_run_command`
 `remote_connection_controller_list_directory`
@@ -217,8 +187,8 @@
 2. 你需要拿到远程主机的真实状态，而不是本地猜测。
 
 推荐顺序：
-1. 不确定有哪些连接可用时，先 `remote_connection_controller_list_connections`。
-2. 不确定连接是否通、或者要先验证环境时，先 `remote_connection_controller_test_connection`。
+1. 当前远程连接和路由上下文由程序在任务开始前绑定，直接调用对应工具即可。
+2. 不确定连接是否通、或者要先验证环境时，用 `remote_connection_controller_test_connection`。
 3. 执行远程检查或操作时，用 `remote_connection_controller_run_command`。
 4. 看远程目录结构时，用 `remote_connection_controller_list_directory`。
 5. 读远程文件内容时，用 `remote_connection_controller_read_file`。
@@ -229,8 +199,8 @@
 1. 远程问题不要落到本地终端或本地文件工具上。
 2. 危险命令只有在用户意图明确、上下文清楚时才考虑执行。
 3. 回答远程环境状态时，要明确这来自远程工具结果，而不是本地推断。
-4. 如果没有匹配的远程连接、连接缺少密码/密钥/私钥口令、认证失败、连接被禁用或权限不足，并且 AskUser 询问工具可用，必须先用 AskUser 询问工具向用户请求选择已有连接、补充认证信息，或提示用户在提供远程连接能力的客户端配置中创建/更新连接后再继续。
-5. 如果远程连接工具当前不能直接消费用户刚输入的临时密码或密钥，不要假装已经使用它；应让用户更新提供远程连接能力的客户端配置，随后重新 `list_connections` 或 `test_connection` 验证。
+4. 如果任务没有绑定远程连接，或连接缺少密码/密钥/私钥口令、认证失败、连接被禁用或权限不足，应提示用户在客户端选择或更新远程连接后再继续；内部路由配置始终由程序管理。
+5. 如果远程连接工具当前不能直接消费用户刚输入的临时密码或密钥，不要假装已经使用它；应让用户更新提供远程连接能力的客户端配置，随后用 `test_connection` 验证。
 6. 对“盘点服务器”“检查线上环境”“读取远程日志/配置”等任务，只有真实远程连接成功后的结果才能作为远程状态结论。无法连接时，应进入需要用户输入/配置的阻塞状态，而不是把公网可见信息包装成完整盘点。
 
 ## [builtin_notepad]

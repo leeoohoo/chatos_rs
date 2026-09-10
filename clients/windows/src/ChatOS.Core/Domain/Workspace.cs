@@ -5,7 +5,8 @@ public sealed record WorkspaceProject(
     string Name,
     string? RootPath,
     string? DisplayRootPath,
-    string? LatestConversationId);
+    string? LatestConversationId,
+    ProjectContextSnapshot? ProjectContext = null);
 
 public sealed record WorkspaceContact(
     string Id,
@@ -33,17 +34,3 @@ public sealed record WorkspaceSnapshot(
         Array.Empty<WorkspaceContact>(),
         Array.Empty<WorkspaceConversation>());
 }
-
-public enum LocalProjectRepositoryMode
-{
-    External,
-    Managed,
-}
-
-public sealed record LocalProjectCreationDraft(
-    string Name,
-    string DeviceId,
-    string WorkspaceId,
-    string? RelativePath,
-    LocalProjectRepositoryMode RepositoryMode,
-    string? GitUrl);

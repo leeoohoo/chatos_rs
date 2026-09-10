@@ -1,6 +1,6 @@
 # 页面真实逻辑矩阵
 
-更新时间：2026-08-24
+更新时间：2026-09-09
 
 本文档是 SwiftUI 页面设计与实现的业务基线。任何设计稿进入评审前，都必须能从这里回答五个问题：页面由哪个真实组件负责、读取哪些接口、维护哪些状态、允许哪些操作、失败时怎样恢复。
 
@@ -20,7 +20,7 @@
 | 左侧资源栏 | `SessionList.tsx`、`sessionList/Sections.tsx` | 四个可折叠资源分区：联系人、项目、终端、远端；各自有刷新、创建、选择、行内菜单 | 原生 `List` + `Section`；资源类型和顺序保持一致 |
 | 主内容路由 | `ChatInterfaceMainContent.tsx` | 根据当前选择显示联系人会话、项目工作区、本地终端、远端终端或 SFTP | 不是固定三栏 IDE；每类资源有自己的工作面 |
 | 全局浮层 | `ChatInterfaceOverlays.tsx` | 原项目包含记事本、应用列表、智能体管理、用户偏好、任务抽屉等 | 新版不实现应用列表；其余可改为 sheet、inspector 或独立 window，但功能边界不能合并丢失 |
-| 项目二级导航 | `projectExplorer/WorkspaceTabs.tsx` | 项目目录、用户消息、Plan、项目设置 | 项目内固定四个工作面，不把 DAG 直接当作 Plan 首页 |
+| 项目二级导航 | `ProjectWorkspaceView.swift` | 项目目录、用户消息、项目设置 | 项目页不承载 Plan 或插件 Tab；项目管理插件从侧栏“应用”进入 |
 
 范围说明：本矩阵用于 macOS 客户端原生重写。浏览器 Web 端继续由现有 Web 工程维护；Browser MCP 与 Computer Use Plugin 本体也不在 Swift 重写范围内。
 
@@ -86,11 +86,7 @@
 | 任务图源关联 | 历史消息必须保留 `task_runner_async.source_user_message_id` 与 `source_turn_id`；查询图时优先使用这组 Task Runner 源标识，不能一律把当前聊天消息 ID 当成任务批次 ID |
 | 已取消任务 | `task_runner_async.event = task.cancelled/task.canceled` 或状态为 cancelled/canceled 的回调从聊天最终回复、过程列表和过程计数中排除；失败与阻塞回调继续显示 |
 | 多任务语义 | 一条用户消息可由 AI 通过 Task Runner MCP 创建一个或多个任务节点；每个节点都可独立查看过程、详情、Run 和阻塞处理 |
-| 规划模式 | 仅项目会话可开启；更新 `/conversations/{id}/runtime-settings`，发送 `/agent/chat/send` 时携带 `plan_mode`，开启后先规划并等待确认执行 |
-| 规划确认 | 从消息 `project_requirement_execution` / `task_runner_async` 元数据恢复项目、需求、执行批次和确认状态；完整 DAG 且节点尚无 `last_run_id` 时允许确认 |
-| 确认执行 | `POST /projects/{projectId}/requirements/{requirementId}/confirm-execution`；Body 为 `execution_group_id`、`conversation_id` 和可选 `contact_id` |
-| 放弃计划 | `POST /projects/{projectId}/requirements/{requirementId}/stop`；在相同执行标识基础上明确发送 `discard_tasks: true`，UI 先显示破坏性确认框 |
-| Composer | 模型、附件、Task Plugin 偏好、规划模式、推理开关；执行中仍可发送 runtime guidance |
+| Composer | 模型、附件、Task Plugin 偏好、推理控制；执行中仍可发送 runtime guidance |
 | 用户可见状态 | 加载更早消息、inline retry、离线/重连、发送失败、任务状态、离开底部后的新消息按钮 |
 | 禁止展示 | TurnID、cursor、revision、generation、缓存数量、加载范围、锚点与偏移、Realtime/HTTP merge 等内部诊断字段 |
 | 当前实现风险 | 首屏页小、HTTP 与 realtime 竞态、历史页被刷新覆盖、会话切换清空、滚动依赖多组 RAF 和估算行高 |
@@ -99,29 +95,23 @@
 
 详细状态机和验收矩阵见 [聊天历史专项架构](./06-chat-history-architecture.md)。
 
-## 6. Plan / Requirement
+## 6. 项目管理插件
 
 | 项目 | 真实逻辑 |
 | --- | --- |
-| 源码组件 | `ProjectPlanPane.tsx`、`PlanRequirementColumns.tsx`、`PlanRequirementDetail.tsx` |
-| 初始接口 | `getProjectPlan(projectId, includeWorkItems: false)`；任务和技术文档按选中 Requirement 延迟加载 |
-| 左侧结构 | Requirement 按层级展开为多列；顶部统计需求数、完成任务数、阻塞任务数 |
-| Requirement 卡片 | 标题、状态、类型、优先级、任务数、前置/后续/子需求、摘要 |
-| 右侧详情 Tab | 需求、技术文档、任务 |
-| 需求内容 | 需求关系、执行范围、摘要、详细说明、业务价值、验收标准 |
-| 任务内容 | 前置关系排序、未完成数、状态、依赖；大列表增量渲染 |
-| 执行入口 | 预览流程；打开执行工作台；恢复已有执行计划/过程；冲突时尝试读取未结束批次 |
-| 执行工作台源码 | `RequirementExecutionStartingModal.tsx`、`RequirementExecutionProcessModal.tsx`、`RequirementExecutionProcessView.tsx`、`MessageTaskGraphPanel.tsx` |
-| 执行工作台结构 | 左侧显示规划阶段、详细过程入口与重新规划反馈；右侧主工作面必须是实时任务 DAG；底部根据阶段显示执行、暂停后续任务、取消、重试或重新生成 |
-| 关键接口 | `listProjectRequirementWorkItems`、`listProjectRequirementDocuments`、`executeProjectRequirement`、`getProjectRequirementExecutionPlan`、confirm/pause/resume/stop/rerun |
-| SwiftUI 页面 | 默认仍是 Requirement 浏览与详情；DAG 只出现在“预览流程”或“执行工作台”，不能占据 Plan 首页；执行工作台不能退化成线性任务列表 |
+| 入口 | 侧栏“应用”中的 `chatos-project-management`，不出现在项目二级导航 |
+| 项目身份 | 客户端 `ProjectRegistry` 注入 `project.id`；插件不提供项目 CRUD，不读取服务端项目记录 |
+| 数据 | 需求层级、版本化文档、工作项、依赖、冻结 Plan、执行意图和 opaque Task Runner refs |
+| 存储 | UI 与 MCP 共用项目隔离的本地 SQLite；缺少项目上下文直接拒绝 |
+| 页面 | Apple 风格三栏 Studio；需求、规划文档、工作项、关系与范围、规划版本、执行交接 |
+| 执行边界 | 插件只形成执行意图并记录引用；Task/Run 状态以 Task Runner 为准 |
 
-## 7. Requirement 执行工作台与任务流程图
+## 7. 通用任务流程图
 
 | 项目 | 真实逻辑 |
 | --- | --- |
 | 源码组件 | `RequirementExecutionProcessModal.tsx`、`MessageTaskDrawer.tsx`、`MessageTaskGraphPanel.tsx` |
-| 图数据 | 消息级任务、Run、prerequisite 边、context 非阻塞边；支持 Project Task 阶段合并和传递约简 |
+| 图数据 | 消息级 Task、Run、prerequisite 边和 context 非阻塞边；不再合并旧 Project Task 阶段 |
 | 图模式 | 精简图/完整图；当前消息、直接前置、间接前置；聚焦节点时保留上下游并弱化无关节点 |
 | 运行表达 | 运行节点和边动画；顶部显示当前任务数、展开前置数、依赖连线数 |
 | 节点动作 | 查看执行过程、任务详情、处理阻塞、Run 详情；可重试、集成重试或豁免等 |

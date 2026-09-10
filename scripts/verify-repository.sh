@@ -68,7 +68,6 @@ run_rust_build() {
   cd "$ROOT_DIR"
   "${CARGO[@]}" check \
     -p config_center_service_backend \
-    -p project_management_service_backend \
     -p plugin_management_service_backend \
     -p local_connector_service_backend \
     -p mcp_management_service_backend \

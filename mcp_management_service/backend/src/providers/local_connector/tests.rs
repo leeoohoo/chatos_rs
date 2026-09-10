@@ -10,7 +10,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use chatos_mcp_management_sdk::{
     McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
-    RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget, WorkspaceProviderKind,
+    RuntimeRemoteConnectionRouteTarget, RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget,
+    WorkspaceProviderKind,
 };
 use chatos_mcp_service::LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER;
 use chatos_plugin_management_sdk::{
@@ -85,7 +86,6 @@ fn snapshot() -> RuntimeSessionSnapshot {
         default_remote_connection_id: None,
         remote_connection_route: None,
         tool_result_max_chars: None,
-        expected_project_task_ids: Vec::new(),
         workspace_route: Some(RuntimeWorkspaceRouteTarget::LocalConnector {
             default_tool_root: Some("backend".to_string()),
             owned_paths: vec!["README.md".to_string()],
@@ -128,6 +128,23 @@ fn code_read_route() -> ResolvedMcpRoute {
         tool_namespace: "code_maintainer_read".to_string(),
         allow_writes: false,
         retry_class: McpRetryClass::IdempotentRead,
+        cancel_supported: true,
+        reason: "test".to_string(),
+    }
+}
+
+fn remote_connection_route() -> ResolvedMcpRoute {
+    let descriptor = chatos_mcp::system_mcp_descriptor(
+        chatos_plugin_management_sdk::SystemMcpKey::RemoteConnectionController,
+    );
+    ResolvedMcpRoute {
+        resource_id: descriptor.resource_id.to_string(),
+        server_name: descriptor.server_name.to_string(),
+        provider_kind: McpProviderKind::LocalConnector,
+        provider_ref: Some("device:device-1/workspace:workspace-1".to_string()),
+        tool_namespace: descriptor.server_name.to_string(),
+        allow_writes: true,
+        retry_class: McpRetryClass::NoRetry,
         cancel_supported: true,
         reason: "test".to_string(),
     }
@@ -618,6 +635,97 @@ async fn call_uses_signed_identity_workspace_snapshot_and_original_tool_name() {
         })
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn remote_connection_call_overwrites_ai_connection_id_with_session_binding() {
+    const SECRET: &str = "remote-connection-binding-secret";
+    async fn handler(
+        headers: HeaderMap,
+        Query(query): Query<HashMap<String, String>>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        assert_eq!(
+            headers
+                .get(LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("RemoteConnectionController")
+        );
+        assert_eq!(
+            query.get("workspace_id").map(String::as_str),
+            Some("workspace-1")
+        );
+        assert_eq!(
+            request.pointer("/params/arguments/connection_id"),
+            Some(&json!("connection-selected"))
+        );
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": request.get("id").cloned().unwrap_or(Value::Null),
+            "result": {"ok": true}
+        }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().route("/api/local-connectors/relay/device-1/mcp", post(handler));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = LocalConnectorProvider::new(
+        reqwest::Client::new(),
+        format!("http://{address}"),
+        Duration::from_secs(5),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+    )
+    .unwrap();
+    let mut runtime = snapshot();
+    runtime.default_remote_connection_id = Some("connection-selected".to_string());
+    runtime.remote_connection_route = Some(RuntimeRemoteConnectionRouteTarget {
+        remote_connection_id: "connection-selected".to_string(),
+        device_id: "device-1".to_string(),
+        workspace_id: "workspace-1".to_string(),
+    });
+    let outcome = provider
+        .call_tool(
+            &runtime,
+            &remote_connection_route(),
+            "run_command",
+            json!({"connection_id": "connection-injected-by-ai", "command": "uptime"}),
+            "invocation-remote-1",
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.result, json!({"ok": true}));
+    server.abort();
+}
+
+#[tokio::test]
+async fn bound_remote_connection_rejects_connection_discovery_calls() {
+    let provider = LocalConnectorProvider::new(
+        reqwest::Client::new(),
+        "http://127.0.0.1:1".to_string(),
+        Duration::from_secs(1),
+        Some("remote-connection-binding-secret".to_string()),
+        1024,
+    )
+    .unwrap();
+    let mut runtime = snapshot();
+    runtime.remote_connection_route = Some(RuntimeRemoteConnectionRouteTarget {
+        remote_connection_id: "connection-selected".to_string(),
+        device_id: "device-1".to_string(),
+        workspace_id: "workspace-1".to_string(),
+    });
+    let error = provider
+        .call_tool(
+            &runtime,
+            &remote_connection_route(),
+            "list_connections",
+            json!({}),
+            "invocation-remote-list",
+        )
+        .await
+        .expect_err("bound session must reject discovery");
+    assert!(error.message.contains("already bound"));
 }
 
 #[tokio::test]

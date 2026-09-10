@@ -70,7 +70,7 @@ macro_rules! embedded_descriptor {
     };
 }
 
-static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 14] = [
+static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
     embedded_descriptor!(
         CodeMaintainerRead,
         "builtin_code_maintainer_read",
@@ -103,17 +103,6 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 14] = [
         "shared",
         TASK_AND_LOCAL_HOSTS,
         TerminalController
-    ),
-    embedded_descriptor!(
-        ProjectManagement,
-        "builtin_project_management",
-        "project_management_service",
-        "Project Management (Builtin)",
-        "Project, requirement, task, document, and dependency management tools.",
-        true,
-        "project_management_service",
-        TASK_AND_LOCAL_HOSTS,
-        ProjectManagement
     ),
     SystemMcpDescriptor {
         key: SystemMcpKey::Notepad,

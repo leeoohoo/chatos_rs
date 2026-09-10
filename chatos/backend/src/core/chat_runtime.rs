@@ -11,7 +11,8 @@ mod chat_runtime_project;
 pub use self::chat_runtime_contact::{compose_contact_system_prompt, ContactSkillPromptMode};
 pub use self::chat_runtime_metadata::{
     contact_agent_id_from_metadata, contact_id_from_metadata, metadata_string, normalize_id,
-    normalize_project_id, project_id_from_metadata, ChatRuntimeMetadata,
+    normalize_project_id, project_context_from_metadata, project_id_from_metadata,
+    ChatRuntimeMetadata,
 };
 pub(crate) use self::chat_runtime_project::resolve_project_runtime_context;
 

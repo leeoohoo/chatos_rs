@@ -6,7 +6,7 @@ use tracing::warn;
 use super::support::normalize_optional_text;
 use crate::api::fs::policy::FsPathPolicy;
 use crate::core::auth::AuthUser;
-use chatos_project_execution::{parse_local_connector_workspace_root, LOCAL_CONNECTOR_ROOT_PREFIX};
+use chatos_local_workspace::{parse_local_connector_workspace_root, LOCAL_CONNECTOR_ROOT_PREFIX};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct ResolvedRuntimeProjectRoot {

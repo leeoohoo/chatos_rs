@@ -70,9 +70,6 @@ image_for_service() {
     memory-engine-backend)
       printf '%s/chatos-rs-memory-engine-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
-    project-management-backend)
-      printf '%s/chatos-rs-project-management-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
     plugin-management-backend)
       printf '%s/chatos-rs-plugin-management-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
@@ -119,7 +116,6 @@ require_harness_ci_images() {
     "$IMAGE_NAMESPACE/chatos-rs-configuration-center-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-user-service-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-memory-engine-backend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-project-management-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-plugin-management-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-local-connector-service-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-task-runner-backend:$IMAGE_TAG"

@@ -7,7 +7,6 @@ use std::ops::Deref;
 
 use crate::models::memory_mapping_types::MemoryContactDto;
 use crate::models::pet_activity_inbox::PetActivityInboxRecord;
-use crate::models::project::Project;
 use crate::models::remote_connection::RemoteConnectionView;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
@@ -47,14 +46,6 @@ pub struct ConversationSummariesUpdatedRealtimePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ProjectChangeSummaryRealtimePayload {
-    pub project_id: String,
-    pub reason: String,
-    pub conversation_id: Option<String>,
-    pub path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct ContactsUpdatedRealtimePayload {
     pub reason: String,
     pub contact_id: Option<String>,
@@ -68,13 +59,6 @@ pub struct NotepadUpdatedRealtimePayload {
     pub folder: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProjectsUpdatedRealtimePayload {
-    pub reason: String,
-    pub project_id: Option<String>,
-    pub project: Option<Project>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,46 +94,6 @@ pub struct TerminalListInvalidatedRealtimePayload {
     pub project_id: Option<String>,
     pub reason: String,
     pub terminal: Option<Terminal>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProjectRunStateRealtimePayload {
-    pub project_id: String,
-    pub terminal_id: Option<String>,
-    pub terminal_name: Option<String>,
-    pub cwd: Option<String>,
-    pub status: String,
-    pub busy: bool,
-    pub running: bool,
-    pub reason: String,
-    pub exit_code: Option<i32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProjectRunInstanceRealtimePayload {
-    pub project_id: String,
-    pub terminal_id: String,
-    pub terminal_name: String,
-    pub cwd: String,
-    pub status: String,
-    pub busy: bool,
-    pub running: bool,
-    pub reason: String,
-    pub exit_code: Option<i32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProjectRunCatalogRealtimePayload {
-    pub project_id: String,
-    pub reason: String,
-    pub path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ProjectMembersUpdatedRealtimePayload {
-    pub project_id: String,
-    pub reason: String,
-    pub contact_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,18 +150,12 @@ pub struct ChatStreamRealtimePayload {
 pub enum RealtimeEventPayload {
     ReviewRepair(ReviewRepairRealtimePayload),
     ConversationSummariesUpdated(ConversationSummariesUpdatedRealtimePayload),
-    ProjectChangeSummary(ProjectChangeSummaryRealtimePayload),
     ContactsUpdated(ContactsUpdatedRealtimePayload),
     NotepadUpdated(NotepadUpdatedRealtimePayload),
-    ProjectsUpdated(ProjectsUpdatedRealtimePayload),
     RemoteConnectionsUpdated(RemoteConnectionsUpdatedRealtimePayload),
     SessionsUpdated(SessionsUpdatedRealtimePayload),
     TerminalState(TerminalStateRealtimePayload),
     TerminalListInvalidated(TerminalListInvalidatedRealtimePayload),
-    ProjectRunState(ProjectRunStateRealtimePayload),
-    ProjectRunInstance(ProjectRunInstanceRealtimePayload),
-    ProjectRunCatalog(ProjectRunCatalogRealtimePayload),
-    ProjectMembersUpdated(ProjectMembersUpdatedRealtimePayload),
     TaskBoard(TaskBoardRealtimePayload),
     AskUserPrompt(AskUserPromptRealtimePayload),
     PetActivityInboxUpdated(PetActivityInboxRealtimePayload),

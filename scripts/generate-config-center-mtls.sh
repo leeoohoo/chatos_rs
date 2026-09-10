@@ -21,7 +21,6 @@ CALLERS=(
   memory-engine
   official-website
   plugin-management-service
-  project-service
   task-runner
   user-service
 )

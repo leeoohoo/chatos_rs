@@ -93,7 +93,6 @@ export const enUS: MessageDictionary = {
   'tasks.status.cancelled': 'Cancelled',
   'tasks.status.archived': 'Archived',
   'tasks.profile.default': 'Regular task',
-  'tasks.profile.chatosPlan': 'Planning task',
   'tasks.scheduledOnly': 'Scheduled only',
   'tasks.stats.total': 'Total',
   'tasks.stats.scheduled': 'Scheduled',

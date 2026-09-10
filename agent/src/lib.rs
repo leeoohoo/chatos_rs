@@ -10,13 +10,10 @@ mod implementations;
 
 pub use catalog::{
     agent_descriptor, chatos_task_runner_tool_profile, is_chatos_callback_agent,
-    is_chatos_plan_task_profile, is_project_requirement_execution_planner_agent,
-    is_task_runner_execution_agent, is_task_runner_phase_agent, is_task_runner_planning_agent,
-    parse_chatos_task_runner_tool_profile, parse_system_agent_key,
-    requires_expected_project_task_ids, system_agent_catalog, uses_chatos_browser_callback,
-    uses_chatos_notepad_callback, AgentDescriptor, AgentExecutionLocation,
-    ChatosTaskRunnerToolProfile, CHATOS_ASYNC_PLANNER_TOOL_PROFILE, CHATOS_PLAN_TASK_PROFILE,
-    PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
+    is_task_runner_execution_agent, is_task_runner_phase_agent,
+    parse_chatos_task_runner_tool_profile, parse_system_agent_key, system_agent_catalog,
+    uses_chatos_browser_callback, uses_chatos_notepad_callback, AgentDescriptor,
+    AgentExecutionLocation, ChatosTaskRunnerToolProfile, CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
 };
 pub use chatos_plugin_management_sdk::SystemAgentKey;
 #[cfg(feature = "managed-config")]
@@ -49,5 +46,5 @@ pub use implementations::{
     MemoryEngineAgent, MemoryEngineAgentKind, TaskRunnerAgent, TaskRunnerRunSpecInput,
     COMMAND_APPROVAL_AGENT, MEMORY_ENGINE_MEMORY_ROLLUP_AGENT, MEMORY_ENGINE_ROLLUP_AGENT,
     MEMORY_ENGINE_SUBJECT_MEMORY_AGENT, MEMORY_ENGINE_SUMMARY_AGENT,
-    MEMORY_ENGINE_THREAD_REPAIR_AGENT, TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT,
+    MEMORY_ENGINE_THREAD_REPAIR_AGENT, TASK_RUNNER_AGENT,
 };

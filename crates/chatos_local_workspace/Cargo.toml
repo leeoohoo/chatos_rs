@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+[package]
+name = "chatos_local_workspace"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+urlencoding = "2"

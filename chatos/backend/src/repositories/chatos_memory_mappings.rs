@@ -12,9 +12,9 @@ pub use contacts::{
     update_contact_task_runner_config, UpdateContactTaskRunnerConfigInput,
 };
 pub use project_links::{
-    delete_project_agent_link, list_project_agent_links_by_contact,
-    list_project_agent_links_by_project, touch_project_agent_link_session,
-    upsert_project_agent_link, TouchProjectAgentLinkSessionInput, UpsertProjectAgentLinkInput,
+    list_project_agent_links_by_contact, list_project_agent_links_by_project,
+    touch_project_agent_link_session, upsert_project_agent_link, TouchProjectAgentLinkSessionInput,
+    UpsertProjectAgentLinkInput,
 };
 pub use projects::{
     get_project_by_user_and_project_id, list_memory_projects, list_projects_by_ids,

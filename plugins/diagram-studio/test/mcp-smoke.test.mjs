@@ -11,7 +11,8 @@ const checklistByKind = {
   flowchart: ['single_business_outcome', 'start_and_terminal_states_are_clear', 'decisions_have_named_outcomes', 'failure_and_retry_paths_are_bounded', 'independent_processes_are_split', 'code_evidence_is_mapped'],
   swimlane: ['single_collaboration_scenario', 'lanes_represent_real_ownership', 'handoffs_are_explicit', 'decisions_have_named_outcomes', 'independent_scenarios_are_split', 'code_evidence_is_mapped'],
   topology: ['single_environment_or_traffic_question', 'deployment_boundaries_are_real', 'traffic_direction_is_visible', 'redundancy_is_not_fake_detail', 'logical_architecture_is_separated', 'configuration_evidence_is_mapped'],
-  sequence: ['single_runtime_scenario', 'participants_have_distinct_roles', 'message_order_is_causal', 'activation_intervals_are_bounded', 'fragments_do_not_hide_content', 'independent_scenarios_are_split']
+  sequence: ['single_runtime_scenario', 'participants_have_distinct_roles', 'message_order_is_causal', 'activation_intervals_are_bounded', 'fragments_do_not_hide_content', 'independent_scenarios_are_split'],
+  mindmap: ['single_central_topic', 'branches_are_mutually_distinct', 'parent_child_relationships_are_hierarchical', 'labels_are_concise', 'depth_is_bounded', 'overloaded_branches_are_split', 'independent_subjects_are_separate_maps', 'evidence_is_mapped']
 };
 
 test('MCP enforces Skill-gated permits, injected scope, and idempotent generated diagrams', async () => {
@@ -36,6 +37,7 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     const listedTools = await client.listTools();
     const tools = new Map(listedTools.tools.map((tool) => [tool.name, tool]));
     for (const name of ['diagram_prepare_generation', 'diagram_commit_generation']) assert.ok(tools.has(name));
+    assert.equal(tools.get('diagram_prepare_generation')._meta['chatos/skillGate'].selectByArgument.map.mindmap, 'diagram-mindmap');
     assert.equal(Object.hasOwn(tools.get('diagram_prepare_generation').inputSchema.properties, 'operation'), false);
     assert.equal(Object.hasOwn(tools.get('diagram_prepare_generation').inputSchema.properties, 'documentId'), false);
     assert.equal(tools.has('diagram_get_generation_guide'), false);
@@ -130,6 +132,31 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     assert.equal(revisionPrepared.operation, 'revise');
     assert.equal(revisionPrepared.documentId, committed.document.documentId);
 
+    const mindmapPrepared = await call(client, 'diagram_prepare_generation', {
+      kind: 'mindmap', mode: 'knowledge-map', artifactKey: 'diagram-studio-capabilities', title: 'Diagram Studio 能力地图',
+      plan: planFor('mindmap', 'Organize Diagram Studio capabilities into one focused hierarchy')
+    });
+    const mindmapSource = `@startmindmap
+title Diagram Studio 能力地图
+* Diagram Studio
+** 手工编辑
+*** 组件库
+*** 图层
+** AI 生成
+*** 专用 Skill
+*** 质量门禁
+left side
+** 互操作
+*** PlantUML
+@endmindmap`;
+    const mindmapCommitted = await call(client, 'diagram_commit_generation', {
+      source: mindmapSource, title: 'Diagram Studio 能力地图', kind: 'mindmap', artifactKey: 'diagram-studio-capabilities', responseDetail: 'document'
+    });
+    assert.equal(mindmapPrepared.operation, 'create');
+    assert.equal(mindmapCommitted.quality.ready, true);
+    assert.equal(mindmapCommitted.document.generationProvenance.guideId, 'diagram-mindmap');
+    assert.equal(mindmapCommitted.document.edges.length, mindmapCommitted.document.nodes.length - 1);
+
     const structuralPatchWithoutPermit = await client.callTool({
       name: 'diagram_apply_patch',
       arguments: {
@@ -157,7 +184,7 @@ test('MCP enforces Skill-gated permits, injected scope, and idempotent generated
     });
     assert.equal(Object.hasOwn(listedDocuments.scope, 'chatosProjectId'), false);
     assert.equal(Object.hasOwn(listedDocuments.scope, 'workspaceId'), false);
-    assert.equal(listedDocuments.documents.length, 2);
+    assert.equal(listedDocuments.documents.length, 3);
 
     const target = await call(client, 'diagram_create_project', { name: 'Reviewed Diagrams' });
     await call(client, 'diagram_move_document', { documentId: blank.document.documentId, targetProjectId: target.project.projectId });
@@ -184,13 +211,15 @@ function planFor(kind, goal, overrides = {}) {
         ? ['Public Edge', 'Application Cluster']
         : kind === 'architecture'
           ? ['Client Boundary', 'Service Boundary']
+          : kind === 'mindmap'
+            ? ['Manual editing', 'AI generation', 'Interoperability']
           : ['Request to completion'];
   return {
     goal,
     scope: 'Only the selected scenario and its primary path.',
     excludedDetails: ['Unrelated business journeys and implementation details.'],
-    estimatedPrimaryItemCount: kind === 'sequence' ? 4 : 6,
-    estimatedEdgeCount: 8,
+    estimatedPrimaryItemCount: kind === 'sequence' ? 4 : kind === 'mindmap' ? 9 : 6,
+    estimatedEdgeCount: kind === 'mindmap' ? 8 : 8,
     structure,
     splitPlan: ['Put unrelated scenarios in separately named diagrams.'],
     splitRationale: 'This diagram remains focused on one question; unrelated work is split.',

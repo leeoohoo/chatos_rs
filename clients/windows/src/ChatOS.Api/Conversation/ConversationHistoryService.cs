@@ -137,8 +137,6 @@ internal static class ConversationHistoryMapper
             user.MessageTaskLookup(conversationId),
             assistant?.MessageTaskLookup(conversationId),
             conversationId);
-        var projectExecutionContext = user.ProjectExecutionContext()
-            ?? assistant?.ProjectExecutionContext();
         return new ConversationTurn(
             turnId,
             conversationId,
@@ -163,8 +161,7 @@ internal static class ConversationHistoryMapper
             true,
             status,
             startedAt,
-            completedAt,
-            projectExecutionContext);
+            completedAt);
     }
 
     private static MessageTaskLookup? MergeTaskLookup(
@@ -421,36 +418,6 @@ internal static class SessionMessageMappingExtensions
             : new MessageTaskLookup(conversationId, turnId, sourceMessageId);
     }
 
-    public static ProjectExecutionContext? ProjectExecutionContext(this SessionMessageDto message)
-    {
-        var hasExecutionObject = message.Metadata.HasObject("project_requirement_execution");
-        var mode = message.Metadata.String("task_runner_async", "mode");
-        var executionKind = message.Metadata.String("task_runner_async", "execution_kind");
-        if (!hasExecutionObject &&
-            !string.Equals(mode, "project_requirement_execution", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(executionKind, "project_requirement_execution", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        return new ProjectExecutionContext(
-            message.Metadata.String("project_requirement_execution", "project_id")
-                ?? message.Metadata.String("task_runner_async", "project_id"),
-            message.Metadata.String("project_requirement_execution", "requirement_id")
-                ?? message.Metadata.String("task_runner_async", "requirement_id"),
-            message.Metadata.String("project_requirement_execution", "execution_group_id")
-                ?? message.Metadata.String("task_runner_async", "execution_group_id"),
-            message.Metadata.String("project_requirement_execution", "replaced_execution_group_id")
-                ?? message.Metadata.String("task_runner_async", "replaced_execution_group_id"),
-            message.Metadata.String("project_requirement_execution", "contact_id")
-                ?? message.Metadata.String("task_runner_async", "contact_id"),
-            mode,
-            executionKind,
-            message.Metadata.String("task_runner_async", "confirmation_status"),
-            message.Metadata.String("task_runner_async", "overall_status")
-                ?? message.Metadata.String("task_runner_async", "status"));
-    }
-
     private static string? NormalizeCallbackStatus(string? eventName, string? status)
     {
         var normalizedStatus = status?.ToLowerInvariant();
@@ -489,9 +456,6 @@ internal static class ConversationMetadataExtensions
         value.TryPath(path, out var child) && child.ValueKind == JsonValueKind.Array
             ? child.EnumerateArray().Where(static item => item.ValueKind == JsonValueKind.Object).ToArray()
             : System.Array.Empty<JsonElement>();
-
-    public static bool HasObject(this JsonElement value, params string[] path) =>
-        value.TryPath(path, out var child) && child.ValueKind == JsonValueKind.Object;
 
     private static bool TryPath(
         this JsonElement value,

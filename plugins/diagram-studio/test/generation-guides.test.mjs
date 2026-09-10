@@ -12,6 +12,7 @@ import {
 
 const architectureChecklist = ['single_architecture_viewpoint', 'boundaries_show_ownership', 'primary_path_is_visible', 'relationships_are_aggregated', 'runtime_cycles_are_moved_to_detail', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'];
 const sequenceChecklist = ['single_runtime_scenario', 'participants_have_distinct_roles', 'message_order_is_causal', 'activation_intervals_are_bounded', 'fragments_do_not_hide_content', 'independent_scenarios_are_split'];
+const mindmapChecklist = ['single_central_topic', 'branches_are_mutually_distinct', 'parent_child_relationships_are_hierarchical', 'labels_are_concise', 'depth_is_bounded', 'overloaded_branches_are_split', 'independent_subjects_are_separate_maps', 'evidence_is_mapped'];
 
 test('persistent diagram scope is stable across runtime sessions while generation plans are session-bound', () => {
   const names = ['CHATOS_CONTEXT_SCOPE', 'CHATOS_CONTEXT_SCOPE_ID', 'CHATOS_PROJECT_ID', 'CHATOS_WORKSPACE_ID', 'CHATOS_USER_ID', 'CHATOS_ACCOUNT_ID', 'CHATOS_PLUGIN_RUNTIME_SESSION_ID'];
@@ -134,6 +135,38 @@ test('generation planning rejects an over-budget plan and incomplete skill check
     plan: { ...basePlan, checklistAcknowledgements: sequenceChecklist.slice(0, -1) },
     scopeFingerprint: scope
   }), /Checklist acknowledgement mismatch/);
+  } finally {
+    await rm(storeDirectory, { recursive: true, force: true });
+  }
+});
+
+test('mind-map generation permit loads its dedicated guide and branch budget', async () => {
+  const storeDirectory = await mkdtemp(path.join(os.tmpdir(), 'diagram-generation-plan-'));
+  try {
+    const prepared = await prepareGenerationPermit({
+      storeDirectory,
+      kind: 'mindmap',
+      mode: 'knowledge-map',
+      artifactKey: 'plugin-capability-map',
+      operation: 'create',
+      title: '插件能力地图',
+      plan: {
+        goal: 'Explain the major capabilities of one plugin.',
+        scope: 'Manual editing, AI generation, interoperability, and delivery.',
+        excludedDetails: ['Runtime call order and deployment topology.'],
+        estimatedPrimaryItemCount: 16,
+        estimatedEdgeCount: 15,
+        structure: ['Manual editing', 'AI generation', 'Interoperability', 'Delivery'],
+        splitPlan: ['Use separate architecture and sequence diagrams for dependencies and runtime order.'],
+        splitRationale: 'This map contains only one capability-classification question.',
+        checklistAcknowledgements: mindmapChecklist
+      },
+      scopeFingerprint: 'd'.repeat(64)
+    });
+    assert.equal(prepared.permit.guideId, 'diagram-mindmap');
+    assert.equal(prepared.permit.maxPrimaryItems, 36);
+    assert.equal(prepared.permit.maxEdges, 35);
+    assert.equal(prepared.permit.maxStructureItems, 8);
   } finally {
     await rm(storeDirectory, { recursive: true, force: true });
   }

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createTemplate } from '../dist/test-helpers.mjs';
 
 test('all built-in templates contain valid connected diagrams', () => {
-  for (const kind of ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence']) {
+  for (const kind of ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence', 'mindmap']) {
     const document = createTemplate(kind);
     assert.equal(document.kind, kind);
     assert.ok(document.nodes.length >= 5);

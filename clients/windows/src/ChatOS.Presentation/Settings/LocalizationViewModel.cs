@@ -30,12 +30,13 @@ public sealed class LocalizationViewModel : ObservableObject
     public string PasswordPlaceholder => Text("请输入密码", "Enter your password");
     public string Contacts => Text("联系人", "Contacts");
     public string Projects => Text("项目", "Projects");
+    public string Applications => Text("应用", "Applications");
+    public string InstalledPluginApplications => Text("已安装插件应用", "Installed plugin applications");
     public string Local => Text("本机", "Local");
     public string Remote => Text("远端", "Remote");
     public string Chat => Text("聊天", "Chat");
     public string Files => Text("文件", "Files");
     public string Git => "Git";
-    public string Plan => Text("计划", "Plan");
     public string Run => Text("运行", "Run");
     public string Notepad => Text("记事本", "Notepad");
     public string Artifacts => Text("插件产物", "Plugin artifacts");
@@ -62,6 +63,9 @@ public sealed class LocalizationViewModel : ObservableObject
     public string RefreshResources => Text("刷新资源", "Refresh resources");
     public string CreateResource => Text("新建资源", "Create resource");
     public string CreateLocalTerminal => Text("新建本机终端", "New local terminal");
+    public string CreateLocalProject => Text("新建本地项目", "New local project");
+    public string RenameLocalProject => Text("重命名所选项目", "Rename selected project");
+    public string RemoveLocalProject => Text("移除所选项目", "Remove selected project");
     public string Terminal => Text("终端", "Terminal");
     public string StopTerminal => Text("停止终端", "Stop terminal");
     public string TerminalCommandPlaceholder => Text("输入命令后按 Enter", "Enter a command and press Enter");
@@ -78,13 +82,6 @@ public sealed class LocalizationViewModel : ObservableObject
     public string Tasks => Text("任务", "Tasks");
     public string Documents => Text("文档", "Documents");
     public string AcceptanceCriteria => Text("验收标准", "Acceptance criteria");
-    public string ExecutionPlan => Text("执行计划", "Execution plan");
-    public string ProjectPlan => Text("项目计划", "Project plan");
-    public string RefreshPlan => Text("刷新计划", "Refresh plan");
-    public string ConfirmExecution => Text("确认执行", "Confirm execution");
-    public string PlanningFeedbackPlaceholder => Text("可选：给规划过程补充要求", "Optional: add requirements for planning");
-    public string IncludePrerequisiteDependents => Text("同时包含依赖项", "Include prerequisite dependencies");
-    public string CreateExecutionPlan => Text("生成执行计划", "Create execution plan");
     public string RemoteConnections => Text("远端连接", "Remote connections");
     public string RemoteCredentialNotice => Text(
         "SSH 凭据只保存在本机 Credential Manager",

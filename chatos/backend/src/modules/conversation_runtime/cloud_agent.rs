@@ -40,10 +40,8 @@ use crate::utils::abort_registry;
 use crate::utils::attachments::Attachment;
 
 use super::chat_execution::{
-    build_chatos_record_options, cloud_task_turn_review_metadata,
-    cloud_track_project_execution_planner_completion, cloud_track_project_planning_integrity,
-    compose_agent_instructions, CloudChatosRuntimeLifecycleHook, CloudTaskTurnLifecycleState,
-    PreparedMcpExecution,
+    build_chatos_record_options, cloud_task_turn_review_metadata, compose_agent_instructions,
+    CloudChatosRuntimeLifecycleHook, CloudTaskTurnLifecycleState, PreparedMcpExecution,
 };
 use super::chat_runner::{build_chat_event_sink, finalize_chat_result};
 use super::runtime_context::{resume_mcp_management_gateway, ResolvedConversationRuntimeContext};
@@ -66,8 +64,6 @@ struct ChatosCloudAgentRunInput {
     model_name: String,
     model_provider: String,
     prompt_vendor: Option<String>,
-    plan_mode: bool,
-    project_requirement_execution_planner: bool,
     effective_settings: Value,
     max_tokens: Option<i64>,
     prefixed_input_items: Vec<Value>,
@@ -96,7 +92,7 @@ struct ChatosCloudAgentRunInput {
 
 impl ChatosCloudAgentRunInput {
     fn profile(&self) -> ChatosAgentProfile {
-        ChatosAgentProfile::from_flags(self.plan_mode, self.project_requirement_execution_planner)
+        ChatosAgentProfile::for_runtime()
     }
 
     fn validate_identity(&self, run: &CloudAgentRunRecord) -> Result<(), String> {
@@ -151,14 +147,7 @@ pub async fn start_chatos_cloud_agent(input: StartChatosCloudAgent<'_>) -> Resul
     let agent_profile = input.runtime_context.agent_profile;
     let max_iterations =
         super::chat_execution::max_iterations_from_settings(&input.effective_settings);
-    let lifecycle = CloudTaskTurnLifecycleState {
-        project_execution_planner_guard: input
-            .runtime_context
-            .project_requirement_execution_planner,
-        project_planning_integrity_guard: agent_profile.plan_mode_header()
-            && !input.runtime_context.project_requirement_execution_planner,
-        ..CloudTaskTurnLifecycleState::default()
-    };
+    let lifecycle = CloudTaskTurnLifecycleState::default();
     let run_input = ChatosCloudAgentRunInput {
         session_id: input.session_id.to_string(),
         turn_id: input.turn_id.to_string(),
@@ -173,10 +162,6 @@ pub async fn start_chatos_cloud_agent(input: StartChatosCloudAgent<'_>) -> Resul
         model_name: input.model_runtime.model.clone(),
         model_provider: input.model_runtime.provider.clone(),
         prompt_vendor: input.model_runtime.prompt_vendor.clone(),
-        plan_mode: agent_profile.plan_mode_header(),
-        project_requirement_execution_planner: input
-            .runtime_context
-            .project_requirement_execution_planner,
         effective_settings: input.effective_settings.clone(),
         max_tokens: input.max_tokens,
         prefixed_input_items: input.prepared_mcp.prefixed_input_items,
@@ -304,14 +289,7 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
         );
         let stream_callbacks = build_chat_stream_callbacks(&sink, input.session_id.as_str(), true);
         let lifecycle_state = Arc::new(Mutex::new(input.lifecycle.clone()));
-        let mut callbacks = shared_callbacks(stream_callbacks.clone());
-        callbacks = cloud_track_project_planning_integrity(callbacks, Arc::clone(&lifecycle_state));
-        if input.project_requirement_execution_planner {
-            callbacks = cloud_track_project_execution_planner_completion(
-                callbacks,
-                Arc::clone(&lifecycle_state),
-            );
-        }
+        let callbacks = shared_callbacks(stream_callbacks.clone());
         if let CloudAgentModelTrigger::ToolResults { items, .. } = trigger {
             persist_mcp_tool_results(
                 &input,
@@ -437,10 +415,7 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
 fn runtime() -> Result<CloudAgentServiceRuntime<CloudAgentProfileRegistry>, String> {
     let store = crate::modules::cloud_agent_runtime::store()?;
     let registry = CloudAgentProfileRegistry::new("chatos", store).register(
-        [
-            SystemAgentKey::ChatosConversationAgent.as_str(),
-            SystemAgentKey::ProjectRequirementExecutionPlannerAgent.as_str(),
-        ],
+        [SystemAgentKey::ChatosConversationAgent.as_str()],
         ChatosCloudAgentAdapter,
     )?;
     Ok(CloudAgentServiceRuntime::new(
@@ -488,18 +463,6 @@ async fn finalize_terminal(run: &CloudAgentRunRecord) -> Result<(), String> {
     if let Ok(resumed) = resume_mcp_management_gateway(input.mcp_session_id.as_str()).await {
         if let Err(error) = resumed.runtime_session.close().await {
             warn!(agent_run_id, error = %error, "close ChatOS MCP runtime session failed");
-        }
-    }
-    if let Some(owner_context) = input.owner_context.clone() {
-        let owner_context = enrich_owner_context_with_terminal_outcome(owner_context, run);
-        if let Err(error) =
-            crate::api::projects::reconcile_requirement_planner_owner_context(owner_context).await
-        {
-            warn!(
-                agent_run_id,
-                error = error.as_str(),
-                "reconcile requirement planner terminal outcome failed"
-            );
         }
     }
     let sink = build_chat_event_sink(
@@ -554,7 +517,7 @@ async fn finalize_terminal(run: &CloudAgentRunRecord) -> Result<(), String> {
         input.turn_id.as_str(),
         input.user_message_id.as_str(),
         true,
-        task_runner_async_success_status_for_lifecycle(&input.lifecycle),
+        None,
         &chunk_sent,
         &streamed_content,
         result,
@@ -565,39 +528,6 @@ async fn finalize_terminal(run: &CloudAgentRunRecord) -> Result<(), String> {
     .await;
     super::guidance::close_active_turn(input.session_id.as_str(), input.turn_id.as_str());
     Ok(())
-}
-
-fn enrich_owner_context_with_terminal_outcome(
-    mut owner_context: Value,
-    run: &CloudAgentRunRecord,
-) -> Value {
-    let Some(owner) = owner_context.as_object_mut() else {
-        return owner_context;
-    };
-    if let Ok(status) = serde_json::to_value(run.status) {
-        owner.insert("agent_run_status".to_string(), status);
-    }
-    if let Some(error) = run
-        .terminal_outcome
-        .as_ref()
-        .and_then(|outcome| outcome.get("error"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        owner.insert(
-            "agent_run_error".to_string(),
-            Value::String(error.to_string()),
-        );
-    }
-    owner_context
-}
-
-fn task_runner_async_success_status_for_lifecycle(
-    lifecycle: &CloudTaskTurnLifecycleState,
-) -> Option<&'static str> {
-    (lifecycle.project_planning_task_created || lifecycle.project_execution_plan_materialized)
-        .then_some("processing")
 }
 
 fn reconstructed_runtime_context(
@@ -632,7 +562,6 @@ fn reconstructed_runtime_context(
         use_tools: true,
         memory_summary_prompt: None,
         runtime_error: None,
-        project_requirement_execution_planner: input.project_requirement_execution_planner,
     }
 }
 
@@ -707,31 +636,4 @@ async fn persist_mcp_tool_results(
     ChatosMemoryRecordWriterAdapter::new(MessageManager::new())
         .save_tool_records(records)
         .await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn created_background_tasks_keep_source_message_processing() {
-        let mut lifecycle = CloudTaskTurnLifecycleState::default();
-        assert_eq!(
-            task_runner_async_success_status_for_lifecycle(&lifecycle),
-            None
-        );
-
-        lifecycle.project_planning_task_created = true;
-        assert_eq!(
-            task_runner_async_success_status_for_lifecycle(&lifecycle),
-            Some("processing")
-        );
-
-        lifecycle.project_planning_task_created = false;
-        lifecycle.project_execution_plan_materialized = true;
-        assert_eq!(
-            task_runner_async_success_status_for_lifecycle(&lifecycle),
-            Some("processing")
-        );
-    }
 }

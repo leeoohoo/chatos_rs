@@ -44,6 +44,21 @@ public sealed class LocalStateDatabase
             PRAGMA journal_mode = WAL;
             PRAGMA foreign_keys = ON;
 
+            CREATE TABLE IF NOT EXISTS local_project_records (
+                owner_user_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
+                description TEXT NOT NULL, workspace_id TEXT NOT NULL, relative_root TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK(revision > 0),
+                status TEXT NOT NULL CHECK(status IN ('active', 'archived', 'removed')),
+                created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
+                PRIMARY KEY(owner_user_id, id)
+            );
+            CREATE TABLE IF NOT EXISTS local_project_imports (
+                owner_user_id TEXT NOT NULL, source_id TEXT NOT NULL, content_digest TEXT NOT NULL,
+                result_json TEXT NOT NULL, PRIMARY KEY(owner_user_id, source_id)
+            );
+            CREATE TABLE IF NOT EXISTS local_project_schema_migrations (version INTEGER PRIMARY KEY NOT NULL);
+            INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (1);
+
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY NOT NULL,
                 applied_at TEXT NOT NULL

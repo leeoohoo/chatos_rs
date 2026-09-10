@@ -54,7 +54,6 @@ public partial class App : Application
         builder.Services.AddSingleton<ConversationPage>();
         builder.Services.AddSingleton<ProjectFilesPage>();
         builder.Services.AddSingleton<ProjectGitPage>();
-        builder.Services.AddSingleton<ProjectPlanPage>();
         builder.Services.AddSingleton<ProjectRunPage>();
         builder.Services.AddSingleton<SettingsPage>();
         builder.Services.AddSingleton<PluginSettingsViewModel>();
@@ -73,6 +72,7 @@ public partial class App : Application
         builder.Services.AddSingleton<PluginArtifactsViewModel>();
         builder.Services.AddSingleton<IPluginArtifactUserInteraction, WindowsPluginArtifactUserInteraction>();
         builder.Services.AddSingleton<PluginArtifactsWindow>();
+        builder.Services.AddSingleton<PluginApplicationsPage>();
         builder.Services.AddSingleton<PluginVisualSessionWindow>();
         builder.Services.AddSingleton<PluginVisualSessionController>();
         builder.Services.AddSingleton<WorkspaceHostPage>();

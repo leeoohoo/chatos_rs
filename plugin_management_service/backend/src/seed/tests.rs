@@ -13,43 +13,10 @@ fn task_runner_run_phase_defaults_cover_execution_capabilities() {
     assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerRead));
     assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerWrite));
     assert!(kinds.contains(&BuiltinMcpKind::TerminalController));
-    assert!(kinds.contains(&BuiltinMcpKind::ProjectManagement));
     assert!(kinds.contains(&BuiltinMcpKind::Notepad));
     assert!(kinds.contains(&BuiltinMcpKind::RemoteConnectionController));
     assert!(!kinds.contains(&BuiltinMcpKind::AgentBuilder));
     assert!(!kinds.contains(&BuiltinMcpKind::MemorySkillReader));
-}
-
-#[test]
-fn task_runner_plan_phase_excludes_mutating_engineering_tools() {
-    let kinds = task_runner_plan_phase_builtin_kinds();
-
-    assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(!kinds.contains(&BuiltinMcpKind::TaskManager));
-    assert!(kinds.contains(&BuiltinMcpKind::ProjectManagement));
-    assert!(kinds.contains(&BuiltinMcpKind::AskUser));
-    assert!(!kinds.contains(&BuiltinMcpKind::CodeMaintainerWrite));
-    assert!(!kinds.contains(&BuiltinMcpKind::TerminalController));
-    assert!(!kinds.contains(&BuiltinMcpKind::RemoteConnectionController));
-}
-
-#[test]
-fn task_runner_planning_agent_owns_read_only_code_and_project_planning_capabilities() {
-    let required = task_runner_plan_phase_builtin_kinds()
-        .into_iter()
-        .filter(|kind| task_runner_plan_phase_required(*kind))
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        required,
-        vec![
-            BuiltinMcpKind::CodeMaintainerRead,
-            BuiltinMcpKind::ProjectManagement,
-            BuiltinMcpKind::AskUser,
-        ]
-    );
-    assert!(!required.contains(&BuiltinMcpKind::CodeMaintainerWrite));
-    assert!(!required.contains(&BuiltinMcpKind::TerminalController));
 }
 
 #[test]
@@ -103,35 +70,22 @@ fn every_system_mcp_has_provider_skills() {
 }
 
 #[test]
-fn task_runner_provider_skills_are_split_by_runtime_profile() {
+fn task_runner_provider_skills_have_no_planning_variant() {
     let skills = provider_skills_for_system_mcp(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID)
         .and_then(|value| value.as_array().cloned())
         .expect("task runner provider skills");
-    assert_eq!(skills.len(), 2);
-    assert!(skills.iter().any(|skill| {
-        skill
-            .get("task_profiles")
-            .and_then(Value::as_array)
-            .is_some_and(|profiles| profiles == &[Value::String("default".to_string())])
-    }));
-    assert!(skills.iter().any(|skill| {
-        skill
-            .get("task_profiles")
-            .and_then(Value::as_array)
-            .is_some_and(|profiles| profiles == &[Value::String("chatos_plan".to_string())])
-    }));
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0]["task_profiles"], serde_json::json!(["default"]));
 }
 
 #[test]
-fn legacy_chatos_planning_agents_are_retired_in_favor_of_task_runner_plan_phase() {
+fn planning_agents_are_retired_without_replacement() {
     assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_plan_agent"));
     assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_planning_agent"));
     assert!(!system_agent_specs()
         .iter()
         .any(|(agent_key, _, _, _, _, _)| *agent_key == "chatos_planning_agent"));
-    assert!(system_agent_specs()
-        .iter()
-        .any(|(agent_key, _, _, _, _, _)| *agent_key == TASK_RUNNER_PLAN_AGENT_KEY));
+    assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"task_runner_plan_phase"));
 }
 
 #[test]
@@ -151,13 +105,7 @@ fn retired_system_agents_are_unique_and_disjoint_from_the_runtime_catalog() {
 
 #[test]
 fn all_chatos_runtime_agents_receive_the_notepad_binding() {
-    assert_eq!(
-        CHATOS_NOTEPAD_AGENT_KEYS,
-        [
-            CHATOS_CONVERSATION_AGENT_KEY,
-            PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
-        ]
-    );
+    assert_eq!(CHATOS_NOTEPAD_AGENT_KEYS, [CHATOS_CONVERSATION_AGENT_KEY]);
 }
 
 #[test]
@@ -179,8 +127,6 @@ fn system_agent_registry_contains_all_runtime_roles() {
         keys,
         vec![
             CHATOS_CONVERSATION_AGENT_KEY,
-            PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
-            TASK_RUNNER_PLAN_AGENT_KEY,
             TASK_RUNNER_RUN_AGENT_KEY,
             LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY,
             "memory_engine_summary_agent",
@@ -263,10 +209,6 @@ fn chatos_conversation_requires_task_runner_service() {
 #[test]
 fn chatos_task_runner_tool_policies_are_split_by_task_profile() {
     assert!(!CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST.contains(&"create_tasks_with_prerequisites"));
-    assert!(CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST.contains(&"create_tasks_with_prerequisites"));
-    for tool_name in CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST {
-        assert!(CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST.contains(tool_name));
-    }
 }
 
 #[test]
@@ -293,8 +235,8 @@ fn seeded_binding_matching_preserves_task_runner_condition_variants() {
         created_at: "now".to_string(),
         updated_at: "now".to_string(),
     };
-    let plan_conditions = BindingConditions {
-        task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
+    let async_conditions = BindingConditions {
+        schedule_mode: Some("contact_async".to_string()),
         ..BindingConditions::default()
     };
 
@@ -310,7 +252,7 @@ fn seeded_binding_matching_preserves_task_runner_condition_variants() {
         BINDING_SCOPE_SYSTEM_REQUIRED,
         RESOURCE_KIND_MCP,
         CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        &plan_conditions,
+        &async_conditions,
     ));
 }
 

@@ -148,7 +148,7 @@ export function createLandingPage(title = 'AI 产品落地页'): WebDesignDocume
       tablet: { ...DEFAULT_WEB_DESIGN_BREAKPOINTS.tablet },
       mobile: { width: 390, height: 1380 }
     },
-    pages: [{ id: 'home', name: '首页', slug: '/' }],
+    pages: [{ id: 'home', name: '首页', slug: '/', surfaceKind: 'page' }],
     assets: [],
     tokens: structuredClone(DEFAULT_WEB_DESIGN_TOKENS),
     symbols: [],
@@ -169,7 +169,7 @@ export function createBlankWebsite(title = '未命名网站'): WebDesignDocument
     updatedAt: now,
     viewport: { width: 1200, height: 940, background: '#FFFFFF' },
     breakpoints: structuredClone(DEFAULT_WEB_DESIGN_BREAKPOINTS),
-    pages: [{ id: 'home', name: '首页', slug: '/' }],
+    pages: [{ id: 'home', name: '首页', slug: '/', surfaceKind: 'page' }],
     assets: [],
     tokens: structuredClone(DEFAULT_WEB_DESIGN_TOKENS),
     symbols: [],

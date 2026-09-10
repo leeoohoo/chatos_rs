@@ -5,6 +5,7 @@ mod catalog;
 mod health;
 mod invocations;
 pub(crate) mod mcp;
+mod project_context;
 mod routes;
 mod runtime_session_metadata;
 mod runtime_sessions;
@@ -61,6 +62,10 @@ pub fn build_internal_router(state: AppState) -> Router {
             .route("/api/internal/catalog", get(catalog::catalog))
             .route("/api/internal/system/stats", get(system::system_stats))
             .route("/api/internal/routes/resolve", post(routes::resolve_routes))
+            .route(
+                "/api/internal/project-context/authorize",
+                post(project_context::authorize_project_context),
+            )
             .route(
                 "/api/internal/runtime/sessions/resolve",
                 post(runtime_sessions::resolve_runtime_session),

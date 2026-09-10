@@ -20,6 +20,7 @@ public actor ChatOSAPIClient {
     private let credentialStore: (any CredentialStoring)?
     private let decoder: JSONDecoder
     private var accessToken: String?
+    private var authenticationSessionID = UUID()
 
     public init(
         configuration: Configuration,
@@ -35,6 +36,7 @@ public actor ChatOSAPIClient {
     }
 
     public func setAccessToken(_ token: String?) async throws {
+        authenticationSessionID = UUID()
         accessToken = token?.trimmedNonEmpty
         if let accessToken {
             try await credentialStore?.saveAccessToken(accessToken)
@@ -46,6 +48,13 @@ public actor ChatOSAPIClient {
     public func currentAccessToken() -> String? {
         accessToken
     }
+
+    func currentAuthenticationSessionID() throws -> UUID {
+        guard accessToken != nil else { throw ChatOSAPIError.unauthorized }
+        return authenticationSessionID
+    }
+
+    enum Service { case chatOS, memoryEngine, taskRunner }
 
     public func webSocketURL(path: String, ticket: String) -> URL? {
         let base = configuration.baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -61,9 +70,14 @@ public actor ChatOSAPIClient {
         method: String = "GET",
         body: Data? = nil,
         additionalHeaders: [String: String] = [:],
-        timeoutInterval: TimeInterval? = nil
+        timeoutInterval: TimeInterval? = nil,
+        service: Service = .chatOS,
+        expectedAuthenticationSessionID: UUID? = nil
     ) async throws -> Response {
-        guard let url = makeURL(endpoint: endpoint) else {
+        if let expectedAuthenticationSessionID {
+            guard accessToken != nil, expectedAuthenticationSessionID == authenticationSessionID else { throw ChatOSAPIError.unauthorized }
+        }
+        guard let url = makeURL(endpoint: endpoint, service: service) else {
             throw ChatOSAPIError.invalidEndpoint
         }
 
@@ -87,13 +101,17 @@ public actor ChatOSAPIClient {
                 timeoutInterval: timeoutInterval
             )
         )
-        if let refreshedToken = response.headers["x-access-token"]?.trimmedNonEmpty {
+        if let expectedAuthenticationSessionID, expectedAuthenticationSessionID != authenticationSessionID {
+            throw ChatOSAPIError.unauthorized
+        }
+        if let refreshedToken = response.headers["x-access-token"]?.trimmedNonEmpty, accessToken == requestAccessToken {
             accessToken = refreshedToken
             try await credentialStore?.saveAccessToken(refreshedToken)
         }
         if response.statusCode == 401 {
             if let requestAccessToken, accessToken == requestAccessToken {
                 accessToken = nil
+                authenticationSessionID = UUID()
                 try? await credentialStore?.deleteAccessToken()
                 NotificationCenter.default.post(
                     name: .chatOSAuthenticationDidExpire,
@@ -121,6 +139,8 @@ public actor ChatOSAPIClient {
             )
         }
 
+        if service == .memoryEngine, response.body.count > 8 * 1_024 * 1_024 { throw ChatOSAPIError.invalidResponse }
+
         do {
             return try decoder.decode(Response.self, from: response.body)
         } catch {
@@ -128,8 +148,21 @@ public actor ChatOSAPIClient {
         }
     }
 
-    private func makeURL(endpoint: String) -> URL? {
-        let base = configuration.baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    private func makeURL(endpoint: String, service: Service = .chatOS) -> URL? {
+        var baseURL = configuration.baseURL
+        if service == .memoryEngine || service == .taskRunner {
+            guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
+                  components.query == nil, components.fragment == nil, components.user == nil, components.password == nil else { return nil }
+            var path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if path == "api/chatos" { path = "" }
+            else if path.hasSuffix("/api/chatos") { path = String(path.dropLast("/api/chatos".count)) }
+            else if !path.isEmpty { return nil }
+            components.path = (path.isEmpty ? "" : "/" + path)
+                + (service == .memoryEngine ? "/api/memory" : "/api/task")
+            guard let resolved = components.url else { return nil }
+            baseURL = resolved
+        }
+        let base = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let cleanedEndpoint = endpoint.hasPrefix("/") ? endpoint : "/\(endpoint)"
         return URL(string: base + cleanedEndpoint)
     }

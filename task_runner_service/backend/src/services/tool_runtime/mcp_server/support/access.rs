@@ -43,13 +43,6 @@ pub(crate) fn agent_tool_allowed_for_profile(name: &str, tool_profile: McpToolPr
     match tool_profile {
         McpToolProfile::Default => agent_tool_allowed(name),
         McpToolProfile::ChatosAsyncPlanner => planner_agent_tool_allowed(name),
-        McpToolProfile::ProjectRequirementExecutionPlanner => matches!(
-            name,
-            "list_tasks"
-                | "get_task"
-                | "get_task_dependency_graph"
-                | "create_project_execution_tasks"
-        ),
     }
 }
 
@@ -188,6 +181,7 @@ pub(crate) fn remove_internal_task_fields(value: &mut Value) {
             for field in [
                 "process_log",
                 "project_id",
+                "project_context",
                 "tenant_id",
                 "subject_id",
                 "task_profile",
@@ -203,6 +197,8 @@ pub(crate) fn remove_internal_task_fields(value: &mut Value) {
                 "source_session_id",
                 "source_turn_id",
                 "source_user_message_id",
+                "remote_connection_id",
+                "default_remote_connection_id",
                 "agent_key",
                 "plugin_config",
                 "mcp_config",

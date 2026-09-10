@@ -411,7 +411,7 @@ public sealed class WindowsPluginPackageInstaller
             throw new PluginPackageException("Plugin manifest name does not match the catalog.");
         }
 
-        if (manifest.McpServers.Count == 0 && manifest.Skills.Count == 0)
+        if (manifest.McpServers.Count == 0 && manifest.Skills.Count == 0 && manifest.Ui.Count == 0)
         {
             throw new PluginPackageException("Plugin manifest has no runnable component.");
         }
@@ -435,6 +435,49 @@ public sealed class WindowsPluginPackageInstaller
             }
         }
 
+        foreach (var contribution in manifest.Ui)
+        {
+            if (string.IsNullOrWhiteSpace(contribution.ComponentKey) ||
+                contribution.ComponentKey.Length > 128 ||
+                !componentKeys.Add(contribution.ComponentKey))
+            {
+                throw new PluginPackageException("Plugin UI component key is invalid or duplicated.");
+            }
+            if (!string.Equals(contribution.Surface, "workbench", StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(contribution.Source.Path))
+            {
+                throw new PluginPackageException("Plugin UI contribution must be a workbench with a source file.");
+            }
+            _ = NormalizePackageRelativePath(contribution.Source.Path!);
+            foreach (var asset in contribution.Assets)
+            {
+                _ = NormalizePackageRelativePath(asset);
+            }
+            if (contribution.BridgeCapabilities.Count != contribution.BridgeCapabilities.Distinct(StringComparer.Ordinal).Count() ||
+                contribution.BridgeCapabilities.Any(capability => capability is not (
+                    "host.context.read" or "task.batch.prepare" or "task.batch.status" or "task.workspace.open")))
+            {
+                throw new PluginPackageException("Plugin UI declares an unsupported host bridge capability.");
+            }
+            if (contribution.Runtime is { } runtime &&
+                (!string.Equals(runtime.Type, "local_http", StringComparison.Ordinal) ||
+                 !SafeExecutableName(runtime.Bin) ||
+                 runtime.Arguments.Count > 128 ||
+                 runtime.Arguments.Any(argument => argument.Length > 8 * 1024 || argument.Contains('\0')) ||
+                 runtime.LaunchTimeoutMilliseconds is < 100 or > 120_000 ||
+                 (runtime.HealthPath is { } healthPath &&
+                  (!healthPath.StartsWith('/') || healthPath.Contains("..", StringComparison.Ordinal) ||
+                   healthPath.Contains('?') || healthPath.Contains('#') || healthPath.Contains('\0')))))
+            {
+                throw new PluginPackageException("Plugin local UI runtime declaration is invalid.");
+            }
+        }
+        foreach (var icon in new[] { manifest.Interface?.Logo?.Path, manifest.Interface?.LogoDark?.Path }
+                     .Where(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            _ = NormalizePackageRelativePath(icon!);
+        }
+
         var permissions = new HashSet<string>(StringComparer.Ordinal);
         foreach (var permission in manifest.Permissions)
         {
@@ -449,10 +492,11 @@ public sealed class WindowsPluginPackageInstaller
             }
         }
 
-        if (manifest.McpServers.Values.Any(server => server.EffectiveTransport == "stdio") &&
+        if ((manifest.McpServers.Values.Any(server => server.EffectiveTransport == "stdio") ||
+             manifest.Ui.Any(contribution => contribution.Runtime is not null)) &&
             !manifest.Permissions.Any(permission => permission.Required && permission.Permission == "process.spawn"))
         {
-            throw new PluginPackageException("stdio MCP plugins must require process.spawn permission.");
+            throw new PluginPackageException("Local executable Plugin components must require process.spawn permission.");
         }
 
         if (manifest.Dependencies.SupportedPlatforms.Count > 0 &&
@@ -468,7 +512,9 @@ public sealed class WindowsPluginPackageInstaller
         HashSet<string> extractedFiles)
     {
         var bins = package.Bins();
-        if (bins.Count == 0)
+        if (bins.Count == 0 &&
+            (manifest.McpServers.Values.Any(server => server.EffectiveTransport == "stdio") ||
+             manifest.Ui.Any(contribution => contribution.Runtime is not null)))
         {
             throw new PluginPackageException("package.json does not publish a Plugin executable.");
         }
@@ -485,6 +531,45 @@ public sealed class WindowsPluginPackageInstaller
             if (!extractedFiles.Contains($"package/{normalizedTarget}"))
             {
                 throw new PluginPackageException($"Published MCP bin is missing from the package: {bin}");
+            }
+        }
+
+        foreach (var contribution in manifest.Ui)
+        {
+            var source = NormalizePackageRelativePath(contribution.Source.Path!);
+            if (!extractedFiles.Contains($"package/{source}"))
+            {
+                throw new PluginPackageException($"Published Plugin UI source is missing: {source}");
+            }
+            foreach (var assetValue in contribution.Assets)
+            {
+                var asset = NormalizePackageRelativePath(assetValue);
+                if (!extractedFiles.Contains($"package/{asset}"))
+                {
+                    throw new PluginPackageException($"Published Plugin UI asset is missing: {asset}");
+                }
+            }
+            if (contribution.Runtime is not { } runtime)
+            {
+                continue;
+            }
+            if (!bins.TryGetValue(runtime.Bin, out var target))
+            {
+                throw new PluginPackageException($"package.json does not publish Plugin UI bin: {runtime.Bin}");
+            }
+            var normalizedTarget = NormalizePackageRelativePath(target);
+            if (!extractedFiles.Contains($"package/{normalizedTarget}"))
+            {
+                throw new PluginPackageException($"Published Plugin UI bin is missing: {runtime.Bin}");
+            }
+        }
+        foreach (var iconValue in new[] { manifest.Interface?.Logo?.Path, manifest.Interface?.LogoDark?.Path }
+                     .Where(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            var icon = NormalizePackageRelativePath(iconValue!);
+            if (!extractedFiles.Contains($"package/{icon}"))
+            {
+                throw new PluginPackageException($"Published Plugin icon is missing: {icon}");
             }
         }
     }

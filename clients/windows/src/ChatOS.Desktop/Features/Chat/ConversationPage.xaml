@@ -26,7 +26,6 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <StackPanel VerticalAlignment="Center" Spacing="1">
@@ -58,18 +57,10 @@
                 IsOn="{x:Bind ViewModel.ReasoningEnabled, Mode=OneWay}"
                 Toggled="OnReasoningToggled" />
 
-            <ToggleSwitch
-                AutomationProperties.AutomationId="ChatOS.Chat.PlanMode"
-                Grid.Column="3"
-                VerticalAlignment="Center"
-                Header="Plan"
-                IsOn="{x:Bind ViewModel.PlanModeEnabled, Mode=OneWay}"
-                Toggled="OnPlanModeToggled" />
-
             <Button
                 AutomationProperties.AutomationId="ChatOS.Chat.Refresh"
                 AutomationProperties.Name="{x:Bind Localization.RefreshConversation, Mode=OneWay}"
-                Grid.Column="4"
+                Grid.Column="3"
                 Command="{x:Bind ViewModel.RefreshLatestCommand}"
                 Style="{StaticResource ChatOSToolbarButtonStyle}"
                 ToolTipService.ToolTip="{x:Bind Localization.RefreshConversation, Mode=OneWay}">

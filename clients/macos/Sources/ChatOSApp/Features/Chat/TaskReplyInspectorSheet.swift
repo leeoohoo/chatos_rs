@@ -35,7 +35,7 @@ struct TaskReplyInlineInspectorView: View {
             TaskReplyInspectorContent(viewModel: viewModel)
         }
         .padding(16)
-        .frame(maxWidth: 840, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)

@@ -39,7 +39,7 @@ routes:
       request-id: *request_id
       uri-blocker: &block_internal_api
         block_rules:
-          - "^/api/(?:admin/(?:user-service|project-service|task-runner|plugin-management|memory-engine|config-center)/|(?:chatos|user|project|plugin|plugins|task|memory|local)/)(?:api/)?internal(?:/|\\?|$)"
+          - "^/api/(?:admin/(?:user-service|task-runner|plugin-management|memory-engine|config-center)/|(?:chatos|user|plugin|plugins|task|memory|local)/)(?:api/)?internal(?:/|\\?|$)"
         rejected_code: 404
       client-control: &admin_api_body_limit
         max_body_size: 268435456
@@ -55,24 +55,6 @@ routes:
         read: 3600
       nodes:
         "user-service-backend:39190": 1
-
-  - id: admin-project-service-api
-    priority: 800
-    hosts: *admin_hosts
-    uri: /api/admin/project-service/*
-    plugins:
-      request-id: *request_id
-      uri-blocker: *block_internal_api
-      client-control: *admin_api_body_limit
-      proxy-rewrite:
-        regex_uri:
-          - "^/api/admin/project-service/?(.*)"
-          - "/api/$1"
-    upstream:
-      type: roundrobin
-      timeout: *admin_api_timeout
-      nodes:
-        "project-management-backend:39210": 1
 
   - id: admin-task-runner-api
     priority: 800
@@ -407,28 +389,6 @@ routes:
         read: 120
       nodes:
         "user-service-backend:39190": 1
-
-  - id: project-service-api
-    priority: 520
-    uri: /api/project/*
-    plugins:
-      request-id: *request_id
-      uri-blocker: *block_internal_api
-      cors: *api_cors
-      client-control: *api_body_limit
-      limit-req: *api_ip_rate_limit
-      proxy-rewrite:
-        regex_uri:
-          - "^/api/project/?(.*)"
-          - "/api/$1"
-    upstream:
-      type: roundrobin
-      timeout:
-        connect: 5
-        send: 600
-        read: 600
-      nodes:
-        "project-management-backend:39210": 1
 
   # Plugin catalog already owns the native /api/plugins namespace.
   - id: plugin-catalog-api

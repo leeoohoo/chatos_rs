@@ -2,62 +2,6 @@ import XCTest
 @testable import ChatOSCore
 
 final class ConversationHistoryStoreTests: XCTestCase {
-    func testReplacementBatchKeepsHistoryAndDisablesOnlyOldTaskGraph() async {
-        let store = ConversationHistoryStore()
-        let old = projectExecutionTurn(id: "old-group", replacedGroupID: nil, sequence: 1)
-        let replacement = projectExecutionTurn(
-            id: "new-group",
-            replacedGroupID: "old-group",
-            sequence: 2
-        )
-
-        await store.mergeCachedTurns([old, replacement], sessionID: "session-a")
-
-        let snapshot = await store.snapshot(sessionID: "session-a")
-        XCTAssertEqual(snapshot.turns.map(\.id), ["old-group", "new-group"])
-        XCTAssertFalse(snapshot.turns[0].isTaskGraphAvailable)
-        XCTAssertTrue(snapshot.turns[1].isTaskGraphAvailable)
-    }
-
-    func testOlderPageRestoresSupersededHistoryWithoutTaskGraph() async {
-        let store = ConversationHistoryStore()
-        let replacement = projectExecutionTurn(
-            id: "new-group",
-            replacedGroupID: "old-group",
-            sequence: 2
-        )
-        await store.mergeCachedTurns([replacement], sessionID: "session-a")
-        await store.mergeCachedTurns(
-            [projectExecutionTurn(id: "old-group", replacedGroupID: nil, sequence: 1)],
-            sessionID: "session-a"
-        )
-
-        let snapshot = await store.snapshot(sessionID: "session-a")
-        XCTAssertEqual(snapshot.turns.map(\.id), ["old-group", "new-group"])
-        XCTAssertFalse(snapshot.turns[0].isTaskGraphAvailable)
-        XCTAssertTrue(snapshot.turns[1].isTaskGraphAvailable)
-    }
-
-    func testNewerRevisionCannotRestoreSupersededTaskGraphButton() async {
-        let store = ConversationHistoryStore()
-        let old = projectExecutionTurn(id: "old-group", replacedGroupID: nil, sequence: 1)
-        let replacement = projectExecutionTurn(
-            id: "new-group",
-            replacedGroupID: "old-group",
-            sequence: 2
-        )
-        await store.mergeCachedTurns([old, replacement], sessionID: "session-a")
-
-        var refreshedOld = old
-        refreshedOld.revision = 2
-        refreshedOld.isTaskGraphAvailable = true
-        await store.mergeCachedTurns([refreshedOld], sessionID: "session-a")
-
-        let snapshot = await store.snapshot(sessionID: "session-a")
-        XCTAssertEqual(snapshot.turns.map(\.id), ["old-group", "new-group"])
-        XCTAssertFalse(snapshot.turns[0].isTaskGraphAvailable)
-    }
-
     func testDiscardOptimisticTurnNeverDeletesPersistedTurn() async {
         let store = ConversationHistoryStore()
         let optimistic = turn(
@@ -373,6 +317,75 @@ final class ConversationHistoryStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.finalAssistantMessage?.text, "accepted")
     }
 
+    func testLatestPageCanAddTaskCallbackWithoutHigherTurnRevision() async {
+        let store = ConversationHistoryStore()
+        let original = turn(id: "1", sequence: 1, revision: 5)
+        await store.mergeCachedTurns([original], sessionID: "session-a")
+
+        var completed = original
+        completed.assistantReplies.append(
+            ConversationAssistantReply(
+                message: ChatMessage(
+                    id: "task-callback-1",
+                    role: .assistant,
+                    text: "任务已完成",
+                    createdAt: Date(timeIntervalSince1970: 2)
+                ),
+                taskCallback: TaskRunnerCallbackReference(
+                    taskID: "task-1",
+                    runID: "run-1",
+                    event: "task.completed",
+                    status: "succeeded"
+                )
+            )
+        )
+        await store.mergePage(
+            HistoryPage(
+                turns: [completed],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 5,
+                requestGeneration: 1
+            ),
+            sessionID: "session-a",
+            origin: .latest
+        )
+
+        let snapshot = await store.snapshot(sessionID: "session-a")
+        XCTAssertEqual(snapshot.turns.first?.revision, 5)
+        XCTAssertEqual(snapshot.turns.first?.assistantReplies.count, 1)
+        XCTAssertEqual(snapshot.turns.first?.assistantReplies.first?.taskCallback?.taskID, "task-1")
+    }
+
+    func testStaleLatestPageCannotReplaceEqualRevisionSnapshot() async {
+        let store = ConversationHistoryStore()
+        await store.mergePage(
+            HistoryPage(
+                turns: [turn(id: "1", sequence: 1, revision: 5, assistantText: "new")],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 5,
+                requestGeneration: 2
+            ),
+            sessionID: "session-a",
+            origin: .latest
+        )
+        await store.mergePage(
+            HistoryPage(
+                turns: [turn(id: "1", sequence: 1, revision: 5, assistantText: "stale")],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 5,
+                requestGeneration: 1
+            ),
+            sessionID: "session-a",
+            origin: .latest
+        )
+
+        let snapshot = await store.snapshot(sessionID: "session-a")
+        XCTAssertEqual(snapshot.turns.first?.finalAssistantMessage?.text, "new")
+    }
+
     func testTurnFromAnotherSessionCannotLeakIntoSnapshot() async {
         let store = ConversationHistoryStore()
         await store.mergeCachedTurns(
@@ -412,27 +425,4 @@ final class ConversationHistoryStoreTests: XCTestCase {
         )
     }
 
-    private func projectExecutionTurn(
-        id: String,
-        replacedGroupID: String?,
-        sequence: Int64
-    ) -> ConversationTurn {
-        let date = Date(timeIntervalSince1970: TimeInterval(sequence))
-        return ConversationTurn(
-            id: id,
-            sessionID: "session-a",
-            sequence: sequence,
-            revision: 1,
-            userMessage: ChatMessage(id: id, role: .user, text: "执行批次", createdAt: date),
-            projectExecutionContext: ProjectExecutionContext(
-                projectID: "project-1",
-                requirementID: "requirement-1",
-                executionGroupID: id,
-                replacedExecutionGroupID: replacedGroupID
-            ),
-            status: .completed,
-            startedAt: date,
-            completedAt: date
-        )
-    }
 }

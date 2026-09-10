@@ -40,7 +40,7 @@ struct ProjectRunSettingsView: View {
                 ProjectRunInstancesSection(viewModel: viewModel)
                 ProjectRunEnvironmentSection(viewModel: viewModel)
                 configurationFilesSection
-                projectManagementSection
+                projectLifecycleSection
             }
             .padding(24)
             .frame(maxWidth: 980, alignment: .leading)
@@ -218,9 +218,9 @@ struct ProjectRunSettingsView: View {
         }
     }
 
-    private var projectManagementSection: some View {
+    private var projectLifecycleSection: some View {
         SettingsCard(
-            title: model.localized("项目管理", english: "Project Management"),
+            title: model.localized("项目设置", english: "Project Settings"),
             systemImage: "folder.badge.minus"
         ) {
             HStack(alignment: .center, spacing: 18) {

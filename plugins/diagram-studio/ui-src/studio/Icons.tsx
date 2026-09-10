@@ -3,7 +3,7 @@ import type { SVGProps } from 'react';
 export type IconName =
   | 'plus' | 'folder' | 'home' | 'save' | 'undo' | 'redo' | 'layout' | 'export'
   | 'sidebar' | 'inspector' | 'trash' | 'fit' | 'search' | 'chevron'
-  | 'architecture' | 'flowchart' | 'swimlane' | 'topology' | 'sequence' | 'close'
+  | 'architecture' | 'flowchart' | 'swimlane' | 'topology' | 'sequence' | 'mindmap' | 'close'
   | 'user' | 'terminal' | 'mobile' | 'browser' | 'server' | 'api' | 'cloud'
   | 'database' | 'cache' | 'storage' | 'queue' | 'network' | 'shield'
   | 'container' | 'cluster' | 'monitor' | 'document' | 'note';
@@ -28,6 +28,7 @@ const paths: Record<IconName, React.ReactNode> = {
   swimlane: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18M3 15h18M9 4v16" /></>,
   topology: <><circle cx="12" cy="5" r="3" /><circle cx="5" cy="18" r="3" /><circle cx="19" cy="18" r="3" /><path d="m10.5 7.5-4 8M13.5 7.5l4 8M8 18h8" /></>,
   sequence: <><rect x="2.5" y="3" width="6" height="4" rx="1" /><rect x="15.5" y="3" width="6" height="4" rx="1" /><path d="M5.5 7v14M18.5 7v14M7 11h10M14 8l3 3-3 3M17 17H7M10 14l-3 3 3 3" /></>,
+  mindmap: <><rect x="8" y="8.5" width="8" height="7" rx="2" /><path d="M8 12H4.5M4.5 12V6.5M4.5 12v5.5M16 12h3.5M19.5 12V6.5M19.5 12v5.5" /><circle cx="4.5" cy="5" r="1.5" /><circle cx="4.5" cy="19" r="1.5" /><circle cx="19.5" cy="5" r="1.5" /><circle cx="19.5" cy="19" r="1.5" /></>,
   close: <path d="m7 7 10 10M17 7 7 17" />,
   user: <><circle cx="12" cy="8" r="3.5" /><path d="M5.5 20c.5-4 2.7-6 6.5-6s6 2 6.5 6" /></>,
   terminal: <><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></>,

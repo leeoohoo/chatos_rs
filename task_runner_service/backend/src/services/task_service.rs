@@ -4,19 +4,17 @@
 use super::*;
 
 mod batch_schedule;
+pub(super) mod project_context;
 mod runtime_settings;
 mod tasks;
 mod validation;
 
 impl TaskService {
-    pub(crate) fn config(&self) -> &AppConfig {
-        &self.config
-    }
-
     pub(crate) fn new(config: AppConfig, store: AppStore) -> Self {
         Self {
             config,
             store,
+            project_context_authorizer: Arc::new(project_context::McpProjectContextAuthorizer),
             plugin_management_client: None,
             #[cfg(test)]
             allow_unresolved_plugin_policy_for_test: false,
@@ -31,6 +29,7 @@ impl TaskService {
         Self {
             config,
             store,
+            project_context_authorizer: Arc::new(project_context::McpProjectContextAuthorizer),
             plugin_management_client: Some(plugin_management_client),
             #[cfg(test)]
             allow_unresolved_plugin_policy_for_test: false,

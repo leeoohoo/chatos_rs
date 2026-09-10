@@ -87,20 +87,10 @@ pub const TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
     "task_runner.downstream.user_service_internal_base_url";
 pub const TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "task_runner.downstream.user_service_request_timeout_ms";
-pub const TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY: &str =
-    "task_runner.downstream.project_service_base_url";
-pub const TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
-    "task_runner.downstream.project_service_internal_base_url";
-pub const TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "task_runner.downstream.project_service_request_timeout_ms";
 pub const TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
     "task_runner.downstream.memory_engine_base_url";
-pub const TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "task_runner.downstream.project_service_internal_api_secret";
 pub const TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "task_runner.downstream.memory_engine_internal_api_secret";
-pub const TASK_RUNNER_PROJECT_SERVICE_CALLER_SECRET_CONFIG_KEY: &str =
-    "task_runner.security.project_service_internal_api_secret";
 pub const TASK_RUNNER_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "task_runner.security.chatos_internal_api_secret";
 pub const TASK_RUNNER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =

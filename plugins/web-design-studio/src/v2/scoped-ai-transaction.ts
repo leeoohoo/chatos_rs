@@ -88,7 +88,9 @@ export function validateScopedAiTransaction(
   const affectedNodeIds = new Set<string>();
 
   for (const operation of transaction.operations) {
-    if (operation.op === 'insert-variable-collection' || operation.op === 'insert-responsive-rule' || operation.op === 'rename-page') {
+    if (operation.op === 'insert-page' || operation.op === 'remove-page'
+      || operation.op === 'insert-variable-collection' || operation.op === 'insert-responsive-rule'
+      || operation.op === 'set-responsive-node-overrides' || operation.op === 'remove-responsive-rule' || operation.op === 'rename-page') {
       throw new Error(`Scoped AI transaction cannot perform ${operation.op}.`);
     }
     if (operation.op === 'insert-node') {
@@ -104,6 +106,9 @@ export function validateScopedAiTransaction(
       }
       affectedNodeIds.add(operation.parentId);
       continue;
+    }
+    if (operation.op === 'set-variable-collections') {
+      throw new Error('Scoped AI transactions cannot replace all variable collections.');
     }
     if (!allowed.has(operation.nodeId)) throw new Error(`Scoped AI operation targets ${operation.nodeId} outside the allowed node scope.`);
     if (operation.op === 'update-node') {

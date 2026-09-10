@@ -7,7 +7,6 @@ public enum PetActivitySource
     Chat,
     TaskBoard,
     TaskRunner,
-    ProjectExecution,
 }
 
 public enum PetActivityKind

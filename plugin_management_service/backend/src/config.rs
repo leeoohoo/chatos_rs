@@ -201,7 +201,6 @@ impl AppConfig {
                 &[
                     "change_me_plugin_management_internal_secret",
                     "change_me_plugin_management_task_runner_secret",
-                    "change_me_plugin_management_project_service_secret",
                     "change_me_plugin_management_local_connector_secret",
                     "change_me_plugin_management_memory_engine_secret",
                     "change_me_plugin_management_mcp_management_secret",
@@ -269,10 +268,6 @@ fn caller_internal_api_secrets() -> Result<HashMap<String, String>, String> {
         (
             "task-runner",
             "PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
-        ),
-        (
-            "project-service",
-            "PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET",
         ),
         (
             "local-connector-service",

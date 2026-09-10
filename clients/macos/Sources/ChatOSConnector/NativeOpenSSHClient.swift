@@ -1,4 +1,6 @@
 import ChatOSCore
+import CryptoKit
+import Darwin
 import Foundation
 
 protocol NativeRemoteSSHExecuting: Sendable {
@@ -129,15 +131,11 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
                   else kind=other
                   fi
                   name=${item##*/}
-                  if stat -c '%s' -- "$item" >/dev/null 2>&1; then
-                    size=$(stat -c '%s' -- "$item" 2>/dev/null || true)
-                    modified=$(stat -c '%Y' -- "$item" 2>/dev/null || true)
-                    permissions=$(stat -c '%A' -- "$item" 2>/dev/null || true)
-                  else
-                    size=$(stat -f '%z' "$item" 2>/dev/null || true)
-                    modified=$(stat -f '%m' "$item" 2>/dev/null || true)
-                    permissions=$(stat -f '%Sp' "$item" 2>/dev/null || true)
-                  fi
+                  metadata=$(stat -c '%s %Y %A' -- "$item" 2>/dev/null || stat -f '%z %m %Sp' "$item" 2>/dev/null || true)
+                  size=${metadata%% *}
+                  remainder=${metadata#* }
+                  modified=${remainder%% *}
+                  permissions=${remainder#* }
                   printf '%s\\0%s\\0%s\\0%s\\0%s\\0' "$kind" "$name" "$size" "$modified" "$permissions"
                   count=$((count + 1))
                   [ "$count" -ge \(normalizedLimit) ] && break
@@ -254,10 +252,24 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             try Self.withRuntime(draft: draft) { runtime in
                 let quotedPath = Self.shellQuote(path)
                 let parent = Self.shellQuote(Self.remoteParent(path))
-                var commands = ["set -e"]
-                if createParentDirectories { commands.append("mkdir -p -- \(parent)") }
-                if !overwrite { commands.append("[ ! -e \(quotedPath) ]") }
-                commands.append("cat > \(quotedPath)")
+                var commands = [
+                    "set -e",
+                    "target=\(quotedPath)",
+                    "parent=\(parent)",
+                ]
+                if createParentDirectories { commands.append("mkdir -p -- \"$parent\"") }
+                commands.append("tmp=$(mktemp \"$parent/.chatos-upload.XXXXXX\")")
+                commands.append("cleanup() { rm -f -- \"$tmp\"; }")
+                commands.append("trap cleanup EXIT HUP INT TERM")
+                commands.append("cat > \"$tmp\"")
+                if overwrite {
+                    commands.append("if [ -e \"$target\" ] && [ ! -L \"$target\" ]; then mode=$(stat -c '%a' -- \"$target\" 2>/dev/null || stat -f '%Lp' \"$target\" 2>/dev/null || true); [ -z \"$mode\" ] || chmod \"$mode\" \"$tmp\"; fi")
+                    commands.append("mv -f -- \"$tmp\" \"$target\"")
+                } else {
+                    commands.append("ln -- \"$tmp\" \"$target\" 2>/dev/null || { printf 'remote target already exists: %s\\n' \"$target\" >&2; exit 73; }")
+                    commands.append("rm -f -- \"$tmp\"")
+                }
+                commands.append("trap - EXIT HUP INT TERM")
                 let captured = try Self.run(
                     executable: "/usr/bin/ssh",
                     arguments: ["-F", runtime.config.path, "chatos-target", commands.joined(separator: "; ")],
@@ -418,7 +430,9 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         defer { try? FileManager.default.removeItem(at: directory) }
         let config = directory.appendingPathComponent("ssh_config")
         let askpass = directory.appendingPathComponent("askpass.sh")
-        try NativeSSHConnectionTester.sshConfig(for: draft).write(to: config, atomically: true, encoding: .utf8)
+        let controlPath = try persistentControlPath(for: draft)
+        try NativeSSHConnectionTester.sshConfig(for: draft, controlPath: controlPath.path)
+            .write(to: config, atomically: true, encoding: .utf8)
         try NativeSSHConnectionTester.askpassScript.write(to: askpass, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: askpass.path)
         var environment = ProcessInfo.processInfo.environment
@@ -431,6 +445,54 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         environment["CHATOS_SSH_JUMP_USER"] = draft.jumpUsername ?? ""
         environment["CHATOS_SSH_VERIFICATION_CODE"] = ""
         return try operation(.init(config: config, environment: environment))
+    }
+
+    static func persistentControlPath(for draft: RemoteConnectionDraft) throws -> URL {
+        let identity = [
+            draft.host,
+            String(draft.port),
+            draft.username,
+            draft.authenticationType.rawValue,
+            draft.password ?? "",
+            draft.privateKeyPath ?? "",
+            draft.certificatePath ?? "",
+            draft.jumpHost ?? "",
+            String(draft.jumpPort ?? 22),
+            draft.jumpUsername ?? "",
+            draft.jumpPassword ?? "",
+            draft.jumpPrivateKeyPath ?? "",
+            draft.jumpCertificatePath ?? "",
+        ].joined(separator: "\u{1F}")
+        let digest = SHA256.hash(data: Data(identity.utf8))
+            .prefix(16)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        // macOS limits Unix-domain socket paths to roughly 104 bytes, and
+        // OpenSSH appends a temporary suffix while creating the master socket.
+        // NSTemporaryDirectory() is usually a long /var/folders/... path, so a
+        // short per-user directory under /tmp is required for reliable reuse.
+        let directory = URL(
+            fileURLWithPath: "/tmp/chatos-ssh-\(getuid())",
+            isDirectory: true
+        )
+        let fileManager = FileManager.default
+        if !fileManager.fileExists(atPath: directory.path) {
+            try fileManager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
+        let attributes = try fileManager.attributesOfItem(atPath: directory.path)
+        guard attributes[.type] as? FileAttributeType == .typeDirectory,
+              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else {
+            throw NativeOpenSSHError.launchFailed("SSH 复用目录的归属或类型不安全")
+        }
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directory.path
+        )
+        return directory.appendingPathComponent(digest, isDirectory: false)
     }
 
     private static func run(

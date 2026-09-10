@@ -273,7 +273,6 @@ export const zhCNSettings: MessageDictionary = {
   'runs.detail.pluginCloudRuntime': '云端执行',
   'runs.detail.pluginComponents': '个组件',
   'runs.detail.pluginSnapshotSummary': '{version}，{target}，{componentCount} 个组件',
-  'runs.detail.planningAgent': 'Task Runner 规划任务智能体',
   'runs.detail.executionAgent': 'Task Runner 执行任务智能体',
   'runs.detail.errorMessage': '错误信息',
   'runs.detail.totalDuration': '运行总耗时',

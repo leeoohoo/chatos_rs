@@ -3,10 +3,11 @@ using System.Text.Json.Serialization;
 using ChatOS.Api.Http;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
+using ChatOS.Core.State;
 
 namespace ChatOS.Api.Workspace;
 
-public sealed class WorkspaceService : IWorkspaceService
+public sealed class WorkspaceService : IWorkspaceRelationsService
 {
     private readonly ChatOSApiClient _client;
 
@@ -15,12 +16,9 @@ public sealed class WorkspaceService : IWorkspaceService
         _client = client;
     }
 
-    public async Task<WorkspaceSnapshot> FetchWorkspaceAsync(
+    public async Task<WorkspaceRelationsSnapshot> FetchWorkspaceRelationsAsync(
         CancellationToken cancellationToken = default)
     {
-        var projectsTask = _client.GetAsync<IReadOnlyList<ProjectDto>>(
-            "projects",
-            cancellationToken);
         var contactsTask = _client.GetAsync<IReadOnlyList<ContactDto>>(
             "contacts?limit=500&offset=0",
             cancellationToken);
@@ -28,41 +26,10 @@ public sealed class WorkspaceService : IWorkspaceService
             "conversations?limit=500&offset=0",
             cancellationToken);
 
-        await Task.WhenAll(projectsTask, contactsTask, conversationsTask).ConfigureAwait(false);
-        return new WorkspaceSnapshot(
-            projectsTask.Result.Select(static value => value.ToDomain()).ToArray(),
+        await Task.WhenAll(contactsTask, conversationsTask).ConfigureAwait(false);
+        return new WorkspaceRelationsSnapshot(
             contactsTask.Result.Select(static value => value.ToDomain()).ToArray(),
             conversationsTask.Result.Select(static value => value.ToDomain()).ToArray());
-    }
-}
-
-internal sealed record ProjectDto
-{
-    [JsonPropertyName("id")]
-    public required string Id { get; init; }
-
-    [JsonPropertyName("name")]
-    public required string Name { get; init; }
-
-    [JsonPropertyName("root_path")]
-    public string? RootPath { get; init; }
-
-    [JsonPropertyName("display_root_path")]
-    public string? DisplayRootPath { get; init; }
-
-    [JsonPropertyName("latest_session_id")]
-    public string? LatestConversationId { get; init; }
-
-    public WorkspaceProject ToDomain()
-    {
-        var rootPath = RootPath.TrimmedOrNull() ?? DisplayRootPath.TrimmedOrNull();
-        var displayPath = DisplayRootPath.TrimmedOrNull() ?? RootPath.TrimmedOrNull();
-        return new WorkspaceProject(
-            Id,
-            Name,
-            rootPath,
-            displayPath,
-            LatestConversationId.TrimmedOrNull());
     }
 }
 
@@ -167,6 +134,15 @@ internal readonly record struct JsonObject(JsonElement Value)
         }
 
         return new JsonObject(child);
+    }
+
+    public JsonElement? Element(string name)
+    {
+        if (Value.ValueKind != JsonValueKind.Object || !Value.TryGetProperty(name, out var child))
+        {
+            return null;
+        }
+        return child;
     }
 
     public string? FirstString(params string[] names)

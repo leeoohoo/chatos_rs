@@ -179,10 +179,6 @@ impl RunService {
                 &runtime_task.mcp_config,
                 &runtime_task.execution_scope(),
             );
-        crate::services::workspace_execution::validate_project_execution_task_runtime_contract(
-            &runtime_task,
-            &effective_tools,
-        )?;
         let task_runtime_capability_fingerprint =
             crate::services::workspace_execution::task_runtime_capability_fingerprint(
                 &runtime_task,

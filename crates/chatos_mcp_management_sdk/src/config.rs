@@ -74,7 +74,6 @@ fn caller_secret_env_key(caller_service: &str) -> Option<&'static str> {
     match caller_service {
         "chatos" => Some("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"),
         "task-runner" => Some("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"),
-        "project-service" => Some("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET"),
         _ => None,
     }
 }
@@ -96,10 +95,6 @@ mod tests {
         assert_eq!(
             caller_secret_env_key("task-runner"),
             Some("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET")
-        );
-        assert_eq!(
-            caller_secret_env_key("project-service"),
-            Some("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET")
         );
         assert_eq!(caller_secret_env_key("unknown"), None);
     }

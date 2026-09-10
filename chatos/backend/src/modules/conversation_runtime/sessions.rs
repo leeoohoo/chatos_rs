@@ -2,15 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde_json::Value;
-use tracing::warn;
 
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{is_owned_session, SessionAccessError};
-use crate::models::memory_mapping_types::SyncMemoryProjectRequestDto;
-use crate::models::project::ProjectService;
 use crate::models::session::Session;
 use crate::services::chatos_memory_engine;
-use crate::services::chatos_memory_mappings;
 use crate::services::chatos_sessions;
 use crate::services::realtime::publish_sessions_updated;
 
@@ -85,8 +81,6 @@ pub async fn create_session(input: CreateConversationSessionInput) -> Result<Ses
         input.metadata,
     )
     .await?;
-
-    sync_session_memory_projections(&saved, &input.user_id).await;
 
     let project_scope = normalize_project_scope(saved.project_id.as_deref());
     publish_sessions_updated(
@@ -255,39 +249,5 @@ pub fn normalize_compat_session_title(title: Option<String>) -> Option<String> {
         None
     } else {
         Some(normalized)
-    }
-}
-
-async fn sync_session_memory_projections(session: &Session, user_id: &str) {
-    let project_scope = normalize_project_scope(session.project_id.as_deref());
-
-    if let Some(project_scope) = project_scope.as_deref() {
-        if let Ok(Some(project)) = ProjectService::get_by_id(project_scope).await {
-            let same_owner = project
-                .user_id
-                .as_deref()
-                .map(|owner| owner == user_id)
-                .unwrap_or(true);
-            if same_owner {
-                if let Err(err) =
-                    chatos_memory_mappings::sync_memory_project(&SyncMemoryProjectRequestDto {
-                        user_id: Some(user_id.to_string()),
-                        project_id: Some(project.id.clone()),
-                        name: Some(project.name.clone()),
-                        root_path: Some(project.root_path.clone()),
-                        description: project.description.clone(),
-                        status: Some("active".to_string()),
-                        is_virtual: Some(false),
-                    })
-                    .await
-                {
-                    warn!(
-                        project_id = project.id.as_str(),
-                        error = err.as_str(),
-                        "sync memory project failed while creating session"
-                    );
-                }
-            }
-        }
     }
 }

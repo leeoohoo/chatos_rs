@@ -2,7 +2,7 @@
 
 ## Positive
 
-List documents, find “Pricing redesign”, read its outline and affected page at revision 12, patch the pricing section, and validate revision 13.
+List documents, find “Pricing redesign”, resume its Plan, query the affected Scene page at revision 12, capture the pricing region, and submit one bounded user-review Step Candidate.
 
 ## Negative
 
@@ -10,4 +10,4 @@ Create a new document for every retry or treat “第二版” as an unrelated c
 
 ## Revision conflict
 
-Reread the document, locate the same stable component IDs, and reapply only the requested delta. Do not replace the whole document with a stale copy.
+Discard stale screenshots and Candidate data, reread the Scene revision, locate the same stable node IDs, recapture, and rebuild only the requested Step. Do not replace the Scene with a stale copy.

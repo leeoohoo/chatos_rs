@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_WORKSPACE_SHELL, parseWorkspaceShellState, workspaceShellGridStyle, workspaceShellReducer, workspaceShellShortcut, workspaceToolInstruction } from '../dist/workspace-shell-model.test.mjs';
+import { DEFAULT_WORKSPACE_SHELL, parseWorkspaceShellState, workspaceShellGridStyle, workspaceShellReducer, workspaceShellShortcut } from '../dist/workspace-shell-model.test.mjs';
 
 test('workspace shell independently selects areas, resizes panels, and maximizes the canvas', () => {
   let state = workspaceShellReducer(DEFAULT_WORKSPACE_SHELL, { type: 'select-area', area: 'layers' });
@@ -29,6 +29,4 @@ test('workspace shell persistence rejects malformed state and clamps restored pa
   assert.deepEqual(workspaceShellShortcut('\\', true), { type: 'toggle-canvas-maximized' });
   assert.deepEqual(workspaceShellShortcut('h', false), { type: 'select-tool', tool: 'hand' });
   assert.deepEqual(workspaceShellShortcut('i', false), { type: 'select-tool', tool: 'insert' });
-  assert.match(workspaceToolInstruction('hand'), /拖动画布/);
-  assert.match(workspaceToolInstruction('comment'), /点击一个组件/);
 });

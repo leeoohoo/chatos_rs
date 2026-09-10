@@ -63,9 +63,6 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
             .map(|service| location_neutral_workspace_catalog(service.list_tools()))
         }
         BuiltinMcpKind::TaskManager => Err("TaskManager builtin MCP has been removed".to_string()),
-        BuiltinMcpKind::ProjectManagement => {
-            Ok(crate::project_management_contract::schemas::task_runner_builtin_tool_definitions())
-        }
         BuiltinMcpKind::Notepad => NotepadBuiltinService::new(NotepadOptions {
             server_name,
             store: NotepadStoreRef::new(store),
@@ -87,7 +84,7 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
             RemoteConnectionControllerService::new(RemoteConnectionControllerOptions {
                 server_name,
                 user_id: Some("schema-catalog".to_string()),
-                default_remote_connection_id: None,
+                default_remote_connection_id: Some("schema-catalog".to_string()),
                 command_timeout_seconds: DEFAULT_COMMAND_TIMEOUT_SECONDS,
                 max_command_timeout_seconds: MAX_COMMAND_TIMEOUT_SECONDS,
                 max_output_chars: DEFAULT_MAX_OUTPUT_CHARS,
@@ -281,23 +278,15 @@ impl AskUserStore for SchemaOnlyStore {
 
 #[async_trait]
 impl RemoteConnectionControllerStore for SchemaOnlyStore {
-    async fn list_connections(
-        &self,
-        _context: RemoteConnectionControllerContext,
-    ) -> Result<Value, String> {
-        Err(schema_only_error())
-    }
     async fn test_connection(
         &self,
         _context: RemoteConnectionControllerContext,
-        _connection_id: Option<String>,
     ) -> Result<Value, String> {
         Err(schema_only_error())
     }
     async fn run_command(
         &self,
         _context: RemoteConnectionControllerContext,
-        _connection_id: Option<String>,
         _command: String,
         _timeout_seconds: Option<u64>,
         _allow_dangerous: bool,
@@ -308,7 +297,6 @@ impl RemoteConnectionControllerStore for SchemaOnlyStore {
     async fn list_directory(
         &self,
         _context: RemoteConnectionControllerContext,
-        _connection_id: Option<String>,
         _path: Option<String>,
         _limit: Option<usize>,
     ) -> Result<Value, String> {
@@ -317,7 +305,6 @@ impl RemoteConnectionControllerStore for SchemaOnlyStore {
     async fn read_file(
         &self,
         _context: RemoteConnectionControllerContext,
-        _connection_id: Option<String>,
         _path: String,
         _max_bytes: Option<usize>,
     ) -> Result<Value, String> {
@@ -326,7 +313,6 @@ impl RemoteConnectionControllerStore for SchemaOnlyStore {
     async fn download_file(
         &self,
         _context: RemoteConnectionControllerContext,
-        _connection_id: Option<String>,
         _path: String,
         _encoding: String,
         _max_bytes: Option<usize>,
@@ -336,7 +322,6 @@ impl RemoteConnectionControllerStore for SchemaOnlyStore {
     async fn upload_file(
         &self,
         _context: RemoteConnectionControllerContext,
-        _connection_id: Option<String>,
         _path: String,
         _content: String,
         _encoding: String,
@@ -382,7 +367,6 @@ mod tests {
             CodeMaintainerRead,
             CodeMaintainerWrite,
             TerminalController,
-            ProjectManagement,
             Notepad,
             AgentBuilder,
             AskUser,

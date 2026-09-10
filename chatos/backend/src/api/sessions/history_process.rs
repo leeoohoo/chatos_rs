@@ -329,7 +329,7 @@ mod tests {
                 "id": "call-1",
                 "type": "function",
                 "function": {
-                    "name": "project_management_service_list_project_tasks",
+                    "name": "task_runner_service_list_tasks",
                     "arguments": "{}"
                 }
             }],

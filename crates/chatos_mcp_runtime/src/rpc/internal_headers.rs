@@ -3,11 +3,6 @@
 
 use std::collections::HashMap;
 
-const PROJECT_SERVICE_SYNC_SECRET_HEADER: &str = "x-project-service-sync-secret";
-const PROJECT_SERVICE_CALLER_HEADER: &str = "x-project-service-caller";
-const PROJECT_SERVICE_TOKEN_HEADER: &str = "x-project-service-internal-token";
-const PROJECT_SERVICE_SCOPE_HEADER: &str = "x-project-service-internal-scope";
-const PROJECT_SERVICE_TOKEN_AUDIENCE: &str = "project-service";
 const LOCAL_CONNECTOR_SECRET_HEADER: &str = "x-local-connector-internal-secret";
 const LOCAL_CONNECTOR_CALLER_HEADER: &str = "x-local-connector-caller";
 const LOCAL_CONNECTOR_TOKEN_HEADER: &str = "x-local-connector-internal-token";
@@ -19,23 +14,10 @@ pub fn prepare_http_headers(
 ) -> Result<HashMap<String, String>, String> {
     reject_static_token_without_scope(
         headers,
-        PROJECT_SERVICE_TOKEN_HEADER,
-        PROJECT_SERVICE_SCOPE_HEADER,
-        "project service",
-    )?;
-    reject_static_token_without_scope(
-        headers,
         LOCAL_CONNECTOR_TOKEN_HEADER,
         LOCAL_CONNECTOR_SCOPE_HEADER,
         "Local Connector",
     )?;
-    let signing_profile_count = [LOCAL_CONNECTOR_SCOPE_HEADER, PROJECT_SERVICE_SCOPE_HEADER]
-        .into_iter()
-        .filter(|scope_header| header_value(headers, scope_header).is_some())
-        .count();
-    if signing_profile_count > 1 {
-        return Err("MCP headers contain multiple internal request signing profiles".to_string());
-    }
     if let Some(scope) = header_value(headers, LOCAL_CONNECTOR_SCOPE_HEADER) {
         return sign_headers(
             headers,
@@ -51,28 +33,11 @@ pub fn prepare_http_headers(
             scope,
         );
     }
-    let Some(scope) = header_value(headers, PROJECT_SERVICE_SCOPE_HEADER) else {
-        return Ok(headers.clone());
-    };
-    sign_headers(
-        headers,
-        HeaderSigningProfile {
-            caller_header: PROJECT_SERVICE_CALLER_HEADER,
-            secret_header: PROJECT_SERVICE_SYNC_SECRET_HEADER,
-            token_header: PROJECT_SERVICE_TOKEN_HEADER,
-            scope_header: PROJECT_SERVICE_SCOPE_HEADER,
-            audience: PROJECT_SERVICE_TOKEN_AUDIENCE,
-            service_label: "project service",
-            extra_private_headers: &[],
-        },
-        scope,
-    )
+    Ok(headers.clone())
 }
 
 pub fn headers_require_per_request_signing(headers: &HashMap<String, String>) -> bool {
-    [LOCAL_CONNECTOR_SCOPE_HEADER, PROJECT_SERVICE_SCOPE_HEADER]
-        .into_iter()
-        .any(|scope_header| header_value(headers, scope_header).is_some())
+    header_value(headers, LOCAL_CONNECTOR_SCOPE_HEADER).is_some()
 }
 
 fn reject_static_token_without_scope(
@@ -155,36 +120,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_service_headers_receive_fresh_scoped_token() {
-        assert_signed_headers(
-            HashMap::from([
-                (
-                    PROJECT_SERVICE_SYNC_SECRET_HEADER.to_string(),
-                    "a-long-project-service-secret".to_string(),
-                ),
-                (
-                    PROJECT_SERVICE_CALLER_HEADER.to_string(),
-                    "task-runner".to_string(),
-                ),
-                (
-                    PROJECT_SERVICE_SCOPE_HEADER.to_string(),
-                    "project.harness".to_string(),
-                ),
-                (
-                    PROJECT_SERVICE_TOKEN_HEADER.to_string(),
-                    "stale-token".to_string(),
-                ),
-            ]),
-            PROJECT_SERVICE_SYNC_SECRET_HEADER,
-            PROJECT_SERVICE_TOKEN_HEADER,
-            "a-long-project-service-secret",
-            "task-runner",
-            PROJECT_SERVICE_TOKEN_AUDIENCE,
-            "project.harness",
-        );
-    }
-
-    #[test]
     fn local_connector_headers_receive_fresh_scoped_token() {
         assert_signed_headers(
             HashMap::from([
@@ -217,18 +152,18 @@ mod tests {
     #[test]
     fn reusable_headers_reject_static_internal_token() {
         let err = prepare_http_headers(&HashMap::from([(
-            PROJECT_SERVICE_TOKEN_HEADER.to_string(),
+            LOCAL_CONNECTOR_TOKEN_HEADER.to_string(),
             "stale-token".to_string(),
         )]))
         .expect_err("static token must be rejected");
-        assert!(err.contains("static project service internal tokens are not allowed"));
+        assert!(err.contains("static Local Connector internal tokens are not allowed"));
     }
 
     #[test]
     fn signing_requirement_detects_private_scope_headers() {
         assert!(headers_require_per_request_signing(&HashMap::from([(
-            PROJECT_SERVICE_SCOPE_HEADER.to_string(),
-            "project.read".to_string(),
+            LOCAL_CONNECTOR_SCOPE_HEADER.to_string(),
+            "relay.mcp".to_string(),
         )])));
         assert!(!headers_require_per_request_signing(&HashMap::new()));
     }

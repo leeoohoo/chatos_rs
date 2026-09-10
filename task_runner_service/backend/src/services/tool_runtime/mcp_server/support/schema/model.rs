@@ -21,13 +21,11 @@ pub(crate) fn enrich_tool_schemas_with_model_configs(
             Some("create_task") => {
                 set_model_config_schema(tool, "/inputSchema/properties", schema.clone())
             }
-            Some("create_tasks_with_prerequisites") | Some("create_project_execution_tasks") => {
-                set_model_config_schema(
-                    tool,
-                    "/inputSchema/properties/tasks/items/properties",
-                    schema.clone(),
-                )
-            }
+            Some("create_tasks_with_prerequisites") => set_model_config_schema(
+                tool,
+                "/inputSchema/properties/tasks/items/properties",
+                schema.clone(),
+            ),
             _ => {}
         }
     }

@@ -50,6 +50,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
@@ -403,13 +404,33 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.LocalApprovalModel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <TextBlock VerticalAlignment="Center" Text="Task Runner" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                         <StackPanel Grid.Column="1" HorizontalAlignment="Left" Orientation="Horizontal" Spacing="8">
+                            <ComboBox
+                                MinWidth="360"
+                                ItemsSource="{x:Bind ModelSettings.AvailableModels}"
+                                SelectedItem="{x:Bind ModelSettings.SelectedTaskRunnerModel, Mode=TwoWay}"
+                                PlaceholderText="{x:Bind Localization.NoModelSelected, Mode=OneWay}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="settings:ConnectorModelOptionViewModel">
+                                        <StackPanel Padding="3" Spacing="2">
+                                            <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <TextBlock Text="{x:Bind Detail, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <Button Click="OnClearTaskRunnerModelClicked" Content="{x:Bind Localization.ClearSelection, Mode=OneWay}" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="{x:Bind Localization.LocalApprovalModel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <StackPanel Grid.Row="1" Grid.Column="1" HorizontalAlignment="Left" Orientation="Horizontal" Spacing="8">
                             <ComboBox
                                 MinWidth="360"
                                 ItemsSource="{x:Bind ModelSettings.AvailableModels}"
@@ -426,9 +447,10 @@
                             </ComboBox>
                             <Button Click="OnClearApprovalModelClicked" Content="{x:Bind Localization.ClearSelection, Mode=OneWay}" />
                         </StackPanel>
-                        <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="{x:Bind Localization.ModelRequestRetries, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+
+                        <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="{x:Bind Localization.ModelRequestRetries, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                         <NumberBox
-                            Grid.Row="1"
+                            Grid.Row="2"
                             Grid.Column="1"
                             Width="130"
                             HorizontalAlignment="Left"
@@ -437,8 +459,8 @@
                             SpinButtonPlacementMode="Inline"
                             Value="{x:Bind ModelSettings.ModelRequestMaxRetries, Mode=OneWay}"
                             ValueChanged="OnModelRetriesChanged" />
-                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{x:Bind ModelSettings.ReviewerHint, Mode=OneWay}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
-                        <Grid Grid.Row="3" Grid.ColumnSpan="2">
+                        <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Text="{x:Bind ModelSettings.ReviewerHint, Mode=OneWay}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                        <Grid Grid.Row="4" Grid.ColumnSpan="2">
                             <ProgressRing Width="20" Height="20" HorizontalAlignment="Left" IsActive="{x:Bind ModelSettings.IsBusy, Mode=OneWay}" />
                             <TextBlock Text="{x:Bind ModelSettings.ActionMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                             <TextBlock Text="{x:Bind ModelSettings.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />

@@ -17,13 +17,6 @@ pub(super) struct UserServiceTaskRunnerTokenResponse {
     pub(super) access_token: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct TaskRunnerTaskRecord {
-    pub status: String,
-    #[serde(default)]
-    pub last_run_id: Option<String>,
-}
-
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct CancelTaskRunnerTaskRequest {
     pub reason: String,

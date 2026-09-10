@@ -90,7 +90,6 @@ def require_exact_locations(
 cloud_agent_roots = [
     "chatos/backend/src",
     "task_runner_service/backend/src",
-    "project_management_service/backend/src",
     "memory_engine/backend/src",
 ]
 cloud_agent_files = rust_files(cloud_agent_roots)
@@ -277,10 +276,6 @@ require(
 for config_path, env_key in [
     ("chatos/backend/src/config.rs", "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"),
     (
-        "project_management_service/backend/src/config.rs",
-        "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-    ),
-    (
         "mcp_management_service/backend/src/config.rs",
         "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
     ),
@@ -305,7 +300,6 @@ require(
 compose = read("docker/compose.yml")
 for env_key in [
     "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-    "PROJECT_SERVICE_LOCAL_CONNECTOR_SERVICE_BASE_URL",
     "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
 ]:
     if f"{env_key}: http://" in compose:

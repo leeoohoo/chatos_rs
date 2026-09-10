@@ -6,19 +6,22 @@ public struct WorkspaceProject: Sendable, Equatable, Identifiable {
     public var rootPath: String?
     public var displayRootPath: String?
     public var latestConversationID: String?
+    public var projectContext: ProjectContextSnapshot?
 
     public init(
         id: String,
         name: String,
         rootPath: String?,
         displayRootPath: String? = nil,
-        latestConversationID: String?
+        latestConversationID: String?,
+        projectContext: ProjectContextSnapshot? = nil
     ) {
         self.id = id
         self.name = name
         self.rootPath = rootPath
         self.displayRootPath = displayRootPath
         self.latestConversationID = latestConversationID
+        self.projectContext = projectContext
     }
 }
 
@@ -81,8 +84,4 @@ public struct WorkspaceSnapshot: Sendable, Equatable {
         self.contacts = contacts
         self.conversations = conversations
     }
-}
-
-public protocol WorkspaceRemoteServicing: Sendable {
-    func fetchWorkspace() async throws -> WorkspaceSnapshot
 }

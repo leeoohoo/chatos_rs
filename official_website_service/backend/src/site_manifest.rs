@@ -104,12 +104,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
                 role: "统一身份与模型配置",
                 capability: "管理真实用户、agent account、令牌交换和共享模型配置。",
             },
-            ServiceInfo {
-                name: "project_management_service",
-                directory: "project_management_service/",
-                role: "工程计划管理",
-                capability: "沉淀需求、技术方案、项目任务和依赖关系。",
-            },
         ],
         showcase_images: vec![
             ShowcaseImage {

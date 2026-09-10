@@ -7,8 +7,7 @@ use crate::config::AppConfig;
 use crate::mcp_server::TaskRunnerMcpService;
 use crate::platform_queue::TaskQueueTopology;
 use crate::services::{
-    McpCatalogService, ModelConfigService, RunService, TaskProjectService, TaskService,
-    ToolingStateService,
+    McpCatalogService, ModelConfigService, RunService, TaskService, ToolingStateService,
 };
 use crate::store::AppStore;
 use chatos_cloud_agent_runtime::CloudAgentStateStore;
@@ -325,7 +324,6 @@ pub struct AppState {
     pub task_queue_topology: TaskQueueTopology,
     pub task_service: TaskService,
     pub model_config_service: ModelConfigService,
-    pub task_project_service: TaskProjectService,
     pub run_service: RunService,
     pub ask_user_prompt_service: AskUserPromptService,
     pub mcp_catalog_service: McpCatalogService,
@@ -375,8 +373,6 @@ impl AppState {
             plugin_management_client.clone(),
         );
         let model_config_service = ModelConfigService::new(store.clone());
-        let task_project_service =
-            TaskProjectService::new_with_config(store.clone(), config.clone());
         let ask_user_prompt_service = AskUserPromptService::new_with_config(
             store.clone(),
             config.clone(),
@@ -406,7 +402,6 @@ impl AppState {
             task_queue_topology,
             task_service,
             model_config_service,
-            task_project_service,
             run_service,
             ask_user_prompt_service,
             mcp_catalog_service,

@@ -347,24 +347,6 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "duration_ms",
         ),
         (
-            TASK_RUNNER_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_PROJECT_SERVICE_BASE_URL",
-            "string",
-        ),
-        (
-            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL",
-            "string",
-        ),
-        (
-            TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_PROJECT_SERVICE_REQUEST_TIMEOUT_MS",
-            "duration_ms",
-        ),
-        (
             TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_MEMORY_ENGINE_BASE_URL",
@@ -441,24 +423,6 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "chatos-backend",
             "CORS_ORIGINS",
             "string",
-        ),
-        (
-            CHATOS_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
-            "chatos-backend",
-            "CHATOS_PROJECT_SERVICE_BASE_URL",
-            "string",
-        ),
-        (
-            CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            "chatos-backend",
-            "CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL",
-            "string",
-        ),
-        (
-            CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-            "chatos-backend",
-            "CHATOS_PROJECT_SERVICE_REQUEST_TIMEOUT_MS",
-            "duration_ms",
         ),
         (
             CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
@@ -1100,11 +1064,6 @@ fn catalog_exposes_local_connector_remote_control_trust_as_managed_config_only()
             json!("change_me_chatos_local_connector_secret"),
         ),
         (
-            LOCAL_CONNECTOR_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
-            "PROJECT_SERVICE_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-            json!("change_me_project_service_local_connector_secret"),
-        ),
-        (
             LOCAL_CONNECTOR_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
             "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
             json!("change_me_mcp_management_local_connector_secret"),
@@ -1593,22 +1552,10 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
     let definitions = builtin_definitions();
     for (key, service_name, env_alias, expected_default) in [
         (
-            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_PROJECT_SERVICE_INTERNAL_API_SECRET",
-            json!("change_me_task_runner_project_service_secret"),
-        ),
-        (
             TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET",
             json!("change_me_task_runner_memory_engine_secret"),
-        ),
-        (
-            TASK_RUNNER_PROJECT_SERVICE_CALLER_SECRET_CONFIG_KEY,
-            "task-runner",
-            "PROJECT_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
-            json!("change_me_project_service_task_runner_secret"),
         ),
         (
             TASK_RUNNER_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -1627,12 +1574,6 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             "chatos-backend",
             "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
             json!("change_me_chatos_user_service_secret"),
-        ),
-        (
-            CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
-            "chatos-backend",
-            "CHATOS_PROJECT_SERVICE_INTERNAL_API_SECRET",
-            json!("change_me_chatos_project_service_secret"),
         ),
         (
             CHATOS_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -1663,12 +1604,6 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             "plugin-management-service",
             "PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
             json!("change_me_plugin_management_task_runner_secret"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
-            "plugin-management-service",
-            "PLUGIN_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET",
-            json!("change_me_plugin_management_project_service_secret"),
         ),
         (
             PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -1705,12 +1640,6 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             "user-service",
             "USER_SERVICE_PREVIOUS_SECRET_KEYS",
             Value::Null,
-        ),
-        (
-            USER_SERVICE_PROJECT_SERVICE_INTERNAL_SECRET_CONFIG_KEY,
-            "user-service",
-            "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
-            json!("change_me_project_service_user_service_secret"),
         ),
         (
             USER_SERVICE_CHATOS_INTERNAL_SECRET_CONFIG_KEY,

@@ -104,6 +104,7 @@ impl CreateTaskArgs {
             tags: self.tags,
             default_model_config_id: self.default_model_config_id,
             project_id: None,
+            project_context: None,
             task_profile: None,
             tenant_id: None,
             subject_id: None,
@@ -216,52 +217,6 @@ impl CancelTaskArgs {
 pub(in crate::mcp_server) struct CreateTasksWithPrerequisitesArgs {
     #[serde(default)]
     pub(in crate::mcp_server) tasks: Vec<CreateTaskWithPrerequisitesItem>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub(in crate::mcp_server) struct CreateProjectExecutionTasksArgs {
-    pub(in crate::mcp_server) project_id: String,
-    pub(in crate::mcp_server) requirement_id: String,
-    #[serde(default)]
-    pub(in crate::mcp_server) tasks: Vec<CreateProjectExecutionTaskItem>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::mcp_server) struct CreateProjectExecutionTaskItem {
-    pub(in crate::mcp_server) client_ref: String,
-    pub(in crate::mcp_server) project_task_ref: String,
-    pub(in crate::mcp_server) title: String,
-    #[serde(default)]
-    pub(in crate::mcp_server) description: Option<String>,
-    pub(in crate::mcp_server) objective: String,
-    #[serde(default)]
-    pub(in crate::mcp_server) acceptance_criteria: Vec<String>,
-    pub(in crate::mcp_server) task_role: String,
-    #[serde(default)]
-    pub(in crate::mcp_server) input_payload: Option<Value>,
-    #[serde(default)]
-    pub(in crate::mcp_server) priority: Option<i32>,
-    #[serde(default)]
-    pub(in crate::mcp_server) tags: Option<Vec<String>>,
-    #[serde(default)]
-    pub(in crate::mcp_server) default_model_config_id: Option<String>,
-    #[serde(default)]
-    pub(in crate::mcp_server) requires_execution: Option<bool>,
-    #[serde(default)]
-    pub(in crate::mcp_server) enabled_builtin_kinds: Option<Vec<String>>,
-    #[serde(default)]
-    pub(in crate::mcp_server) external_mcp_config_ids: Option<Vec<String>>,
-    #[serde(default)]
-    pub(in crate::mcp_server) plugin_hints: Vec<CreateTaskPluginHint>,
-    #[serde(default)]
-    pub(in crate::mcp_server) owned_paths: Vec<String>,
-    #[serde(default)]
-    pub(in crate::mcp_server) prerequisite_refs: Vec<String>,
-    #[serde(default)]
-    pub(in crate::mcp_server) context_refs: Vec<String>,
-    #[serde(default)]
-    pub(in crate::mcp_server) prerequisite_task_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -43,28 +43,6 @@ impl DatabaseFactory {
         Ok(adapter)
     }
 
-    pub fn get_adapter_sync(&self) -> Result<Arc<Database>, String> {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            if let Ok(inner) = self.inner.try_lock() {
-                if let Some(adapter) = inner.adapter.clone() {
-                    return Ok(adapter);
-                }
-                return Err(
-                    "Database adapter not initialized. Call get_adapter() first.".to_string(),
-                );
-            }
-            return Err(
-                "Database adapter busy. Use async get_adapter() within runtime.".to_string(),
-            );
-        }
-
-        let inner = self.inner.blocking_lock();
-        if let Some(adapter) = inner.adapter.clone() {
-            return Ok(adapter);
-        }
-        Err("Database adapter not initialized. Call get_adapter() first.".to_string())
-    }
-
     pub fn load_config(&self, _config_path: Option<PathBuf>) -> Result<DatabaseConfig, String> {
         let connection_string = require_managed_database_value("MONGODB_CONNECTION_STRING")?;
         let database = require_managed_database_value("MONGODB_DB")?;
@@ -125,10 +103,6 @@ pub fn get_factory() -> Result<Arc<DatabaseFactory>, String> {
 
 pub async fn get_db() -> Result<Arc<Database>, String> {
     get_factory()?.get_adapter().await
-}
-
-pub fn get_db_sync() -> Result<Arc<Database>, String> {
-    get_factory()?.get_adapter_sync()
 }
 
 #[cfg(test)]

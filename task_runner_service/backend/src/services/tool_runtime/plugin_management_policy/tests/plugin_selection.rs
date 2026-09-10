@@ -13,7 +13,7 @@ use super::super::TaskRunnerCapabilityPolicy;
 use super::fixtures::*;
 
 const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
-const PLAN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerPlanPhase.as_str();
+const OTHER_AGENT_KEY: &str = SystemAgentKey::ChatosConversationAgent.as_str();
 
 fn local_runtime_capabilities() -> ResolvedAgentCapabilities {
     policy().capabilities
@@ -73,9 +73,7 @@ fn plugin_hints_use_the_users_plugin_installation_without_a_project_device() {
     capabilities.plugins = vec![resolved_plugin(false)];
     let policy = TaskRunnerCapabilityPolicy::new(
         capabilities,
-        crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext::server(
-            "owner-1", None,
-        ),
+        crate::services::task_plugin_runtime_context::TaskPluginRuntimeContext::server("owner-1"),
     )
     .expect("server capability policy");
 
@@ -327,16 +325,10 @@ fn plugin_agent_profiles_are_not_task_capabilities() {
 #[test]
 fn plugin_agent_profiles_are_hidden_for_every_task_runner_agent() {
     let mut run_capabilities = local_runtime_capabilities();
-    run_capabilities.plugins = vec![resolved_agent_plugin(PLAN_AGENT_KEY)];
-    let run_policy = local_runtime_policy(run_capabilities)
-        .expect("incompatible optional Agent components are filtered");
+    run_capabilities.plugins = vec![resolved_agent_plugin(RUN_AGENT_KEY)];
+    let run_policy =
+        local_runtime_policy(run_capabilities).expect("optional Agent components are filtered");
     assert!(run_policy.selectable_plugin_views().is_empty());
-
-    let mut plan_capabilities = local_runtime_capabilities();
-    plan_capabilities.agent_key = SystemAgentKey::TaskRunnerPlanPhase.as_str().to_string();
-    plan_capabilities.plugins = vec![resolved_agent_plugin(PLAN_AGENT_KEY)];
-    let policy = local_runtime_policy(plan_capabilities).expect("plan Agent Plugin policy");
-    assert!(policy.selectable_plugin_views().is_empty());
 }
 
 #[test]
@@ -420,7 +412,7 @@ fn command_invocation_arguments_must_reference_one_exact_selected_command() {
 }
 
 #[test]
-fn command_targeting_the_plan_agent_is_not_selectable_for_run_phase() {
+fn command_targeting_another_agent_is_not_selectable_for_run_phase() {
     let mut command_plugin = resolved_command_plugin(false);
     let component = command_plugin
         .components
@@ -430,7 +422,7 @@ fn command_targeting_the_plan_agent_is_not_selectable_for_run_phase() {
     component
         .component
         .metadata
-        .insert("target_agent".to_string(), json!(PLAN_AGENT_KEY));
+        .insert("target_agent".to_string(), json!(OTHER_AGENT_KEY));
     let mut capabilities = local_runtime_capabilities();
     capabilities.plugins = vec![command_plugin];
     let policy = local_runtime_policy(capabilities).expect("Command Plugin policy");

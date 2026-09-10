@@ -6,7 +6,6 @@ import { useAdminAuth } from '../../app/auth/AuthProvider';
 import { I18nProvider } from './i18n/I18nProvider';
 
 const TasksPage = lazy(async () => ({ default: (await import('./pages/TasksPage')).TasksPage }));
-const ProjectsPage = lazy(async () => ({ default: (await import('./pages/ProjectsPage')).ProjectsPage }));
 const RunsPage = lazy(async () => ({ default: (await import('./pages/RunsPage')).RunsPage }));
 const PromptsPage = lazy(async () => ({ default: (await import('./pages/PromptsPage')).PromptsPage }));
 const McpCatalogPage = lazy(async () => ({ default: (await import('./pages/McpCatalogPage')).McpCatalogPage }));
@@ -24,7 +23,6 @@ export default function TaskRunnerModuleRoutes() {
         <RouterRoutes>
           <RouterRoute index element={<RouterNavigate to="tasks" replace />} />
           <RouterRoute path="tasks" element={<TasksPage />} />
-          <RouterRoute path="projects" element={<ProjectsPage />} />
           <RouterRoute path="runs" element={<RunsPage />} />
           <RouterRoute path="prompts" element={<PromptsPage />} />
           <RouterRoute path="mcp" element={<McpCatalogPage />} />

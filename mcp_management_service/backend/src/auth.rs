@@ -14,9 +14,18 @@ const CALLER_SERVICE_HEADER: &str = "x-mcp-management-caller-service";
 pub struct InternalRequestIdentity {
     pub caller: String,
     pub trace_id: Option<String>,
+    pub owner_user_id: Option<String>,
 }
 
 impl InternalRequestIdentity {
+    pub fn require_owner(&self, expected_owner: &str) -> Result<(), ApiError> {
+        if expected_owner.is_empty() || self.owner_user_id.as_deref() != Some(expected_owner) {
+            return Err(ApiError::unauthorized(
+                "signed MCP management owner does not match request",
+            ));
+        }
+        Ok(())
+    }
     pub fn require_signed_trace_id(&self) -> Result<&str, ApiError> {
         self.trace_id.as_deref().ok_or_else(|| {
             ApiError::unauthorized("signed MCP management internal API token is required")
@@ -70,6 +79,7 @@ pub fn require_internal_request_identity(
     Ok(InternalRequestIdentity {
         caller: caller.to_string(),
         trace_id: Some(claims.trace_id),
+        owner_user_id: claims.owner_user_id,
     })
 }
 

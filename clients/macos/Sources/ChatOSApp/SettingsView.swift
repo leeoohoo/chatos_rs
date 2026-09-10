@@ -19,6 +19,7 @@ struct SettingsView: View {
                     settingsRow(.pet)
                     settingsRow(.globalUtilities)
                     settingsRow(.cloudAI)
+                    settingsRow(.agentRuntime)
                 }
                 Section(model.localized("本机连接器", english: "Native Connector")) {
                     settingsRow(.connection)
@@ -82,6 +83,8 @@ struct SettingsView: View {
             generalSettings
         case .pet:
             PetSettingsView(preferences: model.petPreferences)
+        case .agentRuntime:
+            AgentRuntimeSettingsView()
         case .globalUtilities:
             GlobalUtilitiesSettingsView(
                 preferences: model.globalUtilityPreferences,
@@ -307,7 +310,7 @@ struct SettingsView: View {
         case .approvals: LocalConnectorApprovalsView(viewModel: model.localConnectorControl)
         case .runtime: LocalConnectorRuntimePermissionsView(viewModel: model.localConnectorControl)
         case .sandbox: LocalConnectorSandboxView(viewModel: model.localConnectorControl)
-        case .general, .pet, .globalUtilities: EmptyView()
+        case .general, .pet, .globalUtilities, .agentRuntime: EmptyView()
         }
     }
 
@@ -345,7 +348,7 @@ struct SettingsView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Hashable {
-    case general, pet, globalUtilities, cloudAI, connection, plugins, approvals, runtime, sandbox
+    case general, pet, globalUtilities, cloudAI, agentRuntime, connection, plugins, approvals, runtime, sandbox
 
     func title(language: ChatOSLanguage) -> String {
         if language == .english {
@@ -354,6 +357,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
             case .pet: return "Pet"
             case .globalUtilities: return "Global Utilities"
             case .cloudAI: return "AI Models"
+            case .agentRuntime: return "Agent Runtime"
             case .connection: return "Device & Gateway"
             case .plugins: return "Plugins & Skills"
             case .approvals: return "Command Approvals"
@@ -366,6 +370,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         case .pet: "宠物"
         case .globalUtilities: "全局工具"
         case .cloudAI: "AI 模型配置"
+        case .agentRuntime: "Agent 运行"
         case .connection: "设备与网关"
         case .plugins: "插件与 Skills"
         case .approvals: "命令审批"
@@ -380,6 +385,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         case .pet: "pawprint.fill"
         case .globalUtilities: "command.square.fill"
         case .cloudAI: "sparkles"
+        case .agentRuntime: "arrow.triangle.2.circlepath"
         case .connection: "network"
         case .plugins: "puzzlepiece.extension"
         case .approvals: "checkmark.shield"
@@ -393,6 +399,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         case .pet: "PET"
         case .globalUtilities: "GLOBAL UTILITIES"
         case .cloudAI: "CLOUD AI"
+        case .agentRuntime: "AGENT RUNTIME"
         case .connection: "NATIVE CONNECTOR"
         case .plugins: "PLUGINS & SKILLS"
         case .approvals: "APPROVAL"
@@ -409,6 +416,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
             case .pet: return "Manage the global pet and event notifications outside the main window."
             case .globalUtilities: return "Manage global shortcuts, capture, clipboard history, and quick search."
             case .cloudAI: return "Manage ChatOS cloud models and the local approval model."
+            case .agentRuntime: return "Configure model call limits, timeouts and context budgets."
             case .connection: return "Manage the Swift Native Connector device identity and gateway connection."
             case .plugins: return "Manage plugins and skills running on this Mac."
             case .approvals: return "Configure approval rules for sensitive commands and Computer Use."
@@ -421,6 +429,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         case .pet: "管理脱离主窗口显示的全局宠物与事件提醒。"
         case .globalUtilities: "管理全局快捷键、截屏录屏、剪贴板历史和快速搜索。"
         case .cloudAI: "管理 ChatOS 云端模型，并选择本机审批模型。"
+        case .agentRuntime: "配置模型调用上限、运行时限与上下文窗口预算。"
         case .connection: "管理 Swift Native Connector 的设备身份与网关长连接。"
         case .plugins: "管理运行在这台 Mac 上的 Plugin 与 Skills。"
         case .approvals: "配置敏感命令与 Computer Use 的审批策略。"
@@ -431,7 +440,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
 
     var connectorTab: LocalConnectorControlTab? {
         switch self {
-        case .general, .pet, .globalUtilities: nil
+        case .general, .pet, .globalUtilities, .agentRuntime: nil
         case .cloudAI: .models
         case .connection: .connection
         case .plugins: .plugins

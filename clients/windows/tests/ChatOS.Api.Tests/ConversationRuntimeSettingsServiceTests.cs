@@ -32,7 +32,7 @@ public sealed class ConversationRuntimeSettingsServiceTests
     }
 
     [Fact]
-    public async Task UpdatePlanModeUsesPutAndMapsResponse()
+    public async Task UpdateReasoningUsesPutAndMapsResponse()
     {
         var store = new MemoryTokenStore();
         store.Seed("valid");
@@ -42,16 +42,16 @@ public sealed class ConversationRuntimeSettingsServiceTests
             Assert.Equal("/api/chatos/conversations/c1/runtime-settings", request.RequestUri?.AbsolutePath);
             var body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             using var document = JsonDocument.Parse(body);
-            Assert.True(document.RootElement.GetProperty("plan_mode_enabled").GetBoolean());
+            Assert.True(document.RootElement.GetProperty("reasoning_enabled").GetBoolean());
             return StubHttpMessageHandler.Json("""
-                {"selected_model_id":"m1","selected_model_name":"Model","reasoning_enabled":false,"plan_mode_enabled":true}
+                {"selected_model_id":"m1","selected_model_name":"Model","reasoning_enabled":true}
                 """);
         });
         var service = new ConversationRuntimeSettingsService(client);
 
-        var settings = await service.UpdatePlanModeAsync("c1", true);
+        var settings = await service.UpdateReasoningAsync("c1", true);
 
-        Assert.True(settings.PlanModeEnabled);
+        Assert.True(settings.ReasoningEnabled);
         Assert.Equal("m1", settings.SelectedModelId);
     }
 }

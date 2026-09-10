@@ -12,7 +12,6 @@ struct MessageTaskWorkspaceSheet: View {
     init(
         turn: ConversationTurn,
         graphService: any MessageTaskGraphServicing,
-        projectExecutionService: (any ProjectExecutionServicing)?,
         realtimeService: (any ConversationRealtimeStreaming)? = nil,
         initialTaskID: String? = nil,
         initialRunID: String? = nil
@@ -21,7 +20,6 @@ struct MessageTaskWorkspaceSheet: View {
             wrappedValue: MessageTaskWorkspaceViewModel(
                 turn: turn,
                 graphService: graphService,
-                projectExecutionService: projectExecutionService,
                 realtimeService: realtimeService,
                 initialTaskID: initialTaskID,
                 initialRunID: initialRunID
@@ -33,7 +31,6 @@ struct MessageTaskWorkspaceSheet: View {
         VStack(spacing: 0) {
             header
             Divider()
-            ProjectExecutionStatusBanner(viewModel: viewModel)
             content
                 .workspaceFill()
         }
@@ -100,9 +97,9 @@ struct MessageTaskWorkspaceSheet: View {
 
     @ViewBuilder
     private var content: some View {
-        if viewModel.executionState.isProjectExecution {
+        if !viewModel.executionActivity.isEmpty {
             VStack(spacing: 0) {
-                ProjectExecutionActivityView(viewModel: viewModel)
+                TaskExecutionActivityView(viewModel: viewModel)
                     .frame(height: executionActivityHeight)
                 Divider()
                 graphContent
@@ -152,41 +149,18 @@ struct MessageTaskWorkspaceSheet: View {
                     MessageTaskInspectorView(viewModel: viewModel)
                 }
             } else {
-                if [.failed, .blocked].contains(viewModel.executionState.phase) {
-                    ContentUnavailableView(
-                        "执行计划生成失败",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(
-                            viewModel.executionFailureReason
-                                ?? "规划 Agent 未能创建任务节点，请检查上方执行过程后重新生成。"
-                        )
-                    )
-                } else if viewModel.executionState.phase == .planning {
-                    ContentUnavailableView(
-                        "正在等待第一个任务节点",
-                        systemImage: "wand.and.stars",
-                        description: Text("规划 Agent 创建任务后，流程图会在这里自动更新。")
-                    )
-                } else if viewModel.executionState.isProjectExecution {
-                    ContentUnavailableView(
-                        "未找到关联任务图",
-                        systemImage: "link.badge.plus",
-                        description: Text("消息声明了项目执行计划，但网关未返回关联节点。请刷新；若仍为空，需要检查执行批次关联。")
-                    )
-                } else {
-                    ContentUnavailableView(
-                        "当前消息没有任务图",
-                        systemImage: "point.3.connected.trianglepath.dotted",
-                        description: Text("AI 尚未通过 Task Runner MCP 为这条消息创建任务节点。")
-                    )
-                }
+                ContentUnavailableView(
+                    "当前消息没有任务图",
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    description: Text("AI 尚未通过 Task Runner MCP 为这条消息创建任务节点。")
+                )
             }
         }
         .workspaceFill()
     }
 }
 
-private struct ProjectExecutionActivityView: View {
+private struct TaskExecutionActivityView: View {
     @ObservedObject var viewModel: MessageTaskWorkspaceViewModel
 
     var body: some View {

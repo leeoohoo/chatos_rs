@@ -8,14 +8,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use chatos_project_execution::{
-    STATUS_ALREADY_CONFIRMED, STATUS_AWAITING_CONFIRMATION, STATUS_EXECUTION_STARTED, STATUS_PAUSED,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    models::{TaskRunRecord, TaskRunStatus, TaskStatus},
+    models::{TaskRunRecord, TaskRunStatus},
     services::{
         ChatosMessageModelConfigSummary, ChatosMessageRunDetail, ChatosMessageTaskRun,
         ChatosMessageTaskRunEvent, ChatosMessageTaskSummary,
@@ -28,13 +25,7 @@ use super::internal_auth::{
     TaskRunnerInternalRequestIdentity, CHATOS_CALLER, CHATOS_EXECUTION_START_SCOPE,
     CHATOS_MESSAGES_READ_SCOPE,
 };
-mod project_execution;
 mod projection;
-use project_execution::{
-    clone_chatos_project_execution, confirm_chatos_project_execution,
-    pause_chatos_project_execution, require_chatos_execution_mutation, required_internal_text,
-    resume_chatos_project_execution, retire_chatos_project_execution,
-};
 use projection::{
     paginate_run_events, redact_workspace_paths_internal, run_event_page,
     trim_event_for_chatos_detail, trim_run_for_chatos_detail,
@@ -91,26 +82,6 @@ pub fn router() -> Router<AppState> {
         .route(
             "/internal/chatos/session-active-message-tasks",
             post(list_chatos_session_active_message_tasks),
-        )
-        .route(
-            "/internal/chatos/project-execution/confirm",
-            post(confirm_chatos_project_execution),
-        )
-        .route(
-            "/internal/chatos/project-execution/pause",
-            post(pause_chatos_project_execution),
-        )
-        .route(
-            "/internal/chatos/project-execution/resume",
-            post(resume_chatos_project_execution),
-        )
-        .route(
-            "/internal/chatos/project-execution/clone",
-            post(clone_chatos_project_execution),
-        )
-        .route(
-            "/internal/chatos/project-execution/retire",
-            post(retire_chatos_project_execution),
         )
 }
 
@@ -179,34 +150,6 @@ struct ChatosSessionActiveMessageTasksResponse {
     active_source_user_message_ids: Vec<String>,
     running_source_user_message_ids: Vec<String>,
     items: Vec<ChatosActiveMessageTaskSource>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ConfirmChatosProjectExecutionRequest {
-    project_id: String,
-    requirement_id: String,
-    source_session_id: String,
-    source_user_message_id: String,
-}
-
-type MutateChatosProjectExecutionRequest = ConfirmChatosProjectExecutionRequest;
-
-#[derive(Debug, Deserialize)]
-struct CloneChatosProjectExecutionRequest {
-    project_id: String,
-    requirement_id: String,
-    old_source_session_id: String,
-    old_source_user_message_id: String,
-    new_source_session_id: String,
-    new_source_user_message_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct RetireChatosProjectExecutionRequest {
-    project_id: String,
-    requirement_id: String,
-    source_session_id: String,
-    source_user_message_id: String,
 }
 
 #[derive(Debug)]
@@ -676,6 +619,32 @@ async fn get_chatos_message_run_changes(
         .await
         .map_err(InternalApiError::bad_gateway)?;
     Ok(Json(redact_workspace_paths_internal(&state, changes)?))
+}
+
+fn required_internal_text(value: String, field: &str) -> Result<String, InternalApiError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(InternalApiError::bad_request(format!(
+            "{field} is required"
+        )));
+    }
+    Ok(value.to_string())
+}
+
+fn require_chatos_execution_mutation(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<TaskRunnerInternalRequestIdentity, InternalApiError> {
+    require_task_runner_internal_request(
+        &state.config,
+        headers,
+        &[CHATOS_CALLER],
+        CHATOS_EXECUTION_START_SCOPE,
+    )
+    .map_err(|error| InternalApiError {
+        status: error.status,
+        message: error.message,
+    })
 }
 
 fn require_retryable_message_run(status: &TaskRunStatus) -> Result<(), InternalApiError> {

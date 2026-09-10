@@ -101,9 +101,9 @@ mod tests {
             .get("://invalid-url")
             .build()
             .expect_err("invalid URL should fail request construction");
-        let message = format_http_request_error("project service request", error);
+        let message = format_http_request_error("upstream service request", error);
 
-        assert!(message.starts_with("project service request failed (kind=builder):"));
+        assert!(message.starts_with("upstream service request failed (kind=builder):"));
         assert!(!message.contains("authorization"));
     }
 }

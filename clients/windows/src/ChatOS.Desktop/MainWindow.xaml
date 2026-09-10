@@ -152,6 +152,10 @@
                         <Button AutomationProperties.AutomationId="ChatOS.Shell.CreateResource" AutomationProperties.Name="{x:Bind ViewModel.Localization.CreateResource, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind ViewModel.Localization.CreateResource, Mode=OneWay}">
                             <Button.Flyout>
                                 <MenuFlyout>
+                                    <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.CreateLocalProject, Mode=OneWay}" Click="OnCreateLocalProjectClicked" />
+                                    <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.RenameLocalProject, Mode=OneWay}" Click="OnRenameLocalProjectClicked" />
+                                    <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.RemoveLocalProject, Mode=OneWay}" Click="OnRemoveLocalProjectClicked" />
+                                    <MenuFlyoutSeparator />
                                     <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.CreateLocalTerminal, Mode=OneWay}" Click="OnCreateLocalTerminalClicked">
                                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE756;" /></MenuFlyoutItem.Icon>
                                     </MenuFlyoutItem>
@@ -169,6 +173,9 @@
 
                             <TextBlock Margin="0,8,0,0" Text="{x:Bind ViewModel.Localization.Projects, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
                             <ListView AutomationProperties.AutomationId="ChatOS.Shell.Projects" AutomationProperties.Name="{x:Bind ViewModel.Localization.Projects, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Projects}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=TwoWay}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+
+                            <TextBlock Margin="0,8,0,0" Text="{x:Bind ViewModel.Localization.Applications, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Applications" AutomationProperties.Name="{x:Bind ViewModel.Localization.Applications, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.ApplicationResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=TwoWay}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
 
                             <TextBlock Margin="0,8,0,0" Text="{x:Bind ViewModel.Localization.Local, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
                             <ListView AutomationProperties.AutomationId="ChatOS.Shell.LocalResources" AutomationProperties.Name="{x:Bind ViewModel.Localization.Local, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.LocalResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=TwoWay}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />

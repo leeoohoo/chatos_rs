@@ -30,8 +30,7 @@ extension NativeLocalConnectorService {
               let workspace = state.workspaces.first(where: { $0.id == request.workspaceID }) else {
             throw NativeMCPRelayError.invalidContext
         }
-        let token = try requireAccessToken()
-        let runtime = try await gateway.managedRuntimeConfig(token: token)
+        let runtime = try await managedRuntimeConfig()
         try NativeRelayVerifier().verify(
             request,
             trust: runtime.remoteControlTrust,
@@ -118,6 +117,34 @@ extension NativeLocalConnectorService {
             relativeTo: workspaceRoot,
             workspace: workspace
         )
+        if NativeMCPRemoteConnectionController.toolNames.contains(toolName),
+           policy.remoteConnection {
+            guard let remoteConnectionRuntime else {
+                return .init(
+                    type: "mcp",
+                    requestID: request.requestID,
+                    status: 200,
+                    body: Self.rpcError(id: call.id, code: -32601, message: "当前任务无法使用远程连接 MCP")
+                )
+            }
+            do {
+                let result = try await NativeMCPRemoteConnectionController(
+                    provider: remoteConnectionRuntime
+                ).call(name: toolName, arguments: call.arguments)
+                return Self.mcpResultResponse(
+                    requestID: request.requestID,
+                    rpcID: call.id,
+                    result: Self.mcpToolResult(result)
+                )
+            } catch {
+                return .init(
+                    type: "mcp",
+                    requestID: request.requestID,
+                    status: 200,
+                    body: Self.rpcError(id: call.id, code: -32603, message: error.localizedDescription)
+                )
+            }
+        }
         if Self.codeReadToolNames.contains(toolName) {
             guard policy.codeRead else {
                 return .init(
@@ -177,34 +204,6 @@ extension NativeLocalConnectorService {
                     ),
                     projectRoot: projectRoot
                 )
-                return Self.mcpResultResponse(
-                    requestID: request.requestID,
-                    rpcID: call.id,
-                    result: Self.mcpToolResult(result)
-                )
-            } catch {
-                return .init(
-                    type: "mcp",
-                    requestID: request.requestID,
-                    status: 200,
-                    body: Self.rpcError(id: call.id, code: -32603, message: error.localizedDescription)
-                )
-            }
-        }
-
-        if NativeMCPRemoteConnectionController.toolNames.contains(toolName) {
-            guard policy.remoteConnection, let remoteConnectionRuntime else {
-                return .init(
-                    type: "mcp",
-                    requestID: request.requestID,
-                    status: 200,
-                    body: Self.rpcError(id: call.id, code: -32601, message: "当前任务无法使用远程连接 MCP")
-                )
-            }
-            do {
-                let result = try await NativeMCPRemoteConnectionController(
-                    provider: remoteConnectionRuntime
-                ).call(name: toolName, arguments: call.arguments)
                 return Self.mcpResultResponse(
                     requestID: request.requestID,
                     rpcID: call.id,

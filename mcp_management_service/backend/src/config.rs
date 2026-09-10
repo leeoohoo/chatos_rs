@@ -14,12 +14,7 @@ use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secr
 const DEFAULT_RUNTIME_GRANT_SECRET: &str = "change_me_mcp_management_runtime_grant_secret";
 const DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET: &str =
     "change_me_mcp_management_runtime_session_encryption_secret";
-const REQUIRED_INTERNAL_CALLERS: [&str; 4] = [
-    "chatos",
-    "task-runner",
-    "project-service",
-    "configuration-center",
-];
+const REQUIRED_INTERNAL_CALLERS: [&str; 3] = ["chatos", "task-runner", "configuration-center"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsyncToolDispatchMode {
@@ -277,10 +272,6 @@ pub struct AppConfig {
     pub plugin_management_service_base_url: String,
     pub plugin_management_http_client: reqwest::Client,
     pub plugin_management_internal_api_secret: Option<String>,
-    pub project_service_base_url: String,
-    pub project_service_http_client: reqwest::Client,
-    pub project_service_internal_api_secret: Option<String>,
-    pub project_service_tool_timeout: Duration,
     pub task_runner_service_base_url: String,
     pub task_runner_mtls_ca_cert_path: PathBuf,
     pub task_runner_mtls_client_identity_path: PathBuf,
@@ -372,9 +363,6 @@ impl AppConfig {
         let plugin_management_internal_api_secret = Some(required_text(
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
         )?);
-        let project_service_caller_secret =
-            required_text("MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET")?;
-        let project_service_internal_api_secret = Some(project_service_caller_secret.clone());
         let task_runner_caller_secret =
             required_text("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET")?;
         let task_runner_internal_api_secret = Some(task_runner_caller_secret.clone());
@@ -389,11 +377,6 @@ impl AppConfig {
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
             plugin_management_internal_api_secret.as_deref(),
             &["change_me_plugin_management_mcp_management_secret"],
-        )?;
-        validate_production_secret(
-            "MCP_MANAGEMENT_PROJECT_SERVICE_INTERNAL_API_SECRET",
-            project_service_internal_api_secret.as_deref(),
-            &["change_me_mcp_management_project_service_secret"],
         )?;
         validate_production_secret(
             "MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
@@ -418,7 +401,6 @@ impl AppConfig {
         let internal_api_secrets = BTreeMap::from([
             ("chatos".to_string(), chatos_caller_secret),
             ("task-runner".to_string(), task_runner_caller_secret),
-            ("project-service".to_string(), project_service_caller_secret),
             (
                 "configuration-center".to_string(),
                 configuration_center_caller_secret,
@@ -426,10 +408,6 @@ impl AppConfig {
         ]);
         let downstream_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_DOWNSTREAM_REQUEST_TIMEOUT_MS")?.clamp(300, 60_000),
-        );
-        let project_service_tool_timeout = Duration::from_millis(
-            required_u64("MCP_MANAGEMENT_PROJECT_SERVICE_TOOL_TIMEOUT_MS")?
-                .clamp(1_000, 2 * 60 * 60 * 1_000),
         );
         let plugin_management_service_base_url = require_https_base_url(
             "MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL",
@@ -479,15 +457,6 @@ impl AppConfig {
                 .clamp(64 * 1024, 16 * 1024 * 1024);
         let async_tool_dispatch_topology = AsyncToolDispatchTopology::from_env()?;
         let public_base_url = normalize_base_url(required_text("MCP_MANAGEMENT_PUBLIC_BASE_URL")?);
-        let project_service_base_url = require_https_base_url(
-            "MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL",
-            normalize_base_url(required_text("MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL")?),
-        )?;
-        let project_service_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(project_service_tool_timeout),
-            required_path("PROJECT_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
-            required_path("PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
-        )?;
         let local_connector_service_base_url = require_https_base_url(
             "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
             normalize_base_url(required_text(
@@ -495,7 +464,7 @@ impl AppConfig {
             )?),
         )?;
         let local_connector_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(project_service_tool_timeout),
+            chatos_service_runtime::HttpClientTimeouts::new(downstream_request_timeout),
             required_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?.as_path(),
             required_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
         )?;
@@ -515,10 +484,6 @@ impl AppConfig {
             plugin_management_service_base_url,
             plugin_management_http_client,
             plugin_management_internal_api_secret,
-            project_service_base_url,
-            project_service_http_client,
-            project_service_internal_api_secret,
-            project_service_tool_timeout,
             task_runner_service_base_url: require_https_base_url(
                 "MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL",
                 normalize_base_url(required_text(
@@ -578,10 +543,6 @@ impl AppConfig {
                     "a-long-task-runner-secret".to_string(),
                 ),
                 (
-                    "project-service".to_string(),
-                    "a-long-project-service-secret".to_string(),
-                ),
-                (
                     "configuration-center".to_string(),
                     "a-long-configuration-center-secret".to_string(),
                 ),
@@ -590,7 +551,6 @@ impl AppConfig {
             allowed_internal_callers: BTreeSet::from([
                 "chatos".to_string(),
                 "task-runner".to_string(),
-                "project-service".to_string(),
                 "configuration-center".to_string(),
             ]),
             plugin_management_service_base_url: "https://127.0.0.1:39262".to_string(),
@@ -598,10 +558,6 @@ impl AppConfig {
             plugin_management_internal_api_secret: Some(
                 "a-long-plugin-management-secret".to_string(),
             ),
-            project_service_base_url: "http://127.0.0.1:39210".to_string(),
-            project_service_http_client: reqwest::Client::new(),
-            project_service_internal_api_secret: Some("a-long-project-service-secret".to_string()),
-            project_service_tool_timeout: Duration::from_secs(2 * 60 * 60),
             task_runner_service_base_url: "http://127.0.0.1:39090".to_string(),
             task_runner_mtls_ca_cert_path: PathBuf::new(),
             task_runner_mtls_client_identity_path: PathBuf::new(),

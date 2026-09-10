@@ -6,7 +6,6 @@ public extension ConversationTurn {
             sessionID: messageTaskLookup?.sessionID ?? sessionID,
             turnID: messageTaskLookup?.turnID ?? id,
             sourceUserMessageID: messageTaskLookup?.sourceUserMessageID
-                ?? projectExecutionContext?.executionGroupID
                 ?? userMessage.id
         )
     }

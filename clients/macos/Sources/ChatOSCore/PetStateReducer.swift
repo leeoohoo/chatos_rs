@@ -77,7 +77,7 @@ public struct PetStateReducer: Sendable {
         return candidates
             .filter { activity in
                 guard activity.kind == .working || activity.kind == .reviewing,
-                      activity.source == .chat || activity.source == .projectExecution,
+                      activity.source == .chat,
                       let conversationID = activity.route.conversationID else {
                     return true
                 }

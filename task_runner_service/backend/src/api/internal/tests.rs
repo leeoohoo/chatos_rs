@@ -15,81 +15,9 @@ use crate::config::{AppConfig, StoreMode};
 use crate::mcp_server::TaskRunnerMcpService;
 use crate::models::ModelConfigRecord;
 use crate::services::{
-    McpCatalogService, ModelConfigService, RunService, TaskProjectService, TaskService,
-    ToolingStateService,
+    McpCatalogService, ModelConfigService, RunService, TaskService, ToolingStateService,
 };
 use crate::store::AppStore;
-
-#[tokio::test]
-async fn user_execution_options_filters_owner_scoped_configs() {
-    let state = test_state().await;
-    let token = chatos_service_runtime::issue_internal_service_token(
-        "internal-secret",
-        PROJECT_SERVICE_CALLER,
-        super::super::internal_auth::TASK_RUNNER_TOKEN_AUDIENCE,
-        EXECUTION_OPTIONS_READ_SCOPE,
-        60,
-    )
-    .expect("issue token");
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-task-runner-caller",
-        HeaderValue::from_static(PROJECT_SERVICE_CALLER),
-    );
-    headers.insert(
-        "x-task-runner-internal-token",
-        HeaderValue::from_str(token.as_str()).expect("token header"),
-    );
-
-    let Json(response) =
-        get_user_execution_options(Path("owner-1".to_string()), State(state), headers)
-            .await
-            .expect("execution options");
-
-    assert_eq!(response.model_config_ids, vec!["model-owner"]);
-}
-
-#[tokio::test]
-async fn user_execution_options_requires_signed_internal_token() {
-    let state = test_state().await;
-
-    let err =
-        get_user_execution_options(Path("owner-1".to_string()), State(state), HeaderMap::new())
-            .await
-            .expect_err("missing secret should fail");
-
-    assert_eq!(err.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        err.message,
-        "signed task runner internal API token is required"
-    );
-}
-
-#[tokio::test]
-async fn user_execution_options_accepts_project_service_scoped_token() {
-    let state = test_state().await;
-    let token = chatos_service_runtime::issue_internal_service_token(
-        "internal-secret",
-        PROJECT_SERVICE_CALLER,
-        super::super::internal_auth::TASK_RUNNER_TOKEN_AUDIENCE,
-        EXECUTION_OPTIONS_READ_SCOPE,
-        60,
-    )
-    .expect("issue token");
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-task-runner-caller",
-        HeaderValue::from_static(PROJECT_SERVICE_CALLER),
-    );
-    headers.insert(
-        "x-task-runner-internal-token",
-        HeaderValue::from_str(token.as_str()).expect("token header"),
-    );
-
-    let _ = get_user_execution_options(Path("owner-1".to_string()), State(state), headers)
-        .await
-        .expect("signed execution options request");
-}
 
 #[tokio::test]
 async fn public_router_does_not_expose_internal_routes() {
@@ -246,7 +174,7 @@ fn chatos_internal_auth_uses_dedicated_secret_and_scope() {
         &config,
         &headers,
         &[super::super::internal_auth::CHATOS_CALLER],
-        EXECUTION_OPTIONS_READ_SCOPE,
+        super::super::internal_auth::SYSTEM_STATS_READ_SCOPE,
     )
     .expect_err("scope mismatch must fail");
     assert_eq!(err.message, "invalid task runner internal API token");
@@ -297,7 +225,6 @@ async fn test_state() -> AppState {
     let auth_service = AuthService::new(config.clone(), store.clone());
     let task_service = TaskService::new(config.clone(), store.clone());
     let model_config_service = ModelConfigService::new(store.clone());
-    let task_project_service = TaskProjectService::new(store.clone());
     let ask_user_prompt_service = AskUserPromptService::new(store.clone());
     let run_service = RunService::new(
         config.clone(),
@@ -321,7 +248,6 @@ async fn test_state() -> AppState {
         task_queue_topology,
         task_service,
         model_config_service,
-        task_project_service,
         run_service,
         ask_user_prompt_service,
         mcp_catalog_service,
@@ -368,7 +294,6 @@ fn test_config() -> AppConfig {
         default_tool_results_model_total_max_chars: 2_000,
         chatos_callback_url: String::new(),
         chatos_callback_http_client: reqwest::Client::new(),
-        internal_api_secret: Some("internal-secret".to_string()),
         chatos_internal_api_secret: Some("chatos-internal-secret".to_string()),
         mcp_management_internal_api_secret: Some("internal-secret".to_string()),
         user_service_internal_api_secret: Some("user-service-internal-secret".to_string()),
@@ -378,11 +303,6 @@ fn test_config() -> AppConfig {
         admin_display_name: "Admin".to_string(),
         user_service_base_url: "http://127.0.0.1:39190".to_string(),
         user_service_request_timeout: Duration::from_millis(5_000),
-        project_service_base_url: None,
-        project_service_internal_base_url: None,
-        project_service_internal_http_client: reqwest::Client::new(),
-        project_service_sync_secret: None,
-        project_service_request_timeout: Duration::from_millis(5_000),
     }
 }
 

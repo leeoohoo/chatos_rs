@@ -16,11 +16,13 @@ import {
   type Connection,
   type EdgeChange,
   type EdgeProps,
+  type FinalConnectionState,
   type NodeChange
 } from '@xyflow/react';
 import { toPng, toSvg } from 'html-to-image';
 import type { DiagramDocument, DiagramEdge, DiagramKind, DiagramNode, DiagramProject, DiagramProjectSummary } from '../../src/schema';
 import { layoutDiagram } from '../../src/layout';
+import { analyzeMindMap, createMindMapEdge, insertMindMapChild, layoutMindMap, mindMapNodeSize, mindMapSubtreeIds } from '../../src/mindmap';
 import { nextNodeZIndex, reorderNodeLayers, type NodeLayerAction } from '../../src/layers';
 import { detectPlantUmlDiagramKind, diagramToPlantUml, hasEmbeddedDiagramLayout, plantUmlToDiagram } from '../../src/plantuml';
 import {
@@ -39,6 +41,7 @@ import { DiagramNodeView, LaneNodeView } from './DiagramNodes';
 import { componentDragType, TemplateSidebar, type PaletteItem, type SequenceMessagePreset } from './TemplateSidebar';
 import { Inspector } from './Inspector';
 import { Icon } from './Icons';
+import { measuredNode, rememberNodeMeasurements, type NodeMeasurementCache } from './node-measurements';
 
 const nodeTypes = { diagramNode: DiagramNodeView, laneNode: LaneNodeView };
 const edgeTypes = { sequenceMessage: SequenceMessageEdge, smartOrthogonal: SmartOrthogonalEdge };
@@ -54,6 +57,7 @@ export function DiagramStudioApp() {
   const resizeSnapshot = useRef<DiagramDocument | null>(null);
   const edgeMoveSnapshot = useRef<DiagramDocument | null>(null);
   const edgeMoveChanged = useRef(false);
+  const nodeMeasurements = useRef<NodeMeasurementCache>(new Map());
   const lastSequenceConnect = useRef<{ source: string; target: string; sourceSlot?: number; targetSlot?: number; at: number } | undefined>(undefined);
   const [repository, setRepository] = useState<Repository>();
   const [document, setDocument] = useState<DiagramDocument>();
@@ -74,6 +78,7 @@ export function DiagramStudioApp() {
   const [newProjectVisible, setNewProjectVisible] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newDiagramName, setNewDiagramName] = useState('');
+  const [mindmapEdit, setMindmapEdit] = useState<{ nodeId: string; value: string }>();
   const [homeConfirmVisible, setHomeConfirmVisible] = useState(false);
   const [deleteDocumentTarget, setDeleteDocumentTarget] = useState<DeleteDocumentTarget>();
   const [isDeletingDocument, setIsDeletingDocument] = useState(false);
@@ -128,6 +133,10 @@ export function DiagramStudioApp() {
         event.preventDefault(); redo();
       } else if ((event.key === 'Backspace' || event.key === 'Delete') && (selectedNodeIds.size > 0 || selectedEdgeId)) {
         event.preventDefault(); deleteSelection();
+      } else if (document?.kind === 'mindmap' && selectedNodeIds.size === 1 && (event.key === 'Tab' || event.key === 'Enter')) {
+        event.preventDefault();
+        const selectedId = [...selectedNodeIds][0];
+        addMindMapRelative(selectedId, event.key === 'Enter' ? 'sibling' : 'child');
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -178,9 +187,11 @@ export function DiagramStudioApp() {
       if (supportsPlantUml(normalizedDocument.kind)) {
         normalizedDocument.notation = {
           format: 'plantuml',
-          dialect: normalizedDocument.kind === 'sequence'
-            ? 'sequence'
-            : normalizedDocument.kind === 'architecture'
+          dialect: normalizedDocument.kind === 'mindmap'
+            ? 'mindmap'
+            : normalizedDocument.kind === 'sequence'
+              ? 'sequence'
+              : normalizedDocument.kind === 'architecture'
               ? 'component'
               : normalizedDocument.kind === 'topology'
                 ? 'deployment'
@@ -375,6 +386,7 @@ export function DiagramStudioApp() {
 
   function onNodesChange(changes: NodeChange[]) {
     if (!document) return;
+    rememberNodeMeasurements(nodeMeasurements.current, document.documentId, changes);
     const selectionChanges = changes.filter((change): change is Extract<NodeChange, { type: 'select' }> => change.type === 'select');
     if (selectionChanges.length > 0) {
       setSelectedNodeIds((current) => {
@@ -431,6 +443,36 @@ export function DiagramStudioApp() {
 
   function onConnect(connection: Connection) {
     if (!document || !connection.source || !connection.target) return;
+    if (document.kind === 'mindmap') {
+      const analysis = analyzeMindMap(document);
+      const source = document.nodes.find((node) => node.id === connection.source);
+      const target = document.nodes.find((node) => node.id === connection.target);
+      if (!source || !target || !['mindmap-root', 'mindmap-topic'].includes(source.data.shape) || target.data.shape !== 'mindmap-topic') {
+        showToast('思维导图只能把中心主题或分支主题连接到一个分支主题。');
+        return;
+      }
+      if (analysis.parentByNode.has(target.id)) {
+        showToast('这个主题已经有父主题；请先删除原分支线再重新连接。');
+        return;
+      }
+      const descendants = new Set<string>();
+      const collect = (nodeId: string) => {
+        if (descendants.has(nodeId)) return;
+        descendants.add(nodeId);
+        for (const child of analysis.childrenByNode.get(nodeId) ?? []) collect(child.id);
+      };
+      collect(target.id);
+      if (descendants.has(source.id)) {
+        showToast('思维导图分支不能形成循环。');
+        return;
+      }
+      const side = source.data.shape === 'mindmap-root'
+        ? (target.position.x < source.position.x ? 'left' : 'right')
+        : source.data.mindmapSide ?? 'right';
+      const nextNodes = document.nodes.map((node) => node.id === target.id ? { ...node, data: { ...node.data, mindmapSide: side } } : node);
+      commit(layoutMindMap({ ...document, nodes: nextNodes, edges: [...document.edges, createMindMapEdge(source.id, target.id, nextNodes)] }));
+      return;
+    }
     if (document.kind === 'sequence') {
       const now = Date.now();
       const sourceSlot = parseSequenceSlot(connection.sourceHandle);
@@ -542,8 +584,86 @@ export function DiagramStudioApp() {
     });
   }
 
+  function onConnectEnd(event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) {
+    if (!document || document.kind !== 'mindmap' || connectionState.isValid || !connectionState.fromNode || connectionState.toNode) return;
+    const eventTarget = event.target;
+    if (eventTarget instanceof Element && eventTarget.closest('.react-flow__node')) return;
+    const parent = document.nodes.find((node) => node.id === connectionState.fromNode?.id);
+    if (!parent || !['mindmap-root', 'mindmap-topic'].includes(parent.data.shape)) return;
+    const clientPosition = connectionEndClientPosition(event);
+    if (!clientPosition) return;
+    const position = reactFlow.screenToFlowPosition(clientPosition);
+    const parentSize = mindMapNodeSize(parent);
+    const side = parent.data.shape === 'mindmap-root'
+      ? connectionState.fromHandle?.id === 'left'
+        ? 'left'
+        : connectionState.fromHandle?.id === 'right'
+          ? 'right'
+          : position.x < parent.position.x + parentSize.width / 2 ? 'left' : 'right'
+      : parent.data.mindmapSide ?? 'right';
+    const inserted = insertMindMapChild(document, parent.id, { position, side, label: '新主题' });
+    commit(inserted.document);
+    setSelectedNodeIds(new Set([inserted.node.id]));
+    setSelectedEdgeId(undefined);
+    setMindmapEdit({ nodeId: inserted.node.id, value: '' });
+    window.setTimeout(() => reactFlow.fitView({ padding: 0.28, duration: 280, maxZoom: 1.2 }), 40);
+  }
+
   function addNode(item: PaletteItem, droppedPosition?: { x: number; y: number }) {
     if (!document) return;
+    if (document.kind === 'mindmap' && (item.shape === 'mindmap-root' || item.shape === 'mindmap-topic')) {
+      const analysis = analyzeMindMap(document);
+      const existingRoot = analysis.roots.find((node) => node.data.shape === 'mindmap-root');
+      if (item.shape === 'mindmap-root' && existingRoot) {
+        showToast('一张思维导图只能有一个中心主题。');
+        setSelectedNodeIds(new Set([existingRoot.id]));
+        return;
+      }
+      if (item.shape === 'mindmap-topic' && !existingRoot) {
+        showToast('请先拖入一个中心主题。');
+        return;
+      }
+      const parent = item.shape === 'mindmap-topic'
+        ? document.nodes.find((node) => selectedNodeIds.has(node.id) && ['mindmap-root', 'mindmap-topic'].includes(node.data.shape)) ?? existingRoot
+        : undefined;
+      const side: 'left' | 'right' | undefined = parent?.data.shape === 'mindmap-root'
+        ? (document.edges.filter((edge) => edge.source === parent.id && document.nodes.find((node) => node.id === edge.target)?.data.mindmapSide === 'right').length
+          <= document.edges.filter((edge) => edge.source === parent.id && document.nodes.find((node) => node.id === edge.target)?.data.mindmapSide === 'left').length ? 'right' : 'left')
+        : parent?.data.mindmapSide;
+      const newNode: DiagramNode = {
+        id: `mindmap-${crypto.randomUUID().slice(0, 8)}`,
+        type: 'diagramNode',
+        position: droppedPosition ?? { x: 0, y: 0 },
+        width: item.shape === 'mindmap-root' ? 200 : 150,
+        height: item.shape === 'mindmap-root' ? 64 : 46,
+        zIndex: nextNodeZIndex(document.nodes),
+        data: {
+          label: item.shape === 'mindmap-root' ? '中心主题' : '新主题',
+          category: 'mindmap',
+          shape: item.shape,
+          color: item.color,
+          borderColor: item.color,
+          fillColor: item.shape === 'mindmap-root' ? item.fillColor ?? item.color : 'transparent',
+          ...(item.shape === 'mindmap-root' ? { textColor: '#FFFFFF' } : {}),
+          showLabel: true,
+          fontSize: item.shape === 'mindmap-root' ? 17 : 14,
+          fontWeight: item.shape === 'mindmap-root' ? 700 : 620,
+          ...(side ? { mindmapSide: side } : {}),
+          mindmapOrder: parent ? document.edges.filter((edge) => edge.source === parent.id).length : 0
+        }
+      };
+      const next = layoutMindMap({
+        ...document,
+        nodes: [...document.nodes, newNode],
+        edges: parent ? [...document.edges, createMindMapEdge(parent.id, newNode.id, [...document.nodes, newNode])] : document.edges
+      });
+      commit(next);
+      setSelectedNodeIds(new Set([newNode.id]));
+      setSelectedEdgeId(undefined);
+      setMindmapEdit({ nodeId: newNode.id, value: newNode.data.label });
+      window.setTimeout(() => reactFlow.fitView({ padding: 0.28, duration: 280, maxZoom: 1.2 }), 40);
+      return;
+    }
     const position = droppedPosition ?? reactFlow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
     const initialSize = newComponentSize(item);
     const newNode: DiagramNode = {
@@ -588,7 +708,41 @@ export function DiagramStudioApp() {
 
   function updateNode(nextNode: DiagramNode) {
     if (!document) return;
-    commit({ ...document, nodes: document.nodes.map((node) => node.id === nextNode.id ? nextNode : node) });
+    const previousNode = document.nodes.find((node) => node.id === nextNode.id);
+    const next = { ...document, nodes: document.nodes.map((node) => node.id === nextNode.id ? nextNode : node) };
+    commit(document.kind === 'mindmap' && ['mindmap-root', 'mindmap-topic'].includes(nextNode.data.shape) ? layoutMindMap(next) : next);
+    if (document.kind === 'mindmap' && previousNode?.data.mindmapSide !== nextNode.data.mindmapSide) {
+      window.setTimeout(() => reactFlow.fitView({ padding: 0.24, duration: 280, maxZoom: 1.2 }), 40);
+    }
+  }
+
+  function addMindMapRelative(nodeId: string, relation: 'child' | 'sibling') {
+    if (!document || document.kind !== 'mindmap') return;
+    const analysis = analyzeMindMap(document);
+    const selected = document.nodes.find((node) => node.id === nodeId);
+    if (!selected || !['mindmap-root', 'mindmap-topic'].includes(selected.data.shape)) return;
+    const requestedParentId = relation === 'sibling' ? analysis.parentByNode.get(selected.id) : selected.id;
+    const parent = document.nodes.find((node) => node.id === requestedParentId) ?? selected;
+    const side = parent.data.shape === 'mindmap-root'
+      ? selected.data.shape === 'mindmap-topic' ? selected.data.mindmapSide ?? 'right' : balancedMindMapSide(document, parent.id)
+      : parent.data.mindmapSide ?? 'right';
+    const parentSize = mindMapNodeSize(parent);
+    const position = {
+      x: parent.position.x + (side === 'right' ? parentSize.width + 250 : -250),
+      y: parent.position.y + parentSize.height / 2
+    };
+    const inserted = insertMindMapChild(document, parent.id, { position, side, label: '新主题' });
+    commit(inserted.document);
+    setSelectedNodeIds(new Set([inserted.node.id]));
+    setSelectedEdgeId(undefined);
+    setMindmapEdit({ nodeId: inserted.node.id, value: '' });
+    window.setTimeout(() => reactFlow.fitView({ padding: 0.28, duration: 280, maxZoom: 1.2 }), 40);
+  }
+
+  function toggleMindMapCollapse(nodeId: string) {
+    if (!document || document.kind !== 'mindmap') return;
+    const nodes = document.nodes.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, mindmapCollapsed: !node.data.mindmapCollapsed } } : node);
+    commit(layoutMindMap({ ...document, nodes }));
   }
 
   function changeNodeLayer(action: NodeLayerAction) {
@@ -610,6 +764,9 @@ export function DiagramStudioApp() {
     if (!document) return;
     if (selectedNodeIds.size > 0) {
       const removedNodeIds = new Set(selectedNodeIds);
+      if (document.kind === 'mindmap') {
+        for (const nodeId of selectedNodeIds) for (const subtreeId of mindMapSubtreeIds(document, nodeId)) removedNodeIds.add(subtreeId);
+      }
       let foundChild = true;
       while (foundChild) {
         foundChild = false;
@@ -756,7 +913,7 @@ export function DiagramStudioApp() {
     }
     try {
       const text = await file.text();
-      const isPlantUml = /\.(puml|plantuml|pu)$/i.test(file.name) || /^\s*@startuml\b/im.test(text);
+      const isPlantUml = /\.(puml|plantuml|pu)$/i.test(file.name) || /^\s*@start(?:uml|mindmap)\b/im.test(text);
       if (isPlantUml) {
         const detectedKind = detectPlantUmlDiagramKind(text);
         const fallbackTitle = file.name.replace(/\.(puml|plantuml|pu)$/i, '').trim() || `导入的${kindLabel(detectedKind)}`;
@@ -815,15 +972,31 @@ export function DiagramStudioApp() {
     const ids = new Set(activeProject?.diagramIds ?? []);
     return documents.filter((item) => ids.has(item.documentId));
   }, [activeProject?.diagramIds, documents]);
-  const flowNodes = useMemo(() => document?.nodes.map((node) => ({
-    ...node,
-    selected: selectedNodeIds.has(node.id),
-    dragHandle: node.data.shape === 'activation' ? '.activation-drag-handle' : undefined,
-    style: node.type === 'laneNode'
-      ? { width: node.width ?? 1120, height: node.height ?? 180 }
-      : { width: node.width ?? defaultNodeSize(node).width, height: node.height ?? defaultNodeSize(node).height }
-  })) ?? [], [document?.nodes, selectedNodeIds]);
-  const flowEdges = useMemo(() => document ? runtimeEdgesForDocument(document).map((edge, edgeIndex) => {
+  const flowNodes = useMemo(() => {
+    if (!document) return [];
+    const mindmap = document.kind === 'mindmap' ? analyzeMindMap(document) : undefined;
+    return document.nodes.map((node) => measuredNode(nodeMeasurements.current, document.documentId, {
+      ...node,
+      hidden: mindmap?.hiddenNodeIds.has(node.id) ?? false,
+      data: mindmap && ['mindmap-root', 'mindmap-topic'].includes(node.data.shape)
+        ? {
+            ...node.data,
+            mindmapChildCount: mindmap.childrenByNode.get(node.id)?.length ?? 0,
+            onMindMapToggleCollapse: () => toggleMindMapCollapse(node.id)
+          }
+        : node.data,
+      selected: selectedNodeIds.has(node.id),
+      dragHandle: node.data.shape === 'activation' ? '.activation-drag-handle' : undefined,
+      style: node.type === 'laneNode'
+        ? { width: node.width ?? 1120, height: node.height ?? 180 }
+        : { width: node.width ?? defaultNodeSize(node).width, height: node.height ?? defaultNodeSize(node).height }
+    }));
+  }, [document, selectedNodeIds]);
+  const flowEdges = useMemo(() => document ? runtimeEdgesForDocument(document).filter((edge) => {
+    if (document.kind !== 'mindmap') return true;
+    const hidden = analyzeMindMap(document).hiddenNodeIds;
+    return !hidden.has(edge.source) && !hidden.has(edge.target);
+  }).map((edge, edgeIndex) => {
     const isSequence = document.kind === 'sequence';
     const useSmartRouting = (document.kind === 'architecture'
       || document.kind === 'topology'
@@ -881,7 +1054,7 @@ export function DiagramStudioApp() {
       labelBgPadding: [7, 5],
       labelBgBorderRadius: 6
     };
-  }) : [], [document?.edges, document?.kind, document?.nodes, selectedEdgeId]);
+  }) : [], [document, selectedEdgeId]);
 
   const newProjectSheet = newProjectVisible && <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setNewProjectVisible(false); }}>
     <section className="new-project-sheet" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
@@ -918,6 +1091,31 @@ export function DiagramStudioApp() {
         ))}
       </div>
       <p className="sheet-footnote">只设置图形类型，不会自动生成任何节点、文字或连线。</p>
+    </section>
+  </div>;
+
+  const mindmapEditSheet = mindmapEdit && <div className="sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setMindmapEdit(undefined); }}>
+    <section className="mindmap-edit-sheet" role="dialog" aria-modal="true" aria-labelledby="mindmap-edit-title">
+      <div className="sheet-heading">
+        <div><strong id="mindmap-edit-title">编辑主题</strong><span>主题使用短语表达一个概念，不要放入整段说明</span></div>
+        <button className="icon-button subtle" onClick={() => setMindmapEdit(undefined)} aria-label="关闭主题编辑"><Icon name="close" /></button>
+      </div>
+      <div className="project-name-section">
+        <label htmlFor="mindmap-topic-name">主题文字</label>
+        <input id="mindmap-topic-name" autoFocus value={mindmapEdit.value} onChange={(event) => setMindmapEdit({ ...mindmapEdit, value: event.target.value })} onKeyDown={(event) => {
+          if (event.key === 'Enter' && mindmapEdit.value.trim()) {
+            event.preventDefault();
+            const node = document?.nodes.find((candidate) => candidate.id === mindmapEdit.nodeId);
+            if (node) updateNode({ ...node, data: { ...node.data, label: mindmapEdit.value.trim().slice(0, 80) } });
+            setMindmapEdit(undefined);
+          }
+        }} placeholder="输入主题" maxLength={80} />
+      </div>
+      <div className="project-create-footer"><button className="toolbar-button" onClick={() => setMindmapEdit(undefined)}>取消</button><button className="toolbar-button primary" disabled={!mindmapEdit.value.trim()} onClick={() => {
+        const node = document?.nodes.find((candidate) => candidate.id === mindmapEdit.nodeId);
+        if (node) updateNode({ ...node, data: { ...node.data, label: mindmapEdit.value.trim().slice(0, 80) } });
+        setMindmapEdit(undefined);
+      }}>完成</button></div>
     </section>
   </div>;
 
@@ -984,7 +1182,7 @@ export function DiagramStudioApp() {
       <main className="project-home project-detail">
         <section className="home-intro">
           <div><span className="home-eyebrow">用户项目</span><h1>{activeProject.name}</h1><p>项目内共有 {activeProjectDocuments.length} 张图形。</p></div>
-          <button className="home-new-button" onClick={openNewDiagramSheet}><span><Icon name="plus" /></span><strong>新建图形</strong><small>选择架构图、流程图、泳道图、拓扑图或时序图</small></button>
+          <button className="home-new-button" onClick={openNewDiagramSheet}><span><Icon name="plus" /></span><strong>新建图形</strong><small>选择架构图、流程图、泳道图、拓扑图、时序图或思维导图</small></button>
         </section>
         <section className="projects-section">
           <div className="projects-heading"><div><h2>项目图形</h2><span>{activeProjectDocuments.length} 张</span></div></div>
@@ -1058,6 +1256,11 @@ export function DiagramStudioApp() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onConnectEnd={onConnectEnd}
+          onNodeDoubleClick={(_event, node) => {
+            const resolved = document.nodes.find((candidate) => candidate.id === node.id);
+            if (resolved && document.kind === 'mindmap' && ['mindmap-root', 'mindmap-topic'].includes(resolved.data.shape)) setMindmapEdit({ nodeId: resolved.id, value: resolved.data.label });
+          }}
           onNodeDragStart={onDragStart}
           onNodeDragStop={onDragStop}
           onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
@@ -1078,11 +1281,12 @@ export function DiagramStudioApp() {
           colorMode="system"
         >
           <Background variant={BackgroundVariant.Dots} gap={18} size={1.25} color="var(--grid-dot)" />
+          {document.nodes.length === 0 && <div className="canvas-empty-hint"><span><Icon name={document.kind === 'mindmap' ? 'mindmap' : kindIcon(document.kind)} /></span><strong>{document.kind === 'mindmap' ? '先添加中心主题' : '空白画布'}</strong><p>{document.kind === 'mindmap' ? '从左侧拖入“中心主题”，再从主题两侧拉出分支，松到空白处即可创建下级主题。' : '从左侧组件库拖入元素开始绘制。'}</p></div>}
           <MiniMap className="apple-minimap" pannable zoomable nodeColor={(node) => (node.data as unknown as DiagramNode['data'])?.color ?? '#7D8797'} />
           <Controls className="apple-controls" showInteractive={false} />
           <div className="canvas-status">
             <span>拖动空白移动画布 · Shift 拖动框选</span><i />
-            <span>{kindLabel(document.kind)}</span><i />
+            <span>{document.kind === 'mindmap' ? '从主题拉线到空白处可创建子主题' : kindLabel(document.kind)}</span><i />
             <span>{document.nodes.filter((node) => node.type !== 'laneNode').length} 个节点</span><i />
             <span>{document.edges.length} 条连线</span>
           </div>
@@ -1109,6 +1313,7 @@ export function DiagramStudioApp() {
       </div>}
 
       {newDiagramSheet}
+      {mindmapEditSheet}
 
       {plantUmlVisible && <div className="sheet-backdrop plantuml-backdrop">
         <section className="plantuml-sheet" role="dialog" aria-modal="true" aria-labelledby="plantuml-source-title">
@@ -1154,7 +1359,7 @@ export function DiagramStudioApp() {
 }
 
 function kindLabel(kind: DiagramKind): string {
-  return ({ architecture: '架构图', flowchart: '流程图', swimlane: '泳道图', topology: '拓扑图', sequence: '时序图' })[kind];
+  return ({ architecture: '架构图', flowchart: '流程图', swimlane: '泳道图', topology: '拓扑图', sequence: '时序图', mindmap: '思维导图' })[kind];
 }
 
 function supportsPlantUml(_kind: DiagramKind): boolean {
@@ -1162,7 +1367,9 @@ function supportsPlantUml(_kind: DiagramKind): boolean {
 }
 
 function plantUmlDialectLabel(kind: DiagramKind): string {
-  return kind === 'sequence'
+  return kind === 'mindmap'
+    ? 'MINDMAP'
+    : kind === 'sequence'
     ? 'SEQUENCE'
     : kind === 'swimlane'
       ? 'ACTIVITY · PARTITION'
@@ -1174,7 +1381,9 @@ function plantUmlDialectLabel(kind: DiagramKind): string {
 }
 
 function plantUmlDescription(kind: DiagramKind): string {
-  return kind === 'sequence'
+  return kind === 'mindmap'
+    ? 'PlantUML MindMap 与层级分支画布双向转换'
+    : kind === 'sequence'
     ? '时序语义与当前画布双向转换'
     : kind === 'swimlane'
       ? 'Activity Partition 与泳道画布双向转换'
@@ -1186,7 +1395,9 @@ function plantUmlDescription(kind: DiagramKind): string {
 }
 
 function plantUmlEditorHint(kind: DiagramKind): string {
-  return kind === 'sequence'
+  return kind === 'mindmap'
+    ? '使用 @startmindmap、星号层级和 left side 编辑中心主题与左右分支。应用后会按树结构自动排版。'
+    : kind === 'sequence'
     ? '修改参与者、消息、激活和组合片段后应用。外部 PlantUML 没有布局信息时会自动排版。'
     : kind === 'swimlane'
       ? '修改泳道、活动和判断分支后应用。partition 或 |泳道| 语法会生成可拖拽的泳道结构。'
@@ -1197,7 +1408,7 @@ function plantUmlEditorHint(kind: DiagramKind): string {
           : '修改活动、判断与分支后应用。start、if/else/endif 和 stop 会生成对应的可编辑流程组件。';
 }
 
-function kindIcon(kind: DiagramKind): 'architecture' | 'flowchart' | 'swimlane' | 'topology' | 'sequence' {
+function kindIcon(kind: DiagramKind): 'architecture' | 'flowchart' | 'swimlane' | 'topology' | 'sequence' | 'mindmap' {
   return kind;
 }
 
@@ -1218,6 +1429,7 @@ function defaultNodeSize(node: DiagramNode): { width: number; height: number } {
   if (node.data.shape === 'activation') return { width: 14, height: 120 };
   if (node.data.shape === 'fragment') return { width: 620, height: 220 };
   if (node.data.shape === 'container') return { width: 300, height: 180 };
+  if (node.data.shape === 'mindmap-root' || node.data.shape === 'mindmap-topic') return mindMapNodeSize(node);
   if (node.data.shape === 'lane') return { width: 900, height: 180 };
   if (node.data.icon && node.data.showLabel === false) return { width: 58, height: 58 };
   if (node.data.shape === 'text') return { width: 120, height: 34 };
@@ -1237,10 +1449,29 @@ function newComponentSize(item: PaletteItem): { width: number; height: number } 
   if (item.width && item.height) return { width: item.width, height: item.height };
   if (item.icon) return { width: 58, height: 58 };
   if (item.shape === 'text') return { width: 120, height: 34 };
+  if (item.shape === 'mindmap-root') return { width: 200, height: 64 };
+  if (item.shape === 'mindmap-topic') return { width: 150, height: 46 };
   if (item.shape === 'circle') return { width: 72, height: 72 };
   if (item.shape === 'diamond') return { width: 96, height: 72 };
   if (item.shape === 'cylinder') return { width: 120, height: 58 };
   return { width: 132, height: 56 };
+}
+
+function balancedMindMapSide(document: DiagramDocument, rootId: string): 'left' | 'right' {
+  let left = 0;
+  let right = 0;
+  for (const edge of document.edges.filter((candidate) => candidate.source === rootId)) {
+    const child = document.nodes.find((node) => node.id === edge.target);
+    if (child?.data.mindmapSide === 'left') left += 1;
+    else right += 1;
+  }
+  return right <= left ? 'right' : 'left';
+}
+
+function connectionEndClientPosition(event: MouseEvent | TouchEvent): { x: number; y: number } | undefined {
+  if ('clientX' in event) return { x: event.clientX, y: event.clientY };
+  const touch = event.changedTouches[0] ?? event.touches[0];
+  return touch ? { x: touch.clientX, y: touch.clientY } : undefined;
 }
 
 function findActivationAt(nodes: DiagramNode[], lifeline: DiagramNode, slot: number): DiagramNode | undefined {

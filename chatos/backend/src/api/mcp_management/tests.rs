@@ -123,8 +123,6 @@ fn user_conversation_session_uses_no_project_binding() {
 fn notepad_access_is_limited_to_chatos_and_task_runner_agents() {
     for agent_key in [
         SystemAgentKey::ChatosConversationAgent,
-        SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
-        SystemAgentKey::TaskRunnerPlanPhase,
         SystemAgentKey::TaskRunnerRunPhase,
     ] {
         assert!(is_notepad_agent(agent_key));

@@ -10,9 +10,8 @@ use chatos_plugin_management_sdk::{
 
 use crate::auth::CurrentUser;
 use crate::models::{
-    normalize_project_id, normalize_task_profile, now_rfc3339, task_runner_agent_key_for,
-    CreateTaskPluginHint, CreateTaskRequest, TaskPluginSelectionAudit, TaskScheduleConfig,
-    TaskSelectedPluginSnapshot,
+    normalize_project_id, normalize_task_profile, now_rfc3339, CreateTaskPluginHint,
+    CreateTaskRequest, TaskPluginSelectionAudit, TaskScheduleConfig, TaskSelectedPluginSnapshot,
 };
 
 use super::{TaskRunnerCapabilityPolicy, TaskScheduleModeExt, TaskService};
@@ -34,13 +33,15 @@ impl TaskService {
             "current Agent is missing owner scope for Plugin selection".to_string()
         })?;
         let project_id = normalize_project_id(input.project_id.clone());
+        let project_context = self
+            .authorize_task_project_context(
+                project_id.as_deref(),
+                input.project_context.as_ref(),
+                Some(owner_user_id),
+            )
+            .await?;
         let task_profile = normalize_task_profile(input.task_profile.as_deref())?;
-        let requires_execution = input
-            .mcp_config
-            .as_ref()
-            .and_then(|config| config.requires_execution)
-            .unwrap_or(true);
-        let agent_key = task_runner_agent_key_for(task_profile.as_str(), requires_execution);
+        let agent_key = chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase;
         let schedule = input
             .schedule
             .clone()
@@ -51,6 +52,7 @@ impl TaskService {
                 Some(owner_user_id),
                 agent_key,
                 project_id.as_deref(),
+                project_context.as_ref(),
                 Some(task_profile.as_str()),
                 Some(schedule.mode.mode_key()),
             )

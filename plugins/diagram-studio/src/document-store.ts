@@ -736,8 +736,8 @@ export function renderDiagramSvg(document: DiagramDocument): string {
     const position = absolutePosition(document, node.id);
     const iconOnly = Boolean(node.data.icon && node.data.showLabel === false);
     const unlabeled = node.data.showLabel === false;
-    const width = node.width ?? (node.data.shape === 'lifeline' ? 160 : node.data.shape === 'activation' ? 14 : node.data.shape === 'fragment' ? 620 : node.data.shape === 'lane' ? 900 : node.data.shape === 'container' ? 300 : iconOnly ? 58 : node.data.shape === 'text' ? 120 : unlabeled && node.data.shape === 'circle' ? 72 : unlabeled && node.data.shape === 'diamond' ? 96 : unlabeled && node.data.shape === 'cylinder' ? 120 : unlabeled ? 132 : node.data.shape === 'circle' ? 104 : node.data.shape === 'diamond' ? 138 : node.data.shape === 'cylinder' ? 164 : 168);
-    const height = node.height ?? (node.data.shape === 'lifeline' ? 560 : node.data.shape === 'activation' ? 120 : node.data.shape === 'fragment' ? 220 : node.data.shape === 'lane' ? 180 : node.data.shape === 'container' ? 180 : iconOnly ? 58 : node.data.shape === 'text' ? 34 : unlabeled && node.data.shape === 'circle' ? 72 : unlabeled && node.data.shape === 'diamond' ? 72 : unlabeled && node.data.shape === 'cylinder' ? 58 : unlabeled ? 56 : node.data.shape === 'circle' ? 104 : node.data.shape === 'diamond' ? 100 : node.data.shape === 'cylinder' ? 82 : 68);
+    const width = node.width ?? (node.data.shape === 'lifeline' ? 160 : node.data.shape === 'activation' ? 14 : node.data.shape === 'fragment' ? 620 : node.data.shape === 'lane' ? 900 : node.data.shape === 'container' ? 300 : node.data.shape === 'mindmap-root' ? 200 : node.data.shape === 'mindmap-topic' ? 150 : iconOnly ? 58 : node.data.shape === 'text' ? 120 : unlabeled && node.data.shape === 'circle' ? 72 : unlabeled && node.data.shape === 'diamond' ? 96 : unlabeled && node.data.shape === 'cylinder' ? 120 : unlabeled ? 132 : node.data.shape === 'circle' ? 104 : node.data.shape === 'diamond' ? 138 : node.data.shape === 'cylinder' ? 164 : 168);
+    const height = node.height ?? (node.data.shape === 'lifeline' ? 560 : node.data.shape === 'activation' ? 120 : node.data.shape === 'fragment' ? 220 : node.data.shape === 'lane' ? 180 : node.data.shape === 'container' ? 180 : node.data.shape === 'mindmap-root' ? 64 : node.data.shape === 'mindmap-topic' ? 46 : iconOnly ? 58 : node.data.shape === 'text' ? 34 : unlabeled && node.data.shape === 'circle' ? 72 : unlabeled && node.data.shape === 'diamond' ? 72 : unlabeled && node.data.shape === 'cylinder' ? 58 : unlabeled ? 56 : node.data.shape === 'circle' ? 104 : node.data.shape === 'diamond' ? 100 : node.data.shape === 'cylinder' ? 82 : 68);
     return { node, x: position.x, y: position.y, width, height };
   });
   const minX = Math.min(0, ...positions.map((item) => item.x)) - 40;
@@ -758,8 +758,8 @@ export function renderDiagramSvg(document: DiagramDocument): string {
     const markerId = document.kind === 'sequence'
       ? lineStyle === 'dashed' ? 'sequence-return-arrow' : 'sequence-call-arrow'
       : 'arrow';
-    const markerStart = edge.data?.startMarker === 'arrow' ? ` marker-start="url(#${markerId})"` : '';
-    const markerEnd = edge.data?.endMarker === 'none' ? '' : ` marker-end="url(#${markerId})"`;
+    const markerStart = document.kind !== 'mindmap' && edge.data?.startMarker === 'arrow' ? ` marker-start="url(#${markerId})"` : '';
+    const markerEnd = document.kind === 'mindmap' || edge.data?.endMarker === 'none' ? '' : ` marker-end="url(#${markerId})"`;
     const color = edge.data?.color ?? '#738099';
     const strokeWidth = edge.data?.strokeWidth ?? 2;
     const label = edge.label || edge.data?.relation;
@@ -796,6 +796,14 @@ export function renderDiagramSvg(document: DiagramDocument): string {
     }
     if (node.data.shape === 'container') {
       return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="${Math.max(1.5, strokeWidth)}"${borderDash}/><rect x="${x + 12}" y="${y + 9}" width="${Math.min(width - 24, Math.max(90, node.data.label.length * 14 + 18))}" height="25" rx="6" fill="#F9FBFE"/><text x="${x + 20}" y="${y + 27}" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="13" font-weight="650" fill="${textColor}">${escapeXml(node.data.label)}</text></g>`;
+    }
+    if (node.data.shape === 'mindmap-root') {
+      const rootFill = node.data.fillColor ?? node.data.color ?? '#5D6FCD';
+      const rootText = node.data.textColor ?? '#FFFFFF';
+      return `<g data-mindmap-node="root"><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="18" fill="${rootFill}" stroke="${stroke}" stroke-width="${Math.max(1.5, strokeWidth)}"${borderDash}/><text x="${x + width / 2}" y="${y + height / 2 + fontSize * 0.35}" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="${fontSize}" font-weight="${fontWeight}" fill="${rootText}">${escapeXml(node.data.label)}</text></g>`;
+    }
+    if (node.data.shape === 'mindmap-topic') {
+      return `<g data-mindmap-node="topic"><line x1="${x}" y1="${y + height - 2}" x2="${x + width}" y2="${y + height - 2}" stroke="${stroke}" stroke-width="${Math.max(2, strokeWidth)}"${borderDash}/><text x="${x + width / 2}" y="${y + height / 2 + fontSize * 0.2}" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="${fontSize}" font-weight="${fontWeight}" fill="${textColor}">${escapeXml(node.data.label)}</text></g>`;
     }
     if (node.data.shape === 'text') {
       return `<text x="${x + width / 2}" y="${y + height / 2 + fontSize * 0.35}" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="${fontSize}" font-weight="${fontWeight}" fill="#1D2430">${escapeXml(node.data.label)}</text>`;

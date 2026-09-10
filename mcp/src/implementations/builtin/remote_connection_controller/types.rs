@@ -36,21 +36,14 @@ pub struct RemoteConnectionControllerContext {
 
 #[async_trait]
 pub trait RemoteConnectionControllerStore: Send + Sync {
-    async fn list_connections(
-        &self,
-        context: RemoteConnectionControllerContext,
-    ) -> Result<Value, String>;
-
     async fn test_connection(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
     ) -> Result<Value, String>;
 
     async fn run_command(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         command: String,
         timeout_seconds: Option<u64>,
         allow_dangerous: bool,
@@ -60,7 +53,6 @@ pub trait RemoteConnectionControllerStore: Send + Sync {
     async fn list_directory(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         path: Option<String>,
         limit: Option<usize>,
     ) -> Result<Value, String>;
@@ -68,7 +60,6 @@ pub trait RemoteConnectionControllerStore: Send + Sync {
     async fn read_file(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         path: String,
         max_bytes: Option<usize>,
     ) -> Result<Value, String>;
@@ -76,7 +67,6 @@ pub trait RemoteConnectionControllerStore: Send + Sync {
     async fn download_file(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         path: String,
         encoding: String,
         max_bytes: Option<usize>,
@@ -85,7 +75,6 @@ pub trait RemoteConnectionControllerStore: Send + Sync {
     async fn upload_file(
         &self,
         context: RemoteConnectionControllerContext,
-        connection_id: Option<String>,
         path: String,
         content: String,
         encoding: String,

@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::core::chat_runtime::normalize_project_id;
-use crate::models::project::ProjectService;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ResolvedProjectRuntime {
@@ -17,70 +16,14 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
         .filter(|raw| !raw.is_empty())
 }
 
-fn normalize_path_text(raw: &str) -> String {
-    let mut out = raw.trim().replace('\\', "/");
-    while out.len() > 1 && out.ends_with('/') {
-        out.pop();
-    }
-    out
-}
-
 pub(crate) async fn resolve_project_runtime_context(
-    user_id: Option<&str>,
+    _user_id: Option<&str>,
     project_id: Option<String>,
     project_root: Option<String>,
 ) -> ResolvedProjectRuntime {
-    let mut resolved_project_id = normalize_project_id(project_id.as_deref());
-    let mut resolved_project_root = normalize_optional_string(project_root);
-
-    let Some(project_id) = resolved_project_id.clone() else {
-        return ResolvedProjectRuntime {
-            project_id: resolved_project_id,
-            project_root: resolved_project_root,
-            ..ResolvedProjectRuntime::default()
-        };
-    };
-    let project_id = project_id.trim().to_string();
-    resolved_project_id = Some(project_id.clone());
-
-    let project = match ProjectService::get_by_id(project_id.as_str()).await {
-        Ok(Some(project)) => project,
-        _ => {
-            resolved_project_id = None;
-            return ResolvedProjectRuntime {
-                project_id: resolved_project_id,
-                project_root: resolved_project_root,
-                ..ResolvedProjectRuntime::default()
-            };
-        }
-    };
-
-    if let (Some(uid), Some(project_owner)) = (user_id, project.user_id.as_deref()) {
-        if project_owner != uid {
-            resolved_project_id = None;
-            return ResolvedProjectRuntime {
-                project_id: resolved_project_id,
-                project_root: resolved_project_root,
-                ..ResolvedProjectRuntime::default()
-            };
-        }
-    }
-
-    let expected_root = normalize_path_text(project.root_path.as_str());
-    match resolved_project_root.clone() {
-        Some(current_root) => {
-            if normalize_path_text(current_root.as_str()) != expected_root {
-                resolved_project_root = Some(project.root_path);
-            }
-        }
-        None => {
-            resolved_project_root = Some(project.root_path);
-        }
-    }
-
     ResolvedProjectRuntime {
-        project_id: resolved_project_id,
-        project_name: normalize_optional_string(Some(project.name)),
-        project_root: resolved_project_root,
+        project_id: normalize_project_id(project_id.as_deref()),
+        project_name: None,
+        project_root: normalize_optional_string(project_root),
     }
 }

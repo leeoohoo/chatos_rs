@@ -263,7 +263,7 @@ function pageIntro(x, eyebrow, titleValue, subtitle) {
   body += rect(270, 628, 298, 104, C.panel, 8, C.line) + text(286, 654, '例如：先补测试，再修改接口；', 11, 400, C.tertiary) + text(286, 676, '把前端和后端拆开执行…', 11, 400, C.tertiary);
   body += text(270, 758, '发送后会生成新的任务依赖图，', 10, 450, C.secondary) + text(270, 776, '不会直接启动任务。', 10, 450, C.secondary) + button(438, 750, '发送并调整', true, 130);
 
-  // The graph is the primary execution-plan surface, matching RequirementExecutionGraphSurface.
+  // The graph is the primary Task Runner surface, matching MessageTaskGraphCanvas.
   body += rect(594, 184, 846, 716, C.panel);
   body += text(620, 220, '⌘  实时执行流程图', 14, 680) + text(620, 244, '任务节点和依赖关系会随规划结果实时更新。', 11, 450, C.secondary);
   body += pill(1174, 204, '节点 7', '#EEEFF2', C.secondary, 66) + pill(1246, 204, '依赖 6', '#EEEFF2', C.secondary, 66) + pill(1318, 204, '运行记录 0', '#EEEFF2', C.secondary, 92) + line(594, 264, 1440, 264);

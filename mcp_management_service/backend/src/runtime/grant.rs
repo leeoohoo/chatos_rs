@@ -35,7 +35,6 @@ pub struct RuntimeGrantClaims {
     pub default_model_config_id: Option<String>,
     #[serde(default)]
     pub default_remote_connection_id: Option<String>,
-    pub expected_project_task_ids: Vec<String>,
     pub policy_revision: String,
     pub route_revision: String,
     pub allowed_resource_ids: Vec<String>,
@@ -171,7 +170,6 @@ mod tests {
             contact_agent_id: None,
             default_model_config_id: None,
             default_remote_connection_id: None,
-            expected_project_task_ids: Vec::new(),
             policy_revision: "policy-1".to_string(),
             route_revision: "route-1".to_string(),
             allowed_resource_ids: vec!["mcp-1".to_string()],

@@ -1,21 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::Duration;
-
 use super::{
     ChatosProvider, ChatosProviderConfig, LocalConnectorProvider, PluginComponentProvider,
-    PluginLocalProvider, PluginRouteDispatcher, ProjectServiceProvider, ProviderDispatcher,
-    ProviderRuntimeConfig, TaskRunnerProvider, TaskRunnerProviderConfig,
+    PluginLocalProvider, PluginRouteDispatcher, ProviderDispatcher, ProviderRuntimeConfig,
+    TaskRunnerProvider, TaskRunnerProviderConfig,
 };
 use std::sync::Arc;
 
 impl ProviderDispatcher {
     pub(crate) fn new(
-        project_service_http: reqwest::Client,
-        project_service_base_url: impl Into<String>,
-        project_service_internal_secret: Option<String>,
-        project_service_tool_timeout: Duration,
         task_runner: TaskRunnerProviderConfig,
         chatos: ChatosProviderConfig,
         local_connector_http: reqwest::Client,
@@ -50,13 +44,6 @@ impl ProviderDispatcher {
                 runtime.response_limit_bytes,
             )?,
             plugins: PluginRouteDispatcher::new(plugin_local, plugin_components),
-            project_service: ProjectServiceProvider::new(
-                project_service_http,
-                project_service_base_url,
-                project_service_internal_secret,
-                project_service_tool_timeout,
-                runtime.response_limit_bytes,
-            )?,
             task_runner: TaskRunnerProvider::new(
                 task_runner.http,
                 task_runner.base_url,

@@ -74,9 +74,7 @@ export function RunDetailSummary({
       : null;
   const agentKey = typeof inputSnapshot?.agent_key === 'string' ? inputSnapshot.agent_key : null;
   const agentLabel =
-    agentKey === 'task_runner_plan_phase'
-      ? t('runs.detail.planningAgent')
-      : agentKey === 'task_runner_run_phase'
+    agentKey === 'task_runner_run_phase'
         ? t('runs.detail.executionAgent')
         : '-';
   const totalDuration = run.started_at

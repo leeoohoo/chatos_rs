@@ -3,8 +3,8 @@
 
 use super::*;
 use chatos_mcp_management_sdk::{
-    ProjectExecutionContext, RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget,
-    WorkspaceProviderKind,
+    ProjectExecutionContext, RuntimeRemoteConnectionRouteTarget, RuntimeWorkspaceRouteTarget,
+    WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
@@ -18,6 +18,7 @@ fn request() -> CreateRuntimeSessionRequest {
         owner_role: None,
         agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
         project_id: Some("project-1".to_string()),
+        project_context: None,
         run_id: Some("run-1".to_string()),
         execution_group_id: None,
         turn_id: None,
@@ -30,7 +31,6 @@ fn request() -> CreateRuntimeSessionRequest {
         default_model_config_id: None,
         default_remote_connection_id: None,
         tool_result_max_chars: Some(40_000),
-        expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
         selected_plugins: Vec::new(),
         plugin_command_invocations: Vec::new(),
@@ -219,7 +219,6 @@ fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
     validate_task_runner_provider_context(
         SystemAgentKey::TaskRunnerRunPhase,
         &request,
-        &[],
         std::slice::from_ref(&route),
     )
     .expect("bound Task Runner run should be accepted");
@@ -229,7 +228,6 @@ fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
     let error = validate_task_runner_provider_context(
         SystemAgentKey::TaskRunnerRunPhase,
         &missing_run,
-        &[],
         std::slice::from_ref(&route),
     )
     .expect_err("run binding is required");
@@ -238,7 +236,6 @@ fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
     assert!(validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &request,
-        &[],
         &[route],
     )
     .is_err());
@@ -257,7 +254,6 @@ async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope(
     validate_task_runner_provider_context(
         SystemAgentKey::TaskRunnerRunPhase,
         &request(),
-        &[],
         routes.as_slice(),
     )
     .expect("bound Task Runner Ask User route should be accepted");
@@ -267,7 +263,6 @@ async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope(
     let error = validate_task_runner_provider_context(
         SystemAgentKey::TaskRunnerRunPhase,
         &missing_task,
-        &[],
         routes.as_slice(),
     )
     .expect_err("task binding is required");
@@ -290,7 +285,6 @@ async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope(
     validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &chatos_request,
-        &[],
         routes.as_slice(),
     )
     .expect("bound ChatOS Ask User route should be accepted");
@@ -299,7 +293,6 @@ async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope(
     let error = validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &chatos_request,
-        &[],
         routes.as_slice(),
     )
     .expect_err("ChatOS turn binding is required");
@@ -352,7 +345,6 @@ fn task_runner_service_session_requires_chatos_source_scope() {
     assert!(validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &request,
-        &[],
         std::slice::from_ref(&route),
     )
     .is_err());
@@ -362,19 +354,9 @@ fn task_runner_service_session_requires_chatos_source_scope() {
     validate_task_runner_provider_context(
         SystemAgentKey::ChatosConversationAgent,
         &request,
-        &[],
         std::slice::from_ref(&route),
     )
     .expect("complete Chatos source binding should be accepted");
-
-    let error = validate_task_runner_provider_context(
-        SystemAgentKey::ProjectRequirementExecutionPlannerAgent,
-        &request,
-        &[],
-        &[route],
-    )
-    .expect_err("project execution scope is required");
-    assert!(format!("{error:?}").contains("expected_project_task_ids"));
 }
 
 #[test]
@@ -398,7 +380,7 @@ fn capability_response_must_match_the_requested_identity() {
     .unwrap();
     assert!(validate_capability_identity(
         &capabilities,
-        SystemAgentKey::TaskRunnerPlanPhase.as_str(),
+        SystemAgentKey::ChatosConversationAgent.as_str(),
         "user-1",
     )
     .is_err());
@@ -428,6 +410,119 @@ fn required_route_without_registered_provider_adapter_is_blocked() {
         required_routes_without_provider_adapter(&required_resource_ids, &routes, |_| false),
         vec!["required-mcp"]
     );
+}
+
+#[test]
+fn required_remote_connection_route_uses_the_final_bound_route_state() {
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::RemoteConnectionController);
+    let required_resource_ids = HashSet::from([descriptor.resource_id.to_string()]);
+    let mut route = system_route(SystemMcpKey::RemoteConnectionController);
+    route.provider_kind = McpProviderKind::Unavailable;
+    route.provider_ref = None;
+    route.reason =
+        "remote connection MCP requires an explicit Local Connector connection target".to_string();
+
+    assert_eq!(
+        required_unavailable_routes(&required_resource_ids, std::slice::from_ref(&route)),
+        vec![descriptor.resource_id.to_string()]
+    );
+
+    bind_remote_connection_route(
+        std::slice::from_mut(&mut route),
+        Some(&RuntimeRemoteConnectionRouteTarget {
+            remote_connection_id: "connection-1".to_string(),
+            device_id: "device-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+        }),
+    );
+
+    assert!(required_unavailable_routes(&required_resource_ids, &[route.clone()]).is_empty());
+    assert_eq!(route.provider_kind, McpProviderKind::LocalConnector);
+    assert!(route.allow_writes);
+    assert_eq!(
+        route.retry_class,
+        chatos_mcp_management_sdk::McpRetryClass::NoRetry
+    );
+    assert_eq!(
+        route.provider_ref.as_deref(),
+        Some("device:device-1/workspace:workspace-1")
+    );
+}
+
+#[test]
+fn bound_remote_connection_materializes_its_tool_catalog() {
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::RemoteConnectionController);
+    let mut resolved = resolved_mcp(descriptor.resource_id, true);
+    resolved.resource.runtime.kind = "system".to_string();
+    resolved.resource.runtime.system_key = Some(descriptor.key.as_str().to_string());
+    resolved.resource.security.allow_writes = Some(true);
+    let capabilities = ResolvedAgentCapabilities {
+        agent_key: SystemAgentKey::TaskRunnerRunPhase.as_str().to_string(),
+        owner_user_id: "user-1".to_string(),
+        policy_revision: "policy-1".to_string(),
+        generated_at: "now".to_string(),
+        agent_enabled: true,
+        mcps: vec![resolved],
+        skills: Vec::new(),
+        plugins: Vec::new(),
+        local_connector_requirements: Vec::new(),
+    };
+    let materialized = materialize_mcp_candidates(&capabilities).expect("materialize candidate");
+    let mut route_response =
+        crate::routing::RoutingEngine.resolve(chatos_mcp_management_sdk::ResolveMcpRoutesRequest {
+            context: user_conversation_execution_context("user-1"),
+            resources: materialized.resources,
+        });
+    assert_eq!(
+        route_response.unavailable_required_mcps,
+        vec![descriptor.resource_id.to_string()]
+    );
+
+    bind_remote_connection_route(
+        route_response.routes.as_mut_slice(),
+        Some(&RuntimeRemoteConnectionRouteTarget {
+            remote_connection_id: "connection-1".to_string(),
+            device_id: "device-1".to_string(),
+            workspace_id: "workspace-1".to_string(),
+        }),
+    );
+    let tools = materialize_runtime_tools_with_plugin_components(
+        &capabilities,
+        route_response.routes.as_slice(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+    )
+    .expect("materialize remote connection tools");
+
+    assert!(tools.missing_required_tool_schemas.is_empty());
+    assert_eq!(tools.tools.len(), 6);
+    assert!(!tools
+        .tools
+        .iter()
+        .any(|tool| tool.original_name == "list_connections"));
+    assert!(tools
+        .tools
+        .iter()
+        .any(|tool| tool.original_name == "run_command"));
+    for tool in &tools.tools {
+        assert!(tool
+            .definition
+            .pointer("/inputSchema/properties/connection_id")
+            .is_none());
+        assert!(!tool
+            .definition
+            .pointer("/inputSchema/required")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|required| required.iter().any(|field| field == "connection_id")));
+        assert!(!tool
+            .definition
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .contains("connection_id"));
+    }
 }
 
 #[test]

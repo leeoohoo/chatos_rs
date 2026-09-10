@@ -8,14 +8,11 @@ use crate::config::AppConfig;
 pub(super) const TASK_RUNNER_TOKEN_AUDIENCE: &str = "task-runner";
 pub(super) const CHATOS_MESSAGES_READ_SCOPE: &str = "chatos.messages.read";
 pub(super) const CHATOS_EXECUTION_START_SCOPE: &str = "chatos.execution.start";
-pub(super) const EXECUTION_OPTIONS_READ_SCOPE: &str = "execution-options.read";
 pub(super) const SYSTEM_STATS_READ_SCOPE: &str = "system.stats.read";
 pub(super) const CHATOS_CALLER: &str = "chatos-backend";
-pub(super) const PROJECT_SERVICE_CALLER: &str = "project-service";
 pub(super) const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 pub(super) const MCP_TOOLS_LIST_SCOPE: &str = "mcp.tools.list";
 pub(super) const MCP_TOOLS_CALL_SCOPE: &str = "mcp.tools.call";
-pub(super) const PROJECTS_SYNC_SCOPE: &str = "projects.sync";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TaskRunnerInternalRequestIdentity {
@@ -152,7 +149,6 @@ pub(super) fn require_task_runner_internal_request(
 fn caller_secret<'a>(config: &'a AppConfig, caller: &str) -> Option<&'a str> {
     let value = match caller {
         CHATOS_CALLER => config.chatos_internal_api_secret.as_deref(),
-        PROJECT_SERVICE_CALLER => config.internal_api_secret.as_deref(),
         MCP_MANAGEMENT_CALLER => config.mcp_management_internal_api_secret.as_deref(),
         _ => None,
     };

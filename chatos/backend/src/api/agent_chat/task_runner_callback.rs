@@ -12,18 +12,17 @@ use crate::api::internal_audit::{
     ChatosInternalResourceAudit,
 };
 use crate::config::Config;
-use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::modules::conversation_runtime::session_scope::resolve_session_project_scope;
 use crate::services::ask_user_prompt_manager::{
     upsert_external_ask_user_prompt_record, AskUserPromptRecord, AskUserPromptStatus,
 };
+use crate::services::chatos_sessions;
 use crate::services::pet_activity_inbox::{
     record_task_runner_activity, TaskRunnerPetActivityInput,
 };
 use crate::services::realtime::publish_sessions_updated;
-use crate::services::{chatos_sessions, project_management_api_client};
 
 mod messages;
 
@@ -240,23 +239,6 @@ async fn task_runner_callback_authorized(
     } else {
         Some(user_message.clone())
     };
-
-    if callback_targets_current_run {
-        if let Some(saved_user_message) = saved_user_message.as_ref() {
-            if let Err(err) =
-                sync_project_requirement_execution_status(saved_user_message, &payload).await
-            {
-                warn!(
-                    session_id = session.id.as_str(),
-                    user_message_id = user_message_id.as_str(),
-                    task_id = payload.task_id.as_str(),
-                    event = payload.event.as_str(),
-                    error = err.as_str(),
-                    "failed to sync project requirement execution status"
-                );
-            }
-        }
-    }
 
     let (saved_assistant_message, assistant_message_changed) =
         if should_publish_task_runner_status_message(&payload) {
@@ -600,82 +582,6 @@ fn verify_task_runner_callback_token(
     })
 }
 
-async fn sync_project_requirement_execution_status(
-    message: &Message,
-    payload: &TaskRunnerCallbackRequest,
-) -> Result<(), String> {
-    if !is_project_requirement_execution_message(message)
-        || normalize_callback_value(payload.parent_task_id.as_deref()).is_some()
-    {
-        return Ok(());
-    }
-    if should_ignore_stopped_task_cancel_callback(message.metadata.as_ref(), payload) {
-        return Ok(());
-    }
-    let cfg = Config::try_get().map_err(|err| err.to_string())?;
-    let Some(sync_secret) = cfg
-        .project_service_sync_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Err("project service sync secret is not configured".to_string());
-    };
-    let task_runner_status = payload
-        .task_status
-        .clone()
-        .or_else(|| Some(payload.status.clone()));
-    project_management_api_client::sync_task_runner_task_status(
-        sync_secret,
-        payload.task_id.as_str(),
-        &project_management_api_client::SyncTaskRunnerWorkItemStatusRequest {
-            task_runner_task_id: payload.task_id.clone(),
-            task_runner_run_id: payload.run_id.clone(),
-            task_runner_status,
-            execution_group_id: payload.source_user_message_id.clone(),
-            last_callback_event: Some(payload.event.clone()),
-            last_callback_at: payload.callback_at.clone(),
-            last_error_message: payload.error_message.clone(),
-            source_session_id: payload.source_session_id.clone(),
-            source_user_message_id: payload.source_user_message_id.clone(),
-            supersedes_task_runner_task_ids: Vec::new(),
-        },
-    )
-    .await
-    .map(|_| ())
-}
-
-fn is_project_requirement_execution_message(message: &Message) -> bool {
-    message
-        .metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("project_requirement_execution"))
-        .is_some_and(Value::is_object)
-}
-
-fn should_ignore_stopped_task_cancel_callback(
-    metadata: Option<&Value>,
-    payload: &TaskRunnerCallbackRequest,
-) -> bool {
-    if payload.event != "task.cancelled" {
-        return false;
-    }
-    let task_id = payload.task_id.trim();
-    if task_id.is_empty() {
-        return false;
-    }
-    metadata
-        .and_then(|value| value.get("task_runner_async"))
-        .and_then(|value| value.get("stopped_task_ids"))
-        .and_then(Value::as_array)
-        .is_some_and(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|value| value.trim() == task_id)
-        })
-}
-
 fn normalize_callback_value(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -750,29 +656,6 @@ mod tests {
             "owner-1",
             Some("project-2")
         ));
-    }
-
-    #[test]
-    fn project_requirement_execution_sync_only_applies_to_execution_messages() {
-        let mut execution_message = Message::new(
-            "session-1".to_string(),
-            "user".to_string(),
-            "execute".to_string(),
-        );
-        execution_message.metadata = Some(json!({
-            "project_requirement_execution": {
-                "project_id": "project-1",
-                "requirement_id": "requirement-1"
-            }
-        }));
-        let ordinary_message = Message::new(
-            "session-1".to_string(),
-            "user".to_string(),
-            "ordinary task".to_string(),
-        );
-
-        assert!(is_project_requirement_execution_message(&execution_message));
-        assert!(!is_project_requirement_execution_message(&ordinary_message));
     }
 
     #[test]

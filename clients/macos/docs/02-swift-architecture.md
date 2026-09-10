@@ -154,7 +154,7 @@ protocol SessionService: Sendable {
 }
 ```
 
-相同方式拆分 `ProjectService`、`TaskService`、`MemoryService`、`AgentService`、`ModelService` 和 `LocalConnectorService`。
+相同方式拆分 `ProjectRegistry`、`TaskService`、`MemoryService`、`AgentService`、`ModelService` 和 `LocalConnectorService`。
 
 ## 富内容策略
 

@@ -1,5 +1,6 @@
 import type { DiagramDocument, DiagramNode } from './schema.js';
 import { parsePlantUmlStructural } from './plantuml.js';
+import { analyzeMindMap, isMindMapNode } from './mindmap.js';
 
 export type DiagramQualityProfile = 'balanced' | 'architecture-overview' | 'architecture-detail';
 
@@ -34,6 +35,9 @@ export interface DiagramQualityReport {
     width: number;
     height: number;
     aspectRatio: number;
+    mindmapRootCount?: number;
+    mindmapMaxDepth?: number;
+    mindmapMaxChildren?: number;
   };
   errors: DiagramQualityIssue[];
   warnings: DiagramQualityIssue[];
@@ -100,6 +104,38 @@ export function inspectDiagramQuality(
   const declaredContainerCount = sourceContainerCount(document);
   const errors: DiagramQualityIssue[] = [];
   const warnings: DiagramQualityIssue[] = [];
+  const mindmap = document.kind === 'mindmap' ? analyzeMindMap(document) : undefined;
+  if (mindmap) {
+    const explicitRoots = mindmap.roots.filter((node) => node.data.shape === 'mindmap-root');
+    if (mindmap.roots.length === 0 || explicitRoots.length === 0) {
+      errors.push({ code: 'mindmap_missing_root', message: 'Mind map must contain exactly one central topic.', blocking: true });
+    } else if (mindmap.roots.length !== 1 || explicitRoots.length !== 1) {
+      errors.push({ code: 'mindmap_multiple_roots', message: `Mind map contains ${mindmap.roots.length} root candidates and ${explicitRoots.length} central topics; exactly one is required.`, blocking: true, nodeIds: mindmap.roots.map((node) => node.id) });
+    }
+    if (mindmap.multipleParentNodeIds.length > 0) {
+      errors.push({ code: 'mindmap_multiple_parents', message: 'Every non-root mind-map topic must have exactly one parent.', blocking: true, nodeIds: mindmap.multipleParentNodeIds });
+    }
+    if (mindmap.cycleNodeIds.length > 0) {
+      errors.push({ code: 'mindmap_cycle', message: 'Mind-map branches must form an acyclic hierarchy.', blocking: true, nodeIds: mindmap.cycleNodeIds });
+    }
+    if (mindmap.orphanNodeIds.length > 0) {
+      errors.push({ code: 'mindmap_invalid_nodes', message: 'Mind maps may contain central topics, branch topics, and standalone text notes only.', blocking: true, nodeIds: mindmap.orphanNodeIds });
+    }
+    const semanticNodes = document.nodes.filter(isMindMapNode);
+    if (document.edges.length !== Math.max(0, semanticNodes.length - 1)) {
+      errors.push({ code: 'mindmap_not_a_tree', message: `A ${semanticNodes.length}-topic mind map requires exactly ${Math.max(0, semanticNodes.length - 1)} parent-child branches.`, blocking: true });
+    }
+    if (mindmap.maxDepth > 4) {
+      warnings.push({ code: 'mindmap_too_deep', message: `Mind-map depth ${mindmap.maxDepth} exceeds the recommended four levels; split detailed branches into another map.`, blocking: true });
+    }
+    if (mindmap.maxChildren > 8) {
+      warnings.push({ code: 'mindmap_branch_overloaded', message: `One topic has ${mindmap.maxChildren} direct children; regroup or split the branch.`, blocking: true });
+    }
+    const longLabels = semanticNodes.filter((node) => [...node.data.label].length > (node.data.shape === 'mindmap-root' ? 32 : 24)).map((node) => node.id);
+    if (longLabels.length > 0) {
+      warnings.push({ code: 'mindmap_label_too_long', message: 'Mind-map topics should be short phrases instead of paragraph content.', blocking: true, nodeIds: longLabels });
+    }
+  }
   if (declaredContainerCount !== undefined && declaredContainerCount !== containers.length) {
     errors.push({
       code: 'container_structure_lost',
@@ -140,7 +176,7 @@ export function inspectDiagramQuality(
       blocking: true
     });
   }
-  if (document.kind !== 'architecture' && components.length > 24) {
+  if (document.kind !== 'architecture' && document.kind !== 'mindmap' && components.length > 24) {
     warnings.push({
       code: 'diagram_too_many_nodes',
       message: `${components.length} nodes make this diagram difficult to scan; split independent outcomes or scenarios.`,
@@ -204,7 +240,7 @@ export function inspectDiagramQuality(
   const aspectRatio = bounds.height > 0 && bounds.width > 0
     ? Math.max(bounds.width / bounds.height, bounds.height / bounds.width)
     : 1;
-  if (components.length >= 6 && aspectRatio > 5.5) {
+  if (document.kind !== 'mindmap' && components.length >= 6 && aspectRatio > 5.5) {
     warnings.push({
       code: 'extreme_aspect_ratio',
       message: `Diagram aspect ratio ${aspectRatio.toFixed(1)}:1 will make labels too small at fit-to-view.`,
@@ -242,6 +278,11 @@ export function inspectDiagramQuality(
       width: Math.round(bounds.width),
       height: Math.round(bounds.height),
       aspectRatio: Number(aspectRatio.toFixed(2))
+      ,...(mindmap ? {
+        mindmapRootCount: mindmap.roots.length,
+        mindmapMaxDepth: mindmap.maxDepth,
+        mindmapMaxChildren: mindmap.maxChildren
+      } : {})
     },
     errors,
     warnings
@@ -278,6 +319,8 @@ function defaultNodeSize(node: DiagramNode): { width: number; height: number } {
   if (node.data.shape === 'lifeline') return { width: 160, height: 560 };
   if (node.data.shape === 'activation') return { width: 14, height: 120 };
   if (node.data.shape === 'fragment') return { width: 620, height: 220 };
+  if (node.data.shape === 'mindmap-root') return { width: 200, height: 64 };
+  if (node.data.shape === 'mindmap-topic') return { width: 150, height: 46 };
   if (node.data.shape === 'diamond') return { width: 150, height: 110 };
   if (node.data.shape === 'circle') return { width: 116, height: 116 };
   return { width: 190, height: 82 };

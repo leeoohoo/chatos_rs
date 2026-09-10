@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "guideId": "diagram-mindmap",
+  "guideVersion": "1.0.0",
+  "kind": "mindmap",
+  "defaultMode": "knowledge-map",
+  "modes": {
+    "brainstorm": { "qualityProfile": "balanced", "maxPrimaryItems": 30, "maxEdges": 29, "minStructureItems": 2, "maxStructureItems": 8 },
+    "knowledge-map": { "qualityProfile": "balanced", "maxPrimaryItems": 36, "maxEdges": 35, "minStructureItems": 2, "maxStructureItems": 8 },
+    "project-breakdown": { "qualityProfile": "balanced", "maxPrimaryItems": 36, "maxEdges": 35, "minStructureItems": 2, "maxStructureItems": 8 }
+  },
+  "checklist": [
+    "single_central_topic",
+    "branches_are_mutually_distinct",
+    "parent_child_relationships_are_hierarchical",
+    "labels_are_concise",
+    "depth_is_bounded",
+    "overloaded_branches_are_split",
+    "independent_subjects_are_separate_maps",
+    "evidence_is_mapped"
+  ]
+}

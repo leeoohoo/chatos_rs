@@ -140,9 +140,6 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
     private bool _reasoningEnabled;
 
     [ObservableProperty]
-    private bool _planModeEnabled;
-
-    [ObservableProperty]
     private bool _isApplyingSettings;
 
     public async Task OpenAsync(
@@ -482,23 +479,6 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         });
     }
 
-    public Task SetPlanModeAsync(bool enabled)
-    {
-        if (ConversationId is not { } conversationId ||
-            IsApplyingSettings ||
-            enabled == PlanModeEnabled)
-        {
-            return Task.CompletedTask;
-        }
-
-        return ApplySettingsAsync(async token =>
-        {
-            var settings = await _runtimeService.UpdatePlanModeAsync(conversationId, enabled, token)
-                .ConfigureAwait(false);
-            await ApplyRuntimeSettingsAsync(settings, token).ConfigureAwait(false);
-        });
-    }
-
     public void SetViewportPinnedToBottom(bool pinned)
     {
         if (ConversationId is not { } conversationId)
@@ -563,8 +543,7 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
                     turnId,
                     text,
                     attachments,
-                    ReasoningEnabled,
-                    PlanModeEnabled),
+                    ReasoningEnabled),
                 cancellationToken).ConfigureAwait(false);
         }
         catch
@@ -761,7 +740,6 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
     private void ApplyRuntimeSettings(ConversationRuntimeSettings settings)
     {
         ReasoningEnabled = settings.ReasoningEnabled;
-        PlanModeEnabled = settings.PlanModeEnabled;
         SelectedModel = Models.FirstOrDefault(model =>
             string.Equals(model.Id, settings.SelectedModelId, StringComparison.Ordinal));
     }
@@ -786,7 +764,6 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         Models.Clear();
         SelectedModel = null;
         ReasoningEnabled = false;
-        PlanModeEnabled = false;
         AttachmentError = null;
     }
 

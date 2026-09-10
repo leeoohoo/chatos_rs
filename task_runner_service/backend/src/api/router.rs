@@ -14,20 +14,11 @@ use super::core::{
     system_config_handler, task_runner_internal_prompt_preview_handler,
     update_system_config_handler, update_user,
 };
-use super::internal::{
-    get_system_stats, get_user_execution_options, prometheus_metrics, replay_run_post_process,
-};
-use super::internal_auth::{
-    require_task_runner_internal_request, CHATOS_CALLER, PROJECTS_SYNC_SCOPE,
-};
+use super::internal::{get_system_stats, prometheus_metrics, replay_run_post_process};
 use super::mcp::{
     get_mcp_provider_descriptor, get_mcp_server_info, list_mcp_catalog,
     list_task_capability_catalog, mcp_entrypoint, mcp_management_ask_user_prompt,
     mcp_management_ask_user_start, mcp_management_entrypoint, preview_mcp_prompt,
-};
-use super::projects::{
-    create_project, delete_project, get_project, import_chatos_project, list_project_tasks,
-    list_projects, sync_get_project, sync_list_projects, update_project,
 };
 use super::prompts::{
     cancel_prompt, get_prompt, list_prompt_task_counts, list_prompts, list_prompts_page,
@@ -64,14 +55,6 @@ pub fn build_public_router(state: AppState) -> Router {
         )
         .route("/api/users", get(list_users).post(create_user))
         .route("/api/users/{id}", patch(update_user).delete(delete_user))
-        .route("/api/projects", get(list_projects).post(create_project))
-        .route(
-            "/api/projects/{id}",
-            get(get_project)
-                .patch(update_project)
-                .delete(delete_project),
-        )
-        .route("/api/projects/{id}/tasks", get(list_project_tasks))
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route("/api/tasks/summaries", get(list_task_summaries))
         .route("/api/tasks/page", get(list_tasks_page))
@@ -217,15 +200,6 @@ pub fn build_public_router(state: AppState) -> Router {
 
 pub fn build_internal_router(state: AppState) -> Router {
     Router::new()
-        .route(
-            "/api/chatos-sync/projects",
-            get(sync_list_projects).post(import_chatos_project),
-        )
-        .route("/api/chatos-sync/projects/{id}", get(sync_get_project))
-        .route(
-            "/internal/users/{owner_user_id}/execution-options",
-            get(get_user_execution_options),
-        )
         .route("/internal/system/stats", get(get_system_stats))
         .route(
             "/internal/mcp-management/mcp/{system_key}",
@@ -274,21 +248,4 @@ fn http_server_span(
         http.route = route,
         surface
     )
-}
-
-pub(super) fn require_chatos_project_sync(
-    state: &AppState,
-    headers: &axum::http::HeaderMap,
-) -> Result<(), ApiError> {
-    require_task_runner_internal_request(
-        &state.config,
-        headers,
-        &[CHATOS_CALLER],
-        PROJECTS_SYNC_SCOPE,
-    )
-    .map(|_| ())
-    .map_err(|error| ApiError {
-        status: error.status,
-        message: error.message,
-    })
 }

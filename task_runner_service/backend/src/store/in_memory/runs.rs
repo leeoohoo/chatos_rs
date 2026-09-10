@@ -3,7 +3,6 @@
 
 use super::*;
 use crate::models::WorkspaceIntegrationStatus;
-
 #[path = "runs/events.rs"]
 mod events;
 #[cfg(test)]
@@ -199,54 +198,6 @@ impl InMemoryStore {
             .cloned()
     }
 
-    pub(in crate::store) fn get_prior_pending_integration_run(
-        &self,
-        execution_group_id: &str,
-        integration_ready_at: &str,
-        created_at: &str,
-        run_id: &str,
-    ) -> Option<TaskRunRecord> {
-        let current_key = (integration_ready_at, created_at, run_id);
-        self.inner
-            .read()
-            .runs
-            .values()
-            .filter(|candidate| candidate.id != run_id)
-            .filter(|candidate| {
-                candidate
-                    .workspace_execution
-                    .as_ref()
-                    .is_some_and(|execution| {
-                        execution.execution_group_id.as_deref() == Some(execution_group_id)
-                            && matches!(
-                                execution.integration_status,
-                                WorkspaceIntegrationStatus::Pending
-                                    | WorkspaceIntegrationStatus::Integrating
-                                    | WorkspaceIntegrationStatus::Failed
-                                    | WorkspaceIntegrationStatus::Conflict
-                            )
-                            && (
-                                execution.integration_ready_at.as_deref().unwrap_or(""),
-                                candidate.created_at.as_str(),
-                                candidate.id.as_str(),
-                            ) < current_key
-                    })
-            })
-            .min_by(|left, right| {
-                let left_execution = left.workspace_execution.as_ref();
-                let right_execution = right.workspace_execution.as_ref();
-                left_execution
-                    .and_then(|execution| execution.integration_ready_at.as_deref())
-                    .cmp(
-                        &right_execution
-                            .and_then(|execution| execution.integration_ready_at.as_deref()),
-                    )
-                    .then_with(|| left.created_at.cmp(&right.created_at))
-                    .then_with(|| left.id.cmp(&right.id))
-            })
-            .cloned()
-    }
-
     pub(in crate::store) fn subscribe_run_terminal(
         &self,
         subscription: RunTerminalSubscriptionRecord,
@@ -317,26 +268,6 @@ impl InMemoryStore {
         };
         data.runs.insert(persisted.id.clone(), persisted.clone());
         Ok(persisted)
-    }
-
-    pub(in crate::store) fn set_queued_runs_dispatch_paused(
-        &self,
-        task_ids: &[String],
-        paused: bool,
-    ) -> usize {
-        let task_ids = task_ids.iter().map(String::as_str).collect::<BTreeSet<_>>();
-        let mut data = self.inner.write();
-        let mut updated = 0;
-        for run in data.runs.values_mut() {
-            if run.status != TaskRunStatus::Queued || !task_ids.contains(run.task_id.as_str()) {
-                continue;
-            }
-            run.dispatch_paused = paused;
-            run.dispatch_event_pending = !paused;
-            run.updated_at = now_rfc3339();
-            updated += 1;
-        }
-        updated
     }
 
     pub(in crate::store) fn list_pending_run_post_processes(

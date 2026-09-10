@@ -5,15 +5,32 @@ namespace ChatOS.Api.Tests;
 public sealed class WorkspaceServiceTests
 {
     [Fact]
-    public async Task FetchWorkspaceMapsParallelResourceResponsesWithoutSentinelProjectId()
+    public async Task RelationsUseOnlyContactsAndConversations()
+    {
+        var store = new MemoryTokenStore();
+        store.Seed("valid");
+        var requests = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var client = ApiTestClient.Create(store, request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            requests.Add(path);
+            if (path is not ("/api/chatos/contacts" or "/api/chatos/conversations"))
+                throw new InvalidOperationException("Unexpected project request: " + path);
+            return StubHttpMessageHandler.Json("[]");
+        });
+        var result = await new WorkspaceService(client).FetchWorkspaceRelationsAsync();
+        Assert.Empty(result.Contacts);
+        Assert.Empty(result.Conversations);
+        Assert.Equal(2, requests.Count);
+    }
+
+    [Fact]
+    public async Task FetchRelationsMapsParallelResourceResponsesWithoutSentinelProjectId()
     {
         var store = new MemoryTokenStore();
         store.Seed("valid");
         var client = ApiTestClient.Create(store, request => request.RequestUri?.AbsolutePath switch
         {
-            "/api/chatos/projects" => StubHttpMessageHandler.Json("""
-                [{"id":"p1","name":"ChatOS","root_path":"C:\\\\src\\\\chatos","latest_session_id":"c1"}]
-                """),
             "/api/chatos/contacts" => StubHttpMessageHandler.Json("""
                 [{"id":"contact-1","agent_id":"jiguli","agent_name_snapshot":"叽咕狸","status":"active"}]
                 """),
@@ -38,9 +55,8 @@ public sealed class WorkspaceServiceTests
         });
         var service = new WorkspaceService(client);
 
-        var workspace = await service.FetchWorkspaceAsync();
+        var workspace = await service.FetchWorkspaceRelationsAsync();
 
-        Assert.Single(workspace.Projects);
         Assert.Equal("叽咕狸", Assert.Single(workspace.Contacts).Name);
         Assert.Equal("p1", workspace.Conversations[0].ProjectId);
         Assert.Null(workspace.Conversations[1].ProjectId);

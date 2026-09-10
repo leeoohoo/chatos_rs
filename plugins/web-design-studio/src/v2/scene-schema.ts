@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { assertSceneGridTracks } from './grid-tracks.js';
 
 export type SceneNodeId = string;
@@ -127,6 +126,12 @@ export interface SceneAiPolicy {
   intent?: string;
 }
 
+export interface ScenePrototypeLink {
+  trigger: 'click';
+  action: 'navigate' | 'overlay';
+  targetPageId: string;
+}
+
 export interface SceneNodeBase {
   id: SceneNodeId;
   type: SceneNodeType;
@@ -141,6 +146,7 @@ export interface SceneNodeBase {
   variableBindings: Record<string, string>;
   annotations: SceneAnnotation[];
   aiPolicy: SceneAiPolicy;
+  prototypeLink?: ScenePrototypeLink;
   createdBy: SceneCreator;
   updatedBy: SceneCreator;
   createdAt: string;
@@ -187,6 +193,7 @@ export interface SceneLibraryInstanceNode extends SceneNodeBase {
   library: string;
   component: string;
   variant?: string;
+  content?: string;
   properties: Record<string, unknown>;
   slots: Record<string, SceneNode[]>;
 }
@@ -582,10 +589,27 @@ function visitNode(node: SceneNode, parentId: string, pageId: string, path: numb
   assertAppearance(node.appearance, `node.${node.id}.appearance`);
   assertTimestamp(node.createdAt, `node.${node.id}.createdAt`);
   assertTimestamp(node.updatedAt, `node.${node.id}.updatedAt`);
+  if (node.prototypeLink !== undefined) {
+    if (!node.prototypeLink || typeof node.prototypeLink !== 'object') throw new Error(`Node ${node.id} prototype link is invalid.`);
+    if (node.prototypeLink.trigger !== 'click') throw new Error(`Node ${node.id} prototype trigger is invalid.`);
+    if (!['navigate', 'overlay'].includes(node.prototypeLink.action)) throw new Error(`Node ${node.id} prototype action is invalid.`);
+    assertIdentifier(node.prototypeLink.targetPageId, `node.${node.id}.prototypeLink.targetPageId`);
+  }
   if ((node.type === 'group' || node.type === 'section') && node.layout.mode !== 'free') {
     throw new Error(`${node.type} ${node.id} cannot own auto or grid layout.`);
   }
   if (node.type === 'text' && typeof node.content !== 'string') throw new Error(`Text ${node.id} content is invalid.`);
+  if (node.type === 'library-instance' && node.content !== undefined && typeof node.content !== 'string') {
+    throw new Error(`Library instance ${node.id} content is invalid.`);
+  }
+  if (node.type === 'library-instance') {
+    if (typeof node.library !== 'string' || !node.library.trim()) throw new Error(`Library instance ${node.id} library is invalid.`);
+    if (typeof node.component !== 'string' || !node.component.trim()) throw new Error(`Library instance ${node.id} component is invalid.`);
+    if (node.variant !== undefined && typeof node.variant !== 'string') throw new Error(`Library instance ${node.id} variant is invalid.`);
+    if (!node.properties || typeof node.properties !== 'object' || Array.isArray(node.properties)) {
+      throw new Error(`Library instance ${node.id} properties are invalid.`);
+    }
+  }
   if (node.type === 'media') assertIdentifier(node.assetId, `media.${node.id}.assetId`);
   if (node.type === 'media') {
     if (typeof node.preserveAspectRatio !== 'boolean') throw new Error(`Media ${node.id} preserveAspectRatio is invalid.`);
@@ -599,7 +623,9 @@ function visitNode(node: SceneNode, parentId: string, pageId: string, path: numb
   if (isSceneContainer(node)) {
     for (const [childIndex, child] of node.children.entries()) {
       if (node.type === 'component-set' && child.type !== 'component-main') throw new Error(`Component set ${node.id} can contain only main components.`);
-      if (child.type === 'section') throw new Error(`Section ${child.id} must be a page-level node.`);
+      if (child.type === 'section' && !(node.type === 'frame' && node.role === 'page-root')) {
+        throw new Error(`Section ${child.id} must be a page-level node or a direct child of the page root frame.`);
+      }
       visitNode(child, node.id, pageId, [...path, childIndex], ids, objects, index);
     }
   }
@@ -698,6 +724,12 @@ export function assertSceneDocument(value: unknown): asserts value is SceneDocum
   }
   for (const variableId of variables.keys()) visitAlias(variableId, []);
   const sceneIndex = indexSceneDocumentUnchecked(document);
+  const pageIds = new Set(document.pages.map((page) => page.id));
+  for (const entry of sceneIndex.values()) {
+    if (entry.node.prototypeLink && !pageIds.has(entry.node.prototypeLink.targetPageId)) {
+      throw new Error(`Node ${entry.node.id} prototype link references unknown page ${entry.node.prototypeLink.targetPageId}.`);
+    }
+  }
   for (const entry of sceneIndex.values()) assertVariableBindings(entry.node, variables);
   const componentMains = new Map<string, SceneComponentMainNode>();
   for (const entry of sceneIndex.values()) if (entry.node.type === 'component-main') componentMains.set(entry.node.id, entry.node);
@@ -800,10 +832,16 @@ const defaultAppearance = (): SceneAppearance => ({
   radius: { topLeft: 0, topRight: 0, bottomRight: 0, bottomLeft: 0 }
 });
 
+function randomSceneIdPart(): string {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') return cryptoApi.randomUUID().slice(0, 8);
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`.slice(0, 8);
+}
+
 export function createSceneNodeBase(type: SceneNodeType, name: string, frame: SceneRect, creator: SceneCreator = 'human'): SceneNodeBase {
   const now = new Date().toISOString();
   return {
-    id: `${type}-${randomUUID().slice(0, 8)}`,
+    id: `${type}-${randomSceneIdPart()}`,
     type,
     name,
     visible: true,
@@ -826,10 +864,10 @@ export function createBlankSceneDocument(name = '未命名网站'): SceneDocumen
   const now = new Date().toISOString();
   return {
     schemaVersion: 2,
-    documentId: `scene-${randomUUID().slice(0, 8)}`,
+    documentId: `scene-${randomSceneIdPart()}`,
     revision: 0,
     name,
-    pages: [{ id: `page-${randomUUID().slice(0, 8)}`, name: 'Page 1', children: [] }],
+    pages: [{ id: `page-${randomSceneIdPart()}`, name: 'Page 1', children: [] }],
     variableCollections: [],
     responsiveRules: [],
     createdAt: now,

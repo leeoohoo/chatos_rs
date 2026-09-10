@@ -4,34 +4,6 @@ import Testing
 
 struct PetActivityRecoveryMapperTests {
     @Test
-    func restoresPendingPlanConfirmation() throws {
-        let now = Date()
-        let turn = makeTurn(
-            status: .completed,
-            startedAt: now.addingTimeInterval(-30),
-            context: ProjectExecutionContext(
-                projectID: "project-1",
-                executionGroupID: "group-1",
-                confirmationStatus: "awaiting_confirmation",
-                overallStatus: "awaiting_confirmation"
-            )
-        )
-
-        let activities = PetActivityRecoveryMapper.activities(
-            conversationID: "conversation-1",
-            projectID: "project-1",
-            turns: [turn],
-            now: now
-        )
-
-        let activity = try #require(activities.first)
-        #expect(activity.id == "project-execution:group-1")
-        #expect(activity.kind == .waitingForUser)
-        #expect(activity.route.turnID == "turn-1")
-        #expect(activity.route.runID == "group-1")
-    }
-
-    @Test
     func restoresLatestRunningTaskWithRunRoute() throws {
         let now = Date()
         var turn = makeTurn(status: .completed, startedAt: now.addingTimeInterval(-60))
@@ -218,30 +190,6 @@ struct PetActivityRecoveryMapperTests {
     }
 
     @Test
-    func runningExecutionGroupDoesNotBecomeAFakeTask() {
-        let now = Date()
-        let turn = makeTurn(
-            status: .completed,
-            startedAt: now.addingTimeInterval(-60),
-            context: ProjectExecutionContext(
-                projectID: "project-1",
-                executionGroupID: "group-running",
-                confirmationStatus: "confirmed",
-                overallStatus: "running"
-            )
-        )
-
-        let activities = PetActivityRecoveryMapper.activities(
-            conversationID: "conversation-1",
-            projectID: "project-1",
-            turns: [turn],
-            now: now
-        )
-
-        #expect(activities.isEmpty)
-    }
-
-    @Test
     func expiredCompletionDoesNotReturnAfterReconnect() {
         let now = Date()
         let turn = makeTurn(
@@ -263,8 +211,7 @@ struct PetActivityRecoveryMapperTests {
     private func makeTurn(
         status: TurnStatus,
         startedAt: Date,
-        completedAt: Date? = nil,
-        context: ProjectExecutionContext? = nil
+        completedAt: Date? = nil
     ) -> ConversationTurn {
         ConversationTurn(
             id: "turn-1",
@@ -277,7 +224,6 @@ struct PetActivityRecoveryMapperTests {
                 text: "执行任务",
                 createdAt: startedAt
             ),
-            projectExecutionContext: context,
             status: status,
             startedAt: startedAt,
             completedAt: completedAt

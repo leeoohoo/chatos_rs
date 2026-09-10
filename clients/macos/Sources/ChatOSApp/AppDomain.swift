@@ -5,6 +5,7 @@ enum SidebarSelection: Hashable {
     case project(String)
     case localConnector
     case applications
+    case mediaStudio
     case pluginApplication(String, String)
     case terminal(String)
     case remote(String)
@@ -13,7 +14,6 @@ enum SidebarSelection: Hashable {
 enum ProjectWorkspaceTab: String, CaseIterable, Identifiable {
     case directory = "项目目录"
     case messages = "用户消息"
-    case plan = "Plan"
     case settings = "项目设置"
 
     var id: Self { self }
@@ -23,7 +23,6 @@ enum ProjectWorkspaceTab: String, CaseIterable, Identifiable {
         return switch self {
         case .directory: "Project Files"
         case .messages: "Messages"
-        case .plan: "Plan"
         case .settings: "Project Settings"
         }
     }
@@ -49,8 +48,6 @@ struct PetQuickChatResource: Identifiable, Hashable {
     let title: String
     let subtitle: String?
     let conversationID: String?
-
-    var allowsPlanMode: Bool { kind == .project }
 }
 
 struct VisualSessionPresentation: Equatable {

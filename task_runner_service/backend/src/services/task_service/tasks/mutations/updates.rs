@@ -17,27 +17,7 @@ impl TaskService {
             return Ok(None);
         };
 
-        let mut project_changed = false;
         let mut capability_boundary_changed = false;
-        if let Some(project_id) = patch.project_id {
-            let project_id = normalize_project_id(Some(project_id));
-            let current_project_id = normalize_project_id(task.project_id.clone());
-            if project_id != current_project_id {
-                if self.store.has_active_run_for_task(id).await? {
-                    return Err(
-                        "任务仍有运行中的执行记录，不能切换所属项目，请先取消或等待完成"
-                            .to_string(),
-                    );
-                }
-                if let Some(project_id) = project_id.as_deref() {
-                    self.ensure_project_available_for_task(project_id, current_user)
-                        .await?;
-                }
-                task.project_id = project_id;
-                project_changed = true;
-                capability_boundary_changed = true;
-            }
-        }
 
         if let Some(title) = patch.title {
             validate_required("title", &title)?;
@@ -150,15 +130,13 @@ impl TaskService {
         }
         if capability_boundary_changed {
             let task_owner_user_id = task_owner_or_creator(&task);
-            let agent_key = crate::models::task_runner_agent_key_for(
-                task.task_profile.as_str(),
-                task.mcp_config.requires_execution,
-            );
+            let agent_key = chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase;
             let _ = self
                 .validate_task_mcp_config_for_agent(
                     &task.mcp_config,
                     &task.plugin_config,
                     task.project_id.as_deref(),
+                    task.project_context.as_ref(),
                     current_user,
                     task_owner_user_id,
                     agent_key,
@@ -172,6 +150,7 @@ impl TaskService {
                     task_owner_user_id,
                     agent_key,
                     task.project_id.as_deref(),
+                    task.project_context.as_ref(),
                     Some(task.task_profile.as_str()),
                     Some(task.schedule.mode.mode_key()),
                 )
@@ -192,16 +171,12 @@ impl TaskService {
             )
             .await?;
             task.prerequisite_task_ids = prerequisite_task_ids.clone();
-        } else if project_changed && !task.prerequisite_task_ids.is_empty() {
-            self.validate_task_prerequisites_for_project(
-                id,
-                &task.prerequisite_task_ids,
-                current_user,
-                task.project_id.as_deref(),
-            )
-            .await?;
         }
-        align_task_tenant_to_owner(&mut task);
+        if task.project_id.is_some() || task.project_context.is_some() {
+            task.validate_project_context()?;
+        } else {
+            align_task_tenant_to_owner(&mut task);
+        }
         task.updated_at = now_rfc3339();
         self.ensure_task_thread(&task).await?;
         let saved = self.store.save_task(task).await?;
@@ -278,7 +253,6 @@ mod tests {
             default_tool_results_model_total_max_chars: 2000,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
-            internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
@@ -288,11 +262,6 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5000),
-            project_service_base_url: None,
-            project_service_internal_base_url: None,
-            project_service_internal_http_client: reqwest::Client::new(),
-            project_service_sync_secret: None,
-            project_service_request_timeout: Duration::from_millis(5000),
         }
     }
 
@@ -315,6 +284,7 @@ mod tests {
                     tags: None,
                     default_model_config_id: None,
                     project_id: None,
+                    project_context: None,
                     task_profile: None,
                     tenant_id: None,
                     subject_id: None,
@@ -347,126 +317,20 @@ mod tests {
         service.store.save_task(child).await.expect("save child")
     }
 
-    async fn save_project(
-        service: &TaskService,
-        id: &str,
-        status: TaskProjectStatus,
-    ) -> TaskProjectRecord {
-        let now = now_rfc3339();
-        service
-            .store
-            .save_task_project(TaskProjectRecord {
-                id: id.to_string(),
-                owner_user_id: None,
-                owner_username: None,
-                owner_display_name: None,
-                name: format!("Project {id}"),
-                root_path: Some(format!("/workspace/{id}")),
-                git_url: None,
-                cloud_import_source: None,
-                import_status: None,
-                source_git_url: None,
-                harness_repo_identifier: None,
-                harness_git_url: None,
-                harness_default_branch: None,
-                description: None,
-                status,
-                created_at: now.clone(),
-                updated_at: now.clone(),
-                archived_at: (status == TaskProjectStatus::Archived).then_some(now),
-            })
-            .await
-            .expect("save project")
-    }
-
-    #[tokio::test]
-    async fn update_task_can_switch_to_active_project() {
-        let service = test_service().await;
-        let task = create_task(&service, "task", TaskStatus::Ready).await;
-        let project = save_project(&service, "project-active", TaskProjectStatus::Active).await;
-
-        let updated = service
-            .update_task(
-                task.id.as_str(),
-                UpdateTaskRequest {
-                    project_id: Some(project.id.clone()),
-                    ..UpdateTaskRequest::default()
-                },
-                None,
-            )
-            .await
-            .expect("update task")
-            .expect("task");
-
-        assert_eq!(updated.project_id.as_deref(), Some(project.id.as_str()));
-    }
-
-    #[tokio::test]
-    async fn update_task_rejects_missing_or_archived_project() {
-        let service = test_service().await;
-        let task = create_task(&service, "task", TaskStatus::Ready).await;
-        save_project(&service, "project-archived", TaskProjectStatus::Archived).await;
-
-        for project_id in ["project-missing", "project-archived"] {
-            let err = service
-                .update_task(
-                    task.id.as_str(),
-                    UpdateTaskRequest {
-                        project_id: Some(project_id.to_string()),
-                        ..UpdateTaskRequest::default()
-                    },
-                    None,
-                )
-                .await
-                .expect_err("unavailable project should be rejected");
-            assert!(err.contains("项目"));
+    #[test]
+    fn update_rejects_project_rebinding_and_forged_authorization() {
+        for field in [
+            "project_id",
+            "project_context",
+            "owner_user_id",
+            "tenant_id",
+        ] {
+            let value = serde_json::json!({field: "replacement"});
+            assert!(
+                serde_json::from_value::<UpdateTaskRequest>(value).is_err(),
+                "{field}"
+            );
         }
-
-        let unchanged = service
-            .get_task(task.id.as_str())
-            .await
-            .expect("get task")
-            .expect("task");
-        assert_eq!(unchanged.project_id, None);
-    }
-
-    #[tokio::test]
-    async fn update_task_rejects_cross_project_prerequisites() {
-        let service = test_service().await;
-        let prerequisite = create_task(&service, "prerequisite", TaskStatus::Ready).await;
-        let task = create_task(&service, "task", TaskStatus::Ready).await;
-        service
-            .update_task(
-                task.id.as_str(),
-                UpdateTaskRequest {
-                    prerequisite_task_ids: Some(vec![prerequisite.id.clone()]),
-                    ..UpdateTaskRequest::default()
-                },
-                None,
-            )
-            .await
-            .expect("set prerequisite");
-        let project = save_project(&service, "project-active", TaskProjectStatus::Active).await;
-
-        let err = service
-            .update_task(
-                task.id.as_str(),
-                UpdateTaskRequest {
-                    project_id: Some(project.id),
-                    ..UpdateTaskRequest::default()
-                },
-                None,
-            )
-            .await
-            .expect_err("cross-project prerequisite should be rejected");
-
-        assert!(err.contains("前置任务必须属于同一项目"));
-        let unchanged = service
-            .get_task(task.id.as_str())
-            .await
-            .expect("get task")
-            .expect("task");
-        assert_eq!(unchanged.project_id, None);
     }
 
     #[tokio::test]

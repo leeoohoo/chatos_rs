@@ -343,7 +343,6 @@ mod tests {
             default_tool_results_model_total_max_chars: 2000,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
-            internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
@@ -353,11 +352,6 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5000),
-            project_service_base_url: None,
-            project_service_internal_base_url: None,
-            project_service_internal_http_client: reqwest::Client::new(),
-            project_service_sync_secret: None,
-            project_service_request_timeout: Duration::from_millis(5000),
         }
     }
 
@@ -385,6 +379,7 @@ mod tests {
                     tags: None,
                     default_model_config_id: None,
                     project_id: None,
+                    project_context: None,
                     task_profile: None,
                     tenant_id: None,
                     subject_id: None,
@@ -696,6 +691,7 @@ mod tests {
                     tags: None,
                     default_model_config_id: None,
                     project_id: None,
+                    project_context: None,
                     task_profile: None,
                     tenant_id: None,
                     subject_id: None,

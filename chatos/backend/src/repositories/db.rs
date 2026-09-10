@@ -80,22 +80,6 @@ pub async fn mongo_update_one_doc(
     Ok(())
 }
 
-pub async fn mongo_upsert_set_doc(
-    db: &mongodb::Database,
-    collection_name: &str,
-    filter: Document,
-    set_doc: Document,
-) -> Result<(), String> {
-    mongo_update_one_doc(
-        db,
-        collection_name,
-        filter,
-        doc! { "$set": to_doc(set_doc) },
-        Some(UpdateOptions::builder().upsert(true).build()),
-    )
-    .await
-}
-
 pub async fn mongo_delete_one_doc(
     db: &mongodb::Database,
     collection_name: &str,

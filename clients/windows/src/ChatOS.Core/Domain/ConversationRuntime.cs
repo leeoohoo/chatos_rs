@@ -4,23 +4,22 @@ public sealed record ConversationRuntimeSettings(
     string? SelectedModelId,
     string? SelectedModelName,
     string? SelectedThinkingLevel,
-    bool ReasoningEnabled,
-    bool PlanModeEnabled);
+    bool ReasoningEnabled);
 
 public sealed record ConversationModelOption(
     string Id,
     string DisplayName,
     string ModelName,
     string? ThinkingLevel,
-    bool TaskEnabled = true);
+    bool TaskEnabled = true,
+    bool HasApiKey = true);
 
 public sealed record ConversationSendCommand(
     string ConversationId,
     string TurnId,
     string Content,
     IReadOnlyList<ConversationAttachmentDraft> Attachments,
-    bool? ReasoningEnabled = null,
-    bool? PlanModeEnabled = null);
+    bool? ReasoningEnabled = null);
 
 public sealed record ConversationCommandAck(
     bool Accepted,

@@ -36,16 +36,19 @@ struct LocalModelConfigDTO: Decodable, Sendable {
 
 struct ModelSettingsDTO: Decodable, Sendable {
     var modelRequestMaxRetries: Int?
+    var taskRunnerDefaultModelConfigID: String?
     var commandApprovalModelConfigID: String?
     var commandApprovalThinkingLevel: String?
     enum CodingKeys: String, CodingKey {
         case modelRequestMaxRetries = "model_request_max_retries"
+        case taskRunnerDefaultModelConfigID = "task_runner_default_model_config_id"
         case commandApprovalModelConfigID = "command_approval_model_config_id"
         case commandApprovalThinkingLevel = "command_approval_thinking_level"
     }
     var domainModel: LocalConnectorModelSettings {
         .init(
             modelRequestMaxRetries: modelRequestMaxRetries,
+            taskRunnerDefaultModelConfigID: taskRunnerDefaultModelConfigID,
             commandApprovalModelConfigID: commandApprovalModelConfigID,
             commandApprovalThinkingLevel: commandApprovalThinkingLevel
         )

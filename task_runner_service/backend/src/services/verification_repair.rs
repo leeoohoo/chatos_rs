@@ -12,7 +12,7 @@ use crate::models::{
     TaskRunStatus, TaskScheduleConfig, TaskScheduleMode, TaskStatus,
 };
 
-use super::{project_management_api_client, RunService};
+use super::RunService;
 
 const VERIFICATION_REPAIR_MAX_ATTEMPTS: u32 = 2;
 const REPAIR_CHAIN_ROLE_KEY: &str = "repair_chain_role";
@@ -70,9 +70,6 @@ impl RunService {
             .await?;
         let repair = &persisted.repair;
         let reverify = &persisted.reverify;
-
-        self.sync_repair_chain_links(verification, verification_run, &plan, repair, reverify)
-            .await?;
 
         let dispatched = self
             .dispatch_ready_chatos_async_tasks_for_source_task(repair)
@@ -325,43 +322,6 @@ impl RunService {
             }
         }
         Ok(chain)
-    }
-
-    async fn sync_repair_chain_links(
-        &self,
-        verification: &TaskRecord,
-        verification_run: &TaskRunRecord,
-        plan: &VerificationRepairPlan,
-        repair: &TaskRecord,
-        reverify: &TaskRecord,
-    ) -> Result<(), String> {
-        let common = |task: &TaskRecord, supersedes_task_runner_task_ids: Vec<String>| {
-            project_management_api_client::SyncTaskRunnerWorkItemStatusRequest {
-                task_runner_task_id: task.id.clone(),
-                task_runner_run_id: None,
-                task_runner_status: Some("ready".to_string()),
-                execution_group_id: Some(plan.execution_group_id.clone()),
-                last_callback_event: Some("task.repair_planned".to_string()),
-                last_callback_at: Some(now_rfc3339()),
-                last_error_message: verification_run.error_message.clone(),
-                source_session_id: verification.source_session_id.clone(),
-                source_user_message_id: verification.source_user_message_id.clone(),
-                supersedes_task_runner_task_ids,
-            }
-        };
-        project_management_api_client::sync_work_item_task_runner_status(
-            &self.config,
-            plan.project_task_id.as_str(),
-            &common(repair, vec![verification.id.clone()]),
-        )
-        .await?;
-        project_management_api_client::sync_work_item_task_runner_status(
-            &self.config,
-            plan.project_task_id.as_str(),
-            &common(reverify, Vec::new()),
-        )
-        .await?;
-        Ok(())
     }
 }
 
@@ -662,7 +622,6 @@ mod tests {
             default_tool_results_model_total_max_chars: 2000,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
-            internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
@@ -672,11 +631,6 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(1000),
-            project_service_base_url: None,
-            project_service_internal_base_url: None,
-            project_service_internal_http_client: reqwest::Client::new(),
-            project_service_sync_secret: None,
-            project_service_request_timeout: Duration::from_millis(1000),
         }
     }
 
@@ -712,6 +666,7 @@ mod tests {
             tenant_id: "tenant-1".to_string(),
             subject_id: "subject-1".to_string(),
             project_id: Some("project-1".to_string()),
+            project_context: None,
             task_profile: "execution".to_string(),
             creator_user_id: Some("user-1".to_string()),
             creator_username: Some("user".to_string()),

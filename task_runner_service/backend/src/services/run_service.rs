@@ -19,6 +19,9 @@ impl RunService {
     ) -> Self {
         Self {
             config,
+            project_context_authorizer: Arc::new(
+                task_service::project_context::McpProjectContextAuthorizer,
+            ),
             task_queue_topology: TaskQueueTopology::inline_defaults(),
             store,
             plugin_management_client: None,
@@ -42,6 +45,9 @@ impl RunService {
     ) -> Self {
         Self {
             config,
+            project_context_authorizer: Arc::new(
+                task_service::project_context::McpProjectContextAuthorizer,
+            ),
             task_queue_topology,
             store,
             plugin_management_client: Some(plugin_management_client),

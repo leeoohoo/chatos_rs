@@ -12,11 +12,13 @@ export type DesignRequestStatus = 'pending' | 'resolved';
 export type WebSymbolOverride = 'content' | 'style' | 'frame';
 export type WebHorizontalConstraint = 'auto' | 'left' | 'center' | 'right' | 'stretch' | 'scale';
 export type WebComponentVisualState = 'hover' | 'active' | 'focus';
+export type WebDesignSurfaceKind = 'page' | 'modal' | 'drawer' | 'popover' | 'menu' | 'state';
 
 export interface WebDesignPage {
   id: string;
   name: string;
   slug: string;
+  surfaceKind?: WebDesignSurfaceKind;
 }
 
 export interface WebDesignAsset {
@@ -282,8 +284,9 @@ const layoutJustifications = new Set<WebContainerJustify>(['start', 'center', 'e
 const symbolOverrides = new Set<WebSymbolOverride>(['content', 'style', 'frame']);
 const horizontalConstraints = new Set<WebHorizontalConstraint>(['auto', 'left', 'center', 'right', 'stretch', 'scale']);
 const visualStates = new Set<WebComponentVisualState>(['hover', 'active', 'focus']);
+const surfaceKinds = new Set<WebDesignSurfaceKind>(['page', 'modal', 'drawer', 'popover', 'menu', 'state']);
 
-export const DEFAULT_WEB_DESIGN_PAGE: WebDesignPage = { id: 'home', name: '首页', slug: '/' };
+export const DEFAULT_WEB_DESIGN_PAGE: WebDesignPage = { id: 'home', name: '首页', slug: '/', surfaceKind: 'page' };
 export const DEFAULT_WEB_DESIGN_TOKENS: WebDesignTokens = {
   colors: { primary: '#007AFF', accent: '#34C759', surface: '#FFFFFF', text: '#1D1D1F', muted: '#6E6E73' },
   radii: { small: 8, medium: 14, large: 24 },
@@ -348,6 +351,7 @@ function assertPage(value: unknown): asserts value is WebDesignPage {
   if (typeof page.slug !== 'string' || !page.slug.startsWith('/') || page.slug.length > 240 || /\s/.test(page.slug)) {
     throw new Error('Page slug must start with / and contain no spaces.');
   }
+  if (page.surfaceKind !== undefined && !surfaceKinds.has(page.surfaceKind)) throw new Error('Page surface kind is invalid.');
 }
 
 function assertAsset(value: unknown): asserts value is WebDesignAsset {

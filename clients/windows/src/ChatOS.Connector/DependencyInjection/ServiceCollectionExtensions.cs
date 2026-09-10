@@ -30,6 +30,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ConnectorSocketRequestFactory>();
         services.AddSingleton<IConnectorSocketFactory, ClientWebSocketConnectorSocketFactory>();
         services.AddSingleton<LocalStateDatabase>();
+        services.AddSingleton<IProjectRegistry, SqliteProjectRegistry>();
+        services.AddSingleton<ILocalProjectsService, LocalProjectsService>();
         services.AddSingleton<IAppPreferencesStore, SqliteAppPreferencesStore>();
         services.AddSingleton<AppPreferencesManager>();
         services.AddSingleton<IPetActivitySuppressionStore, SqlitePetActivitySuppressionStore>();
@@ -52,6 +54,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ILocalPluginManagementService, LocalPluginManagementService>();
         services.AddSingleton<IPluginConfigurationService, PluginConfigurationService>();
         services.AddSingleton<PluginManifestLoader>();
+        services.AddSingleton<WindowsPluginApplicationRuntime>();
+        services.AddSingleton<ILocalPluginApplicationService, LocalPluginApplicationService>();
         services.AddSingleton<IPluginMcpClientFactory, PluginMcpClientFactory>();
         services.AddSingleton<PluginRuntimeSessionStore>();
         services.AddSingleton<PluginArtifactRegistry>();

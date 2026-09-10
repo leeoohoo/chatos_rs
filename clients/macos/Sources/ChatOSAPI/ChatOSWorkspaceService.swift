@@ -1,63 +1,25 @@
 import ChatOSCore
 import Foundation
 
-public struct ChatOSWorkspaceService: WorkspaceRemoteServicing {
+public struct ChatOSWorkspaceService: WorkspaceRelationsRemoteServicing {
     private let client: ChatOSAPIClient
 
     public init(client: ChatOSAPIClient) {
         self.client = client
     }
 
-    public func fetchWorkspace() async throws -> WorkspaceSnapshot {
-        async let projects: [ProjectDTO] = client.request("/projects")
+    public func fetchWorkspaceRelations() async throws -> WorkspaceRelationsSnapshot {
         async let contacts: [ContactDTO] = client.request("/contacts?limit=500&offset=0")
         async let conversations: [ConversationDTO] = client.request(
             "/conversations?limit=500&offset=0"
         )
 
-        return try await WorkspaceSnapshot(
-            projects: projects.map(\.domainModel),
+        return try await WorkspaceRelationsSnapshot(
             contacts: contacts.map(\.domainModel),
             conversations: conversations.map(\.domainModel)
         )
     }
 
-    public func deleteProject(id: String) async throws {
-        let _: DeleteProjectResponse = try await client.request(
-            "/projects/\(id.pathEncoded)",
-            method: "DELETE"
-        )
-    }
-}
-
-private struct DeleteProjectResponse: Decodable, Sendable {
-    var success: Bool?
-    var message: String?
-}
-
-private struct ProjectDTO: Decodable, Sendable {
-    var id: String
-    var name: String
-    var rootPath: String?
-    var displayRootPath: String?
-    var latestConversationID: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id, name
-        case rootPath = "root_path"
-        case displayRootPath = "display_root_path"
-        case latestConversationID = "latest_session_id"
-    }
-
-    var domainModel: WorkspaceProject {
-        WorkspaceProject(
-            id: id,
-            name: name,
-            rootPath: rootPath?.nonEmpty ?? displayRootPath?.nonEmpty,
-            displayRootPath: displayRootPath?.nonEmpty ?? rootPath?.nonEmpty,
-            latestConversationID: latestConversationID?.nonEmpty
-        )
-    }
 }
 
 private struct ContactDTO: Decodable, Sendable {
@@ -165,10 +127,6 @@ private extension Dictionary where Key == String, Value == JSONValue {
 }
 
 private extension String {
-    var pathEncoded: String {
-        addingPercentEncoding(withAllowedCharacters: .projectPathComponentAllowed) ?? self
-    }
-
     var nonEmpty: String? {
         let value = trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
@@ -178,12 +136,4 @@ private extension String {
         guard let value = nonEmpty, value != "-1", value != "0" else { return nil }
         return value
     }
-}
-
-private extension CharacterSet {
-    static let projectPathComponentAllowed: CharacterSet = {
-        var set = CharacterSet.urlPathAllowed
-        set.remove(charactersIn: "/?#")
-        return set
-    }()
 }

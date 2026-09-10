@@ -1,8 +1,8 @@
 import ChatOSCore
 import Foundation
+import OSLog
 
 public protocol NativeRemoteConnectionRuntimeProviding: Sendable {
-    func listConnections() async throws -> [RemoteConnection]
     func testSaved(id: String, verificationCode: String?) async throws -> RemoteConnectionTestResult
     func resolvedDraft(id: String) async throws -> RemoteConnectionDraft
 }
@@ -12,33 +12,60 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
     RemoteTerminalCommandServicing {
     public static let nativeDeviceID = "chatos-swift-native-client"
     public static let nativeWorkspaceID = "local-machine"
+    private static let logger = Logger(
+        subsystem: "com.chatos.swift-client",
+        category: "NativeRemoteConnection"
+    )
 
     private let upstream: any RemoteConnectionServicing
     private let tester: any NativeRemoteConnectionTesting
     private let credentialStore: NativeRemoteConnectionCredentialStore
     private let ssh: any NativeRemoteSSHExecuting
+    private let connectorStateStore: NativeConnectorStateStore?
+    private let connectionCacheTTL: TimeInterval
+    private var connectionCache: [String: CachedRemoteConnection] = [:]
 
-    public init(upstream: any RemoteConnectionServicing) {
+    public init(
+        upstream: any RemoteConnectionServicing,
+        connectorStateURL: URL? = nil
+    ) {
         self.upstream = upstream
         self.tester = NativeSSHConnectionTester()
         self.credentialStore = NativeRemoteConnectionCredentialStore()
         self.ssh = NativeOpenSSHClient()
+        self.connectorStateStore = connectorStateURL.map(NativeConnectorStateStore.init(stateURL:))
+        self.connectionCacheTTL = 15
     }
 
     init(
         upstream: any RemoteConnectionServicing,
         tester: any NativeRemoteConnectionTesting,
         credentialStore: NativeRemoteConnectionCredentialStore,
-        ssh: any NativeRemoteSSHExecuting = NativeOpenSSHClient()
+        ssh: any NativeRemoteSSHExecuting = NativeOpenSSHClient(),
+        connectorStateStore: NativeConnectorStateStore? = nil,
+        connectionCacheTTL: TimeInterval = 15
     ) {
         self.upstream = upstream
         self.tester = tester
         self.credentialStore = credentialStore
         self.ssh = ssh
+        self.connectorStateStore = connectorStateStore
+        self.connectionCacheTTL = max(connectionCacheTTL, 0)
     }
 
     public func listConnections() async throws -> [RemoteConnection] {
-        try await upstream.listConnections().map(decorateWithLocalCredentialState)
+        let connections = try await upstream.listConnections()
+        var resolved: [RemoteConnection] = []
+        resolved.reserveCapacity(connections.count)
+        for connection in connections {
+            resolved.append(await migrateLegacyRouteIfNeeded(connection))
+        }
+        cache(resolved)
+        return resolved.map(decorateWithLocalCredentialState)
+    }
+
+    public func getConnection(id: String) async throws -> RemoteConnection? {
+        try await loadConnection(id: id).map(decorateWithLocalCredentialState)
     }
 
     public func createConnection(_ draft: RemoteConnectionDraft) async throws -> RemoteConnection {
@@ -50,6 +77,7 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
             try? await upstream.deleteConnection(id: created.id)
             throw error
         }
+        cache(created)
         return decorateWithLocalCredentialState(created)
     }
 
@@ -65,12 +93,14 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
             draft: sanitizedForCloud(resolvedDraft)
         )
         try credentialStore.save(.from(resolvedDraft), connectionID: id)
+        cache(updated)
         return decorateWithLocalCredentialState(updated)
     }
 
     public func deleteConnection(id: String) async throws {
         try await upstream.deleteConnection(id: id)
         try credentialStore.delete(connectionID: id)
+        connectionCache[id] = nil
     }
 
     public func testDraft(
@@ -87,11 +117,10 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
         id: String,
         verificationCode: String?
     ) async throws -> RemoteConnectionTestResult {
-        let connections = try await upstream.listConnections()
-        guard let connection = connections.first(where: { $0.id == id }) else {
+        guard let connection = try await loadConnection(id: id) else {
             throw NativeRemoteConnectionServiceError("远端连接不存在。")
         }
-        var draft = try draft(for: connection, connections: connections)
+        var draft = try await draft(for: connection)
         draft.localCredentialReferenceID = id
         return try await tester.test(
             draft: resolveLocalCredentials(in: draft),
@@ -100,11 +129,10 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
     }
 
     public func resolvedDraft(id: String) async throws -> RemoteConnectionDraft {
-        let connections = try await upstream.listConnections()
-        guard let connection = connections.first(where: { $0.id == id }) else {
+        guard let connection = try await loadConnection(id: id) else {
             throw NativeRemoteConnectionServiceError("远端连接不存在。")
         }
-        var resolved = try draft(for: connection, connections: connections)
+        var resolved = try await draft(for: connection)
         resolved.localCredentialReferenceID = id
         return try resolveLocalCredentials(in: resolved)
     }
@@ -199,8 +227,9 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
         sanitized.jumpPassword = nil
         sanitized.jumpPrivateKeyPath = nil
         sanitized.jumpCertificatePath = nil
-        sanitized.localConnectorDeviceID = Self.nativeDeviceID
-        sanitized.localConnectorWorkspaceID = Self.nativeWorkspaceID
+        let route = currentLocalConnectorRoute()
+        sanitized.localConnectorDeviceID = route.deviceID
+        sanitized.localConnectorWorkspaceID = route.workspaceID
         sanitized.localCredentialReferenceID = nil
         return sanitized
     }
@@ -219,19 +248,17 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
         return decorated
     }
 
-    private func draft(
-        for connection: RemoteConnection,
-        connections: [RemoteConnection]
-    ) throws -> RemoteConnectionDraft {
+    private func draft(for connection: RemoteConnection) async throws -> RemoteConnectionDraft {
         var jumpHost = connection.jumpHost
         var jumpPort = connection.jumpPort
         var jumpUsername = connection.jumpUsername
         if let jumpID = connection.jumpConnectionID?.trimmedNonEmpty,
-           let jump = connections.first(where: { $0.id == jumpID }) {
+           let jump = try await loadConnection(id: jumpID) {
             jumpHost = jump.host
             jumpPort = jump.port
             jumpUsername = jump.username
         }
+        let route = currentLocalConnectorRoute()
         return RemoteConnectionDraft(
             name: connection.name,
             host: connection.host,
@@ -243,8 +270,8 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
             certificatePath: nil,
             defaultRemotePath: connection.defaultRemotePath,
             hostKeyPolicy: connection.hostKeyPolicy,
-            localConnectorDeviceID: Self.nativeDeviceID,
-            localConnectorWorkspaceID: Self.nativeWorkspaceID,
+            localConnectorDeviceID: route.deviceID,
+            localConnectorWorkspaceID: route.workspaceID,
             jumpEnabled: connection.jumpEnabled,
             jumpConnectionID: connection.jumpConnectionID,
             jumpHost: jumpHost,
@@ -256,6 +283,103 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
             localCredentialReferenceID: connection.id
         )
     }
+
+    private func currentLocalConnectorRoute() -> (deviceID: String, workspaceID: String) {
+        guard let state = try? connectorStateStore?.load(),
+              let deviceID = state.deviceID?.trimmedNonEmpty,
+              let workspaceID = state.workspaces.first?.id.trimmedNonEmpty else {
+            return (Self.nativeDeviceID, Self.nativeWorkspaceID)
+        }
+        return (deviceID, workspaceID)
+    }
+
+    private func loadConnection(id: String) async throws -> RemoteConnection? {
+        let now = Date()
+        if let cached = connectionCache[id], cached.expiresAt > now {
+            return cached.connection
+        }
+        guard let loaded = try await upstream.getConnection(id: id) else {
+            connectionCache[id] = nil
+            return nil
+        }
+        let connection = await migrateLegacyRouteIfNeeded(loaded)
+        cache(connection, now: now)
+        return connection
+    }
+
+    private func migrateLegacyRouteIfNeeded(
+        _ connection: RemoteConnection
+    ) async -> RemoteConnection {
+        let route = currentLocalConnectorRoute()
+        guard route.deviceID != Self.nativeDeviceID,
+              route.workspaceID != Self.nativeWorkspaceID,
+              Self.isLegacyRoute(connection) else {
+            return connection
+        }
+        let draft = RemoteConnectionDraft(
+            name: connection.name,
+            host: connection.host,
+            port: connection.port,
+            username: connection.username,
+            authenticationType: connection.authenticationType,
+            password: nil,
+            privateKeyPath: nil,
+            certificatePath: nil,
+            defaultRemotePath: connection.defaultRemotePath,
+            hostKeyPolicy: connection.hostKeyPolicy,
+            localConnectorDeviceID: route.deviceID,
+            localConnectorWorkspaceID: route.workspaceID,
+            jumpEnabled: connection.jumpEnabled,
+            jumpConnectionID: connection.jumpConnectionID,
+            jumpHost: connection.jumpHost,
+            jumpPort: connection.jumpPort,
+            jumpUsername: connection.jumpUsername,
+            jumpPrivateKeyPath: nil,
+            jumpCertificatePath: nil,
+            jumpPassword: nil,
+            localCredentialReferenceID: nil
+        )
+        do {
+            let migrated = try await upstream.updateConnection(id: connection.id, draft: draft)
+            Self.logger.info(
+                "已迁移远端连接路由到当前 Local Connector：\(connection.id, privacy: .public)"
+            )
+            return migrated
+        } catch {
+            Self.logger.error(
+                "迁移远端连接路由失败，将继续使用兼容路由：\(error.localizedDescription, privacy: .public)"
+            )
+            return connection
+        }
+    }
+
+    private static func isLegacyRoute(_ connection: RemoteConnection) -> Bool {
+        let deviceID = connection.localConnectorDeviceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let workspaceID = connection.localConnectorWorkspaceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return deviceID.isEmpty
+            || workspaceID.isEmpty
+            || deviceID == nativeDeviceID
+            || workspaceID == nativeWorkspaceID
+    }
+
+    private func cache(_ connections: [RemoteConnection]) {
+        let now = Date()
+        for connection in connections {
+            cache(connection, now: now)
+        }
+    }
+
+    private func cache(_ connection: RemoteConnection, now: Date = Date()) {
+        connectionCache[connection.id] = CachedRemoteConnection(
+            connection: connection,
+            expiresAt: now.addingTimeInterval(connectionCacheTTL)
+        )
+    }
+}
+
+private struct CachedRemoteConnection: Sendable {
+    let connection: RemoteConnection
+    let expiresAt: Date
 }
 
 private struct NativeRemoteConnectionServiceError: LocalizedError {

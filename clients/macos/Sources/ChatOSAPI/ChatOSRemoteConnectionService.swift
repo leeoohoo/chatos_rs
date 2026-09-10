@@ -13,6 +13,13 @@ public struct ChatOSRemoteConnectionService: RemoteConnectionServicing {
         return response.map(\.domainModel)
     }
 
+    public func getConnection(id: String) async throws -> RemoteConnection? {
+        let response: RemoteConnectionDTO = try await client.request(
+            "/remote-connections/\(id.pathEncoded)"
+        )
+        return response.domainModel
+    }
+
     public func createConnection(_ draft: RemoteConnectionDraft) async throws -> RemoteConnection {
         let response: RemoteConnectionDTO = try await client.request(
             "/remote-connections",

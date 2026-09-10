@@ -102,7 +102,6 @@ public struct ConversationTurn: Identifiable, Codable, Sendable, Equatable {
     public var finalAssistantMessage: ChatMessage?
     public var assistantReplies: [ConversationAssistantReply]
     public var messageTaskLookup: MessageTaskLookup?
-    public var projectExecutionContext: ProjectExecutionContext?
     public var isTaskGraphAvailable: Bool
     public var status: TurnStatus
     public var startedAt: Date
@@ -118,7 +117,6 @@ public struct ConversationTurn: Identifiable, Codable, Sendable, Equatable {
         finalAssistantMessage: ChatMessage? = nil,
         assistantReplies: [ConversationAssistantReply] = [],
         messageTaskLookup: MessageTaskLookup? = nil,
-        projectExecutionContext: ProjectExecutionContext? = nil,
         isTaskGraphAvailable: Bool = true,
         status: TurnStatus,
         startedAt: Date,
@@ -133,7 +131,6 @@ public struct ConversationTurn: Identifiable, Codable, Sendable, Equatable {
         self.finalAssistantMessage = finalAssistantMessage
         self.assistantReplies = assistantReplies
         self.messageTaskLookup = messageTaskLookup
-        self.projectExecutionContext = projectExecutionContext
         self.isTaskGraphAvailable = isTaskGraphAvailable
         self.status = status
         self.startedAt = startedAt

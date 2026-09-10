@@ -9,5 +9,5 @@ export function isSuperAdmin(role: AdminUser['role']): boolean {
 }
 
 export function defaultAdminPath(role: AdminUser['role']): string {
-  return isSuperAdmin(role) ? '/users/models' : '/projects/list';
+  return isSuperAdmin(role) ? '/users/models' : '/task-runner/tasks';
 }

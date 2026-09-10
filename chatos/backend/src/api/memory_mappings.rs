@@ -15,7 +15,6 @@ use crate::core::user_scope::resolve_user_id;
 use crate::models::memory_mapping_types::{
     SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
 };
-use crate::models::project::ProjectService;
 use crate::services::chatos_memory_mappings;
 
 #[derive(Debug, Deserialize)]
@@ -97,15 +96,8 @@ async fn list_memory_project_contacts(
     Path(project_id): Path<String>,
     Query(query): Query<ListProjectContactsQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let owner_user_id = match load_project_owner_user_id(project_id.as_str()).await {
-        Ok(value) => value,
-        Err(err) => return err,
-    };
-    if owner_user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
-    }
-
-    match chatos_memory_mappings::list_project_contacts(
+    match chatos_memory_mappings::list_project_contacts_for_owner(
+        auth.user_id.as_str(),
         project_id.as_str(),
         query.limit,
         query.offset.unwrap_or(0),
@@ -136,30 +128,5 @@ async fn sync_project_agent_link(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "sync project-agent link failed", "detail": err})),
         ),
-    }
-}
-
-async fn load_project_owner_user_id(project_id: &str) -> Result<String, (StatusCode, Json<Value>)> {
-    match ProjectService::get_by_id(project_id).await {
-        Ok(Some(project)) => project
-            .user_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "project owner is missing"})),
-                )
-            }),
-        Ok(None) => Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "project not found"})),
-        )),
-        Err(err) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "load project failed", "detail": err})),
-        )),
     }
 }

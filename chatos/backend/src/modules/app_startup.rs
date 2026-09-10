@@ -119,20 +119,6 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         }
     }
 
-    services::workspace_realtime_watcher::start_workspace_realtime_watcher();
-    core::runtime_health::mark_runtime_check_ok(
-        "workspace_realtime_watcher",
-        true,
-        "watcher started",
-    );
-
-    services::requirement_execution_reconciler::start_requirement_execution_reconciler();
-    core::runtime_health::mark_runtime_check_ok(
-        "requirement_execution_reconciler",
-        true,
-        "reconciler started",
-    );
-
     info!("Memory-only mode enabled, skip local session background jobs");
 
     cfg.print();

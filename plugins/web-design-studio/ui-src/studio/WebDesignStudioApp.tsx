@@ -69,17 +69,70 @@ import {
   type WebDesignTokens,
   type WebSymbolOverride
 } from '../../src/schema';
-import { createRepository, type DesignRepository, type DesignSummary } from './repository';
+import {
+  createRepository,
+  type DesignRepository,
+  type DesignSummary,
+  type GenerationPlanSummary,
+  type GenerationStepReview,
+  type SceneAnnotationAiContext
+} from './repository';
 import { LibraryCanvasComponent } from './LibraryCanvasComponent';
 import { componentEffectStyleToCss, componentStyleToCss, mergeComponentStyles } from './component-style';
 import { CanvasComponent as WorkspaceCanvasComponent, CanvasComponentContent as WorkspaceCanvasComponentContent } from './CanvasComponent';
 import { libraryPreviewSelection, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
 import { WorkspaceBottomToolbar, WorkspaceNavigationBar, WorkspacePanelResizeHandle } from './WorkspaceShellChrome';
+import { buildPrototypeFlowConnections, prototypeFlowPath, scenePrototypeFlowSources } from './prototype-flow-model';
 import { DEFAULT_WORKSPACE_SHELL, parseWorkspaceShellState, workspaceShellGridStyle, workspaceShellReducer, workspaceShellShortcut, type WorkspaceArea, type WorkspaceTool } from './workspace-shell-model';
-import { centeredCanvasScroll, createInfiniteCanvasGeometry, panCanvasScroll, type InfiniteCanvasGeometry } from './infinite-canvas-model';
+import {
+  fitWorkspaceRect,
+  fitWorkspaceWidth,
+  panWorkspaceCamera,
+  unionWorkspaceRects,
+  workspaceArtboardRenderTier,
+  workspaceViewportReady,
+  workspaceZoomFromWheel,
+  zoomWorkspaceCameraAt,
+  type WorkspaceCamera
+} from '../../src/v2/workspace-camera';
+import type { WorkspaceArtboardPlacement, WorkspacePlacementDocument, WorkspaceSurfaceKind } from '../../src/v2/workspace-placement-store';
+import { indexSceneDocument, isSceneContainer, isSceneSlotContainer, type SceneDocument, type SceneNode, type ScenePrototypeLink, type SceneResponsiveNodeOverride, type SceneVariableCollection } from '../../src/v2/scene-schema';
+import type { SceneEditorCommand } from '../../src/v2/scene-editor-command';
+import type { SceneHistoryStatus } from '../../src/v2/scene-store';
 import { inspectorCapabilities as resolveInspectorCapabilities } from './inspector-model';
+import { SelectionOverlay, type SelectionOverlayItem } from './SelectionOverlay';
+import { SceneArtboardCanvas, sceneArtboardContentHeight, sceneArtboardSelectionBounds } from './SceneArtboardCanvas';
+import { createSceneBasicShape, createSceneLibraryInstance } from './scene-node-factory';
+import { editableSlotsForSceneLibraryNode, resolveSceneInsertionTarget, type SceneInsertionFocus, type SceneInsertionTarget } from './scene-insertion-target';
+import { createSceneSnippet, instantiateSceneSnippet, parseSceneSnippets, type SceneSnippet } from './scene-snippet-library';
+import {
+  deepestSelectionChild,
+  normalizedSelectionRect,
+  selectionCandidatesAtPoint,
+  selectionNodesInRect,
+  type EditorSelectableNode,
+  type EditorSelectionCandidate,
+  type EditorSelectionRect
+} from './selection-model';
 
 type BasicShapeId = 'rectangle' | 'ellipse' | 'line';
+
+const SCENE_RESPONSIVE_EDITOR_RULES = {
+  tablet: { ruleId: 'editor:tablet', ruleName: '人工平板布局', minWidth: 768, maxWidth: 1200 },
+  mobile: { ruleId: 'editor:mobile', ruleName: '人工手机布局', maxWidth: 768 }
+} as const;
+
+const SLOT_EDITOR_HEADER_HEIGHT = 72;
+const SLOT_EDITOR_CANVAS_INSETS = { top: 27, right: 9, bottom: 9, left: 9 } as const;
+
+function slotEditorFrameBounds(canvasSize: { width: number; height: number }) {
+  return {
+    x: 0,
+    y: 0,
+    width: canvasSize.width + SLOT_EDITOR_CANVAS_INSETS.left + SLOT_EDITOR_CANVAS_INSETS.right,
+    height: SLOT_EDITOR_HEADER_HEIGHT + SLOT_EDITOR_CANVAS_INSETS.top + canvasSize.height + SLOT_EDITOR_CANVAS_INSETS.bottom
+  };
+}
 
 const palette: Array<{ id: BasicShapeId; type: WebComponentType; label: string; icon: string; keywords: string[] }> = [
   { id: 'rectangle', type: 'section', label: '矩形', icon: '▭', keywords: ['rectangle', '矩形', '容器'] },
@@ -510,8 +563,28 @@ type Interaction = {
 type CanvasPan = {
   pointerX: number;
   pointerY: number;
-  scrollLeft: number;
-  scrollTop: number;
+  camera: WorkspaceCamera;
+};
+
+type CanvasMarquee = {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startPoint: { x: number; y: number };
+  canvas: HTMLElement;
+  nodes: EditorSelectableNode[];
+  initialIds: string[];
+  initialPrimaryId?: string;
+  additive: boolean;
+  moved: boolean;
+};
+
+type WorkspaceArtboardDrag = {
+  artboardId: string;
+  pointerX: number;
+  pointerY: number;
+  x: number;
+  y: number;
 };
 
 type LayerAction = 'front' | 'forward' | 'backward' | 'back';
@@ -527,10 +600,131 @@ type VariantPickerPointerDrag = Omit<LibraryPreviewPointerEvent, 'phase'> & {
   dragging: boolean;
 };
 type EditingSlot = { componentId: string; slotId: string };
+type SceneContentFocus = SceneInsertionFocus & { pageId: string };
+type SelectionCandidatePopover = {
+  clientX: number;
+  clientY: number;
+  candidates: EditorSelectionCandidate[];
+};
 type InspectorVisualState = 'default' | WebComponentVisualState;
-type InspectorTab = 'design' | 'prototype' | 'ai';
+type InspectorTab = 'design' | 'prototype' | 'ai' | 'review';
 
 const PERSONAL_SYMBOLS_STORAGE_KEY = 'web-design-studio:personal-symbols:v1';
+const SCENE_SNIPPETS_STORAGE_KEY = 'web-design-studio:scene-snippets:v2';
+
+const WORKSPACE_ARTBOARD_GAP = 160;
+const WORKSPACE_ARTBOARD_HEADER_HEIGHT = 48;
+
+const WORKSPACE_SURFACE_LABELS: Record<WorkspaceSurfaceKind, string> = {
+  page: '页面',
+  modal: '弹窗',
+  drawer: '抽屉',
+  popover: '浮层',
+  menu: '菜单',
+  state: '界面状态'
+};
+
+const WORKSPACE_SURFACE_SIZES: Record<Exclude<WorkspaceSurfaceKind, 'page' | 'state'>, { width: number; height: number }> = {
+  modal: { width: 720, height: 720 },
+  drawer: { width: 520, height: 900 },
+  popover: { width: 420, height: 360 },
+  menu: { width: 320, height: 440 }
+};
+
+function deviceForWorkspaceArtboard(document: WebDesignDocument, artboard: WorkspaceArtboardPlacement): WebDesignDevice {
+  if (artboard.surfaceKind !== 'page') return 'desktop';
+  return (['desktop', 'tablet', 'mobile'] as const).reduce((closest, candidate) => (
+    Math.abs(breakpointFor(document, candidate).width - artboard.viewportWidth)
+      < Math.abs(breakpointFor(document, closest).width - artboard.viewportWidth) ? candidate : closest
+  ), 'desktop' as WebDesignDevice);
+}
+
+function workspaceViewportHeight(document: WebDesignDocument, device: WebDesignDevice): number {
+  const responsive = breakpointFor(document, device);
+  if (responsive.preview?.viewportHeight) return responsive.preview.viewportHeight;
+  const preset = matchViewportPreset(device, responsive.width);
+  return preset
+    ? viewportDimensions(preset.preset, preset.orientation).height
+    : Math.min(responsive.height, device === 'desktop' ? 1080 : device === 'tablet' ? 1024 : 844);
+}
+
+function workspacePageSources(document: WebDesignDocument, scene?: SceneDocument) {
+  return scene
+    ? scene.pages.map((page) => ({ id: page.id, surfaceKind: 'page' as WorkspaceSurfaceKind }))
+    : pagesForDocument(document).map((page) => ({ id: page.id, surfaceKind: page.surfaceKind ?? 'page' }));
+}
+
+function initialWorkspaceArtboards(document: WebDesignDocument, scene?: SceneDocument): WorkspaceArtboardPlacement[] {
+  let x = 0;
+  return workspacePageSources(document, scene).map((page) => {
+    const responsive = breakpointFor(document, 'desktop');
+    const artboard: WorkspaceArtboardPlacement = {
+      artboardId: `artboard-${page.id}`,
+      pageId: page.id,
+      surfaceKind: page.surfaceKind,
+      viewportWidth: responsive.width,
+      viewportHeight: workspaceViewportHeight(document, 'desktop'),
+      x,
+      y: 0
+    };
+    x += responsive.width + WORKSPACE_ARTBOARD_GAP;
+    return artboard;
+  });
+}
+
+function reconcileWorkspaceArtboards(document: WebDesignDocument, stored: readonly WorkspaceArtboardPlacement[], scene?: SceneDocument): WorkspaceArtboardPlacement[] {
+  const pages = workspacePageSources(document, scene);
+  const pageIds = new Set(pages.map((page) => page.id));
+  const seenPages = new Set<string>();
+  const valid = stored.filter((artboard) => {
+    if (!pageIds.has(artboard.pageId) || seenPages.has(artboard.pageId)) return false;
+    seenPages.add(artboard.pageId);
+    return true;
+  }).map((artboard) => ({ ...artboard }));
+  let right = valid.length === 0
+    ? 0
+    : Math.max(...valid.map((artboard) => artboard.x + artboard.viewportWidth)) + WORKSPACE_ARTBOARD_GAP;
+  const desktop = breakpointFor(document, 'desktop');
+  for (const page of pages) {
+    if (seenPages.has(page.id)) continue;
+    valid.push({
+      artboardId: `artboard-${page.id}`,
+      pageId: page.id,
+      surfaceKind: page.surfaceKind,
+      viewportWidth: desktop.width,
+      viewportHeight: workspaceViewportHeight(document, 'desktop'),
+      x: right,
+      y: 0
+    });
+    right += desktop.width + WORKSPACE_ARTBOARD_GAP;
+  }
+  return valid;
+}
+
+function workspaceArtboardBounds(document: WebDesignDocument, artboards: readonly WorkspaceArtboardPlacement[], scene?: SceneDocument) {
+  return unionWorkspaceRects(artboards.map((artboard) => workspaceArtboardContentBounds(document, artboard, scene)))
+    ?? { x: 0, y: 0, width: 1, height: 1 };
+}
+
+function workspaceArtboardContentBounds(document: WebDesignDocument, artboard: WorkspaceArtboardPlacement, scene?: SceneDocument) {
+  const targetDevice = deviceForWorkspaceArtboard(document, artboard);
+  const contentHeight = scene
+    ? sceneArtboardContentHeight(scene, artboard.pageId, artboard.viewportWidth, artboard.viewportHeight)
+    : componentsForPage(document, artboard.pageId).reduce((maximum, component) => {
+      const frame = resolveComponent(component, targetDevice);
+      return frame.hidden ? maximum : Math.max(maximum, frame.y + frame.height + 80);
+    }, artboard.viewportHeight);
+  return {
+    x: artboard.x,
+    y: artboard.y - WORKSPACE_ARTBOARD_HEADER_HEIGHT,
+    width: artboard.viewportWidth,
+    height: contentHeight + WORKSPACE_ARTBOARD_HEADER_HEIGHT
+  };
+}
+
+function workspaceArtboardSignature(artboards: readonly WorkspaceArtboardPlacement[]): string {
+  return JSON.stringify(artboards);
+}
 
 function loadPersonalSymbols(): WebDesignSymbol[] {
   try {
@@ -662,36 +856,57 @@ export function WebDesignStudioApp() {
   const [documents, setDocuments] = useState<DesignSummary[]>([]);
   const [activeProject, setActiveProject] = useState<WebDesignProject>();
   const [document, setDocument] = useState<WebDesignDocument>();
+  const [sceneDocument, setSceneDocument] = useState<SceneDocument>();
+  const [sceneHistory, setSceneHistory] = useState<SceneHistoryStatus>();
+  const [sceneLoadState, setSceneLoadState] = useState<'idle' | 'loading' | 'ready' | 'missing'>('idle');
+  const [sceneReloadToken, setSceneReloadToken] = useState(0);
   const [ready, setReady] = useState(false);
   const [screen, setScreen] = useState<'project' | 'editor'>('project');
   const [persistedRevision, setPersistedRevision] = useState(0);
   const [selectedId, setSelectedId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectionCandidatePopover, setSelectionCandidatePopover] = useState<SelectionCandidatePopover>();
+  const [marqueeRect, setMarqueeRect] = useState<EditorSelectionRect>();
   const [pageId, setPageId] = useState('home');
   const [clipboard, setClipboard] = useState<{ document: WebDesignDocument; componentIds: string[] }>();
+  const [sceneClipboard, setSceneClipboard] = useState<SceneNode[]>([]);
   const [snapGuides, setSnapGuides] = useState<SnapGuides>({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [previewOverlayPageId, setPreviewOverlayPageId] = useState<string>();
   const [interactionMode, setInteractionMode] = useState(false);
   const [device, setDevice] = useState<WebDesignDevice>('desktop');
   const [viewportSelections, setViewportSelections] = useState<Record<WebDesignDevice, ViewportSelection>>(() => structuredClone(DEFAULT_VIEWPORT_SELECTIONS));
-  const [zoom, setZoom] = useState(0.82);
+  const [workspaceCamera, setWorkspaceCamera] = useState<WorkspaceCamera>({ x: 0, y: 0, zoom: 0.82 });
+  const [workspacePlacement, setWorkspacePlacement] = useState<WorkspacePlacementDocument>();
+  const [activeArtboardId, setActiveArtboardId] = useState<string>();
+  const [newSurfaceKind, setNewSurfaceKind] = useState<WorkspaceSurfaceKind>('page');
+  const [prototypeLinksVisible, setPrototypeLinksVisible] = useState(true);
   const [past, setPast] = useState<WebDesignDocument[]>([]);
   const [future, setFuture] = useState<WebDesignDocument[]>([]);
   const [toast, setToast] = useState<string>();
   const [annotationText, setAnnotationText] = useState('');
   const [aiInstruction, setAiInstruction] = useState('');
+  const [sceneAiContext, setSceneAiContext] = useState<SceneAnnotationAiContext>();
+  const [sceneAnnotationPreparingId, setSceneAnnotationPreparingId] = useState<string>();
+  const [generationPlan, setGenerationPlan] = useState<GenerationPlanSummary>();
+  const [generationReview, setGenerationReview] = useState<GenerationStepReview>();
+  const [generationLoading, setGenerationLoading] = useState(false);
+  const [generationAction, setGenerationAction] = useState<string>();
+  const [generationRejectionReason, setGenerationRejectionReason] = useState('');
   const [paletteQuery, setPaletteQuery] = useState('');
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('antd');
   const [personalSymbols, setPersonalSymbols] = useState<WebDesignSymbol[]>(loadPersonalSymbols);
+  const [sceneSnippets, setSceneSnippets] = useState<SceneSnippet[]>(() => parseSceneSnippets(window.localStorage.getItem(SCENE_SNIPPETS_STORAGE_KEY)));
+  const [sceneVariablesDraft, setSceneVariablesDraft] = useState('[]');
   const [variantPickerTarget, setVariantPickerTarget] = useState<VariantPickerTarget>();
+  const [sceneContentFocus, setSceneContentFocus] = useState<SceneContentFocus>();
   const [variantPickerDrag, setVariantPickerDrag] = useState<VariantPickerPointerDrag>();
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const [projectLibraryOpen, setProjectLibraryOpen] = useState(false);
   const [newDesignOpen, setNewDesignOpen] = useState(false);
   const [newDesignName, setNewDesignName] = useState('');
-  const [newDesignBlank, setNewDesignBlank] = useState(true);
   const [editingSlot, setEditingSlot] = useState<EditingSlot>();
   const [inspectorVisualState, setInspectorVisualState] = useState<InspectorVisualState>('default');
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('design');
@@ -702,23 +917,96 @@ export function WebDesignStudioApp() {
   );
   const interaction = useRef<Interaction | undefined>(undefined);
   const canvasPan = useRef<CanvasPan | undefined>(undefined);
+  const canvasMarquee = useRef<CanvasMarquee | undefined>(undefined);
+  const workspaceArtboardDrag = useRef<WorkspaceArtboardDrag | undefined>(undefined);
   const spacePressed = useRef(false);
-  const canvasGeometrySnapshot = useRef<{ context: string; geometry: InfiniteCanvasGeometry } | undefined>(undefined);
+  const workspaceCameraContext = useRef<string | undefined>(undefined);
+  const workspaceCameraBeforeSlot = useRef<WorkspaceCamera | undefined>(undefined);
+  const slotCameraContext = useRef<string | undefined>(undefined);
+  const persistedWorkspaceArtboards = useRef<string>('');
   const variantPickerDragRef = useRef<VariantPickerPointerDrag | undefined>(undefined);
   const documentRef = useRef<WebDesignDocument | undefined>(undefined);
+  const sceneDocumentRef = useRef<SceneDocument | undefined>(undefined);
   const assetInput = useRef<HTMLInputElement | null>(null);
+  const canvasStage = useRef<HTMLElement | null>(null);
   const canvasScroll = useRef<HTMLDivElement | null>(null);
+  const zoom = workspaceCamera.zoom;
   const previewZoom = useRef(zoom);
   const interactionZoom = useRef(zoom);
   const [canvasPanning, setCanvasPanning] = useState(false);
   const [canvasPanReady, setCanvasPanReady] = useState(false);
 
   useEffect(() => { documentRef.current = document; }, [document]);
+  useEffect(() => { sceneDocumentRef.current = sceneDocument; }, [sceneDocument]);
+  useEffect(() => { setSceneAiContext(undefined); }, [sceneDocument?.documentId, selectedId]);
+
+  useEffect(() => {
+    const stage = canvasStage.current;
+    const viewport = canvasScroll.current;
+    if (!stage || !viewport || screen !== 'editor') return;
+    const onWheel = (event: WheelEvent) => {
+      if (preview) return;
+      const isPinchZoom = event.ctrlKey || event.metaKey;
+      const target = event.target;
+      const isInsideCanvasStage = target instanceof Node && stage.contains(target);
+      if (isPinchZoom) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      if (!isInsideCanvasStage) return;
+      if (!isPinchZoom && !(target instanceof Node && viewport.contains(target))) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (isPinchZoom) {
+        const bounds = viewport.getBoundingClientRect();
+        const anchor = {
+          x: Math.min(viewport.clientWidth, Math.max(0, event.clientX - bounds.left)),
+          y: Math.min(viewport.clientHeight, Math.max(0, event.clientY - bounds.top))
+        };
+        setWorkspaceCamera((current) => zoomWorkspaceCameraAt(
+          current,
+          workspaceZoomFromWheel(current.zoom, event.deltaY),
+          anchor
+        ));
+        return;
+      }
+      setWorkspaceCamera((current) => panWorkspaceCamera(current, { x: -event.deltaX, y: -event.deltaY }));
+    };
+    window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+    return () => window.removeEventListener('wheel', onWheel, { capture: true });
+  }, [screen, preview]);
 
   const selected = useMemo(
     () => document?.components.find((component) => component.id === selectedId),
     [document, selectedId]
   );
+  const selectedSceneEntry = useMemo(() => {
+    if (!sceneDocument || !selectedId) return undefined;
+    return indexSceneDocument(sceneDocument).get(selectedId);
+  }, [sceneDocument, selectedId]);
+  const selectedSceneNode: SceneNode | undefined = selectedSceneEntry?.node;
+  useEffect(() => {
+    if (!sceneContentFocus || !sceneDocument) return;
+    const entry = indexSceneDocument(sceneDocument).get(sceneContentFocus.nodeId);
+    if (!entry || entry.pageId !== sceneContentFocus.pageId) setSceneContentFocus(undefined);
+  }, [sceneContentFocus, sceneDocument]);
+  const sceneResponsiveRuleSpec = device === 'desktop' ? undefined : SCENE_RESPONSIVE_EDITOR_RULES[device];
+  const selectedSceneResponsiveOverride = useMemo(() => {
+    if (!sceneDocument || !selectedSceneNode || !sceneResponsiveRuleSpec) return undefined;
+    return sceneDocument.responsiveRules.find((rule) => rule.id === sceneResponsiveRuleSpec.ruleId)
+      ?.nodeOverrides.find((override) => override.nodeId === selectedSceneNode.id);
+  }, [sceneDocument, sceneResponsiveRuleSpec, selectedSceneNode]);
+  const selectedScenePositionEditable = useMemo(() => {
+    if (!sceneDocument || !selectedSceneEntry) return false;
+    if (sceneDocument.pages.some((page) => page.id === selectedSceneEntry.parentId)) return true;
+    const parent = indexSceneDocument(sceneDocument).get(selectedSceneEntry.parentId)?.node;
+    return Boolean(parent && (parent.layout.mode === 'free' || selectedSceneEntry.node.layout.position === 'absolute'));
+  }, [sceneDocument, selectedSceneEntry]);
+  const activeScenePage = useMemo(
+    () => sceneDocument?.pages.find((page) => page.id === pageId),
+    [sceneDocument, pageId]
+  );
+  const sceneEditingActive = sceneLoadState === 'loading' || sceneLoadState === 'missing' || Boolean(sceneDocument);
   const selectedFrame = useMemo(
     () => selected ? resolveComponent(selected, device) : undefined,
     [selected, device]
@@ -734,15 +1022,43 @@ export function WebDesignStudioApp() {
   const previewViewportHeight = viewportPreset
     ? viewportDimensions(viewportPreset, viewportSelection.orientation).height
     : viewportSelection.customHeight;
-  const viewportLabel = viewportPreset?.label ?? '自定义视口';
-  const renderedCanvasHeight = Math.max(breakpoint.height, previewViewportHeight);
+  const renderedCanvasHeight = sceneDocument
+    ? sceneArtboardContentHeight(sceneDocument, pageId, breakpoint.width, Math.max(breakpoint.height, previewViewportHeight))
+    : Math.max(breakpoint.height, previewViewportHeight);
   const scaledCanvasWidth = breakpoint.width * zoom;
   const scaledCanvasHeight = renderedCanvasHeight * zoom;
-  const infiniteCanvasGeometry = useMemo(
-    () => createInfiniteCanvasGeometry(scaledCanvasWidth, scaledCanvasHeight),
-    [scaledCanvasWidth, scaledCanvasHeight]
+  const pages = useMemo(() => {
+    if (sceneDocument) {
+      const artboardsByPage = new Map(workspacePlacement?.artboards.map((artboard) => [artboard.pageId, artboard]));
+      return sceneDocument.pages.map((page) => ({
+        id: page.id,
+        name: page.name,
+        slug: `/${page.id}`,
+        surfaceKind: artboardsByPage.get(page.id)?.surfaceKind ?? 'page' as WorkspaceSurfaceKind
+      }));
+    }
+    return document ? pagesForDocument(document) : [];
+  }, [document, sceneDocument, workspacePlacement?.artboards]);
+  const activeWorkspaceArtboard = useMemo(
+    () => workspacePlacement?.artboards.find((artboard) => artboard.artboardId === activeArtboardId),
+    [activeArtboardId, workspacePlacement?.artboards]
   );
-  const pages = useMemo(() => document ? pagesForDocument(document) : [], [document]);
+  const routePages = useMemo(() => pages.filter((page) => (page.surfaceKind ?? 'page') === 'page'), [pages]);
+  const previewOverlayPage = useMemo(() => pages.find((page) => page.id === previewOverlayPageId), [pages, previewOverlayPageId]);
+  const previewOverlayArtboard = useMemo(() => workspacePlacement?.artboards.find((artboard) => artboard.pageId === previewOverlayPageId), [workspacePlacement?.artboards, previewOverlayPageId]);
+  const prototypeConnections = useMemo(() => {
+    if (!document || !workspacePlacement) return [];
+    if (!sceneDocument) return [];
+    return buildPrototypeFlowConnections(
+      scenePrototypeFlowSources(sceneDocument, workspacePlacement.artboards),
+      workspacePlacement.artboards
+    );
+  }, [device, document, sceneDocument, workspacePlacement]);
+  const selectedPrototypeTarget = useMemo(() => {
+    const targetPageId = selectedSceneNode?.prototypeLink?.targetPageId
+      ?? (selected?.interaction?.type === 'page' ? selected.interaction.target : undefined);
+    return targetPageId ? pages.find((page) => page.id === targetPageId) : undefined;
+  }, [pages, selected, selectedSceneNode]);
   const activeProjectDocuments = useMemo(() => {
     const ids = new Set(activeProject?.designIds ?? []);
     return documents.filter((item) => ids.has(item.documentId));
@@ -770,6 +1086,24 @@ export function WebDesignStudioApp() {
       originY: containerFrame.y
     });
   }, [editingContainer, editingSlotDefinition, editingVisibleComponents, device]);
+
+  useEffect(() => {
+    if (!editingSlot || !editingSlotCanvasSize || screen !== 'editor' || preview) return;
+    const context = `${editingSlot.componentId}:${editingSlot.slotId}:${device}`;
+    if (slotCameraContext.current === context) return;
+    const frame = window.requestAnimationFrame(() => {
+      const viewport = canvasScroll.current;
+      if (!viewport) return;
+      slotCameraContext.current = context;
+      setWorkspaceCamera(fitWorkspaceRect(
+        slotEditorFrameBounds(editingSlotCanvasSize),
+        { width: viewport.clientWidth, height: viewport.clientHeight },
+        { top: 112, right: 72, bottom: 88, left: 72 },
+        2.5
+      ));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [screen, preview, editingSlot?.componentId, editingSlot?.slotId, device, editingSlotCanvasSize?.width, editingSlotCanvasSize?.height]);
   const inspectedFrame = useMemo(() => {
     if (!selectedFrame || !editingContainer || !editingSlot || !selected || slotIdForDescendant(document!, selected, editingContainer.id) !== editingSlot.slotId) return selectedFrame;
     const containerFrame = resolveComponent(editingContainer, device);
@@ -784,6 +1118,14 @@ export function WebDesignStudioApp() {
   useEffect(() => {
     window.localStorage.setItem(PERSONAL_SYMBOLS_STORAGE_KEY, JSON.stringify(personalSymbols));
   }, [personalSymbols]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SCENE_SNIPPETS_STORAGE_KEY, JSON.stringify(sceneSnippets));
+  }, [sceneSnippets]);
+
+  useEffect(() => {
+    setSceneVariablesDraft(JSON.stringify(sceneDocument?.variableCollections ?? [], null, 2));
+  }, [sceneDocument?.documentId, sceneDocument?.revision]);
 
   useEffect(() => {
     window.localStorage.setItem('web-design-studio.workspace-shell.v1', JSON.stringify(workspaceShell));
@@ -832,19 +1174,107 @@ export function WebDesignStudioApp() {
   }, []);
 
   useEffect(() => {
+    if (!repository || !document || screen !== 'editor') {
+      sceneDocumentRef.current = undefined;
+      setSceneDocument(undefined);
+      setSceneHistory(undefined);
+      setSceneLoadState('idle');
+      return;
+    }
+    let cancelled = false;
+    setSceneLoadState('loading');
+    setSceneDocument(undefined);
+    setSceneHistory(undefined);
+    void repository.readScene(document.documentId).then(async (nextScene) => {
+      const history = await repository.readSceneHistory(document.documentId).catch(() => ({ undoCount: 0, redoCount: 0 }));
+      if (cancelled) return;
+      sceneDocumentRef.current = nextScene;
+      setSceneDocument(nextScene);
+      setSceneHistory(history);
+      setSceneLoadState('ready');
+    }).catch(() => {
+      if (cancelled) return;
+      sceneDocumentRef.current = undefined;
+      setSceneDocument(undefined);
+      setSceneHistory(undefined);
+      setSceneLoadState('missing');
+    });
+    return () => { cancelled = true; };
+  }, [repository, document?.documentId, screen, sceneReloadToken]);
+
+  useEffect(() => {
+    if (!repository || !document || screen !== 'editor' || repository.mode !== 'server') {
+      setGenerationPlan(undefined);
+      setGenerationReview(undefined);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async (showLoading: boolean) => {
+      if (showLoading) setGenerationLoading(true);
+      try {
+        const plan = await repository.readGenerationPlan(document.documentId);
+        if (cancelled) return;
+        setGenerationPlan(plan);
+        const activeStep = plan?.activeStep;
+        if (activeStep?.stepId && activeStep.activeAttemptId) {
+          const review = await repository.inspectGenerationStep(document.documentId, activeStep.stepId, activeStep.activeAttemptId);
+          if (!cancelled) setGenerationReview(review);
+        } else if (!cancelled) {
+          setGenerationReview(undefined);
+        }
+      } catch (error) {
+        if (!cancelled && showLoading) showToast(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (!cancelled && showLoading) setGenerationLoading(false);
+      }
+    };
+    void refresh(true);
+    const timer = window.setInterval(() => void refresh(false), 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [repository, document?.documentId, screen]);
+
+  useEffect(() => {
     const onMove = (event: PointerEvent) => {
+      const activeArtboard = workspaceArtboardDrag.current;
+      if (activeArtboard) {
+        const dx = (event.clientX - activeArtboard.pointerX) / workspaceCamera.zoom;
+        const dy = (event.clientY - activeArtboard.pointerY) / workspaceCamera.zoom;
+        setWorkspacePlacement((current) => current ? {
+          ...current,
+          artboards: current.artboards.map((artboard) => artboard.artboardId === activeArtboard.artboardId
+            ? { ...artboard, x: Math.round(activeArtboard.x + dx), y: Math.round(activeArtboard.y + dy) }
+            : artboard)
+        } : current);
+        return;
+      }
       const activePan = canvasPan.current;
       if (activePan) {
-        const scroller = canvasScroll.current;
-        if (!scroller) return;
-        const next = panCanvasScroll(
-          activePan.scrollLeft,
-          activePan.scrollTop,
-          event.clientX - activePan.pointerX,
-          event.clientY - activePan.pointerY
-        );
-        scroller.scrollLeft = next.left;
-        scroller.scrollTop = next.top;
+        setWorkspaceCamera(panWorkspaceCamera(activePan.camera, {
+          x: event.clientX - activePan.pointerX,
+          y: event.clientY - activePan.pointerY
+        }));
+        return;
+      }
+      const activeMarquee = canvasMarquee.current;
+      if (activeMarquee && event.pointerId === activeMarquee.pointerId) {
+        const distance = Math.hypot(event.clientX - activeMarquee.startClientX, event.clientY - activeMarquee.startClientY);
+        if (!activeMarquee.moved && distance < 4) return;
+        activeMarquee.moved = true;
+        const bounds = activeMarquee.canvas.getBoundingClientRect();
+        const scaleX = bounds.width / Math.max(1, activeMarquee.canvas.offsetWidth);
+        const scaleY = bounds.height / Math.max(1, activeMarquee.canvas.offsetHeight);
+        const point = {
+          x: (event.clientX - bounds.left) / Math.max(scaleX, .0001),
+          y: (event.clientY - bounds.top) / Math.max(scaleY, .0001)
+        };
+        const rect = normalizedSelectionRect(activeMarquee.startPoint, point);
+        const matchedIds = selectionNodesInRect(activeMarquee.nodes, rect).map((node) => node.id);
+        const nextIds = activeMarquee.additive
+          ? [...activeMarquee.initialIds, ...matchedIds.filter((id) => !activeMarquee.initialIds.includes(id))]
+          : matchedIds;
+        setMarqueeRect(rect);
+        setSelectedIds(nextIds);
+        setSelectedId(matchedIds.at(-1) ?? activeMarquee.initialPrimaryId);
         return;
       }
       const active = interaction.current;
@@ -881,10 +1311,21 @@ export function WebDesignStudioApp() {
         }));
       }
     };
-    const onUp = () => {
+    const onUp = (event: PointerEvent) => {
+      if (workspaceArtboardDrag.current) workspaceArtboardDrag.current = undefined;
       if (canvasPan.current) {
         canvasPan.current = undefined;
         setCanvasPanning(false);
+      }
+      const activeMarquee = canvasMarquee.current;
+      if (activeMarquee && event.pointerId === activeMarquee.pointerId) {
+        if (!activeMarquee.moved && !activeMarquee.additive) {
+          setSelectedId(undefined);
+          setSelectedIds([]);
+        }
+        canvasMarquee.current = undefined;
+        setMarqueeRect(undefined);
+        return;
       }
       const active = interaction.current;
       if (!active) return;
@@ -895,17 +1336,19 @@ export function WebDesignStudioApp() {
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
-  }, [device, zoom, pageId, editingSlot]);
+  }, [device, zoom, pageId, editingSlot, workspaceCamera.zoom]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
-      if (event.code === 'Space' && !preview && !editingSlot) {
+      if (event.code === 'Space' && !preview) {
         event.preventDefault();
         spacePressed.current = true;
         setCanvasPanReady(true);
@@ -913,7 +1356,10 @@ export function WebDesignStudioApp() {
       }
       const command = event.metaKey || event.ctrlKey;
       const shellAction = workspaceShellShortcut(event.key, command);
-      if (event.key === 'Escape' && preview) {
+      if (event.key === 'Escape' && selectionCandidatePopover) {
+        event.preventDefault();
+        setSelectionCandidatePopover(undefined);
+      } else if (event.key === 'Escape' && preview) {
         event.preventDefault();
         toggleFullPreview();
       } else if (event.key === 'Escape' && interactionMode) {
@@ -940,22 +1386,30 @@ export function WebDesignStudioApp() {
       } else if (command && event.key.toLowerCase() === 'c' && selectedIds.length > 0) {
         event.preventDefault();
         copySelected();
-      } else if (command && event.key.toLowerCase() === 'v' && clipboard) {
+      } else if (command && event.key.toLowerCase() === 'v' && (sceneEditingActive ? sceneClipboard.length > 0 : Boolean(clipboard))) {
         event.preventDefault();
         pasteClipboard();
+      } else if (event.key === 'Enter' && selectedId && !event.shiftKey) {
+        event.preventDefault();
+        selectSelectionChild();
+      } else if (event.key === 'Enter' && selectedId && event.shiftKey) {
+        event.preventDefault();
+        selectSelectionParent();
       } else if (shellAction) {
         event.preventDefault();
         if (shellAction.type === 'select-tool') activateWorkspaceTool(shellAction.tool);
         else dispatchWorkspaceShell(shellAction);
       } else if ((event.key === 'Backspace' || event.key === 'Delete') && selectedIds.length > 0) {
         event.preventDefault();
-        deleteSelected();
+        if (sceneEditingActive) void deleteSceneSelection();
+        else deleteSelected();
       } else if (selectedIds.length > 0 && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
         event.preventDefault();
         const amount = event.shiftKey ? 10 : 1;
         const dx = event.key === 'ArrowLeft' ? -amount : event.key === 'ArrowRight' ? amount : 0;
         const dy = event.key === 'ArrowUp' ? -amount : event.key === 'ArrowDown' ? amount : 0;
-        nudgeSelected(dx, dy);
+        if (sceneEditingActive) void nudgeSceneSelection(dx, dy);
+        else nudgeSelected(dx, dy);
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
@@ -977,35 +1431,77 @@ export function WebDesignStudioApp() {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [selectedIds, past, future, dirty, saving, repository, persistedRevision, device, clipboard, pageId, preview, interactionMode, zoom, breakpoint.width, editingSlot]);
+  }, [selectedId, selectedIds, selectionCandidatePopover, past, future, dirty, saving, repository, persistedRevision, device, clipboard, sceneClipboard, sceneEditingActive, sceneDocument, pageId, preview, interactionMode, zoom, breakpoint.width, editingSlot]);
 
   useEffect(() => {
-    if (screen !== 'editor' || preview || editingSlot) {
-      canvasGeometrySnapshot.current = undefined;
+    if (screen !== 'editor' || preview || !document || !repository) {
+      workspaceCameraContext.current = undefined;
+      setWorkspacePlacement(undefined);
       return;
     }
-    const frame = window.requestAnimationFrame(() => {
-      const scroller = canvasScroll.current;
-      if (!scroller) return;
-      const context = `${document?.documentId ?? ''}:${pageId}:${device}:${zoom}`;
-      const previous = canvasGeometrySnapshot.current;
-      if (previous?.context === context) {
-        scroller.scrollLeft += infiniteCanvasGeometry.contentX - previous.geometry.contentX;
-        scroller.scrollTop += infiniteCanvasGeometry.contentY - previous.geometry.contentY;
-      } else {
-        const centered = centeredCanvasScroll(
-          infiniteCanvasGeometry,
-          scroller.clientWidth,
-          scroller.clientHeight,
-          scaledCanvasWidth,
-          scaledCanvasHeight
-        );
-        scroller.scrollTo({ left: centered.left, top: centered.top });
+    if (sceneLoadState === 'idle' || sceneLoadState === 'loading') return;
+    if (editingSlot) return;
+    const context = document.documentId;
+    if (workspaceCameraContext.current === context) return;
+    let cancelled = false;
+    void repository.readWorkspace(document.documentId).then(async (storedPlacement) => {
+      if (cancelled) return;
+      const activeScene = sceneLoadState === 'ready' ? sceneDocument : undefined;
+      const reconciledArtboards = storedPlacement.artboards.length === 0
+        ? initialWorkspaceArtboards(document, activeScene)
+        : reconcileWorkspaceArtboards(document, storedPlacement.artboards, activeScene);
+      const placementChanged = workspaceArtboardSignature(reconciledArtboards) !== workspaceArtboardSignature(storedPlacement.artboards);
+      const placement = placementChanged
+        ? await repository.saveWorkspaceArtboards(document.documentId, reconciledArtboards)
+        : storedPlacement;
+      if (cancelled) return;
+      const viewport = canvasScroll.current;
+      const camera = storedPlacement.artboards.length === 0 && viewport
+        ? fitWorkspaceRect(
+            workspaceArtboardBounds(document, placement.artboards, sceneDocumentRef.current),
+            { width: viewport.clientWidth, height: viewport.clientHeight },
+            { top: 92, right: 64, bottom: 92, left: 64 }
+          )
+        : placement.camera;
+      workspaceCameraContext.current = context;
+      persistedWorkspaceArtboards.current = workspaceArtboardSignature(placement.artboards);
+      setWorkspacePlacement(placement);
+      const first = placement.artboards[0];
+      setActiveArtboardId(first?.artboardId);
+      if (first) {
+        setDevice(deviceForWorkspaceArtboard(document, first));
+        setPageId(first.pageId);
       }
-      canvasGeometrySnapshot.current = { context, geometry: infiniteCanvasGeometry };
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [screen, preview, editingSlot, document?.documentId, pageId, device, zoom, scaledCanvasWidth, scaledCanvasHeight, infiniteCanvasGeometry]);
+      setWorkspaceCamera(camera);
+    }).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+    return () => { cancelled = true; };
+  }, [screen, preview, editingSlot, document?.documentId, repository, sceneDocument, sceneLoadState]);
+
+  useEffect(() => {
+    if (!document || screen !== 'editor' || preview || editingSlot) return;
+    if (!repository) return;
+    const context = document.documentId;
+    if (workspaceCameraContext.current !== context) return;
+    const timeout = window.setTimeout(() => {
+      void repository.saveWorkspaceCamera(document.documentId, workspaceCamera)
+        .catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+    }, 120);
+    return () => window.clearTimeout(timeout);
+  }, [document?.documentId, repository, screen, preview, editingSlot, workspaceCamera]);
+
+  useEffect(() => {
+    if (!document || !repository || !workspacePlacement || screen !== 'editor' || preview || editingSlot) return;
+    if (workspaceCameraContext.current !== document.documentId) return;
+    const signature = workspaceArtboardSignature(workspacePlacement.artboards);
+    if (signature === persistedWorkspaceArtboards.current) return;
+    const timeout = window.setTimeout(() => {
+      void repository.saveWorkspaceArtboards(document.documentId, workspacePlacement.artboards).then((saved) => {
+        persistedWorkspaceArtboards.current = workspaceArtboardSignature(saved.artboards);
+        setWorkspacePlacement((current) => current ? { ...current, revision: saved.revision, updatedAt: saved.updatedAt } : current);
+      }).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+    }, 120);
+    return () => window.clearTimeout(timeout);
+  }, [document?.documentId, repository, workspacePlacement?.artboards, screen, preview, editingSlot]);
 
   function showToast(message: string) {
     setToast(message);
@@ -1051,6 +1547,17 @@ export function WebDesignStudioApp() {
 
   function openDocument(next: WebDesignDocument) {
     const opened = structuredClone(next);
+    workspaceCameraBeforeSlot.current = undefined;
+    slotCameraContext.current = undefined;
+    workspaceCameraContext.current = undefined;
+    persistedWorkspaceArtboards.current = '';
+    setWorkspacePlacement(undefined);
+    setActiveArtboardId(undefined);
+    sceneDocumentRef.current = undefined;
+    setSceneDocument(undefined);
+    setSceneHistory(undefined);
+    setSceneLoadState('loading');
+    setSceneReloadToken((value) => value + 1);
     setCurrent(opened);
     setPersistedRevision(next.revision);
     setSelectedId(undefined);
@@ -1109,7 +1616,135 @@ export function WebDesignStudioApp() {
     return { ...structuredClone(snapshot), revision: current.revision, createdAt: current.createdAt, updatedAt: current.updatedAt };
   }
 
+  function applySceneDocument(next: SceneDocument) {
+    sceneDocumentRef.current = next;
+    setSceneDocument(next);
+    setSceneLoadState('ready');
+  }
+
+  async function refreshSceneHistory(documentId: string) {
+    if (!repository) return;
+    setSceneHistory(await repository.readSceneHistory(documentId));
+  }
+
+  async function refreshGenerationState(showLoading = false) {
+    const currentDocument = documentRef.current;
+    if (!repository || !currentDocument || repository.mode !== 'server') return;
+    if (showLoading) setGenerationLoading(true);
+    try {
+      const plan = await repository.readGenerationPlan(currentDocument.documentId);
+      setGenerationPlan(plan);
+      const activeStep = plan?.activeStep;
+      if (activeStep?.stepId && activeStep.activeAttemptId) {
+        setGenerationReview(await repository.inspectGenerationStep(currentDocument.documentId, activeStep.stepId, activeStep.activeAttemptId));
+      } else {
+        setGenerationReview(undefined);
+      }
+    } finally {
+      if (showLoading) setGenerationLoading(false);
+    }
+  }
+
+  async function runGenerationReviewAction(action: 'accept' | 'reject' | 'rollback' | 'pause' | 'resume') {
+    const currentDocument = documentRef.current;
+    const plan = generationPlan;
+    if (!repository || !currentDocument || !plan || generationAction) return;
+    const review = generationReview;
+    setGenerationAction(action);
+    try {
+      if (action === 'accept') {
+        if (!review?.candidate) throw new Error('当前步骤还没有可接受的设计候选。');
+        let result = await repository.acceptGenerationStep(currentDocument.documentId, plan.revision, review.step.stepId, review.candidate.attemptId);
+        if (result.status === 'requires-protection-review') {
+          const approved = window.confirm('这个候选会修改你人工调整过的字段。是否明确允许本次覆盖？');
+          if (!approved) return;
+          result = await repository.acceptGenerationStep(currentDocument.documentId, result.plan.revision, review.step.stepId, review.candidate.attemptId, true);
+        }
+        showToast(result.status === 'committed' ? '已接受这一小步，AI 可以继续下一步' : `候选状态：${result.status}`);
+        setSceneReloadToken((value) => value + 1);
+      } else if (action === 'reject') {
+        if (!review?.candidate) throw new Error('当前步骤还没有可退回的设计候选。');
+        const reason = generationRejectionReason.trim();
+        if (!reason) throw new Error('请写明视觉问题，AI 才能有针对性地重做。');
+        await repository.rejectGenerationStep(currentDocument.documentId, plan.revision, review.step.stepId, review.candidate.attemptId, reason);
+        setGenerationRejectionReason('');
+        showToast('已退回这一小步，AI 将按视觉意见重做');
+      } else if (action === 'rollback') {
+        if (!review) throw new Error('没有可回滚的步骤。');
+        await repository.rollbackGenerationStep(currentDocument.documentId, plan.revision, review.step.stepId);
+        setSceneReloadToken((value) => value + 1);
+        showToast('已回滚最近接受的 AI 步骤');
+      } else if (action === 'pause') {
+        await repository.pauseGeneration(currentDocument.documentId, plan.revision);
+        showToast('AI 设计流程已暂停');
+      } else {
+        await repository.resumeGeneration(currentDocument.documentId, plan.revision);
+        showToast('AI 设计流程已继续');
+      }
+      await refreshGenerationState();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+      await refreshGenerationState().catch(() => undefined);
+    } finally {
+      setGenerationAction(undefined);
+    }
+  }
+
+  async function commitSceneCommand(command: SceneEditorCommand, reason?: string): Promise<SceneDocument> {
+    const scene = sceneDocumentRef.current;
+    if (!repository || !scene) throw new Error('当前设计还没有可编辑的 Scene。');
+    try {
+      const result = await repository.editScene(scene.documentId, {
+        transactionId: `studio:${crypto.randomUUID()}`,
+        expectedRevision: scene.revision,
+        reason,
+        command
+      });
+      applySceneDocument(result.document);
+      await refreshSceneHistory(scene.documentId);
+      return result.document;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/revision|版本|更新到/i.test(message)) {
+        const latest = await repository.readScene(scene.documentId).catch(() => undefined);
+        if (latest) {
+          applySceneDocument(latest);
+          await refreshSceneHistory(scene.documentId).catch(() => undefined);
+        }
+      }
+      throw error;
+    }
+  }
+
+  async function undoScene() {
+    const scene = sceneDocumentRef.current;
+    if (!repository || !scene || !sceneHistory?.undoCount) return;
+    try {
+      const next = await repository.undoScene(scene.documentId, scene.revision);
+      applySceneDocument(next);
+      await refreshSceneHistory(scene.documentId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function redoScene() {
+    const scene = sceneDocumentRef.current;
+    if (!repository || !scene || !sceneHistory?.redoCount) return;
+    try {
+      const next = await repository.redoScene(scene.documentId, scene.revision);
+      applySceneDocument(next);
+      await refreshSceneHistory(scene.documentId);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   function undo() {
+    if (sceneEditingActive) {
+      void undoScene();
+      return;
+    }
     const current = documentRef.current;
     const previous = past[past.length - 1];
     if (!current || !previous) return;
@@ -1120,6 +1755,10 @@ export function WebDesignStudioApp() {
   }
 
   function redo() {
+    if (sceneEditingActive) {
+      void redoScene();
+      return;
+    }
     const current = documentRef.current;
     const next = future[0];
     if (!current || !next) return;
@@ -1171,7 +1810,6 @@ export function WebDesignStudioApp() {
   async function createNew() {
     if (!activeProject) return;
     setNewDesignName('');
-    setNewDesignBlank(true);
     setNewDesignOpen(true);
     setProjectLibraryOpen(false);
   }
@@ -1184,7 +1822,7 @@ export function WebDesignStudioApp() {
   async function createDesignFromSheet() {
     if (!repository || !activeProject || !newDesignName.trim()) return;
     try {
-      const created = await repository.createInProject(activeProject.projectId, newDesignName, newDesignBlank);
+      const created = await repository.createInProject(activeProject.projectId, newDesignName, true);
       setActiveProject(await repository.readProject(activeProject.projectId));
       await refreshCatalog();
       setNewDesignOpen(false);
@@ -1240,11 +1878,6 @@ export function WebDesignStudioApp() {
     event.dataTransfer.effectAllowed = 'copy';
   }
 
-  function onUiLibraryDrag(event: DragEvent, library: WebDesignLibraryName, definitionId: string) {
-    event.dataTransfer.setData('application/x-web-design-library', JSON.stringify({ library, definitionId }));
-    event.dataTransfer.effectAllowed = 'copy';
-  }
-
   function addUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, x: number, y: number, variantId?: string, targetSlot = editingSlot, registryElement?: LibraryPreviewSelection): WebDesignComponent | undefined {
     const current = documentRef.current;
     if (!current) return;
@@ -1275,9 +1908,152 @@ export function WebDesignStudioApp() {
     return component;
   }
 
+  function scenePageRoot(scene: SceneDocument, targetPageId: string) {
+    const page = scene.pages.find((candidate) => candidate.id === targetPageId);
+    const root = page?.children[0];
+    if (!page || !root || !('children' in root) || !Array.isArray(root.children)) {
+      throw new Error('当前画板没有可插入内容的 Scene 根节点。');
+    }
+    return { page, root };
+  }
+
+  async function insertSceneLibraryComponent(
+    libraryName: WebDesignLibraryName,
+    definitionId: string,
+    x: number,
+    y: number,
+    variantId?: string,
+    registryElement?: LibraryPreviewSelection,
+    targetPageId = pageId,
+    insertionTarget?: SceneInsertionTarget
+  ): Promise<SceneNode | undefined> {
+    const scene = sceneDocumentRef.current;
+    if (!scene) return undefined;
+    const { root } = scenePageRoot(scene, targetPageId);
+    const node = createSceneLibraryInstance({
+      nodeId: `library:${crypto.randomUUID()}`,
+      libraryName,
+      definitionId,
+      variantId,
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+      registryElement
+    });
+    await commitSceneCommand({
+      type: 'insert-node',
+      parentId: insertionTarget?.nodeId ?? root.id,
+      slot: insertionTarget?.slot,
+      index: insertionTarget?.index ?? root.children.length,
+      node
+    }, `用户从 ${libraryName} 组件库插入 ${node.name}。`);
+    setSelectedId(node.id);
+    setSelectedIds([node.id]);
+    const targetName = insertionTarget ? indexSceneDocument(scene).get(insertionTarget.nodeId)?.node.name : undefined;
+    showToast(targetName ? `已插入 ${node.name} 到 ${targetName}` : `已插入 ${node.name}`);
+    return node;
+  }
+
+  async function insertSceneBasicShape(
+    shape: BasicShapeId,
+    x: number,
+    y: number,
+    targetPageId: string,
+    insertionTarget?: SceneInsertionTarget
+  ): Promise<SceneNode | undefined> {
+    const scene = sceneDocumentRef.current;
+    if (!scene) return undefined;
+    const { root } = scenePageRoot(scene, targetPageId);
+    const node = createSceneBasicShape({
+      nodeId: `shape:${crypto.randomUUID()}`,
+      shape,
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y))
+    });
+    await commitSceneCommand({
+      type: 'insert-node',
+      parentId: insertionTarget?.nodeId ?? root.id,
+      slot: insertionTarget?.slot,
+      index: insertionTarget?.index ?? root.children.length,
+      node
+    }, `用户插入基本图形 ${node.name}。`);
+    setSelectedId(node.id);
+    setSelectedIds([node.id]);
+    showToast(`已插入${node.name}`);
+    return node;
+  }
+
+  async function onSceneCanvasDrop(event: DragEvent<HTMLDivElement>, artboard: WorkspaceArtboardPlacement) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (preview || interactionMode || !sceneDocumentRef.current) return;
+    activateWorkspaceArtboard(artboard);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const scaleX = bounds.width / Math.max(1, artboard.viewportWidth);
+    const scaleY = bounds.height / Math.max(1, event.currentTarget.offsetHeight);
+    const x = (event.clientX - bounds.left) / Math.max(scaleX, .0001);
+    const y = (event.clientY - bounds.top) / Math.max(scaleY, .0001);
+    const libraryPayload = event.dataTransfer.getData('application/x-web-design-library');
+    try {
+      const scene = sceneDocumentRef.current;
+      const insertionTarget = resolveSceneInsertionTarget({
+        document: scene,
+        pageId: artboard.pageId,
+        viewportWidth: artboard.viewportWidth,
+        point: { x, y },
+        preferred: sceneContentFocus?.pageId === artboard.pageId ? sceneContentFocus : undefined
+      });
+      if (libraryPayload) {
+        const parsed = JSON.parse(libraryPayload) as VariantPickerTarget & {
+          definitionId?: string;
+          variantId?: string;
+          registryElement?: LibraryPreviewSelection;
+        };
+        const definitionId = parsed.definitionId ?? parsed.componentId;
+        if (uiLibraryByName(parsed.library)?.components.some((item) => item.id === definitionId)) {
+          await insertSceneLibraryComponent(parsed.library, definitionId, insertionTarget.x, insertionTarget.y, parsed.variantId, parsed.registryElement, artboard.pageId, insertionTarget);
+          setVariantPickerDrag(undefined);
+          if (parsed.registryElement) setVariantPickerTarget(undefined);
+          return;
+        }
+      }
+      const shapeId = event.dataTransfer.getData('application/x-web-design-shape') as BasicShapeId;
+      if (palette.some((item) => item.id === shapeId)) await insertSceneBasicShape(shapeId, insertionTarget.x, insertionTarget.y, artboard.pageId, insertionTarget);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   function insertUiLibraryComponent(libraryName: WebDesignLibraryName, definitionId: string, variantId?: string, registryElement?: LibraryPreviewSelection) {
     const definition = uiLibraryByName(libraryName)?.components.find((candidate) => candidate.id === definitionId);
     if (!definition) return;
+    if (sceneDocumentRef.current) {
+      const targetArtboard = workspacePlacement?.artboards.find((candidate) => candidate.artboardId === activeArtboardId)
+        ?? workspacePlacement?.artboards.find((candidate) => candidate.pageId === pageId);
+      const targetPageId = targetArtboard?.pageId ?? pageId;
+      const targetWidth = targetArtboard?.viewportWidth ?? breakpoint.width;
+      const width = registryElement?.width ?? definition.width;
+      const focusedTarget = sceneContentFocus?.pageId === targetPageId
+        ? resolveSceneInsertionTarget({
+          document: sceneDocumentRef.current,
+          pageId: targetPageId,
+          viewportWidth: targetWidth,
+          point: { x: 0, y: 0 },
+          preferred: sceneContentFocus
+        })
+        : undefined;
+      setVariantPickerTarget(undefined);
+      void insertSceneLibraryComponent(
+        libraryName,
+        definitionId,
+        focusedTarget ? 24 : Math.max(24, Math.round((targetWidth - width) / 2)),
+        focusedTarget ? 24 : 80,
+        variantId,
+        registryElement,
+        targetPageId,
+        focusedTarget ? { ...focusedTarget, x: 24, y: 24 } : undefined
+      ).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+      return;
+    }
     let inserted: WebDesignComponent | undefined;
     if (editingSlotCanvasSize) {
       const width = registryElement?.width ?? definition.width;
@@ -1303,6 +2079,48 @@ export function WebDesignStudioApp() {
     }
     const library = uiLibraryByName(libraryName);
     if (!library) return;
+    const scene = sceneDocumentRef.current;
+    const sceneNode = scene && replaceComponentId ? indexSceneDocument(scene).get(replaceComponentId)?.node : undefined;
+    if (scene && sceneNode) {
+      if (sceneNode.type !== 'library-instance') {
+        showToast('当前 Scene 图层不是组件库实例，不能直接替换变体。');
+        return;
+      }
+      const replacement = createSceneLibraryInstance({
+        nodeId: sceneNode.id,
+        libraryName,
+        definitionId,
+        variantId,
+        x: sceneNode.frame.x,
+        y: sceneNode.frame.y,
+        registryElement
+      });
+      setVariantPickerTarget(undefined);
+      void commitSceneCommand({
+        type: 'update-node',
+        nodeId: sceneNode.id,
+        patches: [
+          { path: ['name'], value: replacement.name },
+          { path: ['library'], value: replacement.library },
+          { path: ['component'], value: replacement.component },
+          { path: ['variant'], value: replacement.variant ?? '' },
+          { path: ['properties'], value: replacement.properties },
+          { path: ['content'], value: replacement.content ?? '' },
+          { path: ['frame', 'width'], value: replacement.frame.width },
+          { path: ['frame', 'height'], value: replacement.frame.height }
+        ]
+      }, `用户把 Scene 组件替换为 ${registryElement.label}。`).then(() => {
+        setSelectedId(sceneNode.id);
+        setSelectedIds([sceneNode.id]);
+        showToast(`已改为 ${registryElement.label}`);
+      }).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+      return;
+    }
+    if (scene) {
+      setVariantPickerTarget(undefined);
+      showToast('要替换的 Scene 组件已经不存在，请重新选择。');
+      return;
+    }
     updateComponent(replaceComponentId, (component) => {
       let next = bindLibraryPreviewElement(applyUiLibraryVariant(component, variantId), library.displayName, registryElement);
       if (device !== 'desktop') next = updateComponentFrame(next, device, { width: next.width, height: next.height });
@@ -1398,11 +2216,40 @@ export function WebDesignStudioApp() {
       return;
     }
     const bounds = canvas.getBoundingClientRect();
-    const activeScale = editingSlot ? 1 : zoom;
-    const x = Math.max(0, Math.round((point.clientX - bounds.left) / activeScale - registryElement.width / 2));
-    const y = Math.max(0, Math.round((point.clientY - bounds.top) / activeScale - registryElement.height / 2));
-    addUiLibraryComponent(libraryName, definitionId, x, y, variantId, editingSlot, registryElement);
+    const scaleX = bounds.width / Math.max(1, canvas.offsetWidth);
+    const scaleY = bounds.height / Math.max(1, canvas.offsetHeight);
+    const x = Math.max(0, Math.round((point.clientX - bounds.left) / Math.max(scaleX, .0001) - registryElement.width / 2));
+    const y = Math.max(0, Math.round((point.clientY - bounds.top) / Math.max(scaleY, .0001) - registryElement.height / 2));
+    if (sceneDocumentRef.current && !editingSlot) {
+      const artboard = workspacePlacement?.artboards.find((candidate) => candidate.artboardId === canvas.dataset.artboardId);
+      if (!artboard) {
+        showToast('没有找到目标 Scene 画板，请重新拖入。');
+        return;
+      }
+      activateWorkspaceArtboard(artboard);
+      const insertionTarget = resolveSceneInsertionTarget({
+        document: sceneDocumentRef.current,
+        pageId: artboard.pageId,
+        viewportWidth: artboard.viewportWidth,
+        point: { x, y },
+        preferred: sceneContentFocus?.pageId === artboard.pageId ? sceneContentFocus : undefined
+      });
+      void insertSceneLibraryComponent(libraryName, definitionId, insertionTarget.x, insertionTarget.y, variantId, registryElement, artboard.pageId, insertionTarget)
+        .catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+    } else {
+      addUiLibraryComponent(libraryName, definitionId, x, y, variantId, editingSlot, registryElement);
+    }
     setVariantPickerTarget(undefined);
+  }
+
+  function enterSlotEditor(next: EditingSlot) {
+    if (!editingSlot) workspaceCameraBeforeSlot.current = { ...workspaceCamera };
+    setEditingSlot(next);
+  }
+
+  function resetSlotEditorCamera() {
+    workspaceCameraBeforeSlot.current = undefined;
+    slotCameraContext.current = undefined;
   }
 
   async function editComponentSlot(component: WebDesignComponent, slotId: string, options: { compoundOnly?: boolean } = {}): Promise<boolean> {
@@ -1437,7 +2284,7 @@ export function WebDesignStudioApp() {
           : undefined) ?? materialized[0];
       }
     }
-    setEditingSlot({ componentId: component.id, slotId });
+    enterSlotEditor({ componentId: component.id, slotId });
     setSelectedId(first?.id);
     setSelectedIds(first ? [first.id] : []);
     return true;
@@ -1445,7 +2292,10 @@ export function WebDesignStudioApp() {
 
   function exitSlotEditor() {
     const containerId = editingSlot?.componentId;
+    const previousCamera = workspaceCameraBeforeSlot.current;
+    resetSlotEditorCamera();
     setEditingSlot(undefined);
+    if (previousCamera) setWorkspaceCamera(previousCamera);
     setSelectedId(containerId);
     setSelectedIds(containerId ? [containerId] : []);
   }
@@ -1475,9 +2325,8 @@ export function WebDesignStudioApp() {
     const current = documentRef.current;
     if (!current || preview || interactionMode) return;
     const bounds = event.currentTarget.getBoundingClientRect();
-    const activeScale = editingSlot ? 1 : zoom;
-    const x = Math.round((event.clientX - bounds.left) / activeScale);
-    const y = Math.round((event.clientY - bounds.top) / activeScale);
+    const x = Math.round((event.clientX - bounds.left) / zoom);
+    const y = Math.round((event.clientY - bounds.top) / zoom);
     const libraryPayload = event.dataTransfer.getData('application/x-web-design-library');
     if (libraryPayload) {
       try {
@@ -1518,6 +2367,25 @@ export function WebDesignStudioApp() {
     if (workspaceShell.activeTool === 'hand') return;
     event.preventDefault();
     event.stopPropagation();
+    if ((event.metaKey || event.ctrlKey) && kind === 'move') {
+      const current = documentRef.current;
+      const canvas = (event.currentTarget as HTMLElement).closest<HTMLElement>('.design-canvas');
+      if (!current || !canvas) return;
+      const bounds = canvas.getBoundingClientRect();
+      const point = {
+        x: (event.clientX - bounds.left) / Math.max(bounds.width / Math.max(1, canvas.offsetWidth), .0001),
+        y: (event.clientY - bounds.top) / Math.max(bounds.height / Math.max(1, canvas.offsetHeight), .0001)
+      };
+      const candidates = selectionCandidatesAtPoint(selectableNodesForCurrentEditor(current), point);
+      if (candidates.length <= 1) {
+        setSelectionCandidatePopover(undefined);
+        selectComponent(candidates[0]?.id ?? component.id);
+      } else {
+        setSelectionCandidatePopover({ clientX: event.clientX, clientY: event.clientY, candidates });
+      }
+      return;
+    }
+    setSelectionCandidatePopover(undefined);
     if (workspaceShell.activeTool === 'comment') {
       setSelectedId(component.id);
       setSelectedIds([component.id]);
@@ -1526,7 +2394,7 @@ export function WebDesignStudioApp() {
       showToast(`已选择“${component.name}”，请在右侧添加批注`);
       return;
     }
-    if (event.shiftKey || event.metaKey || event.ctrlKey) {
+    if (event.shiftKey) {
       const next = selectedIds.includes(component.id) ? selectedIds.filter((id) => id !== component.id) : [...selectedIds, component.id];
       setSelectedIds(next);
       setSelectedId(next.includes(component.id) ? component.id : next[0]);
@@ -1548,25 +2416,51 @@ export function WebDesignStudioApp() {
       pointerY: event.clientY,
       frame: resolveComponent(component, device),
       selectedIds: nextSelectedIds,
-      snapshot: structuredClone(current)
-      , scale: editingSlot ? 1 : zoom
-      , scoped: Boolean(editingSlot)
+      snapshot: structuredClone(current),
+      scale: zoom,
+      scoped: Boolean(editingSlot)
     };
   }
 
   function beginCanvasPan(event: ReactPointerEvent<HTMLDivElement>) {
     const handTool = event.button === 0 && workspaceShell.activeTool === 'hand';
-    if (preview || editingSlot || (event.button !== 1 && !(event.button === 0 && spacePressed.current) && !handTool)) return;
+    if (preview || (event.button !== 1 && !(event.button === 0 && spacePressed.current) && !handTool)) return;
     event.preventDefault();
-    const scroller = canvasScroll.current;
-    if (!scroller) return;
     canvasPan.current = {
       pointerX: event.clientX,
       pointerY: event.clientY,
-      scrollLeft: scroller.scrollLeft,
-      scrollTop: scroller.scrollTop
+      camera: workspaceCamera
     };
     setCanvasPanning(true);
+  }
+
+  function beginCanvasMarquee(event: ReactPointerEvent<HTMLElement>) {
+    if (preview || interactionMode || event.button !== 0 || spacePressed.current) return;
+    if (workspaceShell.activeTool === 'hand' || workspaceShell.activeTool === 'comment') return;
+    const current = documentRef.current;
+    if (!current) return;
+    event.preventDefault();
+    setSelectionCandidatePopover(undefined);
+    const canvas = event.currentTarget;
+    const bounds = canvas.getBoundingClientRect();
+    const scaleX = bounds.width / Math.max(1, canvas.offsetWidth);
+    const scaleY = bounds.height / Math.max(1, canvas.offsetHeight);
+    canvasMarquee.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startPoint: {
+        x: (event.clientX - bounds.left) / Math.max(scaleX, .0001),
+        y: (event.clientY - bounds.top) / Math.max(scaleY, .0001)
+      },
+      canvas,
+      nodes: selectableNodesForCurrentEditor(current),
+      initialIds: event.shiftKey ? [...selectedIds] : [],
+      initialPrimaryId: event.shiftKey ? selectedId : undefined,
+      additive: event.shiftKey,
+      moved: false
+    };
+    setMarqueeRect(undefined);
   }
 
   function updateSelected(changes: Partial<WebDesignComponent>) {
@@ -1645,11 +2539,18 @@ export function WebDesignStudioApp() {
       requests: active.requests.filter((request) => !request.componentId || !removed.has(request.componentId))
     }));
     setSelectedId(undefined);
-    if (editingSlot && removed.has(editingSlot.componentId)) setEditingSlot(undefined);
+    if (editingSlot && removed.has(editingSlot.componentId)) {
+      resetSlotEditorCamera();
+      setEditingSlot(undefined);
+    }
     setSelectedIds([]);
   }
 
   function duplicateSelected() {
+    if (sceneEditingActive) {
+      duplicateSceneSelection();
+      return;
+    }
     const current = documentRef.current;
     if (selectedIds.length === 0 || !current) return;
     const cloned = cloneComponentSubtrees(current, selectedIds, pageId, 20, current);
@@ -1659,6 +2560,10 @@ export function WebDesignStudioApp() {
   }
 
   function copySelected() {
+    if (sceneEditingActive) {
+      copySceneSelection();
+      return;
+    }
     const current = documentRef.current;
     if (!current || selectedIds.length === 0) return;
     setClipboard({ document: structuredClone(current), componentIds: [...selectedIds] });
@@ -1666,6 +2571,10 @@ export function WebDesignStudioApp() {
   }
 
   function pasteClipboard() {
+    if (sceneEditingActive) {
+      pasteSceneClipboard();
+      return;
+    }
     const current = documentRef.current;
     if (!current || !clipboard) return;
     const cloned = cloneComponentSubtrees(clipboard.document, clipboard.componentIds, pageId, 20, current);
@@ -1721,6 +2630,218 @@ export function WebDesignStudioApp() {
     updateComponent(component.id, (current) => ({ ...current, locked: !current.locked }));
   }
 
+  function activateWorkspaceArtboard(artboard: WorkspaceArtboardPlacement) {
+    const current = documentRef.current;
+    if (!current) return;
+    setActiveArtboardId(artboard.artboardId);
+    setDevice(deviceForWorkspaceArtboard(current, artboard));
+    setPageId(artboard.pageId);
+    resetSlotEditorCamera();
+    setEditingSlot(undefined);
+    setSelectedId(undefined);
+    setSelectedIds([]);
+  }
+
+  function beginWorkspaceArtboardMove(event: ReactPointerEvent, artboard: WorkspaceArtboardPlacement) {
+    if (event.button !== 0 || preview || editingSlot) return;
+    event.preventDefault();
+    event.stopPropagation();
+    activateWorkspaceArtboard(artboard);
+    workspaceArtboardDrag.current = {
+      artboardId: artboard.artboardId,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      x: artboard.x,
+      y: artboard.y
+    };
+  }
+
+  function updateActiveWorkspaceViewport(width: number, height: number) {
+    if (!activeArtboardId) return;
+    setWorkspacePlacement((current) => current ? {
+      ...current,
+      artboards: current.artboards.map((artboard) => artboard.artboardId === activeArtboardId
+        ? { ...artboard, viewportWidth: width, viewportHeight: height }
+        : artboard)
+    } : current);
+  }
+
+  async function addWorkspaceSurface(surfaceKind: WorkspaceSurfaceKind = newSurfaceKind) {
+    const current = documentRef.current;
+    const scene = sceneDocumentRef.current;
+    if (!current || !workspacePlacement) return;
+    if (!scene) {
+      showToast('请先让 AI 创建 Scene 设计，再添加新的独立画板');
+      return;
+    }
+    const pageIndex = scene.pages.length + 1;
+    const surfaceLabel = WORKSPACE_SURFACE_LABELS[surfaceKind];
+    const nextPageId = `${surfaceKind}:${crypto.randomUUID()}`;
+    const nextPageName = surfaceKind === 'page' ? `页面 ${pageIndex}` : `${surfaceLabel} ${pageIndex}`;
+    const desktop = breakpointFor(current, 'desktop');
+    const fixedSize = surfaceKind === 'page' || surfaceKind === 'state' ? undefined : WORKSPACE_SURFACE_SIZES[surfaceKind];
+    const width = fixedSize?.width ?? desktop.width;
+    const height = fixedSize?.height ?? workspaceViewportHeight(current, 'desktop');
+    const right = workspacePlacement.artboards.length === 0
+      ? 0
+      : Math.max(...workspacePlacement.artboards.map((artboard) => artboard.x + artboard.viewportWidth)) + WORKSPACE_ARTBOARD_GAP;
+    const artboard: WorkspaceArtboardPlacement = {
+      artboardId: `artboard-${crypto.randomUUID().slice(0, 8)}`,
+      pageId: nextPageId,
+      surfaceKind,
+      viewportWidth: width,
+      viewportHeight: height,
+      x: right,
+      y: 0
+    };
+    try {
+      await commitSceneCommand({
+        type: 'create-page',
+        pageId: nextPageId,
+        name: nextPageName,
+        rootNodeId: `root:${crypto.randomUUID()}`,
+        width,
+        height
+      }, `用户创建独立${surfaceLabel}画板。`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    setWorkspacePlacement({ ...workspacePlacement, artboards: [...workspacePlacement.artboards, artboard] });
+    setActiveArtboardId(artboard.artboardId);
+    setPageId(nextPageId);
+    setDevice(deviceForWorkspaceArtboard(current, artboard));
+    resetSlotEditorCamera();
+    setEditingSlot(undefined);
+    setSelectedId(undefined);
+    setSelectedIds([]);
+    showToast(`已创建独立${surfaceLabel}画板，可以分多次让 AI 继续设计`);
+  }
+
+  function removeActiveWorkspaceArtboard() {
+    if (!workspacePlacement || !activeArtboardId || workspacePlacement.artboards.length <= 1) {
+      showToast('工作区至少保留一个画板');
+      return;
+    }
+    const remaining = workspacePlacement.artboards.filter((artboard) => artboard.artboardId !== activeArtboardId);
+    const next = remaining[0];
+    setWorkspacePlacement({ ...workspacePlacement, artboards: remaining });
+    if (next) activateWorkspaceArtboard(next);
+  }
+
+  function fitAllWorkspaceArtboards() {
+    const current = documentRef.current;
+    const viewport = canvasScroll.current;
+    if (!current || !viewport || !workspacePlacement?.artboards.length) return;
+    setWorkspaceCamera(fitWorkspaceRect(
+      workspaceArtboardBounds(current, workspacePlacement.artboards, sceneDocumentRef.current),
+      { width: viewport.clientWidth, height: viewport.clientHeight },
+      { top: 92, right: 64, bottom: 92, left: 64 }
+    ));
+  }
+
+  function fitWorkspaceArtboard(artboard: WorkspaceArtboardPlacement) {
+    const current = documentRef.current;
+    const viewport = canvasScroll.current;
+    if (!current || !viewport) return;
+    setWorkspaceCamera(fitWorkspaceRect(
+      workspaceArtboardContentBounds(current, artboard, sceneDocumentRef.current),
+      { width: viewport.clientWidth, height: viewport.clientHeight },
+      { top: 92, right: 64, bottom: 92, left: 64 }
+    ));
+  }
+
+  function fitActiveWorkspaceArtboard() {
+    const artboard = workspacePlacement?.artboards.find((candidate) => candidate.artboardId === activeArtboardId);
+    if (artboard) fitWorkspaceArtboard(artboard);
+  }
+
+  function fitSlotEditorContent() {
+    const viewport = canvasScroll.current;
+    if (!viewport || !editingSlotCanvasSize) return;
+    setWorkspaceCamera(fitWorkspaceRect(
+      slotEditorFrameBounds(editingSlotCanvasSize),
+      { width: viewport.clientWidth, height: viewport.clientHeight },
+      { top: 112, right: 72, bottom: 88, left: 72 },
+      2.5
+    ));
+  }
+
+  function fitWorkspaceSelection() {
+    const current = documentRef.current;
+    const viewport = canvasScroll.current;
+    if (!current || !viewport || selectedIds.length === 0) return;
+    const selected = new Set(selectedIds);
+    if (editingSlot && editingContainer) {
+      const containerFrame = resolveComponent(editingContainer, device);
+      const bounds = unionWorkspaceRects(current.components.flatMap((component) => {
+        if (!selected.has(component.id) || slotIdForDescendant(current, component, editingContainer.id) !== editingSlot.slotId) return [];
+        const frame = resolveComponent(component, device);
+        if (frame.hidden) return [];
+        return [{
+          x: SLOT_EDITOR_CANVAS_INSETS.left + frame.x - containerFrame.x,
+          y: SLOT_EDITOR_HEADER_HEIGHT + SLOT_EDITOR_CANVAS_INSETS.top + frame.y - containerFrame.y,
+          width: frame.width,
+          height: frame.height
+        }];
+      }));
+      if (!bounds) return;
+      const padding = Math.max(24, Math.min(80, Math.max(bounds.width, bounds.height) * 0.12));
+      setWorkspaceCamera(fitWorkspaceRect(
+        { x: bounds.x - padding, y: bounds.y - padding, width: bounds.width + padding * 2, height: bounds.height + padding * 2 },
+        { width: viewport.clientWidth, height: viewport.clientHeight },
+        { top: 112, right: 96, bottom: 104, left: 96 },
+        2.5
+      ));
+      return;
+    }
+    if (!workspacePlacement) return;
+    if (sceneDocument) {
+      const bounds = unionWorkspaceRects(workspacePlacement.artboards.flatMap((artboard) => {
+        const local = sceneArtboardSelectionBounds(sceneDocument, artboard.pageId, artboard.viewportWidth, selectedIds);
+        return local ? [{ x: artboard.x + local.x, y: artboard.y + local.y, width: local.width, height: local.height }] : [];
+      }));
+      if (!bounds) return;
+      const padding = Math.max(24, Math.min(80, Math.max(bounds.width, bounds.height) * 0.12));
+      setWorkspaceCamera(fitWorkspaceRect(
+        { x: bounds.x - padding, y: bounds.y - padding, width: bounds.width + padding * 2, height: bounds.height + padding * 2 },
+        { width: viewport.clientWidth, height: viewport.clientHeight },
+        { top: 112, right: 96, bottom: 104, left: 96 },
+        2.5
+      ));
+      return;
+    }
+    const firstPageId = pagesForDocument(current)[0].id;
+    const boardByPage = new Map(workspacePlacement.artboards.map((artboard) => [artboard.pageId, artboard]));
+    const bounds = unionWorkspaceRects(current.components.flatMap((component) => {
+      if (!selected.has(component.id)) return [];
+      const componentPageId = component.pageId ?? firstPageId;
+      const artboard = boardByPage.get(componentPageId);
+      if (!artboard) return [];
+      const frame = resolveComponent(component, deviceForWorkspaceArtboard(current, artboard));
+      if (frame.hidden) return [];
+      return [{ x: artboard.x + frame.x, y: artboard.y + frame.y, width: frame.width, height: frame.height }];
+    }));
+    if (!bounds) return;
+    const padding = Math.max(24, Math.min(80, Math.max(bounds.width, bounds.height) * 0.12));
+    setWorkspaceCamera(fitWorkspaceRect(
+      { x: bounds.x - padding, y: bounds.y - padding, width: bounds.width + padding * 2, height: bounds.height + padding * 2 },
+      { width: viewport.clientWidth, height: viewport.clientHeight },
+      { top: 112, right: 96, bottom: 104, left: 96 },
+      2.5
+    ));
+  }
+
+  function focusWorkspaceArtboard(artboard: WorkspaceArtboardPlacement) {
+    activateWorkspaceArtboard(artboard);
+    fitWorkspaceArtboard(artboard);
+  }
+
+  function focusWorkspaceArtboardByPageId(targetPageId: string) {
+    const target = workspacePlacement?.artboards.find((artboard) => artboard.pageId === targetPageId);
+    if (target) focusWorkspaceArtboard(target);
+  }
+
   function updateBreakpoint(width: number, height: number, previewSelection?: ViewportSelection, reflow = false) {
     const safeWidth = Math.min(10000, Math.max(320, Math.round(width)));
     const safeHeight = Math.min(30000, Math.max(320, Math.round(height)));
@@ -1760,6 +2881,7 @@ export function WebDesignStudioApp() {
       ...current,
       [device]: selection
     }));
+    updateActiveWorkspaceViewport(dimensions.width, dimensions.height);
     updateBreakpoint(dimensions.width, breakpoint.height, selection, true);
     window.setTimeout(() => fitCanvasToWidth(dimensions.width), 0);
   }
@@ -1773,6 +2895,7 @@ export function WebDesignStudioApp() {
         ...current,
         [device]: selection
       }));
+      updateActiveWorkspaceViewport(dimensions.width, dimensions.height);
       updateBreakpoint(dimensions.width, breakpoint.height, selection, true);
       window.setTimeout(() => fitCanvasToWidth(dimensions.width), 0);
       return;
@@ -1784,6 +2907,7 @@ export function WebDesignStudioApp() {
       ...current,
       [device]: selection
     }));
+    updateActiveWorkspaceViewport(nextWidth, nextViewportHeight);
     updateBreakpoint(nextWidth, breakpoint.height, selection, true);
     window.setTimeout(() => fitCanvasToWidth(nextWidth), 0);
   }
@@ -1794,6 +2918,7 @@ export function WebDesignStudioApp() {
       ...current,
       [device]: selection
     }));
+    updateActiveWorkspaceViewport(width, previewViewportHeight);
     updateBreakpoint(width, breakpoint.height, selection, true);
   }
 
@@ -1804,14 +2929,17 @@ export function WebDesignStudioApp() {
       ...current,
       [device]: selection
     }));
+    updateActiveWorkspaceViewport(breakpoint.width, safeHeight);
     updateBreakpoint(breakpoint.width, breakpoint.height, selection);
   }
 
   function switchDevice(next: WebDesignDevice) {
     setDevice(next);
+    const current = documentRef.current;
+    const responsive = current ? breakpointFor(current, next) : undefined;
+    if (responsive) updateActiveWorkspaceViewport(responsive.width, workspaceViewportHeight(current!, next));
     setSelectedId(undefined);
     setSelectedIds([]);
-    setZoom(next === 'desktop' ? .82 : next === 'tablet' ? .72 : .9);
   }
 
   function withGeneratedResponsiveLayouts(active: WebDesignDocument, targetPageId: string) {
@@ -1829,32 +2957,51 @@ export function WebDesignStudioApp() {
   }
 
   function fitCanvasToWidth(targetWidth: number) {
-    const scroller = canvasScroll.current;
-    if (!scroller) return;
-    const nextZoom = Math.max(.05, Math.min(1, (scroller.clientWidth - 96) / targetWidth));
-    setZoom(nextZoom);
+    const viewport = canvasScroll.current;
+    if (!viewport) return;
+    const artboard = workspacePlacement?.artboards.find((candidate) => candidate.artboardId === activeArtboardId);
+    setWorkspaceCamera(fitWorkspaceWidth(
+      { x: artboard?.x ?? 0, y: artboard?.y ?? 0, width: targetWidth, height: renderedCanvasHeight },
+      { width: viewport.clientWidth, height: viewport.clientHeight }
+    ));
   }
 
   function fitCanvasWidth() {
     fitCanvasToWidth(breakpoint.width);
   }
 
+  function setCanvasZoom(nextZoom: number, anchor?: { x: number; y: number }) {
+    const viewport = canvasScroll.current;
+    if (!viewport) {
+      setWorkspaceCamera((current) => ({ ...current, zoom: nextZoom }));
+      return;
+    }
+    setWorkspaceCamera((current) => zoomWorkspaceCameraAt(current, nextZoom, anchor ?? {
+      x: viewport.clientWidth / 2,
+      y: viewport.clientHeight / 2
+    }));
+  }
+
   function toggleFullPreview() {
     if (preview) {
       setPreview(false);
-      setZoom(previewZoom.current);
+      setPreviewOverlayPageId(undefined);
+      setWorkspaceCamera((current) => ({ ...current, zoom: previewZoom.current }));
       return;
     }
-    previewZoom.current = interactionMode ? interactionZoom.current : zoom;
+    const editorCamera = editingSlot ? workspaceCameraBeforeSlot.current ?? workspaceCamera : workspaceCamera;
+    previewZoom.current = interactionMode ? interactionZoom.current : editorCamera.zoom;
     if (interactionMode) setInteractionMode(false);
+    resetSlotEditorCamera();
     setEditingSlot(undefined);
+    setWorkspaceCamera(editorCamera);
     setSelectedId(undefined);
     setSelectedIds([]);
     setPreview(true);
     window.setTimeout(() => {
       const scroller = canvasScroll.current;
       if (!scroller) return;
-      setZoom(Math.max(.05, Math.min(1.5, scroller.clientWidth / breakpoint.width)));
+      setWorkspaceCamera((current) => ({ ...current, zoom: Math.max(.1, Math.min(8, scroller.clientWidth / breakpoint.width)) }));
       scroller.scrollTo({ left: 0, top: 0 });
     }, 0);
   }
@@ -1862,7 +3009,7 @@ export function WebDesignStudioApp() {
   function toggleInteractionMode() {
     if (interactionMode) {
       setInteractionMode(false);
-      setZoom(interactionZoom.current);
+      setWorkspaceCamera((current) => ({ ...current, zoom: interactionZoom.current }));
       return;
     }
     interactionZoom.current = zoom;
@@ -1878,7 +3025,7 @@ export function WebDesignStudioApp() {
     const container = current && component ? contentContainerAncestor(current, component) : undefined;
     const slotId = current && component && container ? slotIdForDescendant(current, component, container.id) : undefined;
     if (container && slotId && (editingSlot?.componentId !== container.id || editingSlot.slotId !== slotId)) {
-      setEditingSlot({ componentId: container.id, slotId });
+      enterSlotEditor({ componentId: container.id, slotId });
     }
     if (!additive) {
       setSelectedId(componentId);
@@ -1890,7 +3037,389 @@ export function WebDesignStudioApp() {
     setSelectedId(next.includes(componentId) ? componentId : next[0]);
   }
 
+  function selectableNodesForCurrentEditor(current: WebDesignDocument): EditorSelectableNode[] {
+    if (editingSlot) {
+      const container = current.components.find((component) => component.id === editingSlot.componentId);
+      if (!container) return [];
+      const containerFrame = resolveComponent(container, device);
+      return visibleComponentsInSlot(current, editingSlot.componentId, editingSlot.slotId).map((component) => {
+        const frame = resolveComponent(component, device);
+        return {
+          id: component.id,
+          name: component.name,
+          type: component.library?.component ?? component.type,
+          parentId: component.parentId === container.id ? undefined : component.parentId,
+          zIndex: component.zIndex,
+          locked: component.locked,
+          visible: !frame.hidden,
+          rect: { x: frame.x - containerFrame.x, y: frame.y - containerFrame.y, width: frame.width, height: frame.height }
+        };
+      });
+    }
+    return componentsForPage(current, pageId)
+      .filter((component) => !contentContainerAncestor(current, component))
+      .map((component) => {
+        const frame = resolveComponent(component, device);
+        return {
+          id: component.id,
+          name: component.name,
+          type: component.library?.component ?? component.type,
+          parentId: component.parentId,
+          zIndex: component.zIndex,
+          locked: component.locked,
+          visible: !frame.hidden,
+          rect: { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
+        };
+      });
+  }
+
+  function selectionOverlayItemsFor(
+    components: readonly WebDesignComponent[],
+    targetDevice: WebDesignDevice,
+    origin: { x: number; y: number } = { x: 0, y: 0 }
+  ): SelectionOverlayItem[] {
+    const byId = new Map(components.map((component) => [component.id, component]));
+    return selectedIds.flatMap((id) => {
+      const component = byId.get(id);
+      if (!component) return [];
+      const frame = resolveComponent(component, targetDevice);
+      if (frame.hidden) return [];
+      return [{
+        id: component.id,
+        name: component.name,
+        locked: Boolean(component.locked),
+        primary: component.id === selectedId,
+        rect: { x: frame.x - origin.x, y: frame.y - origin.y, width: frame.width, height: frame.height }
+      }];
+    });
+  }
+
+  function selectSelectionChild() {
+    if (sceneEditingActive && selectedSceneNode) {
+      const children = isSceneContainer(selectedSceneNode)
+        ? selectedSceneNode.children
+        : isSceneSlotContainer(selectedSceneNode)
+          ? Object.values(selectedSceneNode.slots).flat()
+          : [];
+      const child = children.at(-1);
+      if (child) {
+        setSelectedId(child.id);
+        setSelectedIds([child.id]);
+      } else {
+        showToast('当前 Scene 图层没有可进入的子层');
+      }
+      return;
+    }
+    const current = documentRef.current;
+    if (!current || !selectedId) return;
+    const selectedComponent = current.components.find((component) => component.id === selectedId);
+    const editableSlot = selectedComponent ? editableSlotsForUiComponent(selectedComponent)[0] : undefined;
+    if (selectedComponent && editableSlot) {
+      void editComponentSlot(selectedComponent, editableSlot.id);
+      return;
+    }
+    const child = deepestSelectionChild(selectableNodesForCurrentEditor(current), selectedId);
+    if (child) selectComponent(child.id);
+    else showToast('当前图层没有可进入的子层');
+  }
+
+  function selectSelectionParent() {
+    if (sceneEditingActive && selectedId && sceneDocument) {
+      const entry = indexSceneDocument(sceneDocument).get(selectedId);
+      if (!entry || sceneDocument.pages.some((page) => page.id === entry.parentId)) {
+        showToast('当前已经是画板最外层');
+        return;
+      }
+      setSelectedId(entry.parentId);
+      setSelectedIds([entry.parentId]);
+      return;
+    }
+    const current = documentRef.current;
+    if (!current || !selectedId) return;
+    const component = current.components.find((candidate) => candidate.id === selectedId);
+    if (!component?.parentId) {
+      showToast('当前已经是最外层');
+      return;
+    }
+    if (editingSlot && component.parentId === editingSlot.componentId) {
+      exitSlotEditor();
+      return;
+    }
+    selectComponent(component.parentId);
+  }
+
+  function sceneSelectionRootIds(): string[] {
+    const scene = sceneDocumentRef.current;
+    if (!scene) return [];
+    const index = indexSceneDocument(scene);
+    const selectedSet = new Set(selectedIds);
+    return selectedIds.filter((id) => {
+      let parentId = index.get(id)?.parentId;
+      while (parentId && index.has(parentId)) {
+        if (selectedSet.has(parentId)) return false;
+        parentId = index.get(parentId)?.parentId;
+      }
+      return index.get(id)?.pageId === pageId;
+    });
+  }
+
+  function cloneSceneSubtree(source: SceneNode, offsetX = 20, offsetY = 20): SceneNode {
+    const clone = structuredClone(source);
+    const idMap = new Map<string, string>();
+    const collect = (node: SceneNode) => {
+      idMap.set(node.id, `${node.type}:${crypto.randomUUID()}`);
+      if (isSceneContainer(node)) node.children.forEach(collect);
+      if (isSceneSlotContainer(node)) Object.values(node.slots).flat().forEach(collect);
+    };
+    const rewrite = (node: SceneNode, root: boolean) => {
+      node.id = idMap.get(node.id)!;
+      node.name = root ? `${node.name} 副本` : node.name;
+      node.frame = { ...node.frame, ...(root ? { x: node.frame.x + offsetX, y: node.frame.y + offsetY } : {}) };
+      node.annotations = [];
+      node.createdBy = 'human';
+      node.updatedBy = 'human';
+      if (node.type === 'component-instance' && idMap.has(node.mainComponentId)) node.mainComponentId = idMap.get(node.mainComponentId)!;
+      if (isSceneContainer(node)) node.children.forEach((child) => rewrite(child, false));
+      if (isSceneSlotContainer(node)) Object.values(node.slots).flat().forEach((child) => rewrite(child, false));
+    };
+    collect(clone);
+    rewrite(clone, true);
+    return clone;
+  }
+
+  async function insertSceneCopies(nodes: readonly SceneNode[], targetPageId = pageId, preserveParent = false) {
+    let scene = sceneDocumentRef.current;
+    if (!scene || nodes.length === 0) return;
+    const insertedRootIds: string[] = [];
+    for (const source of nodes) {
+      scene = sceneDocumentRef.current;
+      if (!scene) return;
+      const sourceEntry = indexSceneDocument(scene).get(source.id);
+      const sourceParent = sourceEntry ? indexSceneDocument(scene).get(sourceEntry.parentId)?.node : undefined;
+      const sourceSlot = sourceParent && isSceneSlotContainer(sourceParent)
+        ? Object.entries(sourceParent.slots).find(([, children]) => children.some((child) => child.id === source.id))?.[0]
+        : undefined;
+      const target = preserveParent && sourceEntry
+        ? { parentId: sourceEntry.parentId, index: Number.MAX_SAFE_INTEGER, slot: sourceSlot }
+        : (() => {
+          const { root } = scenePageRoot(scene!, targetPageId);
+          return { parentId: root.id, index: root.children.length, slot: undefined };
+        })();
+      const parentEntry = indexSceneDocument(scene).get(target.parentId)?.node;
+      const parentPage = scene.pages.find((candidate) => candidate.id === target.parentId);
+      const childCount = parentPage?.children.length
+        ?? (parentEntry && isSceneContainer(parentEntry)
+          ? parentEntry.children.length
+          : parentEntry && isSceneSlotContainer(parentEntry) && target.slot
+            ? parentEntry.slots[target.slot]?.length ?? 0
+            : 0);
+      const copy = cloneSceneSubtree(source);
+      await commitSceneCommand({ type: 'insert-node', parentId: target.parentId, index: Math.min(target.index, childCount), slot: target.slot, node: copy }, '用户复制 Scene 图层。');
+      insertedRootIds.push(copy.id);
+    }
+    setSelectedId(insertedRootIds[0]);
+    setSelectedIds(insertedRootIds);
+    showToast(`已复制 ${insertedRootIds.length} 个 Scene 图层`);
+  }
+
+  function copySceneSelection() {
+    const scene = sceneDocumentRef.current;
+    if (!scene) return;
+    const index = indexSceneDocument(scene);
+    const nodes = sceneSelectionRootIds().flatMap((id) => {
+      const node = index.get(id)?.node;
+      return node ? [structuredClone(node)] : [];
+    });
+    setSceneClipboard(nodes);
+    showToast(`已复制 ${nodes.length} 个 Scene 图层`);
+  }
+
+  function duplicateSceneSelection() {
+    const scene = sceneDocumentRef.current;
+    if (!scene) return;
+    const index = indexSceneDocument(scene);
+    const nodes = sceneSelectionRootIds().flatMap((id) => {
+      const node = index.get(id)?.node;
+      return node ? [structuredClone(node)] : [];
+    });
+    void insertSceneCopies(nodes, pageId, true).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+  }
+
+  function pasteSceneClipboard() {
+    void insertSceneCopies(sceneClipboard, pageId, false).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+  }
+
+  async function wrapSceneSelection(kind: 'group' | 'frame' | 'auto-horizontal' | 'auto-vertical') {
+    const nodeIds = sceneSelectionRootIds();
+    if (nodeIds.length < 2) {
+      showToast('请选择同一容器中的至少两个图层');
+      return;
+    }
+    const wrapperId = `${kind.startsWith('auto') ? 'frame' : kind}:${crypto.randomUUID()}`;
+    const command: SceneEditorCommand = kind === 'group'
+      ? { type: 'group', nodeIds, wrapperId, name: `分组 · ${nodeIds.length} 项` }
+      : kind === 'frame'
+        ? { type: 'frame', nodeIds, wrapperId, name: `Frame · ${nodeIds.length} 项`, padding: 16 }
+        : {
+          type: 'auto-layout-frame',
+          nodeIds,
+          wrapperId,
+          name: kind === 'auto-horizontal' ? '横向 Auto Layout' : '纵向 Auto Layout',
+          direction: kind === 'auto-horizontal' ? 'horizontal' : 'vertical',
+          padding: 16,
+          gap: 16,
+          sizingX: 'hug',
+          sizingY: 'hug'
+        };
+    try {
+      await commitSceneCommand(command, `在画板中创建 ${command.type}。`);
+      setSelectedId(wrapperId);
+      setSelectedIds([wrapperId]);
+      showToast(command.type === 'group' ? '已创建 Group' : command.type === 'frame' ? '已创建 Frame' : '已创建 Auto Layout');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function ungroupSceneSelection() {
+    if (!selectedSceneNode || (selectedSceneNode.type !== 'group' && selectedSceneNode.type !== 'frame') || selectedSceneNode.layout.mode !== 'free') return;
+    const childIds = selectedSceneNode.children.map((child) => child.id);
+    try {
+      await commitSceneCommand({ type: 'ungroup', wrapperId: selectedSceneNode.id }, '用户取消 Scene 分组。');
+      setSelectedId(childIds[0]);
+      setSelectedIds(childIds);
+      showToast('已取消分组');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function nudgeSceneSelection(deltaX: number, deltaY: number) {
+    const nodeIds = sceneSelectionRootIds();
+    if (nodeIds.length === 0) return;
+    try {
+      await commitSceneCommand({ type: 'move', nodeIds, deltaX, deltaY }, '用户使用键盘微调 Scene 图层。');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function alignSceneSelection(alignment: 'left' | 'horizontal-center' | 'right' | 'top' | 'vertical-center' | 'bottom') {
+    const nodeIds = sceneSelectionRootIds();
+    if (nodeIds.length < 2) return;
+    try {
+      await commitSceneCommand({ type: 'align', nodeIds, alignment }, '用户对齐 Scene 图层。');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function distributeSceneSelection(axis: 'horizontal' | 'vertical') {
+    const nodeIds = sceneSelectionRootIds();
+    if (nodeIds.length < 3) return;
+    try {
+      await commitSceneCommand({ type: 'distribute', nodeIds, axis }, '用户等间距分布 Scene 图层。');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function reorderSceneSelection(placement: 'front' | 'forward' | 'backward' | 'back') {
+    const nodeIds = sceneSelectionRootIds();
+    if (nodeIds.length === 0) return;
+    try {
+      await commitSceneCommand({ type: 'reorder', nodeIds, placement }, '用户调整 Scene 图层顺序。');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function deleteSceneSelection() {
+    const nodeIds = sceneSelectionRootIds();
+    if (nodeIds.length === 0) return;
+    try {
+      await commitSceneCommand({ type: 'delete-nodes', nodeIds }, '用户从画板删除 Scene 图层。');
+      setSelectedId(undefined);
+      setSelectedIds([]);
+      showToast(`已删除 ${nodeIds.length} 个图层`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function updateSceneNodeById(nodeId: string, patches: Array<{ path: string[]; value: unknown }>, reason = '用户在属性栏调整 Scene 图层。') {
+    try {
+      await commitSceneCommand({ type: 'update-node', nodeId, patches }, reason);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function updateSceneNode(patches: Array<{ path: string[]; value: unknown }>, reason = '用户在属性栏调整 Scene 图层。') {
+    if (!selectedSceneNode) return;
+    await updateSceneNodeById(selectedSceneNode.id, patches, reason);
+  }
+
+  async function applySelectedSceneLibraryVariant(variantId: string) {
+    if (selectedSceneNode?.type !== 'library-instance' || !selectedSceneLibrary || !selectedSceneLibraryDefinition) return;
+    const variant = selectedSceneLibraryVariants.find((candidate) => candidate.id === variantId);
+    if (!variant) return;
+    const variantKeys = new Set(selectedSceneLibraryVariants.flatMap((candidate) => Object.keys(candidate.props)));
+    const customProperties = Object.fromEntries(Object.entries(selectedSceneNode.properties).filter(([key]) => !variantKeys.has(key)));
+    const patches: Array<{ path: string[]; value: unknown }> = [
+      { path: ['variant'], value: variant.id },
+      { path: ['properties'], value: { ...(selectedSceneLibraryDefinition.props ?? {}), ...customProperties, ...variant.props } }
+    ];
+    if (variant.content !== undefined) patches.push({ path: ['content'], value: variant.content });
+    if (variant.width !== undefined) patches.push({ path: ['frame', 'width'], value: variant.width });
+    if (variant.height !== undefined) patches.push({ path: ['frame', 'height'], value: variant.height });
+    await updateSceneNode(patches, `用户切换 ${selectedSceneLibrary.displayName} ${selectedSceneLibraryDefinition.label} 的官方款式。`);
+  }
+
+  function focusSceneContent(nodeId: string, slot?: string) {
+    if (!selectedSceneEntry) return;
+    setSceneContentFocus({ pageId: selectedSceneEntry.pageId, nodeId, ...(slot ? { slot } : {}) });
+    showToast(slot ? '已进入内容区；现在拖入的组件会直接放到这里' : '已进入容器；现在拖入的组件会直接放到这里');
+  }
+
+  async function updateSelectedSceneResponsiveOverride(changes: Omit<SceneResponsiveNodeOverride, 'nodeId'>) {
+    if (!selectedSceneNode || !sceneResponsiveRuleSpec) return;
+    const current = selectedSceneResponsiveOverride ?? {};
+    const next = { ...structuredClone(current), ...structuredClone(changes) };
+    await commitSceneCommand({
+      type: 'set-responsive-override',
+      ...sceneResponsiveRuleSpec,
+      nodeId: selectedSceneNode.id,
+      override: next
+    }, `用户调整 ${device} Scene 响应式布局。`);
+  }
+
+  async function replaceSelectedSceneResponsiveOverride(next: Omit<SceneResponsiveNodeOverride, 'nodeId'>) {
+    if (!selectedSceneNode || !sceneResponsiveRuleSpec) return;
+    if (next.visible === undefined && next.layout === undefined && next.childOrder === undefined) {
+      await clearSelectedSceneResponsiveOverride();
+      return;
+    }
+    await commitSceneCommand({
+      type: 'set-responsive-override',
+      ...sceneResponsiveRuleSpec,
+      nodeId: selectedSceneNode.id,
+      override: next
+    }, `用户调整 ${device} Scene 响应式布局。`);
+  }
+
+  async function clearSelectedSceneResponsiveOverride() {
+    if (!selectedSceneNode || !sceneResponsiveRuleSpec || !selectedSceneResponsiveOverride) return;
+    await commitSceneCommand({
+      type: 'clear-responsive-override', ruleId: sceneResponsiveRuleSpec.ruleId, nodeId: selectedSceneNode.id
+    }, `用户恢复 ${device} Scene 响应式继承。`);
+  }
+
   function groupSelected() {
+    if (sceneEditingActive) {
+      void wrapSceneSelection('group');
+      return;
+    }
     const current = documentRef.current;
     if (!current || selectedIds.length < 2) return;
     const roots = selectedRootIds(current, selectedIds);
@@ -1931,6 +3460,10 @@ export function WebDesignStudioApp() {
   }
 
   function ungroupSelected() {
+    if (sceneEditingActive) {
+      void ungroupSceneSelection();
+      return;
+    }
     const current = documentRef.current;
     if (!current || !selected) return;
     const children = current.components.filter((component) => component.parentId === selected.id);
@@ -2018,6 +3551,90 @@ export function WebDesignStudioApp() {
     showToast('已从“我的”移除，画布中的实例保持不变');
   }
 
+  function saveSceneSelectionAsSnippet() {
+    const scene = sceneDocumentRef.current;
+    if (!scene || selectedIds.length === 0) return;
+    const defaultName = selectedIds.length === 1
+      ? indexSceneDocument(scene).get(selectedIds[0])?.node.name ?? '我的组件'
+      : `设计组合 · ${selectedIds.length} 层`;
+    const name = window.prompt('给这个可复用设计组合起个名字', defaultName)?.trim();
+    if (!name) return;
+    try {
+      const snippet = createSceneSnippet(scene, selectedIds, name);
+      setSceneSnippets((items) => [...items.filter((item) => item.id !== snippet.id), snippet]);
+      chooseLibraryTab('my');
+      showToast(`已保存到“我的”：${snippet.name}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function insertSceneSnippet(snippet: SceneSnippet) {
+    const scene = sceneDocumentRef.current;
+    if (!scene) return;
+    try {
+      const artboard = workspacePlacement?.artboards.find((candidate) => candidate.artboardId === activeArtboardId)
+        ?? workspacePlacement?.artboards.find((candidate) => candidate.pageId === pageId);
+      const targetPageId = artboard?.pageId ?? pageId;
+      const viewportWidth = artboard?.viewportWidth ?? breakpoint.width;
+      const target = resolveSceneInsertionTarget({
+        document: scene,
+        pageId: targetPageId,
+        viewportWidth,
+        point: { x: 72, y: 72 },
+        preferred: sceneContentFocus?.pageId === targetPageId ? sceneContentFocus : undefined
+      });
+      const node = instantiateSceneSnippet(snippet, target.x, target.y);
+      await commitSceneCommand({ type: 'insert-node', parentId: target.nodeId, slot: target.slot, index: target.index, node }, `用户插入“我的”设计组合 ${snippet.name}。`);
+      setSelectedId(node.id);
+      setSelectedIds([node.id]);
+      showToast(`已插入 ${snippet.name}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function renameSceneSnippet(snippet: SceneSnippet) {
+    const name = window.prompt('重命名设计组合', snippet.name)?.trim();
+    if (!name || name === snippet.name) return;
+    setSceneSnippets((items) => items.map((item) => item.id === snippet.id ? { ...item, name, updatedAt: new Date().toISOString() } : item));
+  }
+
+  function removeSceneSnippet(snippetId: string) {
+    if (!window.confirm('从“我的”中移除这个设计组合？已经插入画布的内容不会受影响。')) return;
+    setSceneSnippets((items) => items.filter((item) => item.id !== snippetId));
+    showToast('已从“我的”移除，画布中的内容保持不变');
+  }
+
+  async function applySceneVariablesDraft() {
+    if (!sceneDocumentRef.current) return;
+    try {
+      const collections = JSON.parse(sceneVariablesDraft) as SceneVariableCollection[];
+      if (!Array.isArray(collections)) throw new Error('变量数据必须是数组。');
+      await commitSceneCommand({ type: 'set-variable-collections', collections }, '用户更新 Scene 变量与模式。');
+      showToast('Scene 变量已保存');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function seedSceneVariables() {
+    const modeId = 'mode:default';
+    setSceneVariablesDraft(JSON.stringify([{
+      id: 'variables:visual-system',
+      name: '视觉系统',
+      modes: [{ id: modeId, name: '默认' }],
+      variables: [
+        { id: 'variable:color-primary', name: '主色', type: 'color', valuesByMode: { [modeId]: '#0A84FF' } },
+        { id: 'variable:color-surface', name: '表面', type: 'color', valuesByMode: { [modeId]: '#FFFFFF' } },
+        { id: 'variable:color-text', name: '正文', type: 'color', valuesByMode: { [modeId]: '#1D1D1F' } },
+        { id: 'variable:spacing-base', name: '基础间距', type: 'number', valuesByMode: { [modeId]: 8 } },
+        { id: 'variable:radius-card', name: '卡片圆角', type: 'number', valuesByMode: { [modeId]: 20 } },
+        { id: 'variable:font-family', name: '字体', type: 'string', valuesByMode: { [modeId]: '-apple-system, BlinkMacSystemFont, sans-serif' } }
+      ]
+    } satisfies SceneVariableCollection], null, 2));
+  }
+
   function toggleSelectedSymbolOverride(override: WebSymbolOverride) {
     if (!selected) return;
     const enabled = !(selected.symbolOverrides ?? []).includes(override);
@@ -2078,14 +3695,34 @@ export function WebDesignStudioApp() {
     commit((current) => ({ ...current, tokens: updater(structuredClone(tokensForDocument(current))) }));
   }
 
-  function applyDesignTheme(preset: WebDesignThemePreset) {
-    commit((current) => ({
-      ...current,
-      viewport: { ...current.viewport, background: preset.canvasBackground },
-      tokens: structuredClone(preset.tokens)
-    }));
-    setThemePickerOpen(false);
-    showToast(`已应用 ${preset.name} 视觉风格`);
+  async function applyDesignTheme(preset: WebDesignThemePreset) {
+    const scene = sceneDocumentRef.current;
+    if (!scene) {
+      showToast('请先让 AI 建立 Scene，再应用视觉变量');
+      return;
+    }
+    const modeId = 'theme:default';
+    const collection: SceneVariableCollection = {
+      id: 'theme:visual-system',
+      name: `${preset.name} 视觉系统`,
+      modes: [{ id: modeId, name: 'Default' }],
+      variables: [
+        ...Object.entries({ canvas: preset.canvasBackground, ...preset.tokens.colors }).map(([key, value]) => ({ id: `theme:color:${key}`, name: `Color / ${key}`, type: 'color' as const, valuesByMode: { [modeId]: value } })),
+        ...Object.entries(preset.tokens.radii).map(([key, value]) => ({ id: `theme:radius:${key}`, name: `Radius / ${key}`, type: 'number' as const, valuesByMode: { [modeId]: value } })),
+        { id: 'theme:font:family', name: 'Typography / font family', type: 'string', valuesByMode: { [modeId]: preset.tokens.typography.fontFamily } },
+        { id: 'theme:font:base-size', name: 'Typography / base size', type: 'number', valuesByMode: { [modeId]: preset.tokens.typography.baseFontSize } }
+      ]
+    };
+    try {
+      await commitSceneCommand({
+        type: 'set-variable-collections',
+        collections: [...scene.variableCollections.filter((item) => item.id !== collection.id), collection]
+      }, `用户从 ${preset.name} 建立 Scene 视觉变量。`);
+      setThemePickerOpen(false);
+      showToast(`已建立 ${preset.name} Scene 视觉变量`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function updateTokenColor(key: keyof WebDesignTokens['colors'], value: string) {
@@ -2101,35 +3738,102 @@ export function WebDesignStudioApp() {
   }
 
   function switchPage(nextPageId: string) {
-    setPageId(nextPageId);
+    setPreviewOverlayPageId(undefined);
+    const artboard = workspacePlacement?.artboards.find((candidate) => candidate.pageId === nextPageId);
+    if (artboard) activateWorkspaceArtboard(artboard);
+    else setPageId(nextPageId);
+    resetSlotEditorCamera();
     setEditingSlot(undefined);
     setSelectedId(undefined);
     setSelectedIds([]);
   }
 
   function addPage() {
-    const current = documentRef.current;
-    if (!current) return;
-    const currentPages = pagesForDocument(current);
-    const index = currentPages.length + 1;
-    const id = `page-${crypto.randomUUID().slice(0, 8)}`;
-    const page = { id, name: `页面 ${index}`, slug: `/page-${index}` };
-    commit((active) => ({ ...active, pages: [...pagesForDocument(active), page] }));
-    switchPage(id);
+    void addWorkspaceSurface('page');
+  }
+
+  async function duplicateScenePage() {
+    const scene = sceneDocumentRef.current;
+    const sourcePage = scene?.pages.find((page) => page.id === pageId);
+    if (!scene || !sourcePage) return;
+    const newPageId = `page:${crypto.randomUUID()}`;
+    const name = `${sourcePage.name} 副本`;
+    try {
+      await commitSceneCommand({ type: 'duplicate-page', pageId: sourcePage.id, newPageId, name }, '用户复制完整 Scene 画板。');
+      const sourceArtboard = workspacePlacement?.artboards.find((candidate) => candidate.pageId === sourcePage.id);
+      const x = workspacePlacement?.artboards.length
+        ? Math.max(...workspacePlacement.artboards.map((artboard) => artboard.x + artboard.viewportWidth)) + WORKSPACE_ARTBOARD_GAP
+        : 0;
+      const artboard: WorkspaceArtboardPlacement = {
+        artboardId: `artboard-${crypto.randomUUID().slice(0, 8)}`,
+        pageId: newPageId,
+        surfaceKind: sourceArtboard?.surfaceKind ?? 'page',
+        viewportWidth: sourceArtboard?.viewportWidth ?? breakpoint.width,
+        viewportHeight: sourceArtboard?.viewportHeight ?? previewViewportHeight,
+        x,
+        y: sourceArtboard?.y ?? 0
+      };
+      setWorkspacePlacement((current) => current ? { ...current, artboards: [...current.artboards, artboard] } : current);
+      activateWorkspaceArtboard(artboard);
+      setSelectedId(undefined);
+      setSelectedIds([]);
+      showToast(`已复制画板“${sourcePage.name}”，响应式规则保持一致`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function duplicatePage() {
+    if (sceneDocumentRef.current) {
+      void duplicateScenePage();
+      return;
+    }
     const current = documentRef.current;
     if (!current || !currentPage) return;
     const id = `page-${crypto.randomUUID().slice(0, 8)}`;
-    const page = { id, name: `${currentPage.name} 副本`, slug: `/page-${pagesForDocument(current).length + 1}` };
+    const page = { id, name: `${currentPage.name} 副本`, slug: `/page-${pagesForDocument(current).length + 1}`, surfaceKind: currentPage.surfaceKind ?? 'page' };
     const sourceIds = componentsForPage(current, currentPage.id).map((component) => component.id);
     const cloned = cloneComponentSubtrees(current, sourceIds, id, 0, current);
     commit((active) => ({ ...active, pages: [...pagesForDocument(active), page], components: [...active.components, ...cloned.components] }));
-    switchPage(id);
+    const sourceArtboard = workspacePlacement?.artboards.find((candidate) => candidate.pageId === currentPage.id);
+    if (workspacePlacement) {
+      const right = workspacePlacement.artboards.length === 0
+        ? 0
+        : Math.max(...workspacePlacement.artboards.map((artboard) => artboard.x + artboard.viewportWidth)) + WORKSPACE_ARTBOARD_GAP;
+      const duplicateArtboard: WorkspaceArtboardPlacement = {
+        artboardId: `artboard-${crypto.randomUUID().slice(0, 8)}`,
+        pageId: id,
+        surfaceKind: sourceArtboard?.surfaceKind ?? 'page',
+        viewportWidth: sourceArtboard?.viewportWidth ?? breakpoint.width,
+        viewportHeight: sourceArtboard?.viewportHeight ?? previewViewportHeight,
+        x: right,
+        y: sourceArtboard?.y ?? 0
+      };
+      setWorkspacePlacement({ ...workspacePlacement, artboards: [...workspacePlacement.artboards, duplicateArtboard] });
+      setActiveArtboardId(duplicateArtboard.artboardId);
+    }
+    setPageId(id);
   }
 
   function deleteCurrentPage() {
+    if (sceneDocumentRef.current) {
+      const scene = sceneDocumentRef.current;
+      const page = scene.pages.find((candidate) => candidate.id === pageId);
+      if (!page || scene.pages.length <= 1) return;
+      if (!window.confirm(`确定删除画板“${page.name}”及其全部 Scene 图层吗？此操作可撤销。`)) return;
+      const nextPage = scene.pages.find((candidate) => candidate.id !== page.id);
+      void commitSceneCommand({ type: 'delete-page', pageId: page.id }, '用户删除完整 Scene 画板。').then(() => {
+        const remaining = workspacePlacement?.artboards.filter((artboard) => artboard.pageId !== page.id) ?? [];
+        setWorkspacePlacement((current) => current ? { ...current, artboards: current.artboards.filter((artboard) => artboard.pageId !== page.id) } : current);
+        const nextArtboard = remaining.find((artboard) => artboard.pageId === nextPage?.id) ?? remaining[0];
+        if (nextArtboard) activateWorkspaceArtboard(nextArtboard);
+        else if (nextPage) setPageId(nextPage.id);
+        setSelectedId(undefined);
+        setSelectedIds([]);
+        showToast(`已删除画板“${page.name}”`);
+      }).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+      return;
+    }
     const current = documentRef.current;
     if (!current || !currentPage || pagesForDocument(current).length <= 1) return;
     if (!window.confirm(`确定删除页面“${currentPage.name}”及其全部组件吗？`)) return;
@@ -2149,15 +3853,38 @@ export function WebDesignStudioApp() {
       })),
       requests: active.requests.filter((request) => !request.componentId || !removedIds.has(request.componentId))
     }));
-    switchPage(remainingPages[0].id);
+    const remainingArtboards = workspacePlacement?.artboards.filter((artboard) => artboard.pageId !== currentPage.id) ?? [];
+    if (workspacePlacement) setWorkspacePlacement({ ...workspacePlacement, artboards: remainingArtboards });
+    const nextArtboard = remainingArtboards.find((artboard) => artboard.pageId === remainingPages[0].id) ?? remainingArtboards[0];
+    if (nextArtboard) activateWorkspaceArtboard(nextArtboard);
+    else setPageId(remainingPages[0].id);
   }
 
-  function updateCurrentPage(changes: Partial<{ name: string; slug: string }>) {
+  function updateCurrentPage(changes: Partial<{ name: string; slug: string; surfaceKind: WorkspaceSurfaceKind }>) {
     if (!currentPage) return;
+    if (sceneDocumentRef.current) {
+      if (changes.name?.trim() && changes.name.trim() !== currentPage.name) {
+        void commitSceneCommand({ type: 'rename-page', pageId: currentPage.id, name: changes.name.trim() }, '用户重命名 Scene 画板。')
+          .catch((error) => showToast(error instanceof Error ? error.message : String(error)));
+      }
+      if (changes.surfaceKind) {
+        setWorkspacePlacement((current) => current ? {
+          ...current,
+          artboards: current.artboards.map((artboard) => artboard.pageId === currentPage.id ? { ...artboard, surfaceKind: changes.surfaceKind! } : artboard)
+        } : current);
+      }
+      return;
+    }
     commit((current) => ({
       ...current,
       pages: pagesForDocument(current).map((page) => page.id === currentPage.id ? { ...page, ...changes } : page)
     }));
+    if (changes.surfaceKind) {
+      setWorkspacePlacement((current) => current ? {
+        ...current,
+        artboards: current.artboards.map((artboard) => artboard.pageId === currentPage.id ? { ...artboard, surfaceKind: changes.surfaceKind! } : artboard)
+      } : current);
+    }
   }
 
   function useAsset(asset: WebDesignAsset) {
@@ -2247,17 +3974,85 @@ export function WebDesignStudioApp() {
     if (!component.interaction) return;
     if (component.interaction.type === 'page') {
       const target = pages.find((page) => page.id === component.interaction!.target);
-      if (target) switchPage(target.id);
+      if (!target) return;
+      if ((target.surfaceKind ?? 'page') === 'page') switchPage(target.id);
+      else setPreviewOverlayPageId(target.id);
       return;
     }
     window.open(component.interaction.target, '_blank', 'noopener,noreferrer');
   }
 
-  function addAnnotation() {
+  function activateScenePrototype(link: ScenePrototypeLink) {
+    const target = pages.find((page) => page.id === link.targetPageId);
+    if (!target) {
+      showToast('原型目标画板已经不存在');
+      return;
+    }
+    if (link.action === 'navigate') switchPage(target.id);
+    else setPreviewOverlayPageId(target.id);
+  }
+
+  function addLegacyAnnotation() {
     if (!selected || !annotationText.trim()) return;
     const annotation = { id: `note-${crypto.randomUUID().slice(0, 8)}`, text: annotationText.trim(), status: 'open' as const, createdAt: new Date().toISOString() };
     updateComponent(selected.id, (component) => ({ ...component, annotations: [...component.annotations, annotation] }));
     setAnnotationText('');
+  }
+
+  async function prepareSceneAnnotation(nodeId: string, annotationId: string) {
+    const scene = sceneDocumentRef.current;
+    if (!repository || !scene) return;
+    setSceneAnnotationPreparingId(annotationId);
+    try {
+      const context = await repository.prepareSceneAnnotationTask(scene.documentId, {
+        nodeId,
+        annotationId,
+        viewportWidth: breakpoint.width
+      });
+      setSceneAiContext(context);
+      showToast('视觉批注已准备，AI 可按稳定节点和截图继续修改');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSceneAnnotationPreparingId(undefined);
+    }
+  }
+
+  async function addSceneAnnotation(body = annotationText, prepareForAi = false) {
+    const node = selectedSceneNode ?? activeScenePage?.children[0];
+    const trimmed = body.trim();
+    if (!node || !trimmed) return;
+    const annotationId = `annotation:${crypto.randomUUID()}`;
+    try {
+      await commitSceneCommand({ type: 'add-annotation', nodeId: node.id, annotationId, body: trimmed }, '用户为 Scene 图层添加视觉批注。');
+      setAnnotationText('');
+      if (prepareForAi) await prepareSceneAnnotation(node.id, annotationId);
+      else showToast('已添加批注，AI 会把它视为待处理设计任务');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function changeSceneAnnotationStatus(annotationId: string, status: 'open' | 'resolved') {
+    if (!selectedSceneNode) return;
+    try {
+      await commitSceneCommand({
+        type: status === 'open' ? 'reopen-annotation' : 'resolve-annotation',
+        nodeId: selectedSceneNode.id,
+        annotationId
+      }, status === 'open' ? '用户重新打开 Scene 批注。' : '用户确认 Scene 批注已完成。');
+      if (sceneAiContext?.task.annotationId === annotationId) setSceneAiContext(undefined);
+      showToast(status === 'open' ? '批注已重新打开' : '批注已标记完成');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function submitSceneAiInstruction() {
+    const instruction = aiInstruction.trim();
+    if (!instruction) return;
+    setAiInstruction('');
+    await addSceneAnnotation(instruction, true);
   }
 
   async function addAiRequest(instruction = aiInstruction) {
@@ -2280,13 +4075,10 @@ export function WebDesignStudioApp() {
   const storageBadge = <span className={`service-pill ${repository?.mode === 'server' ? 'online' : ''}`}>{repository?.mode === 'server' ? '本地服务' : '浏览器存储'}</span>;
   const newDesignModal = newDesignOpen && activeProject && <div className="studio-modal-backdrop" onPointerDown={() => setNewDesignOpen(false)}>
     <section className="studio-modal project-create-modal" onPointerDown={(event) => event.stopPropagation()}>
-      <header><div><span className="eyebrow">{activeProject.name}</span><h2>新建网站设计</h2><p>每份设计拥有独立页面、组件、响应式布局和设计系统。</p></div><button onClick={() => setNewDesignOpen(false)}>×</button></header>
+      <header><div><span className="eyebrow">{activeProject.name}</span><h2>新建设计工作区</h2><p>先创建空的设计范围，再让 AI 逐页规划、分步骤生成和视觉验收；不会自动塞入演示模板。</p></div><button onClick={() => setNewDesignOpen(false)}>×</button></header>
       <div className="project-form-body">
         <label>设计名称<input autoFocus maxLength={240} value={newDesignName} onChange={(event) => setNewDesignName(event.target.value)} placeholder="例如：官网改版 2026" /></label>
-        <div className="design-start-options">
-          <button className={newDesignBlank ? 'active' : ''} onClick={() => setNewDesignBlank(true)}><span>＋</span><strong>空白网站</strong><small>从干净画布开始设计</small></button>
-          <button className={!newDesignBlank ? 'active' : ''} onClick={() => setNewDesignBlank(false)}><span>✦</span><strong>产品落地页</strong><small>从完整响应式模板开始</small></button>
-        </div>
+        <div className="ai-first-create-note"><span>✦</span><div><strong>AI 分步设计</strong><small>先定页面清单和视觉方向，再一次完成一个有界步骤。复杂页面可以多轮完善。</small></div></div>
       </div>
       <footer className="project-modal-actions"><button className="quiet-button" onClick={() => setNewDesignOpen(false)}>取消</button><button className="primary-button" disabled={!newDesignName.trim()} onClick={() => void createDesignFromSheet()}>创建并打开</button></footer>
     </section>
@@ -2297,7 +4089,7 @@ export function WebDesignStudioApp() {
   if (screen === 'project' && activeProject) return <div className="web-project-shell">
     <header className="web-project-toolbar"><div className="brand"><span className="brand-mark">W</span><span>{activeProject.name}</span>{storageBadge}</div><button className="primary-button" onClick={() => void createNew()}>＋ 新建设计</button></header>
     <main className="web-project-home">
-      <section className="web-project-intro"><div><span className="eyebrow">网站项目</span><h1>{activeProject.name}</h1><p>{activeProject.description || `项目内共有 ${activeProjectDocuments.length} 份网站设计。`}</p></div><button className="web-project-new-card" onClick={() => void createNew()}><span>＋</span><strong>新建网站设计</strong><small>创建空白网站或从完整模板开始</small></button></section>
+      <section className="web-project-intro"><div><span className="eyebrow">网站项目</span><h1>{activeProject.name}</h1><p>{activeProject.description || `项目内共有 ${activeProjectDocuments.length} 份网站设计。`}</p></div><button className="web-project-new-card" onClick={() => void createNew()}><span>＋</span><strong>新建设计工作区</strong><small>由 AI 逐页规划、分步生成，人负责审阅和批注</small></button></section>
       <section className="web-project-section"><div className="web-project-section-heading"><h2>项目设计</h2><span>{activeProjectDocuments.length} 份</span></div>
         {activeProjectDocuments.length ? <div className="web-design-grid">{activeProjectDocuments.map((item) => <article className="web-design-card" key={item.documentId}>
           <button className="web-design-card-open" onClick={() => void openProjectDocument(item.documentId)}><span className="web-design-thumbnail"><i /><i /><i /></span><span className="web-project-card-copy"><strong>{item.title}</strong><small>{item.pageCount ?? 1} 个页面 · {item.componentCount} 个组件 · v{item.revision}</small></span><time>{formatProjectDate(item.updatedAt)}</time><b>›</b></button>
@@ -2310,8 +4102,29 @@ export function WebDesignStudioApp() {
   if (!document || !activeProject) return <div className="loading-screen"><div className="loading-dot" />正在打开网站项目…</div>;
 
   const layerComponents = flattenComponentTree(document, pageId);
+  const sceneLayerNodes = sceneDocument
+    ? [...indexSceneDocument(sceneDocument).values()]
+      .filter((entry) => entry.pageId === pageId)
+      .map((entry) => ({ node: entry.node, depth: Math.max(0, entry.path.length - 2) }))
+    : [];
   const directChildCount = selected ? document.components.filter((component) => component.parentId === selected.id).length : 0;
   const canUngroup = Boolean(selected?.id.startsWith('group-') && directChildCount > 0);
+  const canUngroupScene = Boolean(selectedSceneNode
+    && (selectedSceneNode.type === 'group' || selectedSceneNode.type === 'frame')
+    && selectedSceneNode.layout.mode === 'free');
+  const selectedSceneLibrary = selectedSceneNode?.type === 'library-instance' ? uiLibraryByName(selectedSceneNode.library as WebDesignLibraryName) : undefined;
+  const selectedSceneLibraryDefinition = selectedSceneNode?.type === 'library-instance'
+    ? selectedSceneLibrary?.components.find((item) => item.id === selectedSceneNode.component)
+    : undefined;
+  const selectedSceneLibraryVariants = selectedSceneNode?.type === 'library-instance' && selectedSceneLibrary
+    ? selectedSceneLibrary.variants[selectedSceneNode.component] ?? [{ id: 'default', label: '默认款式', props: {} }]
+    : [];
+  const selectedSceneRegistryElement = selectedSceneNode?.type === 'library-instance'
+    ? libraryPreviewSelection(selectedSceneNode.properties.registryElement)
+    : undefined;
+  const selectedSceneEditableSlots = selectedSceneNode?.type === 'library-instance'
+    ? editableSlotsForSceneLibraryNode(selectedSceneNode)
+    : [];
   const selectedSymbol = selected?.symbolId ? document.symbols?.find((symbol) => symbol.id === selected.symbolId) : undefined;
   const selectedLibrary = uiLibraryByName(selected?.library?.name);
   const selectedLibraryDefinition = selected?.library ? selectedLibrary?.components.find((item) => item.id === selected.library?.component) : undefined;
@@ -2330,6 +4143,8 @@ export function WebDesignStudioApp() {
     || `${item.label} ${item.id} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
   const filteredPersonalSymbols = personalSymbols.filter((symbol) => !normalizedPaletteQuery
     || `${symbol.name} ${symbol.components.map((component) => component.name).join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
+  const filteredSceneSnippets = sceneSnippets.filter((snippet) => !normalizedPaletteQuery
+    || `${snippet.name} ${snippet.nodes.map((node) => node.name).join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
   const activeUiLibrary = libraryTab !== 'components' && libraryTab !== 'my' && libraryTab !== 'layers' ? uiLibraryByName(libraryTab) : undefined;
   const filteredUiLibraryComponents = activeUiLibrary?.components.filter((item) => !normalizedPaletteQuery
     || `${item.id} ${item.label} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery)) ?? [];
@@ -2339,9 +4154,225 @@ export function WebDesignStudioApp() {
   const variantPickerPresentation = variantPickerDefinition && variantPickerLibrary
     ? officialRuntimePresentation(variantPickerLibrary.id, String(variantPickerDefinition.props?.componentSlug ?? variantPickerDefinition.id))
     : undefined;
-  const aiQuickPrompts = aiTarget
+  const sceneAiTarget = selectedSceneNode ?? activeScenePage?.children[0];
+  const sceneAnnotationTasks = sceneDocument
+    ? [...indexSceneDocument(sceneDocument).values()].flatMap((entry) => entry.node.annotations
+      .filter((annotation) => annotation.status === 'open')
+      .map((annotation) => ({ annotation, node: entry.node, pageId: entry.pageId })))
+    : [];
+  const aiQuickPrompts = selectedSceneNode
     ? ['让这个组件更精致、更有层次', '优化尺寸、间距和对齐', '给我 3 个更好看的视觉方案']
     : ['设计一个像 Apple 官网一样克制高级的页面', '统一整页的字号、间距、圆角和色彩', '检查并修复页面中不协调的视觉细节'];
+
+  function renderGenerationReviewPanel() {
+    if (generationLoading && !generationPlan) return <div className="generation-review-empty"><span className="loading-dot" /><strong>正在读取 AI 设计进度…</strong></div>;
+    if (!generationPlan) return <div className="generation-review-empty">
+      <div className="empty-icon">✦</div>
+      <strong>AI 还没有开始分步设计</strong>
+      <p>AI 会先规划网站和当前页面，再一次只提交一个可审阅的视觉步骤。页面不需要一轮完成。</p>
+      <small>开始后，这里会显示真实截图、视觉差异、质量结论和接受/退回操作。</small>
+      <button className="secondary-button" onClick={() => void refreshGenerationState(true).catch((error) => showToast(error instanceof Error ? error.message : String(error)))}>刷新进度</button>
+    </div>;
+    const plan = generationPlan;
+    const activePage = plan.pages.find((page) => page.pageId === plan.activePage?.pageId);
+    const candidate = generationReview?.candidate;
+    const artifacts = [...new Map([...(candidate?.artifacts ?? []), ...(generationReview?.attempt.artifacts ?? [])]
+      .map((artifact) => [artifact.artifactId, artifact])).values()];
+    const imageArtifacts = artifacts.filter((artifact) => ['page-snapshot', 'region-crop', 'visual-diff'].includes(artifact.kind));
+    const statusLabel: Record<string, string> = {
+      draft: '规划中', ready: '待开始', running: '设计中', paused: '已暂停', completed: '已完成', failed: '需要处理',
+      planned: '已规划', generating: '生成中', validating: '视觉验收中', 'awaiting-review': '等待你审阅', accepted: '已接受',
+      rejected: '已退回', retryable: '等待重做', blocked: '被阻塞', stale: '需要更新', 'rolled-back': '已回滚'
+    };
+    return <div className="generation-review-panel">
+      <section className="generation-plan-summary">
+        <header><div><span>AI 设计计划</span><strong>{plan.objective}</strong></div><em className={`generation-status ${plan.status}`}>{statusLabel[plan.status] ?? plan.status}</em></header>
+        <p>{plan.audience.join(' · ')}</p>
+        <small>Plan r{plan.revision} · {plan.mode === 'auto-current-page' ? '当前页面自动推进' : '逐步审阅模式'}</small>
+      </section>
+      <div className="generation-plan-pages">
+        {plan.pages.map((plannedPage) => <article key={plannedPage.pageId} className={plannedPage.pageId === plan.activePage?.pageId ? 'active' : ''}>
+          <span>{plannedPage.order + 1}</span><div><strong>{plannedPage.name}</strong><small>{plannedPage.purpose}</small></div><em>{statusLabel[plannedPage.status] ?? plannedPage.status}</em>
+        </article>)}
+      </div>
+      {activePage?.design && <details className="generation-design-intent" open>
+        <summary>当前页面视觉方向</summary>
+        <dl><div><dt>美术方向</dt><dd>{activePage.design.artDirection}</dd></div><div><dt>构图</dt><dd>{activePage.design.compositionIntent}</dd></div><div><dt>排版</dt><dd>{activePage.design.typographyIntent}</dd></div><div><dt>图片策略</dt><dd>{activePage.design.imageStrategy}</dd></div></dl>
+        <ul>{activePage.design.designAcceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul>
+      </details>}
+      {plan.activeStep && <section className={`generation-active-step ${plan.activeStep.status}`}>
+        <header><div><span>当前只做这一小步</span><strong>{plan.activeStep.title}</strong></div><em>{statusLabel[plan.activeStep.status] ?? plan.activeStep.status}</em></header>
+        <p>{plan.activeStep.kind} · {plan.activeStep.target.nodeIds.join('、')}</p>
+        {plan.activeStep.target.viewportWidths.length > 0 && <small>验收宽度：{plan.activeStep.target.viewportWidths.join(' / ')} px</small>}
+      </section>}
+      {generationReview && <section className="generation-candidate-review">
+        <header><div><span>候选方案</span><strong>{generationReview.step.title}</strong></div><em>Scene r{generationReview.attempt.baseRevision} → r{generationReview.attempt.baseRevision + 1}</em></header>
+        {imageArtifacts.length > 0 && <div className="generation-candidate-images">{imageArtifacts.map((artifact) => <figure key={artifact.artifactId}>
+          <img src={repository?.generationArtifactImageUrl(documentRef.current?.documentId ?? '', artifact.artifactId)} alt={`${artifact.kind} ${artifact.artifactId}`} onError={(event) => { event.currentTarget.closest('figure')?.classList.add('image-unavailable'); }} />
+          <figcaption><strong>{artifact.kind === 'visual-diff' ? '视觉差异' : artifact.kind === 'region-crop' ? '局部截图' : '页面截图'}</strong><span>{artifact.viewportWidth ? `${artifact.viewportWidth}px` : `r${artifact.revision}`}</span></figcaption>
+        </figure>)}</div>}
+        {candidate && <><p className="generation-quality-summary">{candidate.qualitySummary}</p>
+          {candidate.issueIds.length > 0 && <div className="generation-issues"><strong>仍需注意</strong>{candidate.issueIds.map((issue) => <span key={issue}>{issue}</span>)}</div>}
+          {candidate.protectionConflicts.length > 0 && <div className="generation-protection-warning"><strong>会触及人工调整</strong><span>{candidate.protectionConflicts.length} 个受保护字段，需要你明确确认。</span></div>}
+        </>}
+        {generationReview.attempt.error && <div className="generation-attempt-error"><strong>{generationReview.attempt.error.code}</strong><span>{generationReview.attempt.error.message}</span></div>}
+      </section>}
+      {candidate && plan.activeStep?.status === 'awaiting-review' && <section className="generation-review-actions">
+        <button className="ai-button" disabled={Boolean(generationAction)} onClick={() => void runGenerationReviewAction('accept')}>{generationAction === 'accept' ? '正在提交…' : '接受这一小步'}</button>
+        <textarea rows={3} maxLength={4000} value={generationRejectionReason} onChange={(event) => setGenerationRejectionReason(event.target.value)} placeholder="指出具体视觉问题，例如层级、留白、构图或图片不符合方向…" />
+        <button className="secondary-button danger" disabled={Boolean(generationAction) || !generationRejectionReason.trim()} onClick={() => void runGenerationReviewAction('reject')}>{generationAction === 'reject' ? '正在退回…' : '退回并让 AI 重做'}</button>
+      </section>}
+      <div className="generation-plan-controls">
+        {plan.status === 'paused'
+          ? <button disabled={Boolean(generationAction)} onClick={() => void runGenerationReviewAction('resume')}>继续 AI 设计</button>
+          : plan.status === 'running' && <button disabled={Boolean(generationAction)} onClick={() => void runGenerationReviewAction('pause')}>暂停 AI 设计</button>}
+        <button disabled={generationLoading} onClick={() => void refreshGenerationState(true).catch((error) => showToast(error instanceof Error ? error.message : String(error)))}>刷新</button>
+      </div>
+    </div>;
+  }
+
+  function renderWorkspaceArtboard(artboard: WorkspaceArtboardPlacement) {
+    const currentDocument = documentRef.current;
+    if (!currentDocument) return null;
+    const targetDevice = deviceForWorkspaceArtboard(currentDocument, artboard);
+    const targetCanvasHeight = sceneDocument
+      ? sceneArtboardContentHeight(sceneDocument, artboard.pageId, artboard.viewportWidth, artboard.viewportHeight)
+      : artboard.viewportHeight;
+    const targetPage = pages.find((page) => page.id === artboard.pageId);
+    const active = artboard.artboardId === activeArtboardId;
+    const surfaceLabel = WORKSPACE_SURFACE_LABELS[artboard.surfaceKind];
+    const viewport = canvasScroll.current;
+    const viewportSize = viewport ? { width: viewport.clientWidth, height: viewport.clientHeight } : undefined;
+    const renderTier = workspaceViewportReady(viewportSize)
+      ? workspaceArtboardRenderTier(
+          workspaceCamera,
+          workspaceArtboardContentBounds(currentDocument, artboard, sceneDocument),
+          viewportSize,
+          active
+        )
+      : 'runtime';
+    if (renderTier === 'anchor') return <div
+      key={artboard.artboardId}
+      className="workspace-artboard-anchor"
+      style={{ left: artboard.x, top: artboard.y, width: artboard.viewportWidth, height: targetCanvasHeight }}
+      data-artboard-id={artboard.artboardId}
+      data-render-tier="anchor"
+      aria-hidden="true"
+    />;
+    const contentVisible = renderTier === 'content' || renderTier === 'runtime';
+    return <div
+      key={artboard.artboardId}
+      className={`workspace-artboard surface-${artboard.surfaceKind} ${active ? 'active' : ''}`}
+      style={{ left: artboard.x, top: artboard.y, width: artboard.viewportWidth, height: targetCanvasHeight }}
+      data-artboard-id={artboard.artboardId}
+      data-surface-kind={artboard.surfaceKind}
+      data-render-tier={renderTier}
+    >
+      <button className="workspace-artboard-header" onPointerDown={(event) => beginWorkspaceArtboardMove(event, artboard)} onClick={() => activateWorkspaceArtboard(artboard)}>
+        <span className="workspace-artboard-status" />
+        <strong>{targetPage?.name ?? artboard.pageId}</strong>
+        <span className="workspace-surface-kind">{surfaceLabel}</span>
+        <em>{artboard.viewportWidth} × {artboard.viewportHeight}</em>
+        <small>{active ? '当前画板' : '点击选择'}</small>
+      </button>
+      <div className={`design-canvas workspace-projected-canvas device-${targetDevice}`} style={{
+        width: artboard.viewportWidth,
+        height: targetCanvasHeight,
+        background: currentDocument.viewport.background,
+        fontFamily: tokens?.typography.fontFamily,
+        fontSize: tokens?.typography.baseFontSize,
+        '--color-primary': tokens?.colors.primary,
+        '--color-accent': tokens?.colors.accent,
+        '--color-surface': tokens?.colors.surface,
+        '--color-text': tokens?.colors.text,
+        '--color-muted': tokens?.colors.muted,
+        '--radius-small': `${tokens?.radii.small ?? 8}px`,
+        '--radius-medium': `${tokens?.radii.medium ?? 16}px`,
+        '--radius-large': `${tokens?.radii.large ?? 28}px`
+      } as CSSProperties}
+        data-page-id={artboard.pageId}
+        data-artboard-id={artboard.artboardId}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => { if (sceneDocument) void onSceneCanvasDrop(event, artboard); }}>
+        {artboard.viewportHeight < targetCanvasHeight && <div className="viewport-fold-line" style={{ top: artboard.viewportHeight }}><span>首屏结束 · {artboard.viewportWidth} × {artboard.viewportHeight}</span></div>}
+        {contentVisible && sceneDocument && <SceneArtboardCanvas
+          scene={sceneDocument}
+          pageId={artboard.pageId}
+          viewportWidth={artboard.viewportWidth}
+          viewportHeight={artboard.viewportHeight}
+          active={active && !interactionMode}
+          interactive={interactionMode}
+          selectionOnly={workspaceShell.activeTool === 'comment'}
+          selectedIds={active ? selectedIds : []}
+          primaryId={active ? selectedId : undefined}
+          onSelectionChange={(ids, primary) => {
+            setSelectedIds(ids);
+            setSelectedId(primary);
+            if (primary && workspaceShell.activeTool === 'comment') {
+              setInspectorTab('ai');
+              if (!workspaceShell.rightPanelOpen) dispatchWorkspaceShell({ type: 'toggle-right-panel' });
+              showToast('已定位 Scene 图层，请在右侧添加视觉批注');
+            }
+          }}
+          onCommit={commitSceneCommand}
+          onError={showToast}
+          onPrototypeActivate={(link) => activateScenePrototype(link)}
+          contentFocus={sceneContentFocus?.pageId === artboard.pageId ? sceneContentFocus : undefined}
+        />}
+        {contentVisible && !sceneDocument && <div className={`scene-v2-load-state ${sceneLoadState}`} style={{ minHeight: artboard.viewportHeight }}>
+          {sceneLoadState === 'loading'
+            ? <><span className="loading-dot" /><strong>正在读取 AI 设计场景…</strong></>
+            : <><strong>这个设计还没有 Scene 画布</strong><span>请让 AI 先规划当前页面并生成第一个视觉步骤。</span></>}
+        </div>}
+        {!active && <button className="workspace-artboard-activation" onClick={() => activateWorkspaceArtboard(artboard)}><span>选择此画板</span></button>}
+      </div>
+    </div>;
+  }
+
+  function renderPreviewSurfaceOverlay() {
+    if (!previewOverlayPage || !documentRef.current || !sceneDocument) return null;
+    const currentDocument = documentRef.current;
+    const surfaceKind = previewOverlayPage.surfaceKind ?? previewOverlayArtboard?.surfaceKind ?? 'modal';
+    const defaultSize = surfaceKind === 'page' || surfaceKind === 'state' ? { width: 960, height: 720 } : WORKSPACE_SURFACE_SIZES[surfaceKind];
+    const width = previewOverlayArtboard?.viewportWidth ?? defaultSize.width;
+    const height = previewOverlayArtboard?.viewportHeight ?? defaultSize.height;
+    const overlayHeight = sceneArtboardContentHeight(sceneDocument, previewOverlayPage.id, width, height);
+    const frameHeight = Math.min(overlayHeight, Math.max(320, window.innerHeight - 96));
+    return <div className={`preview-surface-backdrop surface-${surfaceKind}`} onPointerDown={() => setPreviewOverlayPageId(undefined)}>
+      <div className="preview-surface-frame" style={{ width, height: frameHeight }} onPointerDown={(event) => event.stopPropagation()}>
+        <button className="preview-surface-close" aria-label="关闭叠层" onClick={() => setPreviewOverlayPageId(undefined)}>×</button>
+        <div className="preview-surface-canvas design-canvas device-desktop" style={{
+          width,
+          height: overlayHeight,
+          background: currentDocument.viewport.background,
+          fontFamily: tokens?.typography.fontFamily,
+          fontSize: tokens?.typography.baseFontSize,
+          '--color-primary': tokens?.colors.primary,
+          '--color-accent': tokens?.colors.accent,
+          '--color-surface': tokens?.colors.surface,
+          '--color-text': tokens?.colors.text,
+          '--color-muted': tokens?.colors.muted,
+          '--radius-small': `${tokens?.radii.small ?? 8}px`,
+          '--radius-medium': `${tokens?.radii.medium ?? 16}px`,
+          '--radius-large': `${tokens?.radii.large ?? 28}px`
+        } as CSSProperties}>
+          <SceneArtboardCanvas
+            scene={sceneDocument}
+            pageId={previewOverlayPage.id}
+            viewportWidth={width}
+            viewportHeight={height}
+            active={false}
+            interactive
+            selectedIds={[]}
+            onSelectionChange={() => undefined}
+            onCommit={commitSceneCommand}
+            onError={showToast}
+            onPrototypeActivate={(link) => activateScenePrototype(link)}
+          />
+        </div>
+      </div>
+    </div>;
+  }
 
   return (
     <div className={`studio-shell ${preview ? 'preview-active' : ''}`}>
@@ -2354,12 +4385,11 @@ export function WebDesignStudioApp() {
         <button className="quiet-button compact-new-design" aria-label="在当前项目中新建设计" onClick={() => void createNew()}>＋ 新建设计</button>
         <button className="quiet-button style-trigger" onClick={() => setThemePickerOpen(true)}>设计风格</button>
         <div className="history-tools">
-          <button title="撤销 ⌘Z" disabled={past.length === 0} onClick={undo}>↶</button>
-          <button title="重做 ⇧⌘Z" disabled={future.length === 0} onClick={redo}>↷</button>
+          <button title="撤销 ⌘Z" disabled={sceneEditingActive ? !sceneHistory?.undoCount : past.length === 0} onClick={undo}>↶</button>
+          <button title="重做 ⇧⌘Z" disabled={sceneEditingActive ? !sceneHistory?.redoCount : future.length === 0} onClick={redo}>↷</button>
         </div>
         <div className="topbar-spacer" />
         <span className={`service-pill ${repository?.mode === 'server' ? 'online' : ''}`}>{repository?.mode === 'server' ? '本地服务' : '浏览器存储'}</span>
-        <details className="delivery-menu"><summary>交付</summary><div><button onClick={exportCurrentPage}>HTML</button><button onClick={exportReact}>React</button><button onClick={exportVue}>Vue</button></div></details>
         <button className="quiet-button" onClick={() => void refresh()}>刷新</button>
         <button className={`quiet-button ${preview ? 'active' : ''}`} onClick={toggleFullPreview}>{preview ? '退出预览' : '全屏预览'}</button>
         <button className="ai-design-trigger" onClick={() => activateWorkspaceArea('ai')}>✦ AI 设计</button>
@@ -2399,53 +4429,61 @@ export function WebDesignStudioApp() {
 
             {workspaceShell.activeArea === 'assets' && activeUiLibrary && <>
               <div className={`ui-library-heading library-${activeUiLibrary.id}`}><div className="ui-library-logo-mark">{activeUiLibrary.brandMark}</div><div><strong>{activeUiLibrary.displayName}</strong><span>{activeUiLibrary.license ? `开源组件 · ${activeUiLibrary.license} · ${activeUiLibrary.version}` : activeUiLibrary.id === 'shadcn' ? `本地源码组件 · ${activeUiLibrary.version}` : `官方运行时 · v${activeUiLibrary.version}`}</span></div></div>
-              <div className="panel-intro"><strong>{activeUiLibrary.displayName} 组件总览</strong><span>点击先预览不同款式，拖拽则直接插入默认款</span></div>
+              <div className="panel-intro"><strong>{activeUiLibrary.displayName} 组件总览</strong><span>先打开组件，再点击或拖动你真正需要的单个官方示例</span></div>
               {activeUiLibrary.categories.map((category) => {
                 const items = filteredUiLibraryComponents.filter((item) => item.category === category);
                 return items.length > 0 && <div key={category} className="ui-library-category"><div className="ui-library-category-title">{category}</div><div className="ui-library-component-list">
-                  {items.map((item) => <button key={item.id} draggable onDragStart={(event) => onUiLibraryDrag(event, activeUiLibrary.id, item.id)} onClick={() => setVariantPickerTarget({ library: activeUiLibrary.id, componentId: item.id })}><span className="ui-library-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{item.status === 'deprecated' ? `已废弃 · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : item.introduced ? `v${item.introduced} · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : `${activeUiLibrary.variants[item.id]?.length ?? 1} 款`}</em><b>›</b></button>)}
+                  {items.map((item) => <button key={item.id} onClick={() => setVariantPickerTarget({ library: activeUiLibrary.id, componentId: item.id })}><span className="ui-library-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{item.status === 'deprecated' ? `已废弃 · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : item.introduced ? `v${item.introduced} · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : `${activeUiLibrary.variants[item.id]?.length ?? 1} 款`}</em><b>›</b></button>)}
                 </div></div>;
               })}
             </>}
 
             {workspaceShell.activeArea === 'my' && <>
-              <div className="panel-intro my-library-intro"><strong>我的组件</strong><span>把画布中设计好的单个组件或多个图层保存到这里，可在其他设计中继续使用。</span></div>
-              {selectedIds.length > 0 && <button className="my-library-save" onClick={saveSelectionAsSymbol}><span>＋</span><div><strong>保存当前选中</strong><small>{selectedIds.length === 1 ? selected?.name : `${selectedIds.length} 个图层的组合`}</small></div></button>}
-              {filteredPersonalSymbols.length > 0 ? <div className="my-library-grid">{filteredPersonalSymbols.map((symbol) => <article key={symbol.id} className="my-library-card"><button className="my-library-insert" onClick={() => insertSymbol(symbol)}><span className="my-library-preview"><i /><i /><i /></span><span><strong>{symbol.name}</strong><small>{symbol.components.length} 层 · 点击插入画布</small></span></button><footer><button onClick={() => renamePersonalSymbol(symbol)}>重命名</button><button className="danger" onClick={() => removePersonalSymbol(symbol.id)}>移除</button></footer></article>)}</div> : <div className="my-library-empty"><span>◇</span><strong>还没有保存的组件</strong><p>在画布中选择一个组件，或按住 Shift / Command 选择多个图层，再保存为自己的组合。</p></div>}
+              <div className="panel-intro my-library-intro"><strong>我的设计组合</strong><span>保存真实 Scene 子树，下次插入后仍可继续拆分、移动、批注和让 AI 修改。</span></div>
+              {sceneDocument && selectedIds.length > 0 && <button className="my-library-save" onClick={saveSceneSelectionAsSnippet}><span>＋</span><div><strong>保存当前选中</strong><small>{selectedIds.length === 1 ? selectedSceneNode?.name : `${selectedIds.length} 个 Scene 图层`}</small></div></button>}
+              {filteredSceneSnippets.length > 0 ? <div className="my-library-grid">{filteredSceneSnippets.map((snippet) => <article key={snippet.id} className="my-library-card"><button className="my-library-insert" onClick={() => void insertSceneSnippet(snippet)}><span className="my-library-preview"><i /><i /><i /></span><span><strong>{snippet.name}</strong><small>{snippet.nodes.length} 个根层 · {Math.round(snippet.width)} × {Math.round(snippet.height)}</small></span></button><footer><button onClick={() => renameSceneSnippet(snippet)}>重命名</button><button className="danger" onClick={() => removeSceneSnippet(snippet.id)}>移除</button></footer></article>)}</div> : <div className="my-library-empty"><span>◇</span><strong>还没有保存的设计组合</strong><p>{sceneDocument ? '在画布中选择一个 Scene 图层，或按住 Shift 选择同一容器里的多个图层，再保存为自己的组合。' : '请先让 AI 创建第一个 Scene 页面，再保存可复用的视觉组合。'}</p></div>}
             </>}
 
             {workspaceShell.activeArea === 'layers' && <>
-              <div className="panel-title layer-title"><span>页面图层</span><small>{pageComponents.length}</small></div>
-              <div className={`layer-group-actions ${selectedIds.length > 1 || canUngroup ? 'ready' : ''}`}>
-                <div><strong>{selectedIds.length > 1 ? `已选择 ${selectedIds.length} 个图层` : canUngroup ? '当前是一个分组' : '创建可整体移动的分组'}</strong><small>{selectedIds.length > 1 ? '创建后拖动外框，内部组件会一起移动' : canUngroup ? `${directChildCount} 个直接子组件` : '按住 Shift、Command 或 Ctrl 点击多个图层'}</small></div>
+              <div className="panel-title layer-title"><span>Scene 图层</span><small>{sceneDocument ? sceneLayerNodes.length : 0}</small></div>
+              <div className={`layer-group-actions ${selectedIds.length > 1 || canUngroup || canUngroupScene ? 'ready' : ''}`}>
+                <div><strong>{selectedIds.length > 1 ? `已选择 ${selectedIds.length} 个图层` : canUngroup || canUngroupScene ? '当前是一个容器' : '创建可整体移动的分组'}</strong><small>{selectedIds.length > 1 ? 'Group、Frame 或 Auto Layout 都会成为真实 Scene 容器' : canUngroup || canUngroupScene ? '可以取消容器并保持内部图层视觉位置' : '按住 Shift 点击画布或图层进行多选'}</small></div>
                 {selectedIds.length > 1
                   ? <button onClick={groupSelected}>创建分组 <kbd>⌘G</kbd></button>
-                  : canUngroup
+                  : canUngroup || canUngroupScene
                     ? <button onClick={ungroupSelected}>取消分组 <kbd>⇧⌘G</kbd></button>
                     : undefined}
               </div>
               <div className="layers-list expanded">
-                {layerComponents.map(({ component, depth }) => {
-                  const resolved = resolveComponent(component, device);
-                  return <div key={component.id} className={`layer-row ${selectedIdSet.has(component.id) ? 'selected' : ''} ${resolved.hidden ? 'hidden' : ''}`} style={{ paddingLeft: 4 + depth * 14 }} onClick={(event) => selectComponent(component.id, event.shiftKey || event.metaKey || event.ctrlKey)}>
-                    <button title={resolved.hidden ? '显示' : '隐藏'} onClick={(event) => { event.stopPropagation(); toggleHidden(component); }}>{resolved.hidden ? '○' : '●'}</button>
-                    <span className="layer-type">{component.library ? uiLibraryByName(component.library.name)?.components.find((item) => item.id === component.library?.component)?.icon : palette.find((item) => item.type === component.type)?.icon}</span>
-                    <span className="layer-name">{depth > 0 ? '└ ' : ''}{component.name}</span>
-                    <button title={component.locked ? '解锁' : '锁定'} onClick={(event) => { event.stopPropagation(); toggleLocked(component); }}>{component.locked ? '🔒' : '⌁'}</button>
-                  </div>;
-                })}
+                {sceneDocument ? sceneLayerNodes.map(({ node, depth }) => <div key={node.id} className={`layer-row ${selectedIdSet.has(node.id) ? 'selected' : ''} ${!node.visible ? 'hidden' : ''}`} style={{ paddingLeft: 4 + depth * 14 }} onClick={(event) => {
+                  const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+                  if (!additive) {
+                    setSelectedId(node.id);
+                    setSelectedIds([node.id]);
+                    return;
+                  }
+                  const next = selectedIds.includes(node.id) ? selectedIds.filter((id) => id !== node.id) : [...selectedIds, node.id];
+                  setSelectedIds(next);
+                  setSelectedId(next.includes(node.id) ? node.id : next.at(-1));
+                }}>
+                  <button title={node.visible ? '隐藏' : '显示'} onClick={(event) => { event.stopPropagation(); void updateSceneNodeById(node.id, [{ path: ['visible'], value: !node.visible }]); }}>{node.visible ? '●' : '○'}</button>
+                  <span className="layer-type">{node.type === 'text' ? 'T' : node.type === 'media' ? '▧' : node.type === 'group' ? '◇' : node.type === 'frame' ? '▣' : '◆'}</span>
+                  <span className="layer-name">{depth > 0 ? '└ ' : ''}{node.name}</span>
+                  <button title={node.locked ? '解锁' : '锁定'} onClick={(event) => { event.stopPropagation(); void updateSceneNodeById(node.id, [{ path: ['locked'], value: !node.locked }]); }}>{node.locked ? '🔒' : '⌁'}</button>
+                </div>) : <div className="scene-sidebar-empty"><strong>等待 AI 建立 Scene</strong><span>先规划页面和视觉方向，再生成第一个有界步骤。</span></div>}
               </div>
 
-              <div className="panel-title section-title">页面设置</div>
-              <label className="field-label">当前页面<select value={currentPage?.id} onChange={(event) => switchPage(event.target.value)}>{pages.map((page) => <option key={page.id} value={page.id}>{page.name}</option>)}</select></label>
-              <div className="page-actions"><button onClick={addPage}>＋ 新建</button><button onClick={duplicatePage}>复制页</button><button disabled={pages.length <= 1} onClick={deleteCurrentPage}>删除</button></div>
-              {currentPage && <><label className="field-label">页面名称<input value={currentPage.name} onChange={(event) => updateCurrentPage({ name: event.target.value })} /></label><label className="field-label page-slug">路径<input value={currentPage.slug} onChange={(event) => updateCurrentPage({ slug: event.target.value })} /></label></>}
-              <label className="field-label">网站标题<input value={document.title} onChange={(event) => commit((current) => ({ ...current, title: event.target.value }))} /></label>
+              <div className="panel-title section-title">设计面设置</div>
+              <label className="field-label">当前画板<select value={currentPage?.id} onChange={(event) => switchPage(event.target.value)}>{pages.map((page) => <option key={page.id} value={page.id}>{page.name} · {WORKSPACE_SURFACE_LABELS[page.surfaceKind ?? 'page']}</option>)}</select></label>
+              {sceneDocument ? <div className="page-actions"><button onClick={addPage}>＋ 新建设计面</button><button onClick={duplicatePage}>复制画板</button><button disabled={pages.length <= 1} onClick={deleteCurrentPage}>删除</button></div> : <p className="helper-text">页面清单由 AI 先写入 Plan；开始当前页后才建立可编辑 Scene 画板。</p>}
+              {currentPage && <><label className="field-label">画板类型<select value={currentPage.surfaceKind ?? 'page'} onChange={(event) => updateCurrentPage({ surfaceKind: event.target.value as WorkspaceSurfaceKind })}>{(Object.keys(WORKSPACE_SURFACE_LABELS) as WorkspaceSurfaceKind[]).map((kind) => <option key={kind} value={kind}>{WORKSPACE_SURFACE_LABELS[kind]}</option>)}</select></label>{sceneDocument
+                ? <><label className="field-label">设计面名称<input key={`${currentPage.id}:${currentPage.name}`} defaultValue={currentPage.name} onBlur={(event) => updateCurrentPage({ name: event.currentTarget.value })} /></label><label className="field-label page-slug">稳定页面 ID<input value={currentPage.id} readOnly /></label></>
+                : <><label className="field-label">设计面名称<input value={currentPage.name} readOnly /></label><label className="field-label page-slug">等待 Scene 页面 ID<input value="由 AI Plan 创建" readOnly /></label></>}</>}
               <div className="panel-title section-title">视口与页面</div>
-              <div className="size-row"><NumberField label="视口宽" value={breakpoint.width} onChange={updateCustomViewportWidth} /><NumberField label="首屏高" value={previewViewportHeight} onChange={updateCustomViewportHeight} /></div>
-              <NumberField label="页面内容高度" value={breakpoint.height} onChange={(height) => updateBreakpoint(breakpoint.width, height)} />
-              <p className="helper-text viewport-helper">视口决定响应式宽度；页面内容可以超过首屏并继续向下滚动。</p>
-              <label className="field-label">背景<input value={document.viewport.background} onChange={(event) => commit((current) => ({ ...current, viewport: { ...current.viewport, background: event.target.value } }))} /></label>
+              {sceneDocument && activeWorkspaceArtboard ? <>
+                <div className="size-row"><NumberField label="画板宽" value={activeWorkspaceArtboard.viewportWidth} min={240} max={10000} onChange={(width) => updateActiveWorkspaceViewport(Math.max(240, width), activeWorkspaceArtboard.viewportHeight)} /><NumberField label="首屏高" value={activeWorkspaceArtboard.viewportHeight} min={240} max={50000} onChange={(height) => updateActiveWorkspaceViewport(activeWorkspaceArtboard.viewportWidth, Math.max(240, height))} /></div>
+                <p className="helper-text viewport-helper">画板尺寸只描述这个页面或弹层的设计表面；实际内容高度由 Scene 节点自动增长。</p>
+              </> : <div className="scene-sidebar-empty"><strong>等待 Scene 画板</strong><span>画板尺寸会在 AI 开始当前页时建立，内容边界随后由真实 Scene 节点自动增长。</span></div>}
 
               <div className="panel-title section-title layer-title"><span>图片资源</span><small>{document.assets?.length ?? 0}</small></div>
               <input ref={assetInput} className="asset-input" type="file" accept="image/*" multiple onChange={(event) => void importAssets(event.target.files).catch((error) => showToast(String(error)))} />
@@ -2453,35 +4491,45 @@ export function WebDesignStudioApp() {
               <div className="asset-grid">{(document.assets ?? []).map((asset) => <button key={asset.id} title={`使用 ${asset.name}`} onClick={() => useAsset(asset)}><img src={asset.dataUrl} alt={asset.name} /><span>{asset.name}</span></button>)}</div>
             </>}
 
-            {workspaceShell.activeArea === 'variables' && tokens && <div className="workspace-sidebar-section variables-sidebar">
-              <div className="panel-intro"><strong>Variables 与样式</strong><span>统一管理当前设计的语义颜色、排版和圆角。后续将直接映射到 Schema v2 Variable Collections 与 Modes。</span></div>
-              <div className="panel-title section-title">语义颜色</div>
-              <div className="token-colors">{(['primary', 'accent', 'surface', 'text', 'muted'] as const).map((key) => <label key={key} className="token-color"><span>{key}</span><input type="color" value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /><input value={tokens.colors[key]} onChange={(event) => updateTokenColor(key, event.target.value)} /></label>)}</div>
-              <div className="panel-title section-title">排版与圆角</div>
-              <label className="field-label">字体族<input value={tokens.typography.fontFamily} onChange={(event) => updateTokens((current) => ({ ...current, typography: { ...current.typography, fontFamily: event.target.value } }))} /></label>
-              <div className="size-row"><NumberField label="基础字号" value={tokens.typography.baseFontSize} onChange={(baseFontSize) => updateTokens((current) => ({ ...current, typography: { ...current.typography, baseFontSize } }))} /><NumberField label="中圆角" value={tokens.radii.medium} onChange={(medium) => updateTokens((current) => ({ ...current, radii: { ...current.radii, medium } }))} /></div>
-              <button className="secondary-button variables-theme-button" onClick={() => setThemePickerOpen(true)}>打开整站设计风格</button>
+            {workspaceShell.activeArea === 'variables' && <div className="workspace-sidebar-section variables-sidebar">
+              <div className="panel-intro"><strong>Scene Variables</strong><span>这里编辑的就是 Scene v2 Variable Collections 与 Modes，不再维护另一份旧 token 数据。</span></div>
+              {sceneDocument ? <>
+                <div className="panel-title layer-title"><span>变量集合</span><small>{sceneDocument.variableCollections.length}</small></div>
+                <div className="scene-variable-summary">{sceneDocument.variableCollections.map((collection) => <article key={collection.id}><strong>{collection.name}</strong><span>{collection.modes.length} 个模式 · {collection.variables.length} 个变量</span></article>)}</div>
+                <label className="field-label">完整变量数据<textarea className="scene-variable-editor" rows={16} spellCheck={false} value={sceneVariablesDraft} onChange={(event) => setSceneVariablesDraft(event.target.value)} /></label>
+                <button className="secondary-button" onClick={() => void applySceneVariablesDraft()}>应用 Scene 变量</button>
+                <button className="quiet-button variables-theme-button" onClick={() => setThemePickerOpen(true)}>从视觉风格建立变量</button>
+              </> : <div className="scene-sidebar-empty"><strong>还没有 Scene 变量</strong><span>AI 开始第一个页面后，可在这里管理颜色、排版、圆角和响应式模式。</span></div>}
             </div>}
 
             {workspaceShell.activeArea === 'ai' && <div className="workspace-sidebar-section ai-tasks-sidebar">
-              <div className="panel-intro"><strong>AI 设计任务</strong><span>AI 以当前项目、文档、页面和选区为稳定作用域；人的主要工作是审阅、批注和锁定。</span></div>
-              <div className="panel-title layer-title"><span>待处理</span><small>{document.requests.filter((request) => request.status === 'pending').length}</small></div>
-              <div className="ai-sidebar-request-list">{document.requests.filter((request) => request.status === 'pending').map((request) => <article key={request.id}><strong>{request.componentId ? document.components.find((component) => component.id === request.componentId)?.name ?? '目标组件' : currentPage?.name ?? '当前页面'}</strong><p>{request.instruction}</p><small>{new Date(request.createdAt).toLocaleString()}</small></article>)}</div>
-              {document.requests.every((request) => request.status !== 'pending') && <div className="ai-sidebar-empty"><span>✓</span><strong>没有待处理任务</strong><p>选择组件后写批注，或直接描述整页设计目标。</p></div>}
-              <div className="panel-title section-title">创建任务</div>
+              <div className="panel-intro"><strong>AI 视觉设计</strong><span>计划、候选截图、视觉 Diff 与人工批注都绑定 Scene 稳定节点；AI 一次只推进一个有界步骤。</span></div>
+              <div className="scene-ai-sidebar-progress">{renderGenerationReviewPanel()}</div>
+              <div className="panel-title layer-title"><span>待处理视觉批注</span><small>{sceneAnnotationTasks.length}</small></div>
+              <div className="ai-sidebar-request-list">{sceneAnnotationTasks.map(({ node, annotation }) => <article key={annotation.id}><strong>{node.name}</strong><p>{annotation.body}</p><small>Scene r{sceneDocument?.revision} · {new Date(annotation.createdAt).toLocaleString()}</small><button disabled={sceneAnnotationPreparingId === annotation.id} onClick={() => void prepareSceneAnnotation(node.id, annotation.id)}>准备视觉上下文</button></article>)}</div>
+              {sceneAnnotationTasks.length === 0 && <div className="ai-sidebar-empty"><span>✓</span><strong>没有待处理视觉批注</strong><p>{sceneDocument ? '选择图层后写下具体的构图、层级、留白、字体或图片问题。' : '先让 AI 规划一个页面并开始第一个视觉步骤。'}</p></div>}
+              <div className="panel-title section-title">给 AI 一个小任务</div>
               <div className="ai-quick-prompts sidebar-prompts">{aiQuickPrompts.map((prompt) => <button key={prompt} onClick={() => setAiInstruction(prompt)}>{prompt}</button>)}</div>
-              <textarea className="composer" rows={5} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} placeholder={aiTarget ? `告诉 AI 如何修改“${aiTarget.name}”…` : '描述网站目标、受众、内容和视觉方向…'} />
-              <button className="ai-button" disabled={!aiInstruction.trim()} onClick={() => void addAiRequest()}>提交给 AI</button>
+              <textarea className="composer" rows={5} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} placeholder={selectedSceneNode ? `描述“${selectedSceneNode.name}”需要改好的视觉问题…` : sceneAiTarget ? `描述“${activeScenePage?.name ?? '当前页面'}”需要改好的整体视觉问题…` : 'AI 建立 Scene 后，可在这里对页面或具体图层发起视觉任务。'} />
+              <button className="ai-button" disabled={!aiInstruction.trim() || !sceneAiTarget || Boolean(sceneAnnotationPreparingId)} onClick={() => void submitSceneAiInstruction()}>{sceneAnnotationPreparingId ? '正在生成截图…' : '提交视觉任务'}</button>
             </div>}
           </div>
           <WorkspacePanelResizeHandle side="left" width={workspaceShell.leftPanelWidth} onResize={(width) => dispatchWorkspaceShell({ type: 'resize-left-panel', width })} />
         </aside>}
 
-        <section className="canvas-stage">
+        <section ref={canvasStage} className="canvas-stage">
           {!preview && <div className="canvas-toolbar device-toolbar">
             {editingSlot && editingContainer && editingSlotDefinition ? <>
               <button className="slot-editor-back" onClick={exitSlotEditor}>‹ 返回页面</button>
               <span className="slot-editor-path"><b>{editingContainer.library?.component}</b><i>/</i>{editingSlotDefinition.label}</span>
+              <span className="toolbar-divider" />
+              <button title="缩小内部画布" onClick={() => setCanvasZoom(zoom / 1.2)}>−</button>
+              <span className="zoom-value">{Math.round(zoom * 100)}%</span>
+              <button title="放大内部画布" onClick={() => setCanvasZoom(zoom * 1.2)}>＋</button>
+              <span className="toolbar-divider" />
+              <button className="fit-button" disabled={selectedIds.length === 0} title="将内部选中的一个或多个组件放到可见区域中心" onClick={fitWorkspaceSelection}>适应选择</button>
+              <button className="fit-button" title="完整显示当前可编辑内容区域" onClick={fitSlotEditorContent}>适应内容</button>
+              <button className="fit-button" title="恢复内部画布为 100%" onClick={() => setCanvasZoom(1)}>100%</button>
               <span className="toolbar-divider" />
               <button className="fit-button" onClick={() => insertSlotTemplate('form')}>＋ 表单模板</button>
               <button className="fit-button" onClick={() => insertSlotTemplate('details')}>＋ 详情模板</button>
@@ -2496,17 +4544,29 @@ export function WebDesignStudioApp() {
                 {viewportPresets.some((preset) => preset.group === 'large-display') && <optgroup label="超宽与原生高分辨率">{viewportPresets.filter((preset) => preset.group === 'large-display').map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>}
               </select>
               <button className="rotate-viewport-button" title="旋转视口" onClick={rotateViewport}>↻</button>
-              <button className="fit-button responsive-generate-button" title="从桌面布局补齐尚未单独编辑的平板和手机布局，不改变桌面或已有响应式调整" onClick={generateResponsiveLayouts}>响应式</button>
+              <button className="fit-button responsive-generate-button" disabled={!sceneDocument} title="切换平板或手机后，对选中 Scene 图层设置该断点的布局覆盖；始终复用同一节点" onClick={() => { activateWorkspaceArea('layers'); showToast('切换到平板或手机，选中图层后在右侧编辑该断点布局'); }}>响应式编辑</button>
               <span className="toolbar-divider" />
-              <button title="缩小" onClick={() => setZoom(Math.max(.05, zoom - .1))}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button title="放大" onClick={() => setZoom(Math.min(1.5, zoom + .1))}>＋</button>
+              <div className="new-surface-control">
+                <select aria-label="新画板类型" value={newSurfaceKind} onChange={(event) => setNewSurfaceKind(event.target.value as WorkspaceSurfaceKind)}>
+                  {(Object.keys(WORKSPACE_SURFACE_LABELS) as WorkspaceSurfaceKind[]).map((kind) => <option key={kind} value={kind}>{WORKSPACE_SURFACE_LABELS[kind]}</option>)}
+                </select>
+                <button className="fit-button artboard-action-button" disabled={!sceneDocument} title="创建一个独立的页面、弹层或界面状态画板" onClick={() => void addWorkspaceSurface()}>＋ 画板</button>
+              </div>
+              <button className="fit-button artboard-action-button" disabled={(workspacePlacement?.artboards.length ?? 0) <= 1} title="从工作区移除当前画板，不删除其设计内容" onClick={removeActiveWorkspaceArtboard}>移出工作区</button>
+              <button className="fit-button artboard-action-button" title="在工作区中显示全部页面与界面状态" onClick={fitAllWorkspaceArtboards}>显示全部</button>
+              <button className={`fit-button prototype-flow-toggle ${prototypeLinksVisible ? 'active' : ''}`} title="显示或隐藏组件到目标画板的原型关系" onClick={() => setPrototypeLinksVisible((visible) => !visible)}>流程线 {prototypeConnections.length}</button>
               <span className="toolbar-divider" />
-              <button className="fit-button" title="适应画布宽度" onClick={fitCanvasWidth}>适应</button><button className="fit-button" title="恢复 100%" onClick={() => setZoom(1)}>100%</button>
+              <button title="缩小" onClick={() => setCanvasZoom(zoom / 1.2)}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button title="放大" onClick={() => setCanvasZoom(zoom * 1.2)}>＋</button>
+              <span className="toolbar-divider" />
+              <button className="fit-button" disabled={selectedIds.length === 0} title="将当前选中的一个或多个组件放到可见区域中心" onClick={fitWorkspaceSelection}>适应选择</button>
+              <button className="fit-button" title="完整显示当前画板及其实际内容" onClick={fitActiveWorkspaceArtboard}>适应画板</button>
+              <button className="fit-button" title="恢复 100%" onClick={() => setCanvasZoom(1)}>100%</button>
               <span className="toolbar-divider" /><button className={`fit-button interaction-mode-button ${interactionMode ? 'active' : ''}`} title="操作输入框、选择器、抽屉、标签页等真实组件" onClick={toggleInteractionMode}>{interactionMode ? '退出交互' : '交互'}</button>
             </>}
           </div>}
           {preview && <button className="exit-fullscreen-preview" onClick={toggleFullPreview}>退出预览 <span>Esc</span></button>}
           {interactionMode && !preview && <div className="interaction-mode-banner"><span>●</span> 交互模式：可以输入、选择、展开和打开弹层；退出后继续拖动编辑</div>}
-          {preview && pages.length > 1 && <nav className="route-preview-bar">{pages.map((page) => <button key={page.id} className={page.id === pageId ? 'active' : ''} onClick={() => switchPage(page.id)}><span>{page.name}</span><small>{page.slug}</small></button>)}</nav>}
+          {preview && routePages.length > 1 && <nav className="route-preview-bar">{routePages.map((page) => <button key={page.id} className={page.id === pageId ? 'active' : ''} onClick={() => switchPage(page.id)}><span>{page.name}</span><small>{page.slug}</small></button>)}</nav>}
           {selected && !preview && <div className="selection-toolbar">
             <button title="左对齐" onClick={() => alignSelected('left')}>⇤</button><button title="水平居中" onClick={() => alignSelected('center')}>↔</button><button title="右对齐" onClick={() => alignSelected('right')}>⇥</button>
             <button title="顶部对齐" onClick={() => alignSelected('top')}>↥</button><button title="垂直居中" onClick={() => alignSelected('middle')}>↕</button><button title="底部对齐" onClick={() => alignSelected('bottom')}>↧</button>
@@ -2515,15 +4575,65 @@ export function WebDesignStudioApp() {
             {selectedIds.length > 1 && <><span /><button className="wide-tool" title="创建可整体移动的分组 ⌘G" onClick={groupSelected}>创建分组</button></>}
             {canUngroup && <button className="wide-tool" title="取消当前分组 ⇧⌘G" onClick={ungroupSelected}>取消分组</button>}
           </div>}
+          {selectedSceneNode && !preview && <div className="selection-toolbar scene-selection-toolbar">
+            <span className="scene-selection-kind">{selectedSceneNode.type}</span>
+            <button title="复制 Scene 图层 ⌘D" onClick={duplicateSceneSelection}>⧉</button>
+            <button title="复制到剪贴板 ⌘C" onClick={copySceneSelection}>C</button>
+            <button title="从剪贴板粘贴 ⌘V" disabled={sceneClipboard.length === 0} onClick={pasteSceneClipboard}>V</button>
+            {selectedIds.length > 1 && <>
+              <span />
+              <button title="左对齐" onClick={() => void alignSceneSelection('left')}>⇤</button>
+              <button title="水平居中对齐" onClick={() => void alignSceneSelection('horizontal-center')}>↔</button>
+              <button title="右对齐" onClick={() => void alignSceneSelection('right')}>⇥</button>
+              <button title="顶部对齐" onClick={() => void alignSceneSelection('top')}>↥</button>
+              <button title="垂直居中对齐" onClick={() => void alignSceneSelection('vertical-center')}>↕</button>
+              <button title="底部对齐" onClick={() => void alignSceneSelection('bottom')}>↧</button>
+            </>}
+            {selectedIds.length > 2 && <>
+              <button className="wide-tool" title="水平等间距分布" onClick={() => void distributeSceneSelection('horizontal')}>水平分布</button>
+              <button className="wide-tool" title="垂直等间距分布" onClick={() => void distributeSceneSelection('vertical')}>垂直分布</button>
+            </>}
+            <span />
+            <button title="置于顶层" onClick={() => void reorderSceneSelection('front')}>⤒</button>
+            <button title="上移一层" onClick={() => void reorderSceneSelection('forward')}>↑</button>
+            <button title="下移一层" onClick={() => void reorderSceneSelection('backward')}>↓</button>
+            <button title="置于底层" onClick={() => void reorderSceneSelection('back')}>⤓</button>
+            {selectedIds.length > 1 && <>
+              <span />
+              <button className="wide-tool" title="把选中图层组成可整体移动的 Group" onClick={() => void wrapSceneSelection('group')}>Group</button>
+              <button className="wide-tool" title="用带内边距的 Frame 包住选中图层" onClick={() => void wrapSceneSelection('frame')}>Frame</button>
+              <button title="横向 Auto Layout" onClick={() => void wrapSceneSelection('auto-horizontal')}>⇥</button>
+              <button title="纵向 Auto Layout" onClick={() => void wrapSceneSelection('auto-vertical')}>⇣</button>
+            </>}
+            {(selectedSceneNode.type === 'group' || selectedSceneNode.type === 'frame') && selectedSceneNode.layout.mode === 'free'
+              && <button className="wide-tool" title="取消当前容器" onClick={() => void ungroupSceneSelection()}>取消容器</button>}
+            <button title="删除选中图层" onClick={() => void deleteSceneSelection()}>⌫</button>
+          </div>}
+          {selectionCandidatePopover && !preview && <div className="selection-candidate-popover" style={{
+            left: Math.max(8, Math.min(window.innerWidth - 248, selectionCandidatePopover.clientX + 12)),
+            top: Math.max(8, Math.min(window.innerHeight - 300, selectionCandidatePopover.clientY + 12))
+          }} onPointerDown={(event) => event.stopPropagation()}>
+            <header><strong>选择这个位置的图层</strong><span>{selectionCandidatePopover.candidates.length} 个重叠对象</span></header>
+            <div>{selectionCandidatePopover.candidates.map((candidate, index) => <button key={candidate.id} onClick={() => {
+              selectComponent(candidate.id);
+              setSelectionCandidatePopover(undefined);
+            }}><span>{index + 1}</span><div><strong>{candidate.name}</strong><small>{candidate.type}{candidate.depth > 0 ? ` · 第 ${candidate.depth + 1} 层` : ' · 外层'}</small></div>{candidate.locked && <em>已锁定</em>}</button>)}</div>
+            <footer>Command / Ctrl 点击可再次查看候选</footer>
+          </div>}
           <div
             ref={canvasScroll}
-            className={`canvas-scroll ${preview ? 'preview-canvas-scroll' : 'infinite-canvas-scroll'} ${editingSlot ? 'slot-editor-scroll' : ''} ${canvasPanReady || workspaceShell.activeTool === 'hand' ? 'pan-ready' : ''} ${canvasPanning ? 'panning' : ''}`}
+            className={`canvas-scroll ${preview ? 'preview-canvas-scroll' : 'workspace-camera-viewport'} ${editingSlot ? 'slot-editor-scroll' : ''} ${canvasPanReady || workspaceShell.activeTool === 'hand' ? 'pan-ready' : ''} ${canvasPanning ? 'panning' : ''}`}
+            style={!preview ? {
+              '--workspace-grid-size': `${16 * zoom}px`,
+              '--workspace-grid-x': `${workspaceCamera.x}px`,
+              '--workspace-grid-y': `${workspaceCamera.y}px`
+            } as CSSProperties : undefined}
             onPointerDown={beginCanvasPan}
           >
-            {editingSlot && editingContainer && editingSlotDefinition && editingSlotCanvasSize ? <div className="slot-editor-centering"><div className="slot-editor-frame">
+          {editingSlot && editingContainer && editingSlotDefinition && editingSlotCanvasSize ? <div className="slot-editor-camera-world" style={{ transform: `translate3d(${workspaceCamera.x}px,${workspaceCamera.y}px,0) scale(${zoom})` }}><div className="slot-editor-frame">
               <div className="slot-editor-heading"><div><span>可编辑内容区域</span><strong>{editingSlotDefinition.label}</strong><small>{editingSlotDefinition.description}</small></div><em>{Math.round(editingSlotCanvasSize.width)} × {Math.round(editingSlotCanvasSize.height)}</em></div>
               <div className="slot-editor-canvas-shell">
-                <div className="slot-design-canvas design-canvas" style={{ width: editingSlotCanvasSize.width, height: editingSlotCanvasSize.height }} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { setSelectedId(undefined); setSelectedIds([]); }}>
+                <div className="slot-design-canvas design-canvas" style={{ width: editingSlotCanvasSize.width, height: editingSlotCanvasSize.height }} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={beginCanvasMarquee}>
                   {editingSlotComponents.length === 0 && <div className="slot-empty-state"><span>＋</span><strong>从左侧拖入组件</strong><p>也可以先插入表单或详情模板，再逐项调整。</p><div><button onPointerDown={(event) => event.stopPropagation()} onClick={() => insertSlotTemplate('form')}>插入表单</button><button onPointerDown={(event) => event.stopPropagation()} onClick={() => insertSlotTemplate('details')}>插入详情</button></div></div>}
                   {editingVisibleComponents.sort((left, right) => left.zIndex - right.zIndex).map((component) => {
                     const frame = resolveComponent(component, device);
@@ -2533,21 +4643,16 @@ export function WebDesignStudioApp() {
                     const editableSlot = editableSlotsForUiComponent(component)[0];
                     return <WorkspaceCanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={false} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, false, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
                   })}
+                  <SelectionOverlay items={selectionOverlayItemsFor(editingVisibleComponents, device, resolveComponent(editingContainer, device))} marqueeRect={marqueeRect} onResizePointerDown={(componentId, _handle, event) => {
+                    const component = document.components.find((candidate) => candidate.id === componentId);
+                    if (component) beginInteraction(event, component, 'resize');
+                  }} />
                 </div>
               </div>
-            </div></div> : <div
-              className={preview ? 'preview-canvas-board' : 'infinite-canvas-board'}
-              style={preview ? undefined : { width: infiniteCanvasGeometry.width, height: infiniteCanvasGeometry.height }}
-            ><div className="canvas-scale" style={{
+            </div></div> : preview ? <div className="preview-canvas-board"><div className="canvas-scale" style={{
               width: scaledCanvasWidth,
-              height: scaledCanvasHeight,
-              ...(preview ? {} : {
-                position: 'absolute',
-                left: infiniteCanvasGeometry.contentX,
-                top: infiniteCanvasGeometry.contentY
-              })
+              height: scaledCanvasHeight
             }}>
-              {!preview && <div className="canvas-device-caption"><strong>{viewportLabel}{viewportSelection.orientation === 'rotated' ? ' · 横向' : ''}</strong><span>{breakpoint.width} × {previewViewportHeight} CSS px</span><em>页面高 {breakpoint.height}</em></div>}
               <div className={`design-canvas device-${device}`} style={{
                 width: breakpoint.width,
                 height: renderedCanvasHeight,
@@ -2564,24 +4669,215 @@ export function WebDesignStudioApp() {
                 '--radius-medium': `${tokens?.radii.medium ?? 16}px`,
                 '--radius-large': `${tokens?.radii.large ?? 28}px`
               } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { if (!interactionMode && workspaceShell.activeTool !== 'hand' && workspaceShell.activeTool !== 'comment') { setSelectedId(undefined); setSelectedIds([]); } }}>
-                {!preview && previewViewportHeight < renderedCanvasHeight && <div className="viewport-fold-line" style={{ top: previewViewportHeight }}><span>首屏结束 · {breakpoint.width} × {previewViewportHeight}</span></div>}
-                {snapGuides.x !== undefined && <div className="snap-guide vertical" style={{ left: snapGuides.x }} />}
-                {snapGuides.y !== undefined && <div className="snap-guide horizontal" style={{ top: snapGuides.y }} />}
-                {[...pageComponents].filter((component) => !contentContainerAncestor(document, component)).sort((left, right) => left.zIndex - right.zIndex).map((component) => {
-                  const resolved = resolveComponent(component, device);
-                  if (resolved.hidden) return null;
-                  const editableSlot = editableSlotsForUiComponent(component)[0];
-                  return <WorkspaceCanvasComponent key={component.id} component={component} resolved={resolved} selected={selectedIdSet.has(component.id)} primary={component.id === selectedId} interactive={preview || interactionMode} forcedState={component.id === selectedId && inspectorVisualState !== 'default' ? inspectorVisualState : undefined} tokens={tokens} slotContent={runtimeSlotContentMap(document, component, device, preview || interactionMode, tokens, activatePreviewInteraction)} onPointerDown={(event) => beginInteraction(event, component, 'move')} onResizePointerDown={(event) => beginInteraction(event, component, 'resize')} onPreviewActivate={() => activatePreviewInteraction(component)} onEditContents={editableSlot ? () => void editComponentSlot(component, editableSlot.id) : undefined} />;
-                })}
+                {sceneDocument ? <SceneArtboardCanvas
+                  scene={sceneDocument}
+                  pageId={pageId}
+                  viewportWidth={breakpoint.width}
+                  viewportHeight={previewViewportHeight}
+                  active={false}
+                  interactive
+                  selectedIds={[]}
+                  onSelectionChange={() => undefined}
+                  onCommit={commitSceneCommand}
+                  onError={showToast}
+                  onPrototypeActivate={(link) => activateScenePrototype(link)}
+                /> : <div className="scene-v2-load-state missing"><strong>还没有可预览的 Scene 页面</strong><span>先让 AI 完成一个视觉步骤，再进入全屏预览。</span></div>}
               </div>
-            </div></div>}
+            </div>{renderPreviewSurfaceOverlay()}</div> : <div className="workspace-camera-world" style={{ transform: `translate3d(${workspaceCamera.x}px,${workspaceCamera.y}px,0) scale(${zoom})` }}>
+              {prototypeLinksVisible && prototypeConnections.length > 0 && <svg className="prototype-flow-layer" aria-hidden="true">
+                <defs><marker id="prototype-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
+                {prototypeConnections.map((connection) => <g key={connection.id} className={connection.componentId === selectedId ? 'active' : ''}>
+                  <path className="prototype-flow-halo" d={prototypeFlowPath(connection)} />
+                  <path className="prototype-flow-path" d={prototypeFlowPath(connection)} markerEnd="url(#prototype-flow-arrow)" />
+                  <circle cx={connection.start.x} cy={connection.start.y} r="6" />
+                  <text x={connection.label.x} y={connection.label.y - 10}>{WORKSPACE_SURFACE_LABELS[connection.targetSurfaceKind]}</text>
+                </g>)}
+              </svg>}
+              {workspacePlacement?.artboards.map(renderWorkspaceArtboard)}
+            </div>}
           </div>
           {!preview && <WorkspaceBottomToolbar activeTool={workspaceShell.activeTool} leftPanelOpen={workspaceShell.leftPanelOpen} rightPanelOpen={workspaceShell.rightPanelOpen} canvasMaximized={workspaceShell.canvasMaximized} onSelectTool={activateWorkspaceTool} onToggleLeft={() => dispatchWorkspaceShell({ type: 'toggle-left-panel' })} onToggleRight={() => dispatchWorkspaceShell({ type: 'toggle-right-panel' })} onToggleMaximize={() => dispatchWorkspaceShell({ type: 'toggle-canvas-maximized' })} />}
         </section>
 
         {!preview && workspaceShell.rightPanelOpen && <aside className="inspector-panel">
           <WorkspacePanelResizeHandle side="right" width={workspaceShell.rightPanelWidth} onResize={(width) => dispatchWorkspaceShell({ type: 'resize-right-panel', width })} />
-          {selected && inspectedFrame ? <>
+          <div className="inspector-review-switch">
+            <button className={inspectorTab === 'review' ? 'active' : ''} onClick={() => setInspectorTab(inspectorTab === 'review' ? 'design' : 'review')}><span>✦</span><strong>AI 设计进度</strong>{generationPlan?.activeStep?.status === 'awaiting-review' && <em>待审阅</em>}</button>
+          </div>
+          {inspectorTab === 'review' ? renderGenerationReviewPanel() : selectedSceneNode ? <>
+            <div className="inspector-heading"><div><span className="eyebrow">Scene v2 · {selectedIds.length > 1 ? `${selectedIds.length} 项` : selectedSceneNode.type}</span><strong>{selectedSceneNode.name}</strong></div><span className="scene-revision-badge">r{sceneDocument?.revision}</span></div>
+            <div className="inspector-actions">
+              <button onClick={duplicateSceneSelection}>复制 ⌘D</button>
+              <button onClick={saveSceneSelectionAsSnippet}>保存到“我的”</button>
+              <button className={selectedSceneNode.locked ? 'active' : ''} onClick={() => void updateSceneNode([{ path: ['locked'], value: !selectedSceneNode.locked }])}>{selectedSceneNode.locked ? '解锁' : '锁定'}</button>
+              <button className={!selectedSceneNode.visible ? 'active' : ''} onClick={() => void updateSceneNode([{ path: ['visible'], value: !selectedSceneNode.visible }])}>{selectedSceneNode.visible ? '隐藏' : '显示'}</button>
+              {(selectedSceneNode.type === 'group' || selectedSceneNode.type === 'frame') && selectedSceneNode.layout.mode === 'free' && <button onClick={() => void ungroupSceneSelection()}>取消容器</button>}
+            </div>
+            <div className="inspector-mode-tabs scene-inspector-tabs" role="tablist" aria-label="Scene 属性栏模式">
+              <button role="tab" aria-selected={inspectorTab === 'design'} className={inspectorTab === 'design' ? 'active' : ''} onClick={() => setInspectorTab('design')}>设计</button>
+              <button role="tab" aria-selected={inspectorTab === 'prototype'} className={inspectorTab === 'prototype' ? 'active' : ''} onClick={() => setInspectorTab('prototype')}>原型</button>
+              <button role="tab" aria-selected={inspectorTab === 'ai'} className={inspectorTab === 'ai' ? 'active' : ''} onClick={() => setInspectorTab('ai')}>批注与 AI</button>
+            </div>
+            {inspectorTab === 'design' && <>
+            <div className="panel-title section-title">图层</div>
+            <label className="field-label">名称<input key={`${selectedSceneNode.id}:${selectedSceneNode.name}`} defaultValue={selectedSceneNode.name} maxLength={240} onBlur={(event) => {
+              const name = event.currentTarget.value.trim();
+              if (name && name !== selectedSceneNode.name) void updateSceneNode([{ path: ['name'], value: name }]);
+            }} /></label>
+            {selectedSceneNode.type === 'text' && <label className="field-label">文字内容<textarea key={`${selectedSceneNode.id}:${selectedSceneNode.content}`} rows={4} defaultValue={selectedSceneNode.content} onBlur={(event) => {
+              if (event.currentTarget.value !== selectedSceneNode.content) void updateSceneNode([{ path: ['content'], value: event.currentTarget.value }]);
+            }} /></label>}
+            {selectedSceneNode.type === 'library-instance' && <section className="scene-library-inspector">
+              <header><div><span>官方组件</span><strong>{selectedSceneLibrary?.displayName ?? selectedSceneNode.library} · {selectedSceneLibraryDefinition?.label ?? selectedSceneNode.component}</strong></div><em>{selectedSceneLibrary?.version ?? 'runtime'}</em></header>
+              <div className="scene-library-binding-grid"><label className="field-label">组件库<input value={selectedSceneNode.library} readOnly /></label><label className="field-label">组件<input value={selectedSceneNode.component} readOnly /></label></div>
+              <label className="field-label">官方款式<select value={selectedSceneNode.variant ?? selectedSceneLibraryVariants[0]?.id ?? 'default'} disabled={selectedSceneNode.locked || selectedSceneLibraryVariants.length === 0} onChange={(event) => void applySelectedSceneLibraryVariant(event.target.value)}>{selectedSceneLibraryVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>
+              <label className="field-label">展示内容<textarea key={`${selectedSceneNode.id}:${selectedSceneNode.content ?? ''}`} rows={3} defaultValue={selectedSceneNode.content ?? ''} disabled={selectedSceneNode.locked} onBlur={(event) => {
+                if (event.currentTarget.value !== (selectedSceneNode.content ?? '')) void updateSceneNode([{ path: ['content'], value: event.currentTarget.value }], '用户修改 Scene 官方组件内容。');
+              }} /></label>
+              <div className="scene-library-runtime-actions"><button disabled={selectedSceneNode.locked || !selectedSceneLibrary} onClick={() => selectedSceneLibrary && setVariantPickerTarget({ library: selectedSceneLibrary.id, componentId: selectedSceneNode.component, replaceComponentId: selectedSceneNode.id })}>{selectedSceneRegistryElement ? '重新选择官方元素' : '浏览官方示例与元素'}</button>{selectedSceneRegistryElement && <span>{selectedSceneRegistryElement.label}</span>}</div>
+              <JsonObjectEditor label="组件属性 / 示例数据" value={selectedSceneNode.properties} disabled={selectedSceneNode.locked} onChange={(value) => void updateSceneNode([{ path: ['properties'], value }], '用户修改 Scene 官方组件属性和示例数据。')} />
+              {selectedSceneEditableSlots.length > 0 && <div className="scene-content-slots"><div className="panel-title section-title">内部内容区</div><p className="helper-text">进入内容区后，左侧拖入或点击插入的官方组件会成为当前组件的真实 Scene 子层，不会生成另一套编辑器数据。</p>{selectedSceneEditableSlots.map((slot) => {
+                const activeSlot = Boolean(sceneContentFocus && sceneContentFocus.pageId === selectedSceneEntry?.pageId && sceneContentFocus.nodeId === selectedSceneNode.id && sceneContentFocus.slot === slot.id);
+                return <button key={slot.id} className={activeSlot ? 'active' : ''} onClick={() => activeSlot ? setSceneContentFocus(undefined) : focusSceneContent(selectedSceneNode.id, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{selectedSceneNode.slots[slot.id]?.length ?? 0} 层</em><b>{activeSlot ? '退出' : '进入编辑'}</b></button>;
+              })}</div>}
+            </section>}
+            {isSceneContainer(selectedSceneNode) && selectedSceneNode.type !== 'component-set' && <section className="scene-container-focus-card"><div><strong>容器内部编辑</strong><span>把后续组件直接放入这个 {selectedSceneNode.type === 'group' ? 'Group' : 'Frame'}</span></div><button className={sceneContentFocus?.nodeId === selectedSceneNode.id && !sceneContentFocus.slot ? 'active' : ''} onClick={() => sceneContentFocus?.nodeId === selectedSceneNode.id && !sceneContentFocus.slot ? setSceneContentFocus(undefined) : focusSceneContent(selectedSceneNode.id)}>{sceneContentFocus?.nodeId === selectedSceneNode.id && !sceneContentFocus.slot ? '退出内部编辑' : '进入内部编辑'}</button></section>}
+            <div className="size-row four">
+              <SceneNumberField label="X" value={selectedSceneNode.frame.x} disabled={!selectedScenePositionEditable || selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['frame', 'x'], value }])} />
+              <SceneNumberField label="Y" value={selectedSceneNode.frame.y} disabled={!selectedScenePositionEditable || selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['frame', 'y'], value }])} />
+              <SceneNumberField label="W" value={selectedSceneNode.frame.width} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['frame', 'width'], value }])} />
+              <SceneNumberField label="H" value={selectedSceneNode.frame.height} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['frame', 'height'], value }])} />
+            </div>
+            {!selectedScenePositionEditable && <p className="helper-text">这个图层由父级 Auto Layout / Grid 排布，X、Y 位置由布局计算。</p>}
+            <div className="panel-title section-title">布局</div>
+            <label className="field-label">布局方式<select value={selectedSceneNode.layout.mode} disabled={selectedSceneNode.locked} onChange={(event) => void updateSceneNode([{ path: ['layout', 'mode'], value: event.target.value }])}><option value="free">自由布局</option><option value="auto">Auto Layout</option><option value="grid">Grid</option></select></label>
+            {selectedSceneNode.layout.mode === 'auto' && <label className="field-label">方向<select value={selectedSceneNode.layout.direction ?? 'vertical'} disabled={selectedSceneNode.locked} onChange={(event) => void updateSceneNode([{ path: ['layout', 'direction'], value: event.target.value }])}><option value="horizontal">横向</option><option value="vertical">纵向</option></select></label>}
+            <div className="size-row">
+              <label className="field-label">水平尺寸<select value={selectedSceneNode.layout.sizingX} disabled={selectedSceneNode.locked} onChange={(event) => void updateSceneNode([{ path: ['layout', 'sizingX'], value: event.target.value }])}><option value="fixed">固定</option><option value="hug">适应内容</option><option value="fill">填满</option></select></label>
+              <label className="field-label">垂直尺寸<select value={selectedSceneNode.layout.sizingY} disabled={selectedSceneNode.locked} onChange={(event) => void updateSceneNode([{ path: ['layout', 'sizingY'], value: event.target.value }])}><option value="fixed">固定</option><option value="hug">适应内容</option><option value="fill">填满</option></select></label>
+            </div>
+            <div className="size-row four">
+              <SceneNumberField label="上" value={selectedSceneNode.layout.padding.top} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['layout', 'padding', 'top'], value }])} />
+              <SceneNumberField label="右" value={selectedSceneNode.layout.padding.right} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['layout', 'padding', 'right'], value }])} />
+              <SceneNumberField label="下" value={selectedSceneNode.layout.padding.bottom} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['layout', 'padding', 'bottom'], value }])} />
+              <SceneNumberField label="左" value={selectedSceneNode.layout.padding.left} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['layout', 'padding', 'left'], value }])} />
+            </div>
+            <div className="size-row"><SceneNumberField label="行间距" value={selectedSceneNode.layout.gap.row} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['layout', 'gap', 'row'], value }])} /><SceneNumberField label="列间距" value={selectedSceneNode.layout.gap.column} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['layout', 'gap', 'column'], value }])} /></div>
+            {sceneResponsiveRuleSpec && <section className="scene-responsive-editor">
+              <header><div><strong>{device === 'mobile' ? '手机' : '平板'}布局覆盖</strong><span>仍使用同一棵 Scene，不复制组件</span></div><button disabled={!selectedSceneResponsiveOverride} onClick={() => void clearSelectedSceneResponsiveOverride()}>恢复继承</button></header>
+              <label className="field-label">此断点可见性<select value={selectedSceneResponsiveOverride?.visible === undefined ? 'inherit' : selectedSceneResponsiveOverride.visible ? 'visible' : 'hidden'} disabled={selectedSceneNode.locked} onChange={(event) => {
+                const value = event.target.value;
+                if (value === 'inherit') {
+                  const next: Omit<SceneResponsiveNodeOverride, 'nodeId'> = structuredClone(selectedSceneResponsiveOverride ?? {});
+                  delete next.visible;
+                  void replaceSelectedSceneResponsiveOverride(next);
+                } else void updateSelectedSceneResponsiveOverride({ visible: value === 'visible' });
+              }}><option value="inherit">继承基础设计</option><option value="visible">强制显示</option><option value="hidden">在此断点隐藏</option></select></label>
+              <div className="size-row">
+                <label className="field-label">水平尺寸<select value={selectedSceneResponsiveOverride?.layout?.sizingX ?? 'inherit'} disabled={selectedSceneNode.locked} onChange={(event) => {
+                  const layout = structuredClone(selectedSceneResponsiveOverride?.layout ?? {});
+                  if (event.target.value === 'inherit') delete layout.sizingX;
+                  else layout.sizingX = event.target.value as 'fixed' | 'hug' | 'fill';
+                  const next = { ...structuredClone(selectedSceneResponsiveOverride ?? {}), ...(Object.keys(layout).length ? { layout } : {}) };
+                  if (!Object.keys(layout).length) delete next.layout;
+                  void replaceSelectedSceneResponsiveOverride(next);
+                }}><option value="inherit">继承</option><option value="fixed">固定</option><option value="hug">适应内容</option><option value="fill">填满可用宽度</option></select></label>
+                <label className="field-label">垂直尺寸<select value={selectedSceneResponsiveOverride?.layout?.sizingY ?? 'inherit'} disabled={selectedSceneNode.locked} onChange={(event) => {
+                  const layout = structuredClone(selectedSceneResponsiveOverride?.layout ?? {});
+                  if (event.target.value === 'inherit') delete layout.sizingY;
+                  else layout.sizingY = event.target.value as 'fixed' | 'hug' | 'fill';
+                  const next = { ...structuredClone(selectedSceneResponsiveOverride ?? {}), ...(Object.keys(layout).length ? { layout } : {}) };
+                  if (!Object.keys(layout).length) delete next.layout;
+                  void replaceSelectedSceneResponsiveOverride(next);
+                }}><option value="inherit">继承</option><option value="fixed">固定</option><option value="hug">适应内容</option><option value="fill">填满可用高度</option></select></label>
+              </div>
+              {isSceneContainer(selectedSceneNode) && <>
+                <label className="field-label">内容方向<select value={selectedSceneResponsiveOverride?.layout?.direction ?? 'inherit'} disabled={selectedSceneNode.locked} onChange={(event) => {
+                  const layout = structuredClone(selectedSceneResponsiveOverride?.layout ?? {});
+                  if (event.target.value === 'inherit') delete layout.direction;
+                  else layout.direction = event.target.value as 'horizontal' | 'vertical';
+                  const next = { ...structuredClone(selectedSceneResponsiveOverride ?? {}), ...(Object.keys(layout).length ? { layout } : {}) };
+                  if (!Object.keys(layout).length) delete next.layout;
+                  void replaceSelectedSceneResponsiveOverride(next);
+                }}><option value="inherit">继承</option><option value="horizontal">横向</option><option value="vertical">纵向</option></select></label>
+                {selectedSceneNode.children.length > 1 && <div className="scene-responsive-order"><strong>此断点子层顺序</strong><span>只改变排列顺序，不复制或删除图层</span>{(selectedSceneResponsiveOverride?.childOrder ?? selectedSceneNode.children.map((child) => child.id)).map((childId, index, order) => {
+                  const child = selectedSceneNode.children.find((candidate) => candidate.id === childId);
+                  return <div key={childId}><span>{child?.name ?? childId}</span><button disabled={index === 0 || selectedSceneNode.locked} onClick={() => {
+                    const next = [...order];
+                    [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                    void updateSelectedSceneResponsiveOverride({ childOrder: next });
+                  }}>↑</button><button disabled={index === order.length - 1 || selectedSceneNode.locked} onClick={() => {
+                    const next = [...order];
+                    [next[index], next[index + 1]] = [next[index + 1], next[index]];
+                    void updateSelectedSceneResponsiveOverride({ childOrder: next });
+                  }}>↓</button></div>;
+                })}</div>}
+              </>}
+            </section>}
+            <section className="scene-ai-policy-card"><header><strong>AI 编辑策略</strong><span>{selectedSceneNode.aiPolicy.editable ? '允许 AI 修改' : '仅人工修改'}</span></header>{selectedSceneNode.aiPolicy.intent && <p>{selectedSceneNode.aiPolicy.intent}</p>}<small>{selectedSceneNode.aiPolicy.lockedFields.length ? `保护字段：${selectedSceneNode.aiPolicy.lockedFields.join('、')}` : '没有单独保护的字段'}</small></section>
+            </>}
+            {inspectorTab === 'prototype' && <>
+              <div className="panel-title section-title">画板连接</div>
+              {selectedPrototypeTarget && <div className="prototype-relationship-card">
+                <div className="prototype-relationship-node"><span>来源</span><strong>{selectedSceneNode.name}</strong><small>{pages.find((page) => page.id === selectedSceneEntry?.pageId)?.name ?? selectedSceneEntry?.pageId}</small></div>
+                <div className="prototype-relationship-action"><i>→</i><span>{selectedSceneNode.prototypeLink?.action === 'navigate' ? '跳转' : `打开${WORKSPACE_SURFACE_LABELS[selectedPrototypeTarget.surfaceKind ?? 'page']}`}</span></div>
+                <div className="prototype-relationship-node target"><span>目标</span><strong>{selectedPrototypeTarget.name}</strong><small>{WORKSPACE_SURFACE_LABELS[selectedPrototypeTarget.surfaceKind ?? 'page']}</small></div>
+                <div className="prototype-relationship-buttons"><button onClick={() => focusWorkspaceArtboardByPageId(selectedPrototypeTarget.id)}>定位目标画板</button><button onClick={() => void updateSceneNode([{ path: ['prototypeLink'], value: null }], '用户移除 Scene 原型关系。')}>移除关系</button></div>
+              </div>}
+              <label className="field-label">点击行为<select value={selectedSceneNode.prototypeLink ? 'page' : 'none'} disabled={selectedSceneNode.locked} onChange={(event) => {
+                if (event.target.value === 'none') {
+                  void updateSceneNode([{ path: ['prototypeLink'], value: null }], '用户移除 Scene 原型关系。');
+                  return;
+                }
+                const target = pages.find((candidate) => candidate.id !== selectedSceneEntry?.pageId);
+                if (!target) {
+                  showToast('请先创建另一个独立画板');
+                  return;
+                }
+                const action = (target.surfaceKind ?? 'page') === 'page' ? 'navigate' : 'overlay';
+                void updateSceneNode([{ path: ['prototypeLink'], value: { trigger: 'click', action, targetPageId: target.id } }], '用户创建 Scene 原型关系。');
+              }}><option value="none">无连接</option><option value="page">连接到独立画板</option></select></label>
+              {selectedSceneNode.prototypeLink && <label className="field-label interaction-target">目标画板<select value={selectedSceneNode.prototypeLink.targetPageId} disabled={selectedSceneNode.locked} onChange={(event) => {
+                const target = pages.find((candidate) => candidate.id === event.target.value);
+                if (!target) return;
+                const action = (target.surfaceKind ?? 'page') === 'page' ? 'navigate' : 'overlay';
+                void updateSceneNode([{ path: ['prototypeLink'], value: { trigger: 'click', action, targetPageId: target.id } }], '用户修改 Scene 原型目标。');
+              }}>{pages.filter((candidate) => candidate.id !== selectedSceneEntry?.pageId).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name} · {WORKSPACE_SURFACE_LABELS[candidate.surfaceKind ?? 'page']}</option>)}</select></label>}
+              <p className="helper-text inspector-prototype-help">页面、弹窗、抽屉、菜单与状态都作为独立画板设计。普通页面执行跳转；其他画板在来源页面上叠加预览。工作区会显示这条关系的箭头。</p>
+            </>}
+            {inspectorTab === 'ai' && <div className="scene-annotation-panel">
+              <section className="scene-ai-target-card">
+                <header><strong>AI 视觉目标</strong><span>r{sceneDocument?.revision}</span></header>
+                <p>{activeScenePage?.name ?? pageId} / {selectedSceneNode.name}</p>
+                <small>节点 {selectedSceneNode.id}</small>
+              </section>
+              <div className="panel-title section-title">图层批注</div>
+              <div className="notes-list scene-notes-list">
+                {selectedSceneNode.annotations.length === 0 && <span className="empty-hint">还没有批注。写下视觉问题后，AI 会按这个稳定节点逐步修改。</span>}
+                {selectedSceneNode.annotations.map((note) => <article key={note.id} className={`note-card scene-note-card ${note.status}`}>
+                  <span>{note.body}</span>
+                  <small>{note.status === 'open' ? '待 AI 处理' : '已完成'} · {note.author} · {note.id}</small>
+                  <div>
+                    {note.status === 'open' ? <>
+                      <button disabled={sceneAnnotationPreparingId === note.id} onClick={() => void prepareSceneAnnotation(selectedSceneNode.id, note.id)}>{sceneAnnotationPreparingId === note.id ? '正在生成截图…' : '准备给 AI'}</button>
+                      <button onClick={() => void changeSceneAnnotationStatus(note.id, 'resolved')}>标记完成</button>
+                    </> : <button onClick={() => void changeSceneAnnotationStatus(note.id, 'open')}>重新打开</button>}
+                  </div>
+                </article>)}
+              </div>
+              <textarea className="composer" rows={3} maxLength={4000} placeholder="例如：标题与按钮的视觉层级不够明确，请加强对比但保留当前布局。" value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} />
+              <button className="secondary-button" disabled={!annotationText.trim()} onClick={() => void addSceneAnnotation()}>只添加批注</button>
+              <div className="panel-title section-title">直接交给 AI</div>
+              <p className="helper-text">提交时会自动创建批注，并截取当前节点的真实画面、Scene revision 与节点坐标，AI 不需要猜元素。</p>
+              <textarea className="composer" rows={4} maxLength={4000} placeholder="描述你希望 AI 下一步改善的视觉效果…" value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} />
+              <button className="ai-button" disabled={!aiInstruction.trim() || Boolean(sceneAnnotationPreparingId)} onClick={() => void submitSceneAiInstruction()}>{sceneAnnotationPreparingId ? '正在准备视觉上下文…' : '提交视觉任务'}</button>
+              {sceneAiContext && <section className="scene-ai-context-card">
+                {sceneAiContext.imageDataUrl && <img src={sceneAiContext.imageDataUrl} alt={`批注目标 ${selectedSceneNode.name}`} />}
+                <div><strong>视觉上下文已就绪</strong><span>{sceneAiContext.capture.width} × {sceneAiContext.capture.height} · {sceneAiContext.capture.groundingCount} 个稳定节点</span></div>
+                <dl><div><dt>页面</dt><dd>{sceneAiContext.task.pageId}</dd></div><div><dt>节点</dt><dd>{sceneAiContext.task.targetNodeId}</dd></div><div><dt>Scene</dt><dd>r{sceneAiContext.task.baseRevision}</dd></div><div><dt>截图</dt><dd>{sceneAiContext.capture.artifact.artifactId}</dd></div></dl>
+              </section>}
+            </div>}
+          </> : selected && inspectedFrame ? <>
             <div className="inspector-heading"><div><span className="eyebrow">已选择 {selectedIds.length > 1 ? `${selectedIds.length} 项` : ''} · {device}</span><strong>{selected.name}</strong></div><button className="danger-link" onClick={deleteSelected}>删除</button></div>
             <div className="inspector-actions"><button onClick={duplicateSelected}>复制 ⌘D</button><button className={selected.locked ? 'active' : ''} onClick={() => toggleLocked(selected)}>{selected.locked ? '解锁' : '锁定'}</button><button className={inspectedFrame.hidden ? 'active' : ''} onClick={() => toggleHidden(selected)}>{inspectedFrame.hidden ? '显示' : '隐藏'}</button></div>
             <div className="inspector-mode-tabs" role="tablist" aria-label="属性栏模式">
@@ -2625,15 +4921,21 @@ export function WebDesignStudioApp() {
             </>}
             {inspectorTab === 'prototype' && <>
             <div className="panel-title section-title">预览交互</div>
+            {selectedPrototypeTarget && <div className="prototype-relationship-card">
+              <div className="prototype-relationship-node"><span>来源</span><strong>{selected.name}</strong><small>{currentPage?.name ?? pageId}</small></div>
+              <div className="prototype-relationship-action"><i>→</i><span>{(selectedPrototypeTarget.surfaceKind ?? 'page') === 'page' ? '跳转' : `打开${WORKSPACE_SURFACE_LABELS[selectedPrototypeTarget.surfaceKind ?? 'page']}`}</span></div>
+              <div className="prototype-relationship-node target"><span>目标</span><strong>{selectedPrototypeTarget.name}</strong><small>{WORKSPACE_SURFACE_LABELS[selectedPrototypeTarget.surfaceKind ?? 'page']}</small></div>
+              <div className="prototype-relationship-buttons"><button onClick={() => focusWorkspaceArtboardByPageId(selectedPrototypeTarget.id)}>定位目标画板</button><button onClick={() => updateSelected({ interaction: undefined })}>移除关系</button></div>
+            </div>}
             <label className="field-label">点击行为<select value={selected.interaction?.type ?? 'none'} onChange={(event) => {
               const type = event.target.value;
               if (type === 'none') updateSelected({ interaction: undefined });
               else if (type === 'page') updateSelected({ interaction: { type: 'page', target: pages.find((page) => page.id !== pageId)?.id ?? pageId } });
               else updateSelected({ interaction: { type: 'url', target: 'https://example.com' } });
-            }}><option value="none">无交互</option><option value="page">跳转页面</option><option value="url">打开 URL</option></select></label>
-            {selected.interaction?.type === 'page' && <label className="field-label interaction-target">目标页面<select value={selected.interaction.target} onChange={(event) => updateSelected({ interaction: { type: 'page', target: event.target.value } })}>{pages.map((page) => <option key={page.id} value={page.id}>{page.name} · {page.slug}</option>)}</select></label>}
+            }}><option value="none">无交互</option><option value="page">连接到设计面</option><option value="url">打开 URL</option></select></label>
+            {selected.interaction?.type === 'page' && <label className="field-label interaction-target">目标画板<select value={selected.interaction.target} onChange={(event) => updateSelected({ interaction: { type: 'page', target: event.target.value } })}>{pages.map((page) => <option key={page.id} value={page.id}>{page.name} · {WORKSPACE_SURFACE_LABELS[page.surfaceKind ?? 'page']}</option>)}</select></label>}
             {selected.interaction?.type === 'url' && <label className="field-label interaction-target">目标 URL<input value={selected.interaction.target} onChange={(event) => updateSelected({ interaction: { type: 'url', target: event.target.value } })} placeholder="https://example.com" /></label>}
-            <p className="helper-text inspector-prototype-help">在顶部进入“交互”或“全屏预览”即可验证跳转、输入、选择、弹层和官方组件行为。</p>
+            <p className="helper-text inspector-prototype-help">连接普通页面时执行跳转；连接弹窗、抽屉、浮层或菜单时，会在来源页面上叠加预览目标画板。</p>
             </>}
             {inspectorTab === 'design' && <>
             <div className="size-row four">
@@ -2696,7 +4998,7 @@ export function WebDesignStudioApp() {
             {inspectorTab === 'ai' && <>
             <div className="panel-title section-title">组件批注</div>
             <div className="notes-list">{selected.annotations.length === 0 && <span className="empty-hint">还没有批注</span>}{selected.annotations.map((note) => <div key={note.id} className={`note-card ${note.status}`}><span>{note.text}</span><small>{note.status === 'open' ? '待处理' : '已完成'}</small></div>)}</div>
-            <textarea className="composer" rows={3} placeholder="例如：这里的按钮再醒目一些" value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} /><button className="secondary-button" onClick={addAnnotation}>添加批注</button>
+            <textarea className="composer" rows={3} placeholder="例如：这里的按钮再醒目一些" value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} /><button className="secondary-button" onClick={addLegacyAnnotation}>添加批注</button>
             <div className="panel-title section-title">与 AI 交互</div>
             <textarea className="composer" rows={4} placeholder={`告诉 AI 如何修改当前${device === 'desktop' ? '桌面' : device === 'tablet' ? '平板' : '手机'}组件…`} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} /><button className="ai-button" onClick={() => void addAiRequest()}>提交给 AI</button>
             </>}
@@ -2730,8 +5032,8 @@ export function WebDesignStudioApp() {
       {variantPickerDrag?.dragging && <div className="variant-picker-drag-ghost" style={{ left: variantPickerDrag.clientX, top: variantPickerDrag.clientY }}><strong>{variantPickerDrag.selection.label}</strong><small>{Math.round(variantPickerDrag.selection.width)} × {Math.round(variantPickerDrag.selection.height)}</small></div>}
       {themePickerOpen && <div className="studio-side-surface-host">
         <section className="studio-modal studio-side-surface theme-picker">
-          <header><div><span className="eyebrow">Visual system</span><h2>选择整站设计风格</h2><p>一次统一颜色、字体、圆角、画布背景和全部 UI 组件主题。</p></div><button onClick={() => setThemePickerOpen(false)}>×</button></header>
-          <div className="theme-preset-grid">{WEB_DESIGN_THEME_PRESETS.map((preset) => <button key={preset.id} onClick={() => applyDesignTheme(preset)}><div className="theme-preview" style={{ background: preset.canvasBackground }}><i style={{ background: preset.preview[1] }} /><b style={{ background: preset.preview[2] }} /><span style={{ color: preset.tokens.colors.text }}>Aa</span></div><strong>{preset.name}</strong><small>{preset.description}</small><div className="theme-swatches">{preset.preview.map((color) => <i key={color} style={{ background: color }} />)}</div></button>)}</div>
+          <header><div><span className="eyebrow">Scene visual system</span><h2>建立视觉变量</h2><p>把颜色、字体和圆角写入真实 Scene Variable Collection，供 AI 与人工设计共同绑定使用。</p></div><button onClick={() => setThemePickerOpen(false)}>×</button></header>
+          <div className="theme-preset-grid">{WEB_DESIGN_THEME_PRESETS.map((preset) => <button key={preset.id} onClick={() => void applyDesignTheme(preset)}><div className="theme-preview" style={{ background: preset.canvasBackground }}><i style={{ background: preset.preview[1] }} /><b style={{ background: preset.preview[2] }} /><span style={{ color: preset.tokens.colors.text }}>Aa</span></div><strong>{preset.name}</strong><small>{preset.description}</small><div className="theme-swatches">{preset.preview.map((color) => <i key={color} style={{ background: color }} />)}</div></button>)}</div>
         </section>
       </div>}
       {toast && <div className="toast">{toast}</div>}
@@ -2741,6 +5043,32 @@ export function WebDesignStudioApp() {
 
 function NumberField({ label, value, onChange, disabled = false, step, min, max }: { label: string; value: number; onChange: (value: number) => void; disabled?: boolean; step?: number; min?: number; max?: number }) {
   return <label className="field-label">{label}<input type="number" disabled={disabled} step={step} min={min} max={max} value={Number.isFinite(value) ? value : 0} onChange={(event) => onChange(Number(event.target.value))} /></label>;
+}
+
+function SceneNumberField({ label, value, onCommit, disabled = false, min, max }: {
+  label: string;
+  value: number;
+  onCommit: (value: number) => void;
+  disabled?: boolean;
+  min?: number;
+  max?: number;
+}) {
+  return <label className="field-label">{label}<input
+    key={`${value}`}
+    type="number"
+    defaultValue={Number.isFinite(value) ? value : 0}
+    disabled={disabled}
+    min={min}
+    max={max}
+    onBlur={(event) => {
+      const next = Number(event.currentTarget.value);
+      if (!Number.isFinite(next) || next === value) return;
+      onCommit(Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, next)));
+    }}
+    onKeyDown={(event) => {
+      if (event.key === 'Enter') event.currentTarget.blur();
+    }}
+  /></label>;
 }
 
 function ColorValueField({ label, value, onChange, allowComplex = false }: { label: string; value: string; onChange: (value: string) => void; allowComplex?: boolean }) {
@@ -2800,6 +5128,24 @@ function JsonPropertyEditor({ label, value, onChange }: { label: string; value: 
     }
   }
   return <div className="json-prop-editor"><div><strong>{label}</strong><button onClick={apply}>应用数据</button></div><textarea rows={Math.min(10, Math.max(4, draft.split('\n').length))} value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} />{error && <small>{error}</small>}</div>;
+}
+
+function JsonObjectEditor({ label, value, onChange, disabled = false }: { label: string; value: Record<string, unknown>; onChange: (value: Record<string, unknown>) => void; disabled?: boolean }) {
+  const serialized = JSON.stringify(value, null, 2);
+  const [draft, setDraft] = useState(serialized);
+  const [error, setError] = useState('');
+  useEffect(() => { setDraft(serialized); setError(''); }, [serialized]);
+  function apply() {
+    try {
+      const parsed = JSON.parse(draft) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('属性必须是 JSON 对象');
+      onChange(parsed as Record<string, unknown>);
+      setError('');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'JSON 格式不正确');
+    }
+  }
+  return <div className="json-prop-editor scene-json-object-editor"><div><strong>{label}</strong><button disabled={disabled} onClick={apply}>应用数据</button></div><textarea disabled={disabled} rows={Math.min(14, Math.max(5, draft.split('\n').length))} value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} />{error && <small>{error}</small>}</div>;
 }
 
 function runtimeSlotContentMap(

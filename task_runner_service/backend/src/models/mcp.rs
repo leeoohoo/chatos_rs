@@ -58,16 +58,6 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
             use_cases: &[],
             capabilities: &[],
         },
-        BuiltinMcpKind::ProjectManagement => McpBuiltinKindGuide {
-            description: "项目管理工具，适合把规划结果写入项目空间，维护需求、技术说明、项目任务和依赖关系。",
-            use_cases: &["写入需求、变更或 bug 修复", "维护项目任务", "整理依赖和验收标准"],
-            capabilities: &[
-                "创建/查询/更新需求",
-                "创建/查询/更新项目任务",
-                "设置依赖",
-                "获取依赖图",
-            ],
-        },
         BuiltinMcpKind::Notepad => McpBuiltinKindGuide {
             description: "临时笔记工具，适合在长任务中记录计划、观察结果、中间结论和待确认事项。",
             use_cases: &["保存中间结论", "记录计划", "整理上下文", "跨步骤保留笔记"],
@@ -86,7 +76,7 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
         BuiltinMcpKind::RemoteConnectionController => McpBuiltinKindGuide {
             description: "远程服务器连接工具，适合通过用户已保存的 SSH 连接检查服务器、执行命令和读写远程文件。",
             use_cases: &["检查远程服务器", "执行 SSH 命令", "读取或上传远程文件", "验证远程连接"],
-            capabilities: &["列出并测试远程连接", "执行远程命令", "浏览和读取远程文件", "上传或下载文件"],
+            capabilities: &["测试已绑定远程连接", "执行远程命令", "浏览和读取远程文件", "上传或下载文件"],
         },
         BuiltinMcpKind::MemorySkillReader => McpBuiltinKindGuide {
             description: "记忆中的 skill 读取工具，适合查找当前上下文可复用的技能说明。",

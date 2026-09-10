@@ -69,6 +69,46 @@ struct ComposerView: View {
                 }
             }
             .disabled(conversation.availableModels.isEmpty || conversation.isUpdatingRuntimeSettings)
+            Menu {
+                Button {
+                    conversation.setRemoteConnectionID(nil)
+                } label: {
+                    if conversation.selectedRemoteConnectionID == nil {
+                        Label(
+                            model.localized("不使用远端", english: "No Remote Connection"),
+                            systemImage: "checkmark"
+                        )
+                    } else {
+                        Text(model.localized("不使用远端", english: "No Remote Connection"))
+                    }
+                }
+                if !model.remoteConnections.isEmpty {
+                    Divider()
+                    ForEach(model.remoteConnections) { connection in
+                        Button {
+                            conversation.setRemoteConnectionID(connection.id)
+                        } label: {
+                            if conversation.selectedRemoteConnectionID == connection.id {
+                                Label(connection.name, systemImage: "checkmark")
+                            } else {
+                                Text(connection.name)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label(
+                    selectedRemoteConnectionDisplayName,
+                    systemImage: conversation.selectedRemoteConnectionID == nil
+                        ? "network.slash"
+                        : "network"
+                )
+            }
+            .disabled(conversation.isUpdatingRuntimeSettings)
+            .help(model.localized(
+                "为当前会话绑定远端连接；之后的新任务会默认使用该服务器",
+                english: "Bind a remote connection to this conversation for future tasks"
+            ))
             Button(model.localized("附件", english: "Attachments"), systemImage: "paperclip") {
                 showsFileImporter = true
             }
@@ -77,37 +117,7 @@ struct ComposerView: View {
                     "添加图片、文档或其他文件；也可以直接粘贴或拖入",
                     english: "Add images, documents, or other files. You can also paste or drag them here."
                 ))
-            if conversation.allowsPlanMode {
-                Button(model.localized(
-                    "规划 \(conversation.planModeEnabled ? "开" : "关")",
-                    english: "Plan \(conversation.planModeEnabled ? "On" : "Off")"
-                )) {
-                    conversation.setPlanModeEnabled(!conversation.planModeEnabled)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(conversation.planModeEnabled ? AppPalette.ai : AppPalette.idleControl)
-                .help(
-                    conversation.planModeEnabled
-                        ? model.localized(
-                            "开启后，AI 会先通过 Task Runner 生成待确认的任务图。",
-                            english: "When enabled, AI first creates a task graph for confirmation through Task Runner."
-                        )
-                        : model.localized(
-                            "关闭后，AI 可直接创建并执行任务。",
-                            english: "When disabled, AI can create and execute tasks directly."
-                        )
-                )
-                .disabled(conversation.isUpdatingRuntimeSettings)
-            }
-            Button(model.localized(
-                "推理 \(conversation.reasoningEnabled ? "开" : "关")",
-                english: "Reasoning \(conversation.reasoningEnabled ? "On" : "Off")"
-            )) {
-                conversation.setReasoningEnabled(!conversation.reasoningEnabled)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(conversation.reasoningEnabled ? AppPalette.ai : AppPalette.idleControl)
-            .disabled(conversation.isUpdatingRuntimeSettings)
+            ReasoningLevelControl(conversation: conversation)
             Spacer()
         }
         .controlSize(.small)
@@ -123,6 +133,19 @@ struct ComposerView: View {
             return first.displayName
         }
         return model.localized("选择模型", english: "Select Model")
+    }
+
+    private var selectedRemoteConnectionDisplayName: String {
+        guard let connectionID = conversation.selectedRemoteConnectionID else {
+            return model.localized("未绑定远端", english: "No Remote")
+        }
+        if let connection = model.remoteConnections.first(where: { $0.id == connectionID }) {
+            return model.localized(
+                "远端：\(connection.name)",
+                english: "Remote: \(connection.name)"
+            )
+        }
+        return model.localized("远端不可用", english: "Remote Unavailable")
     }
 
     @ViewBuilder

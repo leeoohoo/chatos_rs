@@ -297,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn project_management_reuses_the_default_agent_user_service_account() {
+    fn default_agent_reuses_the_task_runner_user_service_account() {
         let mut agent = sample_agent(DEFAULT_AGENT_NAME);
         assert!(!has_shared_user_service_agent_account(&agent));
 

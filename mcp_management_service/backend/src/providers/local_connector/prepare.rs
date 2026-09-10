@@ -12,7 +12,7 @@ use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::providers::project_service::decode_jsonrpc_response;
+use crate::providers::decode_jsonrpc_response;
 use crate::runtime::{LocalConnectorInlineHttpRuntime, LocalConnectorMcpProviderBinding};
 use crate::trace_context::InternalTraceContextExt;
 

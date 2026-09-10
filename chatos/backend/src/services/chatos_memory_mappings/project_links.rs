@@ -4,7 +4,6 @@
 use crate::models::memory_mapping_types::{
     MemoryProjectAgentLinkDto, MemoryProjectContactDto, SyncProjectAgentLinkRequestDto,
 };
-use crate::models::project::ProjectService;
 use crate::repositories::chatos_memory_mappings as mappings_repo;
 
 use super::support::{max_timestamp, project_agent_link_to_dto};
@@ -122,41 +121,6 @@ pub async fn touch_current_project_contact_session(
     )
     .await?;
     Ok(updated.is_some())
-}
-
-pub async fn delete_project_contact_link(
-    user_id: &str,
-    project_id: &str,
-    contact_id: &str,
-) -> Result<bool, String> {
-    let user_id = user_id.trim();
-    let contact_id = contact_id.trim();
-    if user_id.is_empty() || contact_id.is_empty() {
-        return Ok(false);
-    }
-    let project_id = project_id.trim().to_string();
-    if project_id.is_empty() {
-        return Ok(false);
-    }
-    mappings_repo::delete_project_agent_link(user_id, project_id.as_str(), Some(contact_id)).await
-}
-
-pub async fn list_project_contacts(
-    project_id: &str,
-    limit: Option<i64>,
-    offset: i64,
-) -> Result<Vec<MemoryProjectContactDto>, String> {
-    let owner = ProjectService::get_by_id(project_id)
-        .await?
-        .ok_or_else(|| "project not found".to_string())?;
-    let owner_user_id = owner
-        .user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "project owner is missing".to_string())?;
-
-    list_project_contacts_for_owner(owner_user_id, project_id, limit, offset).await
 }
 
 pub async fn list_project_contacts_for_owner(

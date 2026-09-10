@@ -17,6 +17,9 @@ final class ChatOSRemoteConnectionServiceTests: XCTestCase {
         XCTAssertEqual(listed.first?.authenticationType, .privateKey)
         XCTAssertEqual(listed.first?.localConnectorWorkspaceID, "workspace-1")
 
+        let loaded = try await service.getConnection(id: "remote/1")
+        XCTAssertEqual(loaded?.id, "remote/1")
+
         let created = try await service.createConnection(Self.draft)
         XCTAssertEqual(created.id, "remote/1")
 
@@ -26,6 +29,7 @@ final class ChatOSRemoteConnectionServiceTests: XCTestCase {
         let requests = await transport.requests
         XCTAssertEqual(requests.map(\.path), [
             "/api/remote-connections",
+            "/api/remote-connections/remote%2F1",
             "/api/remote-connections",
             "/api/remote-connections/test",
         ])
@@ -104,7 +108,9 @@ private actor RemoteConnectionTransport: HTTPTransport {
             )
         }
         let response = #"{"id":"remote/1","name":"Production","host":"server.example.com","port":22,"username":"deploy","auth_type":"private_key","has_password":false,"has_private_key_path":true,"has_certificate_path":false,"default_remote_path":"/srv/app","host_key_policy":"strict","local_connector_device_id":"device-1","local_connector_workspace_id":"workspace-1","jump_enabled":false,"jump_connection_id":null,"jump_host":null,"jump_port":null,"jump_username":null,"has_jump_private_key_path":false,"has_jump_certificate_path":false,"has_jump_password":false,"last_active_at":"2026-08-25T04:00:00Z"}"#
-        let body = request.method == "GET" ? "[\(response)]" : response
+        let body = request.method == "GET" && path == "/api/remote-connections"
+            ? "[\(response)]"
+            : response
         return HTTPResponse(
             statusCode: request.method == "POST" ? 201 : 200,
             headers: [:],

@@ -158,11 +158,8 @@ impl AppStore {
             .map_err(|err| err.to_string())?;
         self.user_model_settings
             .update_many(
-                doc! { "project_management_agent_model_config_id": id },
-                doc! { "$set": {
-                    "project_management_agent_model_config_id": Bson::Null,
-                    "project_management_agent_thinking_level": Bson::Null,
-                } },
+                doc! { "task_runner_default_model_config_id": id },
+                doc! { "$set": { "task_runner_default_model_config_id": Bson::Null } },
                 None,
             )
             .await

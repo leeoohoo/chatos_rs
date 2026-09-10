@@ -126,28 +126,6 @@ public sealed class ConversationHistoryStoreTests
     }
 
     [Fact]
-    public void ReplacementKeepsHistoryButDisablesSupersededTaskGraph()
-    {
-        var store = new ConversationHistoryStore();
-        var old = Turn("old", 1) with
-        {
-            ProjectExecutionContext = new ProjectExecutionContext(ExecutionGroupId: "old"),
-        };
-        var replacement = Turn("new", 2) with
-        {
-            ProjectExecutionContext = new ProjectExecutionContext(
-                ExecutionGroupId: "new",
-                ReplacedExecutionGroupId: "old"),
-        };
-
-        store.MergeCachedTurns(new[] { old, replacement }, "conversation-a");
-
-        var snapshot = store.Snapshot("conversation-a");
-        Assert.False(snapshot.Turns[0].IsTaskGraphAvailable);
-        Assert.True(snapshot.Turns[1].IsTaskGraphAvailable);
-    }
-
-    [Fact]
     public void TurnFromAnotherConversationCannotLeakIntoSnapshot()
     {
         var store = new ConversationHistoryStore();

@@ -93,7 +93,6 @@ export const zhCN: MessageDictionary = {
   'tasks.status.cancelled': '已取消',
   'tasks.status.archived': '已归档',
   'tasks.profile.default': '普通任务',
-  'tasks.profile.chatosPlan': '规划任务',
   'tasks.scheduledOnly': '仅调度任务',
   'tasks.stats.total': '总任务',
   'tasks.stats.scheduled': '调度中',

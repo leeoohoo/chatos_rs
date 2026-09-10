@@ -17,14 +17,7 @@ GET /api/chatos/conversations/{conversation_id}/compact-history?limit=50&before=
 
 Swift 的 `ConversationHistoryMapper` 将用户消息与 final assistant 合并为稳定 `ConversationTurn`，Turn revision 取两者最大值。页面响应只能 merge 到 `ConversationHistoryStore`，不能替换已经加载的历史。
 
-`ConversationTurn` 同时保留项目执行确认上下文。Swift 只接受消息元数据中的明确 `project_id`、`requirement_id`、`execution_group_id` 和当前 `conversation_id` 作为可操作身份；任务图来源字段只用于查询图，不用于猜测确认/停止目标。
-
-任务图查询必须把 `task_runner_async.source_user_message_id`、`source_turn_id` 和会话 ID 原样保留到 `MessageTaskLookup`。项目执行中的 `source_user_message_id` 可能是 execution group，而不是屏幕上用户消息的数据库 ID；丢失它会导致消息声明有任务但 graph 返回空节点。
-
-规划任务图确认与放弃均通过 APISIX：
-
-- `POST /projects/{projectId}/requirements/{requirementId}/confirm-execution`
-- `POST /projects/{projectId}/requirements/{requirementId}/stop`，并发送 `discard_tasks: true`
+任务图查询把通用 `task_runner_async.source_user_message_id`、`source_turn_id` 和会话 ID 原样保留到 `MessageTaskLookup`。客户端不再解析 `project_requirement_execution`，也不再提供需求执行的确认、停止或执行计划接口。
 
 ## Realtime
 

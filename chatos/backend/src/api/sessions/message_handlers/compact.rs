@@ -526,7 +526,7 @@ pub(in crate::api::sessions) async fn get_session_user_message_turns(
 mod tests {
     use serde_json::json;
 
-    use super::{merge_missing_runtime_guidance_messages, parse_compact_history_offset};
+    use super::parse_compact_history_offset;
     use crate::models::message::Message;
 
     fn build_message(id: &str, role: &str, content: &str) -> Message {
@@ -572,25 +572,5 @@ mod tests {
             ),
             1
         );
-    }
-
-    #[test]
-    fn first_compact_page_does_not_inject_project_execution_users() {
-        let compact_user = build_message("user-current", "user", "current page");
-        let mut older_execution = build_message("user-execution", "user", "execute requirement");
-        older_execution.message_mode = Some("project_requirement_execution".to_string());
-        older_execution.metadata = Some(json!({
-            "conversation_turn_id": "turn-execution",
-            "project_requirement_execution": {
-                "project_id": "project-1",
-                "requirement_id": "requirement-1"
-            }
-        }));
-
-        let merged =
-            merge_missing_runtime_guidance_messages(vec![compact_user], &[older_execution]);
-
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].id, "user-current");
     }
 }

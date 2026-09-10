@@ -31,6 +31,195 @@ internal sealed class PluginManifestLoader
         _oauth = oauth;
     }
 
+    internal async Task<PreparedPluginApplication> PrepareApplicationAsync(
+        InstalledPluginRecord record,
+        string requestedComponentKey,
+        IReadOnlySet<string> permissionSnapshot,
+        string ownerUserId,
+        string deviceId,
+        string? workspaceId = null,
+        string? workspaceRoot = null,
+        string? projectId = null,
+        string? projectName = null,
+        CancellationToken cancellationToken = default)
+    {
+        var installationPath = Path.GetFullPath(record.InstallationPath);
+        if (!Directory.Exists(installationPath))
+        {
+            throw new PluginRuntimeException("Installed Plugin directory is unavailable.");
+        }
+        VerifyFileHash(record, installationPath, "chatos.plugin.json");
+        var manifest = await ReadJsonAsync<PluginManifest>(
+            Path.Combine(installationPath, "chatos.plugin.json"),
+            MaximumManifestBytes,
+            cancellationToken).ConfigureAwait(false);
+        if (manifest.SchemaVersion != 3 ||
+            !string.Equals(manifest.Version, record.Version, StringComparison.Ordinal))
+        {
+            throw new PluginRuntimeException("Plugin manifest does not match the installed Release.");
+        }
+
+        var componentKey = requestedComponentKey.Trim();
+        var contribution = manifest.Ui.FirstOrDefault(value =>
+            string.Equals(value.ComponentKey, componentKey, StringComparison.Ordinal) &&
+            string.Equals(value.Surface, "workbench", StringComparison.Ordinal))
+            ?? throw new PluginRuntimeException("The requested Plugin application was not found.");
+        var requiredPermissions = manifest.Permissions
+            .Where(permission => permission.Required &&
+                (permission.Components.Count == 0 ||
+                 permission.Components.Contains(componentKey, StringComparer.Ordinal)))
+            .Select(permission => permission.Permission)
+            .ToArray();
+        if (requiredPermissions.Any(permission => !permissionSnapshot.Contains(permission)))
+        {
+            throw new PluginRuntimeException("Plugin application permissions have not been granted.");
+        }
+
+        var context = ResolveRuntimeContext(
+            manifest,
+            componentKey,
+            record.PluginId,
+            ownerUserId,
+            deviceId,
+            workspaceId,
+            workspaceRoot,
+            projectId,
+            projectName);
+        Directory.CreateDirectory(context.DataPath);
+        Directory.CreateDirectory(context.CachePath);
+        var sourcePath = ResolveRegularFile(installationPath, contribution.Source.Path!);
+        VerifyFileHash(record, installationPath, contribution.Source.Path!);
+        foreach (var asset in contribution.Assets)
+        {
+            _ = ResolveRegularFile(installationPath, asset);
+            VerifyFileHash(record, installationPath, asset);
+        }
+        var iconPath = ResolveOptionalInterfaceAsset(record, manifest.Interface?.Logo, installationPath);
+
+        var declaration = manifest.RuntimeContext;
+        var application = new LocalPluginApplication(
+            record.PluginId,
+            componentKey,
+            string.IsNullOrWhiteSpace(contribution.Title)
+                ? string.IsNullOrWhiteSpace(manifest.Interface?.DisplayName)
+                    ? manifest.Name
+                    : manifest.Interface!.DisplayName!.Trim()
+                : contribution.Title.Trim(),
+            ApplicationDescription(manifest),
+            manifest.Interface?.BrandColor,
+            contribution.Runtime is not null,
+            declaration?.AppliesTo(componentKey) == true ? declaration.Scope : null,
+            declaration?.AppliesTo(componentKey) == true ? declaration.MissingContext : null,
+            contribution.BridgeCapabilities.ToArray(),
+            iconPath);
+        var contextKey = context.Environment.TryGetValue("CHATOS_CONTEXT_SCOPE_ID", out var scopeId)
+            ? scopeId
+            : Sha256($"device:{deviceId}");
+        var environment = new Dictionary<string, string>(context.Environment, StringComparer.OrdinalIgnoreCase)
+        {
+            ["CHATOS_PLUGIN_ROOT"] = installationPath,
+            ["CHATOS_PLUGIN_DATA_DIR"] = context.DataPath,
+            ["CHATOS_PLUGIN_CACHE_DIR"] = context.CachePath,
+            ["CHATOS_PLUGIN_ID"] = record.PluginId,
+            ["CHATOS_PLUGIN_COMPONENT_KEY"] = componentKey,
+            ["CHATOS_PLUGIN_RELEASE_ID"] = record.ReleaseId,
+            ["CHATOS_PLUGIN_VERSION"] = record.Version,
+            ["CHATOS_PLUGIN_ARTIFACT_SHA256"] = record.ArtifactSha256,
+        };
+        if (contribution.Runtime is not { } runtime)
+        {
+            return new PreparedPluginApplication(
+                application, record, contextKey, installationPath, sourcePath, null,
+                Array.Empty<string>(), environment, "/api/health", 15_000);
+        }
+        if (!permissionSnapshot.Contains("process.spawn"))
+        {
+            throw new PluginRuntimeException("Plugin application requires process.spawn permission.");
+        }
+        ValidateArguments(runtime.Arguments);
+        VerifyFileHash(record, installationPath, "package.json");
+        var package = await ReadJsonAsync<NpmLaunchPackage>(
+            Path.Combine(installationPath, "package.json"),
+            MaximumPackageJsonBytes,
+            cancellationToken).ConfigureAwait(false);
+        var bins = package.Bins();
+        if (!bins.TryGetValue(runtime.Bin, out var relativeBin))
+        {
+            throw new PluginRuntimeException("Installed npm package does not publish the Plugin application bin.");
+        }
+        var binPath = ResolveRegularFile(installationPath, relativeBin);
+        VerifyFileHash(record, installationPath, NormalizeRelativePath(relativeBin));
+        var (executable, prefixArguments) = ResolveExecutable(binPath);
+        var healthPath = ValidateHealthPath(runtime.HealthPath);
+        return new PreparedPluginApplication(
+            application,
+            record,
+            contextKey,
+            installationPath,
+            sourcePath,
+            executable,
+            prefixArguments.Concat(runtime.Arguments).ToArray(),
+            environment,
+            healthPath,
+            Math.Clamp(runtime.LaunchTimeoutMilliseconds ?? 15_000, 100, 120_000));
+    }
+
+    internal async Task<IReadOnlyList<LocalPluginApplication>> ListApplicationsAsync(
+        InstalledPluginRecord record,
+        CancellationToken cancellationToken = default)
+    {
+        var installationPath = Path.GetFullPath(record.InstallationPath);
+        VerifyFileHash(record, installationPath, "chatos.plugin.json");
+        var manifest = await ReadJsonAsync<PluginManifest>(
+            Path.Combine(installationPath, "chatos.plugin.json"),
+            MaximumManifestBytes,
+            cancellationToken).ConfigureAwait(false);
+        if (manifest.SchemaVersion != 3 ||
+            !string.Equals(manifest.Version, record.Version, StringComparison.Ordinal))
+        {
+            throw new PluginRuntimeException("Plugin manifest does not match the installed Release.");
+        }
+        return manifest.Ui
+            .Where(value => string.Equals(value.Surface, "workbench", StringComparison.Ordinal))
+            .Select(contribution =>
+            {
+                var declaration = manifest.RuntimeContext;
+                var iconPath = ResolveOptionalInterfaceAsset(record, manifest.Interface?.Logo, installationPath);
+                return new LocalPluginApplication(
+                    record.PluginId,
+                    contribution.ComponentKey,
+                    string.IsNullOrWhiteSpace(contribution.Title)
+                        ? string.IsNullOrWhiteSpace(manifest.Interface?.DisplayName)
+                            ? manifest.Name
+                            : manifest.Interface!.DisplayName!.Trim()
+                        : contribution.Title.Trim(),
+                    ApplicationDescription(manifest),
+                    manifest.Interface?.BrandColor,
+                    contribution.Runtime is not null,
+                    declaration?.AppliesTo(contribution.ComponentKey) == true ? declaration.Scope : null,
+                    declaration?.AppliesTo(contribution.ComponentKey) == true ? declaration.MissingContext : null,
+                    contribution.BridgeCapabilities.ToArray(),
+                    iconPath);
+            })
+            .ToArray();
+    }
+
+    private static string ApplicationDescription(PluginManifest manifest) =>
+        !string.IsNullOrWhiteSpace(manifest.Interface?.ShortDescription)
+            ? manifest.Interface.ShortDescription.Trim()
+            : manifest.Description;
+
+    private static string? ResolveOptionalInterfaceAsset(
+        InstalledPluginRecord record,
+        PluginPathReference? reference,
+        string installationPath)
+    {
+        if (string.IsNullOrWhiteSpace(reference?.Path)) return null;
+        var path = ResolveRegularFile(installationPath, reference.Path);
+        VerifyFileHash(record, installationPath, reference.Path);
+        return path;
+    }
+
     public async Task<PreparedPluginLaunch> PrepareAsync(
         InstalledPluginRecord record,
         string requestedComponentKey,
@@ -638,6 +827,17 @@ internal sealed class PluginManifestLoader
         {
             throw new PluginRuntimeException("Plugin MCP contains an unsafe or oversized argument.");
         }
+    }
+
+    private static string ValidateHealthPath(string? value)
+    {
+        var path = value ?? "/api/health";
+        if (!path.StartsWith('/') || path.Length > 2_048 || path.Contains("..", StringComparison.Ordinal) ||
+            path.Contains('?') || path.Contains('#') || path.Contains('\0'))
+        {
+            throw new PluginRuntimeException("Plugin application health path is invalid.");
+        }
+        return path;
     }
 
     private async Task<IReadOnlyDictionary<string, string>> ResolveEnvironmentAsync(

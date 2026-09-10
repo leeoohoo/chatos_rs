@@ -5,8 +5,13 @@ pub mod client;
 pub mod config;
 pub mod dto;
 pub mod error;
+pub mod project_context;
 
 pub use client::{McpManagementClient, McpManagementRuntimeSessionHandle};
 pub use config::McpManagementClientConfig;
 pub use dto::*;
 pub use error::McpManagementClientError;
+pub use project_context::{
+    AuthorizeProjectContextRequest, ClientProjectContextSnapshot, ClientProjectExecutionTarget,
+    ProjectContextAuthorization,
+};

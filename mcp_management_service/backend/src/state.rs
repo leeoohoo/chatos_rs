@@ -3,7 +3,6 @@
 
 use crate::async_dispatch::AsyncToolDispatch;
 use crate::config::AppConfig;
-use crate::project_context::ProjectContextClient;
 use crate::providers::{
     ChatosProviderConfig, ProviderDispatcher, ProviderRuntimeConfig, TaskRunnerProviderConfig,
 };
@@ -48,7 +47,6 @@ pub struct AppState {
     pub config: AppConfig,
     pub routing: RoutingEngine,
     pub plugin_management_client: PluginManagementClient,
-    pub project_context_client: ProjectContextClient,
     pub providers: ProviderDispatcher,
     pub(crate) skill_attestations:
         Arc<crate::providers::plugin_components::SkillActivationAttestationService>,
@@ -77,11 +75,6 @@ impl AppState {
             .map_err(|err| format!("build plugin management client config failed: {err}"))?,
         )
         .map_err(|err| format!("initialize Plugin Management client failed: {err}"))?;
-        let project_context_client = ProjectContextClient::new(
-            config.project_service_http_client.clone(),
-            config.project_service_base_url.clone(),
-            config.project_service_internal_api_secret.clone(),
-        )?;
         let skill_attestations = Arc::new(match config.runtime_session_database_url.as_deref() {
             Some(database_url) => {
                 crate::providers::plugin_components::SkillActivationAttestationService::connect(
@@ -95,10 +88,6 @@ impl AppState {
             )?,
         });
         let providers = ProviderDispatcher::new(
-            config.project_service_http_client.clone(),
-            config.project_service_base_url.clone(),
-            config.project_service_internal_api_secret.clone(),
-            config.project_service_tool_timeout,
             TaskRunnerProviderConfig {
                 http: task_runner_http_client(&config)?,
                 base_url: config.task_runner_service_base_url.clone(),
@@ -176,7 +165,6 @@ impl AppState {
             config,
             routing: RoutingEngine,
             plugin_management_client,
-            project_context_client,
             providers,
             skill_attestations,
             runtime_sessions,

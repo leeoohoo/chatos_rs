@@ -28,9 +28,6 @@ fn source_metadata_exposes_prompt_path_and_sections() {
     );
     let section_ids = builtin_mcp_prompt_section_ids(BuiltinMcpPromptLocale::ZhCn);
     assert!(section_ids.iter().any(|item| item == "global"));
-    assert!(section_ids
-        .iter()
-        .any(|item| item == "builtin_project_management"));
     assert!(section_ids.iter().any(|item| item == "runtime_limitations"));
 }
 
@@ -76,18 +73,6 @@ fn includes_global_and_selected_sections_only() {
 }
 
 #[test]
-fn includes_project_management_section_when_selected() {
-    let prompt = compose_builtin_mcp_system_prompt(
-        &[build_builtin_server(BuiltinMcpKind::ProjectManagement)],
-        BuiltinMcpPromptLocale::ZhCn,
-    )
-    .expect("prompt");
-
-    assert!(prompt.contains("`project_management_service_create_requirement`"));
-    assert!(prompt.contains("需求、变更或 bug 修复"));
-}
-
-#[test]
 fn remote_connection_prompt_lists_file_transfer_tools() {
     let prompt = compose_builtin_mcp_system_prompt(
         &[build_builtin_server(
@@ -99,6 +84,9 @@ fn remote_connection_prompt_lists_file_transfer_tools() {
 
     assert!(prompt.contains("`remote_connection_controller_download_file`"));
     assert!(prompt.contains("`remote_connection_controller_upload_file`"));
+    assert!(!prompt.contains("remote_connection_controller_list_connections"));
+    assert!(prompt.contains("当前远程连接和路由上下文由程序在任务开始前绑定"));
+    assert!(prompt.contains("内部路由配置始终由程序管理"));
 }
 
 #[test]

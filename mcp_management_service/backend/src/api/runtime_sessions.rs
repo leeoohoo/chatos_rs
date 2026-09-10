@@ -6,10 +6,7 @@ use std::collections::{HashMap, HashSet};
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use chatos_agent::{
-    is_chatos_callback_agent, is_task_runner_phase_agent, parse_system_agent_key,
-    requires_expected_project_task_ids,
-};
+use chatos_agent::{is_chatos_callback_agent, is_task_runner_phase_agent, parse_system_agent_key};
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
     CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpProviderKind,
@@ -54,11 +51,6 @@ pub(super) async fn resolve_runtime_session(
     request.workspace_route = normalize_runtime_workspace_route(request.workspace_route.clone())?;
     let agent_key = parse_agent_key(request.agent_key.as_str())?;
     let contact_agent_id = normalized(request.contact_agent_id.clone());
-    let expected_project_task_ids = normalized_unique_items(
-        request.expected_project_task_ids.clone(),
-        "expected_project_task_ids",
-        200,
-    )?;
     let requested_mcp_ids = request
         .requested_mcp_ids
         .clone()
@@ -77,13 +69,34 @@ pub(super) async fn resolve_runtime_session(
         ),
         None => None,
     };
-    let project_context = match request.project_id.as_deref() {
-        Some(project_id) => state
-            .project_context_client
-            .resolve(project_id, request.owner_user_id.as_str())
-            .await
-            .map_err(ApiError::bad_gateway)?,
-        None => user_conversation_execution_context(request.owner_user_id.as_str()),
+    let project_context = match (
+        request.project_id.as_deref(),
+        request.project_context.as_ref(),
+    ) {
+        (Some(project_id), Some(authorization)) => {
+            authorization
+                .validate_expected(&request.owner_user_id, &authorization.snapshot)
+                .map_err(ApiError::bad_request)?;
+            if authorization.snapshot.project_id != project_id {
+                return Err(ApiError::bad_request(
+                    "project context does not match project_id",
+                ));
+            }
+            authorization
+                .execution_context()
+                .map_err(ApiError::bad_request)?
+        }
+        (Some(_), None) => {
+            return Err(ApiError::bad_request(
+                "client project context authorization is required",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(ApiError::bad_request(
+                "project context requires a concrete project_id",
+            ));
+        }
+        (None, None) => user_conversation_execution_context(request.owner_user_id.as_str()),
     };
     let execution_scope_run_id = normalized(request.run_id.clone());
     validate_context_overrides(&request, &project_context)?;
@@ -193,7 +206,6 @@ pub(super) async fn resolve_runtime_session(
             request.default_model_config_id.as_deref(),
             request.default_remote_connection_id.as_deref(),
             request.task_profile.as_deref(),
-            expected_project_task_ids.as_slice(),
             expires_at_unix,
         )
         .await;
@@ -258,12 +270,15 @@ pub(super) async fn resolve_runtime_session(
         validate_task_runner_provider_context(
             agent_key,
             &request,
-            expected_project_task_ids.as_slice(),
             route_response.routes.as_slice(),
         )?;
+        let missing_required_tool_schemas = tool_result
+            .missing_required_tool_schemas
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
         let mut unavailable_required_mcps = materialized.unavailable_required_resources;
-        unavailable_required_mcps.extend(route_response.unavailable_required_mcps);
-        unavailable_required_mcps.extend(tool_result.missing_required_tool_schemas);
+        unavailable_required_mcps.extend(missing_required_tool_schemas.iter().cloned());
         let mut required_resource_ids = capabilities
             .mcps
             .iter()
@@ -286,6 +301,10 @@ pub(super) async fn resolve_runtime_session(
                 .filter(|binding| binding.required)
                 .map(|binding| binding.resource_id.clone()),
         );
+        unavailable_required_mcps.extend(required_unavailable_routes(
+            &required_resource_ids,
+            route_response.routes.as_slice(),
+        ));
         unavailable_required_mcps.extend(required_routes_without_provider_adapter(
             &required_resource_ids,
             route_response.routes.as_slice(),
@@ -302,7 +321,18 @@ pub(super) async fn resolve_runtime_session(
                 .routes
                 .iter()
                 .filter(|route| unavailable_set.contains(route.resource_id.as_str()))
-                .map(|route| format!("{}: {}", route.resource_id, route.reason))
+                .map(|route| {
+                    let reason = if !route.is_available() {
+                        route.reason.as_str()
+                    } else if missing_required_tool_schemas.contains(route.resource_id.as_str()) {
+                        "no tool schemas remain after applying the runtime policy"
+                    } else if !state.providers.supports(route) {
+                        "the final route has no registered provider adapter"
+                    } else {
+                        "the required MCP could not be materialized"
+                    };
+                    format!("{}: {reason}", route.resource_id)
+                })
                 .collect::<Vec<_>>();
             tracing::warn!(
                 unavailable_required_mcps = ?unavailable_required_mcps,
@@ -346,7 +376,6 @@ pub(super) async fn resolve_runtime_session(
             contact_agent_id: contact_agent_id.clone(),
             default_model_config_id: normalized(request.default_model_config_id.clone()),
             default_remote_connection_id: normalized(request.default_remote_connection_id.clone()),
-            expected_project_task_ids: expected_project_task_ids.clone(),
             policy_revision: capabilities.policy_revision.clone(),
             route_revision: route_revision.clone(),
             allowed_resource_ids,
@@ -397,7 +426,6 @@ pub(super) async fn resolve_runtime_session(
             default_remote_connection_id: normalized(request.default_remote_connection_id),
             remote_connection_route,
             tool_result_max_chars: request.tool_result_max_chars,
-            expected_project_task_ids,
             workspace_route: request.workspace_route,
             project_context,
             policy_revision: capabilities.policy_revision.clone(),
@@ -656,7 +684,6 @@ fn runtime_grant_claims(snapshot: &RuntimeSessionSnapshot) -> RuntimeGrantClaims
         contact_agent_id: snapshot.contact_agent_id.clone(),
         default_model_config_id: snapshot.default_model_config_id.clone(),
         default_remote_connection_id: snapshot.default_remote_connection_id.clone(),
-        expected_project_task_ids: snapshot.expected_project_task_ids.clone(),
         policy_revision: snapshot.policy_revision.clone(),
         route_revision: snapshot.route_revision.clone(),
         allowed_resource_ids: snapshot
@@ -1183,7 +1210,6 @@ fn normalized_unique_items(
 fn validate_task_runner_provider_context(
     agent_key: SystemAgentKey,
     request: &CreateRuntimeSessionRequest,
-    expected_project_task_ids: &[String],
     routes: &[ResolvedMcpRoute],
 ) -> Result<(), ApiError> {
     let has_route = |system_key| {
@@ -1218,11 +1244,6 @@ fn validate_task_runner_provider_context(
                     "Task Runner Service MCP requires {field}"
                 )));
             }
-        }
-        if requires_expected_project_task_ids(agent_key) && expected_project_task_ids.is_empty() {
-            return Err(ApiError::conflict(
-                "project requirement execution planner requires expected_project_task_ids",
-            ));
         }
     }
     if has_route(SystemMcpKey::TaskProcessLog) {

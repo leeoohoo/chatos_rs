@@ -57,7 +57,6 @@ pub struct AppConfig {
     pub default_tool_results_model_total_max_chars: usize,
     pub chatos_callback_url: String,
     pub chatos_callback_http_client: reqwest::Client,
-    pub internal_api_secret: Option<String>,
     pub chatos_internal_api_secret: Option<String>,
     pub mcp_management_internal_api_secret: Option<String>,
     pub user_service_internal_api_secret: Option<String>,
@@ -67,11 +66,6 @@ pub struct AppConfig {
     pub admin_display_name: String,
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
-    pub project_service_base_url: Option<String>,
-    pub project_service_internal_base_url: Option<String>,
-    pub project_service_internal_http_client: reqwest::Client,
-    pub project_service_sync_secret: Option<String>,
-    pub project_service_request_timeout: Duration,
 }
 
 impl AppConfig {
@@ -234,7 +228,6 @@ mod tests {
             default_tool_results_model_total_max_chars: 1,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
-            internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
@@ -244,11 +237,6 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://user".to_string(),
             user_service_request_timeout: std::time::Duration::from_secs(1),
-            project_service_base_url: None,
-            project_service_internal_base_url: None,
-            project_service_internal_http_client: reqwest::Client::new(),
-            project_service_sync_secret: None,
-            project_service_request_timeout: std::time::Duration::from_secs(1),
         };
         assert!(config.api_enabled());
         assert!(!config.worker_enabled());

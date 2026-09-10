@@ -1,4 +1,4 @@
-export type DiagramKind = 'architecture' | 'flowchart' | 'swimlane' | 'topology' | 'sequence';
+export type DiagramKind = 'architecture' | 'flowchart' | 'swimlane' | 'topology' | 'sequence' | 'mindmap';
 
 export interface DiagramProject {
   schemaVersion: 1;
@@ -32,7 +32,9 @@ export type DiagramNodeShape =
   | 'lifeline'
   | 'activation'
   | 'fragment'
-  | 'container';
+  | 'container'
+  | 'mindmap-root'
+  | 'mindmap-topic';
 export type DiagramNodeIcon =
   | 'user'
   | 'terminal'
@@ -63,7 +65,8 @@ export type DiagramNodeCategory =
   | 'terminal'
   | 'network'
   | 'lane'
-  | 'note';
+  | 'note'
+  | 'mindmap';
 
 export interface DiagramPoint {
   x: number;
@@ -88,6 +91,9 @@ export interface DiagramNodeData extends Record<string, unknown> {
   fontWeight?: number;
   sequenceOwnerId?: string;
   sequenceSlot?: number;
+  mindmapSide?: 'left' | 'right';
+  mindmapOrder?: number;
+  mindmapCollapsed?: boolean;
   plantUmlId?: string;
   plantUmlType?: string;
   sourceReferences?: string[];
@@ -137,7 +143,7 @@ export interface DiagramViewport {
   zoom: number;
 }
 
-export type PlantUmlDialect = 'sequence' | 'activity' | 'component' | 'deployment';
+export type PlantUmlDialect = 'sequence' | 'activity' | 'component' | 'deployment' | 'mindmap';
 
 export interface PlantUmlNotation {
   format: 'plantuml';
@@ -233,7 +239,7 @@ export function assertDiagramDocument(value: unknown): asserts value is DiagramD
     if (typeof document.artifactKey !== 'string') throw new Error('Diagram artifactKey must be a string.');
     assertIdentifier(document.artifactKey, 'artifactKey');
   }
-  if (!['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'].includes(document.kind ?? '')) {
+  if (!['architecture', 'flowchart', 'swimlane', 'topology', 'sequence', 'mindmap'].includes(document.kind ?? '')) {
     throw new Error('Diagram kind is invalid.');
   }
   if (typeof document.title !== 'string' || document.title.trim().length === 0 || document.title.length > 240) {
@@ -250,7 +256,7 @@ export function assertDiagramDocument(value: unknown): asserts value is DiagramD
   }
   if (document.notation) {
     if (document.notation.format !== 'plantuml') throw new Error('Diagram notation format is invalid.');
-    if (!['sequence', 'activity', 'component', 'deployment'].includes(document.notation.dialect)) {
+    if (!['sequence', 'activity', 'component', 'deployment', 'mindmap'].includes(document.notation.dialect)) {
       throw new Error('Diagram PlantUML dialect is invalid.');
     }
     if (document.notation.source !== undefined && (typeof document.notation.source !== 'string' || document.notation.source.length > 2 * 1024 * 1024)) {

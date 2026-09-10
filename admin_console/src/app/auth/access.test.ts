@@ -13,6 +13,6 @@ describe('administration access adapter', () => {
     expect(isSuperAdmin('super_admin')).toBe(true);
     expect(isSuperAdmin('admin')).toBe(false);
     expect(defaultAdminPath('super_admin')).toBe('/users/models');
-    expect(defaultAdminPath('admin')).toBe('/projects/list');
+    expect(defaultAdminPath('admin')).toBe('/task-runner/tasks');
   });
 });

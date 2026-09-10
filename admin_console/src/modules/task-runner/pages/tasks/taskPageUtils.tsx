@@ -108,22 +108,15 @@ export function buildTaskUpdatePayload(values: TaskFormValues): UpdateTaskPayloa
   };
 }
 
-export const taskProfileValues: TaskProfile[] = ['default', 'chatos_plan'];
-
 export const taskProfileColorMap: Record<TaskProfile, string> = {
   default: 'default',
-  chatos_plan: 'geekblue',
 };
 
 export function taskProfileLabel(
   profile: string | undefined,
   t: TranslateFn,
-  requiresExecution?: boolean,
 ): string {
-  if (profile === 'chatos_plan' && requiresExecution !== true) {
-    return t('tasks.profile.chatosPlan');
-  }
-  return t('tasks.profile.default');
+  return profile === 'default' ? t('tasks.profile.default') : (profile || '-');
 }
 
 export const statusColorMap: Record<TaskStatus, string> = {

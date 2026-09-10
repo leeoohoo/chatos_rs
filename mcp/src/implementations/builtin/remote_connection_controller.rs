@@ -61,7 +61,6 @@ impl RemoteConnectionControllerService {
             let reason = "remote_connection_controller 缺少 user_id 上下文".to_string();
             service.registry.register_unavailable_tools(
                 [
-                    "list_connections",
                     "test_connection",
                     "run_command",
                     "list_directory",
@@ -74,14 +73,28 @@ impl RemoteConnectionControllerService {
             return Ok(service);
         }
 
-        let require_connection_id = bound.default_remote_connection_id.is_none();
-        service.register_list_connections(bound.clone(), opts.store.clone());
-        service.register_test_connection(bound.clone(), opts.store.clone(), require_connection_id);
-        service.register_run_command(bound.clone(), opts.store.clone(), require_connection_id);
-        service.register_list_directory(bound.clone(), opts.store.clone(), require_connection_id);
-        service.register_read_file(bound.clone(), opts.store.clone(), require_connection_id);
-        service.register_download_file(bound.clone(), opts.store.clone(), require_connection_id);
-        service.register_upload_file(bound, opts.store, require_connection_id);
+        if bound.default_remote_connection_id.is_none() {
+            service.registry.register_unavailable_tools(
+                [
+                    "test_connection",
+                    "run_command",
+                    "list_directory",
+                    "read_file",
+                    "download_file",
+                    "upload_file",
+                ],
+                "remote_connection_controller requires a program-bound remote connection"
+                    .to_string(),
+            );
+            return Ok(service);
+        }
+
+        service.register_test_connection(bound.clone(), opts.store.clone());
+        service.register_run_command(bound.clone(), opts.store.clone());
+        service.register_list_directory(bound.clone(), opts.store.clone());
+        service.register_read_file(bound.clone(), opts.store.clone());
+        service.register_download_file(bound.clone(), opts.store.clone());
+        service.register_upload_file(bound, opts.store);
         Ok(service)
     }
 

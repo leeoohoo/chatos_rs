@@ -295,7 +295,7 @@ internal sealed class PluginRelayHandler(
             {
                 throw new PluginRuntimeException("Plugin is not installed, is disabled, or its Release does not match.");
             }
-            var result = operation == "skill_activate"
+            var skillResult = operation == "skill_activate"
                 ? PluginSkillSnapshotLoader.Activate(record, componentKey, expectedSnapshot)
                 : ReadSkillResource(record, componentKey, expectedSnapshot, body);
             return RelayHandlerResult.Ok(JsonSerializer.SerializeToElement(new
@@ -308,7 +308,7 @@ internal sealed class PluginRelayHandler(
                 invocation_id = invocationId,
                 adapter_session_id = adapterSessionId,
                 operation,
-                result,
+                result = skillResult,
             }, JsonOptions));
         }
         var toolName = RequiredString(body, "tool_name");

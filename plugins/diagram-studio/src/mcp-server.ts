@@ -27,7 +27,7 @@ import {
 } from './generation-guides.js';
 
 const SERVER_NAME = 'chatos-diagram-studio';
-const SERVER_VERSION = '0.3.4';
+const SERVER_VERSION = '0.4.0';
 const store = new DiagramDocumentStore();
 const scopeKey = runtimeDataScopeFingerprint(store.rootDirectory);
 const generationScopeKey = runtimeGenerationScopeFingerprint(store.rootDirectory);
@@ -50,16 +50,17 @@ const diagramSkillGate = {
         flowchart: 'diagram-flowchart',
         swimlane: 'diagram-swimlane',
         topology: 'diagram-topology',
-        sequence: 'diagram-sequence'
+        sequence: 'diagram-sequence',
+        mindmap: 'diagram-mindmap'
       }
     }
   }
 };
 
 const generatedDiagramProperties = {
-  source: { type: 'string', minLength: 1, maxLength: 2_097_152, description: 'Complete PlantUML source using stable unique ASCII aliases for structural declarations.' },
+  source: { type: 'string', minLength: 1, maxLength: 2_097_152, description: 'Complete PlantUML source. Use stable unique ASCII aliases for structural diagrams and stable source order for mind-map topics.' },
   title: { type: 'string', minLength: 1, maxLength: 240, description: 'User-facing title matching the active generation plan.' },
-  kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'], description: 'Explicit diagram kind matching the active generation plan.' },
+  kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence', 'mindmap'], description: 'Explicit diagram kind matching the active generation plan.' },
   artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$', description: 'Stable logical identity used to resolve the active generation plan internally.' },
   idempotencyKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$', description: 'Stable key for retrying this exact write without creating a duplicate.' },
   layoutDirection: { type: 'string', enum: ['RIGHT', 'DOWN'], description: 'Optional primary reading direction. Defaults from the diagram kind.' },
@@ -70,7 +71,7 @@ const generatedDiagramProperties = {
     items: {
       type: 'object',
       properties: {
-        alias: { type: 'string', minLength: 1, maxLength: 128 },
+        alias: { type: 'string', minLength: 1, maxLength: 128, description: 'PlantUML alias, or the stable mindmap-N preorder identifier for a mind-map topic.' },
         sourceReferences: {
           type: 'array',
           minItems: 1,
@@ -93,7 +94,7 @@ const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'] },
+        kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence', 'mindmap'] },
         mode: { type: 'string', minLength: 1, maxLength: 64 },
         artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$', description: 'Stable logical identity in the injected scope. A new key creates a diagram; an existing key revises that diagram.' },
         title: { type: 'string', minLength: 1, maxLength: 240 },
@@ -202,7 +203,7 @@ const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'] },
+        kind: { type: 'string', enum: ['architecture', 'flowchart', 'swimlane', 'topology', 'sequence', 'mindmap'] },
         title: { type: 'string', minLength: 1, maxLength: 240 },
         artifactKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$' },
         idempotencyKey: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$' },
@@ -390,7 +391,7 @@ function importResult(
 }
 
 function requiredDiagramKind(value: unknown): DiagramKind {
-  if (typeof value !== 'string' || !['architecture', 'flowchart', 'swimlane', 'topology', 'sequence'].includes(value)) {
+  if (typeof value !== 'string' || !['architecture', 'flowchart', 'swimlane', 'topology', 'sequence', 'mindmap'].includes(value)) {
     throw new Error('A valid diagram kind is required.');
   }
   return value as DiagramKind;

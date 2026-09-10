@@ -104,35 +104,4 @@ impl MongoStore {
             .await
             .map_err(|err| format!("parse User Service model response failed: {err}"))
     }
-
-    pub(in crate::store) async fn list_task_projects(
-        &self,
-    ) -> Result<Vec<TaskProjectRecord>, String> {
-        self.load_collection_items_with_query(
-            &self.task_projects,
-            doc! {},
-            Some(mongo_find_options(
-                doc! { "updated_at": -1, "id": -1 },
-                None,
-                None,
-            )),
-        )
-        .await
-    }
-
-    pub(in crate::store) async fn get_task_project(
-        &self,
-        id: &str,
-    ) -> Result<Option<TaskProjectRecord>, String> {
-        self.find_by_id(&self.task_projects, id).await
-    }
-
-    pub(in crate::store) async fn save_task_project(
-        &self,
-        project: TaskProjectRecord,
-    ) -> Result<TaskProjectRecord, String> {
-        self.upsert_by_id(&self.task_projects, &project.id, &project)
-            .await?;
-        Ok(project)
-    }
 }

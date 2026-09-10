@@ -2,7 +2,6 @@
 # Only production source files above 800 lines belong here.
 # expires_on is inclusive; expired, stale, missing, and over-budget entries fail CI.
 crates/chatos_cloud_agent_runtime/src/lib.rs	2357	2026-10-31	3.0 hardening: split cloud Agent runtime assembly and transport contracts
-project_management_service/backend/src/api/run_workspace.rs	2108	2026-10-31	3.0 hardening: split workspace run routing, validation, and response mapping
 task_runner_service/backend/src/services/run_model_phase/supply_chain.rs	1938	2026-10-31	3.0 hardening: split model supply-chain selection, policy, and diagnostics
 task_runner_service/backend/src/api/chatos_internal.rs	1901	2026-09-30	Phase 1E: split internal message task, retry, plugin projection, and response handlers
 plugins/browser/crates/browser-cdp-core/src/runtime.rs	1887	2026-10-31	3.0 plugin import: split browser runtime lifecycle and session state
@@ -16,7 +15,6 @@ config_center_service/backend/src/state/support.rs	1312	2026-10-31	3.0 hardening
 config_center_service/backend/src/state/maintenance.rs	1242	2026-10-31	3.0 hardening: split maintenance state transitions and reconciliation
 mcp_management_service/backend/src/api/runtime_sessions.rs	1237	2026-10-31	3.0 hardening: split Runtime Session creation, resolution, and authorization
 mcp_management_service/backend/src/runtime/execution_scope_store.rs	1177	2026-10-31	3.0 hardening: split execution-scope persistence and lifecycle rules
-crates/chatos_project_execution/src/lib.rs	1148	2026-09-30	Phase 1E: split project execution graph, status, planning, identity, and feedback modules
 task_runner_service/backend/src/services/tool_runtime/mcp_server/prerequisite_creation.rs	1122	2026-10-31	3.0 hardening: split MCP prerequisite resolution and creation
 task_runner_service/backend/src/services/workspace_execution.rs	1122	2026-10-31	3.0 hardening: split workspace execution routing and lifecycle operations
 docker/deploy.sh	1110	2026-10-31	3.0 hardening: split deployment validation, lifecycle, runtime mTLS preflight, and reporting helpers
@@ -41,4 +39,3 @@ memory_engine/backend/src/services/summary/thread_summary/execution.rs	842	2026-
 local_connector_service/backend/src/relay.rs	827	2026-10-31	3.0 hardening: split relay connection, request, and recovery paths
 chatos/backend/src/api/agent_chat/task_runner_callback.rs	824	2026-10-31	3.0 hardening: split task callback validation and conversation projection
 chatos/backend/src/services/user_service_api_client.rs	821	2026-10-31	3.0 hardening: split User Service client authentication, model, and project operations
-project_management_service/backend/src/store/mongo.rs	818	2026-10-31	3.0 hardening: finish splitting Mongo store entrypoint and shared transaction helpers

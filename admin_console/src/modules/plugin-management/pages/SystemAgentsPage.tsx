@@ -535,21 +535,8 @@ function mergeBindingModes(left: McpBindingMode, right: McpBindingMode): McpBind
 
 function bindingConditionEntries(item: MergedMcpBindingItem): Array<[string, string]> {
   const entries: Array<[string, string]> = [];
-  const hasPlanVariant = item.variants.some(
-    (variant) => normalizeConditionValue(variant.conditions.task_profile) === 'chatos_plan',
-  );
-  const hasDefaultVariant = item.variants.some(
-    (variant) => !normalizeConditionValue(variant.conditions.task_profile),
-  );
-
-  if (hasDefaultVariant && item.variants.length > 1) {
-    entries.push(['mode', '普通模式']);
-  }
-  if (hasPlanVariant) {
-    entries.push(['mode', '规划模式']);
-  }
-
   for (const [label, value] of item.variants.flatMap((variant) => [
+    ['task_profile', variant.conditions.task_profile || ''] as [string, string],
     ['schedule_mode', variant.conditions.schedule_mode || ''] as [string, string],
   ])) {
     if (value && !entries.some((entry) => entry[0] === label && entry[1] === value)) {
@@ -572,21 +559,16 @@ function toolPolicyPreview(item: MergedMcpBindingItem): string {
   }
   return item.variants
     .map((variant) => {
-      const label = variantDisplayLabel(variant.conditions, item.variants.length);
+      const label = variantDisplayLabel(variant.conditions);
       return `${label}: ${renderToolPolicyText(variant.tool_allowlist, variant.tool_blocklist)}`;
     })
     .join(' · ');
 }
 
-function variantDisplayLabel(conditions: BindingConditions, variantCount: number): string {
-  const taskProfile = normalizeConditionValue(conditions.task_profile);
-  if (taskProfile === 'chatos_plan') {
-    return '规划';
-  }
-  if (!taskProfile && variantCount > 1) {
-    return '普通';
-  }
-  return '规则';
+function variantDisplayLabel(conditions: BindingConditions): string {
+  return normalizeConditionValue(conditions.task_profile)
+    || normalizeConditionValue(conditions.schedule_mode)
+    || '规则';
 }
 
 function renderToolPolicyText(allowlist: string[], blocklist: string[]): string {

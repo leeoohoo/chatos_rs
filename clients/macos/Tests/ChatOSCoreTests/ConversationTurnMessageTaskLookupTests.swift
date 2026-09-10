@@ -3,7 +3,7 @@ import XCTest
 @testable import ChatOSCore
 
 final class ConversationTurnMessageTaskLookupTests: XCTestCase {
-    func testProjectExecutionGroupIsUsedForLegacyGraphLookup() {
+    func testUserMessageIsDefaultGraphLookup() {
         let turn = ConversationTurn(
             id: "turn-1",
             sessionID: "conversation-1",
@@ -15,18 +15,13 @@ final class ConversationTurnMessageTaskLookupTests: XCTestCase {
                 text: "执行九个任务",
                 createdAt: .distantPast
             ),
-            projectExecutionContext: ProjectExecutionContext(
-                projectID: "project-1",
-                requirementID: "requirement-1",
-                executionGroupID: "execution-group-1"
-            ),
             status: .completed,
             startedAt: .distantPast
         )
 
         XCTAssertEqual(
             turn.resolvedMessageTaskLookup.sourceUserMessageID,
-            "execution-group-1"
+            "message-1"
         )
     }
 
@@ -43,7 +38,6 @@ final class ConversationTurnMessageTaskLookupTests: XCTestCase {
                 createdAt: .distantPast
             ),
             messageTaskLookup: MessageTaskLookup(sourceUserMessageID: "source-1"),
-            projectExecutionContext: ProjectExecutionContext(executionGroupID: "group-1"),
             status: .completed,
             startedAt: .distantPast
         )

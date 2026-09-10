@@ -34,7 +34,6 @@ const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
   'task-runner': { label: 'Task Runner', order: 20 },
   'mcp-management-service': { label: 'MCP 管理', order: 30 },
   'memory-engine': { label: 'Memory Engine', order: 40 },
-  'project-service': { label: '项目服务', order: 50 },
   'user-service': { label: '用户服务', order: 70 },
   'plugin-management-service': { label: '插件管理', order: 80 },
   'local-connector-service': { label: '本地连接器', order: 90 },
@@ -54,7 +53,6 @@ function configAreaKey(definition: ConfigDefinition) {
   if (categoryRoot === 'task runner') return 'task-runner';
   if (categoryRoot === 'mcp management') return 'mcp-management-service';
   if (categoryRoot === 'memory engine') return 'memory-engine';
-  if (categoryRoot === 'project service') return 'project-service';
   if (categoryRoot === 'user service') return 'user-service';
   if (categoryRoot === 'plugin management') return 'plugin-management-service';
   if (categoryRoot === 'local connector') return 'local-connector-service';
@@ -383,7 +381,6 @@ export function ConfigEditor({ environment }: { environment: string }) {
                 'chatos-backend',
                 'task-runner',
                 'user-service',
-                'project-service',
                 'plugin-management-service',
                 'local-connector-service',
                 'memory-engine',

@@ -87,7 +87,7 @@ pub(super) fn is_cancelled_task_runner_callback_message(message: &Message) -> bo
 }
 
 pub(super) fn is_task_runner_async_plan_summary_message(message: &Message) -> bool {
-    let is_task_runner_async_plan_mode = message
+    let is_task_runner_async_plan_message = message
         .message_mode
         .as_deref()
         .map(str::trim)
@@ -109,7 +109,7 @@ pub(super) fn is_task_runner_async_plan_summary_message(message: &Message) -> bo
         return false;
     }
 
-    is_task_runner_async_plan_mode && has_user_visible_summary
+    is_task_runner_async_plan_message && has_user_visible_summary
 }
 
 pub(super) fn normalize_task_runner_async_user_status_for_display(

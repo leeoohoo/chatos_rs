@@ -1,9 +1,9 @@
-import { contentSlot, namedItemSlots, numericLibraryProp, splitPanelSlots, type UiEditableSlot } from './ui-library';
+import { contentSlot, namedItemSlots, numericLibraryProp, splitPanelSlots, type UiEditableSlot, type UiSlotComponentContract } from './ui-library';
 import type { WebDesignComponent } from './schema';
 
 export type AntdEditableSlot = UiEditableSlot;
 
-export function editableSlotsForAntdComponent(component: WebDesignComponent): AntdEditableSlot[] {
+export function editableSlotsForAntdComponent(component: UiSlotComponentContract): AntdEditableSlot[] {
   if (component.library?.name !== 'antd') return [];
   const name = component.library.component;
   const props = component.library.props;

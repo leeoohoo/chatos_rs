@@ -128,16 +128,16 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
         .internal_api_secrets
         .insert("task-runner".to_string(), "task-runner-secret".to_string());
     state.config.internal_api_secrets.insert(
-        "project-service".to_string(),
-        "project-service-secret".to_string(),
+        "chatos-backend".to_string(),
+        "chatos-backend-secret".to_string(),
     );
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
         HeaderValue::from_static("task-runner"),
     );
-    let project_token = chatos_service_runtime::issue_internal_service_token(
-        "project-service-secret",
+    let chatos_token = chatos_service_runtime::issue_internal_service_token(
+        "chatos-backend-secret",
         "task-runner",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
@@ -146,7 +146,7 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
     .expect("issue impersonation token");
     headers.insert(
         "x-plugin-management-internal-token",
-        HeaderValue::from_str(project_token.as_str()).expect("token header"),
+        HeaderValue::from_str(chatos_token.as_str()).expect("token header"),
     );
 
     let err =

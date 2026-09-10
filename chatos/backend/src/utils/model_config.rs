@@ -3,6 +3,7 @@
 
 pub use chatos_ai_runtime::model_config::{
     default_base_url_for_provider, normalize_provider, normalize_thinking_level,
+    supported_thinking_levels,
 };
 
 #[cfg(test)]

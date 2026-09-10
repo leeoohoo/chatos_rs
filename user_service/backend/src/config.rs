@@ -35,7 +35,6 @@ pub struct AppConfig {
     pub harness_space_prefix: String,
     pub harness_request_timeout_ms: i64,
     pub harness_project_pat_prefix: String,
-    pub user_service_internal_api_secret: Option<String>,
     pub chatos_internal_api_secret: Option<String>,
     pub smtp_host: Option<String>,
     pub smtp_port: u16,
@@ -137,9 +136,6 @@ impl AppConfig {
             harness_project_pat_prefix: require_config_center_text(
                 "USER_SERVICE_HARNESS_PROJECT_PAT_PREFIX",
             )?,
-            user_service_internal_api_secret: Some(require_config_center_secret(
-                "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
-            )?),
             chatos_internal_api_secret: Some(require_config_center_secret(
                 "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
             )?),
@@ -188,14 +184,6 @@ impl AppConfig {
             &[
                 DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN,
                 "change_me_user_service_memory_engine_secret",
-            ],
-        )?;
-        validate_production_secret(
-            "PROJECT_SERVICE_USER_SERVICE_INTERNAL_API_SECRET",
-            config.user_service_internal_api_secret.as_deref(),
-            &[
-                "change_me_user_service_internal_secret",
-                "change_me_project_service_user_service_secret",
             ],
         )?;
         validate_production_secret(

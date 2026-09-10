@@ -209,6 +209,7 @@ mod tests {
             tenant_id: "tenant".to_string(),
             subject_id: "subject".to_string(),
             project_id: None,
+            project_context: None,
             task_profile: TASK_PROFILE_DEFAULT.to_string(),
             creator_user_id: None,
             creator_username: None,

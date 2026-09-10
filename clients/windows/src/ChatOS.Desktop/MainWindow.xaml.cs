@@ -35,7 +35,8 @@ public sealed partial class MainWindow : Window
         AppPreferencesManager preferences,
         PetWindowController petWindowController,
         PluginVisualSessionController visualSessionController,
-        PluginArtifactsWindow artifactsWindow)
+        PluginArtifactsWindow artifactsWindow,
+        PluginApplicationsPage pluginApplicationsPage)
     {
         ViewModel = viewModel;
         WorkspaceHost = workspaceHostPage;
@@ -50,6 +51,7 @@ public sealed partial class MainWindow : Window
         PetWindowController = petWindowController;
         VisualSessionController = visualSessionController;
         ArtifactsWindow = artifactsWindow;
+        PluginApplicationsPage = pluginApplicationsPage;
         InitializeComponent();
 
         ExtendsContentIntoTitleBar = true;
@@ -67,9 +69,12 @@ public sealed partial class MainWindow : Window
         NotepadPage.CloseRequested += OnNotepadCloseRequested;
         Preferences.Changed += OnPreferencesChanged;
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+        WorkspaceHost.ProjectTabRequested += async (_, tab) => await ViewModel.OpenProjectTabAsync(tab);
         Approvals.PendingChanged += OnPendingApprovalsChanged;
         Activated += OnActivated;
     }
+
+    private PluginApplicationsPage PluginApplicationsPage { get; }
 
     public MainWindowViewModel ViewModel { get; }
 
@@ -127,6 +132,7 @@ public sealed partial class MainWindow : Window
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainWindowViewModel.SelectedResource) && ViewModel.IsPublishingWorkspace) return;
         if (e.PropertyName is nameof(MainWindowViewModel.IsAuthenticated) or
             nameof(MainWindowViewModel.IsBusy) or
             nameof(MainWindowViewModel.ErrorMessage) or
@@ -138,6 +144,11 @@ public sealed partial class MainWindow : Window
                 if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.LocalConnector)
                 {
                     ShowSettings();
+                }
+                else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.Applications)
+                {
+                    WorkspaceContent.Content = PluginApplicationsPage;
+                    _ = PluginApplicationsPage.OpenAsync();
                 }
                 else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.RemoteConnection)
                 {
@@ -160,6 +171,7 @@ public sealed partial class MainWindow : Window
                 if (!ViewModel.IsAuthenticated)
                 {
                     _ = LocalTerminalPage.CloseSessionAsync();
+                    _ = PluginApplicationsPage.ResetAsync();
                 }
             }
             UpdateVisualState();
@@ -183,7 +195,7 @@ public sealed partial class MainWindow : Window
     private void OnNotepadCloseRequested(object? sender, EventArgs e)
     {
         _ = NotepadPage.ViewModel.CloseAsync();
-        ShowWorkspace();
+        RestoreSelectedContent();
     }
 
     private async void OnSettingsCloseRequested(object? sender, EventArgs e)
@@ -193,7 +205,7 @@ public sealed partial class MainWindow : Window
         {
             ViewModel.SelectedResource = _lastWorkspaceResource;
         }
-        ShowWorkspace();
+        RestoreSelectedContent();
     }
 
     private void ShowSettings() => WorkspaceContent.Content = SettingsPage;
@@ -234,6 +246,108 @@ public sealed partial class MainWindow : Window
     {
         ViewModel.SelectedResource = _lastWorkspaceResource;
         ShowWorkspace();
+    }
+
+    private async void OnCreateLocalProjectClicked(object sender, RoutedEventArgs e)
+    {
+        var account = ViewModel.AccountGeneration;
+        try
+        {
+            await ViewModel.RefreshLocalConnectorAsync();
+            if (account != ViewModel.AccountGeneration || !ViewModel.IsAuthenticated) return;
+            var workspaces = ViewModel.LocalConnectorStatus?.Workspaces ?? [];
+            if (workspaces.Count == 0)
+                throw new InvalidOperationException(ViewModel.Localization.Text(
+                    "请先在设置中为本机 Connector 添加授权工作区。",
+                    "Add an authorized workspace for the local Connector in Settings first."));
+            var name = new TextBox { Header = ViewModel.Localization.Text("项目名称", "Project name") };
+            var workspace = new ComboBox
+            {
+                Header = ViewModel.Localization.Text("授权工作区", "Authorized workspace"),
+                ItemsSource = workspaces,
+                DisplayMemberPath = nameof(LocalConnectorWorkspaceStatus.AbsoluteRoot),
+                SelectedIndex = 0,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
+            var relative = new TextBox
+            {
+                Header = ViewModel.Localization.Text("已有子目录（留空使用工作区根目录）", "Existing subdirectory (blank for workspace root)"),
+                PlaceholderText = "apps/example",
+            };
+            var content = new StackPanel { Spacing = 12, MinWidth = 400 };
+            content.Children.Add(name);
+            content.Children.Add(workspace);
+            content.Children.Add(relative);
+            content.Children.Add(new TextBlock
+            {
+                Text = ViewModel.Localization.Text("项目只保存在本机，不会创建 Git 仓库或上传文件。", "Projects are stored on this device. No Git repository is created and no files are uploaded."),
+                TextWrapping = TextWrapping.Wrap,
+            });
+            var dialog = new ContentDialog
+            {
+                XamlRoot = RootGrid.XamlRoot, Title = ViewModel.Localization.CreateLocalProject,
+                Content = content, PrimaryButtonText = ViewModel.Localization.Text("创建", "Create"),
+                CloseButtonText = ViewModel.Localization.Text("取消", "Cancel"),
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (workspace.SelectedItem is not LocalConnectorWorkspaceStatus selected) return;
+            await ViewModel.CreateProjectAsync(account, new LocalProjectDraft(name.Text.Trim(), selected.Id, relative.Text.Trim()), selected.AbsoluteRoot);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            if (account == ViewModel.AccountGeneration) ViewModel.ErrorMessage = exception.Message;
+        }
+    }
+
+    private async void OnRenameLocalProjectClicked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.SelectedResource is not { Kind: WorkspaceResourceKind.Project } selected) return;
+        var account = ViewModel.AccountGeneration;
+        try
+        {
+            var project = await ViewModel.GetLocalProjectAsync(account, selected.Id);
+            var name = new TextBox { Text = project.Draft.Name, MinWidth = 360 };
+            var dialog = new ContentDialog
+            {
+                XamlRoot = RootGrid.XamlRoot, Title = ViewModel.Localization.RenameLocalProject,
+                Content = name, PrimaryButtonText = ViewModel.Localization.Text("保存", "Save"),
+                CloseButtonText = ViewModel.Localization.Text("取消", "Cancel"),
+            };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                await ViewModel.RenameProjectAsync(account, project, name.Text.Trim());
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            if (account == ViewModel.AccountGeneration) ViewModel.ErrorMessage = exception.Message;
+        }
+    }
+
+    private async void OnRemoveLocalProjectClicked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.SelectedResource is not { Kind: WorkspaceResourceKind.Project } selected) return;
+        var account = ViewModel.AccountGeneration;
+        try
+        {
+            var project = await ViewModel.GetLocalProjectAsync(account, selected.Id);
+            var dialog = new ContentDialog
+            {
+                XamlRoot = RootGrid.XamlRoot, Title = ViewModel.Localization.RemoveLocalProject,
+                Content = ViewModel.Localization.Text(
+                    $"移除“{project.Draft.Name}”？只移除本机项目记录，保留目录、Git 仓库、历史会话及插件数据。",
+                    $"Remove '{project.Draft.Name}'? Only the local project entry is removed. Files, Git, conversations and plugin data are retained."),
+                PrimaryButtonText = ViewModel.Localization.Text("移除", "Remove"),
+                CloseButtonText = ViewModel.Localization.Text("取消", "Cancel"),
+            };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                await ViewModel.RemoveProjectAsync(account, project);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            if (account == ViewModel.AccountGeneration) ViewModel.ErrorMessage = exception.Message;
+        }
     }
 
     private async void OnCreateLocalTerminalClicked(object sender, RoutedEventArgs e)
@@ -292,6 +406,17 @@ public sealed partial class MainWindow : Window
     {
         WorkspaceContent.Content = WorkspaceHost;
         WorkspaceHost.Configure(ViewModel.SelectedResource);
+    }
+
+    private void RestoreSelectedContent()
+    {
+        if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.Applications)
+        {
+            WorkspaceContent.Content = PluginApplicationsPage;
+            _ = PluginApplicationsPage.OpenAsync();
+            return;
+        }
+        ShowWorkspace();
     }
 
     private void OnPreferencesChanged(object? sender, AppPreferences preferences)

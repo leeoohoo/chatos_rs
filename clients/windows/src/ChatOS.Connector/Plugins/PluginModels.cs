@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace ChatOS.Connector.Plugins;
@@ -54,6 +55,9 @@ internal sealed record PluginManifest
     [JsonPropertyName("version")]
     public required string Version { get; init; }
 
+    [JsonPropertyName("description")]
+    public string Description { get; init; } = string.Empty;
+
     [JsonPropertyName("skills")]
     public IReadOnlyList<PluginPathReference> Skills { get; init; } = Array.Empty<PluginPathReference>();
 
@@ -66,6 +70,9 @@ internal sealed record PluginManifest
 
     [JsonPropertyName("apps")]
     public IReadOnlyList<PluginConnectedApp> Apps { get; init; } = Array.Empty<PluginConnectedApp>();
+
+    [JsonPropertyName("ui")]
+    public IReadOnlyList<PluginUiContribution> Ui { get; init; } = Array.Empty<PluginUiContribution>();
 
     [JsonPropertyName("dependencies")]
     public PluginDependencies Dependencies { get; init; } = new();
@@ -100,10 +107,84 @@ internal sealed record PluginRuntimeContext
     public bool AppliesTo(string componentKey) => Components.Contains(componentKey, StringComparer.Ordinal);
 }
 
+[JsonConverter(typeof(PluginPathReferenceConverter))]
 internal sealed record PluginPathReference
 {
     [JsonPropertyName("path")]
     public string? Path { get; init; }
+}
+
+internal sealed class PluginPathReferenceConverter : JsonConverter<PluginPathReference>
+{
+    public override PluginPathReference Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            return new PluginPathReference { Path = reader.GetString() };
+        }
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            throw new JsonException("Plugin path reference must be a string or object.");
+        }
+        using var document = JsonDocument.ParseValue(ref reader);
+        return new PluginPathReference
+        {
+            Path = document.RootElement.TryGetProperty("path", out var path) &&
+                path.ValueKind == JsonValueKind.String
+                    ? path.GetString()
+                    : null,
+        };
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        PluginPathReference value,
+        JsonSerializerOptions options) => writer.WriteStringValue(value.Path);
+}
+
+internal sealed record PluginUiContribution
+{
+    [JsonPropertyName("componentKey")]
+    public required string ComponentKey { get; init; }
+
+    [JsonPropertyName("source")]
+    public required PluginPathReference Source { get; init; }
+
+    [JsonPropertyName("title")]
+    public string? Title { get; init; }
+
+    [JsonPropertyName("surface")]
+    public string? Surface { get; init; }
+
+    [JsonPropertyName("assets")]
+    public IReadOnlyList<string> Assets { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("bridgeCapabilities")]
+    public IReadOnlyList<string> BridgeCapabilities { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("runtime")]
+    public PluginUiRuntime? Runtime { get; init; }
+}
+
+internal sealed record PluginUiRuntime
+{
+    [JsonPropertyName("type")]
+    public required string Type { get; init; }
+
+    [JsonPropertyName("bin")]
+    public required string Bin { get; init; }
+
+    [JsonPropertyName("args")]
+    public IReadOnlyList<string> Arguments { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("healthPath")]
+    public string? HealthPath { get; init; }
+
+    [JsonPropertyName("launchTimeoutMs")]
+    public int? LaunchTimeoutMilliseconds { get; init; }
 }
 
 internal sealed record PluginMcpServer
@@ -186,4 +267,19 @@ internal sealed record PluginInterface
 {
     [JsonPropertyName("displayName")]
     public string? DisplayName { get; init; }
+
+    [JsonPropertyName("shortDescription")]
+    public string? ShortDescription { get; init; }
+
+    [JsonPropertyName("longDescription")]
+    public string? LongDescription { get; init; }
+
+    [JsonPropertyName("brandColor")]
+    public string? BrandColor { get; init; }
+
+    [JsonPropertyName("logo")]
+    public PluginPathReference? Logo { get; init; }
+
+    [JsonPropertyName("logoDark")]
+    public PluginPathReference? LogoDark { get; init; }
 }

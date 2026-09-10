@@ -16,30 +16,16 @@ impl TaskRunnerMcpService {
             method = %method,
             "task runner mcp jsonrpc dispatch entered"
         );
-        if request_context.is_chatos_plan_task_profile()
-            && !request_context.has_concrete_project_scope()
+        if let Err(message) =
+            crate::models::normalize_task_profile(request_context.task_profile.as_deref())
         {
             return JsonRpcResponse {
                 jsonrpc: "2.0",
                 id,
                 result: None,
                 error: Some(JsonRpcError {
-                    code: -32000,
-                    message: "Chatos Plan mode requires concrete project_id".to_string(),
-                }),
-            };
-        }
-        if request_context.tool_profile() == McpToolProfile::ProjectRequirementExecutionPlanner
-            && !request_context.has_concrete_project_scope()
-        {
-            return JsonRpcResponse {
-                jsonrpc: "2.0",
-                id,
-                result: None,
-                error: Some(JsonRpcError {
-                    code: -32000,
-                    message: "Project requirement execution planner requires concrete project_id"
-                        .to_string(),
+                    code: -32602,
+                    message,
                 }),
             };
         }

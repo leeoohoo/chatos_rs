@@ -11,10 +11,11 @@ use crate::providers::decode_cancel_notification_response;
 use crate::providers::{ProviderCallOutcome, ProviderCancelOutcome};
 use crate::runtime::RuntimeSessionSnapshot;
 
-use super::super::project_service::decode_jsonrpc_response;
+use super::super::decode_jsonrpc_response;
 use super::{LocalConnectorProvider, ProviderCallError};
 use crate::providers::managed_tool_call_params;
 use chatos_mcp_management_sdk::ResolvedMcpRoute;
+use chatos_plugin_management_sdk::SystemMcpKey;
 
 impl LocalConnectorProvider {
     pub(in crate::providers) async fn call_tool(
@@ -41,6 +42,8 @@ impl LocalConnectorProvider {
                 });
             }
         }
+        let arguments =
+            bind_remote_connection_arguments(snapshot, route, original_tool_name, arguments)?;
         let call_timeout = super::local_connector_call_timeout(
             original_tool_name,
             &arguments,
@@ -122,4 +125,39 @@ impl LocalConnectorProvider {
             })?;
         decode_cancel_notification_response(status, bytes.as_slice(), "Local Connector Provider")
     }
+}
+
+fn bind_remote_connection_arguments(
+    snapshot: &RuntimeSessionSnapshot,
+    route: &ResolvedMcpRoute,
+    original_tool_name: &str,
+    arguments: Value,
+) -> Result<Value, ProviderCallError> {
+    let descriptor = chatos_mcp::system_mcp_descriptor(SystemMcpKey::RemoteConnectionController);
+    if route.resource_id != descriptor.resource_id {
+        return Ok(arguments);
+    }
+    if original_tool_name == "list_connections" {
+        return Err(ProviderCallError::invalid_request(
+            "the remote connection is already bound to this runtime session",
+        ));
+    }
+    let bound_connection_id = snapshot
+        .remote_connection_route
+        .as_ref()
+        .map(|target| target.remote_connection_id.trim())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ProviderCallError::provider_unavailable(
+                "Remote Connection route is missing its immutable connection binding",
+            )
+        })?;
+    let mut arguments = arguments.as_object().cloned().ok_or_else(|| {
+        ProviderCallError::invalid_request("remote connection tool arguments must be an object")
+    })?;
+    arguments.insert(
+        "connection_id".to_string(),
+        Value::String(bound_connection_id.to_string()),
+    );
+    Ok(Value::Object(arguments))
 }

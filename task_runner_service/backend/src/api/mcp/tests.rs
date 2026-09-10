@@ -1,9 +1,44 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::{SystemAgentKey, CHATOS_PLAN_TASK_PROFILE};
+use crate::models::TASK_PROFILE_DEFAULT;
+use chatos_agent::SystemAgentKey;
 
 use super::*;
+
+#[test]
+fn obsolete_planning_header_cannot_select_a_task_profile() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-chatos-plan-mode",
+        axum::http::HeaderValue::from_static("true"),
+    );
+    let context = mcp_request_context_from_headers(&headers).unwrap();
+    assert!(context.task_profile.is_none());
+    assert!(context.tool_profile.is_none());
+}
+
+#[test]
+fn capability_query_decodes_client_snapshot_without_accepting_authorization_envelope() {
+    let snapshot = crate::services::test_project_snapshot("project-1");
+    let json = serde_json::to_string(&snapshot).unwrap();
+    let uri = format!(
+        "/api/tasks/capabilities/catalog?project_id=project-1&project_context={}",
+        urlencoding::encode(&json)
+    )
+    .parse()
+    .unwrap();
+    let Query(query) = Query::<TaskCapabilityCatalogQuery>::try_from_uri(&uri).unwrap();
+    assert_eq!(query.project_context, Some(snapshot));
+    let envelope = r#"{"snapshot":{},"owner_user_id":"forged","workspace_fingerprint":"forged"}"#;
+    let uri = format!(
+        "/api/tasks/capabilities/catalog?project_context={}",
+        urlencoding::encode(envelope)
+    )
+    .parse()
+    .unwrap();
+    assert!(Query::<TaskCapabilityCatalogQuery>::try_from_uri(&uri).is_err());
+}
 
 #[test]
 fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
@@ -56,17 +91,10 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
     );
     headers.insert(
         "x-mcp-management-task-profile",
-        format!(" {CHATOS_PLAN_TASK_PROFILE} ")
+        format!(" {TASK_PROFILE_DEFAULT} ")
             .parse()
             .expect("valid header"),
     );
-    headers.insert(
-        "x-mcp-management-expected-project-task-ids",
-        " project-task-b,project-task-a,project-task-a "
-            .parse()
-            .expect("valid header"),
-    );
-
     let binding = mcp_management_binding_from_headers(&headers).expect("valid binding");
     assert_eq!(binding.owner_user_id, "user-1");
     assert_eq!(binding.owner_role.as_deref(), Some("super_admin"));
@@ -82,18 +110,7 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
     );
     assert_eq!(binding.source_user_message_id.as_deref(), Some("message-1"));
     assert_eq!(binding.contact_agent_id.as_deref(), Some("chatos-agent-1"));
-    assert_eq!(
-        binding.task_profile.as_deref(),
-        Some(CHATOS_PLAN_TASK_PROFILE)
-    );
-    assert_eq!(
-        binding.expected_project_task_ids,
-        std::collections::BTreeSet::from([
-            "project-task-a".to_string(),
-            "project-task-b".to_string(),
-        ])
-    );
-
+    assert_eq!(binding.task_profile.as_deref(), Some(TASK_PROFILE_DEFAULT));
     headers.insert(
         "x-mcp-management-agent-key",
         "arbitrary-agent".parse().expect("valid header"),
@@ -121,7 +138,6 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
         default_model_config_id: None,
         default_remote_connection_id: None,
         task_profile: Some(crate::models::TASK_PROFILE_DEFAULT.to_string()),
-        expected_project_task_ids: std::collections::BTreeSet::new(),
     };
 
     let timeout = bound_ask_user_prompt_timeout_ms(&binding).expect("usable session lifetime");
@@ -151,7 +167,6 @@ fn bound_task_creator_uses_chatos_agent_and_keeps_human_owner() {
         default_model_config_id: None,
         default_remote_connection_id: None,
         task_profile: Some(crate::models::TASK_PROFILE_DEFAULT.to_string()),
-        expected_project_task_ids: std::collections::BTreeSet::new(),
     };
 
     let creator = bound_task_creator(&binding, true).expect("bound ChatOS creator");
@@ -224,21 +239,5 @@ fn request_context_reads_inherited_model_header() {
     assert_eq!(
         context.default_model_config_id.as_deref(),
         Some("model-selected")
-    );
-}
-
-#[test]
-fn request_context_reads_exact_project_task_scope_header() {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-task-runner-expected-project-task-ids",
-        " task-b,task-a,task-a ".parse().expect("valid header"),
-    );
-
-    let context = mcp_request_context_from_headers(&headers).expect("valid context");
-
-    assert_eq!(
-        context.expected_project_task_ids,
-        std::collections::BTreeSet::from(["task-a".to_string(), "task-b".to_string()])
     );
 }

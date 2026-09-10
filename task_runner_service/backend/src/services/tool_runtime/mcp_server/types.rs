@@ -29,7 +29,7 @@ pub(super) use self::run::{
 };
 pub(super) use self::task::{
     reject_ai_runtime_config, BatchTaskDeleteArgs, BatchTaskRunArgs, BatchTaskStatusUpdateArgs,
-    CancelTaskArgs, CreateProjectExecutionTaskItem, CreateProjectExecutionTasksArgs,
-    CreateTaskArgs, CreateTaskWithPrerequisitesItem, CreateTasksWithPrerequisitesArgs,
-    ListTasksArgs, SetTaskPrerequisitesArgs, TaskIdArgs, UpdateTaskArgs,
+    CancelTaskArgs, CreateTaskArgs, CreateTaskWithPrerequisitesItem,
+    CreateTasksWithPrerequisitesArgs, ListTasksArgs, SetTaskPrerequisitesArgs, TaskIdArgs,
+    UpdateTaskArgs,
 };

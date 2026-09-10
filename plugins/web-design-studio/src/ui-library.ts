@@ -34,6 +34,17 @@ export interface UiEditableSlot {
   height: number;
 }
 
+export interface UiSlotComponentContract {
+  width: number;
+  height: number;
+  library?: {
+    name: string;
+    component: string;
+    variant?: string;
+    props: Record<string, unknown>;
+  };
+}
+
 export interface UiLibraryCatalog<TCategory extends string = string> {
   id: WebDesignLibraryName;
   displayName: string;
@@ -113,17 +124,17 @@ export function applyUiComponentVariant(catalog: UiLibraryCatalog, component: We
   };
 }
 
-export function numericLibraryProp(value: WebDesignJsonValue | undefined, fallback: number): number {
+export function numericLibraryProp(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-export function recordLibraryItems(value: WebDesignJsonValue | undefined): Array<Record<string, WebDesignJsonValue>> {
+export function recordLibraryItems(value: unknown): Array<Record<string, WebDesignJsonValue>> {
   return Array.isArray(value)
     ? value.filter((item): item is Record<string, WebDesignJsonValue> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
     : [];
 }
 
-export function contentSlot(component: WebDesignComponent, id: string, label: string, description: string, options: { width?: number; height?: number } = {}): UiEditableSlot {
+export function contentSlot(component: UiSlotComponentContract, id: string, label: string, description: string, options: { width?: number; height?: number } = {}): UiEditableSlot {
   return {
     id,
     label,
@@ -133,7 +144,7 @@ export function contentSlot(component: WebDesignComponent, id: string, label: st
   };
 }
 
-export function namedItemSlots(component: WebDesignComponent, prefix: string, fallbackLabel: string): UiEditableSlot[] {
+export function namedItemSlots(component: UiSlotComponentContract, prefix: string, fallbackLabel: string): UiEditableSlot[] {
   const rawItems = component.library?.props.items;
   const items = Array.isArray(rawItems) ? rawItems : [];
   return items.map((item, index) => {
@@ -153,7 +164,7 @@ export function namedItemSlots(component: WebDesignComponent, prefix: string, fa
   });
 }
 
-export function splitPanelSlots(component: WebDesignComponent, labels: [string, string] = ['面板一', '面板二']): UiEditableSlot[] {
+export function splitPanelSlots(component: UiSlotComponentContract, labels: [string, string] = ['面板一', '面板二']): UiEditableSlot[] {
   const height = Math.max(180, component.height - 56);
   return labels.map((label, index) => ({
     id: `panel-${index + 1}`,

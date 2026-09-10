@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod call_types;
 mod cancel_response;
 mod canonical_json;
 mod chatos;
@@ -21,13 +22,14 @@ mod plugin_routes;
 mod plugin_routes_prepare;
 #[path = "plugin_routes/runtime.rs"]
 mod plugin_routes_runtime;
-mod project_service;
 mod task_runner;
 
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
+pub(in crate::providers) use call_types::decode_jsonrpc_response;
+pub use call_types::{ProviderCallError, ProviderCallOutcome, ProviderWaitingForUser};
 pub(super) use cancel_response::decode_cancel_notification_response;
 pub(crate) use chatos::memory_provider_ref as chatos_memory_provider_ref;
 use chatos::ChatosProvider;
@@ -35,8 +37,6 @@ use local_connector::LocalConnectorProvider;
 use plugin_components::PluginComponentProvider;
 use plugin_local::PluginLocalProvider;
 use plugin_routes::PluginRouteDispatcher;
-use project_service::ProjectServiceProvider;
-pub use project_service::{ProviderCallError, ProviderCallOutcome, ProviderWaitingForUser};
 use task_runner::TaskRunnerProvider;
 
 pub struct TaskRunnerProviderConfig {
@@ -73,7 +73,6 @@ pub enum ProviderCancelOutcome {
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
     plugins: PluginRouteDispatcher,
-    project_service: ProjectServiceProvider,
     task_runner: TaskRunnerProvider,
     chatos: ChatosProvider,
 }

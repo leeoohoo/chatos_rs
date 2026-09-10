@@ -177,6 +177,21 @@ fn ai_reported_blocked_outcome_is_authoritative_even_with_success_receipts() {
 }
 
 #[test]
+fn serialized_output_text_envelope_does_not_leak_into_task_summary() {
+    assert_eq!(
+        normalized_task_final_response_content(
+            r#"{"type":"output_text","annotations":[],"logprobs":[],"text":"远程命令执行成功。"}"#
+        )
+        .as_deref(),
+        Some("远程命令执行成功。")
+    );
+    assert!(normalized_task_final_response_content(
+        r#"{"type":"output_text","annotations":[],"logprobs":[],"text":""}"#
+    )
+    .is_none());
+}
+
+#[test]
 fn task_outcome_event_parser_accepts_all_supported_statuses() {
     for (status, expected) in [
         ("succeeded", TaskExecutionOutcomeStatus::Succeeded),

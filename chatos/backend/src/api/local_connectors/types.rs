@@ -37,18 +37,6 @@ pub(crate) struct LocalConnectorDirectoryCreateResponse {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct CreateLocalConnectorProjectRequest {
-    pub(super) name: Option<String>,
-    pub(super) device_id: Option<String>,
-    pub(super) workspace_id: Option<String>,
-    pub(super) relative_path: Option<String>,
-    pub(super) git_url: Option<String>,
-    pub(super) repository_mode: Option<String>,
-    pub(super) description: Option<String>,
-    pub(super) user_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct LocalTerminalExecRequest {
     pub(super) device_id: Option<String>,
     pub(super) workspace_id: Option<String>,
@@ -87,35 +75,6 @@ pub(super) struct LocalConnectorWorkspace {
     pub(super) status: String,
     pub(super) created_at: String,
     pub(super) updated_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub(super) struct LocalConnectorProjectBinding {
-    pub(super) id: String,
-    pub(super) owner_user_id: String,
-    pub(super) project_id: String,
-    pub(super) device_id: String,
-    pub(super) workspace_id: String,
-    pub(super) mode: String,
-    pub(super) enabled: bool,
-    pub(super) created_at: String,
-    pub(super) updated_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct CreateProjectBindingRequest<'a> {
-    pub(super) project_id: &'a str,
-    pub(super) device_id: &'a str,
-    pub(super) workspace_id: &'a str,
-    pub(super) mode: &'a str,
-    pub(super) enabled: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct UpdateProjectBindingRequest<'a> {
-    pub(super) device_id: &'a str,
-    pub(super) workspace_id: &'a str,
-    pub(super) enabled: bool,
 }
 
 #[derive(Debug, Serialize)]

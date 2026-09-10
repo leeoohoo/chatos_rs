@@ -265,7 +265,6 @@ fn snapshot() -> RuntimeSessionSnapshot {
         default_remote_connection_id: None,
         remote_connection_route: None,
         tool_result_max_chars: None,
-        expected_project_task_ids: Vec::new(),
         workspace_route: None,
         project_context: ProjectExecutionContext {
             project_id: Some("project-1".to_string()),

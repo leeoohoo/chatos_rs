@@ -266,14 +266,6 @@ public sealed partial class ConversationPage : UserControl
         }
     }
 
-    private async void OnPlanModeToggled(object sender, RoutedEventArgs e)
-    {
-        if (sender is ToggleSwitch toggle)
-        {
-            await ViewModel.SetPlanModeAsync(toggle.IsOn);
-        }
-    }
-
     private void OnTimelineViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
         if (_timelineScrollViewer is null)

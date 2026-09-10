@@ -8,7 +8,6 @@ import { api } from '../../api/client';
 import { api as userServiceApi } from '../../../user-service/api/client';
 import type { TranslateFn } from '../../i18n/I18nProvider';
 import type {
-  TaskProjectRecord,
   TaskRecord,
   TaskRunStatus,
   TaskScheduleMode,
@@ -203,10 +202,6 @@ export function useTasksPageData({
     queryKey: ['user-service', 'model-configs', 'current-user'],
     queryFn: () => userServiceApi.listModelConfigs(),
   });
-  const projectsQuery = useQuery({
-    queryKey: ['task-runner', 'task-projects', 'active'],
-    queryFn: () => api.listProjects('active'),
-  });
   const visibleTaskIds = useMemo(
     () => (tasksQuery.data?.items || []).map((task) => task.id),
     [tasksQuery.data?.items],
@@ -288,19 +283,20 @@ export function useTasksPageData({
 
   const projectNameMap = useMemo(() => {
     const map = new Map<string, string>();
-    (projectsQuery.data || []).forEach((project) => {
-      map.set(project.id, project.name);
+    [...(taskIndexQuery.data?.tasks || []), ...(tasksQuery.data?.items || [])].forEach((task) => {
+      const projectId = normalizeProjectId(task.project_id);
+      if (projectId) map.set(projectId, projectId);
     });
     return map;
-  }, [projectsQuery.data]);
+  }, [taskIndexQuery.data?.tasks, tasksQuery.data?.items]);
 
   const projectOptions = useMemo(
     () =>
-      (projectsQuery.data || []).map((project: TaskProjectRecord) => ({
-        label: project.name,
-        value: project.id,
+      [...projectNameMap.keys()].sort().map((projectId) => ({
+        label: projectId,
+        value: projectId,
       })),
-    [projectsQuery.data],
+    [projectNameMap],
   );
 
   const taskSummaryMap = useMemo(() => {
@@ -372,7 +368,6 @@ export function useTasksPageData({
     taskRunDerivedQuery,
     taskPromptsQuery,
     modelsQuery,
-    projectsQuery,
     taskMemoryContextQuery,
     taskMemoryRecordsQuery,
     taskMcpPromptPreviewQuery,

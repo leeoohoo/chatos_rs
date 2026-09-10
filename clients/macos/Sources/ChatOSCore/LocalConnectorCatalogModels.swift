@@ -128,6 +128,7 @@ public struct LocalConnectorPluginApplication: Codable, Identifiable, Sendable, 
     public var requiresLocalRuntime: Bool
     public var contextScope: String?
     public var missingContext: String?
+    public var bridgeCapabilities: [String]
 
     public var id: String { "\(pluginID):\(componentKey)" }
 
@@ -140,7 +141,8 @@ public struct LocalConnectorPluginApplication: Codable, Identifiable, Sendable, 
         iconURL: URL? = nil,
         requiresLocalRuntime: Bool,
         contextScope: String? = nil,
-        missingContext: String? = nil
+        missingContext: String? = nil,
+        bridgeCapabilities: [String] = []
     ) {
         self.pluginID = pluginID
         self.componentKey = componentKey
@@ -151,6 +153,7 @@ public struct LocalConnectorPluginApplication: Codable, Identifiable, Sendable, 
         self.requiresLocalRuntime = requiresLocalRuntime
         self.contextScope = contextScope
         self.missingContext = missingContext
+        self.bridgeCapabilities = bridgeCapabilities
     }
 }
 
@@ -172,15 +175,24 @@ public struct LocalConnectorPluginApplicationLaunch: Codable, Sendable, Equatabl
     public var application: LocalConnectorPluginApplication
     public var url: URL
     public var websiteDataStoreID: UUID?
+    public var releaseID: String
+    public var version: String
+    public var artifactSHA256: String
 
     public init(
         application: LocalConnectorPluginApplication,
         url: URL,
-        websiteDataStoreID: UUID? = nil
+        websiteDataStoreID: UUID? = nil,
+        releaseID: String = "",
+        version: String = "",
+        artifactSHA256: String = ""
     ) {
         self.application = application
         self.url = url
         self.websiteDataStoreID = websiteDataStoreID
+        self.releaseID = releaseID
+        self.version = version
+        self.artifactSHA256 = artifactSHA256
     }
 }
 

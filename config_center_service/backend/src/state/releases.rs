@@ -365,25 +365,7 @@ impl AppState {
                 ));
             }
         }
-        for key in [
-            CHATOS_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            TASK_RUNNER_PROJECT_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            MCP_MANAGEMENT_PROJECT_SERVICE_BASE_URL_CONFIG_KEY,
-        ] {
-            let is_https = values
-                .get(key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.trim().starts_with("https://"));
-            if !is_https {
-                errors.push(format!(
-                    "{key} must use https:// because Project Service internal APIs require mTLS"
-                ));
-            }
-        }
-        for key in [
-            PROJECT_SERVICE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-        ] {
+        for key in [TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY] {
             let is_https = values
                 .get(key)
                 .and_then(Value::as_str)
@@ -426,7 +408,6 @@ impl AppState {
         for key in [
             CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY,
             MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL_CONFIG_KEY,
-            PROJECT_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
         ] {
             let is_https = values
@@ -478,20 +459,6 @@ impl AppState {
             errors.push(
                 "memory_engine.runtime.internal_mtls_port must differ from memory_engine.runtime.port"
                     .to_string(),
-            );
-        }
-        let project_service_public_port = values
-            .get(PROJECT_SERVICE_PORT_CONFIG_KEY)
-            .and_then(Value::as_i64);
-        let project_service_internal_mtls_port = values
-            .get(PROJECT_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY)
-            .and_then(Value::as_i64);
-        if project_service_public_port.is_some()
-            && project_service_public_port == project_service_internal_mtls_port
-        {
-            errors.push(
-                "project_service.runtime.internal_mtls_port must differ from project_service.runtime.port"
-                .to_string(),
             );
         }
         let user_service_public_port = values

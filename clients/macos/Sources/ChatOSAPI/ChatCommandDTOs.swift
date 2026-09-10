@@ -8,7 +8,6 @@ struct RuntimeSettingsDTO: Decodable, Sendable {
     var remoteConnectionID: String?
     var workspaceRoot: String?
     var reasoningEnabled: Bool
-    var planModeEnabled: Bool
 
     enum CodingKeys: String, CodingKey {
         case selectedModelID = "selected_model_id"
@@ -17,7 +16,6 @@ struct RuntimeSettingsDTO: Decodable, Sendable {
         case remoteConnectionID = "remote_connection_id"
         case workspaceRoot = "workspace_root"
         case reasoningEnabled = "reasoning_enabled"
-        case planModeEnabled = "plan_mode_enabled"
     }
 }
 
@@ -28,13 +26,17 @@ struct ModelConfigDTO: Decodable, Sendable {
     var model: String?
     var modelNameValue: String?
     var thinkingLevel: String?
+    var thinkingLevels: [String]?
     var temperature: Double?
     var enabled: Bool?
+    var supportsReasoning: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, name, provider, model, temperature, enabled
         case modelNameValue = "model_name"
         case thinkingLevel = "thinking_level"
+        case thinkingLevels = "thinking_levels"
+        case supportsReasoning = "supports_reasoning"
     }
 
     var modelName: String {
@@ -47,7 +49,6 @@ struct ChatCommandRequestDTO: Encodable {
     var content: String
     var attachments: [ConversationAttachmentReference]
     var reasoningEnabled: Bool
-    var planMode: Bool
     var turnID: String
     var remoteConnectionID: String?
     var workspaceRoot: String?
@@ -58,7 +59,6 @@ struct ChatCommandRequestDTO: Encodable {
         case content, attachments
         case conversationID = "conversation_id"
         case reasoningEnabled = "reasoning_enabled"
-        case planMode = "plan_mode"
         case turnID = "turn_id"
         case remoteConnectionID = "remote_connection_id"
         case workspaceRoot = "workspace_root"

@@ -4,8 +4,7 @@
 use super::core::{bearer_token_from_headers, current_user_from_user_service_token};
 use super::*;
 use chatos_agent::{
-    chatos_task_runner_tool_profile, is_chatos_callback_agent, is_chatos_plan_task_profile,
-    is_task_runner_phase_agent,
+    chatos_task_runner_tool_profile, is_chatos_callback_agent, is_task_runner_phase_agent,
 };
 use chatos_mcp::{AskUserOptions, AskUserService, AskUserStoreRef};
 use serde::Deserialize;
@@ -43,11 +42,17 @@ pub(super) async fn list_task_capability_catalog(
         .ok_or_else(|| ApiError::unauthorized("current user is missing owner scope"))?;
     let task_profile = crate::models::normalize_task_profile(query.task_profile.as_deref())
         .map_err(ApiError::bad_request)?;
-    let agent_key = crate::models::task_runner_agent_key_for(
-        task_profile.as_str(),
-        query.requires_execution.unwrap_or(true),
-    );
+    let agent_key = chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase;
     let project_id = crate::models::normalize_project_id(query.project_id.clone());
+    let project_context = state
+        .task_service
+        .authorize_task_project_context(
+            project_id.as_deref(),
+            query.project_context.as_ref(),
+            Some(owner_user_id),
+        )
+        .await
+        .map_err(ApiError::bad_request)?;
     let policy = state
         .task_service
         .resolve_task_runner_policy_for_agent_project(
@@ -55,6 +60,7 @@ pub(super) async fn list_task_capability_catalog(
             Some(owner_user_id),
             agent_key,
             project_id.as_deref(),
+            project_context.as_ref(),
             Some(task_profile.as_str()),
             None,
         )
@@ -79,8 +85,18 @@ pub(super) async fn list_task_capability_catalog(
 #[derive(Debug, Deserialize)]
 pub(super) struct TaskCapabilityCatalogQuery {
     task_profile: Option<String>,
-    requires_execution: Option<bool>,
     project_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_project_context_query")]
+    project_context: Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
+}
+
+fn deserialize_project_context_query<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>, D::Error> {
+    let value = Option::<String>::deserialize(deserializer)?;
+    value
+        .map(|value| serde_json::from_str(&value).map_err(serde::de::Error::custom))
+        .transpose()
 }
 
 pub(super) async fn get_mcp_server_info(State(state): State<AppState>) -> Json<McpServerInfo> {
@@ -238,7 +254,6 @@ struct McpManagementBinding {
     default_model_config_id: Option<String>,
     default_remote_connection_id: Option<String>,
     task_profile: Option<String>,
-    expected_project_task_ids: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -414,10 +429,6 @@ async fn dispatch_bound_task_runner_tool(
             return task_runner_mcp_error(request.id.unwrap_or(Value::Null), -32001, message)
         }
     };
-    let is_chatos_plan = binding
-        .task_profile
-        .as_deref()
-        .is_some_and(is_chatos_plan_task_profile);
     let Some(tool_profile) = chatos_task_runner_tool_profile(binding.agent_key) else {
         return task_runner_mcp_error(
             request.id.unwrap_or(Value::Null),
@@ -427,6 +438,7 @@ async fn dispatch_bound_task_runner_tool(
     };
     let request_context = McpRequestContext {
         project_id: binding.project_id.clone(),
+        project_context: None,
         source_session_id: binding.source_session_id.clone(),
         source_turn_id: binding.turn_id.clone(),
         source_user_message_id: binding.source_user_message_id.clone(),
@@ -436,8 +448,6 @@ async fn dispatch_bound_task_runner_tool(
         tool_profile: Some(tool_profile.to_string()),
         task_profile: binding.task_profile.clone(),
         builtin_prompt_locale: None,
-        chatos_plan_mode: is_chatos_plan,
-        expected_project_task_ids: binding.expected_project_task_ids.clone(),
     };
     state
         .task_runner_mcp_service
@@ -528,7 +538,7 @@ async fn dispatch_bound_task_process_log(
         Err(error) => return task_runner_mcp_error(id, -32000, error),
     };
     if !task_matches_mcp_management_binding(&task, binding)
-        || !task_matches_bound_agent(&task, binding.agent_key)
+        || !task_matches_bound_agent(binding.agent_key)
     {
         return task_runner_mcp_error(
             id,
@@ -665,7 +675,7 @@ async fn dispatch_bound_ask_user(
         Err(error) => return task_runner_mcp_error(id, -32000, error),
     };
     if !task_matches_mcp_management_binding(&task, binding)
-        || !task_matches_bound_agent(&task, binding.agent_key)
+        || !task_matches_bound_agent(binding.agent_key)
     {
         return task_runner_mcp_error(
             id,

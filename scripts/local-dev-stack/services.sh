@@ -27,9 +27,6 @@ start_backend() {
     if [[ "$name" == "memory-engine-backend" ]]; then
       stop_port_if_needed "$MEMORY_ENGINE_INTERNAL_MTLS_PORT" "$name internal mTLS"
     fi
-    if [[ "$name" == "project-management-backend" ]]; then
-      stop_port_if_needed "$PROJECT_SERVICE_INTERNAL_MTLS_PORT" "$name internal mTLS"
-    fi
     if [[ "$name" == "user-service-backend" ]]; then
       stop_port_if_needed "$USER_SERVICE_INTERNAL_MTLS_PORT" "$name internal mTLS"
     fi
@@ -64,9 +61,6 @@ start_backend() {
     if memory_engine_identity="$(memory_engine_client_identity_path "$service_name")"; then
       export MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH="$memory_engine_identity"
     fi
-    if project_service_identity="$(project_service_client_identity_path "$service_name")"; then
-      export PROJECT_SERVICE_MTLS_CLIENT_IDENTITY_PATH="$project_service_identity"
-    fi
     if chatos_identity="$(chatos_client_identity_path "$service_name")"; then
       export CHATOS_MTLS_CLIENT_IDENTITY_PATH="$chatos_identity"
     fi
@@ -83,11 +77,6 @@ start_backend() {
       export MEMORY_ENGINE_MTLS_SERVER_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/server.crt"
       export MEMORY_ENGINE_MTLS_SERVER_KEY_PATH="$MEMORY_ENGINE_MTLS_DIR/server.key"
       export MEMORY_ENGINE_MTLS_CLIENT_CA_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/ca.crt"
-    fi
-    if [[ "$name" == "project-management-backend" ]]; then
-      export PROJECT_SERVICE_MTLS_SERVER_CERT_PATH="$PROJECT_SERVICE_MTLS_DIR/server.crt"
-      export PROJECT_SERVICE_MTLS_SERVER_KEY_PATH="$PROJECT_SERVICE_MTLS_DIR/server.key"
-      export PROJECT_SERVICE_MTLS_CLIENT_CA_CERT_PATH="$PROJECT_SERVICE_MTLS_DIR/ca.crt"
     fi
     if [[ "$name" == "chatos-backend" ]]; then
       export CHATOS_MTLS_SERVER_CERT_PATH="$CHATOS_MTLS_DIR/server.crt"
@@ -131,10 +120,6 @@ ensure_mcp_management_mtls_material() {
 
 ensure_task_runner_mtls_material() {
   "$ROOT_DIR/scripts/generate-task-runner-mtls.sh" "$TASK_RUNNER_MTLS_DIR"
-}
-
-ensure_project_service_mtls_material() {
-  "$ROOT_DIR/scripts/generate-project-service-mtls.sh" "$PROJECT_SERVICE_MTLS_DIR"
 }
 
 ensure_chatos_mtls_material() {
@@ -246,12 +231,11 @@ desired.update({
     "task_runner.queue.callback_delivery_mode": "rabbitmq",
     "task_runner.queue.rabbitmq_url": rabbitmq_url,
     "task_runner.observability.otlp_endpoint": "http://127.0.0.1:4317",
-    "project_service.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "user_service.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "mcp_management.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "mcp_management.async_tool.dispatch_mode": "rabbitmq",
     "mcp_management.async_tool.rabbitmq_url": rabbitmq_url,
-    "mcp_management.security.allowed_internal_callers": "chatos,task-runner,project-service,configuration-center",
+    "mcp_management.security.allowed_internal_callers": "chatos,task-runner,configuration-center",
     "local_connector.coordination.valkey_url": valkey_url,
     "chatos.observability.otlp_endpoint": "http://127.0.0.1:4317",
 })
@@ -629,7 +613,6 @@ start_all() {
   ensure_config_center_mtls_material
   ensure_mcp_management_mtls_material
   ensure_task_runner_mtls_material
-  ensure_project_service_mtls_material
   ensure_chatos_mtls_material
   ensure_local_connector_mtls_material
   ensure_user_service_mtls_material
@@ -691,9 +674,6 @@ stop_all() {
       stop_port_if_needed "$port" "$name"
       if [[ "$name" == "memory-engine-backend" ]]; then
         stop_port_if_needed "$MEMORY_ENGINE_INTERNAL_MTLS_PORT" "$name internal mTLS"
-      fi
-      if [[ "$name" == "project-management-backend" ]]; then
-        stop_port_if_needed "$PROJECT_SERVICE_INTERNAL_MTLS_PORT" "$name internal mTLS"
       fi
       if [[ "$name" == "user-service-backend" ]]; then
         stop_port_if_needed "$USER_SERVICE_INTERNAL_MTLS_PORT" "$name internal mTLS"

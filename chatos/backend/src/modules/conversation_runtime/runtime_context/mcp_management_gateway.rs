@@ -5,7 +5,10 @@ use std::time::Duration;
 
 use chatos_agent::ChatosAgentProfile;
 use chatos_mcp_gateway::McpManagementGatewayBuilder;
-use chatos_mcp_management_sdk::{CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle};
+use chatos_mcp_management_sdk::{
+    ClientProjectContextSnapshot, CreateRuntimeSessionRequest, McpManagementClient,
+    McpManagementClientConfig, McpManagementRuntimeSessionHandle, ProjectContextAuthorization,
+};
 use chatos_plugin_management_sdk::{PluginCommandInvocation, SelectedPluginRef, SystemMcpKey};
 use tracing::{info, warn};
 
@@ -21,13 +24,13 @@ pub(super) struct McpManagementGatewayRequest<'a> {
     pub(super) owner_role: Option<&'a str>,
     pub(super) agent_profile: ChatosAgentProfile,
     pub(super) project_id: Option<&'a str>,
+    pub(super) project_context: Option<&'a ClientProjectContextSnapshot>,
     pub(super) source_session_id: Option<&'a str>,
     pub(super) turn_id: Option<&'a str>,
     pub(super) source_user_message_id: Option<&'a str>,
     pub(super) contact_agent_id: Option<&'a str>,
     pub(super) default_model_config_id: Option<&'a str>,
     pub(super) default_remote_connection_id: Option<&'a str>,
-    pub(super) expected_project_task_ids: &'a [String],
     pub(super) selected_plugins: Vec<SelectedPluginRef>,
     pub(super) plugin_command_invocations: Vec<PluginCommandInvocation>,
     pub(super) locale: Option<&'a str>,
@@ -74,28 +77,32 @@ pub(super) async fn resolve_mcp_management_gateway(
     let source_user_message_id =
         required_text(request.source_user_message_id, "source_user_message_id")?;
     let agent_key = request.agent_profile.key().as_str().to_string();
+    let project_id = normalized(request.project_id);
+    let project_context = authorize_project_context(
+        owner_user_id,
+        project_id.as_deref(),
+        request.project_context,
+    )
+    .await?;
     let session_request = CreateRuntimeSessionRequest {
         tenant_id: tenant_id.to_string(),
         owner_user_id: owner_user_id.to_string(),
         owner_role: normalized(request.owner_role),
         agent_key: agent_key.clone(),
-        project_id: normalized(request.project_id),
+        project_id,
+        project_context,
         run_id: None,
         execution_group_id: None,
         turn_id: Some(turn_id.to_string()),
         task_id: None,
         task_title: None,
-        task_profile: request
-            .agent_profile
-            .task_runner_task_profile()
-            .map(ToOwned::to_owned),
+        task_profile: None,
         source_session_id: Some(source_session_id.to_string()),
         source_user_message_id: Some(source_user_message_id.to_string()),
         contact_agent_id: normalized(request.contact_agent_id),
         default_model_config_id: normalized(request.default_model_config_id),
         default_remote_connection_id: normalized(request.default_remote_connection_id),
         tool_result_max_chars: None,
-        expected_project_task_ids: normalized_unique(request.expected_project_task_ids),
         requested_mcp_ids: None,
         selected_plugins: request.selected_plugins,
         plugin_command_invocations: request.plugin_command_invocations,
@@ -119,6 +126,34 @@ pub(super) async fn resolve_mcp_management_gateway(
     build_resolved_gateway(resolved, source_session_id, turn_id).await
 }
 
+async fn authorize_project_context(
+    owner_user_id: &str,
+    project_id: Option<&str>,
+    snapshot: Option<&ClientProjectContextSnapshot>,
+) -> Result<Option<ProjectContextAuthorization>, String> {
+    match (project_id, snapshot) {
+        (None, None) => return Ok(None),
+        (None, Some(_)) => {
+            return Err("client project context was supplied without a project".to_string())
+        }
+        (Some(_), None) => {
+            return Err("client project context authorization is required".to_string())
+        }
+        (Some(project_id), Some(snapshot)) => snapshot.validate_project_id(project_id)?,
+    }
+    let snapshot = snapshot.expect("validated project context presence");
+    let config = McpManagementClientConfig::from_env("chatos")
+        .await
+        .map_err(|error| format!("load MCP Management config failed: {error}"))?;
+    let client = McpManagementClient::new(config)
+        .map_err(|error| format!("initialize MCP Management client failed: {error}"))?;
+    client
+        .authorize_project_context(owner_user_id, snapshot)
+        .await
+        .map(Some)
+        .map_err(|error| format!("authorize client project context failed: {error}"))
+}
+
 pub(super) async fn resolve_existing_mcp_management_gateway(
     session_id: &str,
 ) -> Result<McpManagementGateway, String> {
@@ -129,6 +164,7 @@ pub(super) async fn resolve_existing_mcp_management_gateway(
         owner_role: None,
         agent_key: String::new(),
         project_id: None,
+        project_context: None,
         run_id: None,
         execution_group_id: None,
         turn_id: None,
@@ -141,7 +177,6 @@ pub(super) async fn resolve_existing_mcp_management_gateway(
         default_model_config_id: None,
         default_remote_connection_id: None,
         tool_result_max_chars: None,
-        expected_project_task_ids: Vec::new(),
         requested_mcp_ids: None,
         selected_plugins: Vec::new(),
         plugin_command_invocations: Vec::new(),
@@ -241,33 +276,4 @@ fn normalized(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn normalized_unique(values: &[String]) -> Vec<String> {
-    let mut values = values
-        .iter()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    values.sort();
-    values.dedup();
-    values
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn expected_project_task_ids_are_trimmed_and_deduplicated() {
-        assert_eq!(
-            normalized_unique(&[
-                " task-2 ".to_string(),
-                "task-1".to_string(),
-                "task-2".to_string(),
-                String::new(),
-            ]),
-            vec!["task-1", "task-2"]
-        );
-    }
 }

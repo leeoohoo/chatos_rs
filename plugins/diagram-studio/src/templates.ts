@@ -97,7 +97,7 @@ export function architectureTemplate(): DiagramDocument {
     node('web-app', '客户端应用', 260, 220, 'client', 'rounded', 'SwiftUI · WinUI', palette.blue, {}, { icon: 'terminal' }),
     node('api-gateway', 'API Gateway', 510, 220, 'network', 'rounded', 'HTTPS · WebSocket', palette.cyan, {}, { icon: 'api' }),
     node('identity', '身份服务', 770, 70, 'service', 'rounded', 'OAuth · Session', palette.purple, {}, { icon: 'shield' }),
-    node('project-service', '项目服务', 770, 220, 'service', 'rounded', 'REST · Events', palette.blue, {}, { icon: 'server' }),
+    node('order-service', '订单服务', 770, 220, 'service', 'rounded', 'REST · Events', palette.blue, {}, { icon: 'server' }),
     node('task-runner', '任务执行器', 770, 370, 'service', 'rounded', 'AI · MCP', palette.orange, {}, { icon: 'container' }),
     node('postgres', 'PostgreSQL', 1050, 110, 'database', 'rounded', 'Persistent data', palette.green, {}, { icon: 'database' }),
     node('redis', 'Redis', 1050, 260, 'database', 'rounded', 'Cache · Locks', palette.pink, {}, { icon: 'cache' }),
@@ -106,14 +106,14 @@ export function architectureTemplate(): DiagramDocument {
     edge('e-users-web', 'users', 'web-app'),
     edge('e-web-gateway', 'web-app', 'api-gateway', 'HTTPS'),
     edge('e-gateway-identity', 'api-gateway', 'identity', 'Auth'),
-    edge('e-gateway-project', 'api-gateway', 'project-service', 'REST'),
+    edge('e-gateway-order', 'api-gateway', 'order-service', 'REST'),
     edge('e-gateway-runner', 'api-gateway', 'task-runner', 'Tasks'),
     edge('e-identity-db', 'identity', 'postgres', 'SQL'),
-    edge('e-project-db', 'project-service', 'postgres', 'SQL'),
-    edge('e-project-cache', 'project-service', 'redis', 'Cache'),
+    edge('e-order-db', 'order-service', 'postgres', 'SQL'),
+    edge('e-order-cache', 'order-service', 'redis', 'Cache'),
     edge('e-runner-cache', 'task-runner', 'redis', 'Lease'),
     edge('e-runner-events', 'task-runner', 'event-bus', 'Publish'),
-    edge('e-events-project', 'event-bus', 'project-service', 'Consume', true)
+    edge('e-events-order', 'event-bus', 'order-service', 'Consume', true)
   ]);
 }
 
@@ -207,6 +207,29 @@ export function sequenceTemplate(): DiagramDocument {
   ]);
 }
 
+export function mindmapTemplate(): DiagramDocument {
+  const nodes = [
+    node('mindmap-root', '核心主题', 390, 260, 'mindmap', 'mindmap-root', undefined, '#5D6FCD', { width: 200, height: 64 }, { showLabel: true, fillColor: '#5D6FCD', borderColor: '#5D6FCD', textColor: '#FFFFFF' }),
+    node('mindmap-product', '产品', 720, 120, 'mindmap', 'mindmap-topic', undefined, '#4E7CC7', { width: 150, height: 46 }, { showLabel: true, mindmapSide: 'right', mindmapOrder: 0 }),
+    node('mindmap-technology', '技术', 720, 390, 'mindmap', 'mindmap-topic', undefined, '#4B9B72', { width: 150, height: 46 }, { showLabel: true, mindmapSide: 'right', mindmapOrder: 1 }),
+    node('mindmap-users', '用户', 120, 120, 'mindmap', 'mindmap-topic', undefined, '#7967D8', { width: 150, height: 46 }, { showLabel: true, mindmapSide: 'left', mindmapOrder: 2 }),
+    node('mindmap-goals', '目标', 120, 390, 'mindmap', 'mindmap-topic', undefined, '#C98145', { width: 150, height: 46 }, { showLabel: true, mindmapSide: 'left', mindmapOrder: 3 })
+  ];
+  const branch = (id: string, target: string): DiagramEdge => ({
+    id,
+    source: 'mindmap-root',
+    target,
+    type: 'bezier',
+    data: { lineStyle: 'solid', startMarker: 'none', endMarker: 'none', strokeWidth: 2.2 }
+  });
+  return base('mindmap', '思维导图', nodes, [
+    branch('mindmap-edge-product', 'mindmap-product'),
+    branch('mindmap-edge-technology', 'mindmap-technology'),
+    branch('mindmap-edge-users', 'mindmap-users'),
+    branch('mindmap-edge-goals', 'mindmap-goals')
+  ]);
+}
+
 export function createTemplate(kind: DiagramKind): DiagramDocument {
   switch (kind) {
     case 'architecture': return architectureTemplate();
@@ -214,6 +237,7 @@ export function createTemplate(kind: DiagramKind): DiagramDocument {
     case 'swimlane': return swimlaneTemplate();
     case 'topology': return topologyTemplate();
     case 'sequence': return sequenceTemplate();
+    case 'mindmap': return mindmapTemplate();
   }
 }
 
@@ -226,5 +250,6 @@ export const diagramTypeCatalog: Array<{ kind: DiagramKind; title: string; subti
   { kind: 'flowchart', title: '流程图', subtitle: '步骤、判断和分支' },
   { kind: 'swimlane', title: '泳道图', subtitle: '角色、阶段和责任边界' },
   { kind: 'topology', title: '拓扑图', subtitle: '节点、网络和基础设施' },
-  { kind: 'sequence', title: '时序图', subtitle: '参与者、调用顺序和消息返回' }
+  { kind: 'sequence', title: '时序图', subtitle: '参与者、调用顺序和消息返回' },
+  { kind: 'mindmap', title: '思维导图', subtitle: '中心主题、层级分支和知识拆解' }
 ];

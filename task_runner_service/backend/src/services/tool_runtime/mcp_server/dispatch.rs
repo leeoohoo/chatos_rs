@@ -25,7 +25,6 @@ impl TaskRunnerMcpService {
             | "get_task_stats"
             | "create_task"
             | "create_tasks_with_prerequisites"
-            | "create_project_execution_tasks"
             | "update_task"
             | "set_task_prerequisites"
             | "cancel_task"
@@ -70,10 +69,7 @@ fn tool_call_allowed_for_identity(
 #[cfg(test)]
 mod tests {
     use super::tool_call_allowed_for_identity;
-    use crate::mcp_server::{
-        McpRequestContext, CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
-        PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE,
-    };
+    use crate::mcp_server::{McpRequestContext, CHATOS_ASYNC_PLANNER_TOOL_PROFILE};
 
     #[test]
     fn narrow_tool_profiles_cannot_be_bypassed_by_admin_identity() {
@@ -81,30 +77,6 @@ mod tests {
             "get_task_stats",
             true,
             &McpRequestContext::default(),
-        ));
-        assert!(tool_call_allowed_for_identity(
-            "create_project_execution_tasks",
-            true,
-            &McpRequestContext {
-                tool_profile: Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string(),),
-                ..McpRequestContext::default()
-            },
-        ));
-        assert!(!tool_call_allowed_for_identity(
-            "create_task",
-            true,
-            &McpRequestContext {
-                tool_profile: Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string(),),
-                ..McpRequestContext::default()
-            },
-        ));
-        assert!(!tool_call_allowed_for_identity(
-            "cancel_task",
-            true,
-            &McpRequestContext {
-                tool_profile: Some(PROJECT_REQUIREMENT_EXECUTION_PLANNER_TOOL_PROFILE.to_string(),),
-                ..McpRequestContext::default()
-            },
         ));
         assert!(!tool_call_allowed_for_identity(
             "list_runs",

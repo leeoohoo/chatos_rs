@@ -31,39 +31,6 @@ pub(super) async fn seed_agent_bindings(
         )
         .await?;
     }
-    seed_agent_mcp_binding_with_tool_policy(
-        store,
-        admin_user_id,
-        CHATOS_CONVERSATION_AGENT_KEY,
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        true,
-        11,
-        BindingConditions {
-            task_profile: Some(CHATOS_PLAN_TASK_PROFILE.to_string()),
-            ..BindingConditions::default()
-        },
-        CHATOS_TASK_RUNNER_PLAN_TOOL_ALLOWLIST,
-        &[],
-    )
-    .await?;
-    seed_agent_mcp_binding(
-        store,
-        admin_user_id,
-        PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        true,
-        10,
-    )
-    .await?;
-    seed_agent_mcp_binding(
-        store,
-        admin_user_id,
-        PROJECT_REQUIREMENT_EXECUTION_PLANNER_AGENT_KEY,
-        builtin_resource_id(BuiltinMcpKind::ProjectManagement).as_str(),
-        true,
-        20,
-    )
-    .await?;
     for agent_key in CHATOS_NOTEPAD_AGENT_KEYS {
         seed_agent_mcp_binding(
             store,
@@ -74,22 +41,6 @@ pub(super) async fn seed_agent_bindings(
             30,
         )
         .await?;
-    }
-    for agent_key in [TASK_RUNNER_PLAN_AGENT_KEY] {
-        let kinds = task_runner_plan_phase_builtin_kinds();
-        for (index, kind) in kinds.into_iter().enumerate() {
-            let required = task_runner_plan_phase_required(kind);
-            let resource_id = builtin_resource_id(kind);
-            seed_agent_mcp_binding(
-                store,
-                admin_user_id,
-                agent_key,
-                resource_id.as_str(),
-                required,
-                10 + index as i64 * 10,
-            )
-            .await?;
-        }
     }
     for (agent_key, kind, required, priority) in
         [(TASK_RUNNER_RUN_AGENT_KEY, BuiltinMcpKind::AskUser, true, 20)]
@@ -363,29 +314,6 @@ pub(super) fn task_runner_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpK
         (CodeMaintainerWrite, 110),
         (TerminalController, 120),
         (RemoteConnectionController, 130),
-        (ProjectManagement, 140),
         (Notepad, 150),
     ]
-}
-
-pub(super) fn task_runner_plan_phase_builtin_kinds() -> Vec<BuiltinMcpKind> {
-    use BuiltinMcpKind::*;
-    vec![
-        CodeMaintainerRead,
-        ProjectManagement,
-        Notepad,
-        AskUser,
-        MemorySkillReader,
-        MemoryCommandReader,
-        MemoryPluginReader,
-    ]
-}
-
-pub(super) fn task_runner_plan_phase_required(kind: BuiltinMcpKind) -> bool {
-    matches!(
-        kind,
-        BuiltinMcpKind::CodeMaintainerRead
-            | BuiltinMcpKind::ProjectManagement
-            | BuiltinMcpKind::AskUser
-    )
 }

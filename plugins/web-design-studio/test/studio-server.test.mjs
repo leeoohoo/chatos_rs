@@ -9,6 +9,10 @@ import { applyMagicUiComponentVariant, createMagicUiComponent, variantsForMagicU
 import { applySpellComponentVariant, createSpellComponent, variantsForSpellComponent } from '../dist/spell-library.test.mjs';
 import { applyInspiraComponentVariant, createInspiraComponent } from '../dist/inspira-library.test.mjs';
 import { applyDaisyUiComponentVariant, createDaisyUiComponent } from '../dist/daisyui-library.test.mjs';
+import { createBlankSceneDocument, createSceneNodeBase } from '../dist/v2-scene-schema.test.mjs';
+import { SceneDocumentStore } from '../dist/v2-scene-store.test.mjs';
+import { createGenerationSitePlan } from '../dist/v2-generation-plan-schema.test.mjs';
+import { GenerationPlanStore } from '../dist/v2-generation-plan-store.test.mjs';
 
 test('studio serves the packaged workbench and persists a design', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-studio-server-test-'));
@@ -72,6 +76,139 @@ test('studio serves the packaged workbench and persists a design', async () => {
     assert.equal(created.revision, 1);
     const stored = JSON.parse(await readFile(path.join(root, `${created.documentId}.web-design.json`), 'utf8'));
     assert.equal(stored.title, '本地网站设计');
+
+    const missingPlan = await fetch(`${base}/api/generation/${projectDesign.documentId}/plan`);
+    assert.equal(missingPlan.status, 404);
+    const generationPlanStore = new GenerationPlanStore(root);
+    await generationPlanStore.create(createGenerationSitePlan({
+      planId: 'plan:studio-review',
+      scope: { projectId: 'host-project-through-123', documentId: created.documentId },
+      mode: 'guided',
+      objective: 'Create a visually distinctive product website one reviewed step at a time',
+      audience: ['Design reviewers'],
+      pages: [{ pageId: created.pages[0].id, name: '首页', purpose: '建立品牌视觉与核心价值' }]
+    }));
+    const generationPlanResponse = await fetch(`${base}/api/generation/${created.documentId}/plan`);
+    assert.equal(generationPlanResponse.status, 200);
+    const generationPlan = await generationPlanResponse.json();
+    assert.equal(generationPlan.plan.planId, 'plan:studio-review');
+    assert.equal(generationPlan.plan.objective, 'Create a visually distinctive product website one reviewed step at a time');
+    assert.equal(generationPlan.plan.pages.length, 1);
+
+    const sceneStore = new SceneDocumentStore(root);
+    const sceneSource = createBlankSceneDocument('本地网站设计');
+    sceneSource.documentId = created.documentId;
+    sceneSource.pages[0].id = created.pages[0].id;
+    sceneSource.pages[0].children = [{
+      ...createSceneNodeBase('frame', 'Page root', { x: 0, y: 0, width: 1440, height: 900 }),
+      id: 'frame:studio-root',
+      children: [
+        { ...createSceneNodeBase('shape', 'First', { x: 80, y: 100, width: 160, height: 100 }), id: 'shape:studio-first', shape: 'rectangle' },
+        { ...createSceneNodeBase('shape', 'Second', { x: 300, y: 100, width: 160, height: 100 }), id: 'shape:studio-second', shape: 'rectangle' }
+      ]
+    }];
+    const createdScene = await sceneStore.create(sceneSource);
+    const sceneReadResponse = await fetch(`${base}/api/scenes/${created.documentId}`);
+    assert.equal(sceneReadResponse.status, 200);
+    const sceneRead = await sceneReadResponse.json();
+    assert.equal(sceneRead.revision, createdScene.revision);
+    assert.equal(sceneRead.pages[0].children[0].id, 'frame:studio-root');
+    const groupedResponse = await fetch(`${base}/api/scenes/${created.documentId}/commands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transactionId: 'studio:group-pair', expectedRevision: createdScene.revision,
+        command: {
+          type: 'group', nodeIds: ['shape:studio-first', 'shape:studio-second'],
+          wrapperId: 'group:studio-pair', name: 'Studio pair'
+        }
+      })
+    });
+    assert.equal(groupedResponse.status, 200);
+    const groupedScene = await groupedResponse.json();
+    assert.equal(groupedScene.document.revision, 2);
+    assert.equal(groupedScene.commandType, 'group');
+    assert.equal(groupedScene.recovered, false);
+    assert.deepEqual(groupedScene.summary.insertedNodeIds, ['group:studio-pair']);
+    const staleSceneEdit = await fetch(`${base}/api/scenes/${created.documentId}/commands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transactionId: 'studio:stale-move', expectedRevision: 1,
+        command: { type: 'move', nodeIds: ['group:studio-pair'], deltaX: 10, deltaY: 0 }
+      })
+    });
+    assert.equal(staleSceneEdit.status, 409);
+    assert.equal((await staleSceneEdit.json()).actualRevision, 2);
+    const sceneHistory = await fetch(`${base}/api/scenes/${created.documentId}/history`).then((response) => response.json());
+    assert.equal(sceneHistory.undoCount, 1);
+    assert.equal(sceneHistory.redoCount, 0);
+    const undoneScene = await fetch(`${base}/api/scenes/${created.documentId}/undo`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedRevision: 2 })
+    }).then((response) => response.json());
+    assert.equal(undoneScene.revision, 3);
+    assert.deepEqual(undoneScene.pages[0].children[0].children.map((node) => node.id), ['shape:studio-first', 'shape:studio-second']);
+    const redoneScene = await fetch(`${base}/api/scenes/${created.documentId}/redo`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedRevision: 3 })
+    }).then((response) => response.json());
+    assert.equal(redoneScene.revision, 4);
+    assert.equal(redoneScene.pages[0].children[0].children[0].id, 'group:studio-pair');
+    const annotatedSceneResponse = await fetch(`${base}/api/scenes/${created.documentId}/commands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transactionId: 'studio:add-visual-note', expectedRevision: redoneScene.revision,
+        command: {
+          type: 'add-annotation', nodeId: 'group:studio-pair', annotationId: 'annotation:studio-contrast',
+          body: 'Increase the visual contrast of this pair.'
+        }
+      })
+    });
+    assert.equal(annotatedSceneResponse.status, 200);
+    const annotatedScene = await annotatedSceneResponse.json();
+    assert.equal(annotatedScene.document.revision, 5);
+    assert.equal(annotatedScene.document.pages[0].children[0].children[0].annotations[0].author, 'human');
+    const annotationContextResponse = await fetch(`${base}/api/scenes/${created.documentId}/annotation-ai-context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nodeId: 'group:studio-pair', annotationId: 'annotation:studio-contrast', viewportWidth: 1440
+      })
+    });
+    assert.equal(annotationContextResponse.status, 200);
+    const annotationContext = await annotationContextResponse.json();
+    assert.equal(annotationContext.task.scope.projectId, 'host-project-through-123');
+    assert.equal(annotationContext.task.pageId, created.pages[0].id);
+    assert.equal(annotationContext.task.targetNodeId, 'group:studio-pair');
+    assert.equal(annotationContext.task.baseRevision, annotatedScene.document.revision);
+    assert.equal(annotationContext.visualContext.capture.artifact.revision, annotatedScene.document.revision);
+    assert.equal(annotationContext.__images[0].mimeType, 'image/png');
+    assert.ok(annotationContext.__images[0].data.length > 100);
+
+    const initialWorkspace = await fetch(`${base}/api/workspace/${created.documentId}`).then((response) => response.json());
+    assert.deepEqual(initialWorkspace.camera, { x: 0, y: 0, zoom: 1 });
+    const movedWorkspace = await fetch(`${base}/api/workspace/${created.documentId}/camera`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ camera: { x: -3840, y: 5120, zoom: 3.25 } })
+    }).then((response) => response.json());
+    assert.deepEqual(movedWorkspace.camera, { x: -3840, y: 5120, zoom: 3.25 });
+    assert.deepEqual(
+      (await fetch(`${base}/api/workspace/${created.documentId}`).then((response) => response.json())).camera,
+      movedWorkspace.camera
+    );
+    assert.equal(JSON.parse(await readFile(path.join(root, `${created.documentId}.web-design.json`), 'utf8')).revision, created.revision);
+    const artboardWorkspace = await fetch(`${base}/api/workspace/${created.documentId}/artboards`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ artboards: [
+        { artboardId: 'home-page', pageId: 'home', surfaceKind: 'page', viewportWidth: 1440, viewportHeight: 900, x: 0, y: 0 },
+        { artboardId: 'sign-in-modal', pageId: 'sign-in', surfaceKind: 'modal', viewportWidth: 720, viewportHeight: 720, x: 1600, y: 0 }
+      ] })
+    }).then((response) => response.json());
+    assert.equal(artboardWorkspace.artboards.length, 2);
+    assert.deepEqual(artboardWorkspace.camera, movedWorkspace.camera);
+    assert.equal(JSON.parse(await readFile(path.join(root, `${created.documentId}.web-design.json`), 'utf8')).revision, created.revision);
 
     const exactDesign = structuredClone(created);
     exactDesign.viewport.width = 2560;

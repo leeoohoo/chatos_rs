@@ -540,9 +540,9 @@ mod tests {
             agent_key: "agent".to_string(),
             bundle_version: 3,
             changed_vendor: Some(AgentPromptVendor::Gpt),
-            changed_profile: Some("chatos_plan".to_string()),
+            changed_profile: Some("analysis".to_string()),
             prompts: vec![AgentPromptVersionPrompt {
-                profile: "chatos_plan".to_string(),
+                profile: "analysis".to_string(),
                 vendor: AgentPromptVendor::Gpt,
                 content: "secretly large prompt".to_string(),
                 revision: 2,
@@ -553,14 +553,14 @@ mod tests {
             published_at: "2026-07-17T00:00:00Z".to_string(),
         });
         assert_eq!(summary.bundle_version, 3);
-        assert_eq!(summary.changed_profile.as_deref(), Some("chatos_plan"));
-        assert_eq!(summary.vendor_revisions[0].profile, "chatos_plan");
+        assert_eq!(summary.changed_profile.as_deref(), Some("analysis"));
+        assert_eq!(summary.vendor_revisions[0].profile, "analysis");
         assert_eq!(summary.vendor_revisions[0].revision, 2);
     }
 
     #[test]
-    fn chatos_prompt_completeness_counts_both_runtime_profiles() {
-        let published = ["default", "chatos_plan"]
+    fn prompt_completeness_counts_multiple_runtime_profiles() {
+        let published = ["default", "analysis"]
             .into_iter()
             .flat_map(|profile| {
                 AgentPromptVendor::ALL
@@ -571,7 +571,7 @@ mod tests {
 
         let completeness = build_prompt_completeness(
             "chatos_conversation_agent".to_string(),
-            &["default", "chatos_plan"],
+            &["default", "analysis"],
             published,
         );
 

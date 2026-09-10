@@ -3,12 +3,12 @@ name: diagram-studio
 description: Use Diagram Studio MCP tools to inspect, create, revise, validate, and export editable technical diagrams. Routes every AI-generated diagram through the matching on-demand diagram guide and prevents unrelated business concerns from being crowded onto one canvas.
 metadata:
   chatos.role: router
-  chatos.related-skills: "diagram-architecture,diagram-flowchart,diagram-swimlane,diagram-topology,diagram-sequence"
+  chatos.related-skills: "diagram-architecture,diagram-flowchart,diagram-swimlane,diagram-topology,diagram-sequence,diagram-mindmap"
 ---
 
 # Diagram Studio MCP guide
 
-Use Diagram Studio when the requested deliverable is an editable architecture diagram, flowchart, swimlane diagram, topology map, or sequence diagram. A Mermaid or PlantUML block in chat is not a completed Diagram Studio deliverable.
+Use Diagram Studio when the requested deliverable is an editable architecture diagram, flowchart, swimlane diagram, topology map, sequence diagram, or mind map. A Mermaid or PlantUML block in chat is not a completed Diagram Studio deliverable.
 
 ## Runtime scope
 
@@ -41,6 +41,7 @@ Split the work when:
 - a sequence diagram combines login, ordering, payment, refund, notification, and administration scenarios;
 - a swimlane diagram attempts to cover an organization's entire operating model;
 - a topology diagram mixes logical code structure with every physical deployment detail;
+- a mind map mixes unrelated subjects, exceeds four useful levels, repeats topics under several parents, or turns labels into paragraphs;
 - the graph can fit only by shrinking text, creating a very long canvas, or accepting a mass of crossing edges.
 
 Do not include information merely because it is true. Include it only when it helps the current diagram answer its single question.

@@ -61,6 +61,8 @@ struct RootView: View {
                 LocalConnectorControlCenterView(viewModel: model.localConnectorControl)
             case .applications:
                 PluginApplicationsView()
+            case .mediaStudio:
+                MediaStudioView(viewModel: model.mediaStudio)
             case let .pluginApplication(pluginID, componentKey):
                 if let application = model.pluginApplication(
                     pluginID: pluginID,

@@ -5,6 +5,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum McpManagementClientError {
+    #[error("invalid project context: {0}")]
+    InvalidProjectContext(String),
     #[error("MCP management base URL is invalid: {0}")]
     InvalidBaseUrl(String),
     #[error("MCP management mTLS configuration is invalid: {0}")]

@@ -372,7 +372,6 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
-    use chatos_agent::{AgentIdentity, TASK_RUNNER_AGENT, TASK_RUNNER_PLAN_AGENT};
     use chatos_plugin_management_sdk::SystemAgentKey;
 
     use crate::config::{AppConfig, StoreMode};
@@ -383,45 +382,24 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn task_nature_selects_distinct_task_runner_agents() {
-        let mut planning = sample_task(crate::models::TASK_PROFILE_CHATOS_PLAN, None);
-        planning.mcp_config.requires_execution = false;
-        let mut executing = planning.clone();
-        executing.mcp_config.requires_execution = true;
+    async fn task_runtime_rejects_obsolete_profile_and_preserves_ordinary_task_routing() {
         let service = test_run_service(test_config());
-        assert_eq!(
-            TaskRunnerAgent::new(
+        let obsolete = sample_task("chatos_plan", None);
+        assert!(service
+            .resolve_task_runner_agent_key_for_task(&obsolete)
+            .await
+            .is_err());
+        for requires_execution in [false, true] {
+            let mut task = sample_task(crate::models::TASK_PROFILE_DEFAULT, None);
+            task.mcp_config.requires_execution = requires_execution;
+            assert_eq!(
                 service
-                    .resolve_task_runner_agent_key_for_task(&planning)
+                    .resolve_task_runner_agent_key_for_task(&task)
                     .await
-                    .expect("planning agent"),
-            )
-            .descriptor()
-            .key,
-            TASK_RUNNER_PLAN_AGENT.descriptor().key
-        );
-        assert_eq!(
-            TaskRunnerAgent::new(
-                service
-                    .resolve_task_runner_agent_key_for_task(&planning)
-                    .await
-                    .expect("planning agent"),
-            )
-            .descriptor()
-            .key,
-            SystemAgentKey::TaskRunnerPlanPhase
-        );
-        assert_eq!(
-            TaskRunnerAgent::new(
-                service
-                    .resolve_task_runner_agent_key_for_task(&executing)
-                    .await
-                    .expect("execution agent"),
-            )
-            .descriptor()
-            .key,
-            TASK_RUNNER_AGENT.descriptor().key
-        );
+                    .unwrap(),
+                SystemAgentKey::TaskRunnerRunPhase
+            );
+        }
     }
 
     #[test]
@@ -512,7 +490,6 @@ mod tests {
             default_tool_results_model_total_max_chars: 1_000,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
-            internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
@@ -522,11 +499,6 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5_000),
-            project_service_base_url: Some("http://127.0.0.1:39210".to_string()),
-            project_service_internal_base_url: Some("http://127.0.0.1:39210".to_string()),
-            project_service_internal_http_client: reqwest::Client::new(),
-            project_service_sync_secret: Some("sync-secret".to_string()),
-            project_service_request_timeout: Duration::from_millis(5_000),
         }
     }
 
@@ -557,6 +529,7 @@ mod tests {
             tenant_id: "tenant".to_string(),
             subject_id: "subject".to_string(),
             project_id: project_id.map(ToOwned::to_owned),
+            project_context: None,
             task_profile: task_profile.to_string(),
             creator_user_id: None,
             creator_username: None,

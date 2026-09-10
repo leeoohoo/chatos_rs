@@ -4,6 +4,7 @@ public enum WorkspaceResourceKind
 {
     Contact,
     Project,
+    Applications,
     LocalConnector,
     LocalTerminal,
     RemoteConnection,

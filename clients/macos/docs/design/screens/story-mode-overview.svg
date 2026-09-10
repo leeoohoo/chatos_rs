@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="1100" viewBox="0 0 1660 1100" role="img" aria-labelledby="title desc">
+<title id="title">ChatOS 剧情模式 — 完整剧情分段操作台</title>
+<desc id="desc">设计示例：完整剧情自动规划成八个连续的十五秒视频计划，总计两分钟。中间主区域展示所有分段及累计时间，右侧展开第三段详情。左侧管理完整原文和全剧共用素材，底部勾选批量生成。所有图片、模型和任务状态都是设计占位，不是实际生成结果。</desc>
+<defs>
+<style>
+text {font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Noto Sans CJK SC',sans-serif;font-size:14px;fill:#2c2934}
+.small{font-size:12px}.tiny{font-size:11px}.muted{fill:#77717f}.strong{font-weight:600}.heading{font-size:18px;font-weight:600}.title{font-size:23px;font-weight:600}.purple{fill:#8a45b8}.green{fill:#34785c}.amber{fill:#956a29}.white{fill:white}.line{stroke:#e7e3ec}.panel{fill:#fff;stroke:#e5e0eb}.field{fill:#f9f8fb;stroke:#e5e0eb}.button{fill:white;stroke:#ded7e6}
+</style>
+<linearGradient id="sky" x2="0" y2="1"><stop stop-color="#bed3d1"/><stop offset="1" stop-color="#f0e4c7"/></linearGradient>
+<linearGradient id="dusk" x2="0" y2="1"><stop stop-color="#d1b7c4"/><stop offset="1" stop-color="#f1d3a1"/></linearGradient>
+<symbol id="girl" viewBox="0 0 30 70"><path d="M10 28 3 55H28L20 28" fill="#d5ad57"/><path d="M10 53 8 69M23 53 25 69" stroke="#a8876b" stroke-width="4"/><ellipse cx="16" cy="21" rx="9" ry="14" fill="#5e5343"/><ellipse cx="15" cy="11" rx="15" ry="4" fill="#d8bf85"/><path d="M5 10 8 2H22L25 10" fill="#ead4a0"/></symbol>
+<symbol id="path" viewBox="0 0 160 90"><rect width="160" height="90" fill="url(#sky)"/><path d="M0 46Q45 33 89 49Q130 38 160 46V90H0" fill="#a2b38a"/><path d="M0 64Q80 43 160 65V90H0" fill="#82976b"/><path d="M68 90 95 51 103 49 90 90" fill="#d5c99e"/><use href="#girl" x="59" y="33" width="17" height="40"/></symbol>
+<symbol id="tree" viewBox="0 0 160 90"><use href="#path" width="160" height="90"/><path d="M31 77 39 19H47L45 73 57 88 42 81 24 88Z" fill="#77634d"/><path d="M42 41 70 18M40 33 18 17" stroke="#77634d" stroke-width="6"/><g fill="#6d875d"><ellipse cx="27" cy="12" rx="40" ry="23"/><ellipse cx="65" cy="7" rx="35" ry="21"/><ellipse cx="96" cy="0" rx="26" ry="15"/></g><ellipse cx="30" cy="1" rx="30" ry="15" fill="#93a370"/></symbol>
+<symbol id="river" viewBox="0 0 160 90"><use href="#path" width="160" height="90"/><path d="M118 47Q84 57 113 69Q136 80 89 90H152Q163 70 130 65Q111 58 136 48Z" fill="#9dbfc5"/><ellipse cx="89" cy="78" rx="12" ry="5" fill="#9c9d8b"/></symbol>
+<symbol id="sunset" viewBox="0 0 160 90"><rect width="160" height="90" fill="url(#dusk)"/><circle cx="116" cy="31" r="14" fill="#f8e3a9"/><path d="M0 62Q73 37 160 58V90H0" fill="#92966f"/><path d="M0 78Q80 62 160 72V90H0" fill="#727e5e"/><use href="#girl" x="50" y="42" width="16" height="38"/></symbol>
+</defs>
+<rect x=".5" y=".5" width="1659" height="1099" rx="16" fill="#f5f4f8" stroke="#dcd7e3"/>
+<path d="M16 1H1644Q1659 1 1659 16V38H1V16Q1 1 16 1" fill="#eeecf2"/>
+<circle cx="21" cy="20" r="5.5" fill="#ed7b73"/><circle cx="40" cy="20" r="5.5" fill="#e6bd69"/><circle cx="59" cy="20" r="5.5" fill="#89bd8c"/>
+<text x="830" y="25" text-anchor="middle" class="small muted">ChatOS · 剧情模式 / 完整剧情工作台</text>
+<rect x="1" y="38" width="153" height="1045" fill="#efedf3"/>
+<text x="22" y="82" class="heading">ChatOS</text>
+<text x="22" y="131" class="tiny muted">联系人</text><text x="24" y="166">叽咕狸</text>
+<text x="22" y="226" class="tiny muted">工作空间</text><text x="26" y="264">项目</text><text x="26" y="306">应用</text>
+<rect x="12" y="326" width="130" height="42" rx="9" fill="#e5d7ef"/><text x="26" y="352" class="purple strong">AI 创作</text>
+<text x="22" y="423" class="tiny muted">连接</text><text x="26" y="460">本机终端</text><text x="26" y="502">远端设备</text>
+<line x1="20" y1="1024" x2="134" y2="1024" class="line"/><text x="26" y="1060" class="small muted">我的账户</text>
+<rect x="154" y="38" width="1505" height="60" fill="#fff"/>
+<text x="180" y="65" class="strong">AI 创作</text><text x="180" y="84" class="tiny muted">图片、视频与完整故事创作</text>
+<rect x="1285" y="51" width="348" height="34" rx="8" fill="#eeebf3"/><text x="1322" y="73" text-anchor="middle" class="small muted">图片</text><text x="1389" y="73" text-anchor="middle" class="small muted">视频</text>
+<rect x="1425" y="54" width="117" height="28" rx="6" fill="#fff" stroke="#dfd7e8"/><text x="1483" y="73" text-anchor="middle" class="small purple strong">剧情模式</text><text x="1590" y="73" text-anchor="middle" class="small muted">记录</text>
+<text x="180" y="137" class="title">树下的夏天</text><text x="349" y="136" class="small muted">剧情项目 · 已保存到本机</text>
+<text x="797" y="135" class="small green">1 剧情分析</text><text x="905" y="135" class="muted">→</text><text x="937" y="135" class="small green">2 全剧素材</text><text x="1045" y="135" class="muted">→</text><text x="1077" y="135" class="small purple strong">3 全剧分段计划</text><text x="1208" y="135" class="muted">→</text><text x="1240" y="135" class="small muted">4 批量生成</text>
+<rect x="1511" y="114" width="122" height="33" rx="7" class="button"/><text x="1572" y="136" text-anchor="middle" class="small">＋ 新建剧情</text>
+
+<!-- Source and shared assets are project-wide, not per-segment. -->
+<rect x="180" y="167" width="252" height="807" rx="12" class="panel"/>
+<text x="198" y="198" class="heading">完整剧情</text><text x="411" y="198" text-anchor="end" class="small purple">编辑</text>
+<rect x="198" y="216" width="216" height="264" rx="8" class="field"/>
+<text x="212" y="241"><tspan x="212">夏日午后，小禾沿田间小路</tspan><tspan x="212" dy="25">来到古树下，发现了一只受</tspan><tspan x="212" dy="25">伤的小鸟。她轻轻托起小鸟，</tspan><tspan x="212" dy="25">穿过草地，将它带到溪边。</tspan><tspan x="212" dy="34">经过细心照料，小鸟重新展</tspan><tspan x="212" dy="25">开翅膀，飞向夕阳。小禾挥</tspan><tspan x="212" dy="25">手道别，沿着来时的小路回</tspan><tspan x="212" dy="25">家，耳边响起清脆的鸟鸣。</tspan></text>
+<text x="212" y="462" class="tiny muted">在这里粘贴整篇故事，不限一段。</text>
+<rect x="198" y="493" width="216" height="36" rx="7" fill="#eee4f6"/><text x="306" y="517" text-anchor="middle" class="small purple strong">重新拆分完整剧情</text>
+<text x="198" y="550" class="tiny muted">按剧情自动决定段数，每段计划 15 秒。</text>
+<line x1="198" y1="569" x2="414" y2="569" class="line"/>
+<text x="198" y="598" class="strong">全剧共用素材</text><text x="414" y="598" text-anchor="end" class="small purple">管理</text>
+<text x="198" y="623" class="small muted">固定角色外观，让各段保持一致</text>
+<rect x="198" y="639" width="101" height="63" rx="8" fill="#f1e9db"/><use href="#girl" x="207" y="644" width="22" height="51"/><text x="241" y="667" class="small strong">小禾</text><text x="241" y="686" class="tiny green">已确认</text>
+<rect x="311" y="639" width="103" height="63" rx="8" fill="#eef0e9"/><text x="325" y="664" class="small strong">小鸟</text><text x="325" y="687" class="tiny green">外观已确认</text>
+<use href="#tree" x="198" y="718" width="65" height="37"/><use href="#river" x="273" y="718" width="65" height="37"/><use href="#sunset" x="348" y="718" width="65" height="37"/>
+<text x="230" y="774" text-anchor="middle" class="tiny muted">古树</text><text x="305" y="774" text-anchor="middle" class="tiny muted">溪流</text><text x="380" y="774" text-anchor="middle" class="tiny muted">夕阳草地</text>
+<text x="198" y="804" class="tiny muted">2 个角色 · 5 个场景 · 1 个道具</text>
+<rect x="198" y="821" width="216" height="34" rx="7" class="button"/><text x="306" y="843" text-anchor="middle" class="small">生成 / 补齐素材</text>
+<text x="198" y="882" class="small purple">从生成记录选择</text><text x="414" y="882" text-anchor="end" class="small purple">本机上传</text>
+<line x1="198" y1="902" x2="414" y2="902" class="line"/><text x="198" y="926" class="tiny muted">素材统一管理，各段按需引用。</text><text x="198" y="949" class="tiny muted">修改素材后提示受影响的分段。</text>
+
+<!-- Main workspace: all eight plans, not one expanded 15-second shot. -->
+<rect x="452" y="167" width="834" height="127" rx="12" class="panel"/>
+<text x="472" y="199" class="heading">全剧分段总览</text><text x="656" y="199" class="strong purple">8 段 × 15 秒 = 2 分钟</text>
+<text x="1266" y="198" text-anchor="end" class="small muted">段数随剧情变化 · 可增删、排序</text>
+<text x="472" y="230" class="small muted">起：相遇</text><text x="674" y="230" class="small muted">承：救助</text><text x="866" y="230" class="small muted">转：康复</text><text x="1057" y="230" class="small muted">合：告别与归家</text>
+<rect x="472" y="246" width="91" height="24" rx="4" fill="#dfece5"/><text x="517.5" y="263" text-anchor="middle" class="small muted">01 · 15s</text>
+<rect x="569" y="246" width="91" height="24" rx="4" fill="#dfece5"/><text x="614.5" y="263" text-anchor="middle" class="small muted">02 · 15s</text>
+<rect x="666" y="246" width="91" height="24" rx="4" fill="#9554bf"/><text x="711.5" y="263" text-anchor="middle" class="small white">03 · 15s</text>
+<rect x="763" y="246" width="91" height="24" rx="4" fill="#ebe5f1"/><text x="808.5" y="263" text-anchor="middle" class="small muted">04 · 15s</text>
+<rect x="860" y="246" width="91" height="24" rx="4" fill="#ebe5f1"/><text x="905.5" y="263" text-anchor="middle" class="small muted">05 · 15s</text>
+<rect x="957" y="246" width="91" height="24" rx="4" fill="#ebe5f1"/><text x="1002.5" y="263" text-anchor="middle" class="small muted">06 · 15s</text>
+<rect x="1054" y="246" width="91" height="24" rx="4" fill="#ebe5f1"/><text x="1099.5" y="263" text-anchor="middle" class="small muted">07 · 15s</text>
+<rect x="1151" y="246" width="91" height="24" rx="4" fill="#ebe5f1"/><text x="1196.5" y="263" text-anchor="middle" class="small muted">08 · 15s</text>
+<text x="472" y="286" class="tiny muted">00:00</text><text x="1250" y="286" text-anchor="end" class="tiny muted">02:00</text>
+<text x="468" y="321" class="small muted">选择</text><text x="552" y="321" class="small muted">首帧示意</text><text x="654" y="321" class="small muted">剧情计划 / 全剧时间位置 / 引用素材</text><text x="1220" y="321" text-anchor="middle" class="small muted">视频状态</text>
+<g transform="translate(0 336)">
+<rect x="452" width="834" height="70" rx="9" fill="#fff" stroke="#e8e5ed" stroke-width="1"/>
+<rect x="468" y="27" width="16" height="16" rx="4" fill="#fff" stroke="#d9d4df"/>
+<text x="510" y="31" class="strong">01</text><text x="510" y="51" class="tiny muted">15 秒</text>
+<use href="#path" x="552" y="10" width="88" height="50"/>
+<text x="654" y="24" class="strong">走进夏天</text><text x="807" y="24" class="small muted">00:00–00:15</text>
+<text x="654" y="45" class="small">小禾沿田间小路走向古树，建立故事环境。</text><text x="654" y="61" class="tiny muted">小禾 · 田间小路</text>
+<text x="1220" y="30" text-anchor="middle" class="small green">已完成</text><text x="1220" y="51" text-anchor="middle" class="tiny muted">查看视频</text>
+</g>
+<g transform="translate(0 413)">
+<rect x="452" width="834" height="70" rx="9" fill="#fff" stroke="#e8e5ed" stroke-width="1"/>
+<rect x="468" y="27" width="16" height="16" rx="4" fill="#fff" stroke="#d9d4df"/>
+<text x="510" y="31" class="strong">02</text><text x="510" y="51" class="tiny muted">15 秒</text>
+<use href="#tree" x="552" y="10" width="88" height="50"/>
+<text x="654" y="24" class="strong">树下的发现</text><text x="807" y="24" class="small muted">00:15–00:30</text>
+<text x="654" y="45" class="small">她发现一只受伤的小鸟，蹲下轻轻靠近。</text><text x="654" y="61" class="tiny muted">小禾、小鸟 · 古树</text>
+<text x="1220" y="30" text-anchor="middle" class="small green">已完成</text><text x="1220" y="51" text-anchor="middle" class="tiny muted">查看视频</text>
+</g>
+<g transform="translate(0 490)">
+<rect x="452" width="834" height="70" rx="9" fill="#f7f1fc" stroke="#a16dcd" stroke-width="1.5"/>
+<rect x="468" y="27" width="16" height="16" rx="4" fill="#9252bd" stroke="#9252bd"/><text x="476" y="40" text-anchor="middle" class="white small">✓</text>
+<text x="510" y="31" class="strong">03</text><text x="510" y="51" class="tiny muted">15 秒</text>
+<use href="#tree" x="552" y="10" width="88" height="50"/>
+<text x="654" y="24" class="strong">小心托起</text><text x="807" y="24" class="small muted">00:30–00:45</text>
+<text x="654" y="45" class="small">小禾用手帕托起小鸟，决定带它去溪边。</text><text x="654" y="61" class="tiny muted">小禾、小鸟 · 古树</text>
+<text x="1220" y="30" text-anchor="middle" class="small purple">待生成</text><text x="1220" y="51" text-anchor="middle" class="tiny muted">素材 / 首帧就绪</text>
+</g>
+<g transform="translate(0 567)">
+<rect x="452" width="834" height="70" rx="9" fill="#fff" stroke="#e8e5ed" stroke-width="1"/>
+<rect x="468" y="27" width="16" height="16" rx="4" fill="#9252bd" stroke="#9252bd"/><text x="476" y="40" text-anchor="middle" class="white small">✓</text>
+<text x="510" y="31" class="strong">04</text><text x="510" y="51" class="tiny muted">15 秒</text>
+<use href="#path" x="552" y="10" width="88" height="50"/>
+<text x="654" y="24" class="strong">穿过草地</text><text x="807" y="24" class="small muted">00:45–01:00</text>
+<text x="654" y="45" class="small">她双手护着小鸟，穿过草地走向溪流。</text><text x="654" y="61" class="tiny muted">小禾、小鸟 · 草地</text>
+<text x="1220" y="30" text-anchor="middle" class="small purple">待生成</text><text x="1220" y="51" text-anchor="middle" class="tiny muted">素材 / 首帧就绪</text>
+</g>
+<g transform="translate(0 644)">
+<rect x="452" width="834" height="70" rx="9" fill="#fff" stroke="#e8e5ed" stroke-width="1"/>
+<rect x="468" y="27" width="16" height="16" rx="4" fill="#9252bd" stroke="#9252bd"/><text x="476" y="40" text-anchor="middle" class="white small">✓</text>
+<text x="510" y="31" class="strong">05</text><text x="510" y="51" class="tiny muted">15 秒</text>
+<use href="#river" x="552" y="10" width="88" height="50"/>
+<text x="654" y="24" class="strong">溪边照料</text><text x="807" y="24" class="small muted">01:00–01:15</text>
+<text x="654" y="45" class="small">小禾取水照料小鸟，在石边耐心等待。</text><text x="654" y="61" class="tiny muted">小禾、小鸟 · 溪流</text>
+<text x="1220" y="30" text-anchor="middle" class="small purple">待生成</text><text x="1220" y="51" text-anchor="middle" class="tiny muted">素材 / 首帧就绪</text>
+</g>
+<g transform="translate(0 721)">
+<rect x="452" width="834" height="70" rx="9" fill="#fff" stroke="#e8e5ed" stroke-width="1"/>
+<rect x="468" y="27" width="16" height="16" rx="4" fill="#9252bd" stroke="#9252bd"/><text x="476" y="40" text-anchor="middle" class="white small">✓</text>
+<text x="510" y="31" class="strong">06</text><text x="510" y="51" class="tiny muted">15 秒</text>
+<use href="#river" x="552" y="10" width="88" height="50"/>
+<text x="654" y="24" class="strong">重新振翅</text><text x="807" y="24" class="small muted">01:15–01:30</text>
+<text x="654" y="45" class="small">小鸟试着展开翅膀，小禾惊喜地伸出手。</text><text x="654" y="61" class="tiny muted">小禾、小鸟 · 溪流</text>
+<text x="1220" y="30" text-anchor="middle" class="small purple">待生成</text><text x="1220" y="51" text-anchor="middle" class="tiny muted">素材 / 首帧就绪</text>
+</g>
+<g transform="translate(0 798)">
+<rect x="452" width="834" height="70" rx="9" fill="#fff" stroke="#e8e5ed" stroke-width="1"/>
+<rect x="468" y="27" width="16" height="16" rx="4" fill="#fff" stroke="#d9d4df"/>
+<text x="510" y="31" class="strong">07</text><text x="510" y="51" class="tiny muted">15 秒</text>
+<use href="#sunset" x="552" y="10" width="88" height="50"/>
+<text x="654" y="24" class="strong">告别朋友</text><text x="807" y="24" class="small muted">01:30–01:45</text>
+<text x="654" y="45" class="small">小鸟飞向夕阳，小禾挥手目送它离开。</text><text x="654" y="61" class="tiny muted">小禾、小鸟 · 夕阳草地</text>
+<text x="1220" y="30" text-anchor="middle" class="small amber">缺少首帧</text><text x="1220" y="51" text-anchor="middle" class="tiny muted">补齐素材后生成</text>
+</g>
+<g transform="translate(0 875)">
+<rect x="452" width="834" height="70" rx="9" fill="#fff" stroke="#e8e5ed" stroke-width="1"/>
+<rect x="468" y="27" width="16" height="16" rx="4" fill="#fff" stroke="#d9d4df"/>
+<text x="510" y="31" class="strong">08</text><text x="510" y="51" class="tiny muted">15 秒</text>
+<use href="#sunset" x="552" y="10" width="88" height="50"/>
+<text x="654" y="24" class="strong">带着温柔回家</text><text x="807" y="24" class="small muted">01:45–02:00</text>
+<text x="654" y="45" class="small">她沿原路回家，远处传来清脆的鸟鸣。</text><text x="654" y="61" class="tiny muted">小禾 · 田间小路</text>
+<text x="1220" y="30" text-anchor="middle" class="small amber">缺少首帧</text><text x="1220" y="51" text-anchor="middle" class="tiny muted">补齐素材后生成</text>
+</g>
+<text x="472" y="975" class="small purple">＋ 添加 15 秒分段</text><text x="1266" y="975" text-anchor="end" class="small muted">选中一段，在右侧编辑；排序后重算全剧时间位置。</text>
+
+<!-- Details stay secondary to the complete storyline. -->
+<rect x="1306" y="167" width="327" height="807" rx="12" class="panel"/>
+<text x="1325" y="197" class="heading">03 · 小心托起</text><text x="1614" y="197" text-anchor="end" class="small muted">分段详情</text>
+<text x="1325" y="225" class="small muted">全剧 00:30–00:45 · 本段 15 秒</text>
+<use href="#tree" x="1325" y="241" width="289" height="163"/>
+<rect x="1334" y="250" width="91" height="21" rx="4" fill="#363d30" opacity=".8"/><text x="1379" y="265" text-anchor="middle" class="tiny white">首帧示意 · 放大</text>
+<text x="1325" y="429" class="small purple">替换首帧</text><text x="1614" y="429" text-anchor="end" class="small purple">重新生成首帧</text>
+<text x="1325" y="460" class="small muted">引用：小禾 / 小鸟 / 古树 / 手帕</text>
+<line x1="1325" y1="479" x2="1614" y2="479" class="line"/>
+<text x="1325" y="505" class="strong">本段镜头提示词</text><text x="1614" y="505" text-anchor="end" class="small purple">编辑</text>
+<text x="1325" y="533" class="small purple strong">0–5 秒 · 特写</text><text x="1325" y="555" class="small">镜头缓慢推近，手帕轻轻包住小鸟。</text>
+<text x="1325" y="586" class="small purple strong">5–10 秒 · 中景</text><text x="1325" y="608" class="small">小禾小心托起，视线始终停留在小鸟身上。</text>
+<text x="1325" y="639" class="small purple strong">10–15 秒 · 跟随</text><text x="1325" y="661" class="small">她缓缓起身，转向右侧溪流的方向。</text>
+<rect x="1325" y="680" width="289" height="80" rx="8" fill="#f7f4fa"/>
+<text x="1337" y="701" class="small strong">前后衔接</text><text x="1337" y="725" class="small muted">承接 02：蹲在树下，小鸟仍在地面。</text><text x="1337" y="747" class="small muted">衔接 04：起身后向右走，双手托住小鸟。</text>
+<text x="1325" y="787" class="small muted">声音：树叶声、轻微鸟鸣；无对白。</text>
+<text x="1325" y="811" class="small muted">约束：同一服装、手帕与光线，不换脸。</text>
+<line x1="1325" y1="833" x2="1614" y2="833" class="line"/>
+<rect x="1325" y="850" width="139" height="34" rx="7" class="button"/><text x="1394" y="872" text-anchor="middle" class="small">保存本段修改</text>
+<rect x="1475" y="850" width="139" height="34" rx="7" class="button"/><text x="1544" y="872" text-anchor="middle" class="small">重新规划本段</text>
+<text x="1325" y="918" class="tiny muted">仅修改本段，不覆盖其他计划与已生成视频。</text>
+<text x="1325" y="945" class="tiny muted">生成前检查模型能否输出目标 15 秒时长。</text>
+
+<!-- Global batch actions apply to the full project. -->
+<rect x="180" y="995" width="1453" height="82" rx="12" fill="#fff" stroke="#e1dbe9"/>
+<text x="200" y="1021" class="small muted">全剧进度</text><text x="200" y="1048" class="strong">2 / 8 段已完成</text>
+<rect x="352" y="1021" width="174" height="6" rx="3" fill="#ebe7f0"/><rect x="352" y="1021" width="43.5" height="6" rx="3" fill="#8e54b6"/>
+<text x="352" y="1050" class="small muted">4 段就绪 · 2 段待补首帧</text>
+<text x="575" y="1021" class="small purple">模型与生成设置…</text><text x="575" y="1050" class="small muted">规划 / 图片 / 视频 · 统一风格与比例</text>
+<text x="993" y="1021" class="strong">已选 03–06，共 4 段 / 60 秒</text><text x="993" y="1050" class="small muted">提交前确认费用，不重复生成已完成段。</text>
+<rect x="1268" y="1014" width="123" height="42" rx="8" class="button"/><text x="1329" y="1041" text-anchor="middle" class="small">选择所有就绪段</text>
+<rect x="1403" y="1014" width="211" height="42" rx="8" fill="#9552c0"/><text x="1508" y="1041" text-anchor="middle" class="white strong">批量生成所选 4 段</text>
+<text x="180" y="1094" class="tiny muted">设计示例 · 插画与状态均为占位。每段单独生成视频；这里的 2 分钟是计划总时长，不代表已自动拼接成片。</text>
+</svg>

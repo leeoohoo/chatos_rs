@@ -24,11 +24,6 @@ public interface IConversationRuntimeSettingsService
         string modelId,
         CancellationToken cancellationToken = default);
 
-    Task<ConversationRuntimeSettings> UpdatePlanModeAsync(
-        string conversationId,
-        bool enabled,
-        CancellationToken cancellationToken = default);
-
     Task<ConversationRuntimeSettings> UpdateReasoningAsync(
         string conversationId,
         bool enabled,

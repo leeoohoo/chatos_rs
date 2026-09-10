@@ -42,7 +42,8 @@ pub mod contacts;
 mod conversation_semantics;
 mod cors;
 pub mod fs;
-pub mod git;
+// Filesystem policy remains an internal runtime primitive. Git and filesystem
+// project operations are owned by the desktop client and Local Connector.
 mod internal_audit;
 pub mod local_connectors;
 pub mod mcp_management;
@@ -53,7 +54,6 @@ pub mod messages;
 pub(crate) mod metrics;
 pub mod notepad;
 pub mod pet_activities;
-pub mod projects;
 pub mod realtime;
 pub mod remote_connections;
 pub mod sessions;
@@ -272,13 +272,7 @@ fn request_host_matches_origin(request_host: &str, origin: &str) -> bool {
 }
 
 fn default_request_body_limit_bytes() -> usize {
-    const BASE_LIMIT: usize = 50 * 1024 * 1024;
-    let cloud_zip_limit = std::env::var("PROJECT_SERVICE_CLOUD_PROJECT_MAX_ZIP_BYTES")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .unwrap_or(100 * 1024 * 1024)
-        .saturating_add(1024 * 1024);
-    BASE_LIMIT.max(cloud_zip_limit)
+    50 * 1024 * 1024
 }
 
 fn build_health_payload() -> serde_json::Value {

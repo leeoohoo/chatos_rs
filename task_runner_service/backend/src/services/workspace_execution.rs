@@ -13,11 +13,19 @@ use crate::models::{
     WorkspaceIntegrationStatus, WorkspacePreparationStatus,
 };
 
-use super::project_management_api_client::{
-    FinalizeRunWorkspaceRequest, IntegrateRunWorkspaceRequest, PreparedRunBranch,
-    RunWorkspaceIntegrationResultStatus,
-};
 use super::RunService;
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub(crate) struct RunWorkspaceChanges {
+    pub project_id: String,
+    pub run_id: String,
+    pub branch_ref: String,
+    pub base_commit: String,
+    pub result_commit: String,
+    pub files: Vec<crate::models::TaskRunWorkspaceChangedFile>,
+    pub patch: String,
+    pub patch_truncated: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkspaceRouteDecision {
@@ -135,120 +143,6 @@ fn remove_non_project_workspace_tools(
     snapshot.terminal = false;
 }
 
-pub(crate) fn validate_project_execution_task_runtime_contract(
-    task: &TaskRecord,
-    tools: &EffectiveTaskToolSnapshot,
-) -> Result<(), String> {
-    let payload = task
-        .input_payload
-        .as_ref()
-        .unwrap_or(&serde_json::Value::Null);
-    if payload.get("source").and_then(serde_json::Value::as_str)
-        != Some("chatos_project_requirement_execution")
-    {
-        return Ok(());
-    }
-    let role = payload
-        .get("task_role")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .map(str::to_ascii_lowercase)
-        .ok_or_else(|| {
-            "platform_task_capability_invalid: project execution task is missing task_role"
-                .to_string()
-        })?;
-    let owned_path_values = payload
-        .get("owned_paths")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    if owned_path_values
-        .iter()
-        .any(|value| value.as_str().is_none_or(|path| path.trim().is_empty()))
-    {
-        return Err(
-            "platform_task_capability_invalid: owned_paths must contain only non-empty strings"
-                .to_string(),
-        );
-    }
-    let owned_paths = owned_path_values
-        .iter()
-        .filter_map(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .collect::<Vec<_>>();
-    if task.mcp_config.workspace_changes_required != tools.workspace_write {
-        return Err(format!(
-            "platform_task_capability_invalid: workspace_changes_required={} conflicts with frozen workspace_write={}",
-            task.mcp_config.workspace_changes_required, tools.workspace_write
-        ));
-    }
-    if (tools.workspace_write || tools.terminal) && !task.mcp_config.requires_execution {
-        return Err(
-            "platform_task_capability_invalid: write or terminal capability requires requires_execution=true"
-                .to_string(),
-        );
-    }
-    match role.as_str() {
-        "implementation" => {
-            if !tools.workspace_write {
-                return Err(
-                    "platform_task_capability_invalid: implementation task requires CodeMaintainerWrite selected through Plugin Management"
-                        .to_string(),
-                );
-            }
-            if !tools.workspace_read {
-                return Err(
-                    "platform_task_capability_invalid: implementation write capability is missing its read dependency"
-                        .to_string(),
-                );
-            }
-            if owned_paths.is_empty() {
-                return Err(
-                    "platform_task_capability_invalid: implementation task requires non-empty owned_paths"
-                        .to_string(),
-                );
-            }
-        }
-        "verification" => {
-            if tools.workspace_write {
-                return Err(
-                    "platform_task_capability_invalid: verification task must remain read-only"
-                        .to_string(),
-                );
-            }
-            if !owned_paths.is_empty() {
-                return Err(
-                    "platform_task_capability_invalid: verification task owned_paths must be empty"
-                        .to_string(),
-                );
-            }
-            let has_explicit_capability = task
-                .mcp_config
-                .enabled_builtin_kinds
-                .iter()
-                .any(|kind| builtin_kind_by_any(kind).is_some())
-                || task
-                    .mcp_config
-                    .external_mcp_config_ids
-                    .iter()
-                    .any(|id| !id.trim().is_empty());
-            if !has_explicit_capability {
-                return Err(
-                    "platform_task_capability_invalid: verification task requires at least one explicit MCP capability"
-                        .to_string(),
-                );
-            }
-        }
-        other => {
-            return Err(format!(
-                "platform_task_capability_invalid: unsupported project execution task_role={other}"
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn owned_workspace_paths(task: &TaskRecord) -> Result<Vec<String>, String> {
     let payload = task
         .input_payload
@@ -258,11 +152,6 @@ fn owned_workspace_paths(task: &TaskRecord) -> Result<Vec<String>, String> {
 }
 
 fn owned_workspace_paths_from_payload(payload: &serde_json::Value) -> Result<Vec<String>, String> {
-    if payload.get("source").and_then(serde_json::Value::as_str)
-        != Some("chatos_project_requirement_execution")
-    {
-        return Ok(Vec::new());
-    }
     let owned_paths = payload
         .get("owned_paths")
         .and_then(serde_json::Value::as_array)
@@ -375,16 +264,7 @@ pub(crate) async fn model_execution_lane_key(
     if !tools.mutates_workspace() {
         return Ok(None);
     }
-    let scope = task.execution_scope();
-    let Some(project_id) = scope.workspace_project_id() else {
-        return Ok(None);
-    };
-    let _project =
-        super::project_management_api_client::sync_get_project(&service.config, project_id)
-            .await?
-            .ok_or_else(|| {
-                format!("project not found while resolving execution lane: {project_id}")
-            })?;
+    let _ = (service, task);
     Ok(None)
 }
 
@@ -483,50 +363,35 @@ pub(crate) async fn prepare_task_run_workspace(
 }
 
 async fn prepare_workspace_inner(
-    service: &RunService,
+    _service: &RunService,
     task: &TaskRecord,
     run: &TaskRunRecord,
 ) -> Result<PreparedWorkspaceExecution, String> {
     let scope = task.execution_scope();
-    let project_id = scope
+    let _project_id = scope
         .workspace_project_id()
         .ok_or_else(|| "user conversation tasks do not have a project workspace".to_string())?;
-    let project =
-        super::project_management_api_client::sync_get_project(&service.config, project_id)
-            .await?
-            .ok_or_else(|| {
-                format!("project not found while preparing Task Run workspace: {project_id}")
-            })?;
+    task.project_context
+        .as_ref()
+        .ok_or_else(|| "project task is missing its frozen client project context".to_string())?;
     let decision = decide_workspace_route(&run.effective_tools)?;
     match decision {
         WorkspaceRouteDecision::None => {
             Err("workspace preparation was requested without workspace tools".to_string())
         }
-        WorkspaceRouteDecision::LocalConnector => {
-            let has_local_workspace = project
-                .root_path
-                .as_deref()
-                .and_then(chatos_project_execution::parse_local_connector_workspace_root)
-                .is_some();
-            if !has_local_workspace {
-                return Err(
-                    "project workspace tools require a bound Local Connector workspace".to_string(),
-                );
-            }
-            Ok(PreparedWorkspaceExecution {
-                route: RuntimeWorkspaceRouteTarget::LocalConnector {
-                    default_tool_root: None,
-                    owned_paths: owned_workspace_paths(task)?,
-                },
-                branch_target: TaskRunBranchTarget::Local,
-                execution_group_id: run
-                    .effective_tools
-                    .mutates_workspace()
-                    .then(|| execution_group_id_for_task(task)),
-                execution_branch_ref: None,
-                execution_base_commit: None,
-            })
-        }
+        WorkspaceRouteDecision::LocalConnector => Ok(PreparedWorkspaceExecution {
+            route: RuntimeWorkspaceRouteTarget::LocalConnector {
+                default_tool_root: None,
+                owned_paths: owned_workspace_paths(task)?,
+            },
+            branch_target: TaskRunBranchTarget::Local,
+            execution_group_id: run
+                .effective_tools
+                .mutates_workspace()
+                .then(|| execution_group_id_for_task(task)),
+            execution_branch_ref: None,
+            execution_base_commit: None,
+        }),
     }
 }
 
@@ -557,10 +422,10 @@ async fn persist_workspace_execution(
 }
 
 pub(crate) async fn load_task_run_workspace_changes(
-    service: &RunService,
+    _service: &RunService,
     task: &TaskRecord,
     run: &TaskRunRecord,
-) -> Result<super::project_management_api_client::GetRunWorkspaceChangesResponse, String> {
+) -> Result<RunWorkspaceChanges, String> {
     let execution = run
         .workspace_execution
         .as_ref()
@@ -572,295 +437,54 @@ pub(crate) async fn load_task_run_workspace_changes(
         let project_id = task.project_id.clone().ok_or_else(|| {
             "workspace change inspection requires a concrete project scope".to_string()
         })?;
-        return Ok(
-            super::project_management_api_client::GetRunWorkspaceChangesResponse {
-                project_id,
-                run_id: run.id.clone(),
-                branch_ref: format!(
-                    "local-run:{}",
-                    execution
-                        .execution_group_id
-                        .as_deref()
-                        .unwrap_or(run.id.as_str())
-                ),
-                base_commit: execution
-                    .execution_base_commit
-                    .clone()
-                    .ok_or_else(|| "本地运行尚未返回代码快照提交".to_string())?,
-                result_commit: execution
-                    .result_commit
-                    .clone()
-                    .ok_or_else(|| "本地运行尚未返回结果提交".to_string())?,
-                files: execution.local_changed_files.clone(),
-                patch: execution.local_patch.clone().unwrap_or_default(),
-                patch_truncated: execution.local_patch_truncated,
-            },
-        );
+        return Ok(RunWorkspaceChanges {
+            project_id,
+            run_id: run.id.clone(),
+            branch_ref: format!(
+                "local-run:{}",
+                execution
+                    .execution_group_id
+                    .as_deref()
+                    .unwrap_or(run.id.as_str())
+            ),
+            base_commit: execution
+                .execution_base_commit
+                .clone()
+                .ok_or_else(|| "本地运行尚未返回代码快照提交".to_string())?,
+            result_commit: execution
+                .result_commit
+                .clone()
+                .ok_or_else(|| "本地运行尚未返回结果提交".to_string())?,
+            files: execution.local_changed_files.clone(),
+            patch: execution.local_patch.clone().unwrap_or_default(),
+            patch_truncated: execution.local_patch_truncated,
+        });
     }
-    let TaskRunBranchTarget::Run {
-        branch_id,
-        branch_ref,
-        base_branch,
-        base_commit,
-    } = execution
-        .branch_target
-        .as_ref()
-        .ok_or_else(|| "当前运行没有独立代码分支".to_string())?
-    else {
-        return Err("当前运行没有独立代码分支".to_string());
-    };
-    let changes_base_commit =
-        if execution.integration_status == WorkspaceIntegrationStatus::Integrated {
-            execution
-                .integration_base_commit
-                .as_ref()
-                .unwrap_or(base_commit)
-        } else {
-            base_commit
-        };
-    let scope = task.execution_scope();
-    let project_id = scope.workspace_project_id().ok_or_else(|| {
-        "user conversation tasks cannot load project workspace changes".to_string()
-    })?;
-    let owner_user_id = scope.owner_user_id().trim().to_string();
-    if owner_user_id.is_empty() {
-        return Err("task owner user id is required for workspace changes".to_string());
-    }
-    let changes = super::project_management_api_client::get_run_workspace_changes(
-        &service.config,
-        project_id,
-        run.id.as_str(),
-        &super::project_management_api_client::GetRunWorkspaceChangesRequest {
-            owner_user_id,
-            branch: PreparedRunBranch {
-                branch_id: branch_id.clone(),
-                branch_ref: branch_ref.clone(),
-                base_branch: base_branch.clone(),
-                base_commit: changes_base_commit.clone(),
-            },
-        },
+    Err(
+        "workspace changes are available only from the Local Connector execution result"
+            .to_string(),
     )
-    .await?;
-    if changes.project_id != project_id || changes.run_id != run.id {
-        return Err("Project Service returned changes for a different Task Run".to_string());
-    }
-    Ok(changes)
 }
 
 pub(crate) async fn finalize_task_run_workspace(
-    service: &RunService,
-    task: &TaskRecord,
+    _service: &RunService,
+    _task: &TaskRecord,
     run: &mut TaskRunRecord,
 ) -> Result<(), String> {
-    let Some(execution) = run.workspace_execution.clone() else {
+    let Some(execution) = run.workspace_execution.as_ref() else {
         return Ok(());
     };
     if execution.status != WorkspacePreparationStatus::Ready {
         return Ok(());
     }
-    if matches!(
+    if !matches!(
         execution.route.as_ref(),
         Some(RuntimeWorkspaceRouteTarget::LocalConnector { .. })
     ) {
-        return Ok(());
+        return Err("Task Runner accepts only Local Connector project workspaces".to_string());
     }
-    let branch = match execution.branch_target.as_ref() {
-        Some(TaskRunBranchTarget::Run {
-            branch_id,
-            branch_ref,
-            base_branch,
-            base_commit,
-        }) => Some(PreparedRunBranch {
-            branch_id: branch_id.clone(),
-            branch_ref: branch_ref.clone(),
-            base_branch: base_branch.clone(),
-            base_commit: base_commit.clone(),
-        }),
-        Some(TaskRunBranchTarget::Local | TaskRunBranchTarget::Default { .. }) | None => None,
-    };
-    if branch.is_none() {
-        mark_workspace_finalized(service, run, None, false).await?;
-        return Ok(());
-    }
-    let scope = task.execution_scope();
-    let project_id = scope
-        .workspace_project_id()
-        .ok_or_else(|| "user conversation tasks cannot finalize a project workspace".to_string())?;
-    let owner_user_id = scope.owner_user_id().trim().to_string();
-    if owner_user_id.is_empty() {
-        return Err("task owner user id is required for workspace finalization".to_string());
-    }
-    if execution.finalized_at.is_none() {
-        let response = super::project_management_api_client::finalize_run_workspace(
-            &service.config,
-            project_id,
-            run.id.as_str(),
-            &FinalizeRunWorkspaceRequest {
-                owner_user_id: owner_user_id.clone(),
-                branch: branch.clone(),
-            },
-        )
-        .await;
-        match response {
-            Ok(response) => {
-                if response.project_id.trim() != project_id || response.run_id.trim() != run.id {
-                    return Err(
-                        "Project Service finalized a different Task Run workspace".to_string()
-                    );
-                }
-                mark_workspace_finalized(
-                    service,
-                    run,
-                    response.result_commit,
-                    response.lease_retained_for_diagnostics,
-                )
-                .await?;
-            }
-            Err(error) => {
-                if let Some(execution) = run.workspace_execution.as_mut() {
-                    execution.finalization_error = Some(error.clone());
-                }
-                run.updated_at = now_rfc3339();
-                let _ = persist_workspace_execution(service, run).await;
-                return Err(error);
-            }
-        }
-    }
-    if run.model_phase_status != crate::models::ModelPhaseStatus::Succeeded {
-        return Ok(());
-    }
-    let Some(branch) = branch else {
-        return Ok(());
-    };
-    let execution = run
-        .workspace_execution
-        .as_ref()
-        .ok_or_else(|| "Task Run workspace state disappeared before integration".to_string())?;
-    if execution.integration_status == WorkspaceIntegrationStatus::Integrated
-        || execution.integration_status == WorkspaceIntegrationStatus::Waived
-        || execution.integration_status == WorkspaceIntegrationStatus::Conflict
-    {
-        return Ok(());
-    }
-    let execution_group_id = execution
-        .execution_group_id
-        .clone()
-        .ok_or_else(|| "Task Run workspace is missing execution_group_id".to_string())?;
-    let execution_branch_ref = execution
-        .execution_branch_ref
-        .clone()
-        .ok_or_else(|| "Task Run workspace is missing execution_branch_ref".to_string())?;
-    let result_commit = execution
-        .result_commit
-        .clone()
-        .ok_or_else(|| "Task Run workspace finalization returned no result commit".to_string())?;
-    let integration_ready_at = execution
-        .integration_ready_at
-        .clone()
-        .unwrap_or_else(now_rfc3339);
-    if let Some(prior) = service
-        .store
-        .get_prior_pending_integration_run(
-            execution_group_id.as_str(),
-            integration_ready_at.as_str(),
-            run.created_at.as_str(),
-            run.id.as_str(),
-        )
-        .await?
-    {
-        return Err(format!(
-            "{}: waiting for prior Run {} in execution group {}",
-            crate::services::WORKSPACE_INTEGRATION_RETRY_PREFIX,
-            prior.id,
-            execution_group_id
-        ));
-    }
-    if let Some(execution) = run.workspace_execution.as_mut() {
-        execution.integration_status = WorkspaceIntegrationStatus::Integrating;
-        execution.integration_started_at = Some(now_rfc3339());
-        execution.integration_attempt_count = execution.integration_attempt_count.saturating_add(1);
-        execution.integration_base_commit = execution.execution_base_commit.clone();
-        execution.integration_last_error = None;
-    }
-    run.updated_at = now_rfc3339();
-    persist_workspace_execution(service, run).await?;
-    service
-        .store
-        .append_run_event(crate::models::TaskRunEventRecord::new(
-            run.id.clone(),
-            "integration_started",
-            Some("开始集成任务代码到执行批次分支".to_string()),
-            Some(serde_json::json!({
-                "execution_group_id": execution_group_id,
-                "execution_branch_ref": execution_branch_ref,
-                "result_commit": result_commit,
-            })),
-        ))
-        .await?;
-    let response = super::project_management_api_client::integrate_run_workspace(
-        &service.config,
-        project_id,
-        run.id.as_str(),
-        &IntegrateRunWorkspaceRequest {
-            owner_user_id,
-            execution_group_id,
-            execution_branch_ref,
-            integration_ready_at,
-            branch,
-            result_commit: result_commit.clone(),
-        },
-    )
-    .await?;
-    if response.project_id.trim() != project_id || response.run_id.trim() != run.id {
-        return Err("Project Service integrated a different Task Run workspace".to_string());
-    }
-    match response.status {
-        RunWorkspaceIntegrationResultStatus::Integrated => {
-            if let Some(execution) = run.workspace_execution.as_mut() {
-                execution.integration_status = WorkspaceIntegrationStatus::Integrated;
-                execution.integrated_at = Some(now_rfc3339());
-                execution.result_commit = Some(response.result_commit);
-                execution.integrated_commit = response.integrated_commit;
-                if response.integration_base_commit.is_some() {
-                    execution.integration_base_commit = response.integration_base_commit;
-                }
-                execution.conflict_files.clear();
-                execution.conflict_message = None;
-                execution.integration_last_error = None;
-            }
-            run.updated_at = now_rfc3339();
-            persist_workspace_execution(service, run).await?;
-            Ok(())
-        }
-        RunWorkspaceIntegrationResultStatus::Conflict => {
-            if let Some(execution) = run.workspace_execution.as_mut() {
-                execution.integration_status = WorkspaceIntegrationStatus::Conflict;
-                execution.conflict_files = response.conflict_files;
-                execution.conflict_message = response.message;
-                execution.integration_last_error = None;
-            }
-            run.updated_at = now_rfc3339();
-            persist_workspace_execution(service, run).await?;
-            Ok(())
-        }
-        RunWorkspaceIntegrationResultStatus::RetryableError => {
-            let message = response.message.unwrap_or_else(|| {
-                "Project Service reported a retryable integration error".to_string()
-            });
-            if let Some(execution) = run.workspace_execution.as_mut() {
-                execution.integration_status = WorkspaceIntegrationStatus::Failed;
-                execution.integration_last_error = Some(message.clone());
-            }
-            run.updated_at = now_rfc3339();
-            let _ = persist_workspace_execution(service, run).await;
-            Err(format!(
-                "{}: {message}",
-                crate::services::WORKSPACE_INTEGRATION_RETRY_PREFIX
-            ))
-        }
-    }
+    Ok(())
 }
-
 pub(crate) async fn apply_runtime_provider_finalization(
     service: &RunService,
     run: &mut TaskRunRecord,
@@ -970,39 +594,6 @@ pub(crate) async fn apply_runtime_provider_finalization(
     Ok(())
 }
 
-async fn mark_workspace_finalized(
-    service: &RunService,
-    run: &mut TaskRunRecord,
-    result_commit: Option<String>,
-    lease_retained_for_diagnostics: bool,
-) -> Result<(), String> {
-    if let Some(execution) = run.workspace_execution.as_mut() {
-        execution.finalized_at = Some(now_rfc3339());
-        execution.finalization_error = None;
-        execution.result_commit = result_commit.clone();
-        execution.lease_retained_for_diagnostics = lease_retained_for_diagnostics;
-    }
-    run.updated_at = now_rfc3339();
-    persist_workspace_execution(service, run).await?;
-    service
-        .store
-        .append_run_event(crate::models::TaskRunEventRecord::new(
-            run.id.clone(),
-            "workspace_finalized",
-            Some(if lease_retained_for_diagnostics {
-                "任务工作区已导出，失败租约保留到期以便诊断".to_string()
-            } else {
-                "任务工作区已完成回收".to_string()
-            }),
-            Some(serde_json::json!({
-                "result_commit": result_commit,
-                "lease_retained_for_diagnostics": lease_retained_for_diagnostics,
-            })),
-        ))
-        .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1085,9 +676,8 @@ mod tests {
     }
 
     #[test]
-    fn owned_project_execution_paths_are_preserved_as_write_scope() {
+    fn task_owned_paths_are_preserved_as_write_scope() {
         let payload = serde_json::json!({
-            "source": "chatos_project_requirement_execution",
             "owned_paths": ["README.md", "backend", "README.md"]
         });
 
@@ -1098,21 +688,8 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_payload_has_no_owned_write_scope() {
+    fn unsafe_task_owned_path_is_rejected() {
         let payload = serde_json::json!({
-            "source": "manual",
-            "owned_paths": ["backend"]
-        });
-
-        assert!(owned_workspace_paths_from_payload(&payload)
-            .unwrap()
-            .is_empty());
-    }
-
-    #[test]
-    fn unsafe_owned_project_execution_path_is_rejected() {
-        let payload = serde_json::json!({
-            "source": "chatos_project_requirement_execution",
             "owned_paths": ["../backend"]
         });
 

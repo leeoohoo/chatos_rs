@@ -5,8 +5,6 @@ use super::*;
 use serde::Deserializer;
 use std::collections::BTreeMap;
 
-pub const TASK_MCP_HTTP_AUTH_PROJECT_SERVICE_SYNC: &str = "project_service_sync";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskEphemeralHttpMcpServer {
     pub name: String,

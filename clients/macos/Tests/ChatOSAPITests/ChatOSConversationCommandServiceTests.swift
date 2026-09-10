@@ -32,13 +32,13 @@ final class ChatOSConversationCommandServiceTests: XCTestCase {
         XCTAssertEqual(payload["conversation_id"] as? String, "conversation-1")
         XCTAssertEqual(payload["turn_id"] as? String, "turn-1")
         XCTAssertEqual(payload["model_config_id"] as? String, "model-config-1")
-        XCTAssertEqual(payload["plan_mode"] as? Bool, false)
+        XCTAssertNil(payload["plan_mode"])
         let model = try XCTUnwrap(payload["ai_model_config"] as? [String: Any])
         XCTAssertEqual(model["model_name"] as? String, "gpt-5.6-terra")
-        XCTAssertEqual(model["thinking_level"] as? String, "medium")
+        XCTAssertEqual(model["thinking_level"] as? String, "high")
     }
 
-    func testCommandOverrideCarriesPlanModeToRustBackend() async throws {
+    func testReasoningOverrideDoesNotSendRemovedPlanningMode() async throws {
         let transport = CommandTransport()
         let client = ChatOSAPIClient(
             configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
@@ -50,8 +50,7 @@ final class ChatOSConversationCommandServiceTests: XCTestCase {
                 sessionID: "conversation-1",
                 turnID: "turn-plan",
                 content: "先规划",
-                reasoningEnabled: true,
-                planModeEnabled: true
+                reasoningEnabled: true
             )
         )
 
@@ -59,7 +58,7 @@ final class ChatOSConversationCommandServiceTests: XCTestCase {
         let request = try XCTUnwrap(capturedRequest)
         let body = try XCTUnwrap(request.body)
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(payload["plan_mode"] as? Bool, true)
+        XCTAssertNil(payload["plan_mode"])
         XCTAssertEqual(payload["reasoning_enabled"] as? Bool, true)
     }
 
@@ -226,7 +225,7 @@ private actor CommandTransport: HTTPTransport {
         let body: String
         switch request.url.path {
         case "/api/chatos/conversations/conversation-1/runtime-settings":
-            body = #"{"selected_model_id":"model-config-1","selected_model_name":"gpt-5.6-luna","selected_thinking_level":"high","remote_connection_id":null,"workspace_root":"/workspace","reasoning_enabled":true,"plan_mode_enabled":false}"#
+            body = #"{"selected_model_id":"model-config-1","selected_model_name":"gpt-5.6-luna","selected_thinking_level":"high","remote_connection_id":null,"workspace_root":"/workspace","reasoning_enabled":true}"#
         case "/api/chatos/ai-model-configs":
             body = #"[{"id":"model-config-1","name":"Terra","model_name":"gpt-5.6-terra","thinking_level":"medium","temperature":0.5,"enabled":true}]"#
         case "/api/chatos/agent/chat/send":

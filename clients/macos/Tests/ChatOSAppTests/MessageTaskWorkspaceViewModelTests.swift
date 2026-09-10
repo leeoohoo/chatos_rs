@@ -79,8 +79,7 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         )
         return MessageTaskWorkspaceViewModel(
             turn: turn,
-            graphService: service,
-            projectExecutionService: nil
+            graphService: service
         )
     }
 }

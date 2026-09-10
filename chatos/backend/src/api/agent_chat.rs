@@ -21,8 +21,8 @@ use crate::api::chat_stream_common::{validate_chat_stream_request, ChatStreamReq
 use crate::api::conversation_semantics::extract_conversation_scope_id;
 use crate::core::auth::{access_token_from_headers, AuthUser};
 use crate::core::messages::{build_message, MessageOut, NewMessageFields};
-use crate::core::project_execution::ensure_cloud_session_execution;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
+use crate::core::session_project_scope::ensure_session_project_scope;
 use crate::core::user_scope::ensure_and_set_user_id;
 use crate::modules::conversation_runtime::chat_usecase::{run_chat_usecase, RunChatUsecaseInput};
 use crate::modules::conversation_runtime::guidance;
@@ -81,7 +81,7 @@ async fn agent_chat_send(
     let session = ensure_owned_session(conversation_id.as_str(), &auth)
         .await
         .map_err(map_session_access_error)?;
-    ensure_cloud_session_execution(&session, req.project_id.as_deref(), &auth, &headers).await?;
+    ensure_session_project_scope(&session, req.project_id.as_deref())?;
     let accepted_turn_id = normalize_turn_id(req.turn_id.as_deref());
     let user_message_id = Uuid::new_v4().to_string();
     req.user_message_id = Some(user_message_id.clone());
@@ -106,7 +106,6 @@ async fn agent_chat_send(
 
 async fn agent_chat_guidance(
     auth: AuthUser,
-    headers: HeaderMap,
     Json(req): Json<RuntimeGuidanceRequest>,
 ) -> (StatusCode, Json<Value>) {
     let conversation_id = req.conversation_id.unwrap_or_default().trim().to_string();
@@ -153,7 +152,7 @@ async fn agent_chat_guidance(
         Ok(session) => session,
         Err(err) => return map_session_access_error(err),
     };
-    if let Err(error) = ensure_cloud_session_execution(&session, None, &auth, &headers).await {
+    if let Err(error) = ensure_session_project_scope(&session, None) {
         return error;
     }
 

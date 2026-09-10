@@ -91,11 +91,3 @@ export function workspaceShellShortcut(key: string, command: boolean): Workspace
   if (normalized === 'c') return { type: 'select-tool', tool: 'comment' };
   return undefined;
 }
-
-export function workspaceToolInstruction(tool: WorkspaceTool): string {
-  if (tool === 'hand') return '按住并拖动画布，查看页面四周的自由工作区';
-  if (tool === 'insert') return '从左侧选择形状、文字或容器，再拖到画布';
-  if (tool === 'comment') return '点击一个组件，然后在右侧写批注或让 AI 修改';
-  if (tool === 'ai') return '在左侧描述整页目标，或安排 AI 设计任务';
-  return '点击组件进行选择；拖动组件改变位置，拖动控制点改变大小';
-}

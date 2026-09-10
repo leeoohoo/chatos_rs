@@ -1,21 +1,32 @@
 {
   "name": "web-design-studio",
-  "version": "0.12.0",
-  "description": "Design and refine editable websites with an AI-aware visual canvas.",
+  "version": "3.0.2",
+  "description": "AI-first visual website design with editable Scene artboards and visual review.",
   "author": {
     "name": "Chatos"
   },
   "license": "Apache-2.0",
-  "keywords": ["website", "design", "ui", "canvas", "prototype", "ai"],
+  "keywords": [
+    "website",
+    "design",
+    "ui",
+    "canvas",
+    "prototype",
+    "ai"
+  ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Web Design Studio",
     "shortDescription": "Design editable websites with AI.",
-    "longDescription": "An AI-first visual website design workbench where AI generates and revises a shared structured document while people fine-tune the canvas and leave component-level requests. Build with native primitives, searchable production component systems, responsive sections, reusable instances, precise annotations, and optional HTML, React, or Vue export.",
+    "longDescription": "An AI-first visual website design workbench where AI advances one bounded visual step at a time using screenshots and stable Scene grounding, while people review, annotate, arrange, and refine linked page and overlay artboards. Interaction and code export remain optional handoff work after the visual design passes review.",
     "developerName": "Chatos",
     "category": "Creativity",
-    "capabilities": ["Interactive", "Read", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
     "defaultPrompt": [
       "Create an editable landing page for my product.",
       "Apply the pending component notes to this design.",

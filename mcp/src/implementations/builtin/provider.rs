@@ -112,9 +112,6 @@ pub fn build_builtin_tool_service_with_dependencies(
             })?,
         )),
         BuiltinMcpKind::TaskManager => Err("TaskManager builtin MCP has been removed".to_string()),
-        BuiltinMcpKind::ProjectManagement => Err(
-            "ProjectManagement builtin provider requires its owning service adapter".to_string(),
-        ),
         BuiltinMcpKind::Notepad => Ok(SharedBuiltinToolService::Notepad(
             NotepadBuiltinService::new(NotepadOptions {
                 server_name: server.name.clone(),

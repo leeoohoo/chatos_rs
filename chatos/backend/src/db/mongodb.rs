@@ -54,14 +54,11 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "chatos_contacts",
         "chatos_memory_projects",
         "chatos_project_agent_links",
-        "mcp_change_logs",
         "task_manager_tasks",
         "ask_user_prompt_requests",
         "pet_activity_inbox",
         "system_contexts",
         "applications",
-        "project_run_catalogs",
-        "project_run_environment_settings",
         "terminals",
         "remote_connections",
         "terminal_logs",
@@ -292,62 +289,6 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         )
         .await;
     let _ = db
-        .collection::<mongodb::bson::Document>("mcp_change_logs")
-        .update_many(
-            doc! {
-                "conversation_id": { "$exists": false },
-                "session_id": { "$exists": true }
-            },
-            doc! { "$rename": { "session_id": "conversation_id" } },
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("mcp_change_logs")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "server_name": 1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("mcp_change_logs")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "conversation_id": 1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("mcp_change_logs")
-        .create_index(
-            IndexModel::builder().keys(doc! { "created_at": 1 }).build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("mcp_change_logs")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "confirmed": 1, "created_at": -1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("mcp_change_logs")
-        .create_index(
-            IndexModel::builder().keys(doc! { "project_id": 1 }).build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("mcp_change_logs")
-        .create_index(IndexModel::builder().keys(doc! { "path": 1 }).build(), None)
-        .await;
-    let _ = db
         .collection::<mongodb::bson::Document>("task_manager_tasks")
         .create_index(
             IndexModel::builder()
@@ -434,48 +375,6 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
             IndexModel::builder()
                 .keys(doc! { "source": 1, "external_prompt_id": 1 })
                 .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("project_run_catalogs")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "project_id": 1 })
-                .options(
-                    mongodb::options::IndexOptions::builder()
-                        .unique(true)
-                        .build(),
-                )
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("project_run_catalogs")
-        .create_index(
-            IndexModel::builder().keys(doc! { "user_id": 1 }).build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("project_run_environment_settings")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "project_id": 1 })
-                .options(
-                    mongodb::options::IndexOptions::builder()
-                        .unique(true)
-                        .build(),
-                )
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("project_run_environment_settings")
-        .create_index(
-            IndexModel::builder().keys(doc! { "user_id": 1 }).build(),
             None,
         )
         .await;

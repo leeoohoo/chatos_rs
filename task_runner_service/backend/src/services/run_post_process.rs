@@ -4,21 +4,11 @@
 use tracing::{info, warn};
 
 use crate::models::{
-    now_rfc3339, TaskListFilters, TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskStatus,
+    now_rfc3339, TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskStatus,
     WorkspaceIntegrationStatus,
 };
 
 use super::RunService;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ExecutionPromotionSelection {
-    NotReady,
-    AlreadyPromoted,
-    Promote {
-        representative_run_id: String,
-        execution_branch_ref: String,
-    },
-}
 
 fn ensure_model_phase_terminal_for_post_process(run: &TaskRunRecord) -> Result<(), String> {
     if matches!(
@@ -28,57 +18,6 @@ fn ensure_model_phase_terminal_for_post_process(run: &TaskRunRecord) -> Result<(
         return Err(super::RUN_POST_PROCESS_MODEL_PHASE_PENDING_ERROR.to_string());
     }
     Ok(())
-}
-
-fn select_execution_promotion(
-    execution_group_id: &str,
-    group_runs: &[TaskRunRecord],
-) -> ExecutionPromotionSelection {
-    if group_runs.iter().any(|run| {
-        run.workspace_execution.as_ref().is_some_and(|workspace| {
-            workspace.execution_group_id.as_deref() == Some(execution_group_id)
-                && workspace.promoted_commit.is_some()
-        })
-    }) {
-        return ExecutionPromotionSelection::AlreadyPromoted;
-    }
-
-    if group_runs.iter().any(|run| {
-        run.workspace_execution
-            .as_ref()
-            .is_some_and(|workspace| !workspace.integration_satisfied())
-    }) {
-        return ExecutionPromotionSelection::NotReady;
-    }
-
-    group_runs
-        .iter()
-        .filter_map(|run| {
-            let workspace = run.workspace_execution.as_ref()?;
-            (workspace.integration_status == WorkspaceIntegrationStatus::Integrated
-                && workspace.execution_group_id.as_deref() == Some(execution_group_id))
-            .then(|| {
-                workspace
-                    .execution_branch_ref
-                    .as_ref()
-                    .map(|execution_branch_ref| {
-                        (
-                            run.created_at.as_str(),
-                            run.id.as_str(),
-                            execution_branch_ref.as_str(),
-                        )
-                    })
-            })
-            .flatten()
-        })
-        .min_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)))
-        .map(|(_, representative_run_id, execution_branch_ref)| {
-            ExecutionPromotionSelection::Promote {
-                representative_run_id: representative_run_id.to_string(),
-                execution_branch_ref: execution_branch_ref.to_string(),
-            }
-        })
-        .unwrap_or(ExecutionPromotionSelection::NotReady)
 }
 
 impl RunService {
@@ -479,154 +418,13 @@ impl RunService {
 
     async fn promote_execution_group_if_complete(
         &self,
-        task: &crate::models::TaskRecord,
-        run: &mut TaskRunRecord,
+        _task: &crate::models::TaskRecord,
+        _run: &mut TaskRunRecord,
     ) -> Result<(), String> {
-        let project_id = task.project_id.as_deref().ok_or_else(|| {
-            "execution-group promotion requires a concrete project scope".to_string()
-        })?;
-        let execution_group_id = super::workspace_execution::execution_group_id_for_task(task);
-        let mut group_tasks = self
-            .store
-            .list_tasks_filtered(&TaskListFilters {
-                project_scope: Some(crate::models::TaskProjectScopeFilter::Project),
-                project_id: Some(project_id.to_string()),
-                include_subtasks: Some(false),
-                ..TaskListFilters::default()
-            })
-            .await?;
-        group_tasks.retain(|candidate| {
-            super::workspace_execution::execution_group_id_for_task(candidate) == execution_group_id
-                && candidate
-                    .task_tool_state
-                    .superseded_by_task_id
-                    .as_deref()
-                    .is_none()
-        });
-        if group_tasks.is_empty() {
-            group_tasks.push(task.clone());
-        }
-        let mut group_runs = Vec::with_capacity(group_tasks.len());
-        for group_task in &group_tasks {
-            if group_task.status != TaskStatus::Succeeded {
-                return Ok(());
-            }
-            let Some(last_run_id) = group_task.last_run_id.as_deref() else {
-                return Ok(());
-            };
-            let Some(last_run) = self.store.get_run(last_run_id).await? else {
-                return Ok(());
-            };
-            if last_run.status != TaskRunStatus::Succeeded {
-                return Ok(());
-            }
-            group_runs.push(last_run);
-        }
-        let (representative_run_id, execution_branch_ref) =
-            match select_execution_promotion(execution_group_id.as_str(), &group_runs) {
-                ExecutionPromotionSelection::NotReady
-                | ExecutionPromotionSelection::AlreadyPromoted => return Ok(()),
-                ExecutionPromotionSelection::Promote {
-                    representative_run_id,
-                    execution_branch_ref,
-                } => (representative_run_id, execution_branch_ref),
-            };
-        let representative_task = group_tasks
-            .iter()
-            .find(|candidate| candidate.last_run_id.as_deref() == Some(&representative_run_id))
-            .unwrap_or(task);
-        let owner_user_id = representative_task
-            .owner_user_id
-            .as_deref()
-            .or(representative_task.creator_user_id.as_deref())
-            .unwrap_or(representative_task.subject_id.as_str())
-            .to_string();
-        let mut representative_run = if representative_run_id == run.id {
-            run.clone()
-        } else {
-            self.store
-                .get_run(representative_run_id.as_str())
-                .await?
-                .ok_or_else(|| {
-                    format!(
-                        "Execution promotion representative Run not found: {representative_run_id}"
-                    )
-                })?
-        };
-        if representative_run
-            .workspace_execution
-            .as_ref()
-            .and_then(|workspace| workspace.promoted_commit.as_ref())
-            .is_some()
-        {
-            return Ok(());
-        }
-        let response = super::project_management_api_client::promote_execution_workspace(
-            &self.config,
-            project_id,
-            execution_group_id.as_str(),
-            &super::project_management_api_client::PromoteExecutionWorkspaceRequest {
-                owner_user_id,
-                execution_group_id: execution_group_id.clone(),
-                execution_branch_ref,
-            },
-        )
-        .await?;
-        if response.project_id != project_id || response.execution_group_id != execution_group_id {
-            return Err("Project Service promoted a different execution group".to_string());
-        }
-        match response.status {
-            super::project_management_api_client::PromoteExecutionWorkspaceStatus::Promoted => {
-                if let Some(execution) = representative_run.workspace_execution.as_mut() {
-                    execution.promoted_commit = response.promoted_commit.clone();
-                }
-                representative_run.updated_at = now_rfc3339();
-                representative_run = self.store.save_run(representative_run).await?;
-                if representative_run.id == run.id {
-                    *run = representative_run.clone();
-                }
-                self.store
-                    .append_run_event(TaskRunEventRecord::new(
-                        representative_run.id.clone(),
-                        "execution_promotion_succeeded",
-                        Some("执行批次已成功推进到项目目标分支".to_string()),
-                        Some(serde_json::json!({
-                            "execution_group_id": execution_group_id,
-                            "promoted_commit": response.promoted_commit,
-                        })),
-                    ))
-                    .await?;
-                Ok(())
-            }
-            super::project_management_api_client::PromoteExecutionWorkspaceStatus::Conflict => {
-                self.store
-                    .append_run_event(TaskRunEventRecord::new(
-                        representative_run.id.clone(),
-                        "execution_promotion_conflict",
-                        response
-                            .message
-                            .clone()
-                            .or_else(|| Some("执行批次推进目标分支时发生冲突".to_string())),
-                        Some(serde_json::json!({
-                            "execution_group_id": execution_group_id,
-                            "conflict_files": response.conflict_files,
-                        })),
-                    ))
-                    .await?;
-                Ok(())
-            }
-            super::project_management_api_client::PromoteExecutionWorkspaceStatus::RetryableError => {
-                Err(format!(
-                    "{}: {}",
-                    crate::services::WORKSPACE_INTEGRATION_RETRY_PREFIX,
-                    response
-                        .message
-                        .unwrap_or_else(|| "execution promotion is temporarily unavailable".to_string())
-                ))
-            }
-        }
+        // Local Connector owns Git finalization and integration. Task Runner
+        // records the returned immutable result but never promotes branches itself.
+        Ok(())
     }
-
     pub(in crate::services) async fn enqueue_terminal_side_effects(&self, run: &TaskRunRecord) {
         if let Err(err) = self.enqueue_run_post_process_if_needed(run).await {
             warn!(
@@ -692,7 +490,6 @@ mod tests {
             default_tool_results_model_total_max_chars: 2_000,
             chatos_callback_url: String::new(),
             chatos_callback_http_client: reqwest::Client::new(),
-            internal_api_secret: None,
             chatos_internal_api_secret: None,
             mcp_management_internal_api_secret: None,
             user_service_internal_api_secret: None,
@@ -702,11 +499,6 @@ mod tests {
             admin_display_name: "Admin".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_millis(5_000),
-            project_service_base_url: None,
-            project_service_internal_base_url: None,
-            project_service_internal_http_client: reqwest::Client::new(),
-            project_service_sync_secret: None,
-            project_service_request_timeout: Duration::from_millis(5_000),
         }
     }
 
@@ -739,6 +531,7 @@ mod tests {
                     tags: None,
                     default_model_config_id: None,
                     project_id: None,
+                    project_context: None,
                     task_profile: None,
                     tenant_id: None,
                     subject_id: None,
@@ -828,76 +621,6 @@ mod tests {
                 error: None,
             });
         run
-    }
-
-    #[test]
-    fn read_only_run_finishing_last_still_selects_the_integrated_write_run() {
-        let write_run = run(
-            "write-run",
-            "2026-08-14T10:00:00Z",
-            Some(WorkspaceIntegrationStatus::Integrated),
-        );
-        let read_only_run = run("read-run", "2026-08-14T10:01:00Z", None);
-
-        assert_eq!(
-            select_execution_promotion("group-1", &[write_run, read_only_run]),
-            ExecutionPromotionSelection::Promote {
-                representative_run_id: "write-run".to_string(),
-                execution_branch_ref: "chatos/executions/group-1".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn pending_or_conflicting_run_prevents_promotion() {
-        for status in [
-            WorkspaceIntegrationStatus::Pending,
-            WorkspaceIntegrationStatus::Integrating,
-            WorkspaceIntegrationStatus::Conflict,
-            WorkspaceIntegrationStatus::Failed,
-        ] {
-            assert_eq!(
-                select_execution_promotion(
-                    "group-1",
-                    &[
-                        run(
-                            "write-run",
-                            "2026-08-14T10:00:00Z",
-                            Some(WorkspaceIntegrationStatus::Integrated),
-                        ),
-                        run("blocked-run", "2026-08-14T10:01:00Z", Some(status)),
-                    ],
-                ),
-                ExecutionPromotionSelection::NotReady
-            );
-        }
-    }
-
-    #[test]
-    fn promoted_run_makes_group_promotion_idempotent() {
-        let mut write_run = run(
-            "write-run",
-            "2026-08-14T10:00:00Z",
-            Some(WorkspaceIntegrationStatus::Integrated),
-        );
-        write_run
-            .workspace_execution
-            .as_mut()
-            .expect("workspace")
-            .promoted_commit = Some("commit-1".to_string());
-
-        assert_eq!(
-            select_execution_promotion("group-1", &[write_run]),
-            ExecutionPromotionSelection::AlreadyPromoted
-        );
-    }
-
-    #[test]
-    fn group_without_integrated_write_run_does_not_promote() {
-        assert_eq!(
-            select_execution_promotion("group-1", &[run("read-run", "2026-08-14T10:00:00Z", None)]),
-            ExecutionPromotionSelection::NotReady
-        );
     }
 
     #[tokio::test]

@@ -1,8 +1,8 @@
 # Component examples
 
-## Positive: build a dashboard header as nodes
+## Positive: build one branded header Step as nodes
 
-Create a `section` named `Dashboard header` with Flex row layout. Add independent child nodes for `Product logo`, `Workspace switcher`, `Global search`, `Notifications button`, and `User avatar`. Fetch the exact Input/Button/Avatar contracts before binding production components. Submit only this header region, reread the page, then continue with the sidebar.
+For an architecture studio site, create a `section` named `Editorial header` with Flex row layout. Add independent child nodes for `Wordmark`, `Selected work`, `Studio`, `Journal`, and `Project inquiry`. Use native typography for the wordmark and fetch the exact navigation or Button contract only when it supports the chosen quiet editorial direction. Submit only this header region, capture it, judge its spacing and hierarchy, then pause or continue with the next planned visual Step.
 
 This is good because every object remains selectable, editable, movable, annotatable, and addressable by AI.
 
@@ -11,17 +11,16 @@ This is good because every object remains selectable, editable, movable, annotat
 Do not create one 1392 × 976 `text` node whose content is:
 
 ```text
-LOGO    Dashboard  Projects  Settings          Search       Avatar
-Welcome back
-Revenue $128,400     Users 12,842     Conversion 8.4%
-Recent orders ...
+ATELIER NORTH    WORK    STUDIO    JOURNAL    CONTACT
+Buildings that make room for life
+Selected projects ...
 ```
 
 Whitespace does not create navigation, metric cards, controls, or a table. This is descriptive prose disguised as UI and must fail handoff validation.
 
-## Positive: component contract
+## Positive: component contract serving art direction
 
-Use a returned shadcn Card binding for pricing cards, place editable heading and price children in the declared content slot, and use native decorative shapes behind the section.
+Use a returned shadcn Card binding for one supporting testimonial only when its density, border treatment, and slots fit the established visual system. Place editable quote and attribution children in the declared slots, and use native geometry or media for the page-specific composition around it.
 
 ## Negative: invented component system
 
@@ -29,12 +28,12 @@ Invent a library component or slot name, place every child in a generic `content
 
 ## Positive: reusable navigation
 
-Create one navigation symbol, instantiate it on each page, keep content overrides local, and synchronize structural changes from the definition.
+Create one Scene component-main navigation definition, use component-instance nodes where the same navigation is required, and keep page-specific content overrides explicit.
 
-## Positive: recover from a rejected batch
+## Positive: recover from a rejected Step
 
-If a complete dashboard mutation is rejected or its arguments are truncated, call `web_design_get_page` again. Build `App shell`, `Sidebar`, `Top bar`, `Metrics grid`, and `Recent activity` as separate batches. Preserve stable IDs between retries.
+If a large Hero Candidate is rejected or its arguments are truncated, query the current Hero Scene subtree again and recapture its image. Keep the same visual intention and split it into later Steps such as `Hero / editorial copy`, `Hero / primary media`, and `Hero / supporting detail`. Preserve stable IDs between retries and judge the rendered composition before advancing.
 
 ## Negative: fallback after failure
 
-Never respond to a rejected component-tree call by inserting an image screenshot or one multiline text component named `完整页面`. The desired output is still the same editable component tree; only the mutation size must change.
+Never respond to a rejected Scene transaction by inserting an image screenshot or one multiline text node named `完整页面`. The desired output is still the same editable Scene tree; only the Step boundary must become smaller.

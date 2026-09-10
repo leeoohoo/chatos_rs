@@ -156,25 +156,6 @@ public sealed class ConversationHistoryStore
         SessionState state)
     {
         var changed = false;
-        var newlySuperseded = incomingTurns
-            .Select(static turn => turn.ProjectExecutionContext?.ReplacedExecutionGroupId?.Trim())
-            .Where(static value => !string.IsNullOrEmpty(value))
-            .OfType<string>()
-            .ToArray();
-        if (newlySuperseded.Length > 0)
-        {
-            state.SupersededExecutionGroupIds.UnionWith(newlySuperseded);
-            foreach (var pair in state.TurnsById.ToArray())
-            {
-                if (state.SupersededExecutionGroupIds.Contains(ExecutionGroupIdentity(pair.Value)) &&
-                    pair.Value.IsTaskGraphAvailable)
-                {
-                    state.TurnsById[pair.Key] = pair.Value with { IsTaskGraphAvailable = false };
-                    changed = true;
-                }
-            }
-        }
-
         foreach (var incoming in incomingTurns)
         {
             if (!string.Equals(incoming.ConversationId, conversationId, StringComparison.Ordinal))
@@ -182,9 +163,7 @@ public sealed class ConversationHistoryStore
                 continue;
             }
 
-            var turn = state.SupersededExecutionGroupIds.Contains(ExecutionGroupIdentity(incoming))
-                ? incoming with { IsTaskGraphAvailable = false }
-                : incoming;
+            var turn = incoming;
             if (!state.TurnsById.TryGetValue(turn.Id, out var existing))
             {
                 state.TurnsById[turn.Id] = turn;
@@ -201,11 +180,6 @@ public sealed class ConversationHistoryStore
 
         return changed;
     }
-
-    private static string ExecutionGroupIdentity(ConversationTurn turn) =>
-        string.IsNullOrWhiteSpace(turn.ProjectExecutionContext?.ExecutionGroupId)
-            ? turn.UserMessage.Id
-            : turn.ProjectExecutionContext.ExecutionGroupId.Trim();
 
     private sealed class SessionState
     {
@@ -231,7 +205,6 @@ public sealed class ConversationHistoryStore
 
         public int UnreadNewerCount { get; set; }
 
-        public HashSet<string> SupersededExecutionGroupIds { get; } = new(StringComparer.Ordinal);
     }
 
     private sealed class ConversationTurnComparer : IComparer<ConversationTurn>

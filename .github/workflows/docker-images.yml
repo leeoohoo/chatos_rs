@@ -38,12 +38,6 @@ jobs:
             build_args: |
               MANIFEST_PATH=memory_engine/backend/Cargo.toml
               BIN_NAME=memory_engine
-          - image: chatos-rs-project-management-backend
-            dockerfile: docker/Dockerfile.rust-service
-            build_args: |
-              MANIFEST_PATH=Cargo.toml
-              PACKAGE_NAME=project_management_service_backend
-              BIN_NAME=project_management_service_backend
           - image: chatos-rs-plugin-management-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |

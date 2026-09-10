@@ -32,7 +32,6 @@ public actor ChatOSConversationCommandService: ConversationCommandServicing {
             content: command.content,
             attachments: attachments,
             reasoningEnabled: command.reasoningEnabled ?? runtime.reasoningEnabled,
-            planMode: command.planModeEnabled ?? runtime.planModeEnabled,
             turnID: command.turnID,
             remoteConnectionID: runtime.remoteConnectionID,
             workspaceRoot: runtime.workspaceRoot,
@@ -40,7 +39,8 @@ public actor ChatOSConversationCommandService: ConversationCommandServicing {
             aiModelConfig: .init(
                 temperature: model.temperature ?? 0.7,
                 modelName: model.modelName,
-                thinkingLevel: model.thinkingLevel?.trimmedNonEmptyValue
+                thinkingLevel: runtime.selectedThinkingLevel?.trimmedNonEmptyValue
+                    ?? model.thinkingLevel?.trimmedNonEmptyValue
             )
         )
         let response: ChatCommandResponseDTO = try await client.request(

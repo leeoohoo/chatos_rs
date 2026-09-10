@@ -29,6 +29,10 @@ struct ResourceSidebar: View {
                 if model.isWorkspaceLoading && model.projects.isEmpty {
                     loadingRow(model.localized("正在加载项目…", english: "Loading projects…"))
                 }
+                if !model.isWorkspaceLoading && model.projects.isEmpty {
+                    Text("项目保存在本机。可新建项目，或通过“＋”导入已有项目清单。")
+                        .appFont(.caption).foregroundStyle(.secondary)
+                }
                 ForEach(model.projects) { project in
                     resourceRow(
                         title: project.title,
@@ -38,6 +42,9 @@ struct ResourceSidebar: View {
                     )
                     .tag(SidebarSelection.project(project.id))
                     .contextMenu {
+                        Button("重命名", systemImage: "pencil") {
+                            creationSheet = .renameProject(project.id)
+                        }
                         Button(
                             model.localized("删除项目", english: "Delete Project"),
                             systemImage: "trash",
@@ -64,6 +71,14 @@ struct ResourceSidebar: View {
                     tint: .accentColor
                 )
                 .tag(SidebarSelection.applications)
+
+                resourceRow(
+                    title: model.localized("AI 创作", english: "AI Creation"),
+                    subtitle: model.localized("生成图片与视频", english: "Generate images and video"),
+                    systemImage: "wand.and.stars",
+                    tint: .purple
+                )
+                .tag(SidebarSelection.mediaStudio)
             }
 
             Section {
@@ -171,6 +186,9 @@ struct ResourceSidebar: View {
                     Button(model.localized("新建项目", english: "New Project"), systemImage: "folder.badge.plus") {
                         creationSheet = .project
                     }
+                    Button("导入项目清单…", systemImage: "square.and.arrow.down") {
+                        creationSheet = .projectImport
+                    }
                     Divider()
                     Button(
                         model.localized("新建远端连接", english: "New Remote Connection"),
@@ -194,14 +212,23 @@ struct ResourceSidebar: View {
         .sheet(item: $creationSheet) { sheet in
             switch sheet {
             case .project:
-                CreateProjectSheetHost(
-                    connectorStatus: model.localConnectorControl.status,
-                    defaultContact: model.defaultProjectContact,
-                    filesystemService: model.projectFilesystemService,
-                    gitService: model.projectGitService,
-                    creationService: model.workspaceResourceCreationService,
-                    onCreated: model.registerCreatedProject
-                )
+                if let creator = model.localProjectCreator, let owner = model.localProjectOwnerUserID {
+                    CreateProjectSheetHost(
+                        connectorStatus: model.localConnectorControl.status,
+                        filesystemService: model.projectFilesystemService,
+                        creationService: creator,
+                        onCreated: { project in
+                            guard owner == model.localProjectOwnerUserID else { return }
+                            model.registerCreatedProject(project)
+                        }
+                    )
+                }
+            case .projectImport:
+                if let owner = model.localProjectOwnerUserID {
+                    LocalProjectImportSheet(ownerUserID: owner)
+                }
+            case let .renameProject(id):
+                RenameLocalProjectSheet(projectID: id)
             case .createRemoteConnection:
                 RemoteConnectionEditorSheetHost(
                     editingConnection: nil,
@@ -218,14 +245,15 @@ struct ResourceSidebar: View {
                 )
             }
         }
+        .onChange(of: model.localProjectOwnerUserID) { _, _ in creationSheet = nil }
         .alert(item: $projectDeletionAlert) { alert in
             switch alert {
             case let .confirmation(project):
                 Alert(
                     title: Text(model.localized("删除项目？", english: "Delete Project?")),
                     message: Text(model.localized(
-                        "“\(project.title)”会从 ChatOS 中移除，本机项目文件夹不会被删除。",
-                        english: "\(project.title) will be removed from ChatOS. Its local folder will not be deleted."
+                        "“\(project.title)”会从本机项目列表移除，不会删除文件夹、聊天历史或插件数据。",
+                        english: "\(project.title) will be removed from this device's project list. Files, conversations and plugin data will be kept."
                     )),
                     primaryButton: .destructive(Text(model.localized("删除", english: "Delete"))) {
                         Task { await deleteProject(project) }
@@ -311,12 +339,16 @@ private enum SidebarProjectDeletionAlert: Identifiable {
 
 private enum ResourceCreationSheet: Identifiable {
     case project
+    case projectImport
+    case renameProject(String)
     case createRemoteConnection
     case editRemoteConnection(String)
 
     var id: String {
         switch self {
         case .project: "project"
+        case .projectImport: "project-import"
+        case let .renameProject(id): "project-rename-\(id)"
         case .createRemoteConnection: "remote-create"
         case let .editRemoteConnection(id): "remote-edit-\(id)"
         }

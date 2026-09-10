@@ -2,8 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_agent::{
-    is_task_runner_execution_agent as is_task_runner_execution_key,
-    is_task_runner_planning_agent as is_task_runner_planning_key, parse_system_agent_key,
+    is_task_runner_execution_agent as is_task_runner_execution_key, parse_system_agent_key,
 };
 
 use super::*;
@@ -42,10 +41,6 @@ pub(super) fn mcp_management_binding_from_headers(
         task_profile: header_text(headers, "x-mcp-management-task-profile")
             .map(|value| crate::models::normalize_task_profile(Some(value.as_str())))
             .transpose()?,
-        expected_project_task_ids: header_csv_set(
-            headers,
-            "x-mcp-management-expected-project-task-ids",
-        ),
     })
 }
 
@@ -75,18 +70,9 @@ pub(super) fn task_matches_mcp_management_binding(
 }
 
 pub(super) fn task_matches_bound_agent(
-    task: &crate::models::TaskRecord,
     agent_key: chatos_plugin_management_sdk::SystemAgentKey,
 ) -> bool {
-    let planning = crate::models::uses_task_runner_planning_agent(
-        task.task_profile.as_str(),
-        task.mcp_config.requires_execution,
-    );
-    if planning {
-        is_task_runner_planning_key(agent_key)
-    } else {
-        is_task_runner_execution_key(agent_key)
-    }
+    is_task_runner_execution_key(agent_key)
 }
 
 pub(super) fn bound_ask_user_prompt_timeout_ms(
@@ -191,6 +177,7 @@ pub(super) fn mcp_request_context_from_headers(
     headers: &HeaderMap,
 ) -> Result<McpRequestContext, String> {
     Ok(McpRequestContext {
+        project_context: None,
         project_id: header_text(headers, "x-chatos-project-id")
             .or_else(|| header_text(headers, "x-task-runner-project-id")),
         source_session_id: header_text(headers, "x-chatos-session-id")
@@ -204,32 +191,12 @@ pub(super) fn mcp_request_context_from_headers(
             .or_else(|| header_text(headers, "x-chatos-workspace-dir"))
             .or_else(|| header_text(headers, "x-chatos-workspace-root")),
         tool_profile: header_text(headers, "x-task-runner-tool-profile"),
-        task_profile: header_text(headers, "x-task-runner-task-profile"),
+        task_profile: header_text(headers, "x-task-runner-task-profile")
+            .map(|value| crate::models::normalize_task_profile(Some(&value)))
+            .transpose()?,
         builtin_prompt_locale: header_text(headers, "x-task-runner-builtin-prompt-locale")
             .or_else(|| header_text(headers, "x-chatos-internal-context-locale")),
-        chatos_plan_mode: header_bool(headers, "x-chatos-plan-mode"),
-        expected_project_task_ids: header_csv_set(
-            headers,
-            "x-task-runner-expected-project-task-ids",
-        ),
     })
-}
-
-pub(super) fn header_csv_set(
-    headers: &HeaderMap,
-    key: &'static str,
-) -> std::collections::BTreeSet<String> {
-    header_text(headers, key)
-        .into_iter()
-        .flat_map(|value| {
-            value
-                .split(',')
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .collect()
 }
 
 pub(super) fn header_text(headers: &HeaderMap, key: &'static str) -> Option<String> {
@@ -239,12 +206,4 @@ pub(super) fn header_text(headers: &HeaderMap, key: &'static str) -> Option<Stri
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-pub(super) fn header_bool(headers: &HeaderMap, key: &'static str) -> bool {
-    headers
-        .get(key)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
 }

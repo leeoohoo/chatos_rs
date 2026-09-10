@@ -36,7 +36,6 @@ pub(super) struct ChatosRequestBinding<'a> {
     default_model_config_id: Option<&'a str>,
     default_remote_connection_id: Option<&'a str>,
     contact_agent_id: Option<&'a str>,
-    expected_project_task_ids: &'a [String],
 }
 
 impl<'a> From<&'a RuntimeSessionSnapshot> for ChatosRequestBinding<'a> {
@@ -55,7 +54,6 @@ impl<'a> From<&'a RuntimeSessionSnapshot> for ChatosRequestBinding<'a> {
             default_model_config_id: snapshot.default_model_config_id.as_deref(),
             default_remote_connection_id: snapshot.default_remote_connection_id.as_deref(),
             contact_agent_id: snapshot.contact_agent_id.as_deref(),
-            expected_project_task_ids: snapshot.expected_project_task_ids.as_slice(),
         }
     }
 }

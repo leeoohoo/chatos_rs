@@ -4,16 +4,10 @@ import ChatOSCore
 import AppKit
 import Combine
 import Foundation
-import OSLog
 import SwiftUI
 
 @MainActor
 final class AppModel: ObservableObject {
-    private static let pluginApplicationLogger = Logger(
-        subsystem: "com.chatos.swift-client",
-        category: "PluginApplication"
-    )
-
     @Published var selection: SidebarSelection?
     @Published var projectTab: ProjectWorkspaceTab = .messages
     @Published var isNotepadPresented = false
@@ -62,6 +56,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var projects: [ResourceItem] = []
     @Published private(set) var workspaceProjects: [WorkspaceProject] = []
     @Published private(set) var workspaceContacts: [WorkspaceContact] = []
+    private var workspaceConversations: [WorkspaceConversation] = []
     @Published private(set) var remoteConnections: [RemoteConnection] = []
     @Published private(set) var pluginApplications: [LocalConnectorPluginApplication] = []
     @Published private(set) var isPluginApplicationsLoading = false
@@ -76,6 +71,7 @@ final class AppModel: ObservableObject {
     let historyStore: ConversationHistoryStore
     let authentication: AuthenticationViewModel
     let localConnectorControl: LocalConnectorControlCenterViewModel
+    let mediaStudio: MediaStudioViewModel
     let visualSessionStore = VisualSessionPresentationStore()
     let petPreferences = PetPreferencesStore()
     let petDefaultFileHandlerPrompt = PetDefaultFileHandlerPromptController()
@@ -103,20 +99,20 @@ final class AppModel: ObservableObject {
     private let commandService: ChatOSConversationCommandService
     private let turnProcessService: ChatOSTurnProcessService
     let messageTaskGraphService: ChatOSMessageTaskGraphService
-    let projectExecutionService: ChatOSProjectExecutionService
     private let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
     private let askUserPromptService: ChatOSAskUserPromptService
     private let petActivityInboxService: ChatOSPetActivityInboxService
+    let taskRunnerHostService: ChatOSTaskRunnerHostService
     private let workspaceService: ChatOSWorkspaceService
     private let localConnectorService: NativeLocalConnectorService
-    let workspaceResourceCreationService: ChatOSWorkspaceResourceCreationService
+    private let projectConversationService: ChatOSProjectConversationService
+    let localProjectsService: NativeLocalProjectsService
     let remoteConnectionService: NativeRemoteConnectionService
     let remoteFileService: NativeRemoteFileService
     let remoteConnectionWorkspaceStore: RemoteConnectionWorkspaceStore
     let projectFilesystemService: NativeProjectFilesystemService
     let projectCodeNavigationService: NativeProjectCodeNavigationService
     let projectGitService: NativeProjectGitService
-    let projectPlanService: ChatOSProjectPlanService
     let projectRunService: NativeProjectRunService
     let notepadService: ChatOSNotepadService
     private let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
@@ -130,6 +126,7 @@ final class AppModel: ObservableObject {
     private let idleSleepController = AppIdleSleepController()
     private var cancellables = Set<AnyCancellable>()
     private var authenticatedUserID: String?
+    private var workspaceAccountGeneration: UInt64 = 0
     private var isApplyingLanguagePreferences = false
     private var languagePreferencesSaveTask: Task<Void, Never>?
     var mainWindowPresentationHandler: (() -> Void)?
@@ -149,7 +146,8 @@ final class AppModel: ObservableObject {
         let historyStore = ConversationHistoryStore()
         let connectorTicketProvider = ChatOSLocalConnectorPairingTicketProvider(client: apiClient)
         let remoteConnectionService = NativeRemoteConnectionService(
-            upstream: ChatOSRemoteConnectionService(client: apiClient)
+            upstream: ChatOSRemoteConnectionService(client: apiClient),
+            connectorStateURL: RuntimeConfiguration.nativeConnectorStateURL
         )
         let localConnectorService = NativeLocalConnectorService(
             configuration: .init(
@@ -165,10 +163,19 @@ final class AppModel: ObservableObject {
         self.localConnectorControl = LocalConnectorControlCenterViewModel(
             service: localConnectorService
         )
+        self.mediaStudio = MediaStudioViewModel(
+            service: ChatOSMediaGenerationService(client: apiClient),
+            storyPlanner: ChatOSStoryPlanningService(client: apiClient)
+        )
         self.localConnectorService = localConnectorService
         self.conversationService = conversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
-        self.workspaceResourceCreationService = ChatOSWorkspaceResourceCreationService(client: apiClient)
+        self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
+        self.localProjectsService = NativeLocalProjectsService(
+            connector: localConnectorService,
+            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                .appendingPathComponent("Projects.sqlite3")
+        )
         let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService
         self.remoteFileService = remoteFileService
@@ -179,7 +186,6 @@ final class AppModel: ObservableObject {
         self.projectFilesystemService = NativeProjectFilesystemService(connector: localConnectorService)
         self.projectCodeNavigationService = NativeProjectCodeNavigationService(connector: localConnectorService)
         self.projectGitService = NativeProjectGitService(connector: localConnectorService)
-        self.projectPlanService = ChatOSProjectPlanService(client: apiClient)
         self.notepadService = ChatOSNotepadService(client: apiClient)
         self.userLanguagePreferencesService = ChatOSUserLanguagePreferencesService(client: apiClient)
         self.projectRunService = NativeProjectRunService(
@@ -191,10 +197,10 @@ final class AppModel: ObservableObject {
         self.commandService = ChatOSConversationCommandService(client: apiClient)
         self.turnProcessService = ChatOSTurnProcessService(client: apiClient)
         self.messageTaskGraphService = ChatOSMessageTaskGraphService(client: apiClient)
-        self.projectExecutionService = ChatOSProjectExecutionService(client: apiClient)
         self.runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
         self.askUserPromptService = ChatOSAskUserPromptService(client: apiClient)
         self.petActivityInboxService = ChatOSPetActivityInboxService(client: apiClient)
+        self.taskRunnerHostService = ChatOSTaskRunnerHostService(client: apiClient)
         self.realtimeService = ChatOSRealtimeClient(
             apiClient: apiClient,
             conversationService: conversationService
@@ -356,18 +362,18 @@ final class AppModel: ObservableObject {
             selection = .project(projectID)
             projectTab = .messages
             if let conversationID = activity?.route.conversationID ?? project.conversationID {
-                targetConversation = conversation(for: conversationID, allowsPlanMode: true)
+                targetConversation = conversation(for: conversationID)
                 projectConversation = targetConversation
             }
         } else if let conversationID = activity?.route.conversationID {
             if let project = projects.first(where: { $0.conversationID == conversationID }) {
                 selection = .project(project.id)
                 projectTab = .messages
-                targetConversation = conversation(for: conversationID, allowsPlanMode: true)
+                targetConversation = conversation(for: conversationID)
                 projectConversation = targetConversation
             } else if let contact = contacts.first(where: { $0.conversationID == conversationID }) {
                 selection = .contact(contact.id)
-                targetConversation = conversation(for: conversationID, allowsPlanMode: false)
+                targetConversation = conversation(for: conversationID)
                 contactConversation = targetConversation
             }
         }
@@ -458,13 +464,11 @@ final class AppModel: ObservableObject {
             return
         }
 
-        if activity.source == .chat || activity.source == .projectExecution,
+        if activity.source == .chat,
            let conversationID = activity.route.conversationID?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !conversationID.isEmpty,
-           let turnID = (activity.source == .projectExecution
-               ? activity.route.runID ?? activity.route.turnID
-               : activity.route.turnID)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let turnID = activity.route.turnID?.trimmingCharacters(in: .whitespacesAndNewlines),
            !turnID.isEmpty {
             try await commandService.stopTurn(conversationID: conversationID, turnID: turnID)
             return
@@ -657,6 +661,7 @@ final class AppModel: ObservableObject {
     }
 
     func refreshWorkspace() {
+        guard let ownerUserID = authenticatedUserID else { return }
         workspaceLoadGeneration += 1
         let generation = workspaceLoadGeneration
         isWorkspaceLoading = true
@@ -664,16 +669,26 @@ final class AppModel: ObservableObject {
 
         Task {
             do {
-                let snapshot = try await workspaceService.fetchWorkspace()
-                guard generation == workspaceLoadGeneration else { return }
-                await projectRunService.updateProjects(snapshot.projects)
-                guard generation == workspaceLoadGeneration else { return }
-                workspaceProjects = snapshot.projects
-                workspaceContacts = snapshot.contacts
-                let resources = WorkspaceResourceResolver.resolve(snapshot)
-                contacts = resources.contacts
-                projects = resources.projects
-                reconcileSelection()
+                let registry = try await localProjectsService.registry()
+                let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: workspaceService, ownerUserID: ownerUserID)
+                let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)
+                try? await localProjectsService.repairRootWorkspaceBindings(ownerUserID: ownerUserID)
+                var local = try await loader.loadLocal(deviceID: deviceID)
+                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+                local.contacts = workspaceContacts
+                local.conversations = workspaceConversations
+                await publishWorkspace(local, generation: generation, ownerUserID: ownerUserID)
+                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+                let result = try await loader.refresh(deviceID: deviceID)
+                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+                var snapshot = result.snapshot
+                if result.remoteError != nil {
+                    snapshot.contacts = workspaceContacts
+                    snapshot.conversations = workspaceConversations
+                }
+                await publishWorkspace(snapshot, generation: generation, ownerUserID: ownerUserID)
+                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+                workspaceError = result.remoteError
             } catch {
                 guard generation == workspaceLoadGeneration else { return }
                 workspaceError = error.localizedDescription
@@ -682,6 +697,35 @@ final class AppModel: ObservableObject {
                 isWorkspaceLoading = false
             }
         }
+    }
+
+    private func publishWorkspace(_ snapshot: WorkspaceSnapshot, generation: Int64, ownerUserID: String) async {
+        guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+        await projectRunService.updateProjects(snapshot.projects)
+        guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+        workspaceProjects = snapshot.projects
+        workspaceContacts = snapshot.contacts
+        workspaceConversations = snapshot.conversations
+        let resources = WorkspaceResourceResolver.resolve(snapshot)
+        contacts = resources.contacts
+        projects = resources.projects
+        reconcileSelection()
+    }
+
+    var localProjectCreator: AccountLocalProjectCreator? {
+        authenticatedUserID.map { AccountLocalProjectCreator(ownerUserID: $0, service: localProjectsService) }
+    }
+
+    var localProjectOwnerUserID: String? { authenticatedUserID }
+
+    func renameLocalProject(id: String, name: String) async throws {
+        guard let owner = authenticatedUserID else { throw CancellationError() }
+        let registry = try await localProjectsService.registry()
+        guard let old = try await registry.get(ownerUserID: owner, id: id) else { throw ProjectRegistryError.notFound }
+        guard owner == authenticatedUserID else { throw CancellationError() }
+        try await localProjectsService.rename(ownerUserID: owner, id: id, name: name, expectedRevision: old.revision)
+        guard owner == authenticatedUserID else { return }
+        refreshWorkspace()
     }
 
     func refreshAllResources() {
@@ -722,74 +766,76 @@ final class AppModel: ObservableObject {
         _ application: LocalConnectorPluginApplication,
         context: LocalConnectorPluginApplicationContext? = nil
     ) async throws -> LocalConnectorPluginApplicationLaunch {
-        do {
-            return try await localConnectorService.launchPluginApplication(
-                pluginID: application.pluginID,
-                componentKey: application.componentKey,
-                context: context
-            )
-        } catch NativeConnectorError.workspaceUnavailable {
-            let projectID = context?.projectID ?? "none"
-            Self.pluginApplicationLogger.notice(
-                "Plugin 应用工作区暂不可用，刷新状态后重试：plugin=\(application.id, privacy: .public), project=\(projectID, privacy: .private(mask: .hash))"
-            )
-
-            let refreshedContext = await refreshPluginApplicationLaunchContext(context)
-            do {
-                return try await localConnectorService.launchPluginApplication(
-                    pluginID: application.pluginID,
-                    componentKey: application.componentKey,
-                    context: refreshedContext
-                )
-            } catch NativeConnectorError.workspaceUnavailable {
-                guard PluginApplicationLaunchRecovery.allowsProjectOnlyFallback(application),
-                      let fallbackContext = PluginApplicationLaunchRecovery.projectOnlyContext(
-                          refreshedContext ?? context
-                      ) else {
-                    Self.pluginApplicationLogger.error(
-                        "Plugin 应用刷新后仍找不到工作区：plugin=\(application.id, privacy: .public), project=\(projectID, privacy: .private(mask: .hash))"
-                    )
-                    throw NativeConnectorError.workspaceUnavailable
-                }
-                Self.pluginApplicationLogger.warning(
-                    "Plugin 应用降级为仅项目上下文启动：plugin=\(application.id, privacy: .public), project=\(projectID, privacy: .private(mask: .hash))"
-                )
-                return try await localConnectorService.launchPluginApplication(
-                    pluginID: application.pluginID,
-                    componentKey: application.componentKey,
-                    context: fallbackContext
-                )
-            }
+        guard let owner = authenticatedUserID else { throw CancellationError() }
+        let accountGeneration = workspaceAccountGeneration
+        let resolved: LocalConnectorPluginApplicationContext?
+        if let projectID = context?.projectID {
+            resolved = try await localProjectsService.pluginContext(ownerUserID: owner, projectID: projectID)
+        } else {
+            resolved = context
         }
+        guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration else { throw CancellationError() }
+        let launch = try await localConnectorService.launchPluginApplication(
+            pluginID: application.pluginID, componentKey: application.componentKey, context: resolved,
+            expectedOwnerUserID: owner
+        )
+        guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration else { throw CancellationError() }
+        return launch
     }
 
-    private func refreshPluginApplicationLaunchContext(
-        _ context: LocalConnectorPluginApplicationContext?
-    ) async -> LocalConnectorPluginApplicationContext? {
-        // fetchStatus asks the native connector to restore/import its local
-        // workspace registry before the project URI is resolved again.
-        _ = try? await localConnectorService.fetchStatus()
-
-        guard context?.projectID?.pluginLaunchValue != nil else { return context }
-        do {
-            let snapshot = try await workspaceService.fetchWorkspace()
-            await projectRunService.updateProjects(snapshot.projects)
-            workspaceProjects = snapshot.projects
-            workspaceContacts = snapshot.contacts
-            let resources = WorkspaceResourceResolver.resolve(snapshot)
-            contacts = resources.contacts
-            projects = resources.projects
-            reconcileSelection()
-            return PluginApplicationLaunchRecovery.refreshedContext(
-                context,
-                projects: snapshot.projects
-            )
-        } catch {
-            Self.pluginApplicationLogger.error(
-                "刷新 Plugin 应用项目上下文失败：\(error.localizedDescription, privacy: .public)"
-            )
-            return context
+    func preparePluginTaskBatch(
+        _ request: PluginHostTaskBatchRequest,
+        launch: LocalConnectorPluginApplicationLaunch,
+        context: LocalConnectorPluginApplicationContext
+    ) async throws -> PluginHostTaskBatch {
+        guard let owner = authenticatedUserID, let projectID = context.projectID else {
+            throw ChatOSAPIError.invalidRequest("插件任务必须绑定本地项目")
         }
+        let generation = workspaceAccountGeneration
+        let project = try await localProjectsService.projectContext(ownerUserID: owner, projectID: projectID)
+        let modelCatalog = try await localConnectorService.fetchModelCatalog(refresh: false)
+        guard let defaultModelConfigID = modelCatalog.settings.taskRunnerDefaultModelConfigID?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !defaultModelConfigID.isEmpty else {
+            throw ChatOSAPIError.invalidRequest(
+                "请先在设置 > Local Connector > 模型配置中选择 Task Runner 默认模型"
+            )
+        }
+        guard let defaultModel = modelCatalog.items.first(where: { $0.id == defaultModelConfigID }) else {
+            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型不存在或当前账户无权访问")
+        }
+        guard defaultModel.enabled else {
+            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型已被禁用")
+        }
+        guard defaultModel.taskEnabled else {
+            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型未启用任务执行")
+        }
+        guard defaultModel.hasAPIKey else {
+            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型缺少可用凭据")
+        }
+        guard owner == authenticatedUserID, generation == workspaceAccountGeneration else { throw CancellationError() }
+        return try await taskRunnerHostService.prepareBatch(
+            request,
+            project: project,
+            host: .init(
+                pluginID: launch.application.pluginID,
+                componentKey: launch.application.componentKey,
+                releaseID: launch.releaseID,
+                version: launch.version,
+                artifactSHA256: launch.artifactSHA256
+            ),
+            defaultModelConfigID: defaultModelConfigID
+        )
+    }
+
+    func pluginTaskStatuses(
+        taskIDs: [String],
+        context: LocalConnectorPluginApplicationContext
+    ) async throws -> [PluginHostTaskReference] {
+        guard let projectID = context.projectID else {
+            throw ChatOSAPIError.invalidRequest("插件任务必须绑定本地项目")
+        }
+        return try await taskRunnerHostService.taskStatuses(taskIDs: taskIDs, projectID: projectID)
     }
 
     private func reconcilePluginApplicationSelection() {
@@ -822,24 +868,41 @@ final class AppModel: ObservableObject {
     private func applyAuthenticationPhase(_ phase: AuthenticationViewModel.Phase) {
         switch phase {
         case let .authenticated(session):
+            workspaceAccountGeneration += 1
+            if authenticatedUserID != session.user.id {
+                workspaceConversations = []
+                workspaceContacts = []
+                workspaceProjects = []
+                contacts = []
+                projects = []
+                conversationCache = [:]
+                projectConversation = nil
+                contactConversation = nil
+                preparingProjectConversationIDs = []
+                projectConversationPreparationErrors = [:]
+            }
             authenticatedUserID = session.user.id
+            mediaStudio.activate(userID: session.user.id)
             loadLanguagePreferences()
             localConnectorControl.activate(pairIfNeeded: true)
             refreshWorkspace()
             refreshRemoteConnections()
             refreshPluginApplications()
         case .signedOut:
+            workspaceAccountGeneration += 1
             authenticatedUserID = nil
             languagePreferencesSaveTask?.cancel()
             isLanguagePreferencesLoading = false
             isLanguagePreferencesSaving = false
             languagePreferencesError = nil
             localConnectorControl.resetForSignedOut()
+            mediaStudio.resetForSignedOut()
             workspaceLoadGeneration += 1
             contacts = []
             projects = []
             workspaceProjects = []
             workspaceContacts = []
+            workspaceConversations = []
             remoteConnections = []
             remoteConnectionWorkspaceStore.removeAllWorkspaces()
             pluginApplicationsLoadGeneration += 1
@@ -979,7 +1042,7 @@ final class AppModel: ObservableObject {
             }
             return nil
         }
-        return conversation(for: conversationID, allowsPlanMode: resource.allowsPlanMode)
+        return conversation(for: conversationID)
     }
 
     func registerCreatedProject(_ project: WorkspaceProject) {
@@ -1001,13 +1064,18 @@ final class AppModel: ObservableObject {
             projects.append(resource)
             projects.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         }
-        selection = .project(project.id)
         projectTab = .directory
+        selection = .project(project.id)
         refreshWorkspace()
     }
 
     func deleteProject(id: String) async throws {
-        try await workspaceService.deleteProject(id: id)
+        guard let owner = authenticatedUserID else { throw CancellationError() }
+        let registry = try await localProjectsService.registry()
+        guard let old = try await registry.get(ownerUserID: owner, id: id) else { throw ProjectRegistryError.notFound }
+        guard owner == authenticatedUserID else { throw CancellationError() }
+        try await localProjectsService.remove(ownerUserID: owner, id: id, expectedRevision: old.revision)
+        guard owner == authenticatedUserID else { return }
 
         // A workspace refresh may already be in flight. Invalidate it so an
         // older response cannot resurrect the project after deletion.
@@ -1047,6 +1115,11 @@ final class AppModel: ObservableObject {
     func retryProjectConversationPreparation(projectID: String) {
         projectConversationPreparationErrors[projectID] = nil
         prepareProjectConversationIfNeeded(projectID: projectID, force: true)
+    }
+
+    func prepareProjectChat(projectID: String) {
+        guard projects.first(where: { $0.id == projectID })?.conversationID == nil else { return }
+        prepareProjectConversationIfNeeded(projectID: projectID)
     }
 
     func refreshRemoteConnections() {
@@ -1107,18 +1180,18 @@ final class AppModel: ObservableObject {
         case let .project(id):
             let conversationID = projects.first(where: { $0.id == id })?.conversationID
             projectConversation = conversationID.map { conversationID in
-                let conversation = conversation(for: conversationID, allowsPlanMode: true)
+                let conversation = conversation(for: conversationID)
                 conversation.activate()
                 return conversation
             }
             contactConversation = nil
-            if conversationID == nil {
+            if conversationID == nil, projectTab == .messages {
                 prepareProjectConversationIfNeeded(projectID: id)
             }
         case let .contact(id):
             let conversationID = contacts.first(where: { $0.id == id })?.conversationID
             contactConversation = conversationID.map { conversationID in
-                let conversation = conversation(for: conversationID, allowsPlanMode: false)
+                let conversation = conversation(for: conversationID)
                 conversation.activate()
                 return conversation
             }
@@ -1130,25 +1203,35 @@ final class AppModel: ObservableObject {
     }
 
     private func prepareProjectConversationIfNeeded(projectID: String, force: Bool = false) {
+        guard let owner = authenticatedUserID else { return }
+        let accountGeneration = workspaceAccountGeneration
         guard !preparingProjectConversationIDs.contains(projectID) else { return }
         guard force || projectConversationPreparationErrors[projectID] == nil else { return }
-        guard let project = workspaceProject(id: projectID),
+        guard var project = workspaceProject(id: projectID),
               let contact = defaultProjectContact else { return }
 
         preparingProjectConversationIDs.insert(projectID)
         projectConversationPreparationErrors[projectID] = nil
         Task {
             do {
-                let conversationID = try await workspaceResourceCreationService.ensureConversation(
+                project.projectContext = try await localProjectsService.projectContext(
+                    ownerUserID: owner,
+                    projectID: projectID
+                )
+                let conversationID = try await projectConversationService.ensureConversation(
                     project: project,
                     contact: contact
                 )
+                guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration,
+                      workspaceProject(id: projectID) != nil else { return }
                 applyPreparedConversation(
                     conversationID,
                     projectID: projectID,
                     contactName: contact.name
                 )
             } catch {
+                guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration,
+                      workspaceProject(id: projectID) != nil else { return }
                 projectConversationPreparationErrors[projectID] = error.localizedDescription
             }
             preparingProjectConversationIDs.remove(projectID)
@@ -1175,23 +1258,20 @@ final class AppModel: ObservableObject {
         }
         projectConversationPreparationErrors[projectID] = nil
         if selection == .project(projectID) {
-            let conversation = conversation(for: conversationID, allowsPlanMode: true)
+            let conversation = conversation(for: conversationID)
             conversation.activate()
             projectConversation = conversation
         }
     }
 
     private func conversation(
-        for sessionID: String,
-        allowsPlanMode: Bool
+        for sessionID: String
     ) -> ConversationSessionViewModel {
         if let cached = conversationCache[sessionID] {
-            cached.allowsPlanMode = allowsPlanMode
             return cached
         }
         let created = ConversationSessionViewModel(
             sessionID: sessionID,
-            allowsPlanMode: allowsPlanMode,
             initialTurns: [],
             historyStore: historyStore,
             remoteService: conversationService,
@@ -1199,7 +1279,6 @@ final class AppModel: ObservableObject {
             commandService: commandService,
             turnProcessService: turnProcessService,
             messageTaskGraphService: messageTaskGraphService,
-            projectExecutionService: projectExecutionService,
             runtimeSettingsService: runtimeSettingsService,
             askUserPromptService: askUserPromptService
         )
