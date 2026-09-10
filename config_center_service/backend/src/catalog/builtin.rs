@@ -18,6 +18,8 @@ use serde_json::{json, Value};
 use super::constants::*;
 use crate::models::ConfigDefinitionRecord;
 
+#[path = "builtin/configuration_center.rs"]
+mod configuration_center;
 #[path = "builtin/local_connector.rs"]
 mod local_connector;
 #[path = "builtin/mcp_management.rs"]
@@ -36,6 +38,7 @@ mod user_service;
 pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     let now = Utc::now().to_rfc3339();
     let mut definitions = Vec::new();
+    definitions.extend(configuration_center::definitions(&now));
     definitions.extend(shared_chatos::definitions(&now));
     definitions.extend(task_runner::definitions(&now));
     definitions.extend(local_connector::definitions(&now));
