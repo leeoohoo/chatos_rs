@@ -101,7 +101,7 @@ Task Runner 只登记 `task_runner_run_phase`。只读分析与实际工程执�
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。
 - `memory_engine_summary_agent`、`memory_engine_rollup_agent`、`memory_engine_subject_memory_agent`、`memory_engine_memory_rollup_agent`、`memory_engine_thread_repair_agent`：Memory Engine 的消息总结、层级归并、主体记忆与上下文修复智能体。
 
-Chat OS 的规划开关、`chatos_plan` 任务配置、专用提示词和规划 Agent 已删除。需求、文档、工作项和 Plan 属于项目管理插件，客户端是项目主体的唯一权威。迁移状态见 `docs/plans/PROJECT_PLUGIN_MIGRATION_REMEDIATION.zh-CN.md`。
+Chat OS 的规划开关、`chatos_plan` 任务配置、专用提示词和规划 Agent 已删除。客户端是项目主体的唯一权威；Plugin Management 不承载项目、需求、文档、工作项或 Plan 数据。
 
 ## 环境变量
 

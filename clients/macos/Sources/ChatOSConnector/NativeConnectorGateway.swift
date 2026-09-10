@@ -506,14 +506,12 @@ struct GatewayModelSettingsDTO: Decodable, Sendable {
     var modelRequestMaxRetries: Int?
     var memorySummaryModelConfigID: String?
     var memorySummaryThinkingLevel: String?
-    var taskRunnerDefaultModelConfigID: String?
     var commandApprovalModelConfigID: String?
     var commandApprovalThinkingLevel: String?
     enum CodingKeys: String, CodingKey {
         case modelRequestMaxRetries = "model_request_max_retries"
         case memorySummaryModelConfigID = "memory_summary_model_config_id"
         case memorySummaryThinkingLevel = "memory_summary_thinking_level"
-        case taskRunnerDefaultModelConfigID = "task_runner_default_model_config_id"
         case commandApprovalModelConfigID = "command_approval_model_config_id"
         case commandApprovalThinkingLevel = "command_approval_thinking_level"
     }
@@ -623,17 +621,12 @@ private struct GatewayModelSettingsUpdateRequest: Encodable {
         try container.encode(settings.modelRequestMaxRetries ?? 5, forKey: .modelRequestMaxRetries)
         try container.encode(settings.memorySummaryModelConfigID, forKey: .memorySummaryModelConfigID)
         try container.encode(settings.memorySummaryThinkingLevel, forKey: .memorySummaryThinkingLevel)
-        try container.encode(
-            settings.taskRunnerDefaultModelConfigID ?? "",
-            forKey: .taskRunnerDefaultModelConfigID
-        )
     }
 
     enum CodingKeys: String, CodingKey {
         case modelRequestMaxRetries = "model_request_max_retries"
         case memorySummaryModelConfigID = "memory_summary_model_config_id"
         case memorySummaryThinkingLevel = "memory_summary_thinking_level"
-        case taskRunnerDefaultModelConfigID = "task_runner_default_model_config_id"
     }
 }
 

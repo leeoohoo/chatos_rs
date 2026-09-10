@@ -52,10 +52,6 @@ public sealed class LocalStateDatabase
                 created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
                 PRIMARY KEY(owner_user_id, id)
             );
-            CREATE TABLE IF NOT EXISTS local_project_imports (
-                owner_user_id TEXT NOT NULL, source_id TEXT NOT NULL, content_digest TEXT NOT NULL,
-                result_json TEXT NOT NULL, PRIMARY KEY(owner_user_id, source_id)
-            );
             CREATE TABLE IF NOT EXISTS local_project_schema_migrations (version INTEGER PRIMARY KEY NOT NULL);
             INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (1);
 

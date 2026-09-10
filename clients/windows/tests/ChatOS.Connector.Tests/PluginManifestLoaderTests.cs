@@ -30,7 +30,7 @@ public sealed class PluginManifestLoaderTests : IDisposable
 
         Assert.Equal(Path.Combine(installation, "bin", "test-plugin"), launch.ExecutablePath);
         Assert.Equal("main", launch.ComponentKey);
-        Assert.Equal(_directory, launch.Environment["CHATOS_WORKSPACE"]);
+        Assert.False(launch.Environment.ContainsKey("CHATOS_WORKSPACE"));
         Assert.True(Directory.Exists(launch.ArtifactPath));
         using var host = JsonDocument.Parse(await File.ReadAllTextAsync(
             Path.Combine(launch.VisualSessionPath, "host.json")));
@@ -156,7 +156,7 @@ public sealed class PluginManifestLoaderTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(installation, "ui", "index.html"), "<html></html>");
         await File.WriteAllTextAsync(
             Path.Combine(installation, "chatos.plugin.json"),
-            """{"schemaVersion":3,"name":"test-plugin","version":"1.0.0","description":"fallback","interface":{"displayName":"Project Studio","shortDescription":"Requirements and plans","brandColor":"#2563EB"},"mcpServers":{"main":{"type":"stdio","bin":"test-plugin"}},"ui":[{"componentKey":"studio","source":"./ui/index.html","title":"Project Studio","surface":"workbench","bridgeCapabilities":["host.context.read","task.batch.prepare"],"runtime":{"type":"local_http","bin":"test-plugin","args":["studio"],"healthPath":"/api/health"}}],"permissions":[{"permission":"process.spawn","required":true,"components":["main","studio"]}],"runtimeContext":{"scope":"project","components":["studio"],"required":["project.id"],"storageIsolation":"project","missingContext":"reject"}}""");
+            """{"schemaVersion":3,"name":"test-plugin","version":"1.0.0","description":"fallback","interface":{"displayName":"Project Studio","shortDescription":"Requirements and plans","brandColor":"#2563EB"},"mcpServers":{"main":{"type":"stdio","bin":"test-plugin"}},"ui":[{"componentKey":"studio","source":"./ui/index.html","title":"Project Studio","surface":"workbench","bridgeCapabilities":["host.context.read"],"runtime":{"type":"local_http","bin":"test-plugin","args":["studio"],"healthPath":"/api/health"}}],"permissions":[{"permission":"process.spawn","required":true,"components":["main","studio"]}],"runtimeContext":{"scope":"project","components":["studio"],"required":["project.id"],"storageIsolation":"project","missingContext":"reject"}}""");
         var loader = new PluginManifestLoader(Path.Combine(_directory, "runtime-applications"));
         var record = Record(installation) with { DeclaredPermissions = ["process.spawn"] };
 
@@ -174,7 +174,7 @@ public sealed class PluginManifestLoaderTests : IDisposable
 
         var application = Assert.Single(applications);
         Assert.Equal("Requirements and plans", application.Description);
-        Assert.Equal(["host.context.read", "task.batch.prepare"], application.BridgeCapabilities);
+        Assert.Equal(["host.context.read"], application.BridgeCapabilities);
         Assert.Equal("project", application.ContextScope);
         Assert.Equal("project-1", prepared.Environment["CHATOS_PROJECT_ID"]);
         Assert.Equal("Relay", prepared.Environment["CHATOS_PROJECT_NAME"]);

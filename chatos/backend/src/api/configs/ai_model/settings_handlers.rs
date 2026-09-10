@@ -105,9 +105,6 @@ pub(in crate::api::configs) async fn put_ai_model_settings(
         memory_summary_thinking_level: normalize_settings_update_value(
             req.memory_summary_thinking_level,
         ),
-        task_runner_default_model_config_id: normalize_settings_update_value(
-            req.task_runner_default_model_config_id,
-        ),
     };
     match user_service_api_client::update_model_settings(
         base_url.as_str(),

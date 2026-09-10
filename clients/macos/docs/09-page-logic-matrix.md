@@ -20,7 +20,7 @@
 | 左侧资源栏 | `SessionList.tsx`、`sessionList/Sections.tsx` | 四个可折叠资源分区：联系人、项目、终端、远端；各自有刷新、创建、选择、行内菜单 | 原生 `List` + `Section`；资源类型和顺序保持一致 |
 | 主内容路由 | `ChatInterfaceMainContent.tsx` | 根据当前选择显示联系人会话、项目工作区、本地终端、远端终端或 SFTP | 不是固定三栏 IDE；每类资源有自己的工作面 |
 | 全局浮层 | `ChatInterfaceOverlays.tsx` | 原项目包含记事本、应用列表、智能体管理、用户偏好、任务抽屉等 | 新版不实现应用列表；其余可改为 sheet、inspector 或独立 window，但功能边界不能合并丢失 |
-| 项目二级导航 | `ProjectWorkspaceView.swift` | 项目目录、用户消息、项目设置 | 项目页不承载 Plan 或插件 Tab；项目管理插件从侧栏“应用”进入 |
+| 项目二级导航 | `ProjectWorkspaceView.swift` | 项目目录、用户消息、项目设置 | 项目页不承载 Plan 或规划入口 |
 
 范围说明：本矩阵用于 macOS 客户端原生重写。浏览器 Web 端继续由现有 Web 工程维护；Browser MCP 与 Computer Use Plugin 本体也不在 Swift 重写范围内。
 
@@ -95,18 +95,7 @@
 
 详细状态机和验收矩阵见 [聊天历史专项架构](./06-chat-history-architecture.md)。
 
-## 6. 项目管理插件
-
-| 项目 | 真实逻辑 |
-| --- | --- |
-| 入口 | 侧栏“应用”中的 `chatos-project-management`，不出现在项目二级导航 |
-| 项目身份 | 客户端 `ProjectRegistry` 注入 `project.id`；插件不提供项目 CRUD，不读取服务端项目记录 |
-| 数据 | 需求层级、版本化文档、工作项、依赖、冻结 Plan、执行意图和 opaque Task Runner refs |
-| 存储 | UI 与 MCP 共用项目隔离的本地 SQLite；缺少项目上下文直接拒绝 |
-| 页面 | Apple 风格三栏 Studio；需求、规划文档、工作项、关系与范围、规划版本、执行交接 |
-| 执行边界 | 插件只形成执行意图并记录引用；Task/Run 状态以 Task Runner 为准 |
-
-## 7. 通用任务流程图
+## 6. 通用任务流程图
 
 | 项目 | 真实逻辑 |
 | --- | --- |
@@ -120,7 +109,7 @@
 
 详细图语义见 [任务流程图专项架构](./08-task-graph-architecture.md)。
 
-## 8. 项目设置（实际为运行设置）
+## 7. 项目设置（实际为运行设置）
 
 | 项目 | 真实逻辑 |
 | --- | --- |

@@ -236,7 +236,6 @@ pub struct UserServiceModelSettingsRecord {
     pub model_request_max_retries: i64,
     pub memory_summary_model_config_id: Option<String>,
     pub memory_summary_thinking_level: Option<String>,
-    pub task_runner_default_model_config_id: Option<String>,
     pub updated_at: String,
     #[serde(default)]
     pub sync_warnings: Vec<String>,
@@ -252,6 +251,4 @@ pub struct UpdateUserServiceModelSettingsRequest {
     pub memory_summary_model_config_id: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_summary_thinking_level: Option<Option<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub task_runner_default_model_config_id: Option<Option<String>>,
 }

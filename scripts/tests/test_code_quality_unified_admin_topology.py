@@ -16,7 +16,6 @@ OLD_FRONTEND_SERVICES = (
     "configuration-center-frontend",
     "user-service-frontend",
     "memory-engine-frontend",
-    "project-management-frontend",
     "plugin-management-frontend",
     "task-runner-frontend",
 )
@@ -50,7 +49,9 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn("hosts: &admin_hosts", config)
         self.assertIn("hosts: *admin_hosts", config)
         self.assertIn("admin/(?:user-service|task-runner", config)
-        self.assertIn("(?:chatos|user|project|plugin|plugins|task|memory|local)", config)
+        self.assertIn("(?:chatos|user|plugin|plugins|task|memory|local)", config)
+        self.assertNotIn("project.jgoool.com", config)
+        self.assertNotIn("project-management", config)
         self.assertIn("(?:api/)?internal(?:/|\\\\?|$)", config)
         self.assertIn("admin.jgoool.com", config)
         self.assertIn('"admin-console-frontend:80"', config)

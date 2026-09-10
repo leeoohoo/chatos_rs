@@ -785,7 +785,7 @@ struct NativePluginRuntimeTests {
         #expect(launch.executableURL == launcher.standardizedFileURL)
         #expect(launch.arguments == ["mcp"])
         #expect(launch.environment["CHATOS_PLUGIN_RUNTIME_SESSION_ID"] == "adapter-1")
-        #expect(launch.environment["CHATOS_WORKSPACE"] == root.path)
+        #expect(launch.environment["CHATOS_WORKSPACE"] == nil)
         for key in [
             "CHATOS_PLUGIN_VISUAL_SESSION_DIR",
             "CHATOS_PLUGIN_ARTIFACT_DIR",

@@ -69,11 +69,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
                 frontend: Some(39191),
             },
             DefaultPort {
-                name: "Project Management",
-                backend: Some(39210),
-                frontend: Some(39211),
-            },
-            DefaultPort {
                 name: "Official Website",
                 backend: Some(39250),
                 frontend: Some(39251),
@@ -117,12 +112,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
                 title: "Task Runner 运行台",
                 path: "/showcase/task-runner.png",
                 source_url: "http://127.0.0.1:39091",
-            },
-            ShowcaseImage {
-                id: "project-management",
-                title: "Project Management 工作台",
-                path: "/showcase/project-management.png",
-                source_url: "http://127.0.0.1:39211",
             },
         ],
     }

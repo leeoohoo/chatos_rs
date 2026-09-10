@@ -6,7 +6,6 @@ SHELL := /bin/bash
 .PHONY: help dev docker-up docker-fast docker-dev docker-rebuild docker-restart docker-restart-fast docker-restart-dev docker-build docker-clean-images docker-down docker-reset docker-logs docker-ps docker-config
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs
 .PHONY: build build-rust build-frontends build-macos-client build-windows-client build-browser-plugin build-computer-use-plugin build-document-plugin build-plugins
-.PHONY: build-project-management-plugin test-project-management-plugin
 .PHONY: test smoke smoke-repo smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
 .PHONY: test-chat-app-server test-user-service test-task-runner-service test-local-connector-service test-mcp-management-service test-memory-engine
 .PHONY: test-macos-client test-windows-client test-browser-plugin test-computer-use-plugin test-document-plugin test-plugins
@@ -128,10 +127,7 @@ build-computer-use-plugin:
 build-document-plugin:
 	@npm --prefix plugins/document run build
 
-build-project-management-plugin:
-	@npm --prefix plugins/project-management run build
-
-build-plugins: build-browser-plugin build-computer-use-plugin build-document-plugin build-project-management-plugin
+build-plugins: build-browser-plugin build-computer-use-plugin build-document-plugin
 
 test: smoke test-chat-app-server test-user-service test-task-runner-service test-local-connector-service test-mcp-management-service test-memory-engine
 
@@ -200,10 +196,7 @@ test-document-plugin:
 	@npm --prefix plugins/document run vendor:fetch:current
 	@npm --prefix plugins/document test
 
-test-project-management-plugin:
-	@npm --prefix plugins/project-management test
-
-test-plugins: test-browser-plugin test-computer-use-plugin test-document-plugin test-project-management-plugin
+test-plugins: test-browser-plugin test-computer-use-plugin test-document-plugin
 
 code-size-report:
 	@bash scripts/code-size-report.sh

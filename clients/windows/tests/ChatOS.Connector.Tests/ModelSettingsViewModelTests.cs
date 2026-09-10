@@ -14,13 +14,11 @@ public sealed class ModelSettingsViewModelTests
     {
         var service = new FakeRuntimeSettingsService();
         var store = new MemoryModelSettingsStore(new ConnectorModelSettings(6, "model-two"));
-        var defaults = new MemoryUserModelDefaultsService("model-one");
-        var viewModel = Create(service, store, defaults);
+        var viewModel = Create(service, store);
 
         await viewModel.OpenAsync();
 
         Assert.Equal(2, viewModel.AvailableModels.Count);
-        Assert.Equal("model-one", viewModel.SelectedTaskRunnerModel?.Id);
         Assert.Equal("model-two", viewModel.SelectedApprovalModel?.Id);
         Assert.Equal(6, viewModel.ModelRequestMaxRetries);
     }
@@ -30,8 +28,7 @@ public sealed class ModelSettingsViewModelTests
     {
         var viewModel = Create(
             new FakeRuntimeSettingsService(),
-            new MemoryModelSettingsStore(new ConnectorModelSettings(5, "removed-model")),
-            new MemoryUserModelDefaultsService("removed-model"));
+            new MemoryModelSettingsStore(new ConnectorModelSettings(5, "removed-model")));
 
         await viewModel.LoadAsync();
 
@@ -43,62 +40,25 @@ public sealed class ModelSettingsViewModelTests
     public async Task SavePersistsNormalizedRetryAndSelectedModel()
     {
         var store = new MemoryModelSettingsStore(ConnectorModelSettings.Default);
-        var defaults = new MemoryUserModelDefaultsService();
-        var viewModel = Create(new FakeRuntimeSettingsService(), store, defaults);
+        var viewModel = Create(new FakeRuntimeSettingsService(), store);
         await viewModel.LoadAsync();
         viewModel.ModelRequestMaxRetries = 42;
         viewModel.SelectedApprovalModel = viewModel.AvailableModels[0];
-        viewModel.SelectedTaskRunnerModel = viewModel.AvailableModels[1];
 
         await viewModel.SaveAsync();
 
         Assert.Equal(new ConnectorModelSettings(10, "model-one"), store.Settings);
-        Assert.Equal("model-two", defaults.Defaults.TaskRunnerDefaultModelConfigId);
         Assert.Equal(10, viewModel.ModelRequestMaxRetries);
-    }
-
-    [Fact]
-    public async Task SaveCanClearTaskRunnerDefault()
-    {
-        var defaults = new MemoryUserModelDefaultsService("model-one");
-        var viewModel = Create(
-            new FakeRuntimeSettingsService(),
-            new MemoryModelSettingsStore(ConnectorModelSettings.Default),
-            defaults);
-        await viewModel.LoadAsync();
-        viewModel.SelectedTaskRunnerModel = null;
-
-        await viewModel.SaveAsync();
-
-        Assert.Null(defaults.Defaults.TaskRunnerDefaultModelConfigId);
     }
 
     private static ModelSettingsViewModel Create(
         IConversationRuntimeSettingsService service,
-        IConnectorModelSettingsStore store,
-        IUserModelDefaultsService defaults)
+        IConnectorModelSettingsStore store)
     {
         var dispatcher = new ImmediateUiDispatcher();
         var preferences = new AppPreferencesManager(new MemoryPreferencesStore());
         var localization = new LocalizationViewModel(preferences, dispatcher);
-        return new ModelSettingsViewModel(service, store, defaults, localization, dispatcher);
-    }
-
-    private sealed class MemoryUserModelDefaultsService(string? modelId = null)
-        : IUserModelDefaultsService
-    {
-        public UserModelDefaults Defaults { get; private set; } = new(modelId);
-
-        public Task<UserModelDefaults> FetchAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(Defaults);
-
-        public Task<UserModelDefaults> UpdateTaskRunnerDefaultAsync(
-            string? defaultModelConfigId,
-            CancellationToken cancellationToken = default)
-        {
-            Defaults = new UserModelDefaults(defaultModelConfigId);
-            return Task.FromResult(Defaults);
-        }
+        return new ModelSettingsViewModel(service, store, localization, dispatcher);
     }
 
     private sealed class FakeRuntimeSettingsService : IConversationRuntimeSettingsService

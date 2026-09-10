@@ -102,7 +102,6 @@ final class AppModel: ObservableObject {
     private let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
     private let askUserPromptService: ChatOSAskUserPromptService
     private let petActivityInboxService: ChatOSPetActivityInboxService
-    let taskRunnerHostService: ChatOSTaskRunnerHostService
     private let workspaceService: ChatOSWorkspaceService
     private let localConnectorService: NativeLocalConnectorService
     private let projectConversationService: ChatOSProjectConversationService
@@ -200,7 +199,6 @@ final class AppModel: ObservableObject {
         self.runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
         self.askUserPromptService = ChatOSAskUserPromptService(client: apiClient)
         self.petActivityInboxService = ChatOSPetActivityInboxService(client: apiClient)
-        self.taskRunnerHostService = ChatOSTaskRunnerHostService(client: apiClient)
         self.realtimeService = ChatOSRealtimeClient(
             apiClient: apiClient,
             conversationService: conversationService
@@ -781,61 +779,6 @@ final class AppModel: ObservableObject {
         )
         guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration else { throw CancellationError() }
         return launch
-    }
-
-    func preparePluginTaskBatch(
-        _ request: PluginHostTaskBatchRequest,
-        launch: LocalConnectorPluginApplicationLaunch,
-        context: LocalConnectorPluginApplicationContext
-    ) async throws -> PluginHostTaskBatch {
-        guard let owner = authenticatedUserID, let projectID = context.projectID else {
-            throw ChatOSAPIError.invalidRequest("插件任务必须绑定本地项目")
-        }
-        let generation = workspaceAccountGeneration
-        let project = try await localProjectsService.projectContext(ownerUserID: owner, projectID: projectID)
-        let modelCatalog = try await localConnectorService.fetchModelCatalog(refresh: false)
-        guard let defaultModelConfigID = modelCatalog.settings.taskRunnerDefaultModelConfigID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !defaultModelConfigID.isEmpty else {
-            throw ChatOSAPIError.invalidRequest(
-                "请先在设置 > Local Connector > 模型配置中选择 Task Runner 默认模型"
-            )
-        }
-        guard let defaultModel = modelCatalog.items.first(where: { $0.id == defaultModelConfigID }) else {
-            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型不存在或当前账户无权访问")
-        }
-        guard defaultModel.enabled else {
-            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型已被禁用")
-        }
-        guard defaultModel.taskEnabled else {
-            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型未启用任务执行")
-        }
-        guard defaultModel.hasAPIKey else {
-            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型缺少可用凭据")
-        }
-        guard owner == authenticatedUserID, generation == workspaceAccountGeneration else { throw CancellationError() }
-        return try await taskRunnerHostService.prepareBatch(
-            request,
-            project: project,
-            host: .init(
-                pluginID: launch.application.pluginID,
-                componentKey: launch.application.componentKey,
-                releaseID: launch.releaseID,
-                version: launch.version,
-                artifactSHA256: launch.artifactSHA256
-            ),
-            defaultModelConfigID: defaultModelConfigID
-        )
-    }
-
-    func pluginTaskStatuses(
-        taskIDs: [String],
-        context: LocalConnectorPluginApplicationContext
-    ) async throws -> [PluginHostTaskReference] {
-        guard let projectID = context.projectID else {
-            throw ChatOSAPIError.invalidRequest("插件任务必须绑定本地项目")
-        }
-        return try await taskRunnerHostService.taskStatuses(taskIDs: taskIDs, projectID: projectID)
     }
 
     private func reconcilePluginApplicationSelection() {

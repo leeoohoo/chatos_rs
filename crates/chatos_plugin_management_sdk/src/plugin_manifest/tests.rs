@@ -6,38 +6,6 @@ use serde_json::json;
 use super::*;
 use crate::{normalized_plugin_manifest_sha256, plugin_component_descriptors, PluginComponentKind};
 
-#[test]
-fn project_management_plugin_declares_only_bound_local_business_components() {
-    let manifest = parse_plugin_manifest(include_str!(
-        "../../../../plugins/project-management/chatos.plugin.json"
-    ))
-    .expect("project management manifest");
-    let runtime = manifest.runtime_context.as_ref().expect("project context");
-    assert_eq!(runtime.scope, PluginRuntimeContextScope::Project);
-    assert_eq!(
-        runtime.storage_isolation,
-        PluginRuntimeContextStorageIsolation::Project
-    );
-    assert_eq!(
-        runtime.missing_context,
-        PluginRuntimeContextMissingContext::Reject
-    );
-    assert_eq!(runtime.required, vec!["project.id"]);
-    assert_eq!(manifest.mcp_servers.len(), 1);
-    assert_eq!(manifest.ui.len(), 1);
-    assert_eq!(
-        manifest.ui[0].bridge_capabilities,
-        vec![
-            "host.context.read",
-            "task.batch.prepare",
-            "task.batch.status",
-            "task.workspace.open"
-        ]
-    );
-    assert_eq!(manifest.permissions.len(), 1);
-    assert_eq!(manifest.permissions[0].permission, "process.spawn");
-}
-
 fn manifest_with_mcp(server: serde_json::Value) -> String {
     json!({
         "schemaVersion": 3,
@@ -65,7 +33,6 @@ fn manifest_with_mcp(server: serde_json::Value) -> String {
     })
     .to_string()
 }
-
 #[test]
 fn parses_schema_v3_npm_stdio_mcp() {
     let raw = manifest_with_mcp(json!({

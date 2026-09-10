@@ -145,7 +145,6 @@ struct NativeConnectorGatewayDTOTests {
               "model_request_max_retries": 4,
               "memory_summary_model_config_id": "memory-model",
               "memory_summary_thinking_level": "low",
-              "task_runner_default_model_config_id": "task-model"
             }
             """.utf8
         )
@@ -153,6 +152,5 @@ struct NativeConnectorGatewayDTOTests {
         #expect(settings.modelRequestMaxRetries == 4)
         #expect(settings.memorySummaryModelConfigID == "memory-model")
         #expect(settings.memorySummaryThinkingLevel == "low")
-        #expect(settings.taskRunnerDefaultModelConfigID == "task-model")
     }
 }

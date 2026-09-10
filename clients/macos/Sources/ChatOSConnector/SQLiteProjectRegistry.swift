@@ -1,5 +1,4 @@
 import ChatOSCore
-import CryptoKit
 import Foundation
 import SQLite3
 
@@ -89,50 +88,6 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
         }
     }
 
-    public func importRecords(
-        ownerUserID: String, sourceID: String, records: [LocalProjectRecord]
-    ) throws -> ProjectRegistryImportResult {
-        try ProjectRegistryValidation.identifier(ownerUserID, field: "ownerUserID")
-        try ProjectRegistryValidation.identifier(sourceID, field: "sourceID")
-        var ids = Set<String>()
-        for record in records {
-            try record.validate()
-            guard record.ownerUserID == ownerUserID else { throw ProjectRegistryError.invalidField("ownerUserID") }
-            guard ids.insert(record.id).inserted else { throw ProjectRegistryError.invalidField("duplicate id") }
-        }
-        let sorted = records.sorted { $0.id < $1.id }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let digest = SHA256.hash(data: try encoder.encode(sorted)).map { String(format: "%02x", $0) }.joined()
-        return try transaction {
-            let receipt = try query("""
-                SELECT content_digest, result_json FROM local_project_imports
-                WHERE owner_user_id = ? AND source_id = ?
-                """, [.text(ownerUserID), .text(sourceID)]) { (Self.string($0, 0), Self.string($0, 1)) }.first
-            if let receipt {
-                guard receipt.0 == digest else { throw ProjectRegistryError.importSourceConflict }
-                return try JSONDecoder().decode(ProjectRegistryImportResult.self, from: Data(receipt.1.utf8))
-            }
-            var inserted: [String] = []
-            var skipped: [String] = []
-            for record in sorted {
-                if try get(ownerUserID: ownerUserID, id: record.id) != nil {
-                    skipped.append(record.id)
-                } else {
-                    try insert(record)
-                    inserted.append(record.id)
-                }
-            }
-            let result = ProjectRegistryImportResult(insertedIDs: inserted, skippedIDs: skipped)
-            let json = String(decoding: try encoder.encode(result), as: UTF8.self)
-            try execute("""
-                INSERT INTO local_project_imports(owner_user_id, source_id, content_digest, result_json)
-                VALUES (?, ?, ?, ?)
-                """, [.text(ownerUserID), .text(sourceID), .text(digest), .text(json)])
-            return result
-        }
-    }
-
     private func insert(_ record: LocalProjectRecord) throws {
         try execute("INSERT INTO local_project_records (\(Self.columns)) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
             .text(record.ownerUserID), .text(record.id), .text(record.draft.name), .text(record.draft.description),
@@ -219,10 +174,6 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
             status TEXT NOT NULL CHECK(status IN ('active', 'archived', 'removed')),
             created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
             PRIMARY KEY(owner_user_id, id)
-        );
-        CREATE TABLE IF NOT EXISTS local_project_imports (
-            owner_user_id TEXT NOT NULL, source_id TEXT NOT NULL, content_digest TEXT NOT NULL,
-            result_json TEXT NOT NULL, PRIMARY KEY(owner_user_id, source_id)
         );
         CREATE TABLE IF NOT EXISTS local_project_schema_migrations (version INTEGER PRIMARY KEY NOT NULL);
         INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (1);

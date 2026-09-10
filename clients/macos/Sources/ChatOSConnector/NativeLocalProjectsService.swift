@@ -1,7 +1,7 @@
 import ChatOSCore
 import Foundation
 
-/// Host entrypoint for local CRUD and explicit migration. Never creates/updates a remote project.
+/// Host entrypoint for local CRUD. Never creates or updates a remote project.
 public actor NativeLocalProjectsService {
     private let connector: NativeLocalConnectorService
     private let databaseURL: URL
@@ -86,49 +86,6 @@ public actor NativeLocalProjectsService {
                                 rootPath: try record.localRootURI(deviceID: deviceID),
                                 displayRootPath: binding.absolutePath, latestConversationID: nil,
                                 projectContext: try deviceID.map { try ProjectContextSnapshot(record: record, deviceID: $0) })
-    }
-
-    public func preview(ownerUserID: String, projects: [WorkspaceProject]) async -> [LocalProjectImportCandidate] {
-        var candidates: [LocalProjectImportCandidate] = []
-        for project in projects {
-            do {
-                try Task.checkCancellation()
-                let binding = try await connector.resolveLegacyProjectDirectory(ownerUserID: ownerUserID, project: project)
-                let record = LocalProjectRecord(
-                    id: project.id, ownerUserID: ownerUserID,
-                    draft: .init(name: project.name, workspaceID: binding.workspaceID, relativeRoot: binding.relativeRoot),
-                    createdAtUnixMs: 0, updatedAtUnixMs: 0
-                )
-                try record.validate()
-                candidates.append(.init(project: project, record: record, binding: binding, error: nil))
-            } catch {
-                candidates.append(.init(project: project, record: nil, binding: nil, error: error.localizedDescription))
-            }
-        }
-        return candidates
-    }
-
-    public func importConfirmed(
-        ownerUserID: String, sourceID: String, candidates: [LocalProjectImportCandidate]
-    ) async throws -> ProjectRegistryImportResult {
-        // Import is an explicit data operation, never an authority-mode switch.
-        try Task.checkCancellation()
-        var records: [LocalProjectRecord] = []
-        for candidate in candidates {
-            guard let record = candidate.record, let binding = candidate.binding,
-                  record.ownerUserID == ownerUserID else { throw ProjectRegistryError.invalidField("import selection") }
-            let current = try await connector.resolveLegacyProjectDirectory(ownerUserID: ownerUserID, project: candidate.project)
-            guard current == binding,
-                  record.id == candidate.project.id,
-                  record.draft.workspaceID == current.workspaceID,
-                  record.draft.relativeRoot == current.relativeRoot else {
-                throw ProjectRegistryError.storage("项目目录或工作区已变化，请重新预览后确认。")
-            }
-            records.append(record)
-        }
-        try Task.checkCancellation()
-        // Records and receipt commit together. There is no legacy authority or activation flag.
-        return try await registry().importRecords(ownerUserID: ownerUserID, sourceID: sourceID, records: records)
     }
 
     public func rename(ownerUserID: String, id: String, name: String, expectedRevision: Int64) async throws {
@@ -218,24 +175,4 @@ extension NativeLocalConnectorService {
                      absolutePath: url.path, workspaceFingerprint: workspace.fingerprint)
     }
 
-    func resolveLegacyProjectDirectory(ownerUserID: String, project: WorkspaceProject) throws -> ProjectDirectoryBinding {
-        _ = try localProjectDeviceID(ownerUserID: ownerUserID)
-        guard let path = project.rootPath, !path.isEmpty else { throw NativeConnectorError.workspaceUnavailable }
-        guard path == path.trimmingCharacters(in: .whitespacesAndNewlines) else {
-            throw ProjectRegistryError.invalidField("legacy project root")
-        }
-        // Foreign-device local:// URIs must fail; never fall back to displayRootPath on this machine.
-        if let components = URLComponents(string: path), components.scheme != nil {
-            guard components.scheme == "local", components.host == "connector",
-                  components.query == nil, components.fragment == nil else {
-                throw ProjectRegistryError.invalidField("legacy project root")
-            }
-        } else if !path.hasPrefix("/") {
-            throw ProjectRegistryError.invalidField("legacy project root")
-        }
-        let resolved = try resolveProjectPath(path)
-        let relative = resolved.relativePath == "." ? "" : resolved.relativePath
-        return try validateLocalProjectDirectory(ownerUserID: ownerUserID,
-            draft: .init(name: project.name, workspaceID: resolved.workspace.id, relativeRoot: relative))
-    }
 }

@@ -12,9 +12,7 @@ The cloud coordinates conversations, tasks, memory, and capabilities. Native cli
 
 ![ChatOS native desktop client preview](./official_website_service/frontend/public/showcase/chatos-main.png)
 
-| Project management | Background task execution |
-| --- | --- |
-| ![ChatOS project management interface](./official_website_service/frontend/public/showcase/project-management.png) | ![ChatOS Task Runner interface](./official_website_service/frontend/public/showcase/task-runner.png) |
+![ChatOS Task Runner interface](./official_website_service/frontend/public/showcase/task-runner.png)
 
 | Long-term memory | Sandbox and execution isolation |
 | --- | --- |
@@ -23,7 +21,7 @@ The cloud coordinates conversations, tasks, memory, and capabilities. Native cli
 ## What the project is today
 
 - **Native desktop clients:** independent SwiftUI and WinUI applications for macOS and Windows. The retired Electron client is no longer the product runtime.
-- **Cloud orchestration:** conversations, tasks, requirements, agents, configuration, plugin metadata, and memory are managed by server-side services.
+- **Cloud orchestration:** conversations, tasks, agents, configuration, plugin metadata, and memory are managed by server-side services.
 - **Device-side execution:** every project binds an explicitly authorized local workspace. Files, Git, commands, local MCP servers, plugin applications, and device permissions execute through the Local Connector built into the native client.
 - **Observable background work:** complex requests can become resumable tasks with progress, logs, tool calls, approvals, retries, and final results.
 - **Long-term project context:** conversation summaries, project facts, and role-specific memory can be reused across sessions.
@@ -40,7 +38,7 @@ flowchart LR
     G --> S[Cloud business services]
     S --> T[Task Runner and workers]
     S --> M[Memory Engine]
-    S --> P[Project / Plugin / MCP management]
+    S --> P[Plugin / MCP management]
     T --> L[Local Connector service]
     P --> L
     L --> N[Native Local Connector]
@@ -51,8 +49,8 @@ flowchart LR
 
 The boundary is intentional:
 
-- Cloud services are authoritative for account and project business data.
-- The native client is authoritative for local credentials, workspace authorization, and device capabilities.
+- Cloud services are authoritative for account and task data.
+- The native client is authoritative for projects, local credentials, workspace authorization, and device capabilities.
 - Local Connector uses outbound connectivity and exposes only the workspace and capabilities the user authorized.
 - Harness manages repositories, synchronization, CI, and integrations; it is not a fallback project filesystem or command executor.
 
@@ -60,7 +58,7 @@ The boundary is intentional:
 
 ### Conversation, planning, and tasks
 
-ChatOS supports direct conversation and structured project work. Requirements can be refined into plans and dependency-aware tasks, then executed through a background task lifecycle. Users can inspect intermediate output, provide additional guidance, approve sensitive actions, stop work, and retry failures.
+ChatOS supports direct conversation and background tasks. Users can inspect intermediate output, provide additional guidance, approve sensitive actions, stop work, and retry failures.
 
 ### Project workspace
 
@@ -68,7 +66,7 @@ The native clients provide project browsing, full-text search, file viewing and 
 
 ### Project context and memory
 
-Each project keeps its conversations, requirements, tasks, run history, and reusable context isolated. The memory system supports long-running collaboration through conversation summaries and layered project memory instead of relying on one unbounded transcript. Models, skills, and tool capabilities are supplied jointly by platform configuration and the local runtime.
+Each client-owned project keeps its conversations, tasks, run history, and reusable context isolated by project identity. The memory system supports long-running collaboration through conversation summaries and layered project memory instead of relying on one unbounded transcript. Models, skills, and tool capabilities are supplied jointly by platform configuration and the local runtime.
 
 ### Native desktop capabilities
 
@@ -97,7 +95,6 @@ Plugins can combine MCP servers, skills, permission declarations, managed artifa
 | `clients/windows` | .NET 8 / WinUI 3 native client, Windows Local Connector, Network Guard, and installer. |
 | `chatos/backend` | Main ChatOS API and conversation orchestration service. |
 | `task_runner_service/backend` | Background task API, workers, scheduler, and tool runtime. |
-| `plugins/project-management` | Project-bound requirements, technical documents, work items, dependencies, and execution plans. |
 | `memory_engine/backend` | Conversation summaries and layered project/subject memory. |
 | `mcp_management_service/backend` | MCP capability materialization, routing, and runtime sessions. |
 | `plugin_management_service/backend` | Plugin catalog, releases, packages, and runtime capability metadata. |

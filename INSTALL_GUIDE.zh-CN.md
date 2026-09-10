@@ -133,8 +133,6 @@ make local-dev-stop
 - Memory Engine backend：`7081`
 - Task Runner：`39091`
 - Task Runner backend：`39090`
-- Project Management：`39211`
-- Project Management backend：`39210`
 - Local Connector Service backend：`39230`
 - Official Website：`39251`
 - Official Website backend：`39250`

@@ -69,7 +69,7 @@ while IFS= read -r dirty_line; do
   [[ -n "$dirty_line" ]] || continue
   dirty_path="${dirty_line:3}"
   case "$dirty_path" in
-    clients/macos/*|clients/windows/*|plugins/web-design-studio/*|plugins/project-management/*)
+    clients/macos/*|clients/windows/*|plugins/web-design-studio/*)
       ignored_dirty_count=$((ignored_dirty_count + 1))
       ;;
     *)
@@ -258,7 +258,6 @@ ensure_admin_certificate() {
     config.jgoool.com
     user.jgoool.com
     memory.jgoool.com
-    project.jgoool.com
     plugin.jgoool.com
     task.jgoool.com
     official.jgoool.com
@@ -579,7 +578,6 @@ frontend_hosts=(
   config.jgoool.com
   user.jgoool.com
   memory.jgoool.com
-  project.jgoool.com
   plugin.jgoool.com
   task.jgoool.com
   official.jgoool.com
@@ -608,7 +606,6 @@ for url in \
   https://admin.jgoool.com \
   https://user.jgoool.com \
   https://memory.jgoool.com \
-  https://project.jgoool.com \
   https://plugin.jgoool.com \
   https://official.jgoool.com
 do

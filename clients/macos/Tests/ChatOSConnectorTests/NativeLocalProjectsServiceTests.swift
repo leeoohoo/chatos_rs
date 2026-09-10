@@ -59,47 +59,6 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         } catch {}
     }
 
-    func testForeignDeviceNeverFallsBackToDisplayPathAndUnknownSchemesFail() async throws {
-        let context = try context()
-        defer { try? FileManager.default.removeItem(at: context.root) }
-        let candidates = await context.service.preview(ownerUserID: "alice", projects: [
-            .init(id: "foreign", name: "Foreign", rootPath: "local://connector/another/ws/repo", displayRootPath: context.root.appendingPathComponent("repo").path, latestConversationID: nil),
-            .init(id: "remote", name: "Remote", rootPath: "harness://repo", latestConversationID: nil),
-        ])
-        XCTAssertTrue(candidates.allSatisfy { $0.record == nil && $0.error != nil })
-    }
-
-    func testRepeatedFilePreviewAndImportPreserveIDAndReceipt() async throws {
-        let context = try context()
-        defer { try? FileManager.default.removeItem(at: context.root) }
-        let legacy = WorkspaceProject(id: "historical-id", name: "Imported", rootPath: "local://connector/device/ws/repo", latestConversationID: nil)
-        let first = await context.service.preview(ownerUserID: "alice", projects: [legacy])
-        let imported = try await context.service.importConfirmed(ownerUserID: "alice", sourceID: "export-1", candidates: first)
-        let second = await context.service.preview(ownerUserID: "alice", projects: [legacy])
-        let replay = try await context.service.importConfirmed(ownerUserID: "alice", sourceID: "export-1", candidates: second)
-        XCTAssertEqual(imported, replay)
-        XCTAssertEqual(imported.insertedIDs, [legacy.id])
-    }
-
-    func testChangedDirectoryBetweenPreviewAndConfirmationFails() async throws {
-        let context = try context()
-        defer { try? FileManager.default.removeItem(at: context.root) }
-        let alias = context.root.appendingPathComponent("alias")
-        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: context.root.appendingPathComponent("repo"))
-        let preview = await context.service.preview(ownerUserID: "alice", projects: [
-            .init(id: "legacy", name: "Imported", rootPath: "local://connector/device/ws/alias", latestConversationID: nil),
-        ])
-        try FileManager.default.removeItem(at: alias)
-        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: context.root)
-        do {
-            _ = try await context.service.importConfirmed(ownerUserID: "alice", sourceID: "export", candidates: preview)
-            XCTFail("Silently rebound a changed directory")
-        } catch {}
-        let registry = try await context.service.registry()
-        let records = try await registry.list(ownerUserID: "alice")
-        XCTAssertTrue(records.isEmpty)
-    }
-
     func testPluginContextUsesLocalNameAndBindingAndDeletionCannotFallback() async throws {
         let context = try context()
         defer { try? FileManager.default.removeItem(at: context.root) }
@@ -122,14 +81,10 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: context.root) }
         let registry = try await context.service.registry()
         let relativeRoot = context.root.appendingPathComponent("repo").path.dropFirst().description
-        let record = LocalProjectRecord(
-            id: "project",
+        let record = try await registry.create(
             ownerUserID: "alice",
-            draft: .init(name: "Rebound", workspaceID: "retired-workspace", relativeRoot: relativeRoot),
-            createdAtUnixMs: 1,
-            updatedAtUnixMs: 1
+            draft: .init(name: "Rebound", workspaceID: "retired-workspace", relativeRoot: relativeRoot)
         )
-        _ = try await registry.importRecords(ownerUserID: "alice", sourceID: "stale-binding", records: [record])
 
         let resolved = try await context.connector.resolveProjectPath(
             "local://connector/device/retired-workspace/\(relativeRoot)"
@@ -138,11 +93,11 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         XCTAssertEqual(resolved.absoluteURL.path, context.root.appendingPathComponent("repo").path)
 
         try await context.service.repairRootWorkspaceBindings(ownerUserID: "alice")
-        let snapshot = try await context.service.projectContext(ownerUserID: "alice", projectID: "project")
+        let snapshot = try await context.service.projectContext(ownerUserID: "alice", projectID: record.id)
         XCTAssertEqual(snapshot.executionTarget.workspaceId, "root-ws")
         XCTAssertEqual(snapshot.executionTarget.relativeRoot, relativeRoot)
         XCTAssertEqual(snapshot.projectRevision, 2)
-        let repaired = try await registry.get(ownerUserID: "alice", id: "project")
+        let repaired = try await registry.get(ownerUserID: "alice", id: record.id)
         XCTAssertEqual(repaired?.draft.workspaceID, "root-ws")
         XCTAssertEqual(repaired?.revision, 2)
     }
@@ -173,17 +128,6 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
             guard case .workspaceUnavailable = error else {
                 return XCTFail("Unexpected connector error: \(error)")
             }
-        }
-    }
-
-    func testImportEnvelopeRejectsDifferentOwnerVersionAndDuplicateIDs() throws {
-        for json in [
-            #"{"schemaVersion":2,"ownerUserId":"alice","sourceId":"export","projects":[]}"#,
-            #"{"schemaVersion":1,"ownerUserId":"bob","sourceId":"export","projects":[]}"#,
-            #"{"schemaVersion":1,"ownerUserId":"alice","sourceId":"export","projects":[{"id":"a","name":"a","rootPath":"/repo"},{"id":"a","name":"a","rootPath":"/repo"}]}"#,
-        ] {
-            let document = try JSONDecoder().decode(LocalProjectImportDocument.self, from: Data(json.utf8))
-            XCTAssertThrowsError(try document.validate(ownerUserID: "alice"))
         }
     }
 

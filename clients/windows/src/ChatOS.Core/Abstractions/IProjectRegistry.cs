@@ -12,8 +12,4 @@ public interface IProjectRegistry
     Task<LocalProjectRecord> UpdateAsync(
         string ownerUserId, string id, long expectedRevision, LocalProjectDraft draft,
         LocalProjectStatus status, CancellationToken cancellationToken = default);
-    // Explicit, atomic, idempotent migration. Existing records/tombstones are never overwritten.
-    Task<ProjectRegistryImportResult> ImportAsync(
-        string ownerUserId, string sourceId, IReadOnlyList<LocalProjectRecord> records,
-        CancellationToken cancellationToken = default);
 }

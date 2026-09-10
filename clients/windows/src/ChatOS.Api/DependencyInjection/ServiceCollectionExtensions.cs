@@ -39,7 +39,6 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient(ConversationAttachmentService.UploadClientName);
         services.AddSingleton<IConversationAttachmentService, ConversationAttachmentService>();
         services.AddSingleton<IConversationRuntimeSettingsService, ConversationRuntimeSettingsService>();
-        services.AddSingleton<IUserModelDefaultsService, UserModelDefaultsService>();
         services.AddSingleton<IConversationCommandService, ConversationCommandService>();
         services.AddSingleton<IConversationHistoryService, ConversationHistoryService>();
         services.AddSingleton<WorkspaceService>();
@@ -50,7 +49,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectRunService, ProjectRunService>();
         services.AddSingleton<INotepadService, NotepadService>();
         services.AddSingleton<IMessageTaskGraphService, MessageTaskGraphService>();
-        services.AddSingleton<TaskRunnerHostService>();
         services.AddSingleton<IPetActivityInboxService, PetActivityInboxService>();
         services.AddSingleton<WebSocketTicketService>();
         services.AddSingleton<IRealtimeClient, ChatOSRealtimeClient>();

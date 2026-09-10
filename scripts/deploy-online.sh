@@ -42,7 +42,7 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/deploy-online.sh                    # interactive menu
-  scripts/deploy-online.sh all                # cloud services + all six Plugins
+  scripts/deploy-online.sh all                # cloud services + all maintained Plugins
   scripts/deploy-online.sh cloud              # all cloud services
   scripts/deploy-online.sh cloud-backends     # all backend services
   scripts/deploy-online.sh cloud-frontends    # all frontend services
@@ -54,7 +54,6 @@ Usage:
   scripts/deploy-online.sh plugin document
   scripts/deploy-online.sh plugin diagram-studio
   scripts/deploy-online.sh plugin web-design-studio
-  scripts/deploy-online.sh plugin project-management
   scripts/deploy-online.sh plugin browser computer-use
   scripts/deploy-online.sh client mac
   scripts/deploy-online.sh client windows
@@ -229,12 +228,6 @@ build_plugin_artifact() {
       artifact_name="$(cd "$ROOT_DIR/plugins/web-design-studio" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
       printf '%s\n' "$DEPLOY_TMP/$artifact_name"
       ;;
-    project-management)
-      echo "[INFO] verifying and building Project Management Plugin"
-      npm --prefix "$ROOT_DIR/plugins/project-management" run pack:verify >&2
-      artifact_name="$(cd "$ROOT_DIR/plugins/project-management" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
-      printf '%s\n' "$DEPLOY_TMP/$artifact_name"
-      ;;
     *)
       echo "[ERROR] unknown Plugin: $plugin" >&2
       exit 2
@@ -244,7 +237,7 @@ build_plugin_artifact() {
 
 plugin_publisher_json() {
   case "$1" in
-    browser|document|diagram-studio|web-design-studio|project-management)
+    browser|document|diagram-studio|web-design-studio)
       jq -nc '{id:"chatos",name:"Chatos",website:"https://github.com/chatos-ai"}'
       ;;
     computer-use)
@@ -341,7 +334,7 @@ deploy_plugins() {
   local plugins=("$@")
   local plugin
   if [[ ${#plugins[@]} -eq 0 ]]; then
-    echo "[ERROR] expected Plugin: all, browser, computer-use, document, diagram-studio, web-design-studio, or project-management" >&2
+    echo "[ERROR] expected Plugin: all, browser, computer-use, document, diagram-studio, or web-design-studio" >&2
     exit 2
   fi
   if [[ "${plugins[0]}" == "all" ]]; then
@@ -349,11 +342,11 @@ deploy_plugins() {
       echo "[ERROR] Plugin 'all' cannot be combined with individual Plugins" >&2
       exit 2
     fi
-    plugins=(browser computer-use document diagram-studio web-design-studio project-management)
+    plugins=(browser computer-use document diagram-studio web-design-studio)
   fi
   for plugin in "${plugins[@]}"; do
     case "$plugin" in
-      browser|computer-use|document|diagram-studio|web-design-studio|project-management) ;;
+      browser|computer-use|document|diagram-studio|web-design-studio) ;;
       *)
         echo "[ERROR] unknown Plugin: $plugin" >&2
         exit 2
@@ -398,7 +391,6 @@ Plugins:
   document
   diagram-studio
   web-design-studio
-  project-management
 Clients:
   mac
   windows
@@ -408,7 +400,7 @@ EOF
 interactive_menu() {
   cat <<'EOF'
 ChatOS online deployment
-  1) Deploy everything online (cloud + six Plugins)
+  1) Deploy everything online (cloud + all maintained Plugins)
   2) Deploy all cloud services
   3) Deploy all backend services
   4) Deploy selected cloud service(s)
@@ -419,9 +411,8 @@ ChatOS online deployment
  9) Deploy Document Tools
  10) Deploy Diagram Studio
  11) Deploy Web Design Studio
- 12) Deploy Project Management
- 13) Show deployment status
- 14) Follow deployment logs
+ 12) Show deployment status
+ 13) Follow deployment logs
 EOF
   read -r -p "Select: " selection
   case "$selection" in
@@ -441,9 +432,8 @@ EOF
     9) set -- plugin document ;;
     10) set -- plugin diagram-studio ;;
     11) set -- plugin web-design-studio ;;
-    12) set -- plugin project-management ;;
-    13) set -- status ;;
-    14)
+    12) set -- status ;;
+    13)
       read -r -p "Service name (empty for all): " service
       set -- logs "$service"
       ;;

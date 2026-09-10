@@ -454,8 +454,7 @@ public sealed class WindowsPluginPackageInstaller
                 _ = NormalizePackageRelativePath(asset);
             }
             if (contribution.BridgeCapabilities.Count != contribution.BridgeCapabilities.Distinct(StringComparer.Ordinal).Count() ||
-                contribution.BridgeCapabilities.Any(capability => capability is not (
-                    "host.context.read" or "task.batch.prepare" or "task.batch.status" or "task.workspace.open")))
+                contribution.BridgeCapabilities.Any(capability => capability != "host.context.read"))
             {
                 throw new PluginPackageException("Plugin UI declares an unsupported host bridge capability.");
             }

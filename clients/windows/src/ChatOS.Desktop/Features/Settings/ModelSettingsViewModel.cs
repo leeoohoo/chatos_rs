@@ -12,7 +12,6 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
 {
     private readonly IConversationRuntimeSettingsService _models;
     private readonly IConnectorModelSettingsStore _store;
-    private readonly IUserModelDefaultsService _defaults;
     private readonly IApprovalReviewerReadinessService? _reviewerReadiness;
     private readonly LocalizationViewModel _localization;
     private readonly IUiDispatcher _dispatcher;
@@ -21,14 +20,12 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
     public ModelSettingsViewModel(
         IConversationRuntimeSettingsService models,
         IConnectorModelSettingsStore store,
-        IUserModelDefaultsService defaults,
         LocalizationViewModel localization,
         IUiDispatcher dispatcher,
         IApprovalReviewerReadinessService? reviewerReadiness = null)
     {
         _models = models;
         _store = store;
-        _defaults = defaults;
         _localization = localization;
         _dispatcher = dispatcher;
         _reviewerReadiness = reviewerReadiness;
@@ -43,9 +40,6 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private ConnectorModelOptionViewModel? _selectedApprovalModel;
-
-    [ObservableProperty]
-    private ConnectorModelOptionViewModel? _selectedTaskRunnerModel;
 
     [ObservableProperty]
     private int _modelRequestMaxRetries = 5;
@@ -65,8 +59,8 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
         ApprovalReviewerReadinessState.ManagedConfigurationInvalid;
 
     public string SectionDescription => _localization.Text(
-        "同步可用模型，选择通用 Task Runner 默认模型和这台设备的本机审批模型。",
-        "Sync available models and choose the general Task Runner default plus this device's local approval model.");
+        "同步可用模型，选择这台设备的本机审批模型。",
+        "Sync available models and choose this device's local approval model.");
 
     public string ReviewerHint => ReviewerReadinessState switch
     {
@@ -92,10 +86,9 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
         await RunAsync(async token =>
         {
             var settingsTask = _store.LoadAsync(token);
-            var defaultsTask = _defaults.FetchAsync(token);
             var modelsTask = _models.FetchAvailableModelsAsync(token);
             var readinessTask = CheckReadinessAsync(token);
-            await Task.WhenAll(settingsTask, defaultsTask, modelsTask, readinessTask).ConfigureAwait(false);
+            await Task.WhenAll(settingsTask, modelsTask, readinessTask).ConfigureAwait(false);
             var settings = settingsTask.Result.Normalize();
             var items = modelsTask.Result
                 .Where(static value => value.TaskEnabled && value.HasApiKey)
@@ -107,10 +100,6 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
                 foreach (var item in items) AvailableModels.Add(item);
                 ModelRequestMaxRetries = settings.ModelRequestMaxRetries;
                 ReviewerReadinessState = readinessTask.Result.State;
-                SelectedTaskRunnerModel = items.FirstOrDefault(value => string.Equals(
-                    value.Id,
-                    defaultsTask.Result.TaskRunnerDefaultModelConfigId,
-                    StringComparison.Ordinal));
                 SelectedApprovalModel = items.FirstOrDefault(value => string.Equals(
                     value.Id,
                     settings.CommandApprovalModelConfigId,
@@ -120,12 +109,6 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
                     ActionMessage = _localization.Text(
                         "之前选择的审批模型已不可用，请重新选择并保存。",
                         "The previously selected approval model is unavailable. Select another model and save.");
-                }
-                if (defaultsTask.Result.TaskRunnerDefaultModelConfigId is not null && SelectedTaskRunnerModel is null)
-                {
-                    ActionMessage = _localization.Text(
-                        "之前选择的 Task Runner 默认模型已不可用，请重新选择并保存。",
-                        "The previous Task Runner default is unavailable. Select another model and save.");
                 }
             }, token).ConfigureAwait(false);
         }, cancellationToken).ConfigureAwait(false);
@@ -138,19 +121,12 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
             var settings = new ConnectorModelSettings(
                 ModelRequestMaxRetries,
                 SelectedApprovalModel?.Id).Normalize();
-            var defaults = await _defaults.UpdateTaskRunnerDefaultAsync(
-                SelectedTaskRunnerModel?.Id,
-                token).ConfigureAwait(false);
             await _store.SaveAsync(settings, token).ConfigureAwait(false);
             var readiness = await CheckReadinessAsync(token).ConfigureAwait(false);
             await _dispatcher.InvokeAsync(() =>
             {
                 ModelRequestMaxRetries = settings.ModelRequestMaxRetries;
                 ReviewerReadinessState = readiness.State;
-                SelectedTaskRunnerModel = AvailableModels.FirstOrDefault(value => string.Equals(
-                    value.Id,
-                    defaults.TaskRunnerDefaultModelConfigId,
-                    StringComparison.Ordinal));
                 ActionMessage = _localization.Text(
                     "本机模型设置已保存。",
                     "Local model settings were saved.");

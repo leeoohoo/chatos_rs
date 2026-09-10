@@ -423,12 +423,10 @@ internal sealed class PluginManifestLoader
         var declaration = manifest.RuntimeContext;
         if (declaration is null || !declaration.AppliesTo(componentKey))
         {
-            var legacyEnvironment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            if (!string.IsNullOrWhiteSpace(workspaceRoot))
-            {
-                legacyEnvironment["CHATOS_WORKSPACE"] = Path.GetFullPath(workspaceRoot);
-            }
-            return new RuntimeContextResolution(userDataPath, userCachePath, legacyEnvironment);
+            return new RuntimeContextResolution(
+                userDataPath,
+                userCachePath,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
         }
 
         var requested = declaration.Required.Concat(declaration.Optional)

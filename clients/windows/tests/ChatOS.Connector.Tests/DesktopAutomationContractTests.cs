@@ -60,10 +60,6 @@ public sealed class DesktopAutomationContractTests
         "ChatOS.Applications.Reload",
         "ChatOS.Applications.ProjectPicker",
         "ChatOS.Applications.WebView",
-        "ChatOS.Applications.TaskWorkspace",
-        "ChatOS.Applications.TaskWorkspace.Refresh",
-        "ChatOS.Applications.TaskWorkspace.Start",
-        "ChatOS.Applications.TaskWorkspace.Close",
         "ChatOS.Pet.Root",
         "ChatOS.Pet.HitTarget",
         "ChatOS.Pet.ActivityToast",
@@ -137,7 +133,6 @@ public sealed class DesktopAutomationContractTests
         "ChatOS.Applications.Host",
         "ChatOS.Applications.ProjectPicker",
         "ChatOS.Applications.WebView",
-        "ChatOS.Applications.TaskWorkspace",
     ];
 
     [Fact]

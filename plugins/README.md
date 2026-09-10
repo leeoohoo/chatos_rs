@@ -6,11 +6,10 @@ The first-party ChatOS plugins are maintained in this repository so client proto
 - `computer-use/`: native macOS and Windows Computer Use MCP implementations.
 - `document/`: TypeScript Office and PDF MCP with workspace and managed-artifact boundaries.
 - `diagram-studio/`: TypeScript MCP plus a packaged local visual workbench for structured diagrams and PlantUML interoperability.
-- `project-management/`: project-bound local SQLite requirements, independent versioned documents, work items, dependency scopes, immutable plans, approved execution intents and opaque Task Runner references, shared by the UI and MCP. Native Plan and the planning-mode path have been removed; the remaining execution work is the generic host Task Runner bridge.
 
 Plugins may provide MCP servers, skills, permission declarations, managed artifacts, and local application surfaces. Runtime data can be isolated by user and project according to the plugin manifest.
 
-The root `make build-plugins` and `make test-plugins` targets cover Browser, Computer Use, Document Tools, and Project Management (Node.js >=22.13). Install each npm plugin's locked dependencies with `npm ci --ignore-scripts` before building. Diagram Studio uses its own npm workflow:
+The root `make build-plugins` and `make test-plugins` targets cover Browser, Computer Use, and Document Tools. Install each npm plugin's locked dependencies with `npm ci --ignore-scripts` before building. Diagram Studio uses its own npm workflow:
 
 ```bash
 npm --prefix plugins/diagram-studio test

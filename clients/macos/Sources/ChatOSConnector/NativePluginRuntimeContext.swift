@@ -56,14 +56,10 @@ enum NativePluginRuntimeContextResolver {
 
         guard let declaration = manifest.runtimeContext,
               declaration.applies(to: componentKey) else {
-            var environment: [String: String] = [:]
-            if let workspaceRoot = host.workspaceRoot {
-                environment["CHATOS_WORKSPACE"] = workspaceRoot.path
-            }
             return .init(
                 dataURL: userPluginDataURL,
                 cacheURL: userPluginCacheURL,
-                environment: environment,
+                environment: [:],
                 scopeKey: "user:\(userHash)"
             )
         }

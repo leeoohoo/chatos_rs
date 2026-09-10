@@ -173,17 +173,6 @@ routes:
         uri: https://admin.jgoool.com/memory
         ret_code: 302
 
-  - id: legacy-project-admin-redirect
-    priority: 700
-    hosts:
-      - project.jgoool.com
-    uri: /*
-    plugins:
-      request-id: *request_id
-      redirect:
-        uri: https://admin.jgoool.com/projects
-        ret_code: 302
-
   # Plugin artifacts remain public download resources even though the legacy
   # Plugin Management hostname redirects ordinary UI traffic to Admin Console.
   - id: plugin-artifact-download

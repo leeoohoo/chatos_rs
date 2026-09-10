@@ -185,7 +185,6 @@ pub(super) fn model_settings_response_value(
         "model_request_max_retries": settings.model_request_max_retries,
         "memory_summary_model_config_id": settings.memory_summary_model_config_id,
         "memory_summary_thinking_level": settings.memory_summary_thinking_level,
-        "task_runner_default_model_config_id": settings.task_runner_default_model_config_id,
         "updated_at": settings.updated_at,
     });
     if !settings.sync_warnings.is_empty() {

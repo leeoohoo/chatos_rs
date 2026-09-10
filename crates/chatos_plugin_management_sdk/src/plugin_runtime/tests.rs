@@ -60,30 +60,6 @@ fn plugin_ui_bridge_request_uses_dotted_capability_names_and_closed_schema() {
 }
 
 #[test]
-fn task_host_bridge_methods_use_generic_dotted_capabilities() {
-    for (name, expected) in [
-        ("task.batch.prepare", PluginUiBridgeMethod::TaskBatchPrepare),
-        ("task.batch.status", PluginUiBridgeMethod::TaskBatchStatus),
-        (
-            "task.workspace.open",
-            PluginUiBridgeMethod::TaskWorkspaceOpen,
-        ),
-    ] {
-        let value = serde_json::json!({
-            "type": "chatos.plugin_ui.request",
-            "protocol_version": 1,
-            "adapter_session_id": "session",
-            "host_session_nonce": "nonce",
-            "request_id": "request",
-            "method": name,
-            "payload": {}
-        });
-        let request: PluginUiBridgeRequest = serde_json::from_value(value).unwrap();
-        assert_eq!(request.method, expected);
-    }
-}
-
-#[test]
 fn plugin_artifact_read_contract_is_closed_and_mode_scoped() {
     let request: PluginArtifactReadRequest = serde_json::from_value(serde_json::json!({
         "access": {

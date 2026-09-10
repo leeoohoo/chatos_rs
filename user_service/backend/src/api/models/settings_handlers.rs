@@ -39,7 +39,6 @@ pub(in crate::api) async fn get_model_settings(
             model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
             memory_summary_model_config_id: None,
             memory_summary_thinking_level: None,
-            task_runner_default_model_config_id: None,
             updated_at: now_rfc3339(),
         });
 
@@ -65,7 +64,6 @@ pub(in crate::api) async fn put_model_settings(
             model_request_max_retries: DEFAULT_MODEL_REQUEST_MAX_RETRIES,
             memory_summary_model_config_id: None,
             memory_summary_thinking_level: None,
-            task_runner_default_model_config_id: None,
             updated_at: now_rfc3339(),
         });
     let model_request_max_retries = resolve_model_request_max_retries(
@@ -76,10 +74,6 @@ pub(in crate::api) async fn put_model_settings(
     let memory_summary_model_config_id = resolve_optional_update(
         input.memory_summary_model_config_id,
         current.memory_summary_model_config_id,
-    );
-    let task_runner_default_model_config_id = resolve_optional_update(
-        input.task_runner_default_model_config_id,
-        current.task_runner_default_model_config_id,
     );
     let memory_summary_thinking_level_input = resolve_thinking_level_update(
         input.memory_summary_thinking_level,
@@ -94,35 +88,6 @@ pub(in crate::api) async fn put_model_settings(
         "memory_summary_model_config_id",
     )
     .await?;
-    let task_runner_default_model_config = validate_settings_model_config(
-        &state,
-        user_id.as_str(),
-        task_runner_default_model_config_id.as_deref(),
-        "task_runner_default_model_config_id",
-    )
-    .await?;
-    if let Some(model_config) = task_runner_default_model_config.as_ref() {
-        if !model_config.enabled_for_tasks() {
-            return Err(bad_request(
-                "task_runner_default_model_config_id is disabled for tasks",
-            ));
-        }
-        if model_config
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .is_none_or(str::is_empty)
-            || model_config
-                .base_url
-                .as_deref()
-                .map(str::trim)
-                .is_none_or(str::is_empty)
-        {
-            return Err(bad_request(
-                "task_runner_default_model_config_id requires cloud-resident credentials",
-            ));
-        }
-    }
     let memory_summary_provider = memory_summary_model_config
         .as_ref()
         .map(|model_config| model_config.provider.as_str())
@@ -136,7 +101,6 @@ pub(in crate::api) async fn put_model_settings(
             memory_summary_provider,
             memory_summary_thinking_level_input.as_deref(),
         )?,
-        task_runner_default_model_config_id,
         updated_at: now_rfc3339(),
     };
     let saved = state

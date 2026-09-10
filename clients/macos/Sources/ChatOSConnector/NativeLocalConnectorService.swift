@@ -85,9 +85,6 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func fetchStatus() async throws -> LocalConnectorStatus {
-        if state.deviceID != nil {
-            try? await importLegacyWorkspacesIfNeeded()
-        }
         if state.deviceID != nil, !gatewayConnected {
             try? await connectGateway()
         }
@@ -117,7 +114,6 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         state.deviceID = device.id
         state.deviceName = resolvedName
         state.workspaces = [workspace]
-        try? await importLegacyWorkspacesIfNeeded()
         try stateStore.save(state)
         try await connectGateway()
         try? await Task.sleep(for: .milliseconds(200))
