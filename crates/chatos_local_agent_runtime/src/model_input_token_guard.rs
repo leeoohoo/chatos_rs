@@ -101,7 +101,9 @@ impl ModelInputTokenPolicy {
         input_tokens: u64,
         source: ModelInputTokenSource,
     ) -> Result<ModelInputTokenAssessment, ModelInputTokenGuardError> {
-        if input_tokens > self.maximum_input_tokens {
+        if input_tokens > self.maximum_input_tokens
+            && self.context_strategy == ContextStrategy::ProviderNative
+        {
             return Err(ModelInputTokenGuardError::HardLimitExceeded {
                 input_tokens,
                 maximum_input_tokens: self.maximum_input_tokens,

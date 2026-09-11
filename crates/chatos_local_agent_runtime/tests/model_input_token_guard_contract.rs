@@ -8,7 +8,7 @@ use chatos_local_agent_protocol::{
 };
 use chatos_local_agent_runtime::{
     guard_model_input, ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError,
-    ModelGatewayOutput, ModelInputTokenAction, ModelInputTokenGuardError, ModelInputTokenSource,
+    ModelGatewayOutput, ModelInputTokenAction, ModelInputTokenSource,
 };
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -104,10 +104,10 @@ async fn memory_engine_threshold_requires_summary_before_model_io() {
 }
 
 #[tokio::test]
-async fn exact_hard_limit_overflow_fails_without_sending_the_model_request() {
+async fn memory_engine_hard_overflow_requires_summary_before_it_can_fail() {
     let descriptor = descriptor(ContextStrategy::MemoryEngine, true);
     let request = request(&descriptor, None);
-    let error = guard_model_input(
+    let assessment = guard_model_input(
         &CountingGateway {
             input_tokens: 368_001,
         },
@@ -118,16 +118,13 @@ async fn exact_hard_limit_overflow_fails_without_sending_the_model_request() {
         CancellationToken::new(),
     )
     .await
-    .expect_err("hard limit");
+    .expect("summary decision");
 
-    assert!(matches!(
-        error,
-        ModelInputTokenGuardError::HardLimitExceeded {
-            input_tokens: 368_001,
-            maximum_input_tokens: 368_000,
-            count_source: ModelInputTokenSource::ProviderExact,
-        }
-    ));
+    assert_eq!(assessment.input_tokens, 368_001);
+    assert_eq!(
+        assessment.action,
+        ModelInputTokenAction::RequireMemoryEngineSummary
+    );
 }
 
 #[tokio::test]
