@@ -942,15 +942,176 @@ fn stable_event_id(
 }
 
 #[derive(Debug, Clone)]
+pub struct BeginModelStepExecutionRequest {
+    pub scope: RecordScope,
+    pub event_id: String,
+    pub claim_token: String,
+    pub now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BeganModelStepExecution {
+    pub run_record: AgentRunStateRecord,
+    pub request_event: AgentEventStateRecord,
+}
+
+/// Durably marks one claimed model request as running without consuming its
+/// event. The same event remains the recovery lease until a formal model
+/// result and its semantic records are committed.
+pub async fn begin_model_step_execution(
+    storage: &dyn ClientStorage,
+    request: BeginModelStepExecutionRequest,
+) -> StorageResult<BeganModelStepExecution> {
+    if request.event_id.trim().is_empty() || request.claim_token.trim().is_empty() {
+        return Err(StorageError::InvalidData {
+            reason: "model step event and claim identifiers must not be empty".to_string(),
+        });
+    }
+    let mut operation = BeginModelStepExecutionOperation {
+        request: Some(request),
+        result: None,
+    };
+    storage.transaction(&mut operation).await?;
+    operation.result.ok_or(StorageError::Transaction {
+        reason: "begin model step transaction returned no result".to_string(),
+    })
+}
+
+struct BeginModelStepExecutionOperation {
+    request: Option<BeginModelStepExecutionRequest>,
+    result: Option<BeganModelStepExecution>,
+}
+
+#[async_trait]
+impl StorageTransaction for BeginModelStepExecutionOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let request = self.request.take().ok_or(StorageError::Transaction {
+            reason: "begin model step request was already consumed".to_string(),
+        })?;
+        let mut event = require_claimed_model_request(
+            repositories,
+            &request.scope,
+            &request.event_id,
+            &request.claim_token,
+            request.now,
+        )
+        .await?;
+        let mut run = repositories
+            .agent_runs()
+            .get(&RecordQuery {
+                scope: request.scope,
+                id: event.event.run_id.clone(),
+            })
+            .await?
+            .ok_or(StorageError::NotFound)?;
+        if event.event.expected_version != run.run.version {
+            return Err(StorageError::Conflict {
+                actual_revision: run.metadata.revision,
+            });
+        }
+        if run.run.status == LocalAgentRunStatus::ModelRunning {
+            self.result = Some(BeganModelStepExecution {
+                run_record: run,
+                request_event: event,
+            });
+            return Ok(());
+        }
+        if run.run.status != LocalAgentRunStatus::ModelReady {
+            return Err(StorageError::InvalidData {
+                reason: "model request can begin only from model_ready".to_string(),
+            });
+        }
+
+        let run_revision = run.metadata.revision;
+        run.run.version = run
+            .run
+            .version
+            .checked_add(1)
+            .ok_or(StorageError::InvalidData {
+                reason: "Run version overflow while beginning model step".to_string(),
+            })?;
+        run.run.step_seq = run
+            .run
+            .step_seq
+            .checked_add(1)
+            .ok_or(StorageError::InvalidData {
+                reason: "Run step sequence overflow while beginning model step".to_string(),
+            })?;
+        run.run.status = LocalAgentRunStatus::ModelRunning;
+        run.run.updated_at = request.now;
+        run.run
+            .validate()
+            .map_err(|error| StorageError::InvalidData {
+                reason: format!("model-running Run is invalid: {error}"),
+            })?;
+        let run = repositories
+            .agent_runs()
+            .put(PutRecord {
+                record: run,
+                expected_revision: Some(run_revision),
+            })
+            .await?;
+        append_run_snapshot(repositories, &run).await?;
+
+        let event_revision = event.metadata.revision;
+        event.event.expected_version = run.run.version;
+        let event = repositories
+            .agent_events()
+            .put(PutRecord {
+                record: event,
+                expected_revision: Some(event_revision),
+            })
+            .await?;
+        self.result = Some(BeganModelStepExecution {
+            run_record: run,
+            request_event: event,
+        });
+        Ok(())
+    }
+}
+
+async fn require_claimed_model_request(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+    event_id: &str,
+    claim_token: &str,
+    now: DateTime<Utc>,
+) -> StorageResult<AgentEventStateRecord> {
+    let event = repositories
+        .agent_events()
+        .get(&RecordQuery {
+            scope: scope.clone(),
+            id: event_id.to_string(),
+        })
+        .await?
+        .ok_or(StorageError::NotFound)?;
+    if event.event.event_type != LocalAgentEventType::ModelStepRequested
+        || event.event.status != LocalAgentEventStatus::Claimed
+        || event.event.claim_token.as_deref() != Some(claim_token)
+        || event
+            .event
+            .claim_until
+            .is_none_or(|deadline| deadline < now)
+    {
+        return Err(StorageError::Conflict {
+            actual_revision: event.metadata.revision,
+        });
+    }
+    Ok(event)
+}
+
+#[derive(Debug, Clone)]
 pub struct RecordModelStepCompletionRequest {
     pub scope: RecordScope,
-    pub run_id: String,
+    pub request_event_id: String,
+    pub claim_token: String,
     pub completion: ModelStepCompletion,
     pub assistant_message: Option<CompletedAssistantMessage>,
     pub provider_context_commit: Option<DurableProviderContextCommit>,
     pub origin_device_id: String,
-    pub causation_id: String,
-    pub correlation_id: String,
     pub now: DateTime<Utc>,
 }
 
@@ -994,6 +1155,18 @@ pub async fn record_model_step_completion(
     storage: &dyn ClientStorage,
     request: RecordModelStepCompletionRequest,
 ) -> StorageResult<AgentEventStateRecord> {
+    if [
+        request.request_event_id.as_str(),
+        request.claim_token.as_str(),
+        request.origin_device_id.as_str(),
+    ]
+    .into_iter()
+    .any(|value| value.trim().is_empty())
+    {
+        return Err(StorageError::InvalidData {
+            reason: "model completion request identifiers must not be empty".to_string(),
+        });
+    }
     request
         .completion
         .validate()
@@ -1026,19 +1199,28 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
         let request = self.request.take().ok_or(StorageError::Transaction {
             reason: "model completion request was already consumed".to_string(),
         })?;
+        let mut model_request = repositories
+            .agent_events()
+            .get(&RecordQuery {
+                scope: request.scope.clone(),
+                id: request.request_event_id.clone(),
+            })
+            .await?
+            .ok_or(StorageError::NotFound)?;
+        if model_request.event.event_type != LocalAgentEventType::ModelStepRequested {
+            return Err(StorageError::InvalidData {
+                reason: "model completion source must be a model_step_requested event".to_string(),
+            });
+        }
         let run = repositories
             .agent_runs()
             .get(&RecordQuery {
                 scope: request.scope.clone(),
-                id: request.run_id.clone(),
+                id: model_request.event.run_id.clone(),
             })
             .await?
             .ok_or(StorageError::NotFound)?;
-        if run.run.status != LocalAgentRunStatus::ModelRunning {
-            return Err(StorageError::InvalidData {
-                reason: "model completion requires a model_running run".to_string(),
-            });
-        }
+        let model_step_version = model_request.event.expected_version;
         let provider_context_commit_digest = request
             .provider_context_commit
             .as_ref()
@@ -1055,6 +1237,53 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
         .map_err(|error| StorageError::InvalidData {
             reason: format!("model completion could not be serialized: {error}"),
         })?;
+        let event_id = stable_event_id(
+            model_request.event.run_id.as_str(),
+            model_step_version,
+            LocalAgentEventType::ModelStepCompleted,
+            0,
+        );
+        let event_query = RecordQuery {
+            scope: request.scope.clone(),
+            id: event_id.clone(),
+        };
+        if model_request.event.status == LocalAgentEventStatus::Applied {
+            let existing = repositories
+                .agent_events()
+                .get(&event_query)
+                .await?
+                .ok_or_else(|| StorageError::InvalidData {
+                    reason: "applied model request has no durable completion event".to_string(),
+                })?;
+            if existing.event.event_type == LocalAgentEventType::ModelStepCompleted
+                && existing.event.expected_version == model_step_version
+                && existing.event.causation_id == model_request.event.event_id
+                && existing.event.bounded_payload == payload
+            {
+                self.result = Some(existing);
+                return Ok(());
+            }
+            return Err(StorageError::Conflict {
+                actual_revision: existing.metadata.revision,
+            });
+        }
+        if model_request.event.status != LocalAgentEventStatus::Claimed
+            || model_request.event.claim_token.as_deref() != Some(request.claim_token.as_str())
+            || model_request
+                .event
+                .claim_until
+                .is_none_or(|deadline| deadline < request.now)
+            || model_request.event.expected_version != run.run.version
+        {
+            return Err(StorageError::Conflict {
+                actual_revision: model_request.metadata.revision,
+            });
+        }
+        if run.run.status != LocalAgentRunStatus::ModelRunning {
+            return Err(StorageError::InvalidData {
+                reason: "model completion requires a model_running run".to_string(),
+            });
+        }
         persist_completed_assistant_message(
             repositories,
             &run,
@@ -1071,27 +1300,23 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
             request.now,
         )
         .await?;
-        let event_id = stable_event_id(
-            request.run_id.as_str(),
-            run.run.version,
-            LocalAgentEventType::ModelStepCompleted,
-            0,
-        );
-        let query = RecordQuery {
-            scope: request.scope.clone(),
-            id: event_id.clone(),
-        };
-        if let Some(existing) = repositories.agent_events().get(&query).await? {
-            if existing.event.expected_version == run.run.version
-                && existing.event.bounded_payload == payload
-            {
-                self.result = Some(existing);
-                return Ok(());
-            }
+        if let Some(existing) = repositories.agent_events().get(&event_query).await? {
             return Err(StorageError::Conflict {
                 actual_revision: existing.metadata.revision,
             });
         }
+        let model_request_revision = model_request.metadata.revision;
+        model_request.event.status = LocalAgentEventStatus::Applied;
+        model_request.event.claimed_by_device_id = None;
+        model_request.event.claim_token = None;
+        model_request.event.claim_until = None;
+        repositories
+            .agent_events()
+            .put(PutRecord {
+                record: model_request.clone(),
+                expected_revision: Some(model_request_revision),
+            })
+            .await?;
         let record = AgentEventStateRecord {
             metadata: RecordMetadata {
                 id: event_id.clone(),
@@ -1103,7 +1328,7 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
             },
             event: LocalAgentEvent {
                 event_id,
-                run_id: request.run_id,
+                run_id: model_request.event.run_id,
                 event_type: LocalAgentEventType::ModelStepCompleted,
                 expected_version: run.run.version,
                 available_at: request.now,
@@ -1112,8 +1337,8 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
                 claimed_by_device_id: None,
                 claim_token: None,
                 claim_until: None,
-                causation_id: request.causation_id,
-                correlation_id: request.correlation_id,
+                causation_id: model_request.event.event_id,
+                correlation_id: model_request.event.correlation_id,
                 bounded_payload: payload,
                 last_error: None,
             },

@@ -10,10 +10,11 @@ use chatos_local_agent_protocol::{
     ModelRuntimeDescriptor,
 };
 use chatos_local_agent_runtime::{
-    answer_run_interaction, begin_tool_execution, build_local_tool_invocation,
-    complete_tool_execution, create_local_agent_run, inspect_tool_batch, mark_tool_outcome_unknown,
-    prepare_tool_batch, reduce_and_commit, renew_event_claim, request_run_control,
-    scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
+    answer_run_interaction, begin_model_step_execution, begin_tool_execution,
+    build_local_tool_invocation, complete_tool_execution, create_local_agent_run,
+    inspect_tool_batch, mark_tool_outcome_unknown, prepare_tool_batch, reduce_and_commit,
+    renew_event_claim, request_run_control, scan_recoverable_work, validate_local_tool_outcome,
+    AnswerRunInteraction, BeganModelStepExecution, BeginModelStepExecutionRequest,
     BeginToolExecutionRequest, BeginToolExecutionResult, CommittedReduction,
     CompleteToolExecutionRequest, CreateLocalAgentRunRequest, CreatedLocalAgentRun,
     DurableModelStepCompletionPayload, DurableScheduler, InitialRunMessage, LocalToolRuntime,
@@ -80,6 +81,10 @@ pub enum LocalAgentHostError {
     ClaimedEventMismatch { expected: String, actual: String },
     #[error("event {0} is not a claimed local tool batch")]
     NotToolBatch(String),
+    #[error("event {0} requires the dedicated model step executor")]
+    ModelStepExecutorRequired(String),
+    #[error("event {0} is not a claimed model step request")]
+    NotModelStep(String),
     #[error("local tool runtime failed after invocation start: {0}")]
     ToolRuntime(String),
     #[error("local tool runtime returned an invalid outcome: {0}")]
@@ -289,6 +294,34 @@ impl LocalAgentHost {
         Ok(committed)
     }
 
+    pub async fn begin_claimed_model_step(
+        &self,
+        claimed: &AgentEventStateRecord,
+        now: DateTime<Utc>,
+    ) -> Result<BeganModelStepExecution, LocalAgentHostError> {
+        if claimed.metadata.id != claimed.event.event_id {
+            return Err(LocalAgentHostError::ClaimedEventMismatch {
+                expected: claimed.metadata.id.clone(),
+                actual: claimed.event.event_id.clone(),
+            });
+        }
+        if claimed.event.event_type != LocalAgentEventType::ModelStepRequested {
+            return Err(LocalAgentHostError::NotModelStep(
+                claimed.event.event_id.clone(),
+            ));
+        }
+        Ok(begin_model_step_execution(
+            self.storage.as_ref(),
+            BeginModelStepExecutionRequest {
+                scope: self.scope.clone(),
+                event_id: claimed.event.event_id.clone(),
+                claim_token: claimed.event.claim_token.clone().unwrap_or_default(),
+                now,
+            },
+        )
+        .await?)
+    }
+
     /// Applies events whose evidence is already encoded in their durable
     /// payload. Model and tool completion payloads are decoded here so native
     /// callers cannot accidentally supply different evidence.
@@ -298,6 +331,11 @@ impl LocalAgentHost {
         now: DateTime<Utc>,
     ) -> Result<CommittedReduction, LocalAgentHostError> {
         let evidence = match claimed.event.event_type {
+            LocalAgentEventType::ModelStepRequested => {
+                return Err(LocalAgentHostError::ModelStepExecutorRequired(
+                    claimed.event.event_id.clone(),
+                ));
+            }
             LocalAgentEventType::ModelStepCompleted => {
                 let payload: DurableModelStepCompletionPayload = serde_json::from_value(
                     claimed.event.bounded_payload.clone(),

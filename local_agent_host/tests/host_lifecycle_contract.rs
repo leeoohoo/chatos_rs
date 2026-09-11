@@ -398,6 +398,17 @@ async fn host_recovers_claims_commits_and_schedules_the_next_event() {
         LocalAgentEventType::ModelStepRequested
     );
     assert_eq!(next.event.expected_version, 2);
+    let begun = host.begin_claimed_model_step(&next, now).await.unwrap();
+    assert_eq!(
+        begun.run_record.run.status,
+        LocalAgentRunStatus::ModelRunning
+    );
+    assert_eq!(begun.run_record.run.version, 3);
+    assert_eq!(begun.request_event.event.expected_version, 3);
+    assert_eq!(
+        begun.request_event.event.status,
+        LocalAgentEventStatus::Claimed
+    );
 }
 
 #[tokio::test]

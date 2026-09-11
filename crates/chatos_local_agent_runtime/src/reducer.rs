@@ -83,6 +83,8 @@ pub enum ReducerError {
     },
     #[error("{event_type:?} received incompatible step evidence")]
     InvalidEvidence { event_type: LocalAgentEventType },
+    #[error("{event_type:?} must be handled by its durable external executor")]
+    DedicatedExecutionRequired { event_type: LocalAgentEventType },
     #[error("run counter overflow")]
     CounterOverflow,
 }
@@ -139,13 +141,9 @@ pub fn reduce_claimed_event(
             );
         }
         LocalAgentEventType::ModelStepRequested => {
-            require_status(run, event, &[LocalAgentRunStatus::ModelReady])?;
-            require_no_evidence(event, &evidence)?;
-            next.status = LocalAgentRunStatus::ModelRunning;
-            next.step_seq = next
-                .step_seq
-                .checked_add(1)
-                .ok_or(ReducerError::CounterOverflow)?;
+            return Err(ReducerError::DedicatedExecutionRequired {
+                event_type: event.event_type,
+            });
         }
         LocalAgentEventType::ModelStepCompleted => {
             require_status(run, event, &[LocalAgentRunStatus::ModelRunning])?;

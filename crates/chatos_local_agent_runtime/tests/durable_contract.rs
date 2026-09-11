@@ -15,11 +15,12 @@ use chatos_local_agent_protocol::{
     ToolExecution, ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
-    claim_event, create_local_agent_run, record_model_step_completion, reduce_and_commit,
-    AttemptLimitDisposition, CompletedAssistantMessage, CreateLocalAgentRunRequest,
-    DurableModelStepCompletionPayload, DurableProviderContextCommit, DurableProviderContextItem,
-    EventClaimRequest, EventClaimResult, InitialRunMessage, RecordModelStepCompletionRequest,
-    ReduceAndCommitRequest, ReducerPolicy, StepEvidence,
+    begin_model_step_execution, claim_event, create_local_agent_run, record_model_step_completion,
+    reduce_and_commit, AttemptLimitDisposition, BeginModelStepExecutionRequest,
+    CompletedAssistantMessage, CreateLocalAgentRunRequest, DurableModelStepCompletionPayload,
+    DurableProviderContextCommit, DurableProviderContextItem, EventClaimRequest, EventClaimResult,
+    InitialRunMessage, RecordModelStepCompletionRequest, ReduceAndCommitRequest, ReducerPolicy,
+    StepEvidence,
 };
 use chrono::{Duration, Utc};
 
@@ -278,6 +279,31 @@ impl StorageTransaction for SeedModelRunning {
                 expected_revision: Some(expected_revision),
             })
             .await?;
+        repositories
+            .agent_events()
+            .put(PutRecord {
+                record: AgentEventStateRecord {
+                    metadata: metadata("model-request-1", Utc::now()),
+                    event: LocalAgentEvent {
+                        event_id: "model-request-1".to_string(),
+                        run_id: "run-1".to_string(),
+                        event_type: LocalAgentEventType::ModelStepRequested,
+                        expected_version: 2,
+                        available_at: Utc::now(),
+                        status: LocalAgentEventStatus::Claimed,
+                        attempt_count: 1,
+                        claimed_by_device_id: Some("device-1".to_string()),
+                        claim_token: Some("model-claim-1".to_string()),
+                        claim_until: Some(Utc::now() + Duration::minutes(5)),
+                        causation_id: "event-1".to_string(),
+                        correlation_id: "conversation-1".to_string(),
+                        bounded_payload: serde_json::Value::Null,
+                        last_error: None,
+                    },
+                },
+                expected_revision: None,
+            })
+            .await?;
         Ok(())
     }
 }
@@ -437,7 +463,8 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
         .unwrap();
     let request = RecordModelStepCompletionRequest {
         scope: scope(),
-        run_id: "run-1".to_string(),
+        request_event_id: "model-request-1".to_string(),
+        claim_token: "model-claim-1".to_string(),
         completion: ModelStepCompletion {
             result: ModelStepResult::Final(serde_json::json!({"text": "done"})),
             pending_batch_id: None,
@@ -463,14 +490,14 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
             }],
         }),
         origin_device_id: "device-1".to_string(),
-        causation_id: "model-request-1".to_string(),
-        correlation_id: "conversation-1".to_string(),
         now,
     };
 
+    let post_reduction_request = request.clone();
     let first = record_model_step_completion(&storage, request.clone())
         .await
         .unwrap();
+    let completion_event_id = first.event.event_id.clone();
     let mut retried_request = request;
     retried_request
         .provider_context_commit
@@ -487,9 +514,9 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
     assert_eq!(first.event.status, LocalAgentEventStatus::Pending);
     assert_eq!(first.event.expected_version, 2);
     let decoded: DurableModelStepCompletionPayload =
-        serde_json::from_value(first.event.bounded_payload).unwrap();
+        serde_json::from_value(first.event.bounded_payload.clone()).unwrap();
     assert!(matches!(
-        decoded.completion.result,
+        &decoded.completion.result,
         ModelStepResult::Final(_)
     ));
     assert_eq!(
@@ -508,6 +535,61 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
     assert_eq!(counts.messages, 1);
     assert_eq!(counts.outbox, 1);
     assert_eq!(counts.provider_context, 1);
+    assert_eq!(
+        claim_event(
+            &storage,
+            EventClaimRequest {
+                scope: scope(),
+                event_id: "model-request-1".to_string(),
+                device_id: "device-1".to_string(),
+                claim_token: "must-not-reclaim".to_string(),
+                now,
+                claim_until: now + Duration::seconds(30),
+                max_attempts: 3,
+            },
+        )
+        .await
+        .unwrap(),
+        EventClaimResult::AlreadyFinished
+    );
+
+    let EventClaimResult::Acquired(claimed_completion) = claim_event(
+        &storage,
+        EventClaimRequest {
+            scope: scope(),
+            event_id: completion_event_id,
+            device_id: "device-1".to_string(),
+            claim_token: "completion-claim".to_string(),
+            now,
+            claim_until: now + Duration::seconds(30),
+            max_attempts: 3,
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("model completion must remain reducible");
+    };
+    reduce_and_commit(
+        &storage,
+        ReduceAndCommitRequest {
+            scope: scope(),
+            event_id: claimed_completion.event.event_id,
+            claim_token: "completion-claim".to_string(),
+            origin_device_id: "device-1".to_string(),
+            evidence: StepEvidence::from(decoded.completion),
+            now,
+            policy: ReducerPolicy::default(),
+        },
+    )
+    .await
+    .unwrap();
+    let repeated_after_reduction = record_model_step_completion(&storage, post_reduction_request)
+        .await
+        .unwrap();
+    assert_eq!(
+        repeated_after_reduction.event.event_id,
+        first.event.event_id
+    );
 }
 
 #[tokio::test]
@@ -529,7 +611,8 @@ async fn ask_user_reduction_publishes_a_visual_interaction_with_the_run_snapshot
         &storage,
         RecordModelStepCompletionRequest {
             scope: scope(),
-            run_id: "run-1".to_string(),
+            request_event_id: "model-request-1".to_string(),
+            claim_token: "model-claim-1".to_string(),
             completion: ModelStepCompletion {
                 result: ModelStepResult::AskUser(question.clone()),
                 pending_batch_id: None,
@@ -546,8 +629,6 @@ async fn ask_user_reduction_publishes_a_visual_interaction_with_the_run_snapshot
             }),
             provider_context_commit: None,
             origin_device_id: "device-1".to_string(),
-            causation_id: "model-request-1".to_string(),
-            correlation_id: "conversation-1".to_string(),
             now,
         },
     )
@@ -700,6 +781,112 @@ async fn claim_and_reduction_commit_are_durable_and_idempotent() {
         .unwrap(),
         EventClaimResult::AlreadyFinished
     );
+}
+
+#[tokio::test]
+async fn model_request_remains_recoverable_until_a_formal_completion() {
+    let (_directory, storage) = storage().await;
+    let now = Utc::now();
+    let EventClaimResult::Acquired(started) = claim_event(
+        &storage,
+        EventClaimRequest {
+            scope: scope(),
+            event_id: "event-1".to_string(),
+            device_id: "device-1".to_string(),
+            claim_token: "start-claim".to_string(),
+            now,
+            claim_until: now + Duration::seconds(30),
+            max_attempts: 3,
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("run start must be claimable");
+    };
+    let started = reduce_and_commit(
+        &storage,
+        ReduceAndCommitRequest {
+            scope: scope(),
+            event_id: started.event.event_id,
+            claim_token: "start-claim".to_string(),
+            origin_device_id: "device-1".to_string(),
+            evidence: StepEvidence::None,
+            now,
+            policy: ReducerPolicy::default(),
+        },
+    )
+    .await
+    .unwrap();
+    let request_id = started.emitted_events[0].event.event_id.clone();
+    let EventClaimResult::Acquired(request) = claim_event(
+        &storage,
+        EventClaimRequest {
+            scope: scope(),
+            event_id: request_id.clone(),
+            device_id: "device-1".to_string(),
+            claim_token: "model-claim".to_string(),
+            now,
+            claim_until: now + Duration::seconds(30),
+            max_attempts: 3,
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("model request must be claimable");
+    };
+    let begin = BeginModelStepExecutionRequest {
+        scope: scope(),
+        event_id: request.event.event_id,
+        claim_token: "model-claim".to_string(),
+        now,
+    };
+    let first = begin_model_step_execution(&storage, begin.clone())
+        .await
+        .unwrap();
+    let repeated = begin_model_step_execution(&storage, begin).await.unwrap();
+    assert_eq!(first, repeated);
+    assert_eq!(
+        first.run_record.run.status,
+        LocalAgentRunStatus::ModelRunning
+    );
+    assert_eq!(first.run_record.run.version, 3);
+    assert_eq!(first.run_record.run.step_seq, 1);
+    assert_eq!(first.request_event.event.expected_version, 3);
+    assert_eq!(
+        first.request_event.event.status,
+        LocalAgentEventStatus::Claimed
+    );
+
+    let recovered_at = now + Duration::seconds(31);
+    let EventClaimResult::Acquired(reclaimed) = claim_event(
+        &storage,
+        EventClaimRequest {
+            scope: scope(),
+            event_id: request_id,
+            device_id: "device-1".to_string(),
+            claim_token: "recovered-model-claim".to_string(),
+            now: recovered_at,
+            claim_until: recovered_at + Duration::seconds(30),
+            max_attempts: 3,
+        },
+    )
+    .await
+    .unwrap() else {
+        panic!("expired in-flight model request must be reclaimable");
+    };
+    let recovered = begin_model_step_execution(
+        &storage,
+        BeginModelStepExecutionRequest {
+            scope: scope(),
+            event_id: reclaimed.event.event_id,
+            claim_token: "recovered-model-claim".to_string(),
+            now: recovered_at,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(recovered.run_record.run.version, 3);
+    assert_eq!(recovered.run_record.run.step_seq, 1);
 }
 
 #[tokio::test]
