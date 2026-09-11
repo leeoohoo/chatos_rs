@@ -4,10 +4,12 @@
 use async_trait::async_trait;
 
 use crate::{
-    AgentEventStateRepository, AgentRepository, AgentRunStateRepository, ClientSettingsRepository,
-    ClipboardRepository, ConversationRepository, MediaStateRepository, NotepadRepository,
-    PluginStateRepository, ProjectRepository, StorageBackend, StorageResult, StoryRepository,
-    TaskRepository, TerminalHistoryRepository,
+    AgentEventStateRepository, AgentMessageStateRepository, AgentRepository,
+    AgentRunStateRepository, ClientSettingsRepository, ClipboardRepository, ConversationRepository,
+    MediaStateRepository, NotepadRepository, PluginStateRepository, ProjectRepository,
+    ProviderContextStateRepository, StorageBackend, StorageResult, StoryRepository,
+    SyncOutboxStateRepository, TaskRepository, TerminalHistoryRepository,
+    ToolExecutionStateRepository,
 };
 
 /// Repository views bound to one backend transaction.
@@ -15,6 +17,10 @@ pub trait TransactionRepositories: Send {
     fn agents(&mut self) -> Box<dyn AgentRepository + '_>;
     fn agent_runs(&mut self) -> Box<dyn AgentRunStateRepository + '_>;
     fn agent_events(&mut self) -> Box<dyn AgentEventStateRepository + '_>;
+    fn agent_messages(&mut self) -> Box<dyn AgentMessageStateRepository + '_>;
+    fn provider_context(&mut self) -> Box<dyn ProviderContextStateRepository + '_>;
+    fn tool_executions(&mut self) -> Box<dyn ToolExecutionStateRepository + '_>;
+    fn sync_outbox(&mut self) -> Box<dyn SyncOutboxStateRepository + '_>;
     fn conversations(&mut self) -> Box<dyn ConversationRepository + '_>;
     fn tasks(&mut self) -> Box<dyn TaskRepository + '_>;
     fn projects(&mut self) -> Box<dyn ProjectRepository + '_>;

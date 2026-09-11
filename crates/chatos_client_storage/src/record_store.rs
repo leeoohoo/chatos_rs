@@ -10,16 +10,20 @@ use serde::Serialize;
 
 use crate::canonical_json::{encode_canonical, verify_canonical, CanonicalRecord};
 use crate::{
-    AgentEventStateRecord, AgentEventStateRepository, AgentRecord, AgentRepository,
-    AgentRunStateRecord, AgentRunStateRepository, ClientSettingRecord, ClientSettingsRepository,
-    ClipboardRecord, ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery,
-    MediaStateRecord, MediaStateRepository, NotepadRecord, NotepadRepository, PluginStateRecord,
-    PluginStateRepository, ProjectRecord, ProjectRepository, PutRecord, RecordMetadata, RecordPage,
-    RecordQuery, StorageError, StorageResult, StoryRecord, StoryRepository, TaskRecord,
-    TaskRepository, TerminalHistoryRecord, TerminalHistoryRepository, TransactionRepositories,
+    AgentEventStateRecord, AgentEventStateRepository, AgentMessageStateRecord,
+    AgentMessageStateRepository, AgentRecord, AgentRepository, AgentRunStateRecord,
+    AgentRunStateRepository, ClientSettingRecord, ClientSettingsRepository, ClipboardRecord,
+    ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery, MediaStateRecord,
+    MediaStateRepository, NotepadRecord, NotepadRepository, PluginStateRecord,
+    PluginStateRepository, ProjectRecord, ProjectRepository, ProviderContextStateRecord,
+    ProviderContextStateRepository, PutRecord, RecordMetadata, RecordPage, RecordQuery,
+    StorageError, StorageResult, StoryRecord, StoryRepository, SyncOutboxStateRecord,
+    SyncOutboxStateRepository, TaskRecord, TaskRepository, TerminalHistoryRecord,
+    TerminalHistoryRepository, ToolExecutionStateRecord, ToolExecutionStateRepository,
+    TransactionRepositories,
 };
 
-pub(crate) const SCHEMA_VERSION: u32 = 3;
+pub(crate) const SCHEMA_VERSION: u32 = 4;
 pub(crate) const LEGACY_DOMAIN_TABLES: [&str; 11] = [
     "client_agents",
     "client_conversations",
@@ -34,7 +38,13 @@ pub(crate) const LEGACY_DOMAIN_TABLES: [&str; 11] = [
     "client_terminal_history",
 ];
 pub(crate) const RUNTIME_DOMAIN_TABLES: [&str; 2] = ["client_agent_runs", "client_agent_events"];
-pub(crate) const DOMAIN_TABLES: [&str; 13] = [
+pub(crate) const AUXILIARY_RUNTIME_TABLES: [&str; 4] = [
+    "client_agent_messages",
+    "client_provider_context",
+    "client_tool_executions",
+    "client_sync_outbox",
+];
+pub(crate) const DOMAIN_TABLES: [&str; 17] = [
     "client_agents",
     "client_conversations",
     "client_tasks",
@@ -48,6 +58,10 @@ pub(crate) const DOMAIN_TABLES: [&str; 13] = [
     "client_terminal_history",
     "client_agent_runs",
     "client_agent_events",
+    "client_agent_messages",
+    "client_provider_context",
+    "client_tool_executions",
+    "client_sync_outbox",
 ];
 
 pub(crate) struct StoredRow {
@@ -151,6 +165,34 @@ impl TransactionRepositories for RecordTransactionRepositories<'_> {
         Box::new(JsonRecordRepository::<AgentEventStateRecord>::new(
             self.store,
             "client_agent_events",
+        ))
+    }
+
+    fn agent_messages(&mut self) -> Box<dyn AgentMessageStateRepository + '_> {
+        Box::new(JsonRecordRepository::<AgentMessageStateRecord>::new(
+            self.store,
+            "client_agent_messages",
+        ))
+    }
+
+    fn provider_context(&mut self) -> Box<dyn ProviderContextStateRepository + '_> {
+        Box::new(JsonRecordRepository::<ProviderContextStateRecord>::new(
+            self.store,
+            "client_provider_context",
+        ))
+    }
+
+    fn tool_executions(&mut self) -> Box<dyn ToolExecutionStateRepository + '_> {
+        Box::new(JsonRecordRepository::<ToolExecutionStateRecord>::new(
+            self.store,
+            "client_tool_executions",
+        ))
+    }
+
+    fn sync_outbox(&mut self) -> Box<dyn SyncOutboxStateRepository + '_> {
+        Box::new(JsonRecordRepository::<SyncOutboxStateRecord>::new(
+            self.store,
+            "client_sync_outbox",
         ))
     }
 
@@ -322,6 +364,54 @@ impl RepositoryRecord for AgentEventStateRecord {
         Ok(())
     }
 }
+
+macro_rules! impl_protocol_repository_record {
+    ($record:ty, $field:ident, $id_field:ident, $label:literal) => {
+        impl RepositoryRecord for $record {
+            fn metadata(&self) -> &RecordMetadata {
+                &self.metadata
+            }
+
+            fn metadata_mut(&mut self) -> &mut RecordMetadata {
+                &mut self.metadata
+            }
+
+            fn validate(&self) -> StorageResult<()> {
+                validate_record_identity(&self.metadata)?;
+                self.$field
+                    .validate()
+                    .map_err(|error| StorageError::InvalidData {
+                        reason: format!(concat!("invalid ", $label, ": {}"), error),
+                    })?;
+                if self.metadata.id != self.$field.$id_field {
+                    return Err(StorageError::InvalidData {
+                        reason: concat!(
+                            $label,
+                            " storage identity does not match the protocol record"
+                        )
+                        .to_string(),
+                    });
+                }
+                Ok(())
+            }
+        }
+    };
+}
+
+impl_protocol_repository_record!(AgentMessageStateRecord, message, record_id, "Agent message");
+impl_protocol_repository_record!(
+    ProviderContextStateRecord,
+    item,
+    item_id,
+    "provider context"
+);
+impl_protocol_repository_record!(
+    ToolExecutionStateRecord,
+    execution,
+    invocation_id,
+    "tool execution"
+);
+impl_protocol_repository_record!(SyncOutboxStateRecord, item, outbox_id, "sync outbox");
 
 pub(crate) struct JsonRecordRepository<'store, Record> {
     store: &'store mut dyn RecordStore,
@@ -578,6 +668,10 @@ macro_rules! impl_domain_repository {
 impl_domain_repository!(AgentRepository, AgentRecord);
 impl_domain_repository!(AgentRunStateRepository, AgentRunStateRecord);
 impl_domain_repository!(AgentEventStateRepository, AgentEventStateRecord);
+impl_domain_repository!(AgentMessageStateRepository, AgentMessageStateRecord);
+impl_domain_repository!(ProviderContextStateRepository, ProviderContextStateRecord);
+impl_domain_repository!(ToolExecutionStateRepository, ToolExecutionStateRecord);
+impl_domain_repository!(SyncOutboxStateRepository, SyncOutboxStateRecord);
 impl_domain_repository!(ConversationRepository, ConversationRecord);
 impl_domain_repository!(TaskRepository, TaskRecord);
 impl_domain_repository!(ProjectRepository, ProjectRecord);

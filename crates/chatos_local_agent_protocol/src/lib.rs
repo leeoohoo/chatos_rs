@@ -5,12 +5,14 @@
 //! Local Agent Host. This crate contains no model, database, queue, or tool
 //! execution implementation.
 
+mod context;
 mod event;
 mod ipc;
 mod message;
 mod run;
 mod tool;
 
+pub use context::*;
 pub use event::*;
 pub use ipc::*;
 pub use message::*;
@@ -19,6 +21,7 @@ pub use tool::*;
 
 pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_BOUNDED_JSON_BYTES: usize = 64 * 1024;
+pub const MAX_ENCRYPTED_CONTEXT_BYTES: usize = 128 * 1024;
 
 pub(crate) fn require_identifier(field: &'static str, value: &str) -> Result<(), ProtocolError> {
     if value.trim().is_empty() {
@@ -58,10 +61,30 @@ pub(crate) fn require_bounded_json(
     Ok(())
 }
 
+pub(crate) fn require_nonempty_bounded_text(
+    field: &'static str,
+    value: &str,
+    maximum: usize,
+) -> Result<(), ProtocolError> {
+    if value.is_empty() {
+        return Err(ProtocolError::EmptyPayload { field });
+    }
+    if value.len() > maximum {
+        return Err(ProtocolError::PayloadTooLarge {
+            field,
+            bytes: value.len(),
+            maximum,
+        });
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProtocolError {
     #[error("{field} must not be empty")]
     EmptyIdentifier { field: &'static str },
+    #[error("{field} payload must not be empty")]
+    EmptyPayload { field: &'static str },
     #[error("{field} exceeds the identifier length limit")]
     IdentifierTooLong { field: &'static str },
     #[error("{field} must be a SHA-256 digest")]

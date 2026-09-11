@@ -184,7 +184,7 @@ async fn sqlite_persists_only_authenticated_ciphertext() {
             .fetch_one(&mut raw_connection)
             .await
             .unwrap();
-    assert_eq!(schema_version, 3);
+    assert_eq!(schema_version, 4);
     raw_connection.close().await.unwrap();
 
     let wrong_key = StorageEncryptionKey::new([99; 32]);
@@ -253,7 +253,15 @@ async fn schema_v1_is_atomically_rewritten_to_the_current_schema() {
     .await
     .unwrap();
     for table in table_names {
-        let sql = if table == "client_agent_runs" || table == "client_agent_events" {
+        let runtime_tables = [
+            "client_agent_runs",
+            "client_agent_events",
+            "client_agent_messages",
+            "client_provider_context",
+            "client_tool_executions",
+            "client_sync_outbox",
+        ];
+        let sql = if runtime_tables.contains(&table.as_str()) {
             format!("DROP TABLE {table}")
         } else {
             format!("ALTER TABLE {table} DROP COLUMN record_digest")
@@ -290,12 +298,13 @@ async fn schema_v1_is_atomically_rewritten_to_the_current_schema() {
     assert!(digest.starts_with("sha256:"));
     let runtime_table_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
-         AND name IN ('client_agent_runs', 'client_agent_events')",
+         AND name IN ('client_agent_runs', 'client_agent_events', 'client_agent_messages', \
+                      'client_provider_context', 'client_tool_executions', 'client_sync_outbox')",
     )
     .fetch_one(&mut raw_connection)
     .await
     .unwrap();
-    assert_eq!(runtime_table_count, 2);
+    assert_eq!(runtime_table_count, 6);
 }
 
 struct CreateThenFail;

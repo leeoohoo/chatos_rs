@@ -7,14 +7,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AgentEventStateRecord, AgentRecord, AgentRunStateRecord, ClientSettingRecord, ClientStorage,
-    ClipboardRecord, ConversationRecord, ListQuery, MediaStateRecord, NotepadRecord,
-    PluginStateRecord, ProjectRecord, RecordScope, StorageBackend, StorageError, StorageResult,
-    StorageTransaction, StoryRecord, TaskRecord, TerminalHistoryRecord, TransactionRepositories,
+    AgentEventStateRecord, AgentMessageStateRecord, AgentRecord, AgentRunStateRecord,
+    ClientSettingRecord, ClientStorage, ClipboardRecord, ConversationRecord, ListQuery,
+    MediaStateRecord, NotepadRecord, PluginStateRecord, ProjectRecord, ProviderContextStateRecord,
+    RecordScope, StorageBackend, StorageError, StorageResult, StorageTransaction, StoryRecord,
+    SyncOutboxStateRecord, TaskRecord, TerminalHistoryRecord, ToolExecutionStateRecord,
+    TransactionRepositories,
 };
 
 const ARCHIVE_FORMAT: &str = "chatos-client-storage";
-const ARCHIVE_VERSION: u32 = 2;
+const ARCHIVE_VERSION: u32 = 3;
 const EXPORT_PAGE_SIZE: u32 = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -31,6 +33,10 @@ pub struct StorageArchiveRecords {
     pub agents: Vec<AgentRecord>,
     pub agent_runs: Vec<AgentRunStateRecord>,
     pub agent_events: Vec<AgentEventStateRecord>,
+    pub agent_messages: Vec<AgentMessageStateRecord>,
+    pub provider_context: Vec<ProviderContextStateRecord>,
+    pub tool_executions: Vec<ToolExecutionStateRecord>,
+    pub sync_outbox: Vec<SyncOutboxStateRecord>,
     pub conversations: Vec<ConversationRecord>,
     pub tasks: Vec<TaskRecord>,
     pub projects: Vec<ProjectRecord>,
@@ -143,6 +149,10 @@ impl StorageTransaction for ExportOperation {
         collect_records!(agents, agents);
         collect_records!(agent_runs, agent_runs);
         collect_records!(agent_events, agent_events);
+        collect_records!(agent_messages, agent_messages);
+        collect_records!(provider_context, provider_context);
+        collect_records!(tool_executions, tool_executions);
+        collect_records!(sync_outbox, sync_outbox);
         collect_records!(conversations, conversations);
         collect_records!(tasks, tasks);
         collect_records!(projects, projects);
@@ -198,6 +208,10 @@ impl StorageTransaction for ImportOperation<'_> {
         require_empty!(agents);
         require_empty!(agent_runs);
         require_empty!(agent_events);
+        require_empty!(agent_messages);
+        require_empty!(provider_context);
+        require_empty!(tool_executions);
+        require_empty!(sync_outbox);
         require_empty!(conversations);
         require_empty!(tasks);
         require_empty!(projects);
@@ -220,6 +234,10 @@ impl StorageTransaction for ImportOperation<'_> {
         restore_records!(agents, agents);
         restore_records!(agent_runs, agent_runs);
         restore_records!(agent_events, agent_events);
+        restore_records!(agent_messages, agent_messages);
+        restore_records!(provider_context, provider_context);
+        restore_records!(tool_executions, tool_executions);
+        restore_records!(sync_outbox, sync_outbox);
         restore_records!(conversations, conversations);
         restore_records!(tasks, tasks);
         restore_records!(projects, projects);
@@ -262,6 +280,10 @@ fn validate_archive(archive: &ClientStorageArchive) -> StorageResult<()> {
     validate_scope!(&archive.records.agents);
     validate_scope!(&archive.records.agent_runs);
     validate_scope!(&archive.records.agent_events);
+    validate_scope!(&archive.records.agent_messages);
+    validate_scope!(&archive.records.provider_context);
+    validate_scope!(&archive.records.tool_executions);
+    validate_scope!(&archive.records.sync_outbox);
     validate_scope!(&archive.records.conversations);
     validate_scope!(&archive.records.tasks);
     validate_scope!(&archive.records.projects);

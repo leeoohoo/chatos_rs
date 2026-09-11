@@ -4,8 +4,8 @@
 use chatos_local_agent_protocol::{
     AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentCommand, LocalAgentEvent,
     LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcRequest, LocalAgentRun,
-    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ProtocolError, ToolEffect, ToolExecution,
-    ToolExecutionStatus, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ProtocolError, ProviderContextItem,
+    ToolEffect, ToolExecution, ToolExecutionStatus, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chrono::Utc;
 
@@ -83,6 +83,24 @@ fn events_reject_unbounded_payloads() {
         event.validate(),
         Err(ProtocolError::PayloadTooLarge { .. })
     ));
+}
+
+#[test]
+fn provider_context_payload_is_not_limited_to_identifier_length() {
+    let item = ProviderContextItem {
+        item_id: "context-1".to_string(),
+        run_id: "run-1".to_string(),
+        generation: 1,
+        sequence: 1,
+        provider: "openai".to_string(),
+        item_type: "response_item".to_string(),
+        encrypted_payload: "x".repeat(4 * 1024),
+        payload_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            .to_string(),
+        created_at: Utc::now(),
+    };
+
+    item.validate().unwrap();
 }
 
 #[test]

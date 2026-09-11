@@ -15,8 +15,8 @@ use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
 
 use crate::canonical_json::canonicalize_encoded;
 use crate::record_store::{
-    RecordStore, RecordTransactionRepositories, StoredPayload, StoredRow, DOMAIN_TABLES,
-    LEGACY_DOMAIN_TABLES, RUNTIME_DOMAIN_TABLES, SCHEMA_VERSION,
+    RecordStore, RecordTransactionRepositories, StoredPayload, StoredRow, AUXILIARY_RUNTIME_TABLES,
+    DOMAIN_TABLES, LEGACY_DOMAIN_TABLES, RUNTIME_DOMAIN_TABLES, SCHEMA_VERSION,
 };
 use crate::sqlite_cipher::SqlitePayloadCipher;
 use crate::{
@@ -341,13 +341,16 @@ async fn migrate(pool: &SqlitePool, cipher: &SqlitePayloadCipher) -> StorageResu
             for table in DOMAIN_TABLES {
                 create_domain_table(&mut transaction, table).await?;
             }
-        } else if current == 1 {
-            migrate_v1_to_v2(&mut transaction, cipher).await?;
-            for table in RUNTIME_DOMAIN_TABLES {
-                create_domain_table(&mut transaction, table).await?;
+        } else {
+            if current == 1 {
+                migrate_v1_to_v2(&mut transaction, cipher).await?;
             }
-        } else if current == 2 {
-            for table in RUNTIME_DOMAIN_TABLES {
+            if current <= 2 {
+                for table in RUNTIME_DOMAIN_TABLES {
+                    create_domain_table(&mut transaction, table).await?;
+                }
+            }
+            for table in AUXILIARY_RUNTIME_TABLES {
                 create_domain_table(&mut transaction, table).await?;
             }
         }

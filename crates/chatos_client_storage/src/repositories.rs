@@ -4,10 +4,11 @@
 use async_trait::async_trait;
 
 use crate::{
-    AgentEventStateRecord, AgentRecord, AgentRunStateRecord, ClientSettingRecord, ClipboardRecord,
-    ConversationRecord, ListQuery, MediaStateRecord, NotepadRecord, PluginStateRecord,
-    ProjectRecord, PutRecord, RecordPage, RecordQuery, StorageResult, StoryRecord, TaskRecord,
-    TerminalHistoryRecord,
+    AgentEventStateRecord, AgentMessageStateRecord, AgentRecord, AgentRunStateRecord,
+    ClientSettingRecord, ClipboardRecord, ConversationRecord, ListQuery, MediaStateRecord,
+    NotepadRecord, PluginStateRecord, ProjectRecord, ProviderContextStateRecord, PutRecord,
+    RecordPage, RecordQuery, StorageResult, StoryRecord, SyncOutboxStateRecord, TaskRecord,
+    TerminalHistoryRecord, ToolExecutionStateRecord,
 };
 
 macro_rules! define_domain_repository {
@@ -32,6 +33,10 @@ macro_rules! define_domain_repository {
 define_domain_repository!(AgentRepository, AgentRecord);
 define_domain_repository!(AgentRunStateRepository, AgentRunStateRecord);
 define_domain_repository!(AgentEventStateRepository, AgentEventStateRecord);
+define_domain_repository!(AgentMessageStateRepository, AgentMessageStateRecord);
+define_domain_repository!(ProviderContextStateRepository, ProviderContextStateRecord);
+define_domain_repository!(ToolExecutionStateRepository, ToolExecutionStateRecord);
+define_domain_repository!(SyncOutboxStateRepository, SyncOutboxStateRecord);
 define_domain_repository!(ConversationRepository, ConversationRecord);
 define_domain_repository!(TaskRepository, TaskRecord);
 define_domain_repository!(ProjectRepository, ProjectRecord);

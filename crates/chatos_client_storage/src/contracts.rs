@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_local_agent_protocol::{LocalAgentEvent, LocalAgentRun};
+use chatos_local_agent_protocol::{
+    AgentMessage, LocalAgentEvent, LocalAgentRun, ProviderContextItem, SyncOutboxItem,
+    ToolExecution,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -50,6 +53,30 @@ pub struct AgentRunStateRecord {
 pub struct AgentEventStateRecord {
     pub metadata: RecordMetadata,
     pub event: LocalAgentEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentMessageStateRecord {
+    pub metadata: RecordMetadata,
+    pub message: AgentMessage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderContextStateRecord {
+    pub metadata: RecordMetadata,
+    pub item: ProviderContextItem,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolExecutionStateRecord {
+    pub metadata: RecordMetadata,
+    pub execution: ToolExecution,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SyncOutboxStateRecord {
+    pub metadata: RecordMetadata,
+    pub item: SyncOutboxItem,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
