@@ -23,13 +23,19 @@ const USER_SERVICE_INTERNAL_AUDIENCE: &str = "user-service";
 const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
 
 pub fn response_status_from_error(error: &str) -> Option<u16> {
-    error
-        .trim()
-        .strip_prefix("user_service request failed:")?
-        .split_whitespace()
-        .next()?
-        .parse::<u16>()
-        .ok()
+    const PREFIXES: [&str; 2] = [
+        "user_service request failed:",
+        "user service internal request failed:",
+    ];
+    PREFIXES.into_iter().find_map(|prefix| {
+        error
+            .trim()
+            .strip_prefix(prefix)?
+            .split_whitespace()
+            .next()?
+            .parse::<u16>()
+            .ok()
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -575,6 +581,12 @@ mod tests {
                 "user_service request failed: 401 invalid or expired access token"
             ),
             Some(401)
+        );
+        assert_eq!(
+            response_status_from_error(
+                "user service internal request failed: 404 model config not found"
+            ),
+            Some(404)
         );
         assert_eq!(
             response_status_from_error("connection refused by user_service"),

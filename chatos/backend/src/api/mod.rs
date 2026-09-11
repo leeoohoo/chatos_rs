@@ -52,6 +52,7 @@ pub mod memory_mappings;
 pub mod message_task_runner;
 pub mod messages;
 pub(crate) mod metrics;
+pub mod model_gateway;
 pub mod notepad;
 pub mod pet_activities;
 pub mod realtime;

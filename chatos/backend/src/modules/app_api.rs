@@ -19,6 +19,7 @@ pub fn internal_routes() -> Router {
 
 pub fn protected_routes() -> Router {
     Router::new()
+        .merge(crate::api::model_gateway::router())
         .merge(conversation_runtime::routes())
         .merge(memory::routes())
         .merge(platform_admin::protected_routes())
@@ -28,7 +29,7 @@ pub fn protected_routes() -> Router {
 
 #[cfg(test)]
 mod tests {
-    use super::{internal_routes, public_routes};
+    use super::{internal_routes, protected_routes, public_routes};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
@@ -67,5 +68,29 @@ mod tests {
                 .expect("route request");
             assert_ne!(response.status(), StatusCode::NOT_FOUND, "path={path}");
         }
+    }
+
+    #[tokio::test]
+    async fn model_gateway_descriptor_is_protected_only() {
+        let path = "/api/model-gateway/descriptors/model-1";
+        let public_response = public_routes()
+            .oneshot(
+                Request::get(path)
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("route request");
+        assert_eq!(public_response.status(), StatusCode::NOT_FOUND);
+
+        let protected_response = protected_routes()
+            .oneshot(
+                Request::get(path)
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("route request");
+        assert_eq!(protected_response.status(), StatusCode::UNAUTHORIZED);
     }
 }
