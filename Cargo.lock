@@ -961,13 +961,18 @@ name = "chatos_local_agent_runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "chatos_client_storage",
  "chatos_local_agent_protocol",
+ "chatos_service_runtime",
  "chrono",
+ "futures-util",
+ "reqwest",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

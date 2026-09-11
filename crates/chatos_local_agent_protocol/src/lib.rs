@@ -25,6 +25,7 @@ pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 3;
 pub const MAX_BOUNDED_JSON_BYTES: usize = 64 * 1024;
 pub const MAX_ENCRYPTED_CONTEXT_BYTES: usize = 128 * 1024;
 pub const MAX_MODEL_GATEWAY_JSON_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_MODEL_GATEWAY_STREAM_BYTES: usize = 4 * MAX_MODEL_GATEWAY_JSON_BYTES;
 pub const MAX_STREAM_DELTA_BYTES: usize = 1024 * 1024;
 
 pub(crate) fn require_identifier(field: &'static str, value: &str) -> Result<(), ProtocolError> {

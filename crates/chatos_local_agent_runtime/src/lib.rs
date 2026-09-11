@@ -7,6 +7,7 @@
 
 mod durable;
 mod model_gateway;
+mod model_gateway_client;
 mod pagination;
 mod recovery;
 mod reducer;
@@ -14,6 +15,7 @@ mod scheduler;
 
 pub use durable::*;
 pub use model_gateway::*;
+pub use model_gateway_client::*;
 pub use recovery::*;
 pub use reducer::*;
 pub use scheduler::*;
