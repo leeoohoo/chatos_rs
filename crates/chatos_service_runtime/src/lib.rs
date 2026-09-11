@@ -17,6 +17,7 @@ mod internal_token;
 mod request_id;
 mod runtime;
 mod security;
+mod sse;
 mod utils;
 
 pub use config::{DiscoveryMode, RuntimeConfig};
@@ -49,5 +50,9 @@ pub use runtime::{
     resolve_service_url, ChatosServiceRuntime,
 };
 pub use security::{is_production_environment, validate_production_secret};
+pub use sse::{
+    consume_sse_json_stream, consume_sse_json_stream_with_progress_timeout, drain_sse_json_events,
+    SseStreamError, SseStreamStats,
+};
 
 pub const DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN: &str = "chatos-memory-engine-dev-operator-token";
