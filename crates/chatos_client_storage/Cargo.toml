@@ -14,6 +14,8 @@ serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio",
   "sqlite",
+  "postgres",
+  "tls-native-tls",
 ] }
 thiserror = "2"
 zeroize = "1"

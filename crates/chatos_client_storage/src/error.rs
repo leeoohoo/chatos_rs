@@ -26,6 +26,12 @@ pub enum StorageError {
     Unavailable { reason: String },
     #[error("client storage migration {version} failed: {reason}")]
     Migration { version: u32, reason: String },
+    #[error("{backend} {found} is unsupported; minimum version is {minimum}")]
+    UnsupportedBackendVersion {
+        backend: &'static str,
+        found: u32,
+        minimum: u32,
+    },
     #[error("client storage record conflicts with revision {actual_revision}")]
     Conflict { actual_revision: u64 },
     #[error("client storage record was not found")]

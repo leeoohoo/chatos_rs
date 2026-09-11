@@ -1,44 +1,55 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::fmt;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
+use sqlx::{Connection, PgConnection, PgPool, Row};
 
 use crate::record_store::{
     RecordStore, RecordTransactionRepositories, StoredRow, DOMAIN_TABLES, SCHEMA_VERSION,
 };
 use crate::{
-    ClientStorage, SqliteBootstrapProfile, StorageBackend, StorageError, StorageResult,
-    StorageTransaction,
+    ClientStorage, PostgresConnectionSettings, PostgresTlsMode, StorageBackend, StorageError,
+    StorageResult, StorageTransaction,
 };
 
-#[derive(Debug, Clone)]
-pub struct SqliteClientStorage {
-    pool: SqlitePool,
+const MINIMUM_POSTGRES_MAJOR_VERSION: u32 = 15;
+
+#[derive(Clone)]
+pub struct PostgresClientStorage {
+    pool: PgPool,
 }
 
-impl SqliteClientStorage {
-    pub async fn open(profile: &SqliteBootstrapProfile) -> StorageResult<Self> {
-        profile
+impl PostgresClientStorage {
+    pub async fn open(settings: &PostgresConnectionSettings) -> StorageResult<Self> {
+        settings
             .validate()
             .map_err(|error| StorageError::InvalidData {
                 reason: error.to_string(),
             })?;
-        let options = SqliteConnectOptions::new()
-            .filename(&profile.database_path)
-            .create_if_missing(true)
-            .foreign_keys(true)
-            .journal_mode(SqliteJournalMode::Wal)
-            .busy_timeout(Duration::from_secs(5));
-        let pool = SqlitePoolOptions::new()
-            .max_connections(4)
+        let ssl_mode = match settings.endpoint.tls_mode {
+            PostgresTlsMode::Disabled => PgSslMode::Disable,
+            PostgresTlsMode::VerifyFull => PgSslMode::VerifyFull,
+        };
+        let options = PgConnectOptions::new()
+            .host(&settings.endpoint.host)
+            .port(settings.endpoint.port)
+            .database(&settings.endpoint.database)
+            .username(settings.credentials.username())
+            .password(settings.credentials.expose_password())
+            .ssl_mode(ssl_mode)
+            .application_name("chatos-client-storage");
+        let pool = PgPoolOptions::new()
+            .max_connections(8)
+            .acquire_timeout(Duration::from_secs(15))
             .connect_with(options)
             .await
             .map_err(unavailable)?;
+        validate_server_version(&pool).await?;
         migrate(&pool).await?;
         Ok(Self { pool })
     }
@@ -48,17 +59,26 @@ impl SqliteClientStorage {
     }
 }
 
+impl fmt::Debug for PostgresClientStorage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PostgresClientStorage")
+            .field("backend", &StorageBackend::Postgres)
+            .finish_non_exhaustive()
+    }
+}
+
 #[async_trait]
-impl ClientStorage for SqliteClientStorage {
+impl ClientStorage for PostgresClientStorage {
     fn backend(&self) -> StorageBackend {
-        StorageBackend::Sqlite
+        StorageBackend::Postgres
     }
 
     async fn transaction(&self, operation: &mut dyn StorageTransaction) -> StorageResult<()> {
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
         let result = {
-            let connection: &mut SqliteConnection = &mut transaction;
-            let mut store = SqliteRecordStore { connection };
+            let connection: &mut PgConnection = &mut transaction;
+            let mut store = PostgresRecordStore { connection };
             let mut repositories = RecordTransactionRepositories::new(&mut store);
             operation.execute(&mut repositories).await
         };
@@ -72,20 +92,20 @@ impl ClientStorage for SqliteClientStorage {
     }
 }
 
-struct SqliteRecordStore<'connection> {
-    connection: &'connection mut SqliteConnection,
+struct PostgresRecordStore<'connection> {
+    connection: &'connection mut PgConnection,
 }
 
 #[async_trait]
-impl RecordStore for SqliteRecordStore<'_> {
+impl RecordStore for PostgresRecordStore<'_> {
     async fn get_json(
         &mut self,
         table: &'static str,
         owner_user_id: &str,
         id: &str,
     ) -> StorageResult<Option<String>> {
-        assert_table(table)?;
-        let sql = format!("SELECT record_json FROM {table} WHERE owner_user_id = ? AND id = ?");
+        let table = qualified_table(table)?;
+        let sql = format!("SELECT record_json FROM {table} WHERE owner_user_id = $1 AND id = $2");
         sqlx::query_scalar(&sql)
             .bind(owner_user_id)
             .bind(id)
@@ -101,14 +121,13 @@ impl RecordStore for SqliteRecordStore<'_> {
         cursor: Option<&str>,
         limit: u32,
     ) -> StorageResult<Vec<StoredRow>> {
-        assert_table(table)?;
+        let table = qualified_table(table)?;
         let sql = format!(
-            "SELECT id, record_json FROM {table} WHERE owner_user_id = ? \
-             AND (? IS NULL OR id > ?) ORDER BY id ASC LIMIT ?"
+            "SELECT id, record_json FROM {table} WHERE owner_user_id = $1 \
+             AND ($2::TEXT IS NULL OR id > $2) ORDER BY id ASC LIMIT $3"
         );
         sqlx::query(&sql)
             .bind(owner_user_id)
-            .bind(cursor)
             .bind(cursor)
             .bind(i64::from(limit))
             .fetch_all(&mut *self.connection)
@@ -134,10 +153,10 @@ impl RecordStore for SqliteRecordStore<'_> {
         updated_at: &str,
         record_json: &str,
     ) -> StorageResult<bool> {
-        assert_table(table)?;
+        let table = qualified_table(table)?;
         let sql = format!(
             "INSERT INTO {table} (owner_user_id, id, revision, created_at, updated_at, record_json) \
-             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(owner_user_id, id) DO NOTHING"
+             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(owner_user_id, id) DO NOTHING"
         );
         Ok(sqlx::query(&sql)
             .bind(owner_user_id)
@@ -163,10 +182,10 @@ impl RecordStore for SqliteRecordStore<'_> {
         updated_at: &str,
         record_json: &str,
     ) -> StorageResult<bool> {
-        assert_table(table)?;
+        let table = qualified_table(table)?;
         let sql = format!(
-            "UPDATE {table} SET revision = ?, updated_at = ?, record_json = ? \
-             WHERE owner_user_id = ? AND id = ? AND revision = ?"
+            "UPDATE {table} SET revision = $1, updated_at = $2, record_json = $3 \
+             WHERE owner_user_id = $4 AND id = $5 AND revision = $6"
         );
         Ok(sqlx::query(&sql)
             .bind(next_revision)
@@ -189,9 +208,9 @@ impl RecordStore for SqliteRecordStore<'_> {
         id: &str,
         expected_revision: i64,
     ) -> StorageResult<bool> {
-        assert_table(table)?;
+        let table = qualified_table(table)?;
         let sql =
-            format!("DELETE FROM {table} WHERE owner_user_id = ? AND id = ? AND revision = ?");
+            format!("DELETE FROM {table} WHERE owner_user_id = $1 AND id = $2 AND revision = $3");
         Ok(sqlx::query(&sql)
             .bind(owner_user_id)
             .bind(id)
@@ -209,8 +228,8 @@ impl RecordStore for SqliteRecordStore<'_> {
         owner_user_id: &str,
         id: &str,
     ) -> StorageResult<Option<i64>> {
-        assert_table(table)?;
-        let sql = format!("SELECT revision FROM {table} WHERE owner_user_id = ? AND id = ?");
+        let table = qualified_table(table)?;
+        let sql = format!("SELECT revision FROM {table} WHERE owner_user_id = $1 AND id = $2");
         sqlx::query_scalar(&sql)
             .bind(owner_user_id)
             .bind(id)
@@ -220,19 +239,47 @@ impl RecordStore for SqliteRecordStore<'_> {
     }
 }
 
-async fn migrate(pool: &SqlitePool) -> StorageResult<()> {
+async fn validate_server_version(pool: &PgPool) -> StorageResult<()> {
+    let version_number: i32 =
+        sqlx::query_scalar("SELECT current_setting('server_version_num')::INTEGER")
+            .fetch_one(pool)
+            .await
+            .map_err(unavailable)?;
+    let major = u32::try_from(version_number).map_err(|_| StorageError::Unavailable {
+        reason: "PostgreSQL returned an invalid server version".to_string(),
+    })? / 10_000;
+    if major < MINIMUM_POSTGRES_MAJOR_VERSION {
+        return Err(StorageError::UnsupportedBackendVersion {
+            backend: "PostgreSQL",
+            found: major,
+            minimum: MINIMUM_POSTGRES_MAJOR_VERSION,
+        });
+    }
+    Ok(())
+}
+
+async fn migrate(pool: &PgPool) -> StorageResult<()> {
     let mut connection = pool.acquire().await.map_err(unavailable)?;
+    let mut transaction = connection.begin().await.map_err(transaction_error)?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('chatos_client_storage_migrations'))")
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| migration_error(0, error))?;
+    sqlx::query("CREATE SCHEMA IF NOT EXISTS chatos")
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| migration_error(0, error))?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS chatos_client_schema_migrations (\
-         version INTEGER PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS chatos.chatos_client_schema_migrations (\
+         version BIGINT PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL)",
     )
-    .execute(&mut *connection)
+    .execute(&mut *transaction)
     .await
     .map_err(|error| migration_error(0, error))?;
     let current = sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT MAX(version) FROM chatos_client_schema_migrations",
+        "SELECT MAX(version) FROM chatos.chatos_client_schema_migrations",
     )
-    .fetch_one(&mut *connection)
+    .fetch_one(&mut *transaction)
     .await
     .map_err(|error| migration_error(0, error))?
     .unwrap_or(0);
@@ -243,11 +290,10 @@ async fn migrate(pool: &SqlitePool) -> StorageResult<()> {
         });
     }
     if current == 0 {
-        let mut transaction = connection.begin().await.map_err(transaction_error)?;
         for table in DOMAIN_TABLES {
             let sql = format!(
-                "CREATE TABLE {table} (owner_user_id TEXT NOT NULL, id TEXT NOT NULL, \
-                 revision INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, \
+                "CREATE TABLE chatos.{table} (owner_user_id TEXT NOT NULL, id TEXT NOT NULL, \
+                 revision BIGINT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, \
                  record_json TEXT NOT NULL, PRIMARY KEY(owner_user_id, id), CHECK(revision > 0))"
             );
             sqlx::query(&sql)
@@ -256,24 +302,23 @@ async fn migrate(pool: &SqlitePool) -> StorageResult<()> {
                 .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
         }
         sqlx::query(
-            "INSERT INTO chatos_client_schema_migrations(version, applied_at) VALUES (?, ?)",
+            "INSERT INTO chatos.chatos_client_schema_migrations(version, applied_at) VALUES ($1, $2)",
         )
         .bind(i64::from(SCHEMA_VERSION))
         .bind(Utc::now().to_rfc3339())
         .execute(&mut *transaction)
         .await
         .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
     }
-    Ok(())
+    transaction
+        .commit()
+        .await
+        .map_err(|error| migration_error(SCHEMA_VERSION, error))
 }
 
-fn assert_table(table: &'static str) -> StorageResult<()> {
+fn qualified_table(table: &'static str) -> StorageResult<String> {
     if DOMAIN_TABLES.contains(&table) {
-        Ok(())
+        Ok(format!("chatos.{table}"))
     } else {
         Err(StorageError::InvalidData {
             reason: "unknown repository table".to_string(),
@@ -286,11 +331,13 @@ fn unavailable(error: sqlx::Error) -> StorageError {
         reason: error.to_string(),
     }
 }
+
 fn transaction_error(error: sqlx::Error) -> StorageError {
     StorageError::Transaction {
         reason: error.to_string(),
     }
 }
+
 fn migration_error(version: u32, error: sqlx::Error) -> StorageError {
     StorageError::Migration {
         version,
