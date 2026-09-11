@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {"path":"clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/Clipboard/ClipboardHistoryStore.swift","platform":"macos","access_kind":"direct_database_driver","target":"ClipboardRepository","status":"pending"},
+    {"path":"clients/macos/Sources/ChatOSConnector/SQLiteProjectRegistry.swift","platform":"macos","access_kind":"direct_database_driver","target":"ProjectRepository","status":"pending"},
+
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/LocalStateDatabase.cs","platform":"windows","access_kind":"direct_database_driver","target":"Local Agent Host IPC","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteAppPreferencesStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConnectorApprovalStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"AgentRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConnectorModelSettingsStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConnectorPersistentStateStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConnectorSandboxSettingsStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConversationCacheStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ConversationRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqlitePetActivitySuppressionStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqlitePetFavoriteProjectsStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqlitePetWindowPlacementStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"OS UI preferences","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteProjectRegistry.cs","platform":"windows","access_kind":"direct_database_driver","target":"ProjectRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteTerminalCommandHistoryStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"TerminalHistoryRepository","status":"pending"},
+    {"path":"clients/windows/src/ChatOS.Connector/Plugins/SqliteInstalledPluginStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"PluginStateRepository","status":"pending"},
+
+    {"path":"clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioHistoryStore.swift","platform":"macos","access_kind":"business_json_file","target":"MediaStateRepository","status":"pending"},
+    {"path":"clients/macos/Sources/ChatOSApp/Features/MediaStudio/Story/StoryProjectStore.swift","platform":"macos","access_kind":"business_json_file","target":"StoryRepository","status":"pending"},
+    {"path":"clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift","platform":"macos","access_kind":"business_json_file_and_secret_file","target":"ClientSettingsRepository + PluginStateRepository + platform secure store","status":"pending"},
+    {"path":"clients/macos/Sources/ChatOSAgentRuntime/AgentTypes.swift","platform":"macos","access_kind":"business_user_defaults","target":"ClientSettingsRepository","status":"pending"},
+    {"path":"clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/GlobalUtilityPreferencesStore.swift","platform":"macos","access_kind":"business_user_defaults","target":"ClientSettingsRepository","status":"pending"},
+    {"path":"clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/QuickSearch/QuickSearchViewModel.swift","platform":"macos","access_kind":"business_user_defaults","target":"ClientSettingsRepository","status":"pending"},
+    {"path":"clients/macos/Sources/ChatOSApp/Features/Pet/PetPreferencesStore.swift","platform":"macos","access_kind":"business_user_defaults","target":"ClientSettingsRepository","status":"pending"}
+  ],
+  "os_ui_preference_exemptions": [
+    "clients/macos/Sources/ChatOSApp/AppModel.swift",
+    "clients/macos/Sources/ChatOSApp/Features/LocalConnector/BrowserExtensionGuide.swift",
+    "clients/macos/Sources/ChatOSApp/Features/Pet/PetOverlayWindowController.swift",
+    "clients/macos/Sources/ChatOSApp/Features/Project/ProjectDirectoryExpansionStateStore.swift"
+  ],
+  "secure_store_exemptions": [
+    "clients/macos/Sources/ChatOSApp/Infrastructure/KeychainCredentialStore.swift",
+    "clients/macos/Sources/ChatOSConnector/NativeRemoteConnectionCredentialStore.swift",
+    "clients/windows/src/ChatOS.Connector/Persistence/WindowsCredentialConnectorSecretStore.cs",
+    "clients/windows/src/ChatOS.Connector/Persistence/WindowsCredentialConnectorTokenStore.cs",
+    "clients/windows/src/ChatOS.Connector/Persistence/WindowsCredentialTokenStore.cs"
+  ]
+}
