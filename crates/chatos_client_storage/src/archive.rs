@@ -8,8 +8,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AgentRecord, ClientSettingRecord, ClientStorage, ClipboardRecord, ConversationRecord,
-    ListQuery, MediaStateRecord, PluginStateRecord, ProjectRecord, RecordScope, StorageBackend,
-    StorageError, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
+    ListQuery, MediaStateRecord, NotepadRecord, PluginStateRecord, ProjectRecord, RecordScope,
+    StorageBackend, StorageError, StorageResult, StorageTransaction, StoryRecord, TaskRecord,
+    TerminalHistoryRecord, TransactionRepositories,
 };
 
 const ARCHIVE_FORMAT: &str = "chatos-client-storage";
@@ -35,6 +36,9 @@ pub struct StorageArchiveRecords {
     pub media: Vec<MediaStateRecord>,
     pub settings: Vec<ClientSettingRecord>,
     pub clipboard: Vec<ClipboardRecord>,
+    pub stories: Vec<StoryRecord>,
+    pub notepad: Vec<NotepadRecord>,
+    pub terminal_history: Vec<TerminalHistoryRecord>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -142,6 +146,9 @@ impl StorageTransaction for ExportOperation {
         collect_records!(media, media);
         collect_records!(settings, settings);
         collect_records!(clipboard, clipboard);
+        collect_records!(stories, stories);
+        collect_records!(notepad, notepad);
+        collect_records!(terminal_history, terminal_history);
 
         self.archive = Some(ClientStorageArchive {
             format_version: ARCHIVE_VERSION,
@@ -192,6 +199,9 @@ impl StorageTransaction for ImportOperation<'_> {
         require_empty!(media);
         require_empty!(settings);
         require_empty!(clipboard);
+        require_empty!(stories);
+        require_empty!(notepad);
+        require_empty!(terminal_history);
 
         macro_rules! restore_records {
             ($repository:ident, $source:ident) => {
@@ -209,6 +219,9 @@ impl StorageTransaction for ImportOperation<'_> {
         restore_records!(media, media);
         restore_records!(settings, settings);
         restore_records!(clipboard, clipboard);
+        restore_records!(stories, stories);
+        restore_records!(notepad, notepad);
+        restore_records!(terminal_history, terminal_history);
         Ok(())
     }
 }
@@ -246,6 +259,9 @@ fn validate_archive(archive: &ClientStorageArchive) -> StorageResult<()> {
     validate_scope!(&archive.records.media);
     validate_scope!(&archive.records.settings);
     validate_scope!(&archive.records.clipboard);
+    validate_scope!(&archive.records.stories);
+    validate_scope!(&archive.records.notepad);
+    validate_scope!(&archive.records.terminal_history);
     Ok(())
 }
 

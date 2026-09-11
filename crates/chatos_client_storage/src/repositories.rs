@@ -5,8 +5,8 @@ use async_trait::async_trait;
 
 use crate::{
     AgentRecord, ClientSettingRecord, ClipboardRecord, ConversationRecord, ListQuery,
-    MediaStateRecord, PluginStateRecord, ProjectRecord, PutRecord, RecordPage, RecordQuery,
-    StorageResult, TaskRecord,
+    MediaStateRecord, NotepadRecord, PluginStateRecord, ProjectRecord, PutRecord, RecordPage,
+    RecordQuery, StorageResult, StoryRecord, TaskRecord, TerminalHistoryRecord,
 };
 
 macro_rules! define_domain_repository {
@@ -36,3 +36,6 @@ define_domain_repository!(PluginStateRepository, PluginStateRecord);
 define_domain_repository!(MediaStateRepository, MediaStateRecord);
 define_domain_repository!(ClientSettingsRepository, ClientSettingRecord);
 define_domain_repository!(ClipboardRepository, ClipboardRecord);
+define_domain_repository!(StoryRepository, StoryRecord);
+define_domain_repository!(NotepadRepository, NotepadRecord);
+define_domain_repository!(TerminalHistoryRepository, TerminalHistoryRecord);

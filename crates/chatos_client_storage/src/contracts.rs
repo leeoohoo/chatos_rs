@@ -87,6 +87,42 @@ pub struct ClipboardRecord {
     pub state: Value,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StoryRecordKind {
+    Project,
+    AgentRun,
+    Continuity,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StoryRecord {
+    pub metadata: RecordMetadata,
+    pub project_id: String,
+    pub kind: StoryRecordKind,
+    pub status: Option<String>,
+    pub state: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NotepadRecord {
+    pub metadata: RecordMetadata,
+    pub project_id: Option<String>,
+    pub title: String,
+    pub content: String,
+    pub state: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TerminalHistoryRecord {
+    pub metadata: RecordMetadata,
+    pub project_id: Option<String>,
+    pub terminal_session_id: String,
+    pub command: String,
+    pub exit_code: Option<i32>,
+    pub state: Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PutRecord<R> {
     pub record: R,

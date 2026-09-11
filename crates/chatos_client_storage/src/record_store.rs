@@ -11,13 +11,14 @@ use serde::Serialize;
 use crate::{
     AgentRecord, AgentRepository, ClientSettingRecord, ClientSettingsRepository, ClipboardRecord,
     ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery, MediaStateRecord,
-    MediaStateRepository, PluginStateRecord, PluginStateRepository, ProjectRecord,
-    ProjectRepository, PutRecord, RecordMetadata, RecordPage, RecordQuery, StorageError,
-    StorageResult, TaskRecord, TaskRepository, TransactionRepositories,
+    MediaStateRepository, NotepadRecord, NotepadRepository, PluginStateRecord,
+    PluginStateRepository, ProjectRecord, ProjectRepository, PutRecord, RecordMetadata, RecordPage,
+    RecordQuery, StorageError, StorageResult, StoryRecord, StoryRepository, TaskRecord,
+    TaskRepository, TerminalHistoryRecord, TerminalHistoryRepository, TransactionRepositories,
 };
 
 pub(crate) const SCHEMA_VERSION: u32 = 1;
-pub(crate) const DOMAIN_TABLES: [&str; 8] = [
+pub(crate) const DOMAIN_TABLES: [&str; 11] = [
     "client_agents",
     "client_conversations",
     "client_tasks",
@@ -26,6 +27,9 @@ pub(crate) const DOMAIN_TABLES: [&str; 8] = [
     "client_media",
     "client_settings",
     "client_clipboard",
+    "client_stories",
+    "client_notepad",
+    "client_terminal_history",
 ];
 
 pub(crate) struct StoredRow {
@@ -156,6 +160,27 @@ impl TransactionRepositories for RecordTransactionRepositories<'_> {
             "client_clipboard",
         ))
     }
+
+    fn stories(&mut self) -> Box<dyn StoryRepository + '_> {
+        Box::new(JsonRecordRepository::<StoryRecord>::new(
+            self.store,
+            "client_stories",
+        ))
+    }
+
+    fn notepad(&mut self) -> Box<dyn NotepadRepository + '_> {
+        Box::new(JsonRecordRepository::<NotepadRecord>::new(
+            self.store,
+            "client_notepad",
+        ))
+    }
+
+    fn terminal_history(&mut self) -> Box<dyn TerminalHistoryRepository + '_> {
+        Box::new(JsonRecordRepository::<TerminalHistoryRecord>::new(
+            self.store,
+            "client_terminal_history",
+        ))
+    }
 }
 
 pub(crate) trait RepositoryRecord: Serialize + DeserializeOwned + Send + Unpin {
@@ -183,6 +208,9 @@ impl_repository_record!(
     MediaStateRecord,
     ClientSettingRecord,
     ClipboardRecord,
+    StoryRecord,
+    NotepadRecord,
+    TerminalHistoryRecord,
 );
 
 pub(crate) struct JsonRecordRepository<'store, Record> {
@@ -438,6 +466,9 @@ impl_domain_repository!(PluginStateRepository, PluginStateRecord);
 impl_domain_repository!(MediaStateRepository, MediaStateRecord);
 impl_domain_repository!(ClientSettingsRepository, ClientSettingRecord);
 impl_domain_repository!(ClipboardRepository, ClipboardRecord);
+impl_domain_repository!(StoryRepository, StoryRecord);
+impl_domain_repository!(NotepadRepository, NotepadRecord);
+impl_domain_repository!(TerminalHistoryRepository, TerminalHistoryRecord);
 
 fn validate_record_identity(metadata: &RecordMetadata) -> StorageResult<()> {
     if metadata.id.trim().is_empty() {
