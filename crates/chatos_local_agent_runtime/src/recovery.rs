@@ -11,6 +11,8 @@ use chatos_client_storage::{
 use chatos_local_agent_protocol::{LocalAgentEventStatus, LocalAgentRunStatus};
 use chrono::{DateTime, Utc};
 
+use crate::pagination::advance_cursor;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecoveryIssue {
     OrphanedEvent {
@@ -198,19 +200,6 @@ impl StorageTransaction for RecoveryScanOperation {
         });
         Ok(())
     }
-}
-
-fn advance_cursor(current: &mut Option<String>, next: Option<String>) -> StorageResult<bool> {
-    let Some(next) = next else {
-        return Ok(false);
-    };
-    if current.as_deref() == Some(next.as_str()) {
-        return Err(StorageError::InvalidData {
-            reason: "repository pagination cursor did not advance".to_string(),
-        });
-    }
-    *current = Some(next);
-    Ok(true)
 }
 
 fn retain_earliest(target: &mut Option<DateTime<Utc>>, candidate: DateTime<Utc>) {

@@ -14,6 +14,7 @@ use chatos_local_agent_protocol::{
 use chrono::{DateTime, Utc};
 use serde_json::json;
 
+use crate::pagination::advance_cursor;
 use crate::{reduce_claimed_event, ReducerPolicy, Reduction, StepEvidence};
 
 #[derive(Debug, Clone)]
@@ -323,24 +324,11 @@ async fn mark_unknown_irreversible_tools(
             }
             unknown.push(record);
         }
-        if !advance_page_cursor(&mut cursor, page.next_cursor)? {
+        if !advance_cursor(&mut cursor, page.next_cursor)? {
             break;
         }
     }
     Ok(unknown)
-}
-
-fn advance_page_cursor(current: &mut Option<String>, next: Option<String>) -> StorageResult<bool> {
-    let Some(next) = next else {
-        return Ok(false);
-    };
-    if current.as_deref() == Some(next.as_str()) {
-        return Err(StorageError::InvalidData {
-            reason: "repository pagination cursor did not advance".to_string(),
-        });
-    }
-    *current = Some(next);
-    Ok(true)
 }
 
 pub struct ReduceAndCommitRequest {
