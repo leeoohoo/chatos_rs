@@ -101,3 +101,49 @@ pub enum ModelStepResult {
     Failed(Value),
     Cancelled,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStepCompletion {
+    pub result: ModelStepResult,
+    pub pending_batch_id: Option<String>,
+    pub retry_at: Option<DateTime<Utc>>,
+}
+
+impl ModelStepCompletion {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_bounded_json(
+            "model_step_completion",
+            &serde_json::to_value(self).map_err(|_| ProtocolError::InvalidJson {
+                field: "model_step_completion",
+            })?,
+        )?;
+        match &self.result {
+            ModelStepResult::ToolCommand(_) => {
+                require_identifier(
+                    "pending_batch_id",
+                    self.pending_batch_id.as_deref().unwrap_or_default(),
+                )?;
+                if self.retry_at.is_some() {
+                    return Err(ProtocolError::InvalidState {
+                        reason: "tool command completion cannot include retry_at",
+                    });
+                }
+            }
+            ModelStepResult::Retry(_) => {
+                if self.retry_at.is_none() || self.pending_batch_id.is_some() {
+                    return Err(ProtocolError::InvalidState {
+                        reason: "retry completion requires only retry_at",
+                    });
+                }
+            }
+            _ if self.pending_batch_id.is_some() || self.retry_at.is_some() => {
+                return Err(ProtocolError::InvalidState {
+                    reason: "model completion metadata does not match its result",
+                });
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}

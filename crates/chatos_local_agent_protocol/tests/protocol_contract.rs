@@ -7,8 +7,9 @@ use chatos_local_agent_protocol::{
     LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelGatewayParameters,
     ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
     ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
-    ModelRuntimeDescriptor, ProtocolError, ProviderContextItem, ToolEffect, ToolExecution,
-    ToolExecutionStatus, LOCAL_AGENT_PROTOCOL_VERSION,
+    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ProtocolError,
+    ProviderContextItem, ToolEffect, ToolExecution, ToolExecutionStatus,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chrono::Utc;
 
@@ -214,6 +215,26 @@ fn gateway_terminal_keeps_official_status_usage_and_request_identity() {
         unreachable!();
     };
     terminal.incomplete_details = None;
+    assert!(matches!(
+        invalid.validate(),
+        Err(ProtocolError::InvalidState { .. })
+    ));
+}
+
+#[test]
+fn durable_model_completion_metadata_must_match_its_result() {
+    let valid = ModelStepCompletion {
+        result: ModelStepResult::Retry(serde_json::json!({"reason": "overloaded"})),
+        pending_batch_id: None,
+        retry_at: Some(Utc::now()),
+    };
+    valid.validate().unwrap();
+
+    let invalid = ModelStepCompletion {
+        result: ModelStepResult::Final(serde_json::json!({"text": "done"})),
+        pending_batch_id: Some("batch-1".to_string()),
+        retry_at: None,
+    };
     assert!(matches!(
         invalid.validate(),
         Err(ProtocolError::InvalidState { .. })

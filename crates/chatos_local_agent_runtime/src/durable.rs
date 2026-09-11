@@ -9,7 +9,7 @@ use chatos_client_storage::{
 };
 use chatos_local_agent_protocol::{
     LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRunStatus,
-    ToolExecutionStatus,
+    ModelStepCompletion, ToolExecutionStatus,
 };
 use chrono::{DateTime, Utc};
 use serde_json::json;
@@ -501,6 +501,129 @@ fn stable_event_id(
     index: usize,
 ) -> String {
     format!("{run_id}:{version}:{}:{index}", event_type_name(event_type))
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordModelStepCompletionRequest {
+    pub scope: RecordScope,
+    pub run_id: String,
+    pub completion: ModelStepCompletion,
+    pub origin_device_id: String,
+    pub causation_id: String,
+    pub correlation_id: String,
+    pub now: DateTime<Utc>,
+}
+
+pub async fn record_model_step_completion(
+    storage: &dyn ClientStorage,
+    request: RecordModelStepCompletionRequest,
+) -> StorageResult<AgentEventStateRecord> {
+    request
+        .completion
+        .validate()
+        .map_err(|error| StorageError::InvalidData {
+            reason: error.to_string(),
+        })?;
+    let mut operation = RecordModelStepCompletionOperation {
+        request: Some(request),
+        result: None,
+    };
+    storage.transaction(&mut operation).await?;
+    operation.result.ok_or(StorageError::Transaction {
+        reason: "model completion transaction returned no event".to_string(),
+    })
+}
+
+struct RecordModelStepCompletionOperation {
+    request: Option<RecordModelStepCompletionRequest>,
+    result: Option<AgentEventStateRecord>,
+}
+
+#[async_trait]
+impl StorageTransaction for RecordModelStepCompletionOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let request = self.request.take().ok_or(StorageError::Transaction {
+            reason: "model completion request was already consumed".to_string(),
+        })?;
+        let run = repositories
+            .agent_runs()
+            .get(&RecordQuery {
+                scope: request.scope.clone(),
+                id: request.run_id.clone(),
+            })
+            .await?
+            .ok_or(StorageError::NotFound)?;
+        if run.run.status != LocalAgentRunStatus::ModelRunning {
+            return Err(StorageError::InvalidData {
+                reason: "model completion requires a model_running run".to_string(),
+            });
+        }
+        let event_id = stable_event_id(
+            request.run_id.as_str(),
+            run.run.version,
+            LocalAgentEventType::ModelStepCompleted,
+            0,
+        );
+        let payload = serde_json::to_value(&request.completion).map_err(|error| {
+            StorageError::InvalidData {
+                reason: format!("model completion could not be serialized: {error}"),
+            }
+        })?;
+        let query = RecordQuery {
+            scope: request.scope.clone(),
+            id: event_id.clone(),
+        };
+        if let Some(existing) = repositories.agent_events().get(&query).await? {
+            if existing.event.expected_version == run.run.version
+                && existing.event.bounded_payload == payload
+            {
+                self.result = Some(existing);
+                return Ok(());
+            }
+            return Err(StorageError::Conflict {
+                actual_revision: existing.metadata.revision,
+            });
+        }
+        let record = AgentEventStateRecord {
+            metadata: RecordMetadata {
+                id: event_id.clone(),
+                scope: request.scope,
+                origin_device_id: request.origin_device_id,
+                revision: 0,
+                created_at: request.now,
+                updated_at: request.now,
+            },
+            event: LocalAgentEvent {
+                event_id,
+                run_id: request.run_id,
+                event_type: LocalAgentEventType::ModelStepCompleted,
+                expected_version: run.run.version,
+                available_at: request.now,
+                status: LocalAgentEventStatus::Pending,
+                attempt_count: 0,
+                claimed_by_device_id: None,
+                claim_token: None,
+                claim_until: None,
+                causation_id: request.causation_id,
+                correlation_id: request.correlation_id,
+                bounded_payload: payload,
+                last_error: None,
+            },
+        };
+        self.result = Some(
+            repositories
+                .agent_events()
+                .put(PutRecord {
+                    record,
+                    expected_revision: None,
+                })
+                .await?,
+        );
+        Ok(())
+    }
 }
 
 const fn event_type_name(event_type: LocalAgentEventType) -> &'static str {

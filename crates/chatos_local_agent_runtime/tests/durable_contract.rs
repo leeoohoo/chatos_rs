@@ -10,12 +10,13 @@ use chatos_client_storage::{
 };
 use chatos_local_agent_protocol::{
     ContextStrategy, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
-    LocalAgentRunStatus, ModelProtocol, ModelRuntimeDescriptor, ToolEffect, ToolExecution,
-    ToolExecutionStatus,
+    LocalAgentRunStatus, ModelProtocol, ModelRuntimeDescriptor, ModelStepCompletion,
+    ModelStepResult, ToolEffect, ToolExecution, ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
-    claim_event, reduce_and_commit, AttemptLimitDisposition, EventClaimRequest, EventClaimResult,
-    ReduceAndCommitRequest, ReducerPolicy, StepEvidence,
+    claim_event, record_model_step_completion, reduce_and_commit, AttemptLimitDisposition,
+    EventClaimRequest, EventClaimResult, RecordModelStepCompletionRequest, ReduceAndCommitRequest,
+    ReducerPolicy, StepEvidence,
 };
 use chrono::{Duration, Utc};
 
@@ -161,6 +162,70 @@ async fn empty_storage() -> (tempfile::TempDir, SqliteClientStorage) {
     (directory, storage)
 }
 
+struct SeedModelRunning;
+
+#[async_trait]
+impl StorageTransaction for SeedModelRunning {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let (run, _) = seed_records();
+        let mut run = repositories
+            .agent_runs()
+            .put(PutRecord {
+                record: run,
+                expected_revision: None,
+            })
+            .await?;
+        run.run.status = LocalAgentRunStatus::ModelRunning;
+        run.run.version = 2;
+        run.run.step_seq = 1;
+        let expected_revision = run.metadata.revision;
+        repositories
+            .agent_runs()
+            .put(PutRecord {
+                record: run,
+                expected_revision: Some(expected_revision),
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn model_completion_is_durable_and_idempotent_before_reduction() {
+    let (_directory, storage) = empty_storage().await;
+    storage.transaction(&mut SeedModelRunning).await.unwrap();
+    let now = Utc::now();
+    let request = RecordModelStepCompletionRequest {
+        scope: scope(),
+        run_id: "run-1".to_string(),
+        completion: ModelStepCompletion {
+            result: ModelStepResult::Final(serde_json::json!({"text": "done"})),
+            pending_batch_id: None,
+            retry_at: None,
+        },
+        origin_device_id: "device-1".to_string(),
+        causation_id: "model-request-1".to_string(),
+        correlation_id: "conversation-1".to_string(),
+        now,
+    };
+
+    let first = record_model_step_completion(&storage, request.clone())
+        .await
+        .unwrap();
+    let repeated = record_model_step_completion(&storage, request)
+        .await
+        .unwrap();
+
+    assert_eq!(first.event.event_id, "run-1:2:model_step_completed:0");
+    assert_eq!(first, repeated);
+    assert_eq!(first.event.status, LocalAgentEventStatus::Pending);
+    assert_eq!(first.event.expected_version, 2);
+    let decoded: ModelStepCompletion = serde_json::from_value(first.event.bounded_payload).unwrap();
+    assert!(matches!(decoded.result, ModelStepResult::Final(_)));
+}
 #[tokio::test]
 async fn claim_and_reduction_commit_are_durable_and_idempotent() {
     let (_directory, storage) = storage().await;

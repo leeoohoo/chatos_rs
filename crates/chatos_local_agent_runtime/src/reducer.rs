@@ -3,7 +3,8 @@
 
 use chatos_local_agent_protocol::{
     LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
-    LocalAgentRunStatus, ModelStepResult, ProtocolError, MAX_BOUNDED_JSON_BYTES,
+    LocalAgentRunStatus, ModelStepCompletion, ModelStepResult, ProtocolError,
+    MAX_BOUNDED_JSON_BYTES,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -30,6 +31,16 @@ pub enum StepEvidence {
     ToolBatch {
         outcome_unknown: bool,
     },
+}
+
+impl From<ModelStepCompletion> for StepEvidence {
+    fn from(completion: ModelStepCompletion) -> Self {
+        Self::Model {
+            result: completion.result,
+            pending_batch_id: completion.pending_batch_id,
+            retry_at: completion.retry_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
