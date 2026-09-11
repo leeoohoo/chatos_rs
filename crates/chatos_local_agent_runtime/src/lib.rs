@@ -6,7 +6,9 @@
 //! database by itself.
 
 mod context;
+mod digest;
 mod durable;
+mod memory_sync;
 mod model_gateway;
 mod model_gateway_client;
 mod model_input_token_guard;
@@ -19,6 +21,7 @@ mod tool_runtime;
 
 pub use context::*;
 pub use durable::*;
+pub use memory_sync::*;
 pub use model_gateway::*;
 pub use model_gateway_client::*;
 pub use model_input_token_guard::*;
