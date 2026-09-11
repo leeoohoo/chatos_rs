@@ -10,12 +10,13 @@ use chatos_local_agent_protocol::{
     ModelRuntimeDescriptor, ModelStepResult,
 };
 use chatos_local_agent_runtime::{
-    LocalAgentProfile, LocalAgentProfileStep, MemoryEngineContextAdapter, MemoryEngineContextApi,
-    MemoryEngineContextScope, ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError,
-    ModelGatewayOutput, ModelStepContext, ModelStepExecutorError, ProviderNativeContextWindow,
-    SingleModelStepExecutor,
+    prepare_model_step_persistence, ExecutedModelStep, LocalAgentProfile, LocalAgentProfileStep,
+    MemoryEngineContextAdapter, MemoryEngineContextApi, MemoryEngineContextScope,
+    ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError, ModelGatewayOutput,
+    ModelStepContext, ModelStepExecutorError, ModelStepPersistenceError,
+    ProviderNativeContextWindow, SingleModelStepExecutor,
 };
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use memory_engine_sdk::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextResponse,
     RunThreadActiveSummaryResponse, SdkComposeContextRequest,
@@ -242,6 +243,84 @@ async fn summary_without_token_improvement_blocks_model_io() {
         }
     );
     assert!(gateway.requests.lock().await.is_empty());
+}
+
+#[test]
+fn executed_model_output_gets_stable_completion_and_message_identities() {
+    let now = Utc::now();
+    let executed = ExecutedModelStep {
+        result: ModelStepResult::Final(json!({"text": "done"})),
+        output: Some(completed_output(Vec::new())),
+        token_assessments: Vec::new(),
+        provider_context_commit: None,
+    };
+    let first = prepare_model_step_persistence(
+        &run(ContextStrategy::ProviderNative),
+        "model-request-1",
+        "turn-1",
+        executed.clone(),
+        None,
+        now,
+    )
+    .unwrap();
+    let repeated = prepare_model_step_persistence(
+        &run(ContextStrategy::ProviderNative),
+        "model-request-1",
+        "turn-1",
+        executed,
+        None,
+        now + Duration::seconds(1),
+    )
+    .unwrap();
+    assert_eq!(first, repeated);
+    assert!(first.completion.pending_batch_id.is_none());
+    let message = first.assistant_message.unwrap();
+    assert!(message.record_id.starts_with("assistant-model-output:"));
+    assert_eq!(message.turn_id, "turn-1");
+    assert_eq!(message.content.as_deref(), Some("done"));
+    assert_eq!(message.response_id.as_deref(), Some("response-1"));
+}
+
+#[test]
+fn tool_and_retry_metadata_are_derived_once_by_the_runtime() {
+    let now = Utc::now();
+    let mut tool_output = completed_output(Vec::new());
+    tool_output.content.clear();
+    let tool = prepare_model_step_persistence(
+        &run(ContextStrategy::ProviderNative),
+        "model-request-2",
+        "turn-2",
+        ExecutedModelStep {
+            result: ModelStepResult::ToolCommand(json!({"calls": [{"call_id": "call-1"}]})),
+            output: Some(tool_output),
+            token_assessments: Vec::new(),
+            provider_context_commit: None,
+        },
+        None,
+        now,
+    )
+    .unwrap();
+    assert!(tool.completion.pending_batch_id.is_some());
+    assert!(tool.assistant_message.is_none());
+
+    let retry_result = ExecutedModelStep {
+        result: ModelStepResult::Retry(json!({"reason": "temporary"})),
+        output: Some(completed_output(Vec::new())),
+        token_assessments: Vec::new(),
+        provider_context_commit: None,
+    };
+    assert_eq!(
+        prepare_model_step_persistence(
+            &run(ContextStrategy::ProviderNative),
+            "model-request-3",
+            "turn-3",
+            retry_result,
+            None,
+            now,
+        )
+        .unwrap_err(),
+        ModelStepPersistenceError::InvalidRetryDeadline
+    );
 }
 
 struct MockMemoryApi {

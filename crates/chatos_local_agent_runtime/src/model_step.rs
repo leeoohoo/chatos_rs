@@ -5,18 +5,19 @@ use std::sync::Arc;
 
 use chatos_local_agent_protocol::{
     ContextStrategy, LocalAgentRun, LocalAgentRunStatus, ModelGatewayParameters,
-    ModelGatewayRequest, ModelGatewayTerminalStatus, ModelStepResult, MAX_BOUNDED_JSON_BYTES,
-    MAX_MODEL_GATEWAY_JSON_BYTES,
+    ModelGatewayRequest, ModelGatewayTerminalStatus, ModelStepCompletion, ModelStepResult,
+    MAX_BOUNDED_JSON_BYTES, MAX_MODEL_GATEWAY_JSON_BYTES,
 };
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    guard_model_input, MemoryEngineContextAdapter, MemoryEngineContextError,
-    MemoryEngineContextScope, ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError,
-    ModelGatewayOutput, ModelInputTokenAction, ModelInputTokenAssessment,
-    ModelInputTokenGuardError, ProviderNativeContextCommit, ProviderNativeContextError,
-    ProviderNativeContextWindow,
+    digest::stable_digest_id, guard_model_input, CompletedAssistantMessage,
+    MemoryEngineContextAdapter, MemoryEngineContextError, MemoryEngineContextScope,
+    ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError, ModelGatewayOutput,
+    ModelInputTokenAction, ModelInputTokenAssessment, ModelInputTokenGuardError,
+    ProviderNativeContextCommit, ProviderNativeContextError, ProviderNativeContextWindow,
 };
 
 const MAX_MEMORY_SUMMARY_ATTEMPTS: u8 = 8;
@@ -105,6 +106,96 @@ pub struct ExecutedModelStep {
     pub output: Option<ModelGatewayOutput>,
     pub token_assessments: Vec<ModelInputTokenAssessment>,
     pub provider_context_commit: Option<ProviderNativeContextCommit>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedModelStepPersistence {
+    pub completion: ModelStepCompletion,
+    pub assistant_message: Option<CompletedAssistantMessage>,
+    pub provider_context_commit: Option<ProviderNativeContextCommit>,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum ModelStepPersistenceError {
+    #[error("model request and turn identifiers must not be empty")]
+    InvalidIdentity,
+    #[error("retry model result requires exactly one future retry deadline")]
+    InvalidRetryDeadline,
+    #[error("model result could not be represented as semantic JSON")]
+    InvalidSemanticResult,
+}
+
+/// Converts one executed model request into stable persistence artifacts. The
+/// caller still seals provider-native items before committing them, but batch
+/// and assistant record identities are decided once here rather than by each
+/// business Profile or native client.
+pub fn prepare_model_step_persistence(
+    run: &LocalAgentRun,
+    request_event_id: &str,
+    turn_id: &str,
+    executed: ExecutedModelStep,
+    retry_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Result<PreparedModelStepPersistence, ModelStepPersistenceError> {
+    if request_event_id.trim().is_empty() || turn_id.trim().is_empty() {
+        return Err(ModelStepPersistenceError::InvalidIdentity);
+    }
+    let retry_at = match (&executed.result, retry_at) {
+        (ModelStepResult::Retry(_), Some(deadline)) if deadline > now => Some(deadline),
+        (ModelStepResult::Retry(_), _) | (_, Some(_)) => {
+            return Err(ModelStepPersistenceError::InvalidRetryDeadline);
+        }
+        (_, None) => None,
+    };
+    let pending_batch_id = matches!(&executed.result, ModelStepResult::ToolCommand(_)).then(|| {
+        stable_digest_id(
+            "tool-batch",
+            &[run.owner_user_id.as_str(), request_event_id],
+        )
+    });
+    let assistant_message = match executed
+        .output
+        .as_ref()
+        .filter(|output| output.terminal.status == ModelGatewayTerminalStatus::Completed)
+    {
+        Some(output) => {
+            let content = (!output.content.trim().is_empty()).then(|| output.content.clone());
+            let reasoning = (!output.reasoning.trim().is_empty()).then(|| output.reasoning.clone());
+            let structured_payload = if matches!(&executed.result, ModelStepResult::ToolCommand(_))
+            {
+                None
+            } else {
+                Some(
+                    serde_json::to_value(&executed.result)
+                        .map_err(|_| ModelStepPersistenceError::InvalidSemanticResult)?,
+                )
+            };
+            (content.is_some() || reasoning.is_some() || structured_payload.is_some()).then(|| {
+                CompletedAssistantMessage {
+                    record_id: stable_digest_id(
+                        "assistant-model-output",
+                        &[run.owner_user_id.as_str(), request_event_id],
+                    ),
+                    turn_id: turn_id.to_string(),
+                    content,
+                    reasoning,
+                    structured_payload,
+                    response_id: output.terminal.response_id.clone(),
+                    message_source: format!("{}_model", run.profile_key),
+                }
+            })
+        }
+        None => None,
+    };
+    Ok(PreparedModelStepPersistence {
+        completion: ModelStepCompletion {
+            result: executed.result,
+            pending_batch_id,
+            retry_at,
+        },
+        assistant_message,
+        provider_context_commit: executed.provider_context_commit,
+    })
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
