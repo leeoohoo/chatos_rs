@@ -87,7 +87,7 @@ pub fn build_responses_request_payload(
     payload
 }
 
-pub(crate) fn responses_input_token_count_payload(mut payload: Value) -> Value {
+pub fn responses_input_token_count_payload(mut payload: Value) -> Value {
     let Some(object) = payload.as_object_mut() else {
         return payload;
     };

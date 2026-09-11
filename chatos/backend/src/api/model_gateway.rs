@@ -13,14 +13,15 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chatos_ai_runtime::request_payload::{
     build_chat_completions_request_payload, build_responses_request_payload,
+    responses_input_token_count_payload,
 };
 use chatos_ai_runtime::{
     AiRequestHandler, AiRequestOptions, AiResponse, AiTransport, StreamCallbacks,
 };
 use chatos_local_agent_protocol::{
     ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
-    ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelProtocol, ModelRuntimeDescriptor,
-    MAX_MODEL_GATEWAY_JSON_BYTES,
+    ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
+    ModelRuntimeDescriptor, MAX_MODEL_GATEWAY_JSON_BYTES,
 };
 use futures::Stream;
 use serde_json::{json, Value};
@@ -41,7 +42,78 @@ pub fn router() -> Router {
             "/api/model-gateway/descriptors/{model_config_id}",
             get(get_model_runtime_descriptor),
         )
+        .route(
+            "/api/model-gateway/input-tokens",
+            post(count_model_input_tokens),
+        )
         .route("/api/model-gateway/stream", post(stream_model_request))
+}
+
+async fn count_model_input_tokens(
+    auth: AuthUser,
+    Json(request): Json<ModelGatewayRequest>,
+) -> ApiResult<ModelGatewayTokenCount> {
+    request.validate().map_err(|error| {
+        warn!(error = %error, "model_gateway.input_tokens.invalid_request");
+        api_error(StatusCode::BAD_REQUEST, error.to_string())
+    })?;
+    let runtime =
+        load_runtime_for_authenticated_user(&auth, request.model_config_id.as_str()).await?;
+    if runtime.revision != request.model_config_revision {
+        return Err(api_error(
+            StatusCode::CONFLICT,
+            "model configuration revision does not match the frozen run",
+        ));
+    }
+    let descriptor = descriptor_from_runtime(&runtime)
+        .map_err(|detail| api_error(StatusCode::UNPROCESSABLE_ENTITY, detail))?;
+    request
+        .validate_against(&descriptor)
+        .map_err(|error| api_error(StatusCode::UNPROCESSABLE_ENTITY, error.to_string()))?;
+    validate_gateway_parameter_policy(&request, &runtime)
+        .map_err(|detail| api_error(StatusCode::UNPROCESSABLE_ENTITY, detail))?;
+    if !descriptor.supports_input_token_count || descriptor.protocol != ModelProtocol::Responses {
+        return Err(api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "model configuration does not support exact input token counting",
+        ));
+    }
+
+    let payload = responses_input_token_count_payload(build_provider_payload(&request, &runtime));
+    let input_tokens = AiRequestHandler::new()
+        .count_responses_input_tokens(
+            runtime.base_url.as_str(),
+            runtime.api_key.as_str(),
+            payload,
+            None,
+        )
+        .await
+        .map_err(|error| {
+            warn!(model_config_id = request.model_config_id, error = %error, "model_gateway.input_tokens.provider_failed");
+            api_error(StatusCode::BAD_GATEWAY, "provider input token count failed")
+        })?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "provider does not implement its configured input token count capability",
+            )
+        })?;
+    let input_tokens = u64::try_from(input_tokens).map_err(|_| {
+        api_error(
+            StatusCode::BAD_GATEWAY,
+            "provider input token count exceeds the supported range",
+        )
+    })?;
+    let response = ModelGatewayTokenCount {
+        request_id: request.request_id.clone(),
+        model_config_id: request.model_config_id.clone(),
+        model_config_revision: request.model_config_revision,
+        input_tokens,
+    };
+    response
+        .validate_against(&request)
+        .map_err(|error| api_error(StatusCode::BAD_GATEWAY, error.to_string()))?;
+    Ok(Json(response))
 }
 
 async fn get_model_runtime_descriptor(

@@ -118,6 +118,36 @@ pub struct ModelGatewayRequest {
     pub parameters: ModelGatewayParameters,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelGatewayTokenCount {
+    pub request_id: String,
+    pub model_config_id: String,
+    pub model_config_revision: u64,
+    pub input_tokens: u64,
+}
+
+impl ModelGatewayTokenCount {
+    pub fn validate_against(&self, request: &ModelGatewayRequest) -> Result<(), ProtocolError> {
+        require_identifier("request_id", &self.request_id)?;
+        require_identifier("model_config_id", &self.model_config_id)?;
+        if self.model_config_revision == 0 || self.input_tokens == 0 {
+            return Err(ProtocolError::InvalidState {
+                reason: "token count revision and input tokens must be positive",
+            });
+        }
+        if self.request_id != request.request_id
+            || self.model_config_id != request.model_config_id
+            || self.model_config_revision != request.model_config_revision
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "token count response does not match the frozen request",
+            });
+        }
+        Ok(())
+    }
+}
+
 impl ModelGatewayRequest {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         require_identifier("request_id", &self.request_id)?;

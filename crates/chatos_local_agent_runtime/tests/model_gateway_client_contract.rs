@@ -12,7 +12,7 @@ use axum::{Json, Router};
 use chatos_local_agent_protocol::{
     ContextStrategy, ModelGatewayParameters, ModelGatewayRequest, ModelGatewayStreamEnvelope,
     ModelGatewayStreamEvent, ModelGatewayTerminal, ModelGatewayTerminalSource,
-    ModelGatewayTerminalStatus, ModelProtocol, ModelRuntimeDescriptor,
+    ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol, ModelRuntimeDescriptor,
 };
 use chatos_local_agent_runtime::{
     HttpModelGatewayClient, ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError,
@@ -361,4 +361,83 @@ async fn cancellation_interrupts_a_pending_gateway_request() {
     server.abort();
     assert_eq!(error, ModelGatewayClientError::Cancelled);
     assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+async fn input_token_count(
+    State(hits): State<Arc<AtomicUsize>>,
+    headers: HeaderMap,
+    Json(received): Json<ModelGatewayRequest>,
+) -> Json<ModelGatewayTokenCount> {
+    hits.fetch_add(1, Ordering::SeqCst);
+    assert_eq!(received, request());
+    assert_eq!(
+        headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer user-token")
+    );
+    Json(ModelGatewayTokenCount {
+        request_id: received.request_id,
+        model_config_id: received.model_config_id,
+        model_config_revision: received.model_config_revision,
+        input_tokens: 12_345,
+    })
+}
+
+#[tokio::test]
+async fn exact_token_count_is_bound_to_the_frozen_request() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let (base_url, server) = start_server(
+        Router::new()
+            .route("/api/model-gateway/input-tokens", post(input_token_count))
+            .with_state(Arc::clone(&hits)),
+    )
+    .await;
+    let client = HttpModelGatewayClient::new(base_url.as_str()).unwrap();
+
+    let count = client
+        .count_input_tokens(
+            "user-token",
+            &descriptor(),
+            &request(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("token count");
+    server.abort();
+
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert_eq!(count.input_tokens, 12_345);
+    assert_eq!(count.request_id, "request-1");
+}
+
+#[tokio::test]
+async fn token_count_capability_is_checked_before_network_io() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let (base_url, server) = start_server(
+        Router::new()
+            .route("/api/model-gateway/input-tokens", post(input_token_count))
+            .with_state(Arc::clone(&hits)),
+    )
+    .await;
+    let client = HttpModelGatewayClient::new(base_url.as_str()).unwrap();
+    let mut unsupported = descriptor();
+    unsupported.supports_input_token_count = false;
+
+    let error = client
+        .count_input_tokens(
+            "user-token",
+            &unsupported,
+            &request(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("unsupported exact count");
+    server.abort();
+
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        error,
+        ModelGatewayClientError::InvalidConfiguration(_)
+    ));
 }

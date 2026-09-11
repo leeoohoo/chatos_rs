@@ -7,7 +7,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent,
-    ModelRuntimeDescriptor, MAX_MODEL_GATEWAY_JSON_BYTES, MAX_MODEL_GATEWAY_STREAM_BYTES,
+    ModelGatewayTokenCount, ModelRuntimeDescriptor, MAX_MODEL_GATEWAY_JSON_BYTES,
+    MAX_MODEL_GATEWAY_STREAM_BYTES,
 };
 use chatos_service_runtime::{
     classify_http_request_error, consume_sse_json_stream_with_progress_timeout,
@@ -70,6 +71,14 @@ pub trait ModelGatewayClient: Send + Sync {
         callbacks: ModelGatewayCallbacks,
         cancellation: CancellationToken,
     ) -> Result<ModelGatewayOutput, ModelGatewayClientError>;
+
+    async fn count_input_tokens(
+        &self,
+        access_token: &str,
+        descriptor: &ModelRuntimeDescriptor,
+        request: &ModelGatewayRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ModelGatewayTokenCount, ModelGatewayClientError>;
 }
 
 #[derive(Clone)]
@@ -332,5 +341,44 @@ impl ModelGatewayClient for HttpModelGatewayClient {
             return Err(ModelGatewayClientError::MalformedStreamJson);
         }
         accumulator.finish().map_err(Into::into)
+    }
+
+    async fn count_input_tokens(
+        &self,
+        access_token: &str,
+        descriptor: &ModelRuntimeDescriptor,
+        request: &ModelGatewayRequest,
+        cancellation: CancellationToken,
+    ) -> Result<ModelGatewayTokenCount, ModelGatewayClientError> {
+        let access_token = Self::bearer_token(access_token)?;
+        request
+            .validate_against(descriptor)
+            .map_err(|error| ModelGatewayClientError::InvalidConfiguration(error.to_string()))?;
+        if !descriptor.supports_input_token_count {
+            return Err(ModelGatewayClientError::InvalidConfiguration(
+                "frozen model descriptor does not support exact input token counting".to_string(),
+            ));
+        }
+        let response = self
+            .send(
+                self.client
+                    .post(self.endpoint("api/model-gateway/input-tokens"))
+                    .bearer_auth(access_token)
+                    .header(header::ACCEPT, "application/json")
+                    .json(request),
+                &cancellation,
+            )
+            .await?;
+        let response = Self::require_success(response, &cancellation).await?;
+        let count: ModelGatewayTokenCount = tokio::select! {
+            _ = cancellation.cancelled() => return Err(ModelGatewayClientError::Cancelled),
+            result = read_response_json_limited(response, MAX_MODEL_GATEWAY_JSON_BYTES) => {
+                result.map_err(ModelGatewayClientError::InvalidDescriptor)?
+            },
+        };
+        count
+            .validate_against(request)
+            .map_err(|error| ModelGatewayClientError::InvalidDescriptor(error.to_string()))?;
+        Ok(count)
     }
 }

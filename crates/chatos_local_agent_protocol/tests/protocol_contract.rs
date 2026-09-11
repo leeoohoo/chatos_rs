@@ -6,9 +6,9 @@ use chatos_local_agent_protocol::{
     LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcRequest, LocalAgentRun,
     LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelGatewayParameters,
     ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
-    ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelProtocol, ModelRuntimeDescriptor,
-    ProtocolError, ProviderContextItem, ToolEffect, ToolExecution, ToolExecutionStatus,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
+    ModelRuntimeDescriptor, ProtocolError, ProviderContextItem, ToolEffect, ToolExecution,
+    ToolExecutionStatus, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chrono::Utc;
 
@@ -150,6 +150,39 @@ fn gateway_request_requires_exactly_one_configured_context_strategy() {
     ));
     request.parameters.native_compaction_threshold = None;
     request.validate_against(&memory_descriptor).unwrap();
+}
+
+#[test]
+fn token_count_response_is_bound_to_the_exact_gateway_request() {
+    let descriptor = model_descriptor();
+    let request = ModelGatewayRequest {
+        request_id: "request-1".to_string(),
+        model_config_id: descriptor.model_config_id,
+        model_config_revision: descriptor.revision,
+        protocol: descriptor.protocol,
+        input: serde_json::json!([{"role": "user", "content": "hello"}]),
+        tools: Vec::new(),
+        instructions: None,
+        parameters: ModelGatewayParameters {
+            maximum_output_tokens: 4_096,
+            reasoning_effort: None,
+            temperature: None,
+            native_compaction_threshold: Some(200_000),
+        },
+    };
+    let mut count = ModelGatewayTokenCount {
+        request_id: request.request_id.clone(),
+        model_config_id: request.model_config_id.clone(),
+        model_config_revision: request.model_config_revision,
+        input_tokens: 42,
+    };
+    count.validate_against(&request).unwrap();
+
+    count.request_id = "another-request".to_string();
+    assert!(matches!(
+        count.validate_against(&request),
+        Err(ProtocolError::InvalidState { .. })
+    ));
 }
 
 #[test]
