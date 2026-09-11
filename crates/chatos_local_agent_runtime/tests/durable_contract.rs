@@ -17,7 +17,8 @@ use chatos_local_agent_protocol::{
 use chatos_local_agent_runtime::{
     claim_event, create_local_agent_run, record_model_step_completion, reduce_and_commit,
     AttemptLimitDisposition, CreateLocalAgentRunRequest, EventClaimRequest, EventClaimResult,
-    RecordModelStepCompletionRequest, ReduceAndCommitRequest, ReducerPolicy, StepEvidence,
+    InitialRunMessage, RecordModelStepCompletionRequest, ReduceAndCommitRequest, ReducerPolicy,
+    StepEvidence,
 };
 use chrono::{Duration, Utc};
 
@@ -177,6 +178,7 @@ fn create_run_request(now: chrono::DateTime<Utc>) -> CreateLocalAgentRunRequest 
         origin_device_id: "device-1".to_string(),
         causation_id: "turn-created-1".to_string(),
         deadline_at: None,
+        initial_message: None,
         now,
     }
 }
@@ -184,6 +186,8 @@ fn create_run_request(now: chrono::DateTime<Utc>) -> CreateLocalAgentRunRequest 
 struct CountCreatedRecords {
     runs: usize,
     events: usize,
+    messages: usize,
+    outbox: usize,
 }
 
 #[async_trait]
@@ -204,6 +208,13 @@ impl StorageTransaction for CountCreatedRecords {
             .await?
             .records
             .len();
+        self.messages = repositories
+            .agent_messages()
+            .list(&query)
+            .await?
+            .records
+            .len();
+        self.outbox = repositories.sync_outbox().list(&query).await?.records.len();
         Ok(())
     }
 }
@@ -285,7 +296,12 @@ async fn run_creation_commits_start_event_and_ui_snapshot_atomically_and_idempot
     );
     assert_eq!(first.start_event.event.expected_version, 1);
 
-    let mut counts = CountCreatedRecords { runs: 0, events: 0 };
+    let mut counts = CountCreatedRecords {
+        runs: 0,
+        events: 0,
+        messages: 0,
+        outbox: 0,
+    };
     storage.transaction(&mut counts).await.unwrap();
     assert_eq!(counts.runs, 1);
     assert_eq!(counts.events, 1);
@@ -314,13 +330,55 @@ async fn stable_run_id_rejects_different_creation_identity_without_writes() {
         error,
         chatos_client_storage::StorageError::Conflict { .. }
     ));
-    let mut counts = CountCreatedRecords { runs: 0, events: 0 };
+    let mut counts = CountCreatedRecords {
+        runs: 0,
+        events: 0,
+        messages: 0,
+        outbox: 0,
+    };
     storage.transaction(&mut counts).await.unwrap();
     assert_eq!(counts.runs, 1);
     assert_eq!(counts.events, 1);
     let mut ui_events = ReadUiEvents(Vec::new());
     storage.transaction(&mut ui_events).await.unwrap();
     assert_eq!(ui_events.0.len(), 1);
+}
+
+#[tokio::test]
+async fn initial_user_message_and_memory_outbox_share_the_run_creation_transaction() {
+    let (_directory, storage) = empty_storage().await;
+    let now = Utc::now();
+    let mut request = create_run_request(now);
+    request.initial_message = Some(InitialRunMessage {
+        record_id: "message-created-1".to_string(),
+        turn_id: "turn-created-1".to_string(),
+        content: Some("Design a calm editorial homepage".to_string()),
+        structured_payload: Some(serde_json::json!({
+            "attachments": ["homepage-reference-1"]
+        })),
+        message_source: "main_chat".to_string(),
+    });
+    let first = create_local_agent_run(&storage, request.clone())
+        .await
+        .unwrap();
+    let repeated = create_local_agent_run(&storage, request).await.unwrap();
+    assert_eq!(first, repeated);
+    let message = first.initial_message.unwrap();
+    assert_eq!(message.message.message.run_id, "created-run-1");
+    assert_eq!(message.message.message.thread_id, "conversation-created-1");
+    assert_eq!(message.message.message.sequence, 1);
+    assert_eq!(message.outbox.item.record_id, "message-created-1");
+    let mut counts = CountCreatedRecords {
+        runs: 0,
+        events: 0,
+        messages: 0,
+        outbox: 0,
+    };
+    storage.transaction(&mut counts).await.unwrap();
+    assert_eq!(counts.runs, 1);
+    assert_eq!(counts.events, 1);
+    assert_eq!(counts.messages, 1);
+    assert_eq!(counts.outbox, 1);
 }
 
 #[tokio::test]

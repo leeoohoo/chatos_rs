@@ -501,6 +501,7 @@ async fn host_creates_and_schedules_a_durable_run_start() {
         capability_snapshot_ref: "capabilities-1".to_string(),
         causation_id: "created-turn-1".to_string(),
         deadline_at: None,
+        initial_message: None,
     };
     let created = host.create_run(request.clone(), now).await.unwrap();
     let repeated = host

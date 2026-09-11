@@ -16,10 +16,10 @@ use chatos_local_agent_runtime::{
     scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
     BeginToolExecutionRequest, BeginToolExecutionResult, CommittedReduction,
     CompleteToolExecutionRequest, CreateLocalAgentRunRequest, CreatedLocalAgentRun,
-    DurableScheduler, LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayClient,
-    PrepareToolBatchRequest, RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy,
-    RenewEventClaimRequest, RequestRunControl, RunControlAction, SchedulerTickRequest,
-    SchedulerTickResult, SingleModelStepExecutor, StepEvidence,
+    DurableScheduler, InitialRunMessage, LocalToolRuntime, MarkToolOutcomeUnknownRequest,
+    ModelGatewayClient, PrepareToolBatchRequest, RecoveryIssue, ReduceAndCommitRequest,
+    ReducerPolicy, RenewEventClaimRequest, RequestRunControl, RunControlAction,
+    SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor, StepEvidence,
 };
 use chrono::{DateTime, Duration, Utc};
 use tokio::sync::Mutex;
@@ -64,6 +64,7 @@ pub struct LocalAgentHostRunRequest {
     pub capability_snapshot_ref: String,
     pub causation_id: String,
     pub deadline_at: Option<DateTime<Utc>>,
+    pub initial_message: Option<InitialRunMessage>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -200,6 +201,7 @@ impl LocalAgentHost {
                 origin_device_id: self.device_id.clone(),
                 causation_id: request.causation_id,
                 deadline_at: request.deadline_at,
+                initial_message: request.initial_message,
                 now,
             },
         )

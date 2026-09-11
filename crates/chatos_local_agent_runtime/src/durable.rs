@@ -8,12 +8,17 @@ use chatos_client_storage::{
     ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRunStatus,
-    ModelRuntimeDescriptor, ModelStepCompletion, ToolExecutionStatus,
+    AgentMessage, AgentMessageRole, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType,
+    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelRuntimeDescriptor,
+    ModelStepCompletion, ToolExecutionStatus,
 };
 use chrono::{DateTime, Utc};
 use serde_json::json;
 
+use crate::memory_sync::{
+    next_semantic_message_sequence, persist_semantic_message, RecordSemanticMessageRequest,
+    RecordedSemanticMessage,
+};
 use crate::pagination::advance_cursor;
 use crate::ui_events::{
     append_pending_user_interaction, append_run_snapshot, append_tool_snapshot,
@@ -34,13 +39,24 @@ pub struct CreateLocalAgentRunRequest {
     pub origin_device_id: String,
     pub causation_id: String,
     pub deadline_at: Option<DateTime<Utc>>,
+    pub initial_message: Option<InitialRunMessage>,
     pub now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InitialRunMessage {
+    pub record_id: String,
+    pub turn_id: String,
+    pub content: Option<String>,
+    pub structured_payload: Option<serde_json::Value>,
+    pub message_source: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreatedLocalAgentRun {
     pub run_record: AgentRunStateRecord,
     pub start_event: AgentEventStateRecord,
+    pub initial_message: Option<RecordedSemanticMessage>,
 }
 
 pub async fn create_local_agent_run(
@@ -107,9 +123,18 @@ impl StorageTransaction for CreateLocalAgentRunOperation {
                     actual_revision: start_event.metadata.revision,
                 });
             }
+            let initial_message = persist_initial_run_message(
+                repositories,
+                &existing_run,
+                request.initial_message,
+                &request.origin_device_id,
+                request.now,
+            )
+            .await?;
             self.result = Some(CreatedLocalAgentRun {
                 run_record: existing_run,
                 start_event,
+                initial_message,
             });
             return Ok(());
         }
@@ -191,10 +216,19 @@ impl StorageTransaction for CreateLocalAgentRunOperation {
                 expected_revision: None,
             })
             .await?;
+        let initial_message = persist_initial_run_message(
+            repositories,
+            &run_record,
+            request.initial_message,
+            &run_record.metadata.origin_device_id,
+            request.now,
+        )
+        .await?;
         append_run_snapshot(repositories, &run_record).await?;
         self.result = Some(CreatedLocalAgentRun {
             run_record,
             start_event,
+            initial_message,
         });
         Ok(())
     }
@@ -223,7 +257,91 @@ fn validate_create_run_request(request: &CreateLocalAgentRunRequest) -> StorageR
         .validate()
         .map_err(|error| StorageError::InvalidData {
             reason: format!("model runtime snapshot is invalid: {error}"),
+        })?;
+    if let Some(message) = &request.initial_message {
+        for value in [
+            message.record_id.as_str(),
+            message.turn_id.as_str(),
+            message.message_source.as_str(),
+        ] {
+            if value.trim().is_empty() {
+                return Err(StorageError::InvalidData {
+                    reason: "initial Run message identifiers must not be empty".to_string(),
+                });
+            }
+        }
+        if message
+            .content
+            .as_deref()
+            .is_none_or(|content| content.trim().is_empty())
+            && message.structured_payload.is_none()
+        {
+            return Err(StorageError::InvalidData {
+                reason: "initial Run message must contain content or structured payload"
+                    .to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn persist_initial_run_message(
+    repositories: &mut dyn TransactionRepositories,
+    run_record: &AgentRunStateRecord,
+    initial: Option<InitialRunMessage>,
+    origin_device_id: &str,
+    now: DateTime<Utc>,
+) -> StorageResult<Option<RecordedSemanticMessage>> {
+    let Some(initial) = initial else {
+        return Ok(None);
+    };
+    let existing_identity = repositories
+        .agent_messages()
+        .get(&RecordQuery {
+            scope: run_record.metadata.scope.clone(),
+            id: initial.record_id.clone(),
         })
+        .await?
+        .map(|record| (record.message.sequence, record.message.created_at));
+    let (sequence, created_at) = match existing_identity {
+        Some(identity) => identity,
+        None => (
+            next_semantic_message_sequence(
+                repositories,
+                &run_record.metadata.scope,
+                &run_record.run.owner_entity_id,
+            )
+            .await?,
+            now,
+        ),
+    };
+    persist_semantic_message(
+        repositories,
+        RecordSemanticMessageRequest {
+            scope: run_record.metadata.scope.clone(),
+            message: AgentMessage {
+                record_id: initial.record_id,
+                run_id: run_record.run.run_id.clone(),
+                thread_id: run_record.run.owner_entity_id.clone(),
+                turn_id: initial.turn_id,
+                sequence,
+                role: AgentMessageRole::User,
+                content: initial.content,
+                reasoning: None,
+                structured_payload: initial.structured_payload,
+                tool_call_id: None,
+                response_id: None,
+                message_mode: MessageMode::Semantic,
+                message_source: initial.message_source,
+                memory_sync_status: MemorySyncStatus::Pending,
+                created_at,
+            },
+            origin_device_id: origin_device_id.to_string(),
+            now,
+        },
+    )
+    .await
+    .map(Some)
 }
 
 fn validate_existing_created_run(

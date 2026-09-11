@@ -146,6 +146,36 @@ pub(crate) async fn persist_semantic_message(
     })
 }
 
+pub(crate) async fn next_semantic_message_sequence(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+    thread_id: &str,
+) -> StorageResult<u64> {
+    let mut cursor = None;
+    let mut maximum = 0_u64;
+    loop {
+        let page = repositories
+            .agent_messages()
+            .list(&ListQuery {
+                scope: scope.clone(),
+                cursor: cursor.clone(),
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        for record in page.records {
+            if record.message.thread_id == thread_id {
+                maximum = maximum.max(record.message.sequence);
+            }
+        }
+        if !advance_cursor(&mut cursor, page.next_cursor)? {
+            break;
+        }
+    }
+    maximum.checked_add(1).ok_or(StorageError::InvalidData {
+        reason: "message sequence overflow".to_string(),
+    })
+}
+
 async fn put_message_idempotently(
     repositories: &mut dyn TransactionRepositories,
     record: AgentMessageStateRecord,

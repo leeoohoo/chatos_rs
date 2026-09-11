@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery, PutRecord,
-    RecordMetadata, RecordQuery, RecordScope, StorageError, StorageResult, StorageTransaction,
+    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, PutRecord, RecordMetadata,
+    RecordQuery, RecordScope, StorageError, StorageResult, StorageTransaction,
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
@@ -16,8 +16,9 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 use crate::digest::stable_digest_id;
-use crate::memory_sync::{persist_semantic_message, RecordSemanticMessageRequest};
-use crate::pagination::advance_cursor;
+use crate::memory_sync::{
+    next_semantic_message_sequence, persist_semantic_message, RecordSemanticMessageRequest,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunControlAction {
@@ -186,7 +187,7 @@ impl StorageTransaction for AnswerRunInteractionOperation {
         let (sequence, message_created_at) = match existing_identity {
             Some(identity) => identity,
             None => (
-                next_message_sequence(repositories, &request.scope, &thread_id).await?,
+                next_semantic_message_sequence(repositories, &request.scope, &thread_id).await?,
                 request.now,
             ),
         };
@@ -306,36 +307,6 @@ async fn put_run_event(
             expected_revision: None,
         })
         .await
-}
-
-async fn next_message_sequence(
-    repositories: &mut dyn TransactionRepositories,
-    scope: &RecordScope,
-    thread_id: &str,
-) -> StorageResult<u64> {
-    let mut cursor = None;
-    let mut maximum = 0_u64;
-    loop {
-        let page = repositories
-            .agent_messages()
-            .list(&ListQuery {
-                scope: scope.clone(),
-                cursor: cursor.clone(),
-                limit: ListQuery::MAX_LIMIT,
-            })
-            .await?;
-        for record in page.records {
-            if record.message.thread_id == thread_id {
-                maximum = maximum.max(record.message.sequence);
-            }
-        }
-        if !advance_cursor(&mut cursor, page.next_cursor)? {
-            break;
-        }
-    }
-    maximum.checked_add(1).ok_or(StorageError::InvalidData {
-        reason: "message sequence overflow".to_string(),
-    })
 }
 
 fn require_matching_interaction(
