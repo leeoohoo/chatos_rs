@@ -22,6 +22,7 @@ members = [
   "crates/chatos_config_sdk",
   "crates/chatos_plugin_management_sdk",
   "crates/chatos_local_workspace",
+  "crates/chatos_client_storage",
   "crates/chatos_queue_observability",
   "config_center_service/backend",
   "task_runner_service/backend",

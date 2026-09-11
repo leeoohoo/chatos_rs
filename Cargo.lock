@@ -830,6 +830,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_client_storage"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "zeroize",
+]
+
+[[package]]
 name = "chatos_cloud_agent_protocol"
 version = "0.1.0"
 dependencies = [
