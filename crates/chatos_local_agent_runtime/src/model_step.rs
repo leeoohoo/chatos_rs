@@ -84,7 +84,7 @@ pub trait LocalAgentProfile: Send + Sync {
         run: &LocalAgentRun,
     ) -> Result<LocalAgentProfileStep, String>;
 
-    fn interpret_completed_output(
+    async fn interpret_completed_output(
         &self,
         run: &LocalAgentRun,
         output: &ModelGatewayOutput,
@@ -224,6 +224,7 @@ impl SingleModelStepExecutor {
                         (
                             profile
                                 .interpret_completed_output(run, &output)
+                                .await
                                 .map_err(ModelStepExecutorError::Profile)?,
                             Some(commit),
                         )
@@ -301,6 +302,7 @@ impl SingleModelStepExecutor {
                         let result = match output.terminal.status {
                             ModelGatewayTerminalStatus::Completed => profile
                                 .interpret_completed_output(run, &output)
+                                .await
                                 .map_err(ModelStepExecutorError::Profile)?,
                             ModelGatewayTerminalStatus::Incomplete
                             | ModelGatewayTerminalStatus::Failed => {

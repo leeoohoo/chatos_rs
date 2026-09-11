@@ -861,6 +861,8 @@ dependencies = [
  "async-trait",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
+ "chrono",
+ "serde",
  "serde_json",
  "tokio",
 ]

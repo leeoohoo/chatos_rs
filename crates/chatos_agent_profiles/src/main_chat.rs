@@ -4,9 +4,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chatos_local_agent_protocol::{ContextStrategy, LocalAgentRun, ModelStepResult};
+use chatos_local_agent_protocol::{LocalAgentRun, ModelStepResult};
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileStep, ModelGatewayOutput};
 use serde_json::{json, Value};
+
+use crate::shared::{parse_tool_arguments, validate_context_strategy};
 
 pub const MAIN_CHAT_PROFILE_KEY: &str = "main_chat";
 pub const MAIN_CHAT_ASK_USER_TOOL: &str = "ask_user";
@@ -52,7 +54,12 @@ impl LocalAgentProfile for MainChatAgentProfile {
         run: &LocalAgentRun,
     ) -> Result<LocalAgentProfileStep, String> {
         let context = self.context_provider.load_step_context(run).await?;
-        validate_context_strategy(run.context_strategy, &context)?;
+        validate_context_strategy(
+            run,
+            context.native_compaction_threshold,
+            context.memory_engine_active_threshold,
+            context.maximum_summary_attempts,
+        )?;
         let mut sections = vec![context.base_system_prompt, main_chat_boundary_prompt()];
         sections.extend(
             [
@@ -81,7 +88,7 @@ impl LocalAgentProfile for MainChatAgentProfile {
         })
     }
 
-    fn interpret_completed_output(
+    async fn interpret_completed_output(
         &self,
         _run: &LocalAgentRun,
         output: &ModelGatewayOutput,
@@ -109,7 +116,7 @@ fn interpret_main_chat_output(output: &ModelGatewayOutput) -> Result<ModelStepRe
     let mut ask_question = None;
     for call in calls {
         let name = call.get("name").and_then(Value::as_str).unwrap_or_default();
-        let arguments = parse_arguments(call)?;
+        let arguments = parse_tool_arguments(call)?;
         match name {
             MAIN_CHAT_ASK_USER_TOOL => {
                 if ask_question.is_some() || !task_calls.is_empty() {
@@ -134,29 +141,6 @@ fn interpret_main_chat_output(output: &ModelGatewayOutput) -> Result<ModelStepRe
         Ok(ModelStepResult::AskUser(question))
     } else {
         Ok(ModelStepResult::ToolCommand(json!({"calls": task_calls})))
-    }
-}
-
-fn validate_context_strategy(
-    strategy: ContextStrategy,
-    context: &MainChatStepContext,
-) -> Result<(), String> {
-    match strategy {
-        ContextStrategy::ProviderNative
-            if context.native_compaction_threshold.is_some()
-                && context.memory_engine_active_threshold.is_none()
-                && context.maximum_summary_attempts == 0 =>
-        {
-            Ok(())
-        }
-        ContextStrategy::MemoryEngine
-            if context.native_compaction_threshold.is_none()
-                && context.memory_engine_active_threshold.is_some()
-                && context.maximum_summary_attempts > 0 =>
-        {
-            Ok(())
-        }
-        _ => Err("main chat context settings do not match the frozen strategy".to_string()),
     }
 }
 
@@ -192,16 +176,6 @@ fn main_chat_tools() -> Vec<Value> {
             }
         }),
     ]
-}
-
-fn parse_arguments(call: &Value) -> Result<Value, String> {
-    let arguments = call.get("arguments").cloned().unwrap_or(Value::Null);
-    match arguments {
-        Value::String(text) => serde_json::from_str(&text)
-            .map_err(|error| format!("tool arguments are invalid JSON: {error}")),
-        Value::Object(_) => Ok(arguments),
-        _ => Err("tool arguments must be a JSON object".to_string()),
-    }
 }
 
 #[cfg(test)]

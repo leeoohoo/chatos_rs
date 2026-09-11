@@ -27,7 +27,6 @@ use tokio_util::sync::CancellationToken;
 struct TestProfile;
 
 #[async_trait]
-#[async_trait]
 impl LocalAgentProfile for TestProfile {
     fn profile_key(&self) -> &'static str {
         "test_profile"
@@ -60,7 +59,7 @@ impl LocalAgentProfile for TestProfile {
         })
     }
 
-    fn interpret_completed_output(
+    async fn interpret_completed_output(
         &self,
         _run: &LocalAgentRun,
         output: &ModelGatewayOutput,

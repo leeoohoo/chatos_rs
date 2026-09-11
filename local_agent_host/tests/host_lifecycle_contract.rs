@@ -25,7 +25,6 @@ use tokio_util::sync::CancellationToken;
 struct Profile;
 
 #[async_trait]
-#[async_trait]
 impl LocalAgentProfile for Profile {
     fn profile_key(&self) -> &'static str {
         "main_chat"
@@ -38,7 +37,7 @@ impl LocalAgentProfile for Profile {
         unreachable!("not executed by lifecycle test")
     }
 
-    fn interpret_completed_output(
+    async fn interpret_completed_output(
         &self,
         _run: &LocalAgentRun,
         _output: &ModelGatewayOutput,
