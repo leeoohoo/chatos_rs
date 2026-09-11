@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, AgentUiEventCursorQuery, ClientStorage, PutRecord,
-    RecordMetadata, RecordQuery, RecordScope, SecretReference, SqliteBootstrapProfile,
+    AgentEventStateRecord, AgentRunStateRecord, AgentUiEventCursorQuery, ClientStorage, ListQuery,
+    PutRecord, RecordMetadata, RecordQuery, RecordScope, SecretReference, SqliteBootstrapProfile,
     SqliteClientStorage, StorageEncryptionKey, StorageResult, StorageTransaction,
     ToolExecutionStateRecord, TransactionRepositories,
 };
@@ -15,9 +15,9 @@ use chatos_local_agent_protocol::{
     ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
-    claim_event, record_model_step_completion, reduce_and_commit, AttemptLimitDisposition,
-    EventClaimRequest, EventClaimResult, RecordModelStepCompletionRequest, ReduceAndCommitRequest,
-    ReducerPolicy, StepEvidence,
+    claim_event, create_local_agent_run, record_model_step_completion, reduce_and_commit,
+    AttemptLimitDisposition, CreateLocalAgentRunRequest, EventClaimRequest, EventClaimResult,
+    RecordModelStepCompletionRequest, ReduceAndCommitRequest, ReducerPolicy, StepEvidence,
 };
 use chrono::{Duration, Utc};
 
@@ -163,6 +163,51 @@ async fn empty_storage() -> (tempfile::TempDir, SqliteClientStorage) {
     (directory, storage)
 }
 
+fn create_run_request(now: chrono::DateTime<Utc>) -> CreateLocalAgentRunRequest {
+    CreateLocalAgentRunRequest {
+        scope: scope(),
+        run_id: "created-run-1".to_string(),
+        profile_key: "main_chat".to_string(),
+        owner_entity_type: "conversation".to_string(),
+        owner_entity_id: "conversation-created-1".to_string(),
+        project_id: Some("project-1".to_string()),
+        model_runtime_snapshot: model_descriptor(),
+        prompt_revision: "prompt-1".to_string(),
+        capability_snapshot_ref: "capabilities-1".to_string(),
+        origin_device_id: "device-1".to_string(),
+        causation_id: "turn-created-1".to_string(),
+        deadline_at: None,
+        now,
+    }
+}
+
+struct CountCreatedRecords {
+    runs: usize,
+    events: usize,
+}
+
+#[async_trait]
+impl StorageTransaction for CountCreatedRecords {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let query = ListQuery {
+            scope: scope(),
+            cursor: None,
+            limit: 100,
+        };
+        self.runs = repositories.agent_runs().list(&query).await?.records.len();
+        self.events = repositories
+            .agent_events()
+            .list(&query)
+            .await?
+            .records
+            .len();
+        Ok(())
+    }
+}
+
 struct ReadUiEvents(Vec<LocalAgentUiEvent>);
 
 #[async_trait]
@@ -216,6 +261,66 @@ impl StorageTransaction for SeedModelRunning {
             .await?;
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn run_creation_commits_start_event_and_ui_snapshot_atomically_and_idempotently() {
+    let (_directory, storage) = empty_storage().await;
+    let now = Utc::now();
+    let request = create_run_request(now);
+    let first = create_local_agent_run(&storage, request.clone())
+        .await
+        .unwrap();
+    let mut repeated_request = request;
+    repeated_request.now = now + Duration::seconds(1);
+    let repeated = create_local_agent_run(&storage, repeated_request)
+        .await
+        .unwrap();
+    assert_eq!(first, repeated);
+    assert_eq!(first.run_record.run.status, LocalAgentRunStatus::Queued);
+    assert_eq!(first.run_record.run.version, 1);
+    assert_eq!(
+        first.start_event.event.event_type,
+        LocalAgentEventType::RunStarted
+    );
+    assert_eq!(first.start_event.event.expected_version, 1);
+
+    let mut counts = CountCreatedRecords { runs: 0, events: 0 };
+    storage.transaction(&mut counts).await.unwrap();
+    assert_eq!(counts.runs, 1);
+    assert_eq!(counts.events, 1);
+    let mut ui_events = ReadUiEvents(Vec::new());
+    storage.transaction(&mut ui_events).await.unwrap();
+    assert_eq!(ui_events.0.len(), 1);
+    let LocalAgentUiEventPayload::RunSnapshot(snapshot) = &ui_events.0[0].event else {
+        panic!("run creation must publish a Run snapshot");
+    };
+    assert_eq!(snapshot.run_id, "created-run-1");
+}
+
+#[tokio::test]
+async fn stable_run_id_rejects_different_creation_identity_without_writes() {
+    let (_directory, storage) = empty_storage().await;
+    let now = Utc::now();
+    create_local_agent_run(&storage, create_run_request(now))
+        .await
+        .unwrap();
+    let mut conflicting = create_run_request(now + Duration::seconds(1));
+    conflicting.project_id = Some("project-other".to_string());
+    let error = create_local_agent_run(&storage, conflicting)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        chatos_client_storage::StorageError::Conflict { .. }
+    ));
+    let mut counts = CountCreatedRecords { runs: 0, events: 0 };
+    storage.transaction(&mut counts).await.unwrap();
+    assert_eq!(counts.runs, 1);
+    assert_eq!(counts.events, 1);
+    let mut ui_events = ReadUiEvents(Vec::new());
+    storage.transaction(&mut ui_events).await.unwrap();
+    assert_eq!(ui_events.0.len(), 1);
 }
 
 #[tokio::test]

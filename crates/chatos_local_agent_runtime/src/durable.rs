@@ -9,7 +9,7 @@ use chatos_client_storage::{
 };
 use chatos_local_agent_protocol::{
     LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRunStatus,
-    ModelStepCompletion, ToolExecutionStatus,
+    ModelRuntimeDescriptor, ModelStepCompletion, ToolExecutionStatus,
 };
 use chrono::{DateTime, Utc};
 use serde_json::json;
@@ -19,6 +19,236 @@ use crate::ui_events::{
     append_pending_user_interaction, append_run_snapshot, append_tool_snapshot,
 };
 use crate::{reduce_claimed_event, ReducerPolicy, Reduction, StepEvidence};
+
+#[derive(Debug, Clone)]
+pub struct CreateLocalAgentRunRequest {
+    pub scope: RecordScope,
+    pub run_id: String,
+    pub profile_key: String,
+    pub owner_entity_type: String,
+    pub owner_entity_id: String,
+    pub project_id: Option<String>,
+    pub model_runtime_snapshot: ModelRuntimeDescriptor,
+    pub prompt_revision: String,
+    pub capability_snapshot_ref: String,
+    pub origin_device_id: String,
+    pub causation_id: String,
+    pub deadline_at: Option<DateTime<Utc>>,
+    pub now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreatedLocalAgentRun {
+    pub run_record: AgentRunStateRecord,
+    pub start_event: AgentEventStateRecord,
+}
+
+pub async fn create_local_agent_run(
+    storage: &dyn ClientStorage,
+    request: CreateLocalAgentRunRequest,
+) -> StorageResult<CreatedLocalAgentRun> {
+    validate_create_run_request(&request)?;
+    let mut operation = CreateLocalAgentRunOperation {
+        request: Some(request),
+        result: None,
+    };
+    storage.transaction(&mut operation).await?;
+    operation.result.ok_or(StorageError::Transaction {
+        reason: "local Agent Run creation returned no result".to_string(),
+    })
+}
+
+struct CreateLocalAgentRunOperation {
+    request: Option<CreateLocalAgentRunRequest>,
+    result: Option<CreatedLocalAgentRun>,
+}
+
+#[async_trait]
+impl StorageTransaction for CreateLocalAgentRunOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let request = self.request.take().ok_or(StorageError::Transaction {
+            reason: "local Agent Run creation request was already consumed".to_string(),
+        })?;
+        let start_event_id = stable_event_id(
+            request.run_id.as_str(),
+            1,
+            LocalAgentEventType::RunStarted,
+            0,
+        );
+        let run_query = RecordQuery {
+            scope: request.scope.clone(),
+            id: request.run_id.clone(),
+        };
+        let existing_run = {
+            let mut runs = repositories.agent_runs();
+            runs.get(&run_query).await?
+        };
+        if let Some(existing_run) = existing_run {
+            validate_existing_created_run(&existing_run, &request)?;
+            let start_event = repositories
+                .agent_events()
+                .get(&RecordQuery {
+                    scope: request.scope,
+                    id: start_event_id,
+                })
+                .await?
+                .ok_or_else(|| StorageError::InvalidData {
+                    reason: "existing local Agent Run has no durable start event".to_string(),
+                })?;
+            if start_event.event.run_id != existing_run.run.run_id
+                || start_event.event.event_type != LocalAgentEventType::RunStarted
+                || start_event.event.expected_version != 1
+                || start_event.event.causation_id != request.causation_id
+            {
+                return Err(StorageError::Conflict {
+                    actual_revision: start_event.metadata.revision,
+                });
+            }
+            self.result = Some(CreatedLocalAgentRun {
+                run_record: existing_run,
+                start_event,
+            });
+            return Ok(());
+        }
+
+        let run = chatos_local_agent_protocol::LocalAgentRun {
+            run_id: request.run_id.clone(),
+            profile_key: request.profile_key,
+            owner_user_id: request.scope.owner_user_id.clone(),
+            owner_entity_type: request.owner_entity_type,
+            owner_entity_id: request.owner_entity_id.clone(),
+            project_id: request.project_id,
+            status: LocalAgentRunStatus::Queued,
+            version: 1,
+            step_seq: 0,
+            iteration: 0,
+            retry_count: 0,
+            model_config_id: request.model_runtime_snapshot.model_config_id.clone(),
+            model_config_revision: request.model_runtime_snapshot.revision,
+            context_strategy: request.model_runtime_snapshot.context_strategy,
+            model_runtime_snapshot: request.model_runtime_snapshot,
+            prompt_revision: request.prompt_revision,
+            capability_snapshot_ref: request.capability_snapshot_ref,
+            pending_batch_id: None,
+            pending_interaction: None,
+            terminal_outcome: None,
+            deadline_at: request.deadline_at,
+            created_at: request.now,
+            updated_at: request.now,
+        };
+        run.validate().map_err(|error| StorageError::InvalidData {
+            reason: format!("new local Agent Run is invalid: {error}"),
+        })?;
+        let run_record = repositories
+            .agent_runs()
+            .put(PutRecord {
+                record: AgentRunStateRecord {
+                    metadata: RecordMetadata {
+                        id: request.run_id.clone(),
+                        scope: request.scope.clone(),
+                        origin_device_id: request.origin_device_id.clone(),
+                        revision: 0,
+                        created_at: request.now,
+                        updated_at: request.now,
+                    },
+                    run,
+                },
+                expected_revision: None,
+            })
+            .await?;
+        let start_event = repositories
+            .agent_events()
+            .put(PutRecord {
+                record: AgentEventStateRecord {
+                    metadata: RecordMetadata {
+                        id: start_event_id.clone(),
+                        scope: request.scope.clone(),
+                        origin_device_id: request.origin_device_id,
+                        revision: 0,
+                        created_at: request.now,
+                        updated_at: request.now,
+                    },
+                    event: LocalAgentEvent {
+                        event_id: start_event_id,
+                        run_id: request.run_id,
+                        event_type: LocalAgentEventType::RunStarted,
+                        expected_version: 1,
+                        available_at: request.now,
+                        status: LocalAgentEventStatus::Pending,
+                        attempt_count: 0,
+                        claimed_by_device_id: None,
+                        claim_token: None,
+                        claim_until: None,
+                        causation_id: request.causation_id,
+                        correlation_id: request.owner_entity_id,
+                        bounded_payload: serde_json::Value::Null,
+                        last_error: None,
+                    },
+                },
+                expected_revision: None,
+            })
+            .await?;
+        append_run_snapshot(repositories, &run_record).await?;
+        self.result = Some(CreatedLocalAgentRun {
+            run_record,
+            start_event,
+        });
+        Ok(())
+    }
+}
+
+fn validate_create_run_request(request: &CreateLocalAgentRunRequest) -> StorageResult<()> {
+    for value in [
+        request.scope.owner_user_id.as_str(),
+        request.run_id.as_str(),
+        request.profile_key.as_str(),
+        request.owner_entity_type.as_str(),
+        request.owner_entity_id.as_str(),
+        request.prompt_revision.as_str(),
+        request.capability_snapshot_ref.as_str(),
+        request.origin_device_id.as_str(),
+        request.causation_id.as_str(),
+    ] {
+        if value.trim().is_empty() {
+            return Err(StorageError::InvalidData {
+                reason: "local Agent Run creation identifiers must not be empty".to_string(),
+            });
+        }
+    }
+    request
+        .model_runtime_snapshot
+        .validate()
+        .map_err(|error| StorageError::InvalidData {
+            reason: format!("model runtime snapshot is invalid: {error}"),
+        })
+}
+
+fn validate_existing_created_run(
+    existing: &AgentRunStateRecord,
+    request: &CreateLocalAgentRunRequest,
+) -> StorageResult<()> {
+    let run = &existing.run;
+    if run.run_id == request.run_id
+        && run.profile_key == request.profile_key
+        && run.owner_user_id == request.scope.owner_user_id
+        && run.owner_entity_type == request.owner_entity_type
+        && run.owner_entity_id == request.owner_entity_id
+        && run.project_id == request.project_id
+        && run.model_runtime_snapshot == request.model_runtime_snapshot
+        && run.prompt_revision == request.prompt_revision
+        && run.capability_snapshot_ref == request.capability_snapshot_ref
+        && run.deadline_at == request.deadline_at
+    {
+        Ok(())
+    } else {
+        Err(StorageError::Conflict {
+            actual_revision: existing.metadata.revision,
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct EventClaimRequest {

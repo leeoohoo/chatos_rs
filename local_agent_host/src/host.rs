@@ -7,18 +7,19 @@ use async_trait::async_trait;
 use chatos_client_storage::{AgentEventStateRecord, ClientStorage, RecordScope, StorageError};
 use chatos_local_agent_protocol::{
     LocalAgentCommand, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
-    ModelStepCompletion,
+    ModelRuntimeDescriptor, ModelStepCompletion,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, begin_tool_execution, build_local_tool_invocation,
-    complete_tool_execution, inspect_tool_batch, mark_tool_outcome_unknown, prepare_tool_batch,
-    reduce_and_commit, renew_event_claim, request_run_control, scan_recoverable_work,
-    validate_local_tool_outcome, AnswerRunInteraction, BeginToolExecutionRequest,
-    BeginToolExecutionResult, CommittedReduction, CompleteToolExecutionRequest, DurableScheduler,
-    LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayClient, PrepareToolBatchRequest,
-    RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest,
-    RequestRunControl, RunControlAction, SchedulerTickRequest, SchedulerTickResult,
-    SingleModelStepExecutor, StepEvidence,
+    complete_tool_execution, create_local_agent_run, inspect_tool_batch, mark_tool_outcome_unknown,
+    prepare_tool_batch, reduce_and_commit, renew_event_claim, request_run_control,
+    scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
+    BeginToolExecutionRequest, BeginToolExecutionResult, CommittedReduction,
+    CompleteToolExecutionRequest, CreateLocalAgentRunRequest, CreatedLocalAgentRun,
+    DurableScheduler, LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayClient,
+    PrepareToolBatchRequest, RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy,
+    RenewEventClaimRequest, RequestRunControl, RunControlAction, SchedulerTickRequest,
+    SchedulerTickResult, SingleModelStepExecutor, StepEvidence,
 };
 use chrono::{DateTime, Duration, Utc};
 use tokio::sync::Mutex;
@@ -49,6 +50,20 @@ pub struct LocalAgentHostStartupReport {
     pub ready_event_count: usize,
     pub next_wake_at: Option<DateTime<Utc>>,
     pub recovery_issues: Vec<RecoveryIssue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalAgentHostRunRequest {
+    pub run_id: String,
+    pub profile_key: String,
+    pub owner_entity_type: String,
+    pub owner_entity_id: String,
+    pub project_id: Option<String>,
+    pub model_runtime_snapshot: ModelRuntimeDescriptor,
+    pub prompt_revision: String,
+    pub capability_snapshot_ref: String,
+    pub causation_id: String,
+    pub deadline_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -162,6 +177,35 @@ impl LocalAgentHost {
                 },
             )
             .await?)
+    }
+
+    pub async fn create_run(
+        &self,
+        request: LocalAgentHostRunRequest,
+        now: DateTime<Utc>,
+    ) -> Result<CreatedLocalAgentRun, LocalAgentHostError> {
+        self.profiles.require(&request.profile_key)?;
+        let created = create_local_agent_run(
+            self.storage.as_ref(),
+            CreateLocalAgentRunRequest {
+                scope: self.scope.clone(),
+                run_id: request.run_id,
+                profile_key: request.profile_key,
+                owner_entity_type: request.owner_entity_type,
+                owner_entity_id: request.owner_entity_id,
+                project_id: request.project_id,
+                model_runtime_snapshot: request.model_runtime_snapshot,
+                prompt_revision: request.prompt_revision,
+                capability_snapshot_ref: request.capability_snapshot_ref,
+                origin_device_id: self.device_id.clone(),
+                causation_id: request.causation_id,
+                deadline_at: request.deadline_at,
+                now,
+            },
+        )
+        .await?;
+        self.scheduler.lock().await.schedule(&created.start_event);
+        Ok(created)
     }
 
     pub async fn request_control(

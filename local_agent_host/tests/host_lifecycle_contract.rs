@@ -10,7 +10,7 @@ use chatos_client_storage::{
     StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_host::{
-    LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostPolicy,
+    LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostPolicy, LocalAgentHostRunRequest,
     LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry,
 };
 use chatos_local_agent_protocol::{
@@ -459,6 +459,64 @@ async fn host_schedules_a_durable_control_request_immediately() {
         claimed.event.event_type,
         LocalAgentEventType::PauseRequested
     );
+}
+
+#[tokio::test]
+async fn host_creates_and_schedules_a_durable_run_start() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:create-run-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([17; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    let profiles =
+        LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
+    let (host, _) = LocalAgentHost::start(
+        storage,
+        Arc::new(Gateway),
+        Arc::new(Tools),
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+    let request = LocalAgentHostRunRequest {
+        run_id: "created-run-1".to_string(),
+        profile_key: "main_chat".to_string(),
+        owner_entity_type: "conversation".to_string(),
+        owner_entity_id: "created-thread-1".to_string(),
+        project_id: Some("project-1".to_string()),
+        model_runtime_snapshot: run(now).model_runtime_snapshot,
+        prompt_revision: "prompt-1".to_string(),
+        capability_snapshot_ref: "capabilities-1".to_string(),
+        causation_id: "created-turn-1".to_string(),
+        deadline_at: None,
+    };
+    let created = host.create_run(request.clone(), now).await.unwrap();
+    let repeated = host
+        .create_run(request, now + chrono::Duration::seconds(1))
+        .await
+        .unwrap();
+    assert_eq!(created, repeated);
+    let SchedulerTickResult::Claimed(claimed) = host
+        .claim_next("created-run-claim", now + chrono::Duration::seconds(2))
+        .await
+        .unwrap()
+    else {
+        panic!("created Run start event was not scheduled");
+    };
+    assert_eq!(claimed.event.run_id, "created-run-1");
+    assert_eq!(claimed.event.event_type, LocalAgentEventType::RunStarted);
 }
 
 #[tokio::test]
