@@ -955,6 +955,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_local_agent_runtime"
+version = "0.1.0"
+dependencies = [
+ "chatos_local_agent_protocol",
+ "chrono",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "chatos_local_workspace"
 version = "0.1.0"
 dependencies = [
