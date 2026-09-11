@@ -75,10 +75,14 @@ impl LocalAgentProfileStep {
     }
 }
 
+#[async_trait::async_trait]
 pub trait LocalAgentProfile: Send + Sync {
     fn profile_key(&self) -> &'static str;
 
-    fn prepare_model_step(&self, run: &LocalAgentRun) -> Result<LocalAgentProfileStep, String>;
+    async fn prepare_model_step(
+        &self,
+        run: &LocalAgentRun,
+    ) -> Result<LocalAgentProfileStep, String>;
 
     fn interpret_completed_output(
         &self,
@@ -167,6 +171,7 @@ impl SingleModelStepExecutor {
         }
         let step = profile
             .prepare_model_step(run)
+            .await
             .map_err(ModelStepExecutorError::Profile)?;
         step.validate(run)?;
         let request_id = request_id.into();

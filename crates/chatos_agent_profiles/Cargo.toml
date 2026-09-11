@@ -1,0 +1,13 @@
+[package]
+name = "chatos_agent_profiles"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+chatos_local_agent_protocol = { path = "../chatos_local_agent_protocol" }
+chatos_local_agent_runtime = { path = "../chatos_local_agent_runtime" }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

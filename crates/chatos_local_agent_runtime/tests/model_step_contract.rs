@@ -26,12 +26,17 @@ use tokio_util::sync::CancellationToken;
 
 struct TestProfile;
 
+#[async_trait]
+#[async_trait]
 impl LocalAgentProfile for TestProfile {
     fn profile_key(&self) -> &'static str {
         "test_profile"
     }
 
-    fn prepare_model_step(&self, run: &LocalAgentRun) -> Result<LocalAgentProfileStep, String> {
+    async fn prepare_model_step(
+        &self,
+        run: &LocalAgentRun,
+    ) -> Result<LocalAgentProfileStep, String> {
         Ok(LocalAgentProfileStep {
             model_input_items: vec![json!({
                 "type": "message",

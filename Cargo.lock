@@ -855,6 +855,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_agent_profiles"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chatos_local_agent_protocol",
+ "chatos_local_agent_runtime",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "chatos_ai_runtime"
 version = "0.1.0"
 dependencies = [
