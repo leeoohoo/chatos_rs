@@ -6,7 +6,9 @@
 //! database by itself.
 
 mod durable;
+mod recovery;
 mod reducer;
 
 pub use durable::*;
+pub use recovery::*;
 pub use reducer::*;
