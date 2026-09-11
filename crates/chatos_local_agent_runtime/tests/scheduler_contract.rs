@@ -9,12 +9,28 @@ use chatos_client_storage::{
 };
 use chatos_local_agent_protocol::{
     ContextStrategy, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
-    LocalAgentRunStatus,
+    LocalAgentRunStatus, ModelProtocol, ModelRuntimeDescriptor,
 };
 use chatos_local_agent_runtime::{
     scan_recoverable_work, DurableScheduler, SchedulerTickRequest, SchedulerTickResult,
 };
 use chrono::{Duration, Utc};
+
+fn model_descriptor() -> ModelRuntimeDescriptor {
+    ModelRuntimeDescriptor {
+        model_config_id: "model-1".to_string(),
+        revision: 1,
+        provider: "openai".to_string(),
+        model: "gpt-5".to_string(),
+        protocol: ModelProtocol::Responses,
+        context_window_tokens: 400_000,
+        maximum_output_tokens: 32_000,
+        context_strategy: ContextStrategy::ProviderNative,
+        supports_streaming: true,
+        supports_native_compaction: true,
+        supports_input_token_count: true,
+    }
+}
 
 fn scope() -> RecordScope {
     RecordScope {
@@ -59,7 +75,7 @@ impl StorageTransaction for Seed {
                         retry_count: 0,
                         model_config_id: "model-1".to_string(),
                         model_config_revision: 1,
-                        model_runtime_snapshot: serde_json::json!({"provider": "openai"}),
+                        model_runtime_snapshot: model_descriptor(),
                         context_strategy: ContextStrategy::ProviderNative,
                         prompt_revision: "prompt-1".to_string(),
                         capability_snapshot_ref: "capabilities-1".to_string(),

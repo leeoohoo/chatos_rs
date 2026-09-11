@@ -9,6 +9,7 @@ mod context;
 mod event;
 mod ipc;
 mod message;
+mod model;
 mod run;
 mod tool;
 
@@ -16,12 +17,15 @@ pub use context::*;
 pub use event::*;
 pub use ipc::*;
 pub use message::*;
+pub use model::*;
 pub use run::*;
 pub use tool::*;
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 1;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 2;
 pub const MAX_BOUNDED_JSON_BYTES: usize = 64 * 1024;
 pub const MAX_ENCRYPTED_CONTEXT_BYTES: usize = 128 * 1024;
+pub const MAX_MODEL_GATEWAY_JSON_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_STREAM_DELTA_BYTES: usize = 1024 * 1024;
 
 pub(crate) fn require_identifier(field: &'static str, value: &str) -> Result<(), ProtocolError> {
     if value.trim().is_empty() {
@@ -48,14 +52,30 @@ pub(crate) fn require_bounded_json(
     field: &'static str,
     value: &serde_json::Value,
 ) -> Result<(), ProtocolError> {
+    require_json_with_limit(field, value, MAX_BOUNDED_JSON_BYTES)
+}
+
+pub(crate) fn require_json_with_limit(
+    field: &'static str,
+    value: &serde_json::Value,
+    maximum: usize,
+) -> Result<(), ProtocolError> {
+    require_serialized_with_limit(field, value, maximum)
+}
+
+pub(crate) fn require_serialized_with_limit<T: serde::Serialize>(
+    field: &'static str,
+    value: &T,
+    maximum: usize,
+) -> Result<(), ProtocolError> {
     let length = serde_json::to_vec(value)
         .map_err(|_| ProtocolError::InvalidJson { field })?
         .len();
-    if length > MAX_BOUNDED_JSON_BYTES {
+    if length > maximum {
         return Err(ProtocolError::PayloadTooLarge {
             field,
             bytes: length,
-            maximum: MAX_BOUNDED_JSON_BYTES,
+            maximum,
         });
     }
     Ok(())

@@ -4,10 +4,29 @@
 use chatos_local_agent_protocol::{
     AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentCommand, LocalAgentEvent,
     LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcRequest, LocalAgentRun,
-    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ProtocolError, ProviderContextItem,
-    ToolEffect, ToolExecution, ToolExecutionStatus, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelGatewayParameters,
+    ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
+    ModelGatewayTerminalStatus, ModelProtocol, ModelRuntimeDescriptor, ProtocolError,
+    ProviderContextItem, ToolEffect, ToolExecution, ToolExecutionStatus,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chrono::Utc;
+
+fn model_descriptor() -> ModelRuntimeDescriptor {
+    ModelRuntimeDescriptor {
+        model_config_id: "model-1".to_string(),
+        revision: 1,
+        provider: "openai".to_string(),
+        model: "gpt-5".to_string(),
+        protocol: ModelProtocol::Responses,
+        context_window_tokens: 400_000,
+        maximum_output_tokens: 32_000,
+        context_strategy: ContextStrategy::ProviderNative,
+        supports_streaming: true,
+        supports_native_compaction: true,
+        supports_input_token_count: true,
+    }
+}
 
 fn run(status: LocalAgentRunStatus) -> LocalAgentRun {
     let now = Utc::now();
@@ -25,7 +44,7 @@ fn run(status: LocalAgentRunStatus) -> LocalAgentRun {
         retry_count: 0,
         model_config_id: "model-1".to_string(),
         model_config_revision: 1,
-        model_runtime_snapshot: serde_json::json!({"provider": "openai"}),
+        model_runtime_snapshot: model_descriptor(),
         context_strategy: ContextStrategy::ProviderNative,
         prompt_revision: "prompt-1".to_string(),
         capability_snapshot_ref: "capabilities-1".to_string(),
@@ -49,6 +68,79 @@ fn terminal_runs_require_a_terminal_outcome() {
     let mut complete = run(LocalAgentRunStatus::Succeeded);
     complete.terminal_outcome = Some(serde_json::json!({"result": "done"}));
     assert!(complete.validate().is_ok());
+}
+
+#[test]
+fn run_rejects_a_descriptor_from_another_revision() {
+    let mut run = run(LocalAgentRunStatus::Queued);
+    run.model_runtime_snapshot.revision = 2;
+    assert!(matches!(
+        run.validate(),
+        Err(ProtocolError::InvalidState { .. })
+    ));
+}
+
+#[test]
+fn gateway_request_contains_no_provider_secret_or_endpoint() {
+    let descriptor = model_descriptor();
+    let request = ModelGatewayRequest {
+        request_id: "request-1".to_string(),
+        model_config_id: descriptor.model_config_id.clone(),
+        model_config_revision: descriptor.revision,
+        protocol: descriptor.protocol,
+        input: serde_json::json!([{"role": "user", "content": "hello"}]),
+        tools: Vec::new(),
+        instructions: Some("Answer clearly".to_string()),
+        parameters: ModelGatewayParameters {
+            maximum_output_tokens: 4_096,
+            reasoning_effort: Some("high".to_string()),
+            temperature: None,
+            native_compaction_threshold: Some(200_000),
+        },
+    };
+    request.validate_against(&descriptor).unwrap();
+    let encoded = serde_json::to_string(&request).unwrap();
+    assert!(!encoded.contains("api_key"));
+    assert!(!encoded.contains("base_url"));
+
+    let mut stale = request;
+    stale.model_config_revision += 1;
+    assert!(matches!(
+        stale.validate_against(&descriptor),
+        Err(ProtocolError::InvalidState { .. })
+    ));
+}
+
+#[test]
+fn gateway_terminal_keeps_official_status_usage_and_request_identity() {
+    let terminal = ModelGatewayTerminal {
+        status: ModelGatewayTerminalStatus::Incomplete,
+        response_id: Some("resp_1".to_string()),
+        provider_request_id: Some("req_1".to_string()),
+        provider_terminal_event: "response.incomplete".to_string(),
+        provider_http_status: 200,
+        usage: Some(serde_json::json!({"input_tokens": 100, "output_tokens": 20})),
+        output_items: vec![serde_json::json!({"type": "message", "id": "msg_1"})],
+        incomplete_details: Some(serde_json::json!({"reason": "max_output_tokens"})),
+        provider_error: None,
+    };
+    let envelope = ModelGatewayStreamEnvelope {
+        request_id: "request-1".to_string(),
+        sequence: 3,
+        protocol: ModelProtocol::Responses,
+        event: ModelGatewayStreamEvent::Terminal { terminal },
+    };
+    envelope.validate().unwrap();
+
+    let mut invalid = envelope;
+    let ModelGatewayStreamEvent::Terminal { terminal } = &mut invalid.event else {
+        unreachable!();
+    };
+    terminal.incomplete_details = None;
+    assert!(matches!(
+        invalid.validate(),
+        Err(ProtocolError::InvalidState { .. })
+    ));
 }
 
 #[test]

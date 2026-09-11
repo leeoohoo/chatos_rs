@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{require_bounded_json, require_identifier, ProtocolError};
+use crate::{require_bounded_json, require_identifier, ModelRuntimeDescriptor, ProtocolError};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -52,7 +52,7 @@ pub struct LocalAgentRun {
     pub retry_count: u32,
     pub model_config_id: String,
     pub model_config_revision: u64,
-    pub model_runtime_snapshot: Value,
+    pub model_runtime_snapshot: ModelRuntimeDescriptor,
     pub context_strategy: ContextStrategy,
     pub prompt_revision: String,
     pub capability_snapshot_ref: String,
@@ -89,7 +89,15 @@ impl LocalAgentRun {
                 reason: "run and model configuration revisions must be positive",
             });
         }
-        require_bounded_json("model_runtime_snapshot", &self.model_runtime_snapshot)?;
+        self.model_runtime_snapshot.validate()?;
+        if self.model_runtime_snapshot.model_config_id != self.model_config_id
+            || self.model_runtime_snapshot.revision != self.model_config_revision
+            || self.model_runtime_snapshot.context_strategy != self.context_strategy
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "run model reference does not match the frozen descriptor",
+            });
+        }
         if let Some(outcome) = &self.terminal_outcome {
             require_bounded_json("terminal_outcome", outcome)?;
         }
