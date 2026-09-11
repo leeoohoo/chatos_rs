@@ -26,6 +26,8 @@ struct AiModelConfigRequest {
     task_thinking_level: Option<String>,
     temperature: Option<f64>,
     clear_temperature: Option<bool>,
+    context_window_tokens: Option<i64>,
+    clear_context_window_tokens: Option<bool>,
     max_output_tokens: Option<i64>,
     clear_max_output_tokens: Option<bool>,
     api_key: Option<String>,
@@ -36,6 +38,8 @@ struct AiModelConfigRequest {
     supports_images: Option<bool>,
     supports_reasoning: Option<bool>,
     supports_responses: Option<bool>,
+    supports_native_compaction: Option<bool>,
+    supports_input_token_count: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

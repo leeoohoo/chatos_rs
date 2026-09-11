@@ -48,7 +48,10 @@ type ModelTaskPreferencesDraft = {
   task_usage_scenario: string;
   task_thinking_level?: string;
   temperature?: number;
+  context_window_tokens?: number;
   max_output_tokens?: number;
+  supports_native_compaction: boolean;
+  supports_input_token_count: boolean;
 };
 
 const TASK_THINKING_LEVEL_OPTIONS = [
@@ -154,8 +157,12 @@ export function ModelsPage() {
         task_thinking_level: draft.task_thinking_level || '',
         temperature: draft.temperature,
         clear_temperature: draft.temperature == null,
+        context_window_tokens: draft.context_window_tokens,
+        clear_context_window_tokens: draft.context_window_tokens == null,
         max_output_tokens: draft.max_output_tokens,
         clear_max_output_tokens: draft.max_output_tokens == null,
+        supports_native_compaction: draft.supports_native_compaction,
+        supports_input_token_count: draft.supports_input_token_count,
       }),
     onSuccess: async (result) => {
       showWarnings(result.sync_warnings);
@@ -560,6 +567,21 @@ export function ModelsPage() {
                       />
                     </Col>
                     <Col xs={24} sm={8} lg={4}>
+                      <Typography.Text type="secondary">Context Window</Typography.Text>
+                      <InputNumber
+                        value={draft.context_window_tokens}
+                        min={1}
+                        precision={0}
+                        placeholder="必须配置"
+                        style={{ width: '100%' }}
+                        onChange={(contextWindowTokens) =>
+                          updateModelTaskDraft(model.id, {
+                            context_window_tokens: contextWindowTokens ?? undefined,
+                          })
+                        }
+                      />
+                    </Col>
+                    <Col xs={24} sm={8} lg={4}>
                       <Typography.Text type="secondary">Max Tokens</Typography.Text>
                       <InputNumber
                         value={draft.max_output_tokens}
@@ -573,6 +595,35 @@ export function ModelsPage() {
                           })
                         }
                       />
+                    </Col>
+                    <Col xs={24} sm={12} lg={4}>
+                      <Space direction="vertical" size={4}>
+                        <Typography.Text type="secondary">原生上下文压缩</Typography.Text>
+                        <Switch
+                          checked={draft.supports_native_compaction}
+                          disabled={
+                            !model.supports_responses && !draft.supports_native_compaction
+                          }
+                          onChange={(supportsNativeCompaction) =>
+                            updateModelTaskDraft(model.id, {
+                              supports_native_compaction: supportsNativeCompaction,
+                            })
+                          }
+                        />
+                      </Space>
+                    </Col>
+                    <Col xs={24} sm={12} lg={4}>
+                      <Space direction="vertical" size={4}>
+                        <Typography.Text type="secondary">输入 Token 计数</Typography.Text>
+                        <Switch
+                          checked={draft.supports_input_token_count}
+                          onChange={(supportsInputTokenCount) =>
+                            updateModelTaskDraft(model.id, {
+                              supports_input_token_count: supportsInputTokenCount,
+                            })
+                          }
+                        />
+                      </Space>
                     </Col>
                   </Row>
                 </Card>
@@ -602,6 +653,9 @@ function taskPreferencesDraft(model: UserModelConfigRecord): ModelTaskPreference
     task_usage_scenario: model.task_usage_scenario || '',
     task_thinking_level: model.task_thinking_level || undefined,
     temperature: model.temperature ?? undefined,
+    context_window_tokens: model.context_window_tokens ?? undefined,
     max_output_tokens: model.max_output_tokens ?? undefined,
+    supports_native_compaction: model.supports_native_compaction,
+    supports_input_token_count: model.supports_input_token_count,
   };
 }

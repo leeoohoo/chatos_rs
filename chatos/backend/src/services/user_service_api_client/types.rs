@@ -84,6 +84,7 @@ pub struct UserServiceModelConfigRecord {
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
     pub temperature: Option<f64>,
+    pub context_window_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
     pub api_key: Option<String>,
     #[serde(default)]
@@ -98,6 +99,10 @@ pub struct UserServiceModelConfigRecord {
     pub supports_reasoning: bool,
     #[serde(default)]
     pub supports_responses: bool,
+    #[serde(default)]
+    pub supports_native_compaction: bool,
+    #[serde(default)]
+    pub supports_input_token_count: bool,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]
@@ -118,6 +123,7 @@ pub struct UserServiceInternalModelRuntimeRecord {
     pub model: String,
     pub thinking_level: Option<String>,
     pub temperature: Option<f64>,
+    pub context_window_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
     #[serde(default)]
     pub supports_images: bool,
@@ -125,6 +131,10 @@ pub struct UserServiceInternalModelRuntimeRecord {
     pub supports_reasoning: bool,
     #[serde(default)]
     pub supports_responses: bool,
+    #[serde(default)]
+    pub supports_native_compaction: bool,
+    #[serde(default)]
+    pub supports_input_token_count: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -169,6 +179,7 @@ pub struct CreateUserServiceModelConfigRequest {
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
     pub temperature: Option<f64>,
+    pub context_window_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
@@ -177,6 +188,8 @@ pub struct CreateUserServiceModelConfigRequest {
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
+    pub supports_native_compaction: Option<bool>,
+    pub supports_input_token_count: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,6 +218,8 @@ pub struct UpdateUserServiceModelConfigRequest {
     pub task_thinking_level: Option<String>,
     pub temperature: Option<f64>,
     pub clear_temperature: Option<bool>,
+    pub context_window_tokens: Option<i64>,
+    pub clear_context_window_tokens: Option<bool>,
     pub max_output_tokens: Option<i64>,
     pub clear_max_output_tokens: Option<bool>,
     pub api_key: Option<String>,
@@ -215,6 +230,8 @@ pub struct UpdateUserServiceModelConfigRequest {
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
+    pub supports_native_compaction: Option<bool>,
+    pub supports_input_token_count: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

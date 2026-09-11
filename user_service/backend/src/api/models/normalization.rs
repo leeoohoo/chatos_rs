@@ -249,6 +249,7 @@ mod tests {
             task_usage_scenario: None,
             task_thinking_level: None,
             temperature: None,
+            context_window_tokens: None,
             max_output_tokens: None,
             api_key: None,
             has_api_key: false,
@@ -258,6 +259,8 @@ mod tests {
             supports_images: false,
             supports_reasoning: false,
             supports_responses: false,
+            supports_native_compaction: false,
+            supports_input_token_count: false,
             created_at: String::new(),
             updated_at: String::new(),
         }

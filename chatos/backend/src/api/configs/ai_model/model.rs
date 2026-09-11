@@ -65,6 +65,7 @@ pub(super) fn from_user_service_model_config(
         task_usage_scenario: record.task_usage_scenario,
         task_thinking_level: record.task_thinking_level,
         temperature: record.temperature,
+        context_window_tokens: record.context_window_tokens,
         max_output_tokens: record.max_output_tokens,
         api_key: record.api_key,
         has_api_key: record.has_api_key,
@@ -74,6 +75,8 @@ pub(super) fn from_user_service_model_config(
         supports_images: record.supports_images,
         supports_reasoning: record.supports_reasoning,
         supports_responses: record.supports_responses,
+        supports_native_compaction: record.supports_native_compaction,
+        supports_input_token_count: record.supports_input_token_count,
         sync_warnings: record.sync_warnings,
         created_at: record.created_at,
         updated_at: record.updated_at,
@@ -98,6 +101,7 @@ pub(super) fn to_user_service_create_request(
         task_usage_scenario: normalize_optional_input(req.task_usage_scenario),
         task_thinking_level: normalize_optional_input(req.task_thinking_level),
         temperature: req.temperature,
+        context_window_tokens: req.context_window_tokens,
         max_output_tokens: req.max_output_tokens,
         api_key: normalize_optional_input(req.api_key),
         base_url: normalize_optional_input(req.base_url),
@@ -106,6 +110,8 @@ pub(super) fn to_user_service_create_request(
         supports_images: req.supports_images,
         supports_reasoning: req.supports_reasoning,
         supports_responses: req.supports_responses,
+        supports_native_compaction: req.supports_native_compaction,
+        supports_input_token_count: req.supports_input_token_count,
     }
 }
 
@@ -122,6 +128,8 @@ pub(super) fn to_user_service_update_request(
         task_thinking_level: req.task_thinking_level,
         temperature: req.temperature,
         clear_temperature: req.clear_temperature,
+        context_window_tokens: req.context_window_tokens,
+        clear_context_window_tokens: req.clear_context_window_tokens,
         max_output_tokens: req.max_output_tokens,
         clear_max_output_tokens: req.clear_max_output_tokens,
         api_key: req.api_key,
@@ -132,6 +140,8 @@ pub(super) fn to_user_service_update_request(
         supports_images: req.supports_images,
         supports_reasoning: req.supports_reasoning,
         supports_responses: req.supports_responses,
+        supports_native_compaction: req.supports_native_compaction,
+        supports_input_token_count: req.supports_input_token_count,
     }
 }
 
@@ -153,6 +163,7 @@ pub(super) fn to_response_value(cfg: &AiModelConfig) -> Value {
         "task_usage_scenario": cfg.task_usage_scenario,
         "task_thinking_level": cfg.task_thinking_level,
         "temperature": cfg.temperature,
+        "context_window_tokens": cfg.context_window_tokens,
         "max_output_tokens": cfg.max_output_tokens,
         "has_api_key": cfg.has_api_key,
         "base_url": cfg.base_url,
@@ -162,6 +173,8 @@ pub(super) fn to_response_value(cfg: &AiModelConfig) -> Value {
         "supports_reasoning": cfg.supports_reasoning,
         "thinking_levels": thinking_levels,
         "supports_responses": cfg.supports_responses,
+        "supports_native_compaction": cfg.supports_native_compaction,
+        "supports_input_token_count": cfg.supports_input_token_count,
         "created_at": cfg.created_at,
         "updated_at": cfg.updated_at
     });
@@ -302,6 +315,7 @@ pub(super) fn build_model_config(
         task_usage_scenario: None,
         task_thinking_level: None,
         temperature: req.temperature,
+        context_window_tokens: req.context_window_tokens,
         max_output_tokens: req.max_output_tokens,
         base_url: normalize_optional_input(req.base_url),
         api_key,
@@ -312,6 +326,8 @@ pub(super) fn build_model_config(
         supports_images: req.supports_images.unwrap_or(false),
         supports_reasoning: req.supports_reasoning.unwrap_or(false),
         supports_responses: req.supports_responses.unwrap_or(false),
+        supports_native_compaction: req.supports_native_compaction.unwrap_or(false),
+        supports_input_token_count: req.supports_input_token_count.unwrap_or(false),
         sync_warnings: Vec::new(),
         created_at: crate::core::time::now_rfc3339(),
         updated_at: crate::core::time::now_rfc3339(),
@@ -338,10 +354,14 @@ mod tests {
             supports_images: Some(true),
             supports_reasoning: Some(true),
             supports_responses: Some(true),
+            supports_native_compaction: Some(true),
+            supports_input_token_count: Some(true),
             task_usage_scenario: None,
             task_thinking_level: None,
             temperature: Some(0.4),
             clear_temperature: None,
+            context_window_tokens: Some(128_000),
+            clear_context_window_tokens: None,
             max_output_tokens: Some(4096),
             clear_max_output_tokens: None,
             api_key: Some("secret".to_string()),
@@ -364,6 +384,7 @@ mod tests {
             task_usage_scenario: None,
             task_thinking_level: None,
             temperature: Some(0.4),
+            context_window_tokens: Some(128_000),
             max_output_tokens: Some(4096),
             api_key: Some("secret".to_string()),
             has_api_key: true,
@@ -373,6 +394,8 @@ mod tests {
             supports_images: true,
             supports_reasoning: true,
             supports_responses: true,
+            supports_native_compaction: true,
+            supports_input_token_count: true,
             sync_warnings: Vec::new(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
@@ -382,6 +405,24 @@ mod tests {
         assert_eq!(
             value.get("revision").and_then(|item| item.as_u64()),
             Some(7)
+        );
+        assert_eq!(
+            value
+                .get("context_window_tokens")
+                .and_then(|item| item.as_i64()),
+            Some(128_000)
+        );
+        assert_eq!(
+            value
+                .get("supports_native_compaction")
+                .and_then(|item| item.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value
+                .get("supports_input_token_count")
+                .and_then(|item| item.as_bool()),
+            Some(true)
         );
         assert_eq!(
             value.get("base_url").and_then(|item| item.as_str()),

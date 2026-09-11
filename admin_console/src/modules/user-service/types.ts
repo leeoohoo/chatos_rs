@@ -138,6 +138,7 @@ export interface ResetAgentPasswordPayload {
 
 export interface UserModelConfigRecord {
   id: string;
+  revision: number;
   owner_user_id: string;
   name: string;
   provider: string;
@@ -148,6 +149,7 @@ export interface UserModelConfigRecord {
   task_usage_scenario?: string | null;
   task_thinking_level?: string | null;
   temperature?: number | null;
+  context_window_tokens?: number | null;
   max_output_tokens?: number | null;
   api_key?: string;
   has_api_key: boolean;
@@ -157,6 +159,8 @@ export interface UserModelConfigRecord {
   supports_images: boolean;
   supports_reasoning: boolean;
   supports_responses: boolean;
+  supports_native_compaction: boolean;
+  supports_input_token_count: boolean;
   created_at: string;
   updated_at: string;
   sync_warnings?: string[];
@@ -195,6 +199,7 @@ export interface CreateUserModelConfigPayload {
   task_usage_scenario?: string;
   task_thinking_level?: string;
   temperature?: number;
+  context_window_tokens?: number;
   max_output_tokens?: number;
   api_key?: string;
   base_url?: string;
@@ -203,6 +208,8 @@ export interface CreateUserModelConfigPayload {
   supports_images?: boolean;
   supports_reasoning?: boolean;
   supports_responses?: boolean;
+  supports_native_compaction?: boolean;
+  supports_input_token_count?: boolean;
 }
 
 export interface CreateUserModelProviderPayload {
@@ -229,6 +236,8 @@ export interface UpdateUserModelConfigPayload {
   task_thinking_level?: string;
   temperature?: number;
   clear_temperature?: boolean;
+  context_window_tokens?: number;
+  clear_context_window_tokens?: boolean;
   max_output_tokens?: number;
   clear_max_output_tokens?: boolean;
   api_key?: string;
@@ -239,6 +248,8 @@ export interface UpdateUserModelConfigPayload {
   supports_images?: boolean;
   supports_reasoning?: boolean;
   supports_responses?: boolean;
+  supports_native_compaction?: boolean;
+  supports_input_token_count?: boolean;
 }
 
 export interface UpdateUserModelProviderPayload {

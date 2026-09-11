@@ -79,6 +79,7 @@ pub(in crate::api) async fn create_model_config(
         normalize_thinking_level_input(provider.as_str(), input.task_thinking_level.as_deref())?;
     let task_usage_scenario = normalize_optional_string(input.task_usage_scenario);
     let temperature = validate_temperature(input.temperature)?;
+    let context_window_tokens = validate_context_window_tokens(input.context_window_tokens)?;
     let max_output_tokens = validate_max_output_tokens(input.max_output_tokens)?;
     let now = now_rfc3339();
     let Some(model) = normalize_optional_string(input.model) else {
@@ -125,6 +126,11 @@ pub(in crate::api) async fn create_model_config(
                 .and_then(|item| item.task_thinking_level.clone())
         }),
         temperature: temperature.or_else(|| existing.as_ref().and_then(|item| item.temperature)),
+        context_window_tokens: context_window_tokens.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.context_window_tokens)
+        }),
         max_output_tokens: max_output_tokens
             .or_else(|| existing.as_ref().and_then(|item| item.max_output_tokens)),
         api_key: api_key.or_else(|| existing.as_ref().and_then(|item| item.api_key.clone())),
@@ -137,15 +143,36 @@ pub(in crate::api) async fn create_model_config(
             .task_enabled
             .or_else(|| existing.as_ref().and_then(|item| item.task_enabled))
             .or(Some(true)),
-        supports_images: input.supports_images.unwrap_or(false),
-        supports_reasoning: input.supports_reasoning.unwrap_or(false),
-        supports_responses: input.supports_responses.unwrap_or(false),
+        supports_images: input
+            .supports_images
+            .unwrap_or_else(|| existing.as_ref().is_some_and(|item| item.supports_images)),
+        supports_reasoning: input.supports_reasoning.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .is_some_and(|item| item.supports_reasoning)
+        }),
+        supports_responses: input.supports_responses.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .is_some_and(|item| item.supports_responses)
+        }),
+        supports_native_compaction: input.supports_native_compaction.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .is_some_and(|item| item.supports_native_compaction)
+        }),
+        supports_input_token_count: input.supports_input_token_count.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .is_some_and(|item| item.supports_input_token_count)
+        }),
         created_at: existing
             .as_ref()
             .map(|item| item.created_at.clone())
             .unwrap_or_else(|| now.clone()),
         updated_at: now,
     };
+    validate_model_runtime_metadata(&record)?;
 
     let saved = state
         .store
@@ -266,6 +293,12 @@ pub(in crate::api) async fn update_model_config(
     if let Some(supports_responses) = input.supports_responses {
         record.supports_responses = supports_responses;
     }
+    if let Some(supports_native_compaction) = input.supports_native_compaction {
+        record.supports_native_compaction = supports_native_compaction;
+    }
+    if let Some(supports_input_token_count) = input.supports_input_token_count {
+        record.supports_input_token_count = supports_input_token_count;
+    }
     if input.thinking_level.is_some() {
         record.thinking_level = normalize_thinking_level_input(
             record.provider.as_str(),
@@ -286,11 +319,17 @@ pub(in crate::api) async fn update_model_config(
     } else if input.temperature.is_some() {
         record.temperature = validate_temperature(input.temperature)?;
     }
+    if input.clear_context_window_tokens.unwrap_or(false) {
+        record.context_window_tokens = None;
+    } else if input.context_window_tokens.is_some() {
+        record.context_window_tokens = validate_context_window_tokens(input.context_window_tokens)?;
+    }
     if input.clear_max_output_tokens.unwrap_or(false) {
         record.max_output_tokens = None;
     } else if input.max_output_tokens.is_some() {
         record.max_output_tokens = validate_max_output_tokens(input.max_output_tokens)?;
     }
+    validate_model_runtime_metadata(&record)?;
     record.updated_at = now_rfc3339();
 
     let saved = state
@@ -330,6 +369,35 @@ fn validate_max_output_tokens(
     }
 }
 
+fn validate_context_window_tokens(
+    value: Option<i64>,
+) -> Result<Option<i64>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    match value {
+        Some(value) if value <= 0 => Err(bad_request("context_window_tokens must be positive")),
+        value => Ok(value),
+    }
+}
+
+fn validate_model_runtime_metadata(
+    record: &UserModelConfigRecord,
+) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
+    if let (Some(context_window_tokens), Some(max_output_tokens)) =
+        (record.context_window_tokens, record.max_output_tokens)
+    {
+        if max_output_tokens > context_window_tokens {
+            return Err(bad_request(
+                "max_output_tokens must not exceed context_window_tokens",
+            ));
+        }
+    }
+    if record.supports_native_compaction && !record.supports_responses {
+        return Err(bad_request(
+            "supports_native_compaction requires supports_responses",
+        ));
+    }
+    Ok(())
+}
+
 pub(in crate::api) async fn delete_model_config(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -354,5 +422,67 @@ pub(in crate::api) async fn delete_model_config(
         Ok(axum::http::StatusCode::NO_CONTENT)
     } else {
         Err(not_found("model config not found"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_context_window_tokens, validate_model_runtime_metadata};
+    use crate::models::UserModelConfigRecord;
+
+    fn model_runtime_metadata() -> UserModelConfigRecord {
+        UserModelConfigRecord {
+            id: "model-1".to_string(),
+            revision: 1,
+            owner_user_id: "user-1".to_string(),
+            source_provider_id: Some("provider-1".to_string()),
+            name: "Model".to_string(),
+            provider: "gpt".to_string(),
+            prompt_vendor: Some("gpt".to_string()),
+            model: "gpt-test".to_string(),
+            thinking_level: None,
+            task_usage_scenario: None,
+            task_thinking_level: None,
+            temperature: None,
+            context_window_tokens: Some(128_000),
+            max_output_tokens: Some(16_000),
+            api_key: None,
+            has_api_key: false,
+            base_url: Some("https://api.example.test/v1".to_string()),
+            enabled: true,
+            task_enabled: Some(true),
+            supports_images: false,
+            supports_reasoning: true,
+            supports_responses: true,
+            supports_native_compaction: true,
+            supports_input_token_count: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn context_window_must_be_positive() {
+        assert!(validate_context_window_tokens(Some(0)).is_err());
+        assert_eq!(validate_context_window_tokens(Some(1)).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn output_limit_must_fit_context_window() {
+        let mut record = model_runtime_metadata();
+        record.max_output_tokens = Some(128_001);
+        assert!(validate_model_runtime_metadata(&record).is_err());
+    }
+
+    #[test]
+    fn native_compaction_requires_responses_protocol() {
+        let mut record = model_runtime_metadata();
+        record.supports_responses = false;
+        assert!(validate_model_runtime_metadata(&record).is_err());
+    }
+
+    #[test]
+    fn complete_runtime_metadata_is_valid() {
+        assert!(validate_model_runtime_metadata(&model_runtime_metadata()).is_ok());
     }
 }

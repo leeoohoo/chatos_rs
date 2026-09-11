@@ -321,6 +321,7 @@ pub(super) async fn refresh_provider_models_from_record(
             task_usage_scenario: existing.and_then(|item| item.task_usage_scenario.clone()),
             task_thinking_level: existing.and_then(|item| item.task_thinking_level.clone()),
             temperature: existing.and_then(|item| item.temperature),
+            context_window_tokens: existing.and_then(|item| item.context_window_tokens),
             max_output_tokens: existing.and_then(|item| item.max_output_tokens),
             api_key: provider_record.api_key.clone(),
             has_api_key: true,
@@ -333,6 +334,10 @@ pub(super) async fn refresh_provider_models_from_record(
             supports_images: provider_record.supports_images,
             supports_reasoning: provider_record.supports_reasoning,
             supports_responses: provider_record.supports_responses,
+            supports_native_compaction: existing
+                .is_some_and(|item| item.supports_native_compaction),
+            supports_input_token_count: existing
+                .is_some_and(|item| item.supports_input_token_count),
             created_at: existing
                 .map(|item| item.created_at.clone())
                 .unwrap_or_else(|| now.clone()),
@@ -401,6 +406,7 @@ mod tests {
             task_usage_scenario: None,
             task_thinking_level: None,
             temperature: None,
+            context_window_tokens: None,
             max_output_tokens: None,
             api_key: Some("old-key".to_string()),
             has_api_key: true,
@@ -410,6 +416,8 @@ mod tests {
             supports_images: false,
             supports_reasoning: false,
             supports_responses: false,
+            supports_native_compaction: false,
+            supports_input_token_count: false,
             created_at: "created".to_string(),
             updated_at: "updated".to_string(),
         }

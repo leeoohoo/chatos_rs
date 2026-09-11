@@ -228,6 +228,8 @@ pub struct UserModelConfigRecord {
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
     pub temperature: Option<f64>,
+    #[serde(default)]
+    pub context_window_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
     pub api_key: Option<String>,
     #[serde(default)]
@@ -239,6 +241,10 @@ pub struct UserModelConfigRecord {
     pub supports_images: bool,
     pub supports_reasoning: bool,
     pub supports_responses: bool,
+    #[serde(default)]
+    pub supports_native_compaction: bool,
+    #[serde(default)]
+    pub supports_input_token_count: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -440,6 +446,7 @@ pub struct CreateUserModelConfigRequest {
     pub task_usage_scenario: Option<String>,
     pub task_thinking_level: Option<String>,
     pub temperature: Option<f64>,
+    pub context_window_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
     pub api_key: Option<String>,
     #[serde(default)]
@@ -450,6 +457,8 @@ pub struct CreateUserModelConfigRequest {
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
+    pub supports_native_compaction: Option<bool>,
+    pub supports_input_token_count: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -480,6 +489,8 @@ pub struct UpdateUserModelConfigRequest {
     pub task_thinking_level: Option<String>,
     pub temperature: Option<f64>,
     pub clear_temperature: Option<bool>,
+    pub context_window_tokens: Option<i64>,
+    pub clear_context_window_tokens: Option<bool>,
     pub max_output_tokens: Option<i64>,
     pub clear_max_output_tokens: Option<bool>,
     pub api_key: Option<String>,
@@ -491,6 +502,8 @@ pub struct UpdateUserModelConfigRequest {
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
+    pub supports_native_compaction: Option<bool>,
+    pub supports_input_token_count: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -575,6 +588,7 @@ mod tests {
             task_usage_scenario: None,
             task_thinking_level: None,
             temperature: None,
+            context_window_tokens: None,
             max_output_tokens: None,
             api_key: Some("secret".to_string()),
             has_api_key: true,
@@ -584,6 +598,8 @@ mod tests {
             supports_images: false,
             supports_reasoning: false,
             supports_responses: true,
+            supports_native_compaction: false,
+            supports_input_token_count: false,
             created_at: "created".to_string(),
             updated_at: "updated".to_string(),
         }

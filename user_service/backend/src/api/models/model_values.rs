@@ -24,6 +24,7 @@ pub(super) fn model_config_public_value(
         "task_usage_scenario": record.task_usage_scenario,
         "task_thinking_level": record.task_thinking_level,
         "temperature": record.temperature,
+        "context_window_tokens": record.context_window_tokens,
         "max_output_tokens": record.max_output_tokens,
         "has_api_key": record.has_api_key
             || record
@@ -37,6 +38,8 @@ pub(super) fn model_config_public_value(
         "supports_images": record.supports_images,
         "supports_reasoning": record.supports_reasoning,
         "supports_responses": record.supports_responses,
+        "supports_native_compaction": record.supports_native_compaction,
+        "supports_input_token_count": record.supports_input_token_count,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     });
