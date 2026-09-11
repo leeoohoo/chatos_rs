@@ -5,22 +5,25 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, AgentUiEventCursorQuery, ClientStorage, PutRecord,
-    RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
+    AgentEventStateRecord, AgentMessageStateRecord, AgentRunStateRecord, AgentUiEventCursorQuery,
+    ClientStorage, ListQuery, PutRecord, RecordMetadata, RecordScope, SecretReference,
+    SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey, StorageResult,
+    StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    ContextStrategy, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
-    LocalAgentRunStatus, LocalAgentUiEvent, LocalAgentUiEventPayload, ModelProtocol,
-    ModelRuntimeDescriptor, ToolExecutionStatus,
+    AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentEvent, LocalAgentEventStatus,
+    LocalAgentEventType, LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEvent,
+    LocalAgentUiEventPayload, MemorySyncStatus, MessageMode, ModelProtocol, ModelRuntimeDescriptor,
+    ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
-    begin_tool_execution, complete_tool_execution, inspect_tool_batch, prepare_tool_batch,
-    BeginToolExecutionRequest, BeginToolExecutionResult, CompleteToolExecutionRequest,
-    PrepareToolBatchRequest,
+    begin_tool_execution, complete_tool_execution, inspect_tool_batch, mark_tool_outcome_unknown,
+    prepare_tool_batch, BeginToolExecutionRequest, BeginToolExecutionResult,
+    CompleteToolExecutionRequest, MarkToolOutcomeUnknownRequest, PrepareToolBatchRequest,
 };
 use chrono::{Duration, Utc};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 fn scope() -> RecordScope {
     RecordScope {
@@ -205,6 +208,53 @@ async fn read_ui_events(storage: &SqliteClientStorage) -> Vec<LocalAgentUiEvent>
     operation.0
 }
 
+struct ReadSemanticState {
+    messages: Vec<AgentMessage>,
+    outbox_count: usize,
+}
+
+#[async_trait]
+impl StorageTransaction for ReadSemanticState {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let query = ListQuery {
+            scope: scope(),
+            cursor: None,
+            limit: 100,
+        };
+        self.messages = repositories
+            .agent_messages()
+            .list(&query)
+            .await?
+            .records
+            .into_iter()
+            .map(|record| record.message)
+            .collect();
+        self.outbox_count = repositories.sync_outbox().list(&query).await?.records.len();
+        Ok(())
+    }
+}
+
+async fn read_semantic_state(storage: &SqliteClientStorage) -> ReadSemanticState {
+    let mut operation = ReadSemanticState {
+        messages: Vec::new(),
+        outbox_count: 0,
+    };
+    storage.transaction(&mut operation).await.unwrap();
+    operation
+}
+
+fn tool_result_message_id(invocation_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    for value in ["user-1", invocation_id] {
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    format!("tool-result:{:x}", hasher.finalize())
+}
+
 #[tokio::test]
 async fn batch_and_arguments_are_frozen_idempotently_before_execution() {
     let (_directory, storage) = storage("project-1").await;
@@ -277,11 +327,33 @@ async fn read_execution_can_resume_and_completion_is_idempotent() {
     assert!(!state.all_completed);
     assert!(!state.outcome_unknown);
     let events = read_ui_events(storage.as_ref()).await;
-    assert_eq!(events.len(), 4, "only real tool transitions are published");
-    let LocalAgentUiEventPayload::ToolSnapshot(snapshot) = &events[3].event else {
-        panic!("tool completion must publish a tool snapshot");
-    };
+    let tool_events = events
+        .iter()
+        .filter_map(|event| match &event.event {
+            LocalAgentUiEventPayload::ToolSnapshot(snapshot) => Some(snapshot),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tool_events.len(),
+        4,
+        "only real tool transitions are published"
+    );
+    let snapshot = tool_events.last().unwrap();
     assert_eq!(snapshot.status, ToolExecutionStatus::Succeeded);
+
+    let semantic = read_semantic_state(storage.as_ref()).await;
+    assert_eq!(semantic.messages.len(), 1);
+    assert_eq!(semantic.outbox_count, 1);
+    let message = &semantic.messages[0];
+    assert_eq!(message.role, AgentMessageRole::Tool);
+    assert_eq!(message.thread_id, "task-1");
+    assert_eq!(message.tool_call_id.as_deref(), Some("call-read"));
+    assert_eq!(message.content.as_deref(), Some("{\"content\":\"ok\"}"));
+    assert_eq!(
+        message.structured_payload.as_ref().unwrap()["status"],
+        "succeeded"
+    );
 }
 
 #[tokio::test]
@@ -307,6 +379,138 @@ async fn irreversible_started_execution_is_never_replayed_after_reentry() {
         panic!("irreversible execution must not replay");
     };
     assert_eq!(record.execution.status, ToolExecutionStatus::OutcomeUnknown);
+    let semantic = read_semantic_state(storage.as_ref()).await;
+    assert_eq!(semantic.messages.len(), 1);
+    assert_eq!(semantic.outbox_count, 1);
+    assert_eq!(semantic.messages[0].role, AgentMessageRole::Tool);
+    assert_eq!(
+        semantic.messages[0].structured_payload.as_ref().unwrap()["status"],
+        "outcome_unknown"
+    );
+}
+
+#[tokio::test]
+async fn explicit_unknown_outcome_is_recorded_idempotently() {
+    let (_directory, storage) = storage("project-1").await;
+    let batch = prepare_tool_batch(storage.as_ref(), prepare_request())
+        .await
+        .unwrap();
+    let invocation_id = batch.calls[1].invocation_id.clone();
+    begin_tool_execution(
+        storage.as_ref(),
+        BeginToolExecutionRequest {
+            scope: scope(),
+            invocation_id: invocation_id.clone(),
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap();
+    let request = MarkToolOutcomeUnknownRequest {
+        scope: scope(),
+        invocation_id,
+        now: Utc::now(),
+    };
+    let first = mark_tool_outcome_unknown(storage.as_ref(), request.clone())
+        .await
+        .unwrap();
+    let repeated = mark_tool_outcome_unknown(storage.as_ref(), request)
+        .await
+        .unwrap();
+    assert_eq!(first, repeated);
+    assert_eq!(first.execution.status, ToolExecutionStatus::OutcomeUnknown);
+    let semantic = read_semantic_state(storage.as_ref()).await;
+    assert_eq!(semantic.messages.len(), 1);
+    assert_eq!(semantic.outbox_count, 1);
+}
+
+struct SeedConflictingToolMessage {
+    record_id: String,
+    now: chrono::DateTime<Utc>,
+}
+
+#[async_trait]
+impl StorageTransaction for SeedConflictingToolMessage {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        repositories
+            .agent_messages()
+            .put(PutRecord {
+                record: AgentMessageStateRecord {
+                    metadata: metadata(&self.record_id, self.now),
+                    message: AgentMessage {
+                        record_id: self.record_id.clone(),
+                        run_id: "run-1".to_string(),
+                        thread_id: "task-1".to_string(),
+                        turn_id: "conflict".to_string(),
+                        sequence: 1,
+                        role: AgentMessageRole::User,
+                        content: Some("conflicting message".to_string()),
+                        reasoning: None,
+                        structured_payload: None,
+                        tool_call_id: None,
+                        response_id: None,
+                        message_mode: MessageMode::Semantic,
+                        message_source: "test".to_string(),
+                        memory_sync_status: MemorySyncStatus::Pending,
+                        created_at: self.now,
+                    },
+                },
+                expected_revision: None,
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn message_conflict_rolls_back_tool_completion() {
+    let (_directory, storage) = storage("project-1").await;
+    let batch = prepare_tool_batch(storage.as_ref(), prepare_request())
+        .await
+        .unwrap();
+    let invocation_id = batch.calls[0].invocation_id.clone();
+    begin_tool_execution(
+        storage.as_ref(),
+        BeginToolExecutionRequest {
+            scope: scope(),
+            invocation_id: invocation_id.clone(),
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap();
+    storage
+        .transaction(&mut SeedConflictingToolMessage {
+            record_id: tool_result_message_id(&invocation_id),
+            now: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    let error = complete_tool_execution(
+        storage.as_ref(),
+        CompleteToolExecutionRequest {
+            scope: scope(),
+            invocation_id,
+            status: ToolExecutionStatus::Succeeded,
+            bounded_result: json!({"content": "ok"}),
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("conflict"));
+    let state = inspect_tool_batch(storage.as_ref(), scope(), &batch)
+        .await
+        .unwrap();
+    assert_eq!(
+        state.records[0].execution.status,
+        ToolExecutionStatus::Started
+    );
+    assert_eq!(read_semantic_state(storage.as_ref()).await.outbox_count, 0);
 }
 
 #[tokio::test]

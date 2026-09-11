@@ -403,6 +403,7 @@ impl LocalAgentHost {
                                 MarkToolOutcomeUnknownRequest {
                                     scope: self.scope.clone(),
                                     invocation_id: call.invocation_id.clone(),
+                                    now: Utc::now(),
                                 },
                             )
                             .await?;

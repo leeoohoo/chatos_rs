@@ -10,15 +10,19 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    LocalAgentEventStatus, LocalAgentEventType, LocalAgentRunStatus, ToolEffect, ToolExecution,
+    AgentMessage, AgentMessageRole, LocalAgentEventStatus, LocalAgentEventType,
+    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ToolEffect, ToolExecution,
     ToolExecutionStatus,
 };
 use chrono::{DateTime, Utc};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use crate::digest::canonical_json_digest;
+use crate::digest::{canonical_json_digest, stable_digest_id};
+use crate::memory_sync::{
+    next_semantic_message_sequence, persist_semantic_message, RecordSemanticMessageRequest,
+};
 use crate::ui_events::append_tool_snapshot;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -416,6 +420,7 @@ impl StorageTransaction for BeginToolExecutionOperation {
                     })
                     .await?;
                 append_tool_snapshot(repositories, &record).await?;
+                persist_tool_semantic_message(repositories, &record, request.now).await?;
                 BeginToolExecutionResult::NeedsReview(record)
             }
             ToolExecutionStatus::Succeeded | ToolExecutionStatus::Failed => {
@@ -460,6 +465,7 @@ pub async fn complete_tool_execution(
 pub struct MarkToolOutcomeUnknownRequest {
     pub scope: RecordScope,
     pub invocation_id: String,
+    pub now: DateTime<Utc>,
 }
 
 /// Used when the local transport fails after an irreversible invocation was
@@ -502,6 +508,7 @@ impl StorageTransaction for MarkToolOutcomeUnknownOperation {
             .await?
             .ok_or(StorageError::NotFound)?;
         if record.execution.status == ToolExecutionStatus::OutcomeUnknown {
+            persist_tool_semantic_message(repositories, &record, request.now).await?;
             self.result = Some(record);
             return Ok(());
         }
@@ -520,6 +527,7 @@ impl StorageTransaction for MarkToolOutcomeUnknownOperation {
             })
             .await?;
         append_tool_snapshot(repositories, &record).await?;
+        persist_tool_semantic_message(repositories, &record, request.now).await?;
         self.result = Some(record);
         Ok(())
     }
@@ -555,6 +563,7 @@ impl StorageTransaction for CompleteToolExecutionOperation {
             if record.execution.status == request.status
                 && record.execution.bounded_result.as_ref() == Some(&request.bounded_result)
             {
+                persist_tool_semantic_message(repositories, &record, request.now).await?;
                 self.result = Some(record);
                 return Ok(());
             }
@@ -581,9 +590,108 @@ impl StorageTransaction for CompleteToolExecutionOperation {
             })
             .await?;
         append_tool_snapshot(repositories, &record).await?;
+        persist_tool_semantic_message(repositories, &record, request.now).await?;
         self.result = Some(record);
         Ok(())
     }
+}
+
+async fn persist_tool_semantic_message(
+    repositories: &mut dyn TransactionRepositories,
+    execution_record: &ToolExecutionStateRecord,
+    now: DateTime<Utc>,
+) -> StorageResult<()> {
+    let execution = &execution_record.execution;
+    if !matches!(
+        execution.status,
+        ToolExecutionStatus::Succeeded
+            | ToolExecutionStatus::Failed
+            | ToolExecutionStatus::OutcomeUnknown
+    ) {
+        return invalid_data("only a terminal tool outcome can become a semantic message");
+    }
+    let run = repositories
+        .agent_runs()
+        .get(&RecordQuery {
+            scope: execution_record.metadata.scope.clone(),
+            id: execution.run_id.clone(),
+        })
+        .await?
+        .ok_or(StorageError::NotFound)?;
+    let record_id = stable_digest_id(
+        "tool-result",
+        &[
+            execution_record.metadata.scope.owner_user_id.as_str(),
+            execution.invocation_id.as_str(),
+        ],
+    );
+    let existing_identity = repositories
+        .agent_messages()
+        .get(&RecordQuery {
+            scope: execution_record.metadata.scope.clone(),
+            id: record_id.clone(),
+        })
+        .await?
+        .map(|record| (record.message.sequence, record.message.created_at));
+    let (sequence, created_at) = match existing_identity {
+        Some(identity) => identity,
+        None => (
+            next_semantic_message_sequence(
+                repositories,
+                &execution_record.metadata.scope,
+                &run.run.owner_entity_id,
+            )
+            .await?,
+            now,
+        ),
+    };
+    let content = match execution.status {
+        ToolExecutionStatus::Succeeded | ToolExecutionStatus::Failed => execution
+            .bounded_result
+            .as_ref()
+            .map(Value::to_string)
+            .ok_or_else(|| StorageError::InvalidData {
+                reason: "completed tool execution has no bounded result".to_string(),
+            })?,
+        ToolExecutionStatus::OutcomeUnknown => {
+            "Tool outcome is unknown and requires human review.".to_string()
+        }
+        _ => unreachable!("terminal status was checked above"),
+    };
+    persist_semantic_message(
+        repositories,
+        RecordSemanticMessageRequest {
+            scope: execution_record.metadata.scope.clone(),
+            message: AgentMessage {
+                record_id,
+                run_id: execution.run_id.clone(),
+                thread_id: run.run.owner_entity_id,
+                turn_id: execution.batch_id.clone(),
+                sequence,
+                role: AgentMessageRole::Tool,
+                content: Some(content),
+                reasoning: None,
+                structured_payload: Some(json!({
+                    "type": "tool_execution_result",
+                    "invocation_id": execution.invocation_id,
+                    "tool_name": execution.tool_name,
+                    "effect": execution.effect,
+                    "status": execution.status,
+                    "result": execution.bounded_result,
+                })),
+                tool_call_id: Some(execution.tool_call_id.clone()),
+                response_id: None,
+                message_mode: MessageMode::Semantic,
+                message_source: "local_tool_runtime".to_string(),
+                memory_sync_status: MemorySyncStatus::Pending,
+                created_at,
+            },
+            origin_device_id: execution_record.metadata.origin_device_id.clone(),
+            now,
+        },
+    )
+    .await?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq)]
