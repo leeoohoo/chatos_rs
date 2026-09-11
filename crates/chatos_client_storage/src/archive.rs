@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AgentRecord, ClientSettingRecord, ClientStorage, ConversationRecord, ListQuery,
-    MediaStateRecord, PluginStateRecord, ProjectRecord, RecordScope, StorageBackend, StorageError,
-    StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
+    AgentRecord, ClientSettingRecord, ClientStorage, ClipboardRecord, ConversationRecord,
+    ListQuery, MediaStateRecord, PluginStateRecord, ProjectRecord, RecordScope, StorageBackend,
+    StorageError, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
 };
 
 const ARCHIVE_FORMAT: &str = "chatos-client-storage";
@@ -34,6 +34,7 @@ pub struct StorageArchiveRecords {
     pub plugins: Vec<PluginStateRecord>,
     pub media: Vec<MediaStateRecord>,
     pub settings: Vec<ClientSettingRecord>,
+    pub clipboard: Vec<ClipboardRecord>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -140,6 +141,7 @@ impl StorageTransaction for ExportOperation {
         collect_records!(plugins, plugins);
         collect_records!(media, media);
         collect_records!(settings, settings);
+        collect_records!(clipboard, clipboard);
 
         self.archive = Some(ClientStorageArchive {
             format_version: ARCHIVE_VERSION,
@@ -189,6 +191,7 @@ impl StorageTransaction for ImportOperation<'_> {
         require_empty!(plugins);
         require_empty!(media);
         require_empty!(settings);
+        require_empty!(clipboard);
 
         macro_rules! restore_records {
             ($repository:ident, $source:ident) => {
@@ -205,6 +208,7 @@ impl StorageTransaction for ImportOperation<'_> {
         restore_records!(plugins, plugins);
         restore_records!(media, media);
         restore_records!(settings, settings);
+        restore_records!(clipboard, clipboard);
         Ok(())
     }
 }
@@ -241,6 +245,7 @@ fn validate_archive(archive: &ClientStorageArchive) -> StorageResult<()> {
     validate_scope!(&archive.records.plugins);
     validate_scope!(&archive.records.media);
     validate_scope!(&archive.records.settings);
+    validate_scope!(&archive.records.clipboard);
     Ok(())
 }
 

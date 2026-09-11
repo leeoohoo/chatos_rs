@@ -9,15 +9,15 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::{
-    AgentRecord, AgentRepository, ClientSettingRecord, ClientSettingsRepository,
-    ConversationRecord, ConversationRepository, ListQuery, MediaStateRecord, MediaStateRepository,
-    PluginStateRecord, PluginStateRepository, ProjectRecord, ProjectRepository, PutRecord,
-    RecordMetadata, RecordPage, RecordQuery, StorageError, StorageResult, TaskRecord,
-    TaskRepository, TransactionRepositories,
+    AgentRecord, AgentRepository, ClientSettingRecord, ClientSettingsRepository, ClipboardRecord,
+    ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery, MediaStateRecord,
+    MediaStateRepository, PluginStateRecord, PluginStateRepository, ProjectRecord,
+    ProjectRepository, PutRecord, RecordMetadata, RecordPage, RecordQuery, StorageError,
+    StorageResult, TaskRecord, TaskRepository, TransactionRepositories,
 };
 
 pub(crate) const SCHEMA_VERSION: u32 = 1;
-pub(crate) const DOMAIN_TABLES: [&str; 7] = [
+pub(crate) const DOMAIN_TABLES: [&str; 8] = [
     "client_agents",
     "client_conversations",
     "client_tasks",
@@ -25,6 +25,7 @@ pub(crate) const DOMAIN_TABLES: [&str; 7] = [
     "client_plugins",
     "client_media",
     "client_settings",
+    "client_clipboard",
 ];
 
 pub(crate) struct StoredRow {
@@ -148,6 +149,13 @@ impl TransactionRepositories for RecordTransactionRepositories<'_> {
             "client_settings",
         ))
     }
+
+    fn clipboard(&mut self) -> Box<dyn ClipboardRepository + '_> {
+        Box::new(JsonRecordRepository::<ClipboardRecord>::new(
+            self.store,
+            "client_clipboard",
+        ))
+    }
 }
 
 pub(crate) trait RepositoryRecord: Serialize + DeserializeOwned + Send + Unpin {
@@ -174,6 +182,7 @@ impl_repository_record!(
     PluginStateRecord,
     MediaStateRecord,
     ClientSettingRecord,
+    ClipboardRecord,
 );
 
 pub(crate) struct JsonRecordRepository<'store, Record> {
@@ -428,6 +437,7 @@ impl_domain_repository!(ProjectRepository, ProjectRecord);
 impl_domain_repository!(PluginStateRepository, PluginStateRecord);
 impl_domain_repository!(MediaStateRepository, MediaStateRecord);
 impl_domain_repository!(ClientSettingsRepository, ClientSettingRecord);
+impl_domain_repository!(ClipboardRepository, ClipboardRecord);
 
 fn validate_record_identity(metadata: &RecordMetadata) -> StorageResult<()> {
     if metadata.id.trim().is_empty() {

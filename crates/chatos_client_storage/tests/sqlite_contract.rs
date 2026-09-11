@@ -5,9 +5,9 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    ClientStorage, ProjectRecord, PutRecord, RecordMetadata, RecordQuery, RecordScope,
-    SqliteBootstrapProfile, SqliteClientStorage, StorageError, StorageResult, StorageTransaction,
-    TransactionRepositories,
+    ClientStorage, ClipboardRecord, ProjectRecord, PutRecord, RecordMetadata, RecordQuery,
+    RecordScope, SqliteBootstrapProfile, SqliteClientStorage, StorageError, StorageResult,
+    StorageTransaction, TransactionRepositories,
 };
 use chrono::Utc;
 
@@ -183,4 +183,68 @@ async fn only_one_client_host_can_own_a_sqlite_database() {
     first.close().await;
     let reopened = SqliteClientStorage::open(&profile).await.unwrap();
     reopened.close().await;
+}
+
+struct StoreClipboard {
+    restored: Option<ClipboardRecord>,
+}
+
+#[async_trait]
+impl StorageTransaction for StoreClipboard {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let metadata = RecordMetadata {
+            id: "clipboard-1".to_string(),
+            scope: RecordScope {
+                owner_user_id: "user-1".to_string(),
+            },
+            origin_device_id: "device-1".to_string(),
+            revision: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        repositories
+            .clipboard()
+            .put(PutRecord {
+                record: ClipboardRecord {
+                    metadata,
+                    mime_type: "image/png".to_string(),
+                    content_hash: "sha256:0123456789abcdef".to_string(),
+                    payload_reference: Some("encrypted-payload/clipboard-1".to_string()),
+                    byte_size: 4096,
+                    state: serde_json::json!({"favorite": true}),
+                },
+                expected_revision: None,
+            })
+            .await?;
+        self.restored = repositories
+            .clipboard()
+            .get(&RecordQuery {
+                scope: RecordScope {
+                    owner_user_id: "user-1".to_string(),
+                },
+                id: "clipboard-1".to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn clipboard_repository_stores_metadata_not_binary_payloads() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = storage(&directory.path().join("client.sqlite3")).await;
+    let mut operation = StoreClipboard { restored: None };
+
+    database.transaction(&mut operation).await.unwrap();
+
+    let restored = operation.restored.unwrap();
+    assert_eq!(restored.mime_type, "image/png");
+    assert_eq!(restored.byte_size, 4096);
+    assert_eq!(
+        restored.payload_reference.as_deref(),
+        Some("encrypted-payload/clipboard-1")
+    );
 }

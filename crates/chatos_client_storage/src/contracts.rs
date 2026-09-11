@@ -75,6 +75,18 @@ pub struct ClientSettingRecord {
     pub value: Value,
 }
 
+/// Clipboard metadata. Large or binary payloads remain in encrypted local
+/// files; the database stores only a stable reference and integrity fields.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClipboardRecord {
+    pub metadata: RecordMetadata,
+    pub mime_type: String,
+    pub content_hash: String,
+    pub payload_reference: Option<String>,
+    pub byte_size: u64,
+    pub state: Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PutRecord<R> {
     pub record: R,

@@ -4,8 +4,9 @@
 use async_trait::async_trait;
 
 use crate::{
-    AgentRepository, ClientSettingsRepository, ConversationRepository, MediaStateRepository,
-    PluginStateRepository, ProjectRepository, StorageBackend, StorageResult, TaskRepository,
+    AgentRepository, ClientSettingsRepository, ClipboardRepository, ConversationRepository,
+    MediaStateRepository, PluginStateRepository, ProjectRepository, StorageBackend, StorageResult,
+    TaskRepository,
 };
 
 /// Repository views bound to one backend transaction.
@@ -17,6 +18,7 @@ pub trait TransactionRepositories: Send {
     fn plugins(&mut self) -> Box<dyn PluginStateRepository + '_>;
     fn media(&mut self) -> Box<dyn MediaStateRepository + '_>;
     fn settings(&mut self) -> Box<dyn ClientSettingsRepository + '_>;
+    fn clipboard(&mut self) -> Box<dyn ClipboardRepository + '_>;
 }
 
 /// A caller-owned operation executed atomically by the selected backend.
