@@ -517,6 +517,12 @@ impl MemorySyncRecord {
                 "turn_id": message.turn_id,
                 "sequence": message.sequence,
                 "tool_call_id": message.tool_call_id,
+                "tool_calls": message.structured_payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_calls")),
+                "structured_result": (message.role == AgentMessageRole::Tool)
+                    .then_some(message.structured_payload.as_ref()),
+                "reasoning": message.reasoning,
                 "response_id": message.response_id,
                 "message_source": message.message_source,
             }),

@@ -9,17 +9,18 @@ use chatos_client_storage::{
     StorageResult, StorageTransaction, ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    ContextStrategy, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
-    LocalAgentRunStatus, LocalAgentUiEvent, LocalAgentUiEventPayload, ModelProtocol,
-    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ProviderContextItem, ToolEffect,
-    ToolExecution, ToolExecutionStatus,
+    AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentEvent, LocalAgentEventStatus,
+    LocalAgentEventType, LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEvent,
+    LocalAgentUiEventPayload, ModelProtocol, ModelRuntimeDescriptor, ModelStepCompletion,
+    ModelStepResult, ProviderContextItem, ToolEffect, ToolExecution, ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
-    begin_model_step_execution, claim_event, create_local_agent_run, record_model_step_completion,
-    reduce_and_commit, AttemptLimitDisposition, BeginModelStepExecutionRequest,
-    CompletedAssistantMessage, CreateLocalAgentRunRequest, DurableModelStepCompletionPayload,
-    DurableProviderContextCommit, DurableProviderContextItem, EventClaimRequest, EventClaimResult,
-    InitialRunMessage, RecordModelStepCompletionRequest, ReduceAndCommitRequest, ReducerPolicy,
+    begin_model_step_execution, claim_event, claim_memory_sync_batch, create_local_agent_run,
+    record_model_step_completion, reduce_and_commit, AttemptLimitDisposition,
+    BeginModelStepExecutionRequest, ClaimMemorySyncBatchRequest, CompletedAssistantMessage,
+    CreateLocalAgentRunRequest, DurableModelStepCompletionPayload, DurableProviderContextCommit,
+    DurableProviderContextItem, EventClaimRequest, EventClaimResult, InitialRunMessage,
+    MemorySyncPolicy, RecordModelStepCompletionRequest, ReduceAndCommitRequest, ReducerPolicy,
     StepEvidence,
 };
 use chrono::{Duration, Utc};
@@ -191,6 +192,30 @@ struct CountCreatedRecords {
     messages: usize,
     outbox: usize,
     provider_context: usize,
+}
+
+struct ReadMessages(Vec<AgentMessage>);
+
+#[async_trait]
+impl StorageTransaction for ReadMessages {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.0 = repositories
+            .agent_messages()
+            .list(&ListQuery {
+                scope: scope(),
+                cursor: None,
+                limit: 100,
+            })
+            .await?
+            .records
+            .into_iter()
+            .map(|record| record.message)
+            .collect();
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -589,6 +614,87 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
     assert_eq!(
         repeated_after_reduction.event.event_id,
         first.event.event_id
+    );
+}
+
+#[tokio::test]
+async fn tool_commands_are_recorded_once_with_complete_call_arguments() {
+    let (_directory, storage) = empty_storage().await;
+    storage.transaction(&mut SeedModelRunning).await.unwrap();
+    let now = Utc::now();
+    let request = RecordModelStepCompletionRequest {
+        scope: scope(),
+        request_event_id: "model-request-1".to_string(),
+        claim_token: "model-claim-1".to_string(),
+        completion: ModelStepCompletion {
+            result: ModelStepResult::ToolCommand(serde_json::json!({
+                "project_id": "project-1",
+                "capability_snapshot_ref": "capabilities-1",
+                "calls": [{
+                    "call_id": "call-1",
+                    "name": "read_file",
+                    "effect": "read",
+                    "arguments": {"path": "src/lib.rs"}
+                }]
+            })),
+            pending_batch_id: Some("batch-1".to_string()),
+            retry_at: None,
+        },
+        assistant_message: None,
+        provider_context_commit: None,
+        origin_device_id: "device-1".to_string(),
+        now,
+    };
+    let first = record_model_step_completion(&storage, request.clone())
+        .await
+        .unwrap();
+    let repeated = record_model_step_completion(&storage, request)
+        .await
+        .unwrap();
+    assert_eq!(first, repeated);
+    let payload: DurableModelStepCompletionPayload =
+        serde_json::from_value(first.event.bounded_payload).unwrap();
+    assert!(payload.tool_call_message_record_id.is_some());
+    assert!(payload.assistant_message_record_id.is_none());
+
+    let mut messages = ReadMessages(Vec::new());
+    storage.transaction(&mut messages).await.unwrap();
+    assert_eq!(messages.0.len(), 1);
+    let message = &messages.0[0];
+    assert_eq!(message.role, AgentMessageRole::Assistant);
+    assert_eq!(message.message_source, "model_tool_calls");
+    assert_eq!(
+        message.structured_payload.as_ref().unwrap()["tool_calls"][0]["call_id"],
+        "call-1"
+    );
+    assert_eq!(
+        message.structured_payload.as_ref().unwrap()["tool_calls"][0]["arguments"]["path"],
+        "src/lib.rs"
+    );
+    let mut counts = CountCreatedRecords {
+        runs: 0,
+        events: 0,
+        messages: 0,
+        outbox: 0,
+        provider_context: 0,
+    };
+    storage.transaction(&mut counts).await.unwrap();
+    assert_eq!(counts.messages, 1);
+    assert_eq!(counts.outbox, 1);
+    let sync_batch = claim_memory_sync_batch(
+        &storage,
+        ClaimMemorySyncBatchRequest {
+            scope: scope(),
+            now,
+            policy: MemorySyncPolicy::default(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(sync_batch.records.len(), 1);
+    assert_eq!(
+        sync_batch.records[0].remote_record.metadata["tool_calls"][0]["call_id"],
+        "call-1"
     );
 }
 

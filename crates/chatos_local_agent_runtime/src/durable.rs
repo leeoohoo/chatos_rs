@@ -1137,6 +1137,7 @@ pub struct DurableProviderContextItem {
 pub struct DurableModelStepCompletionPayload {
     pub completion: ModelStepCompletion,
     pub assistant_message_record_id: Option<String>,
+    pub tool_call_message_record_id: Option<String>,
     pub provider_context_commit_digest: Option<String>,
 }
 
@@ -1226,12 +1227,26 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
             .as_ref()
             .map(provider_context_commit_identity_digest)
             .transpose()?;
+        let tool_call_message_record_id = matches!(
+            &request.completion.result,
+            chatos_local_agent_protocol::ModelStepResult::ToolCommand(_)
+        )
+        .then(|| {
+            stable_digest_id(
+                "model-tool-calls",
+                &[
+                    request.scope.owner_user_id.as_str(),
+                    model_request.event.event_id.as_str(),
+                ],
+            )
+        });
         let payload = serde_json::to_value(DurableModelStepCompletionPayload {
             completion: request.completion.clone(),
             assistant_message_record_id: request
                 .assistant_message
                 .as_ref()
                 .map(|message| message.record_id.clone()),
+            tool_call_message_record_id,
             provider_context_commit_digest,
         })
         .map_err(|error| StorageError::InvalidData {
@@ -1288,6 +1303,15 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
             repositories,
             &run,
             request.assistant_message,
+            &request.origin_device_id,
+            request.now,
+        )
+        .await?;
+        persist_model_tool_call_message(
+            repositories,
+            &run,
+            &model_request,
+            &request.completion,
             &request.origin_device_id,
             request.now,
         )
@@ -1568,6 +1592,89 @@ fn provider_context_items_match(
         && existing.item_type == expected.item_type
         && existing.payload_digest == expected.payload_digest
         && existing.created_at == expected.created_at
+}
+
+async fn persist_model_tool_call_message(
+    repositories: &mut dyn TransactionRepositories,
+    run_record: &AgentRunStateRecord,
+    request_event: &AgentEventStateRecord,
+    completion: &ModelStepCompletion,
+    origin_device_id: &str,
+    now: DateTime<Utc>,
+) -> StorageResult<Option<RecordedSemanticMessage>> {
+    let chatos_local_agent_protocol::ModelStepResult::ToolCommand(command) = &completion.result
+    else {
+        return Ok(None);
+    };
+    let calls = command
+        .get("calls")
+        .and_then(serde_json::Value::as_array)
+        .filter(|calls| !calls.is_empty())
+        .ok_or_else(|| StorageError::InvalidData {
+            reason: "tool command completion must contain at least one call".to_string(),
+        })?;
+    if calls.iter().any(|call| !call.is_object()) {
+        return Err(StorageError::InvalidData {
+            reason: "tool command calls must be JSON objects".to_string(),
+        });
+    }
+    let record_id = stable_digest_id(
+        "model-tool-calls",
+        &[
+            run_record.metadata.scope.owner_user_id.as_str(),
+            request_event.event.event_id.as_str(),
+        ],
+    );
+    let existing_identity = repositories
+        .agent_messages()
+        .get(&RecordQuery {
+            scope: run_record.metadata.scope.clone(),
+            id: record_id.clone(),
+        })
+        .await?
+        .map(|record| (record.message.sequence, record.message.created_at));
+    let (sequence, created_at) = match existing_identity {
+        Some(identity) => identity,
+        None => (
+            next_semantic_message_sequence(
+                repositories,
+                &run_record.metadata.scope,
+                &run_record.run.owner_entity_id,
+            )
+            .await?,
+            now,
+        ),
+    };
+    persist_semantic_message(
+        repositories,
+        RecordSemanticMessageRequest {
+            scope: run_record.metadata.scope.clone(),
+            message: AgentMessage {
+                record_id,
+                run_id: run_record.run.run_id.clone(),
+                thread_id: run_record.run.owner_entity_id.clone(),
+                turn_id: request_event.event.correlation_id.clone(),
+                sequence,
+                role: AgentMessageRole::Assistant,
+                content: None,
+                reasoning: None,
+                structured_payload: Some(json!({
+                    "type": "model_tool_calls",
+                    "tool_calls": calls,
+                })),
+                tool_call_id: None,
+                response_id: None,
+                message_mode: MessageMode::Semantic,
+                message_source: "model_tool_calls".to_string(),
+                memory_sync_status: MemorySyncStatus::Pending,
+                created_at,
+            },
+            origin_device_id: origin_device_id.to_string(),
+            now,
+        },
+    )
+    .await
+    .map(Some)
 }
 
 async fn persist_completed_assistant_message(
