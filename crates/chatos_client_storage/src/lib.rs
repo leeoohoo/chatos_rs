@@ -9,7 +9,10 @@
 
 mod bootstrap;
 mod connection;
+mod contracts;
 mod error;
+mod repositories;
+mod transaction;
 
 pub use bootstrap::{
     BootstrapStorageProfile, PostgresBootstrapProfile, SecretReference, SqliteBootstrapProfile,
@@ -18,4 +21,7 @@ pub use bootstrap::{
 pub use connection::{
     PostgresConnectionSettings, PostgresCredentials, PostgresEndpoint, PostgresTlsMode,
 };
-pub use error::{StorageConfigurationError, StorageResult};
+pub use contracts::*;
+pub use error::{ConfigurationResult, StorageConfigurationError, StorageError, StorageResult};
+pub use repositories::*;
+pub use transaction::{ClientStorage, StorageTransaction, TransactionRepositories};

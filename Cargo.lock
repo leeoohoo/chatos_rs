@@ -833,9 +833,12 @@ dependencies = [
 name = "chatos_client_storage"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "chrono",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tokio",
  "zeroize",
 ]
 

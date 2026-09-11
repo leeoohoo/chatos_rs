@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{StorageConfigurationError, StorageResult};
+use crate::{ConfigurationResult, StorageConfigurationError};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -33,7 +33,7 @@ impl BootstrapStorageProfile {
         }
     }
 
-    pub fn validate(&self) -> StorageResult<()> {
+    pub fn validate(&self) -> ConfigurationResult<()> {
         match self {
             Self::Sqlite(profile) => profile.validate(),
             Self::Postgres(profile) => profile.validate(),
@@ -48,7 +48,7 @@ pub struct SqliteBootstrapProfile {
 }
 
 impl SqliteBootstrapProfile {
-    pub fn validate(&self) -> StorageResult<()> {
+    pub fn validate(&self) -> ConfigurationResult<()> {
         if !self.database_path.is_absolute() {
             return Err(StorageConfigurationError::SqlitePathNotAbsolute(
                 self.database_path.clone(),
@@ -67,7 +67,7 @@ pub struct PostgresBootstrapProfile {
 }
 
 impl PostgresBootstrapProfile {
-    pub fn validate(&self) -> StorageResult<()> {
+    pub fn validate(&self) -> ConfigurationResult<()> {
         self.connection_secret.validate()
     }
 }
@@ -77,7 +77,7 @@ impl PostgresBootstrapProfile {
 pub struct SecretReference(String);
 
 impl SecretReference {
-    pub fn new(value: impl Into<String>) -> StorageResult<Self> {
+    pub fn new(value: impl Into<String>) -> ConfigurationResult<Self> {
         let reference = Self(value.into());
         reference.validate()?;
         Ok(reference)
@@ -87,7 +87,7 @@ impl SecretReference {
         &self.0
     }
 
-    fn validate(&self) -> StorageResult<()> {
+    fn validate(&self) -> ConfigurationResult<()> {
         if self.0.trim().is_empty() {
             return Err(StorageConfigurationError::EmptyField {
                 field: "connection_secret",

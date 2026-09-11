@@ -6,7 +6,7 @@ use std::net::IpAddr;
 
 use zeroize::Zeroizing;
 
-use crate::{StorageConfigurationError, StorageResult};
+use crate::{ConfigurationResult, StorageConfigurationError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostgresTlsMode {
@@ -25,7 +25,7 @@ pub struct PostgresEndpoint {
 }
 
 impl PostgresEndpoint {
-    pub fn validate(&self) -> StorageResult<()> {
+    pub fn validate(&self) -> ConfigurationResult<()> {
         require_non_empty("host", &self.host)?;
         require_non_empty("database", &self.database)?;
         if self.port == 0 {
@@ -46,7 +46,10 @@ pub struct PostgresCredentials {
 }
 
 impl PostgresCredentials {
-    pub fn new(username: impl Into<String>, password: impl Into<String>) -> StorageResult<Self> {
+    pub fn new(
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> ConfigurationResult<Self> {
         let credentials = Self {
             username: username.into(),
             password: Zeroizing::new(password.into()),
@@ -83,7 +86,7 @@ pub struct PostgresConnectionSettings {
 }
 
 impl PostgresConnectionSettings {
-    pub fn validate(&self) -> StorageResult<()> {
+    pub fn validate(&self) -> ConfigurationResult<()> {
         self.endpoint.validate()?;
         require_non_empty("username", self.credentials.username())?;
         require_non_empty("password", self.credentials.expose_password())
@@ -100,7 +103,7 @@ impl fmt::Debug for PostgresConnectionSettings {
     }
 }
 
-fn require_non_empty(field: &'static str, value: &str) -> StorageResult<()> {
+fn require_non_empty(field: &'static str, value: &str) -> ConfigurationResult<()> {
     if value.trim().is_empty() {
         return Err(StorageConfigurationError::EmptyField { field });
     }
