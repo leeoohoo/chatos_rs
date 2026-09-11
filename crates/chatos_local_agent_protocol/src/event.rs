@@ -43,6 +43,9 @@ pub struct LocalAgentEvent {
     pub available_at: DateTime<Utc>,
     pub status: LocalAgentEventStatus,
     pub attempt_count: u32,
+    pub claimed_by_device_id: Option<String>,
+    pub claim_token: Option<String>,
+    pub claim_until: Option<DateTime<Utc>>,
     pub causation_id: String,
     pub correlation_id: String,
     pub bounded_payload: Value,
@@ -63,6 +66,25 @@ impl LocalAgentEvent {
             return Err(ProtocolError::InvalidState {
                 reason: "expected_version must be positive",
             });
+        }
+        let has_any_claim_field = self.claimed_by_device_id.is_some()
+            || self.claim_token.is_some()
+            || self.claim_until.is_some();
+        let has_complete_claim = self.claimed_by_device_id.is_some()
+            && self.claim_token.is_some()
+            && self.claim_until.is_some();
+        if has_any_claim_field != has_complete_claim
+            || (self.status == LocalAgentEventStatus::Claimed) != has_complete_claim
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "claimed event status and lease fields must change together",
+            });
+        }
+        if let Some(device_id) = &self.claimed_by_device_id {
+            require_identifier("claimed_by_device_id", device_id)?;
+        }
+        if let Some(claim_token) = &self.claim_token {
+            require_identifier("claim_token", claim_token)?;
         }
         require_bounded_json("bounded_payload", &self.bounded_payload)
     }

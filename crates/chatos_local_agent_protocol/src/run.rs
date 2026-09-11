@@ -57,6 +57,7 @@ pub struct LocalAgentRun {
     pub prompt_revision: String,
     pub capability_snapshot_ref: String,
     pub pending_batch_id: Option<String>,
+    pub pending_interaction: Option<Value>,
     pub terminal_outcome: Option<Value>,
     pub deadline_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -92,6 +93,9 @@ impl LocalAgentRun {
         if let Some(outcome) = &self.terminal_outcome {
             require_bounded_json("terminal_outcome", outcome)?;
         }
+        if let Some(interaction) = &self.pending_interaction {
+            require_bounded_json("pending_interaction", interaction)?;
+        }
         if self.status.is_terminal() != self.terminal_outcome.is_some() {
             return Err(ProtocolError::InvalidState {
                 reason: "terminal status and terminal outcome must change together",
@@ -102,6 +106,11 @@ impl LocalAgentRun {
                 "pending_batch_id",
                 self.pending_batch_id.as_deref().unwrap_or_default(),
             )?;
+        }
+        if self.status == LocalAgentRunStatus::NeedsReview && self.pending_interaction.is_none() {
+            return Err(ProtocolError::InvalidState {
+                reason: "needs_review requires a pending interaction",
+            });
         }
         if self.updated_at < self.created_at {
             return Err(ProtocolError::InvalidState {

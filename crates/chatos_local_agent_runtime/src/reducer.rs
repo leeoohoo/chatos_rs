@@ -116,6 +116,7 @@ pub fn reduce_claimed_event(
             require_status(run, event, &[LocalAgentRunStatus::Queued])?;
             require_no_evidence(event, &evidence)?;
             next.status = LocalAgentRunStatus::ModelReady;
+            next.pending_interaction = None;
             emit(
                 &mut emitted_events,
                 &next,
@@ -167,6 +168,10 @@ pub fn reduce_claimed_event(
                         },
                     )?,
                 });
+                next.pending_interaction = Some(json!({
+                    "type": "review_unknown_tool_outcome",
+                    "batch_id": run.pending_batch_id,
+                }));
             } else {
                 next.status = LocalAgentRunStatus::ContinuationReady;
                 emit(
@@ -187,6 +192,7 @@ pub fn reduce_claimed_event(
             require_status(run, event, &[allowed])?;
             require_no_evidence(event, &evidence)?;
             next.status = LocalAgentRunStatus::ModelReady;
+            next.pending_interaction = None;
             emit(
                 &mut emitted_events,
                 &next,
@@ -211,6 +217,7 @@ pub fn reduce_claimed_event(
             )?;
             require_no_evidence(event, &evidence)?;
             next.status = LocalAgentRunStatus::ModelReady;
+            next.pending_interaction = None;
             emit(
                 &mut emitted_events,
                 &next,
@@ -330,6 +337,10 @@ fn reduce_model_result(
         }
         ModelStepResult::AskUser(question) => {
             next.status = LocalAgentRunStatus::Paused;
+            next.pending_interaction = Some(json!({
+                "type": "ask_user",
+                "question": question.clone(),
+            }));
             *human_interaction = Some(HumanInteraction::AskUser(question));
         }
         ModelStepResult::Final(outcome) => {
@@ -395,6 +406,7 @@ fn invalid_transition<T>(run: &LocalAgentRun, event: &LocalAgentEvent) -> Result
 fn set_terminal(run: &mut LocalAgentRun, status: LocalAgentRunStatus, outcome: Value) {
     run.status = status;
     run.pending_batch_id = None;
+    run.pending_interaction = None;
     run.terminal_outcome = Some(outcome);
 }
 

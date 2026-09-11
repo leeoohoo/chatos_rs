@@ -5,6 +5,8 @@
 //! it advances one claimed event and never calls a model, tool, queue, or
 //! database by itself.
 
+mod durable;
 mod reducer;
 
+pub use durable::*;
 pub use reducer::*;

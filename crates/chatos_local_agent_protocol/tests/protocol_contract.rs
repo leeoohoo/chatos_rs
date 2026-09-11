@@ -30,6 +30,7 @@ fn run(status: LocalAgentRunStatus) -> LocalAgentRun {
         prompt_revision: "prompt-1".to_string(),
         capability_snapshot_ref: "capabilities-1".to_string(),
         pending_batch_id: None,
+        pending_interaction: None,
         terminal_outcome: None,
         deadline_at: None,
         created_at: now,
@@ -70,6 +71,9 @@ fn events_reject_unbounded_payloads() {
         available_at: Utc::now(),
         status: LocalAgentEventStatus::Pending,
         attempt_count: 0,
+        claimed_by_device_id: None,
+        claim_token: None,
+        claim_until: None,
         causation_id: "event-0".to_string(),
         correlation_id: "turn-1".to_string(),
         bounded_payload: serde_json::json!({"value": "x".repeat(70_000)}),
@@ -143,4 +147,32 @@ fn ipc_request_validates_the_nested_command() {
         request.validate(),
         Err(ProtocolError::InvalidState { .. })
     ));
+}
+
+#[test]
+fn event_claim_lease_fields_are_all_or_nothing() {
+    let mut event = LocalAgentEvent {
+        event_id: "event-1".to_string(),
+        run_id: "run-1".to_string(),
+        event_type: LocalAgentEventType::RunStarted,
+        expected_version: 1,
+        available_at: Utc::now(),
+        status: LocalAgentEventStatus::Pending,
+        attempt_count: 0,
+        claimed_by_device_id: None,
+        claim_token: Some("orphan-token".to_string()),
+        claim_until: None,
+        causation_id: "turn-1".to_string(),
+        correlation_id: "run-1".to_string(),
+        bounded_payload: serde_json::Value::Null,
+        last_error: None,
+    };
+    assert!(matches!(
+        event.validate(),
+        Err(ProtocolError::InvalidState { .. })
+    ));
+    event.status = LocalAgentEventStatus::Claimed;
+    event.claimed_by_device_id = Some("device-1".to_string());
+    event.claim_until = Some(Utc::now());
+    assert!(event.validate().is_ok());
 }
