@@ -184,7 +184,7 @@ async fn sqlite_persists_only_authenticated_ciphertext() {
             .fetch_one(&mut raw_connection)
             .await
             .unwrap();
-    assert_eq!(schema_version, 2);
+    assert_eq!(schema_version, 3);
     raw_connection.close().await.unwrap();
 
     let wrong_key = StorageEncryptionKey::new([99; 32]);
@@ -234,7 +234,7 @@ async fn modified_record_digest_is_rejected() {
 }
 
 #[tokio::test]
-async fn schema_v1_is_atomically_rewritten_with_record_digests() {
+async fn schema_v1_is_atomically_rewritten_to_the_current_schema() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("client.sqlite3");
     let database = storage(&path).await;
@@ -253,7 +253,12 @@ async fn schema_v1_is_atomically_rewritten_with_record_digests() {
     .await
     .unwrap();
     for table in table_names {
-        sqlx::query(&format!("ALTER TABLE {table} DROP COLUMN record_digest"))
+        let sql = if table == "client_agent_runs" || table == "client_agent_events" {
+            format!("DROP TABLE {table}")
+        } else {
+            format!("ALTER TABLE {table} DROP COLUMN record_digest")
+        };
+        sqlx::query(&sql)
             .execute(&mut raw_connection)
             .await
             .unwrap();
@@ -283,6 +288,14 @@ async fn schema_v1_is_atomically_rewritten_with_record_digests() {
             .await
             .unwrap();
     assert!(digest.starts_with("sha256:"));
+    let runtime_table_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
+         AND name IN ('client_agent_runs', 'client_agent_events')",
+    )
+    .fetch_one(&mut raw_connection)
+    .await
+    .unwrap();
+    assert_eq!(runtime_table_count, 2);
 }
 
 struct CreateThenFail;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_local_agent_protocol::{LocalAgentEvent, LocalAgentRun};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,6 +35,21 @@ pub struct AgentRecord {
     pub profile: String,
     pub status: String,
     pub state: Value,
+}
+
+/// Durable Local Agent run state. The nested protocol value is shared with
+/// native IPC and the reducer; storage does not define a second state model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentRunStateRecord {
+    pub metadata: RecordMetadata,
+    pub run: LocalAgentRun,
+}
+
+/// Durable event consumed exactly once by the Local Agent scheduler.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentEventStateRecord {
+    pub metadata: RecordMetadata,
+    pub event: LocalAgentEvent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

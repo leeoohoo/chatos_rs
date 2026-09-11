@@ -881,6 +881,7 @@ dependencies = [
  "aes-gcm 0.10.3",
  "async-trait",
  "base64 0.22.1",
+ "chatos_local_agent_protocol",
  "chrono",
  "fs2",
  "serde",

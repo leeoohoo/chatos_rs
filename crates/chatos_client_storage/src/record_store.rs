@@ -10,16 +10,17 @@ use serde::Serialize;
 
 use crate::canonical_json::{encode_canonical, verify_canonical, CanonicalRecord};
 use crate::{
-    AgentRecord, AgentRepository, ClientSettingRecord, ClientSettingsRepository, ClipboardRecord,
-    ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery, MediaStateRecord,
-    MediaStateRepository, NotepadRecord, NotepadRepository, PluginStateRecord,
+    AgentEventStateRecord, AgentEventStateRepository, AgentRecord, AgentRepository,
+    AgentRunStateRecord, AgentRunStateRepository, ClientSettingRecord, ClientSettingsRepository,
+    ClipboardRecord, ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery,
+    MediaStateRecord, MediaStateRepository, NotepadRecord, NotepadRepository, PluginStateRecord,
     PluginStateRepository, ProjectRecord, ProjectRepository, PutRecord, RecordMetadata, RecordPage,
     RecordQuery, StorageError, StorageResult, StoryRecord, StoryRepository, TaskRecord,
     TaskRepository, TerminalHistoryRecord, TerminalHistoryRepository, TransactionRepositories,
 };
 
-pub(crate) const SCHEMA_VERSION: u32 = 2;
-pub(crate) const DOMAIN_TABLES: [&str; 11] = [
+pub(crate) const SCHEMA_VERSION: u32 = 3;
+pub(crate) const LEGACY_DOMAIN_TABLES: [&str; 11] = [
     "client_agents",
     "client_conversations",
     "client_tasks",
@@ -31,6 +32,22 @@ pub(crate) const DOMAIN_TABLES: [&str; 11] = [
     "client_stories",
     "client_notepad",
     "client_terminal_history",
+];
+pub(crate) const RUNTIME_DOMAIN_TABLES: [&str; 2] = ["client_agent_runs", "client_agent_events"];
+pub(crate) const DOMAIN_TABLES: [&str; 13] = [
+    "client_agents",
+    "client_conversations",
+    "client_tasks",
+    "client_projects",
+    "client_plugins",
+    "client_media",
+    "client_settings",
+    "client_clipboard",
+    "client_stories",
+    "client_notepad",
+    "client_terminal_history",
+    "client_agent_runs",
+    "client_agent_events",
 ];
 
 pub(crate) struct StoredRow {
@@ -123,6 +140,20 @@ impl TransactionRepositories for RecordTransactionRepositories<'_> {
         ))
     }
 
+    fn agent_runs(&mut self) -> Box<dyn AgentRunStateRepository + '_> {
+        Box::new(JsonRecordRepository::<AgentRunStateRecord>::new(
+            self.store,
+            "client_agent_runs",
+        ))
+    }
+
+    fn agent_events(&mut self) -> Box<dyn AgentEventStateRepository + '_> {
+        Box::new(JsonRecordRepository::<AgentEventStateRecord>::new(
+            self.store,
+            "client_agent_events",
+        ))
+    }
+
     fn conversations(&mut self) -> Box<dyn ConversationRepository + '_> {
         Box::new(JsonRecordRepository::<ConversationRecord>::new(
             self.store,
@@ -197,6 +228,10 @@ impl TransactionRepositories for RecordTransactionRepositories<'_> {
 pub(crate) trait RepositoryRecord: Serialize + DeserializeOwned + Send + Unpin {
     fn metadata(&self) -> &RecordMetadata;
     fn metadata_mut(&mut self) -> &mut RecordMetadata;
+    fn validate(&self) -> StorageResult<()>;
+    fn validate_persisted(&self) -> StorageResult<()> {
+        self.validate()
+    }
 }
 
 macro_rules! impl_repository_record {
@@ -205,6 +240,7 @@ macro_rules! impl_repository_record {
             impl RepositoryRecord for $record {
                 fn metadata(&self) -> &RecordMetadata { &self.metadata }
                 fn metadata_mut(&mut self) -> &mut RecordMetadata { &mut self.metadata }
+                fn validate(&self) -> StorageResult<()> { validate_record_identity(&self.metadata) }
             }
         )+
     };
@@ -223,6 +259,69 @@ impl_repository_record!(
     NotepadRecord,
     TerminalHistoryRecord,
 );
+
+impl RepositoryRecord for AgentRunStateRecord {
+    fn metadata(&self) -> &RecordMetadata {
+        &self.metadata
+    }
+
+    fn metadata_mut(&mut self) -> &mut RecordMetadata {
+        &mut self.metadata
+    }
+
+    fn validate(&self) -> StorageResult<()> {
+        validate_record_identity(&self.metadata)?;
+        self.run
+            .validate()
+            .map_err(|error| StorageError::InvalidData {
+                reason: format!("invalid local Agent run: {error}"),
+            })?;
+        if self.metadata.id != self.run.run_id
+            || self.metadata.scope.owner_user_id != self.run.owner_user_id
+        {
+            return Err(StorageError::InvalidData {
+                reason: "Agent run storage identity does not match the protocol record".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_persisted(&self) -> StorageResult<()> {
+        self.validate()?;
+        if self.metadata.revision != self.run.version {
+            return Err(StorageError::InvalidData {
+                reason: "Agent run storage revision does not match the run version".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl RepositoryRecord for AgentEventStateRecord {
+    fn metadata(&self) -> &RecordMetadata {
+        &self.metadata
+    }
+
+    fn metadata_mut(&mut self) -> &mut RecordMetadata {
+        &mut self.metadata
+    }
+
+    fn validate(&self) -> StorageResult<()> {
+        validate_record_identity(&self.metadata)?;
+        self.event
+            .validate()
+            .map_err(|error| StorageError::InvalidData {
+                reason: format!("invalid local Agent event: {error}"),
+            })?;
+        if self.metadata.id != self.event.event_id {
+            return Err(StorageError::InvalidData {
+                reason: "Agent event storage identity does not match the protocol record"
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
+}
 
 pub(crate) struct JsonRecordRepository<'store, Record> {
     store: &'store mut dyn RecordStore,
@@ -286,7 +385,7 @@ where
     }
 
     async fn put_record(&mut self, mut command: PutRecord<Record>) -> StorageResult<Record> {
-        validate_record_identity(command.record.metadata())?;
+        command.record.validate()?;
         let owner_user_id = command.record.metadata().scope.owner_user_id.clone();
         let id = command.record.metadata().id.clone();
         match command.expected_revision {
@@ -296,6 +395,7 @@ where
                 metadata.revision = 1;
                 metadata.created_at = now;
                 metadata.updated_at = now;
+                command.record.validate_persisted()?;
                 let encoded = encode_record(&command.record)?;
                 let inserted = self
                     .store
@@ -337,6 +437,7 @@ where
                         })?;
                 let expected_revision_i64 = stored_revision(expected_revision)?;
                 let next_revision_i64 = stored_revision(command.record.metadata().revision)?;
+                command.record.validate_persisted()?;
                 let encoded = encode_record(&command.record)?;
                 let updated = self
                     .store
@@ -365,7 +466,7 @@ where
     }
 
     async fn restore_record(&mut self, record: Record) -> StorageResult<Record> {
-        validate_record_identity(record.metadata())?;
+        record.validate_persisted()?;
         if record.metadata().revision == 0 {
             return Err(StorageError::InvalidData {
                 reason: "restored record revision must be greater than zero".to_string(),
@@ -475,6 +576,8 @@ macro_rules! impl_domain_repository {
 }
 
 impl_domain_repository!(AgentRepository, AgentRecord);
+impl_domain_repository!(AgentRunStateRepository, AgentRunStateRecord);
+impl_domain_repository!(AgentEventStateRepository, AgentEventStateRecord);
 impl_domain_repository!(ConversationRepository, ConversationRecord);
 impl_domain_repository!(TaskRepository, TaskRecord);
 impl_domain_repository!(ProjectRepository, ProjectRecord);
@@ -519,6 +622,12 @@ fn decode_record<Record: RepositoryRecord>(
     let record: Record =
         serde_json::from_str(&payload.record_json).map_err(|error| StorageError::InvalidData {
             reason: format!("stored record is invalid: {error}"),
+        })?;
+    record
+        .validate_persisted()
+        .map_err(|_| StorageError::RecordIntegrity {
+            table,
+            id: id.to_string(),
         })?;
     let metadata = record.metadata();
     if metadata.id != id

@@ -4,14 +4,17 @@
 use async_trait::async_trait;
 
 use crate::{
-    AgentRepository, ClientSettingsRepository, ClipboardRepository, ConversationRepository,
-    MediaStateRepository, NotepadRepository, PluginStateRepository, ProjectRepository,
-    StorageBackend, StorageResult, StoryRepository, TaskRepository, TerminalHistoryRepository,
+    AgentEventStateRepository, AgentRepository, AgentRunStateRepository, ClientSettingsRepository,
+    ClipboardRepository, ConversationRepository, MediaStateRepository, NotepadRepository,
+    PluginStateRepository, ProjectRepository, StorageBackend, StorageResult, StoryRepository,
+    TaskRepository, TerminalHistoryRepository,
 };
 
 /// Repository views bound to one backend transaction.
 pub trait TransactionRepositories: Send {
     fn agents(&mut self) -> Box<dyn AgentRepository + '_>;
+    fn agent_runs(&mut self) -> Box<dyn AgentRunStateRepository + '_>;
+    fn agent_events(&mut self) -> Box<dyn AgentEventStateRepository + '_>;
     fn conversations(&mut self) -> Box<dyn ConversationRepository + '_>;
     fn tasks(&mut self) -> Box<dyn TaskRepository + '_>;
     fn projects(&mut self) -> Box<dyn ProjectRepository + '_>;

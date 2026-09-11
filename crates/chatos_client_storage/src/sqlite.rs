@@ -16,7 +16,7 @@ use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
 use crate::canonical_json::canonicalize_encoded;
 use crate::record_store::{
     RecordStore, RecordTransactionRepositories, StoredPayload, StoredRow, DOMAIN_TABLES,
-    SCHEMA_VERSION,
+    LEGACY_DOMAIN_TABLES, RUNTIME_DOMAIN_TABLES, SCHEMA_VERSION,
 };
 use crate::sqlite_cipher::SqlitePayloadCipher;
 use crate::{
@@ -343,6 +343,13 @@ async fn migrate(pool: &SqlitePool, cipher: &SqlitePayloadCipher) -> StorageResu
             }
         } else if current == 1 {
             migrate_v1_to_v2(&mut transaction, cipher).await?;
+            for table in RUNTIME_DOMAIN_TABLES {
+                create_domain_table(&mut transaction, table).await?;
+            }
+        } else if current == 2 {
+            for table in RUNTIME_DOMAIN_TABLES {
+                create_domain_table(&mut transaction, table).await?;
+            }
         }
         sqlx::query(
             "INSERT INTO chatos_client_schema_migrations(version, applied_at) VALUES (?, ?)",
@@ -364,7 +371,7 @@ async fn migrate_v1_to_v2(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     cipher: &SqlitePayloadCipher,
 ) -> StorageResult<()> {
-    for table in DOMAIN_TABLES {
+    for table in LEGACY_DOMAIN_TABLES {
         let old_table = format!("{table}_schema_v1");
         sqlx::query(&format!("ALTER TABLE {table} RENAME TO {old_table}"))
             .execute(&mut **transaction)

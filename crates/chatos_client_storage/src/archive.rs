@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AgentRecord, ClientSettingRecord, ClientStorage, ClipboardRecord, ConversationRecord,
-    ListQuery, MediaStateRecord, NotepadRecord, PluginStateRecord, ProjectRecord, RecordScope,
-    StorageBackend, StorageError, StorageResult, StorageTransaction, StoryRecord, TaskRecord,
-    TerminalHistoryRecord, TransactionRepositories,
+    AgentEventStateRecord, AgentRecord, AgentRunStateRecord, ClientSettingRecord, ClientStorage,
+    ClipboardRecord, ConversationRecord, ListQuery, MediaStateRecord, NotepadRecord,
+    PluginStateRecord, ProjectRecord, RecordScope, StorageBackend, StorageError, StorageResult,
+    StorageTransaction, StoryRecord, TaskRecord, TerminalHistoryRecord, TransactionRepositories,
 };
 
 const ARCHIVE_FORMAT: &str = "chatos-client-storage";
-const ARCHIVE_VERSION: u32 = 1;
+const ARCHIVE_VERSION: u32 = 2;
 const EXPORT_PAGE_SIZE: u32 = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -29,6 +29,8 @@ pub struct ClientStorageArchive {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct StorageArchiveRecords {
     pub agents: Vec<AgentRecord>,
+    pub agent_runs: Vec<AgentRunStateRecord>,
+    pub agent_events: Vec<AgentEventStateRecord>,
     pub conversations: Vec<ConversationRecord>,
     pub tasks: Vec<TaskRecord>,
     pub projects: Vec<ProjectRecord>,
@@ -139,6 +141,8 @@ impl StorageTransaction for ExportOperation {
         }
 
         collect_records!(agents, agents);
+        collect_records!(agent_runs, agent_runs);
+        collect_records!(agent_events, agent_events);
         collect_records!(conversations, conversations);
         collect_records!(tasks, tasks);
         collect_records!(projects, projects);
@@ -192,6 +196,8 @@ impl StorageTransaction for ImportOperation<'_> {
         }
 
         require_empty!(agents);
+        require_empty!(agent_runs);
+        require_empty!(agent_events);
         require_empty!(conversations);
         require_empty!(tasks);
         require_empty!(projects);
@@ -212,6 +218,8 @@ impl StorageTransaction for ImportOperation<'_> {
         }
 
         restore_records!(agents, agents);
+        restore_records!(agent_runs, agent_runs);
+        restore_records!(agent_events, agent_events);
         restore_records!(conversations, conversations);
         restore_records!(tasks, tasks);
         restore_records!(projects, projects);
@@ -252,6 +260,8 @@ fn validate_archive(archive: &ClientStorageArchive) -> StorageResult<()> {
     }
 
     validate_scope!(&archive.records.agents);
+    validate_scope!(&archive.records.agent_runs);
+    validate_scope!(&archive.records.agent_events);
     validate_scope!(&archive.records.conversations);
     validate_scope!(&archive.records.tasks);
     validate_scope!(&archive.records.projects);

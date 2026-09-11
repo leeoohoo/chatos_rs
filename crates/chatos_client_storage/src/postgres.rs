@@ -12,7 +12,7 @@ use sqlx::{Connection, PgConnection, PgPool, Row};
 use crate::canonical_json::canonicalize_encoded;
 use crate::record_store::{
     RecordStore, RecordTransactionRepositories, StoredPayload, StoredRow, DOMAIN_TABLES,
-    SCHEMA_VERSION,
+    LEGACY_DOMAIN_TABLES, RUNTIME_DOMAIN_TABLES, SCHEMA_VERSION,
 };
 use crate::{
     ClientStorage, PostgresConnectionSettings, PostgresTlsMode, StorageBackend, StorageError,
@@ -333,6 +333,13 @@ async fn migrate(pool: &PgPool) -> StorageResult<()> {
         }
         if current == 1 {
             migrate_v1_to_v2(&mut transaction).await?;
+            for table in RUNTIME_DOMAIN_TABLES {
+                create_domain_table(&mut transaction, table).await?;
+            }
+        } else if current == 2 {
+            for table in RUNTIME_DOMAIN_TABLES {
+                create_domain_table(&mut transaction, table).await?;
+            }
         }
         sqlx::query(
             "INSERT INTO chatos.chatos_client_schema_migrations(version, applied_at) VALUES ($1, $2)",
@@ -352,7 +359,7 @@ async fn migrate(pool: &PgPool) -> StorageResult<()> {
 async fn migrate_v1_to_v2(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> StorageResult<()> {
-    for table in DOMAIN_TABLES {
+    for table in LEGACY_DOMAIN_TABLES {
         let qualified = qualified_table(table)?;
         sqlx::query(&format!(
             "ALTER TABLE {qualified} ADD COLUMN record_digest TEXT"
