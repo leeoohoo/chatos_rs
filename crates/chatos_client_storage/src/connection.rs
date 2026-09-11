@@ -16,12 +16,24 @@ pub enum PostgresTlsMode {
     VerifyFull,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PostgresEndpoint {
     pub host: String,
     pub port: u16,
     pub database: String,
     pub tls_mode: PostgresTlsMode,
+}
+
+impl fmt::Debug for PostgresEndpoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PostgresEndpoint")
+            .field("host", &"[REDACTED]")
+            .field("port", &self.port)
+            .field("database", &"[REDACTED]")
+            .field("tls_mode", &self.tls_mode)
+            .finish()
+    }
 }
 
 impl PostgresEndpoint {
@@ -72,7 +84,7 @@ impl fmt::Debug for PostgresCredentials {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PostgresCredentials")
-            .field("username", &self.username)
+            .field("username", &"[REDACTED]")
             .field("password", &"[REDACTED]")
             .finish()
     }
@@ -156,6 +168,30 @@ mod tests {
         let rendered = format!("{credentials:?}");
 
         assert!(rendered.contains("[REDACTED]"));
+        assert!(!rendered.contains("chatos"));
         assert!(!rendered.contains("do-not-log-this"));
+    }
+
+    #[test]
+    fn connection_debug_output_redacts_endpoint_and_credentials() {
+        let settings = PostgresConnectionSettings {
+            endpoint: PostgresEndpoint {
+                host: "secret-db.example.com".to_string(),
+                port: 5432,
+                database: "private_database".to_string(),
+                tls_mode: PostgresTlsMode::VerifyFull,
+            },
+            credentials: PostgresCredentials::new("private_user", "private_password").unwrap(),
+        };
+        let rendered = format!("{settings:?}");
+
+        for secret in [
+            "secret-db.example.com",
+            "private_database",
+            "private_user",
+            "private_password",
+        ] {
+            assert!(!rendered.contains(secret));
+        }
     }
 }

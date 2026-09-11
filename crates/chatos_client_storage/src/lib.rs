@@ -11,6 +11,7 @@ mod bootstrap;
 mod connection;
 mod contracts;
 mod error;
+mod factory;
 mod postgres;
 mod record_store;
 mod repositories;
@@ -26,6 +27,10 @@ pub use connection::{
 };
 pub use contracts::*;
 pub use error::{ConfigurationResult, StorageConfigurationError, StorageError, StorageResult};
+pub use factory::{
+    ClientStorageFactory, NativeStorageBackendConnector, StorageBackendConnector,
+    StorageSecretResolver,
+};
 pub use postgres::PostgresClientStorage;
 pub use repositories::*;
 pub use sqlite::SqliteClientStorage;
