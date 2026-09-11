@@ -4,19 +4,20 @@
 use async_trait::async_trait;
 use chatos_client_storage::{
     AgentEventStateRecord, AgentRunStateRecord, AgentUiEventCursorQuery, ClientStorage, ListQuery,
-    PutRecord, RecordMetadata, RecordQuery, RecordScope, SecretReference, SqliteBootstrapProfile,
-    SqliteClientStorage, StorageEncryptionKey, StorageResult, StorageTransaction,
-    ToolExecutionStateRecord, TransactionRepositories,
+    ProviderContextStateRecord, PutRecord, RecordMetadata, RecordQuery, RecordScope,
+    SecretReference, SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey,
+    StorageResult, StorageTransaction, ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
     ContextStrategy, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
     LocalAgentRunStatus, LocalAgentUiEvent, LocalAgentUiEventPayload, ModelProtocol,
-    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ToolEffect, ToolExecution,
-    ToolExecutionStatus,
+    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ProviderContextItem, ToolEffect,
+    ToolExecution, ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
     claim_event, create_local_agent_run, record_model_step_completion, reduce_and_commit,
     AttemptLimitDisposition, CompletedAssistantMessage, CreateLocalAgentRunRequest,
+    DurableModelStepCompletionPayload, DurableProviderContextCommit, DurableProviderContextItem,
     EventClaimRequest, EventClaimResult, InitialRunMessage, RecordModelStepCompletionRequest,
     ReduceAndCommitRequest, ReducerPolicy, StepEvidence,
 };
@@ -188,6 +189,7 @@ struct CountCreatedRecords {
     events: usize,
     messages: usize,
     outbox: usize,
+    provider_context: usize,
 }
 
 #[async_trait]
@@ -215,6 +217,12 @@ impl StorageTransaction for CountCreatedRecords {
             .records
             .len();
         self.outbox = repositories.sync_outbox().list(&query).await?.records.len();
+        self.provider_context = repositories
+            .provider_context()
+            .list(&query)
+            .await?
+            .records
+            .len();
         Ok(())
     }
 }
@@ -274,6 +282,40 @@ impl StorageTransaction for SeedModelRunning {
     }
 }
 
+struct SeedProviderContext {
+    now: chrono::DateTime<Utc>,
+}
+
+#[async_trait]
+impl StorageTransaction for SeedProviderContext {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        repositories
+            .provider_context()
+            .put(PutRecord {
+                record: ProviderContextStateRecord {
+                    metadata: metadata("stale-provider-context", self.now),
+                    item: ProviderContextItem {
+                        item_id: "stale-provider-context".to_string(),
+                        run_id: "run-1".to_string(),
+                        generation: 1,
+                        sequence: 1,
+                        provider: "openai".to_string(),
+                        item_type: "message".to_string(),
+                        encrypted_payload: "sealed:stale-provider-item".to_string(),
+                        payload_digest: format!("sha256:{}", "b".repeat(64)),
+                        created_at: self.now,
+                    },
+                },
+                expected_revision: None,
+            })
+            .await?;
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn run_creation_commits_start_event_and_ui_snapshot_atomically_and_idempotently() {
     let (_directory, storage) = empty_storage().await;
@@ -301,6 +343,7 @@ async fn run_creation_commits_start_event_and_ui_snapshot_atomically_and_idempot
         events: 0,
         messages: 0,
         outbox: 0,
+        provider_context: 0,
     };
     storage.transaction(&mut counts).await.unwrap();
     assert_eq!(counts.runs, 1);
@@ -335,6 +378,7 @@ async fn stable_run_id_rejects_different_creation_identity_without_writes() {
         events: 0,
         messages: 0,
         outbox: 0,
+        provider_context: 0,
     };
     storage.transaction(&mut counts).await.unwrap();
     assert_eq!(counts.runs, 1);
@@ -373,6 +417,7 @@ async fn initial_user_message_and_memory_outbox_share_the_run_creation_transacti
         events: 0,
         messages: 0,
         outbox: 0,
+        provider_context: 0,
     };
     storage.transaction(&mut counts).await.unwrap();
     assert_eq!(counts.runs, 1);
@@ -386,6 +431,10 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
     let (_directory, storage) = empty_storage().await;
     storage.transaction(&mut SeedModelRunning).await.unwrap();
     let now = Utc::now();
+    storage
+        .transaction(&mut SeedProviderContext { now })
+        .await
+        .unwrap();
     let request = RecordModelStepCompletionRequest {
         scope: scope(),
         run_id: "run-1".to_string(),
@@ -403,6 +452,16 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
             response_id: Some("response-1".to_string()),
             message_source: "main_chat".to_string(),
         }),
+        provider_context_commit: Some(DurableProviderContextCommit {
+            generation: 1,
+            retained_items: vec![DurableProviderContextItem {
+                sequence: 2,
+                item_type: "message".to_string(),
+                encrypted_payload: "sealed:provider-item-1".to_string(),
+                payload_digest: format!("sha256:{}", "a".repeat(64)),
+                created_at: now,
+            }],
+        }),
         origin_device_id: "device-1".to_string(),
         causation_id: "model-request-1".to_string(),
         correlation_id: "conversation-1".to_string(),
@@ -412,7 +471,14 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
     let first = record_model_step_completion(&storage, request.clone())
         .await
         .unwrap();
-    let repeated = record_model_step_completion(&storage, request)
+    let mut retried_request = request;
+    retried_request
+        .provider_context_commit
+        .as_mut()
+        .unwrap()
+        .retained_items[0]
+        .encrypted_payload = "sealed:provider-item-1-reencrypted".to_string();
+    let repeated = record_model_step_completion(&storage, retried_request)
         .await
         .unwrap();
 
@@ -420,17 +486,28 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
     assert_eq!(first, repeated);
     assert_eq!(first.event.status, LocalAgentEventStatus::Pending);
     assert_eq!(first.event.expected_version, 2);
-    let decoded: ModelStepCompletion = serde_json::from_value(first.event.bounded_payload).unwrap();
-    assert!(matches!(decoded.result, ModelStepResult::Final(_)));
+    let decoded: DurableModelStepCompletionPayload =
+        serde_json::from_value(first.event.bounded_payload).unwrap();
+    assert!(matches!(
+        decoded.completion.result,
+        ModelStepResult::Final(_)
+    ));
+    assert_eq!(
+        decoded.assistant_message_record_id.as_deref(),
+        Some("assistant-message-1")
+    );
+    assert!(decoded.provider_context_commit_digest.is_some());
     let mut counts = CountCreatedRecords {
         runs: 0,
         events: 0,
         messages: 0,
         outbox: 0,
+        provider_context: 0,
     };
     storage.transaction(&mut counts).await.unwrap();
     assert_eq!(counts.messages, 1);
     assert_eq!(counts.outbox, 1);
+    assert_eq!(counts.provider_context, 1);
 }
 
 #[tokio::test]
@@ -467,6 +544,7 @@ async fn ask_user_reduction_publishes_a_visual_interaction_with_the_run_snapshot
                 response_id: Some("response-ask-1".to_string()),
                 message_source: "main_chat".to_string(),
             }),
+            provider_context_commit: None,
             origin_device_id: "device-1".to_string(),
             causation_id: "model-request-1".to_string(),
             correlation_id: "conversation-1".to_string(),

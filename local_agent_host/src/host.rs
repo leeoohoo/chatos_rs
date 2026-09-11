@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chatos_client_storage::{AgentEventStateRecord, ClientStorage, RecordScope, StorageError};
 use chatos_local_agent_protocol::{
     LocalAgentCommand, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
-    ModelRuntimeDescriptor, ModelStepCompletion,
+    ModelRuntimeDescriptor,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, begin_tool_execution, build_local_tool_invocation,
@@ -16,10 +16,11 @@ use chatos_local_agent_runtime::{
     scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
     BeginToolExecutionRequest, BeginToolExecutionResult, CommittedReduction,
     CompleteToolExecutionRequest, CreateLocalAgentRunRequest, CreatedLocalAgentRun,
-    DurableScheduler, InitialRunMessage, LocalToolRuntime, MarkToolOutcomeUnknownRequest,
-    ModelGatewayClient, PrepareToolBatchRequest, RecoveryIssue, ReduceAndCommitRequest,
-    ReducerPolicy, RenewEventClaimRequest, RequestRunControl, RunControlAction,
-    SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor, StepEvidence,
+    DurableModelStepCompletionPayload, DurableScheduler, InitialRunMessage, LocalToolRuntime,
+    MarkToolOutcomeUnknownRequest, ModelGatewayClient, PrepareToolBatchRequest, RecoveryIssue,
+    ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest, RequestRunControl,
+    RunControlAction, SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor,
+    StepEvidence,
 };
 use chrono::{DateTime, Duration, Utc};
 use tokio::sync::Mutex;
@@ -298,11 +299,11 @@ impl LocalAgentHost {
     ) -> Result<CommittedReduction, LocalAgentHostError> {
         let evidence = match claimed.event.event_type {
             LocalAgentEventType::ModelStepCompleted => {
-                let completion: ModelStepCompletion = serde_json::from_value(
+                let payload: DurableModelStepCompletionPayload = serde_json::from_value(
                     claimed.event.bounded_payload.clone(),
                 )
                 .map_err(|error| LocalAgentHostError::InvalidEventPayload(error.to_string()))?;
-                StepEvidence::from(completion)
+                StepEvidence::from(payload.completion)
             }
             LocalAgentEventType::ToolBatchCompleted => {
                 let outcome_unknown = claimed

@@ -3,18 +3,20 @@
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery, PutRecord,
-    RecordMetadata, RecordQuery, RecordScope, StorageError, StorageResult, StorageTransaction,
-    ToolExecutionStateRecord, TransactionRepositories,
+    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery,
+    ProviderContextStateRecord, PutRecord, RecordMetadata, RecordQuery, RecordScope, StorageError,
+    StorageResult, StorageTransaction, ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType,
-    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelRuntimeDescriptor,
-    ModelStepCompletion, ToolExecutionStatus,
+    AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentEvent, LocalAgentEventStatus,
+    LocalAgentEventType, LocalAgentRunStatus, MemorySyncStatus, MessageMode,
+    ModelRuntimeDescriptor, ModelStepCompletion, ProviderContextItem, ToolExecutionStatus,
 };
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::digest::{canonical_json_digest, stable_digest_id};
 use crate::memory_sync::{
     next_semantic_message_sequence, persist_semantic_message, RecordSemanticMessageRequest,
     RecordedSemanticMessage,
@@ -945,10 +947,36 @@ pub struct RecordModelStepCompletionRequest {
     pub run_id: String,
     pub completion: ModelStepCompletion,
     pub assistant_message: Option<CompletedAssistantMessage>,
+    pub provider_context_commit: Option<DurableProviderContextCommit>,
     pub origin_device_id: String,
     pub causation_id: String,
     pub correlation_id: String,
     pub now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DurableProviderContextCommit {
+    pub generation: u64,
+    pub retained_items: Vec<DurableProviderContextItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DurableProviderContextItem {
+    pub sequence: u64,
+    pub item_type: String,
+    pub encrypted_payload: String,
+    pub payload_digest: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DurableModelStepCompletionPayload {
+    pub completion: ModelStepCompletion,
+    pub assistant_message_record_id: Option<String>,
+    pub provider_context_commit_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -973,6 +1001,7 @@ pub async fn record_model_step_completion(
             reason: error.to_string(),
         })?;
     validate_completed_assistant_message(request.assistant_message.as_ref())?;
+    validate_provider_context_commit(request.provider_context_commit.as_ref())?;
     let mut operation = RecordModelStepCompletionOperation {
         request: Some(request),
         result: None,
@@ -1010,10 +1039,34 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
                 reason: "model completion requires a model_running run".to_string(),
             });
         }
+        let provider_context_commit_digest = request
+            .provider_context_commit
+            .as_ref()
+            .map(provider_context_commit_identity_digest)
+            .transpose()?;
+        let payload = serde_json::to_value(DurableModelStepCompletionPayload {
+            completion: request.completion.clone(),
+            assistant_message_record_id: request
+                .assistant_message
+                .as_ref()
+                .map(|message| message.record_id.clone()),
+            provider_context_commit_digest,
+        })
+        .map_err(|error| StorageError::InvalidData {
+            reason: format!("model completion could not be serialized: {error}"),
+        })?;
         persist_completed_assistant_message(
             repositories,
             &run,
             request.assistant_message,
+            &request.origin_device_id,
+            request.now,
+        )
+        .await?;
+        persist_provider_context_commit(
+            repositories,
+            &run,
+            request.provider_context_commit,
             &request.origin_device_id,
             request.now,
         )
@@ -1024,11 +1077,6 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
             LocalAgentEventType::ModelStepCompleted,
             0,
         );
-        let payload = serde_json::to_value(&request.completion).map_err(|error| {
-            StorageError::InvalidData {
-                reason: format!("model completion could not be serialized: {error}"),
-            }
-        })?;
         let query = RecordQuery {
             scope: request.scope.clone(),
             id: event_id.clone(),
@@ -1115,6 +1163,186 @@ fn validate_completed_assistant_message(
         });
     }
     Ok(())
+}
+
+fn validate_provider_context_commit(
+    commit: Option<&DurableProviderContextCommit>,
+) -> StorageResult<()> {
+    let Some(commit) = commit else {
+        return Ok(());
+    };
+    if commit.generation == 0 {
+        return Err(StorageError::InvalidData {
+            reason: "provider context generation must be positive".to_string(),
+        });
+    }
+    let mut previous_sequence = 0;
+    for item in &commit.retained_items {
+        if item.sequence <= previous_sequence
+            || item.item_type.trim().is_empty()
+            || item.encrypted_payload.is_empty()
+            || item.payload_digest.trim().is_empty()
+        {
+            return Err(StorageError::InvalidData {
+                reason: "provider context items must be strictly ordered and complete".to_string(),
+            });
+        }
+        previous_sequence = item.sequence;
+    }
+    Ok(())
+}
+
+fn provider_context_commit_identity_digest(
+    commit: &DurableProviderContextCommit,
+) -> StorageResult<String> {
+    canonical_json_digest(&json!({
+        "generation": commit.generation,
+        "retained_items": commit.retained_items.iter().map(|item| json!({
+            "sequence": item.sequence,
+            "item_type": item.item_type,
+            "payload_digest": item.payload_digest,
+            "created_at": item.created_at,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+async fn persist_provider_context_commit(
+    repositories: &mut dyn TransactionRepositories,
+    run_record: &AgentRunStateRecord,
+    commit: Option<DurableProviderContextCommit>,
+    origin_device_id: &str,
+    now: DateTime<Utc>,
+) -> StorageResult<()> {
+    let Some(commit) = commit else {
+        return Ok(());
+    };
+    if run_record.run.context_strategy != ContextStrategy::ProviderNative {
+        return Err(StorageError::InvalidData {
+            reason: "Memory Engine runs cannot persist provider-native context".to_string(),
+        });
+    }
+    let generation = commit.generation;
+    let generation_text = generation.to_string();
+    let mut desired = Vec::with_capacity(commit.retained_items.len());
+    for item in commit.retained_items {
+        let sequence_text = item.sequence.to_string();
+        let item_id = stable_digest_id(
+            "provider-context",
+            &[
+                run_record.run.run_id.as_str(),
+                generation_text.as_str(),
+                sequence_text.as_str(),
+                item.payload_digest.as_str(),
+            ],
+        );
+        let record = ProviderContextStateRecord {
+            metadata: RecordMetadata {
+                id: item_id.clone(),
+                scope: run_record.metadata.scope.clone(),
+                origin_device_id: origin_device_id.to_string(),
+                revision: 0,
+                created_at: now,
+                updated_at: now,
+            },
+            item: ProviderContextItem {
+                item_id,
+                run_id: run_record.run.run_id.clone(),
+                generation,
+                sequence: item.sequence,
+                provider: run_record.run.model_runtime_snapshot.provider.clone(),
+                item_type: item.item_type,
+                encrypted_payload: item.encrypted_payload,
+                payload_digest: item.payload_digest,
+                created_at: item.created_at,
+            },
+        };
+        record
+            .item
+            .validate()
+            .map_err(|error| StorageError::InvalidData {
+                reason: format!("provider context item is invalid: {error}"),
+            })?;
+        desired.push(record);
+    }
+
+    let mut cursor = None;
+    let mut existing_records = Vec::new();
+    loop {
+        let page = repositories
+            .provider_context()
+            .list(&ListQuery {
+                scope: run_record.metadata.scope.clone(),
+                cursor: cursor.clone(),
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        existing_records.extend(
+            page.records
+                .into_iter()
+                .filter(|record| record.item.run_id == run_record.run.run_id),
+        );
+        if !advance_cursor(&mut cursor, page.next_cursor)? {
+            break;
+        }
+    }
+    let desired_ids = desired
+        .iter()
+        .map(|record| record.metadata.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for record in existing_records {
+        if !desired_ids.contains(record.metadata.id.as_str()) {
+            repositories
+                .provider_context()
+                .delete(
+                    &RecordQuery {
+                        scope: record.metadata.scope,
+                        id: record.metadata.id,
+                    },
+                    record.metadata.revision,
+                )
+                .await?;
+        }
+    }
+    for record in desired {
+        let query = RecordQuery {
+            scope: record.metadata.scope.clone(),
+            id: record.metadata.id.clone(),
+        };
+        let existing = {
+            let mut context = repositories.provider_context();
+            context.get(&query).await?
+        };
+        if let Some(existing) = existing {
+            if provider_context_items_match(&existing.item, &record.item) {
+                continue;
+            }
+            return Err(StorageError::Conflict {
+                actual_revision: existing.metadata.revision,
+            });
+        }
+        repositories
+            .provider_context()
+            .put(PutRecord {
+                record,
+                expected_revision: None,
+            })
+            .await?;
+    }
+    Ok(())
+}
+
+fn provider_context_items_match(
+    existing: &ProviderContextItem,
+    expected: &ProviderContextItem,
+) -> bool {
+    existing.item_id == expected.item_id
+        && existing.run_id == expected.run_id
+        && existing.generation == expected.generation
+        && existing.sequence == expected.sequence
+        && existing.provider == expected.provider
+        && existing.item_type == expected.item_type
+        && existing.payload_digest == expected.payload_digest
+        && existing.created_at == expected.created_at
 }
 
 async fn persist_completed_assistant_message(
