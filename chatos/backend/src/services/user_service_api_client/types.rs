@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_local_agent_protocol::{ContextStrategy, ModelProtocol};
 use serde::{Deserialize, Serialize};
 
 fn default_model_request_max_retries() -> i64 {
@@ -74,6 +75,8 @@ pub struct UserServiceModelConfigRecord {
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,
+    pub protocol: Option<ModelProtocol>,
+    pub context_strategy: Option<ContextStrategy>,
     #[serde(default)]
     pub prompt_vendor: Option<String>,
     #[serde(default)]
@@ -100,6 +103,8 @@ pub struct UserServiceModelConfigRecord {
     #[serde(default)]
     pub supports_responses: bool,
     #[serde(default)]
+    pub supports_streaming: bool,
+    #[serde(default)]
     pub supports_native_compaction: bool,
     #[serde(default)]
     pub supports_input_token_count: bool,
@@ -116,6 +121,8 @@ pub struct UserServiceInternalModelRuntimeRecord {
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,
+    pub protocol: Option<ModelProtocol>,
+    pub context_strategy: Option<ContextStrategy>,
     #[serde(default)]
     pub prompt_vendor: Option<String>,
     pub base_url: String,
@@ -131,6 +138,8 @@ pub struct UserServiceInternalModelRuntimeRecord {
     pub supports_reasoning: bool,
     #[serde(default)]
     pub supports_responses: bool,
+    #[serde(default)]
+    pub supports_streaming: bool,
     #[serde(default)]
     pub supports_native_compaction: bool,
     #[serde(default)]
@@ -173,6 +182,8 @@ pub struct CreateUserServiceModelConfigRequest {
     pub owner_user_id: Option<String>,
     pub name: String,
     pub provider: Option<String>,
+    pub protocol: Option<ModelProtocol>,
+    pub context_strategy: Option<ContextStrategy>,
     pub prompt_vendor: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
@@ -188,6 +199,7 @@ pub struct CreateUserServiceModelConfigRequest {
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
+    pub supports_streaming: Option<bool>,
     pub supports_native_compaction: Option<bool>,
     pub supports_input_token_count: Option<bool>,
 }
@@ -211,6 +223,8 @@ pub struct CreateUserServiceModelProviderRequest {
 pub struct UpdateUserServiceModelConfigRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
+    pub protocol: Option<ModelProtocol>,
+    pub context_strategy: Option<ContextStrategy>,
     pub prompt_vendor: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
@@ -230,6 +244,7 @@ pub struct UpdateUserServiceModelConfigRequest {
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
+    pub supports_streaming: Option<bool>,
     pub supports_native_compaction: Option<bool>,
     pub supports_input_token_count: Option<bool>,
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_local_agent_protocol::{ContextStrategy, ModelProtocol};
 use serde::{Deserialize, Serialize};
 
 fn default_true() -> bool {
@@ -14,6 +15,8 @@ pub struct AiModelConfig {
     pub user_id: Option<String>,
     pub name: String,
     pub provider: String,
+    pub protocol: Option<ModelProtocol>,
+    pub context_strategy: Option<ContextStrategy>,
     #[serde(default)]
     pub prompt_vendor: Option<String>,
     pub model: String,
@@ -33,6 +36,7 @@ pub struct AiModelConfig {
     pub supports_images: bool,
     pub supports_reasoning: bool,
     pub supports_responses: bool,
+    pub supports_streaming: bool,
     pub supports_native_compaction: bool,
     pub supports_input_token_count: bool,
     #[serde(default)]

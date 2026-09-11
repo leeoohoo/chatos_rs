@@ -142,6 +142,8 @@ export interface UserModelConfigRecord {
   owner_user_id: string;
   name: string;
   provider: string;
+  protocol?: 'responses' | 'chat_completions' | null;
+  context_strategy?: 'provider_native' | 'memory_engine' | null;
   prompt_vendor?: AgentPromptVendor | null;
   model: string;
   model_name: string;
@@ -159,6 +161,7 @@ export interface UserModelConfigRecord {
   supports_images: boolean;
   supports_reasoning: boolean;
   supports_responses: boolean;
+  supports_streaming: boolean;
   supports_native_compaction: boolean;
   supports_input_token_count: boolean;
   created_at: string;
@@ -193,6 +196,8 @@ export interface CreateUserModelConfigPayload {
   owner_user_id?: string;
   name: string;
   provider?: string;
+  protocol?: 'responses' | 'chat_completions';
+  context_strategy?: 'provider_native' | 'memory_engine';
   prompt_vendor?: AgentPromptVendor;
   model?: string;
   thinking_level?: string;
@@ -208,6 +213,7 @@ export interface CreateUserModelConfigPayload {
   supports_images?: boolean;
   supports_reasoning?: boolean;
   supports_responses?: boolean;
+  supports_streaming?: boolean;
   supports_native_compaction?: boolean;
   supports_input_token_count?: boolean;
 }
@@ -229,6 +235,8 @@ export interface CreateUserModelProviderPayload {
 export interface UpdateUserModelConfigPayload {
   name?: string;
   provider?: string;
+  protocol?: 'responses' | 'chat_completions';
+  context_strategy?: 'provider_native' | 'memory_engine';
   prompt_vendor?: AgentPromptVendor;
   model?: string;
   thinking_level?: string;
@@ -248,6 +256,7 @@ export interface UpdateUserModelConfigPayload {
   supports_images?: boolean;
   supports_reasoning?: boolean;
   supports_responses?: boolean;
+  supports_streaming?: boolean;
   supports_native_compaction?: boolean;
   supports_input_token_count?: boolean;
 }

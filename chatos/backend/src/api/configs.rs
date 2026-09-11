@@ -5,6 +5,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use chatos_local_agent_protocol::{ContextStrategy, ModelProtocol};
 use serde::Deserialize;
 
 mod ai_model;
@@ -19,6 +20,8 @@ struct AiModelConfigRequest {
     id: Option<String>,
     name: Option<String>,
     provider: Option<String>,
+    protocol: Option<ModelProtocol>,
+    context_strategy: Option<ContextStrategy>,
     prompt_vendor: Option<String>,
     model: Option<String>,
     thinking_level: Option<String>,
@@ -38,6 +41,7 @@ struct AiModelConfigRequest {
     supports_images: Option<bool>,
     supports_reasoning: Option<bool>,
     supports_responses: Option<bool>,
+    supports_streaming: Option<bool>,
     supports_native_compaction: Option<bool>,
     supports_input_token_count: Option<bool>,
 }

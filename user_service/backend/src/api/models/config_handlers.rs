@@ -109,6 +109,12 @@ pub(in crate::api) async fn create_model_config(
             .and_then(|item| item.source_provider_id.clone()),
         name,
         provider: provider.clone(),
+        protocol: input
+            .protocol
+            .or_else(|| existing.as_ref().and_then(|item| item.protocol)),
+        context_strategy: input
+            .context_strategy
+            .or_else(|| existing.as_ref().and_then(|item| item.context_strategy)),
         prompt_vendor,
         model,
         thinking_level: normalize_thinking_level_input(
@@ -155,6 +161,11 @@ pub(in crate::api) async fn create_model_config(
             existing
                 .as_ref()
                 .is_some_and(|item| item.supports_responses)
+        }),
+        supports_streaming: input.supports_streaming.unwrap_or_else(|| {
+            existing
+                .as_ref()
+                .is_some_and(|item| item.supports_streaming)
         }),
         supports_native_compaction: input.supports_native_compaction.unwrap_or_else(|| {
             existing
@@ -254,6 +265,12 @@ pub(in crate::api) async fn update_model_config(
     if let Some(provider) = input.provider {
         record.provider = normalize_provider_input(Some(provider))?;
     }
+    if let Some(protocol) = input.protocol {
+        record.protocol = Some(protocol);
+    }
+    if let Some(context_strategy) = input.context_strategy {
+        record.context_strategy = Some(context_strategy);
+    }
     if input.prompt_vendor.is_some() || provider_changed {
         let next = normalize_prompt_vendor_input(input.prompt_vendor, record.provider.as_str())?;
         if next.is_some() || record.prompt_vendor.is_none() {
@@ -292,6 +309,9 @@ pub(in crate::api) async fn update_model_config(
     }
     if let Some(supports_responses) = input.supports_responses {
         record.supports_responses = supports_responses;
+    }
+    if let Some(supports_streaming) = input.supports_streaming {
+        record.supports_streaming = supports_streaming;
     }
     if let Some(supports_native_compaction) = input.supports_native_compaction {
         record.supports_native_compaction = supports_native_compaction;
@@ -390,9 +410,28 @@ fn validate_model_runtime_metadata(
             ));
         }
     }
-    if record.supports_native_compaction && !record.supports_responses {
+    if record.protocol == Some(chatos_local_agent_protocol::ModelProtocol::Responses)
+        && !record.supports_responses
+    {
         return Err(bad_request(
-            "supports_native_compaction requires supports_responses",
+            "responses protocol requires supports_responses",
+        ));
+    }
+    if record.supports_native_compaction
+        && (record.protocol != Some(chatos_local_agent_protocol::ModelProtocol::Responses)
+            || record.context_strategy
+                != Some(chatos_local_agent_protocol::ContextStrategy::ProviderNative))
+    {
+        return Err(bad_request(
+            "supports_native_compaction requires responses protocol and provider_native context",
+        ));
+    }
+    if record.context_strategy == Some(chatos_local_agent_protocol::ContextStrategy::ProviderNative)
+        && (record.protocol != Some(chatos_local_agent_protocol::ModelProtocol::Responses)
+            || !record.supports_native_compaction)
+    {
+        return Err(bad_request(
+            "provider_native context requires responses protocol and native compaction",
         ));
     }
     Ok(())
@@ -438,6 +477,8 @@ mod tests {
             source_provider_id: Some("provider-1".to_string()),
             name: "Model".to_string(),
             provider: "gpt".to_string(),
+            protocol: Some(chatos_local_agent_protocol::ModelProtocol::Responses),
+            context_strategy: Some(chatos_local_agent_protocol::ContextStrategy::ProviderNative),
             prompt_vendor: Some("gpt".to_string()),
             model: "gpt-test".to_string(),
             thinking_level: None,
@@ -454,6 +495,7 @@ mod tests {
             supports_images: false,
             supports_reasoning: true,
             supports_responses: true,
+            supports_streaming: true,
             supports_native_compaction: true,
             supports_input_token_count: true,
             created_at: String::new(),
@@ -475,9 +517,23 @@ mod tests {
     }
 
     #[test]
-    fn native_compaction_requires_responses_protocol() {
+    fn responses_protocol_requires_declared_support() {
         let mut record = model_runtime_metadata();
         record.supports_responses = false;
+        assert!(validate_model_runtime_metadata(&record).is_err());
+    }
+
+    #[test]
+    fn native_compaction_requires_responses_protocol() {
+        let mut record = model_runtime_metadata();
+        record.protocol = Some(chatos_local_agent_protocol::ModelProtocol::ChatCompletions);
+        assert!(validate_model_runtime_metadata(&record).is_err());
+    }
+
+    #[test]
+    fn provider_native_context_requires_native_compaction() {
+        let mut record = model_runtime_metadata();
+        record.supports_native_compaction = false;
         assert!(validate_model_runtime_metadata(&record).is_err());
     }
 

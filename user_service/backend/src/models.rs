@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use chatos_local_agent_protocol::{ContextStrategy, ModelProtocol};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_MODEL_REQUEST_MAX_RETRIES: i64 = 5;
@@ -222,6 +223,10 @@ pub struct UserModelConfigRecord {
     pub name: String,
     pub provider: String,
     #[serde(default)]
+    pub protocol: Option<ModelProtocol>,
+    #[serde(default)]
+    pub context_strategy: Option<ContextStrategy>,
+    #[serde(default)]
     pub prompt_vendor: Option<String>,
     pub model: String,
     pub thinking_level: Option<String>,
@@ -241,6 +246,8 @@ pub struct UserModelConfigRecord {
     pub supports_images: bool,
     pub supports_reasoning: bool,
     pub supports_responses: bool,
+    #[serde(default)]
+    pub supports_streaming: bool,
     #[serde(default)]
     pub supports_native_compaction: bool,
     #[serde(default)]
@@ -440,6 +447,8 @@ pub struct CreateUserModelConfigRequest {
     pub owner_user_id: Option<String>,
     pub name: String,
     pub provider: Option<String>,
+    pub protocol: Option<ModelProtocol>,
+    pub context_strategy: Option<ContextStrategy>,
     pub prompt_vendor: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
@@ -457,6 +466,7 @@ pub struct CreateUserModelConfigRequest {
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
+    pub supports_streaming: Option<bool>,
     pub supports_native_compaction: Option<bool>,
     pub supports_input_token_count: Option<bool>,
 }
@@ -482,6 +492,8 @@ pub struct CreateUserModelProviderRequest {
 pub struct UpdateUserModelConfigRequest {
     pub name: Option<String>,
     pub provider: Option<String>,
+    pub protocol: Option<ModelProtocol>,
+    pub context_strategy: Option<ContextStrategy>,
     pub prompt_vendor: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
@@ -502,6 +514,7 @@ pub struct UpdateUserModelConfigRequest {
     pub supports_images: Option<bool>,
     pub supports_reasoning: Option<bool>,
     pub supports_responses: Option<bool>,
+    pub supports_streaming: Option<bool>,
     pub supports_native_compaction: Option<bool>,
     pub supports_input_token_count: Option<bool>,
 }
@@ -582,6 +595,8 @@ mod tests {
             source_provider_id: Some("provider-1".to_string()),
             name: "Model".to_string(),
             provider: "gpt".to_string(),
+            protocol: None,
+            context_strategy: None,
             prompt_vendor: Some("gpt".to_string()),
             model: "gpt-test".to_string(),
             thinking_level: None,
@@ -598,6 +613,7 @@ mod tests {
             supports_images: false,
             supports_reasoning: false,
             supports_responses: true,
+            supports_streaming: true,
             supports_native_compaction: false,
             supports_input_token_count: false,
             created_at: "created".to_string(),

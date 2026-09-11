@@ -406,6 +406,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_local_agent_protocol"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "chatos_plugin_management_sdk"
 version = "0.1.0"
 dependencies = [
@@ -3587,6 +3597,7 @@ dependencies = [
  "axum",
  "axum-server",
  "base64 0.22.1",
+ "chatos_local_agent_protocol",
  "chatos_plugin_management_sdk",
  "chatos_service_runtime",
  "chrono",

@@ -45,11 +45,14 @@ const ModelProviderDrawer = lazy(() => import('./models/ModelProviderDrawer').th
 
 type ModelTaskPreferencesDraft = {
   task_enabled: boolean;
+  protocol?: 'responses' | 'chat_completions';
+  context_strategy?: 'provider_native' | 'memory_engine';
   task_usage_scenario: string;
   task_thinking_level?: string;
   temperature?: number;
   context_window_tokens?: number;
   max_output_tokens?: number;
+  supports_streaming: boolean;
   supports_native_compaction: boolean;
   supports_input_token_count: boolean;
 };
@@ -153,6 +156,8 @@ export function ModelsPage() {
     mutationFn: ({ id, draft }: { id: string; draft: ModelTaskPreferencesDraft }) =>
       api.updateModelConfig(id, {
         task_enabled: draft.task_enabled,
+        protocol: draft.protocol,
+        context_strategy: draft.context_strategy,
         task_usage_scenario: draft.task_usage_scenario.trim(),
         task_thinking_level: draft.task_thinking_level || '',
         temperature: draft.temperature,
@@ -161,6 +166,7 @@ export function ModelsPage() {
         clear_context_window_tokens: draft.context_window_tokens == null,
         max_output_tokens: draft.max_output_tokens,
         clear_max_output_tokens: draft.max_output_tokens == null,
+        supports_streaming: draft.supports_streaming,
         supports_native_compaction: draft.supports_native_compaction,
         supports_input_token_count: draft.supports_input_token_count,
       }),
@@ -523,6 +529,42 @@ export function ModelsPage() {
                   }
                 >
                   <Row gutter={[16, 12]} align="bottom">
+                    <Col xs={24} sm={12} lg={4}>
+                      <Typography.Text type="secondary">调用协议</Typography.Text>
+                      <Select
+                        value={draft.protocol}
+                        placeholder="必须选择"
+                        style={{ width: '100%' }}
+                        options={[
+                          { label: 'Responses', value: 'responses' },
+                          { label: 'Chat Completions', value: 'chat_completions' },
+                        ]}
+                        onChange={(protocol) =>
+                          updateModelTaskDraft(model.id, { protocol })
+                        }
+                      />
+                    </Col>
+                    <Col xs={24} sm={12} lg={4}>
+                      <Typography.Text type="secondary">上下文策略</Typography.Text>
+                      <Select
+                        value={draft.context_strategy}
+                        placeholder="必须选择"
+                        style={{ width: '100%' }}
+                        options={[
+                          {
+                            label: 'Provider Native',
+                            value: 'provider_native',
+                            disabled: draft.protocol !== 'responses',
+                          },
+                          { label: 'Memory Engine', value: 'memory_engine' },
+                        ]}
+                        onChange={(contextStrategy) =>
+                          updateModelTaskDraft(model.id, {
+                            context_strategy: contextStrategy,
+                          })
+                        }
+                      />
+                    </Col>
                     <Col xs={24} lg={8}>
                       <Typography.Text type="secondary">任务用途</Typography.Text>
                       <Input
@@ -587,7 +629,7 @@ export function ModelsPage() {
                         value={draft.max_output_tokens}
                         min={1}
                         precision={0}
-                        placeholder="默认"
+                        placeholder="必须配置"
                         style={{ width: '100%' }}
                         onChange={(maxOutputTokens) =>
                           updateModelTaskDraft(model.id, {
@@ -598,11 +640,25 @@ export function ModelsPage() {
                     </Col>
                     <Col xs={24} sm={12} lg={4}>
                       <Space direction="vertical" size={4}>
+                        <Typography.Text type="secondary">流式输出</Typography.Text>
+                        <Switch
+                          checked={draft.supports_streaming}
+                          onChange={(supportsStreaming) =>
+                            updateModelTaskDraft(model.id, {
+                              supports_streaming: supportsStreaming,
+                            })
+                          }
+                        />
+                      </Space>
+                    </Col>
+                    <Col xs={24} sm={12} lg={4}>
+                      <Space direction="vertical" size={4}>
                         <Typography.Text type="secondary">原生上下文压缩</Typography.Text>
                         <Switch
                           checked={draft.supports_native_compaction}
                           disabled={
-                            !model.supports_responses && !draft.supports_native_compaction
+                            (draft.protocol !== 'responses' || !model.supports_responses) &&
+                            !draft.supports_native_compaction
                           }
                           onChange={(supportsNativeCompaction) =>
                             updateModelTaskDraft(model.id, {
@@ -650,11 +706,14 @@ export function ModelsPage() {
 function taskPreferencesDraft(model: UserModelConfigRecord): ModelTaskPreferencesDraft {
   return {
     task_enabled: model.task_enabled,
+    protocol: model.protocol || undefined,
+    context_strategy: model.context_strategy || undefined,
     task_usage_scenario: model.task_usage_scenario || '',
     task_thinking_level: model.task_thinking_level || undefined,
     temperature: model.temperature ?? undefined,
     context_window_tokens: model.context_window_tokens ?? undefined,
     max_output_tokens: model.max_output_tokens ?? undefined,
+    supports_streaming: model.supports_streaming,
     supports_native_compaction: model.supports_native_compaction,
     supports_input_token_count: model.supports_input_token_count,
   };

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use crate::models::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
 use crate::state::AppState;
 use crate::store::now_rfc3339;
+use chatos_local_agent_protocol::{ContextStrategy, ModelProtocol};
 use chatos_plugin_management_sdk::normalize_agent_prompt_vendor;
 
 use super::internal_auth::{
@@ -27,6 +28,8 @@ pub struct InternalModelRuntimeConfigResponse {
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,
+    pub protocol: Option<ModelProtocol>,
+    pub context_strategy: Option<ContextStrategy>,
     pub prompt_vendor: Option<String>,
     pub base_url: String,
     pub api_key: String,
@@ -38,6 +41,7 @@ pub struct InternalModelRuntimeConfigResponse {
     pub supports_images: bool,
     pub supports_reasoning: bool,
     pub supports_responses: bool,
+    pub supports_streaming: bool,
     pub supports_native_compaction: bool,
     pub supports_input_token_count: bool,
 }
@@ -60,6 +64,8 @@ pub struct InternalTaskModelConfigResponse {
     pub owner_display_name: Option<String>,
     pub name: String,
     pub provider: String,
+    pub protocol: Option<ModelProtocol>,
+    pub context_strategy: Option<ContextStrategy>,
     pub prompt_vendor: Option<String>,
     pub base_url: String,
     pub api_key: String,
@@ -73,6 +79,7 @@ pub struct InternalTaskModelConfigResponse {
     pub supports_images: bool,
     pub supports_reasoning: bool,
     pub supports_responses: bool,
+    pub supports_streaming: bool,
     pub supports_native_compaction: bool,
     pub supports_input_token_count: bool,
     pub instructions: Option<String>,
@@ -234,6 +241,8 @@ async fn load_task_model_configs(
             owner_display_name: None,
             name: config.name,
             provider: config.provider,
+            protocol: config.protocol,
+            context_strategy: config.context_strategy,
             prompt_vendor: config.prompt_vendor,
             base_url,
             api_key,
@@ -247,6 +256,7 @@ async fn load_task_model_configs(
             supports_images: config.supports_images,
             supports_reasoning: config.supports_reasoning,
             supports_responses: config.supports_responses,
+            supports_streaming: config.supports_streaming,
             supports_native_compaction: config.supports_native_compaction,
             supports_input_token_count: config.supports_input_token_count,
             instructions: None,
@@ -406,6 +416,8 @@ pub async fn get_user_model_runtime_config(
             owner_user_id: model_config.owner_user_id,
             name: model_config.name,
             provider: model_config.provider,
+            protocol: model_config.protocol,
+            context_strategy: model_config.context_strategy,
             prompt_vendor,
             base_url,
             api_key,
@@ -417,6 +429,7 @@ pub async fn get_user_model_runtime_config(
             supports_images: model_config.supports_images,
             supports_reasoning: model_config.supports_reasoning,
             supports_responses: model_config.supports_responses,
+            supports_streaming: model_config.supports_streaming,
             supports_native_compaction: model_config.supports_native_compaction,
             supports_input_token_count: model_config.supports_input_token_count,
         }))

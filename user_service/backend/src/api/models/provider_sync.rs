@@ -315,6 +315,8 @@ pub(super) async fn refresh_provider_models_from_record(
             source_provider_id: Some(provider_record.id.clone()),
             name: imported_model_name(&provider_record, model.as_str()),
             provider: provider_record.provider.clone(),
+            protocol: existing.and_then(|item| item.protocol),
+            context_strategy: existing.and_then(|item| item.context_strategy),
             prompt_vendor: provider_record.prompt_vendor.clone(),
             model: model.clone(),
             thinking_level: existing.and_then(|item| item.thinking_level.clone()),
@@ -334,6 +336,7 @@ pub(super) async fn refresh_provider_models_from_record(
             supports_images: provider_record.supports_images,
             supports_reasoning: provider_record.supports_reasoning,
             supports_responses: provider_record.supports_responses,
+            supports_streaming: existing.is_some_and(|item| item.supports_streaming),
             supports_native_compaction: existing
                 .is_some_and(|item| item.supports_native_compaction),
             supports_input_token_count: existing
@@ -400,6 +403,8 @@ mod tests {
             source_provider_id: Some("provider-1".to_string()),
             name: "Provider / gpt-5.5".to_string(),
             provider: "gpt".to_string(),
+            protocol: None,
+            context_strategy: None,
             prompt_vendor: Some("gpt".to_string()),
             model: "gpt-5.5".to_string(),
             thinking_level: None,
@@ -416,6 +421,7 @@ mod tests {
             supports_images: false,
             supports_reasoning: false,
             supports_responses: false,
+            supports_streaming: false,
             supports_native_compaction: false,
             supports_input_token_count: false,
             created_at: "created".to_string(),
