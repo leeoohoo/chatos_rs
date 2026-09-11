@@ -118,6 +118,7 @@ struct RecordingMutationExecutor {
 impl LocalAgentIpcMutationExecutor for RecordingMutationExecutor {
     async fn execute_mutation(
         &self,
+        _request_id: &str,
         _command: LocalAgentCommand,
     ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError> {
         self.calls.fetch_add(1, Ordering::SeqCst);

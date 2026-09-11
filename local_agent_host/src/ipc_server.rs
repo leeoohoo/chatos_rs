@@ -34,6 +34,7 @@ pub enum LocalAgentIpcServerError {
 pub trait LocalAgentIpcMutationExecutor: Send + Sync {
     async fn execute_mutation(
         &self,
+        request_id: &str,
         command: LocalAgentCommand,
     ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError>;
 }
@@ -123,7 +124,7 @@ impl LocalAgentIpcServer {
                     retryable: false,
                 })
             }
-            Ok(()) => self.execute_command(request.command).await,
+            Ok(()) => self.execute_command(&request_id, request.command).await,
         };
         LocalAgentIpcReply {
             protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
@@ -132,7 +133,11 @@ impl LocalAgentIpcServer {
         }
     }
 
-    async fn execute_command(&self, command: LocalAgentCommand) -> LocalAgentIpcResponse {
+    async fn execute_command(
+        &self,
+        request_id: &str,
+        command: LocalAgentCommand,
+    ) -> LocalAgentIpcResponse {
         let query_result = match command {
             LocalAgentCommand::GetRun { run_id } => {
                 let mut operation = GetRunOperation {
@@ -189,7 +194,7 @@ impl LocalAgentIpcServer {
             mutation => {
                 return self
                     .mutation_executor
-                    .execute_mutation(mutation)
+                    .execute_mutation(request_id, mutation)
                     .await
                     .unwrap_or_else(LocalAgentIpcResponse::Error);
             }

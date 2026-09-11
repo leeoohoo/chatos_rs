@@ -3,22 +3,28 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chatos_client_storage::{AgentEventStateRecord, ClientStorage, RecordScope, StorageError};
-use chatos_local_agent_protocol::{LocalAgentEventType, ModelStepCompletion};
+use chatos_local_agent_protocol::{
+    LocalAgentCommand, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
+    ModelStepCompletion,
+};
 use chatos_local_agent_runtime::{
     begin_tool_execution, build_local_tool_invocation, complete_tool_execution, inspect_tool_batch,
     mark_tool_outcome_unknown, prepare_tool_batch, reduce_and_commit, renew_event_claim,
-    scan_recoverable_work, validate_local_tool_outcome, BeginToolExecutionRequest,
-    BeginToolExecutionResult, CommittedReduction, CompleteToolExecutionRequest, DurableScheduler,
-    LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayClient, PrepareToolBatchRequest,
-    RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest,
-    SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor, StepEvidence,
+    request_run_control, scan_recoverable_work, validate_local_tool_outcome,
+    BeginToolExecutionRequest, BeginToolExecutionResult, CommittedReduction,
+    CompleteToolExecutionRequest, DurableScheduler, LocalToolRuntime,
+    MarkToolOutcomeUnknownRequest, ModelGatewayClient, PrepareToolBatchRequest, RecoveryIssue,
+    ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest, RequestRunControl,
+    RunControlAction, SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor,
+    StepEvidence,
 };
 use chrono::{DateTime, Duration, Utc};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{LocalAgentProfileRegistry, ProfileRegistryError};
+use crate::{LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry, ProfileRegistryError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalAgentHostPolicy {
@@ -156,6 +162,29 @@ impl LocalAgentHost {
                 },
             )
             .await?)
+    }
+
+    pub async fn request_control(
+        &self,
+        run_id: impl Into<String>,
+        action: RunControlAction,
+        causation_id: impl Into<String>,
+        now: DateTime<Utc>,
+    ) -> Result<AgentEventStateRecord, LocalAgentHostError> {
+        let event = request_run_control(
+            self.storage.as_ref(),
+            RequestRunControl {
+                scope: self.scope.clone(),
+                run_id: run_id.into(),
+                action,
+                origin_device_id: self.device_id.clone(),
+                causation_id: causation_id.into(),
+                now,
+            },
+        )
+        .await?;
+        self.scheduler.lock().await.schedule(&event);
+        Ok(event)
     }
 
     pub async fn commit_claimed(
@@ -391,5 +420,49 @@ impl LocalAgentHost {
             next_wake_at: plan.next_wake_at,
             recovery_issues: plan.issues,
         })
+    }
+}
+
+/// Adds durable Run lifecycle commands to an IPC executor chain. Commands
+/// owned by model/run creation, approval, or platform storage are delegated to
+/// the next typed executor instead of being reimplemented here.
+pub struct LocalAgentHostControlExecutor {
+    host: Arc<LocalAgentHost>,
+    next: Arc<dyn LocalAgentIpcMutationExecutor>,
+}
+
+impl LocalAgentHostControlExecutor {
+    pub fn new(host: Arc<LocalAgentHost>, next: Arc<dyn LocalAgentIpcMutationExecutor>) -> Self {
+        Self { host, next }
+    }
+}
+
+#[async_trait]
+impl LocalAgentIpcMutationExecutor for LocalAgentHostControlExecutor {
+    async fn execute_mutation(
+        &self,
+        request_id: &str,
+        command: LocalAgentCommand,
+    ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError> {
+        let (run_id, action) = match command {
+            LocalAgentCommand::PauseRun { run_id } => (run_id, RunControlAction::Pause),
+            LocalAgentCommand::ResumeRun { run_id } => (run_id, RunControlAction::Resume),
+            LocalAgentCommand::CancelRun { run_id } => (run_id, RunControlAction::Cancel),
+            other => return self.next.execute_mutation(request_id, other).await,
+        };
+        self.host
+            .request_control(run_id, action, request_id, Utc::now())
+            .await
+            .map(|event| LocalAgentIpcResponse::Accepted {
+                operation_id: event.event.event_id,
+            })
+            .map_err(|error| LocalAgentIpcError {
+                code: "run_control_rejected".to_string(),
+                message: error.to_string(),
+                retryable: matches!(
+                    error,
+                    LocalAgentHostError::Storage(StorageError::Unavailable { .. })
+                ),
+            })
     }
 }

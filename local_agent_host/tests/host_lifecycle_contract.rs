@@ -9,9 +9,13 @@ use chatos_client_storage::{
     RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
     StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
 };
-use chatos_local_agent_host::{LocalAgentHost, LocalAgentHostPolicy, LocalAgentProfileRegistry};
+use chatos_local_agent_host::{
+    LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostPolicy,
+    LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry,
+};
 use chatos_local_agent_protocol::{
-    ContextStrategy, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
+    ContextStrategy, LocalAgentCommand, LocalAgentEvent, LocalAgentEventStatus,
+    LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse, LocalAgentRun,
     LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTokenCount, ModelProtocol,
     ModelRuntimeDescriptor, ModelStepResult,
 };
@@ -50,6 +54,19 @@ impl LocalAgentProfile for Profile {
 struct Gateway;
 
 struct Tools;
+
+struct UnusedMutationExecutor;
+
+#[async_trait]
+impl LocalAgentIpcMutationExecutor for UnusedMutationExecutor {
+    async fn execute_mutation(
+        &self,
+        _request_id: &str,
+        _command: LocalAgentCommand,
+    ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError> {
+        panic!("control command must not be delegated");
+    }
+}
 
 #[async_trait]
 impl LocalToolRuntime for Tools {
@@ -122,6 +139,37 @@ impl ModelGatewayClient for Gateway {
 
 struct Seed {
     now: chrono::DateTime<Utc>,
+}
+
+struct SeedRunOnly {
+    now: chrono::DateTime<Utc>,
+}
+
+#[async_trait]
+impl StorageTransaction for SeedRunOnly {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        repositories
+            .agent_runs()
+            .put(PutRecord {
+                record: AgentRunStateRecord {
+                    metadata: RecordMetadata {
+                        id: "run-1".to_string(),
+                        scope: scope(),
+                        origin_device_id: "device-1".to_string(),
+                        revision: 0,
+                        created_at: self.now,
+                        updated_at: self.now,
+                    },
+                    run: run(self.now),
+                },
+                expected_revision: None,
+            })
+            .await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -307,6 +355,67 @@ async fn host_recovers_claims_commits_and_schedules_the_next_event() {
         LocalAgentEventType::ModelStepRequested
     );
     assert_eq!(next.event.expected_version, 2);
+}
+
+#[tokio::test]
+async fn host_schedules_a_durable_control_request_immediately() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:control-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([12; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    storage.transaction(&mut SeedRunOnly { now }).await.unwrap();
+    let profiles =
+        LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
+    let (host, report) = LocalAgentHost::start(
+        storage,
+        Arc::new(Gateway),
+        Arc::new(Tools),
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.ready_event_count, 0);
+
+    let host = Arc::new(host);
+    let executor =
+        LocalAgentHostControlExecutor::new(host.clone(), Arc::new(UnusedMutationExecutor));
+    let response = executor
+        .execute_mutation(
+            "ipc-request-1",
+            LocalAgentCommand::PauseRun {
+                run_id: "run-1".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let LocalAgentIpcResponse::Accepted { operation_id } = response else {
+        panic!("control executor must return an accepted operation");
+    };
+    let SchedulerTickResult::Claimed(claimed) = host
+        .claim_next("control-claim", Utc::now() + chrono::Duration::seconds(1))
+        .await
+        .unwrap()
+    else {
+        panic!("new control event was not scheduled");
+    };
+    assert_eq!(claimed.event.event_id, operation_id);
+    assert_eq!(
+        claimed.event.event_type,
+        LocalAgentEventType::PauseRequested
+    );
 }
 
 #[tokio::test]
