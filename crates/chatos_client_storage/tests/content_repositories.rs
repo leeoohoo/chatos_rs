@@ -4,9 +4,9 @@
 use async_trait::async_trait;
 use chatos_client_storage::{
     export_storage_archive, import_storage_archive, ClientStorage, NotepadRecord, PutRecord,
-    RecordMetadata, RecordScope, SqliteBootstrapProfile, SqliteClientStorage, StorageResult,
-    StorageTransaction, StoryRecord, StoryRecordKind, TerminalHistoryRecord,
-    TransactionRepositories,
+    RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
+    StorageEncryptionKey, StorageResult, StorageTransaction, StoryRecord, StoryRecordKind,
+    TerminalHistoryRecord, TransactionRepositories,
 };
 use chrono::Utc;
 
@@ -82,9 +82,14 @@ impl StorageTransaction for SeedContent {
 #[tokio::test]
 async fn content_domains_share_transactions_and_archive_semantics() {
     let directory = tempfile::tempdir().unwrap();
-    let source = SqliteClientStorage::open(&SqliteBootstrapProfile {
-        database_path: directory.path().join("source.sqlite3"),
-    })
+    let key = StorageEncryptionKey::new([42; 32]);
+    let source = SqliteClientStorage::open(
+        &SqliteBootstrapProfile {
+            database_path: directory.path().join("source.sqlite3"),
+            encryption_secret: SecretReference::new("test:sqlite-key").unwrap(),
+        },
+        &key,
+    )
     .await
     .unwrap();
     source.transaction(&mut SeedContent).await.unwrap();
@@ -94,9 +99,13 @@ async fn content_domains_share_transactions_and_archive_semantics() {
     assert_eq!(source_archive.records.notepad.len(), 1);
     assert_eq!(source_archive.records.terminal_history.len(), 1);
 
-    let target = SqliteClientStorage::open(&SqliteBootstrapProfile {
-        database_path: directory.path().join("target.sqlite3"),
-    })
+    let target = SqliteClientStorage::open(
+        &SqliteBootstrapProfile {
+            database_path: directory.path().join("target.sqlite3"),
+            encryption_secret: SecretReference::new("test:sqlite-key").unwrap(),
+        },
+        &key,
+    )
     .await
     .unwrap();
     import_storage_archive(&target, &source_archive)

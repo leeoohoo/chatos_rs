@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,19 +16,24 @@ use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
 use crate::record_store::{
     RecordStore, RecordTransactionRepositories, StoredRow, DOMAIN_TABLES, SCHEMA_VERSION,
 };
+use crate::sqlite_cipher::SqlitePayloadCipher;
 use crate::{
-    ClientStorage, SqliteBootstrapProfile, StorageBackend, StorageError, StorageResult,
-    StorageTransaction,
+    ClientStorage, SqliteBootstrapProfile, StorageBackend, StorageEncryptionKey, StorageError,
+    StorageResult, StorageTransaction,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SqliteClientStorage {
     pool: SqlitePool,
     _instance_lock: Arc<File>,
+    cipher: Arc<SqlitePayloadCipher>,
 }
 
 impl SqliteClientStorage {
-    pub async fn open(profile: &SqliteBootstrapProfile) -> StorageResult<Self> {
+    pub async fn open(
+        profile: &SqliteBootstrapProfile,
+        encryption_key: &StorageEncryptionKey,
+    ) -> StorageResult<Self> {
         profile
             .validate()
             .map_err(|error| StorageError::InvalidData {
@@ -49,11 +55,21 @@ impl SqliteClientStorage {
         Ok(Self {
             pool,
             _instance_lock: Arc::new(instance_lock),
+            cipher: Arc::new(SqlitePayloadCipher::new(encryption_key)),
         })
     }
 
     pub async fn close(self) {
         self.pool.close().await;
+    }
+}
+
+impl fmt::Debug for SqliteClientStorage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SqliteClientStorage")
+            .field("backend", &StorageBackend::Sqlite)
+            .finish_non_exhaustive()
     }
 }
 
@@ -90,7 +106,10 @@ impl ClientStorage for SqliteClientStorage {
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
         let result = {
             let connection: &mut SqliteConnection = &mut transaction;
-            let mut store = SqliteRecordStore { connection };
+            let mut store = SqliteRecordStore {
+                connection,
+                cipher: &self.cipher,
+            };
             let mut repositories = RecordTransactionRepositories::new(&mut store);
             operation.execute(&mut repositories).await
         };
@@ -106,6 +125,7 @@ impl ClientStorage for SqliteClientStorage {
 
 struct SqliteRecordStore<'connection> {
     connection: &'connection mut SqliteConnection,
+    cipher: &'connection SqlitePayloadCipher,
 }
 
 #[async_trait]
@@ -118,12 +138,14 @@ impl RecordStore for SqliteRecordStore<'_> {
     ) -> StorageResult<Option<String>> {
         assert_table(table)?;
         let sql = format!("SELECT record_json FROM {table} WHERE owner_user_id = ? AND id = ?");
-        sqlx::query_scalar(&sql)
+        sqlx::query_scalar::<_, String>(&sql)
             .bind(owner_user_id)
             .bind(id)
             .fetch_optional(&mut *self.connection)
             .await
-            .map_err(transaction_error)
+            .map_err(transaction_error)?
+            .map(|payload| self.cipher.decrypt(&payload))
+            .transpose()
     }
 
     async fn list_json(
@@ -150,7 +172,10 @@ impl RecordStore for SqliteRecordStore<'_> {
             .map(|row| {
                 Ok(StoredRow {
                     id: row.try_get("id").map_err(transaction_error)?,
-                    record_json: row.try_get("record_json").map_err(transaction_error)?,
+                    record_json: self.cipher.decrypt(
+                        &row.try_get::<String, _>("record_json")
+                            .map_err(transaction_error)?,
+                    )?,
                 })
             })
             .collect()
@@ -167,6 +192,7 @@ impl RecordStore for SqliteRecordStore<'_> {
         record_json: &str,
     ) -> StorageResult<bool> {
         assert_table(table)?;
+        let encrypted = self.cipher.encrypt(record_json)?;
         let sql = format!(
             "INSERT INTO {table} (owner_user_id, id, revision, created_at, updated_at, record_json) \
              VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(owner_user_id, id) DO NOTHING"
@@ -177,7 +203,7 @@ impl RecordStore for SqliteRecordStore<'_> {
             .bind(revision)
             .bind(created_at)
             .bind(updated_at)
-            .bind(record_json)
+            .bind(encrypted)
             .execute(&mut *self.connection)
             .await
             .map_err(transaction_error)?
@@ -196,6 +222,7 @@ impl RecordStore for SqliteRecordStore<'_> {
         record_json: &str,
     ) -> StorageResult<bool> {
         assert_table(table)?;
+        let encrypted = self.cipher.encrypt(record_json)?;
         let sql = format!(
             "UPDATE {table} SET revision = ?, updated_at = ?, record_json = ? \
              WHERE owner_user_id = ? AND id = ? AND revision = ?"
@@ -203,7 +230,7 @@ impl RecordStore for SqliteRecordStore<'_> {
         Ok(sqlx::query(&sql)
             .bind(next_revision)
             .bind(updated_at)
-            .bind(record_json)
+            .bind(encrypted)
             .bind(owner_user_id)
             .bind(id)
             .bind(expected_revision)

@@ -12,6 +12,7 @@ use chatos_client_storage::{
 fn sqlite_profile_is_the_default_backend_shape() {
     let profile = BootstrapStorageProfile::Sqlite(SqliteBootstrapProfile {
         database_path: PathBuf::from("/tmp/chatos/client.sqlite3"),
+        encryption_secret: SecretReference::new("keychain:client-storage/sqlite-key").unwrap(),
     });
 
     assert_eq!(profile.backend(), StorageBackend::Sqlite);
@@ -20,7 +21,8 @@ fn sqlite_profile_is_the_default_backend_shape() {
         serde_json::to_value(&profile).unwrap(),
         serde_json::json!({
             "backend": "sqlite",
-            "database_path": "/tmp/chatos/client.sqlite3"
+            "database_path": "/tmp/chatos/client.sqlite3",
+            "encryption_secret": "keychain:client-storage/sqlite-key"
         })
     );
 }
@@ -47,6 +49,7 @@ fn a_relative_sqlite_path_is_rejected() {
     let path = PathBuf::from("client.sqlite3");
     let profile = BootstrapStorageProfile::Sqlite(SqliteBootstrapProfile {
         database_path: path.clone(),
+        encryption_secret: SecretReference::new("keychain:client-storage/sqlite-key").unwrap(),
     });
 
     assert_eq!(

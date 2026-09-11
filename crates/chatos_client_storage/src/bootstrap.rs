@@ -45,6 +45,9 @@ impl BootstrapStorageProfile {
 #[serde(deny_unknown_fields)]
 pub struct SqliteBootstrapProfile {
     pub database_path: PathBuf,
+    /// Opaque reference to the 256-bit device key held by the platform secure
+    /// store. The key itself never enters this profile.
+    pub encryption_secret: SecretReference,
 }
 
 impl SqliteBootstrapProfile {
@@ -54,7 +57,7 @@ impl SqliteBootstrapProfile {
                 self.database_path.clone(),
             ));
         }
-        Ok(())
+        self.encryption_secret.validate()
     }
 }
 

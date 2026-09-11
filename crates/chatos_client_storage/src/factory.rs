@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::{
     BootstrapStorageProfile, ClientStorage, PostgresBootstrapProfile, PostgresClientStorage,
     PostgresConnectionSettings, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageResult,
+    StorageEncryptionKey, StorageResult,
 };
 
 /// Resolves an opaque bootstrap reference through the platform secure store.
@@ -14,6 +14,11 @@ use crate::{
 /// Windows; the resolved value must never be persisted by this crate.
 #[async_trait]
 pub trait StorageSecretResolver: Send + Sync {
+    async fn resolve_sqlite_encryption_key(
+        &self,
+        reference: &SecretReference,
+    ) -> StorageResult<StorageEncryptionKey>;
+
     async fn resolve_postgres(
         &self,
         reference: &SecretReference,
@@ -27,6 +32,7 @@ pub trait StorageBackendConnector: Send + Sync {
     async fn open_sqlite(
         &self,
         profile: &SqliteBootstrapProfile,
+        encryption_key: &StorageEncryptionKey,
     ) -> StorageResult<Box<dyn ClientStorage>>;
 
     async fn open_postgres(
@@ -43,8 +49,11 @@ impl StorageBackendConnector for NativeStorageBackendConnector {
     async fn open_sqlite(
         &self,
         profile: &SqliteBootstrapProfile,
+        encryption_key: &StorageEncryptionKey,
     ) -> StorageResult<Box<dyn ClientStorage>> {
-        Ok(Box::new(SqliteClientStorage::open(profile).await?))
+        Ok(Box::new(
+            SqliteClientStorage::open(profile, encryption_key).await?,
+        ))
     }
 
     async fn open_postgres(
@@ -72,7 +81,12 @@ impl ClientStorageFactory {
         connector: &dyn StorageBackendConnector,
     ) -> StorageResult<Box<dyn ClientStorage>> {
         match profile {
-            BootstrapStorageProfile::Sqlite(profile) => connector.open_sqlite(profile).await,
+            BootstrapStorageProfile::Sqlite(profile) => {
+                let encryption_key = secrets
+                    .resolve_sqlite_encryption_key(&profile.encryption_secret)
+                    .await?;
+                connector.open_sqlite(profile, &encryption_key).await
+            }
             BootstrapStorageProfile::Postgres(PostgresBootstrapProfile { connection_secret }) => {
                 let settings = secrets.resolve_postgres(connection_secret).await?;
                 connector.open_postgres(&settings).await

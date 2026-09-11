@@ -8,6 +8,24 @@ use zeroize::Zeroizing;
 
 use crate::{ConfigurationResult, StorageConfigurationError};
 
+pub struct StorageEncryptionKey(Zeroizing<[u8; 32]>);
+
+impl StorageEncryptionKey {
+    pub fn new(bytes: [u8; 32]) -> Self {
+        Self(Zeroizing::new(bytes))
+    }
+
+    pub(crate) fn expose(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for StorageEncryptionKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("StorageEncryptionKey([REDACTED])")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostgresTlsMode {
     /// Allowed only for loopback development databases.

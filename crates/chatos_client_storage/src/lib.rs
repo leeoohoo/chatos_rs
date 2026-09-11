@@ -17,6 +17,7 @@ mod postgres;
 mod record_store;
 mod repositories;
 mod sqlite;
+mod sqlite_cipher;
 mod transaction;
 
 pub use archive::{
@@ -29,6 +30,7 @@ pub use bootstrap::{
 };
 pub use connection::{
     PostgresConnectionSettings, PostgresCredentials, PostgresEndpoint, PostgresTlsMode,
+    StorageEncryptionKey,
 };
 pub use contracts::*;
 pub use error::{ConfigurationResult, StorageConfigurationError, StorageError, StorageResult};

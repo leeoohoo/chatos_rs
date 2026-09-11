@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use chatos_client_storage::{
     decode_storage_archive, encode_storage_archive, export_storage_archive, import_storage_archive,
     ClientStorage, ProjectRecord, PutRecord, RecordMetadata, RecordQuery, RecordScope,
-    SqliteBootstrapProfile, SqliteClientStorage, StorageError, StorageResult, StorageTransaction,
-    TransactionRepositories,
+    SecretReference, SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey,
+    StorageError, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chrono::Utc;
 
@@ -103,9 +103,14 @@ impl StorageTransaction for ReadProject {
 #[tokio::test]
 async fn archive_roundtrip_preserves_records_and_metadata() {
     let directory = tempfile::tempdir().unwrap();
-    let source = SqliteClientStorage::open(&SqliteBootstrapProfile {
-        database_path: directory.path().join("source.sqlite3"),
-    })
+    let key = StorageEncryptionKey::new([42; 32]);
+    let source = SqliteClientStorage::open(
+        &SqliteBootstrapProfile {
+            database_path: directory.path().join("source.sqlite3"),
+            encryption_secret: SecretReference::new("test:sqlite-key").unwrap(),
+        },
+        &key,
+    )
     .await
     .unwrap();
     source.transaction(&mut CreateProject).await.unwrap();
@@ -116,9 +121,13 @@ async fn archive_roundtrip_preserves_records_and_metadata() {
     let decoded = decode_storage_archive(&bytes).unwrap();
     assert_eq!(decoded, exported);
 
-    let target = SqliteClientStorage::open(&SqliteBootstrapProfile {
-        database_path: directory.path().join("target.sqlite3"),
-    })
+    let target = SqliteClientStorage::open(
+        &SqliteBootstrapProfile {
+            database_path: directory.path().join("target.sqlite3"),
+            encryption_secret: SecretReference::new("test:sqlite-key").unwrap(),
+        },
+        &key,
+    )
     .await
     .unwrap();
     import_storage_archive(&target, &decoded).await.unwrap();
@@ -140,9 +149,14 @@ async fn archive_roundtrip_preserves_records_and_metadata() {
 #[tokio::test]
 async fn modified_archive_payload_is_rejected_before_import() {
     let directory = tempfile::tempdir().unwrap();
-    let source = SqliteClientStorage::open(&SqliteBootstrapProfile {
-        database_path: directory.path().join("source.sqlite3"),
-    })
+    let key = StorageEncryptionKey::new([42; 32]);
+    let source = SqliteClientStorage::open(
+        &SqliteBootstrapProfile {
+            database_path: directory.path().join("source.sqlite3"),
+            encryption_secret: SecretReference::new("test:sqlite-key").unwrap(),
+        },
+        &key,
+    )
     .await
     .unwrap();
     let archive = export_storage_archive(&source, scope()).await.unwrap();

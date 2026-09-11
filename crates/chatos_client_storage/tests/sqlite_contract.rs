@@ -6,10 +6,12 @@ use std::path::Path;
 use async_trait::async_trait;
 use chatos_client_storage::{
     ClientStorage, ClipboardRecord, ProjectRecord, PutRecord, RecordMetadata, RecordQuery,
-    RecordScope, SqliteBootstrapProfile, SqliteClientStorage, StorageError, StorageResult,
-    StorageTransaction, TransactionRepositories,
+    RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
+    StorageEncryptionKey, StorageError, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chrono::Utc;
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{Connection, Row, SqliteConnection};
 
 fn project(id: &str) -> ProjectRecord {
     ProjectRecord {
@@ -39,9 +41,13 @@ fn query(id: &str) -> RecordQuery {
 }
 
 async fn storage(path: &Path) -> SqliteClientStorage {
-    SqliteClientStorage::open(&SqliteBootstrapProfile {
-        database_path: path.to_path_buf(),
-    })
+    SqliteClientStorage::open(
+        &SqliteBootstrapProfile {
+            database_path: path.to_path_buf(),
+            encryption_secret: SecretReference::new("test:sqlite-key").unwrap(),
+        },
+        &StorageEncryptionKey::new([42; 32]),
+    )
     .await
     .unwrap()
 }
@@ -84,6 +90,44 @@ impl StorageTransaction for ReadProject {
     }
 }
 
+struct StoreProject {
+    record: Option<ProjectRecord>,
+}
+
+#[async_trait]
+impl StorageTransaction for StoreProject {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let record = self.record.take().unwrap();
+        repositories
+            .projects()
+            .put(PutRecord {
+                record,
+                expected_revision: None,
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+struct ReadSensitiveProject;
+
+#[async_trait]
+impl StorageTransaction for ReadSensitiveProject {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        repositories
+            .projects()
+            .get(&query("project-sensitive"))
+            .await?;
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn records_survive_reopening_the_default_backend() {
     let directory = tempfile::tempdir().unwrap();
@@ -98,6 +142,53 @@ async fn records_survive_reopening_the_default_backend() {
     let mut read = ReadProject { record: None };
     reopened.transaction(&mut read).await.unwrap();
     assert_eq!(read.record.unwrap().name, "Website");
+}
+
+#[tokio::test]
+async fn sqlite_persists_only_authenticated_ciphertext() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite3");
+    let profile = SqliteBootstrapProfile {
+        database_path: path.clone(),
+        encryption_secret: SecretReference::new("test:sqlite-key").unwrap(),
+    };
+    let correct_key = StorageEncryptionKey::new([42; 32]);
+    let database = SqliteClientStorage::open(&profile, &correct_key)
+        .await
+        .unwrap();
+    let mut record = project("project-sensitive");
+    record.name = "Preserve exactly".to_string();
+    database
+        .transaction(&mut StoreProject {
+            record: Some(record),
+        })
+        .await
+        .unwrap();
+    database.close().await;
+
+    let options = SqliteConnectOptions::new().filename(&path);
+    let mut raw_connection = SqliteConnection::connect_with(&options).await.unwrap();
+    let row = sqlx::query("SELECT record_json FROM client_projects WHERE id = ?")
+        .bind("project-sensitive")
+        .fetch_one(&mut raw_connection)
+        .await
+        .unwrap();
+    let encrypted: String = row.try_get("record_json").unwrap();
+    assert!(encrypted.starts_with("chatos-encrypted-v1:"));
+    assert!(!encrypted.contains("Preserve exactly"));
+    raw_connection.close().await.unwrap();
+
+    let wrong_key = StorageEncryptionKey::new([99; 32]);
+    let reopened = SqliteClientStorage::open(&profile, &wrong_key)
+        .await
+        .unwrap();
+    let mut read = ReadSensitiveProject;
+    assert!(matches!(
+        reopened.transaction(&mut read).await,
+        Err(StorageError::InvalidData { reason })
+            if reason.contains("authentication failed")
+    ));
+    reopened.close().await;
 }
 
 struct CreateThenFail;
@@ -172,16 +263,18 @@ async fn only_one_client_host_can_own_a_sqlite_database() {
     let path = directory.path().join("client.sqlite3");
     let profile = SqliteBootstrapProfile {
         database_path: path,
+        encryption_secret: SecretReference::new("test:sqlite-key").unwrap(),
     };
-    let first = SqliteClientStorage::open(&profile).await.unwrap();
+    let key = StorageEncryptionKey::new([42; 32]);
+    let first = SqliteClientStorage::open(&profile, &key).await.unwrap();
 
     assert!(matches!(
-        SqliteClientStorage::open(&profile).await,
+        SqliteClientStorage::open(&profile, &key).await,
         Err(StorageError::Unavailable { .. })
     ));
 
     first.close().await;
-    let reopened = SqliteClientStorage::open(&profile).await.unwrap();
+    let reopened = SqliteClientStorage::open(&profile, &key).await.unwrap();
     reopened.close().await;
 }
 
