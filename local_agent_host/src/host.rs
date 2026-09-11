@@ -7,19 +7,20 @@ use async_trait::async_trait;
 use chatos_client_storage::{AgentEventStateRecord, ClientStorage, RecordScope, StorageError};
 use chatos_local_agent_protocol::{
     LocalAgentCommand, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
-    ModelRuntimeDescriptor, ModelStepCompletion,
+    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, begin_model_step_execution, begin_tool_execution,
     build_local_tool_invocation, complete_tool_execution, create_local_agent_run,
-    inspect_tool_batch, mark_tool_outcome_unknown, prepare_tool_batch,
-    record_model_step_completion, reduce_and_commit, renew_event_claim, request_run_control,
-    scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
+    inspect_tool_batch, mark_tool_outcome_unknown, prepare_model_step_persistence,
+    prepare_tool_batch, record_model_step_completion, reduce_and_commit, renew_event_claim,
+    request_run_control, scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
     BeganModelStepExecution, BeginModelStepExecutionRequest, BeginToolExecutionRequest,
     BeginToolExecutionResult, CommittedReduction, CompleteToolExecutionRequest,
     CompletedAssistantMessage, CreateLocalAgentRunRequest, CreatedLocalAgentRun,
     DurableModelStepCompletionPayload, DurableProviderContextCommit, DurableScheduler,
-    InitialRunMessage, LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayClient,
+    ExecutedModelStep, InitialRunMessage, LocalToolRuntime, MarkToolOutcomeUnknownRequest,
+    ModelGatewayCallbacks, ModelGatewayClient, ModelStepExecutorError, ModelStepPersistenceError,
     PrepareToolBatchRequest, RecordModelStepCompletionRequest, RecoveryIssue,
     ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest, RequestRunControl,
     RunControlAction, SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor,
@@ -29,12 +30,16 @@ use chrono::{DateTime, Duration, Utc};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry, ProfileRegistryError};
+use crate::{
+    LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentIpcMutationExecutor,
+    LocalAgentProfileRegistry, ProfileRegistryError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalAgentHostPolicy {
     pub claim_ttl: Duration,
     pub maximum_event_attempts: u32,
+    pub model_retry_delay: Duration,
     pub reducer: ReducerPolicy,
 }
 
@@ -43,6 +48,7 @@ impl Default for LocalAgentHostPolicy {
         Self {
             claim_ttl: Duration::seconds(90),
             maximum_event_attempts: 3,
+            model_retry_delay: Duration::seconds(5),
             reducer: ReducerPolicy::default(),
         }
     }
@@ -95,6 +101,16 @@ pub enum LocalAgentHostError {
     IncompleteToolBatch,
     #[error("claimed event payload is invalid: {0}")]
     InvalidEventPayload(String),
+    #[error("model access token must not be empty")]
+    InvalidModelAccessToken,
+    #[error(transparent)]
+    ContextRuntime(#[from] LocalAgentContextRuntimeError),
+    #[error(transparent)]
+    ModelStepExecutor(#[from] ModelStepExecutorError),
+    #[error(transparent)]
+    ModelStepPersistence(#[from] ModelStepPersistenceError),
+    #[error("model retry deadline overflowed")]
+    ModelRetryDeadlineOverflow,
 }
 
 pub struct LocalAgentHost {
@@ -105,6 +121,7 @@ pub struct LocalAgentHost {
     scheduler: Mutex<DurableScheduler>,
     profiles: LocalAgentProfileRegistry,
     model_steps: SingleModelStepExecutor,
+    context_runtime: Arc<dyn LocalAgentContextRuntime>,
     tool_runtime: Arc<dyn LocalToolRuntime>,
 }
 
@@ -113,6 +130,7 @@ impl LocalAgentHost {
     pub async fn start(
         storage: Arc<dyn ClientStorage>,
         gateway: Arc<dyn ModelGatewayClient>,
+        context_runtime: Arc<dyn LocalAgentContextRuntime>,
         tool_runtime: Arc<dyn LocalToolRuntime>,
         profiles: LocalAgentProfileRegistry,
         scope: RecordScope,
@@ -131,9 +149,12 @@ impl LocalAgentHost {
                 "at least one Agent profile must be registered",
             ));
         }
-        if policy.claim_ttl <= Duration::zero() || policy.maximum_event_attempts == 0 {
+        if policy.claim_ttl <= Duration::zero()
+            || policy.maximum_event_attempts == 0
+            || policy.model_retry_delay <= Duration::zero()
+        {
             return Err(LocalAgentHostError::InvalidConfiguration(
-                "claim TTL and event attempt limit must be positive",
+                "claim TTL, event attempt limit, and model retry delay must be positive",
             ));
         }
         let plan = scan_recoverable_work(storage.as_ref(), scope.clone(), now).await?;
@@ -152,6 +173,7 @@ impl LocalAgentHost {
                 scheduler: Mutex::new(DurableScheduler::from_recovery(scope, &plan)),
                 profiles,
                 model_steps: SingleModelStepExecutor::new(gateway),
+                context_runtime,
                 tool_runtime,
             },
             report,
@@ -359,6 +381,149 @@ impl LocalAgentHost {
         .await?;
         self.scheduler.lock().await.schedule(&event);
         Ok(event)
+    }
+
+    /// Executes one claimed model request through the only supported Host
+    /// pipeline. Context construction, the gateway request identity, retry
+    /// policy, provider-context sealing, durable completion and scheduling are
+    /// deliberately not exposed as choices to Profiles or native UI callers.
+    pub async fn execute_claimed_model_step(
+        &self,
+        claimed: &AgentEventStateRecord,
+        access_token: &str,
+        callbacks: ModelGatewayCallbacks,
+        cancellation: CancellationToken,
+        now: DateTime<Utc>,
+    ) -> Result<AgentEventStateRecord, LocalAgentHostError> {
+        if access_token.trim().is_empty() {
+            return Err(LocalAgentHostError::InvalidModelAccessToken);
+        }
+        let begun = self.begin_claimed_model_step(claimed, now).await?;
+        let request_event = begun.request_event;
+        let run = begun.run_record.run;
+        let profile = self.profiles.require(run.profile_key.as_str())?;
+        let request_id = request_event.event.event_id.clone();
+        let turn_id = request_event.event.correlation_id.clone();
+        let claim_token = request_event.event.claim_token.clone().unwrap_or_default();
+
+        let execution = async {
+            let context = self
+                .context_runtime
+                .prepare_model_step_context(self.storage.as_ref(), &self.scope, &run, &cancellation)
+                .await;
+            let context = match context {
+                Ok(context) => context,
+                Err(LocalAgentContextRuntimeError::Cancelled) => {
+                    return Ok(ExecutedModelStep {
+                        result: ModelStepResult::Cancelled,
+                        output: None,
+                        token_assessments: Vec::new(),
+                        provider_context_commit: None,
+                    });
+                }
+                Err(error) => return Err(LocalAgentHostError::ContextRuntime(error)),
+            };
+            self.model_steps
+                .execute(
+                    access_token,
+                    &run,
+                    request_id,
+                    profile.as_ref(),
+                    context,
+                    callbacks,
+                    cancellation,
+                )
+                .await
+                .map_err(LocalAgentHostError::ModelStepExecutor)
+        };
+        let executed = self
+            .await_model_execution_with_claim_renewal(
+                request_event.event.event_id.as_str(),
+                claim_token.as_str(),
+                execution,
+            )
+            .await?;
+        let completion_now = Utc::now();
+        let retry_at = if matches!(&executed.result, ModelStepResult::Retry(_)) {
+            Some(
+                completion_now
+                    .checked_add_signed(self.policy.model_retry_delay)
+                    .ok_or(LocalAgentHostError::ModelRetryDeadlineOverflow)?,
+            )
+        } else {
+            None
+        };
+        let prepared = prepare_model_step_persistence(
+            &run,
+            request_event.event.event_id.as_str(),
+            turn_id.as_str(),
+            executed,
+            retry_at,
+            completion_now,
+        )?;
+        let provider_context_commit = match prepared.provider_context_commit {
+            Some(commit) => Some(
+                self.context_runtime
+                    .seal_provider_context_commit(&run, commit, completion_now)
+                    .await?,
+            ),
+            None => None,
+        };
+        self.record_claimed_model_step_completion(
+            &request_event,
+            prepared.completion,
+            prepared.assistant_message,
+            provider_context_commit,
+            completion_now,
+        )
+        .await
+    }
+
+    async fn await_model_execution_with_claim_renewal<F>(
+        &self,
+        event_id: &str,
+        claim_token: &str,
+        execution: F,
+    ) -> Result<ExecutedModelStep, LocalAgentHostError>
+    where
+        F: std::future::Future<Output = Result<ExecutedModelStep, LocalAgentHostError>>,
+    {
+        let renewal_period = self.policy.claim_ttl.to_std().map_err(|_| {
+            LocalAgentHostError::InvalidConfiguration("model event claim TTL cannot be represented")
+        })? / 3;
+        if renewal_period.is_zero() {
+            return Err(LocalAgentHostError::InvalidConfiguration(
+                "model event claim renewal period is zero",
+            ));
+        }
+        let first_tick = tokio::time::Instant::now() + renewal_period;
+        let mut interval = tokio::time::interval_at(first_tick, renewal_period);
+        tokio::pin!(execution);
+        loop {
+            tokio::select! {
+                result = &mut execution => return result,
+                _ = interval.tick() => {
+                    let now = Utc::now();
+                    let claim_until = now
+                        .checked_add_signed(self.policy.claim_ttl)
+                        .ok_or(LocalAgentHostError::InvalidConfiguration(
+                            "model event claim renewal overflow",
+                        ))?;
+                    renew_event_claim(
+                        self.storage.as_ref(),
+                        RenewEventClaimRequest {
+                            scope: self.scope.clone(),
+                            event_id: event_id.to_string(),
+                            device_id: self.device_id.clone(),
+                            claim_token: claim_token.to_string(),
+                            now,
+                            claim_until,
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
     }
 
     /// Applies events whose evidence is already encoded in their durable

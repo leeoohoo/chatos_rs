@@ -10,19 +10,23 @@ use chatos_client_storage::{
     StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_host::{
-    LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostPolicy, LocalAgentHostRunRequest,
+    LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentHost,
+    LocalAgentHostControlExecutor, LocalAgentHostPolicy, LocalAgentHostRunRequest,
     LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry,
 };
 use chatos_local_agent_protocol::{
     AnswerUserQuestionCommand, ContextStrategy, LocalAgentCommand, LocalAgentEvent,
     LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
-    LocalAgentRun, LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTokenCount, ModelProtocol,
+    LocalAgentRun, LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTerminal,
+    ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
     ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, UserInteractionAnswer,
 };
 use chatos_local_agent_runtime::{
-    CompletedAssistantMessage, LocalAgentProfile, LocalAgentProfileStep, LocalToolInvocation,
-    LocalToolOutcome, LocalToolRuntime, ModelGatewayCallbacks, ModelGatewayClient,
-    ModelGatewayClientError, ModelGatewayOutput, SchedulerTickResult, StepEvidence,
+    CompletedAssistantMessage, DurableProviderContextCommit, LocalAgentProfile,
+    LocalAgentProfileStep, LocalToolInvocation, LocalToolOutcome, LocalToolRuntime,
+    ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError, ModelGatewayOutput,
+    ModelStepContext, ProviderNativeContextCommit, ProviderNativeContextWindow,
+    SchedulerTickResult, StepEvidence,
 };
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
@@ -37,23 +41,159 @@ impl LocalAgentProfile for Profile {
 
     async fn prepare_model_step(
         &self,
-        _run: &LocalAgentRun,
+        run: &LocalAgentRun,
     ) -> Result<LocalAgentProfileStep, String> {
-        unreachable!("not executed by lifecycle test")
+        Ok(LocalAgentProfileStep {
+            model_input_items: vec![serde_json::json!({
+                "type": "message",
+                "role": "user",
+                "content": "complete this step"
+            })],
+            tools: Vec::new(),
+            instructions: Some("Complete exactly one local Agent step.".to_string()),
+            maximum_output_tokens: 32_000,
+            reasoning_effort: None,
+            temperature: None,
+            native_compaction_threshold: (run.context_strategy == ContextStrategy::ProviderNative)
+                .then_some(300_000),
+            memory_engine_active_threshold: (run.context_strategy == ContextStrategy::MemoryEngine)
+                .then_some(300_000),
+            maximum_summary_attempts: if run.context_strategy == ContextStrategy::MemoryEngine {
+                2
+            } else {
+                0
+            },
+        })
     }
 
     async fn interpret_completed_output(
         &self,
         _run: &LocalAgentRun,
-        _output: &ModelGatewayOutput,
+        output: &ModelGatewayOutput,
     ) -> Result<ModelStepResult, String> {
-        unreachable!("not executed by lifecycle test")
+        Ok(ModelStepResult::Final(
+            serde_json::json!({"text": output.content}),
+        ))
     }
 }
 
 struct Gateway;
 
 struct Tools;
+
+struct TestContextRuntime;
+
+#[async_trait]
+impl LocalAgentContextRuntime for TestContextRuntime {
+    async fn prepare_model_step_context(
+        &self,
+        _storage: &dyn ClientStorage,
+        _scope: &RecordScope,
+        _run: &LocalAgentRun,
+        _cancellation: &CancellationToken,
+    ) -> Result<ModelStepContext, LocalAgentContextRuntimeError> {
+        Ok(ModelStepContext::ProviderNative(
+            ProviderNativeContextWindow::empty(1).unwrap(),
+        ))
+    }
+
+    async fn seal_provider_context_commit(
+        &self,
+        _run: &LocalAgentRun,
+        commit: ProviderNativeContextCommit,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<DurableProviderContextCommit, LocalAgentContextRuntimeError> {
+        Ok(DurableProviderContextCommit {
+            generation: commit.generation,
+            retained_items: commit
+                .retained_items
+                .into_iter()
+                .enumerate()
+                .map(
+                    |(index, item)| chatos_local_agent_runtime::DurableProviderContextItem {
+                        sequence: u64::try_from(index).unwrap() + 1,
+                        item_type: item
+                            .get("type")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        encrypted_payload: format!("sealed:{item}"),
+                        payload_digest: format!("sha256:{}", "a".repeat(64)),
+                        created_at: now,
+                    },
+                )
+                .collect(),
+        })
+    }
+}
+
+struct ExecutingGateway {
+    requests: Mutex<Vec<ModelGatewayRequest>>,
+}
+
+#[async_trait]
+impl ModelGatewayClient for ExecutingGateway {
+    async fn descriptor(
+        &self,
+        _access_token: &str,
+        _model_config_id: &str,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelRuntimeDescriptor, ModelGatewayClientError> {
+        unreachable!("descriptor is frozen into the Run")
+    }
+
+    async fn stream(
+        &self,
+        _access_token: &str,
+        _descriptor: &ModelRuntimeDescriptor,
+        request: ModelGatewayRequest,
+        _callbacks: ModelGatewayCallbacks,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelGatewayOutput, ModelGatewayClientError> {
+        self.requests.lock().unwrap().push(request);
+        let output_items = vec![serde_json::json!({
+            "type": "message",
+            "id": "provider-message-1",
+            "role": "assistant",
+            "content": []
+        })];
+        Ok(ModelGatewayOutput {
+            content: "Finished".to_string(),
+            reasoning: String::new(),
+            output_items: output_items.clone(),
+            terminal: ModelGatewayTerminal {
+                status: ModelGatewayTerminalStatus::Completed,
+                source: ModelGatewayTerminalSource::Provider,
+                response_id: Some("response-1".to_string()),
+                provider_request_id: Some("provider-request-1".to_string()),
+                terminal_event: "response.completed".to_string(),
+                provider_http_status: Some(200),
+                usage: Some(serde_json::json!({
+                    "input_tokens": 100,
+                    "output_tokens": 10
+                })),
+                output_items,
+                incomplete_details: None,
+                provider_error: None,
+            },
+        })
+    }
+
+    async fn count_input_tokens(
+        &self,
+        _access_token: &str,
+        _descriptor: &ModelRuntimeDescriptor,
+        request: &ModelGatewayRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelGatewayTokenCount, ModelGatewayClientError> {
+        Ok(ModelGatewayTokenCount {
+            request_id: request.request_id.clone(),
+            model_config_id: request.model_config_id.clone(),
+            model_config_revision: request.model_config_revision,
+            input_tokens: 100,
+        })
+    }
+}
 
 struct UnusedMutationExecutor;
 
@@ -364,6 +504,7 @@ async fn host_recovers_claims_commits_and_schedules_the_next_event() {
     let (host, report) = LocalAgentHost::start(
         storage,
         Arc::new(Gateway),
+        Arc::new(TestContextRuntime),
         Arc::new(Tools),
         profiles,
         scope(),
@@ -447,6 +588,92 @@ async fn host_recovers_claims_commits_and_schedules_the_next_event() {
 }
 
 #[tokio::test]
+async fn host_executes_and_persists_one_claimed_model_step_end_to_end() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:model-execution-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([27; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    storage.transaction(&mut Seed { now }).await.unwrap();
+    let gateway = Arc::new(ExecutingGateway {
+        requests: Mutex::new(Vec::new()),
+    });
+    let profiles =
+        LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
+    let (host, _) = LocalAgentHost::start(
+        storage,
+        gateway.clone(),
+        Arc::new(TestContextRuntime),
+        Arc::new(Tools),
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+
+    let SchedulerTickResult::Claimed(started) = host.claim_next("claim-start", now).await.unwrap()
+    else {
+        panic!("run start was not claimed");
+    };
+    host.commit_claimed(&started, StepEvidence::None, now)
+        .await
+        .unwrap();
+    let SchedulerTickResult::Claimed(requested) =
+        host.claim_next("claim-model", now).await.unwrap()
+    else {
+        panic!("model step was not claimed");
+    };
+
+    let completion = host
+        .execute_claimed_model_step(
+            &requested,
+            "access-token",
+            ModelGatewayCallbacks::default(),
+            CancellationToken::new(),
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        completion.event.event_type,
+        LocalAgentEventType::ModelStepCompleted
+    );
+    {
+        let requests = gateway.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].request_id, requested.event.event_id);
+    }
+
+    let SchedulerTickResult::Claimed(scheduled) = host
+        .claim_next("claim-completion", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("model completion was not scheduled");
+    };
+    assert_eq!(scheduled.event.event_id, completion.event.event_id);
+    let committed = host
+        .commit_claimed_protocol_event(&scheduled, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        committed.run_record.run.status,
+        LocalAgentRunStatus::Succeeded
+    );
+}
+
+#[tokio::test]
 async fn host_schedules_a_durable_control_request_immediately() {
     let now = Utc::now();
     let directory = tempfile::tempdir().unwrap();
@@ -467,6 +694,7 @@ async fn host_schedules_a_durable_control_request_immediately() {
     let (host, report) = LocalAgentHost::start(
         storage,
         Arc::new(Gateway),
+        Arc::new(TestContextRuntime),
         Arc::new(Tools),
         profiles,
         scope(),
@@ -527,6 +755,7 @@ async fn host_creates_and_schedules_a_durable_run_start() {
     let (host, _) = LocalAgentHost::start(
         storage,
         Arc::new(Gateway),
+        Arc::new(TestContextRuntime),
         Arc::new(Tools),
         profiles,
         scope(),
@@ -590,6 +819,7 @@ async fn host_persists_an_answer_and_schedules_resume_through_ipc() {
     let (host, _) = LocalAgentHost::start(
         storage,
         Arc::new(Gateway),
+        Arc::new(TestContextRuntime),
         Arc::new(Tools),
         profiles,
         scope(),
@@ -670,6 +900,7 @@ async fn host_renews_the_claim_and_commits_a_successful_local_tool_batch() {
     let (host, _) = LocalAgentHost::start(
         storage,
         Arc::new(Gateway),
+        Arc::new(TestContextRuntime),
         tools.clone(),
         profiles,
         scope(),
@@ -743,6 +974,7 @@ async fn indeterminate_irreversible_tool_result_moves_the_run_to_review() {
     let (host, _) = LocalAgentHost::start(
         storage,
         Arc::new(Gateway),
+        Arc::new(TestContextRuntime),
         tools,
         profiles,
         scope(),
