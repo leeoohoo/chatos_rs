@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use futures_util::TryStreamExt;
-use mongodb::bson::{doc, Bson};
-use mongodb::options::{FindOptions, UpdateOptions};
+use mongodb::bson::{doc, to_document, Bson};
+use mongodb::options::{FindOneAndUpdateOptions, FindOptions, ReturnDocument, UpdateOptions};
 
 use crate::models::{UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord};
 use crate::secrets::{decrypt_optional_secret, encrypt_optional_secret};
@@ -11,6 +11,18 @@ use crate::secrets::{decrypt_optional_secret, encrypt_optional_secret};
 use super::{to_set_document, AppStore};
 
 impl AppStore {
+    pub async fn migrate_legacy_model_revisions(&self) -> Result<u64, String> {
+        self.user_model_configs
+            .update_many(
+                doc! { "revision": { "$exists": false } },
+                doc! { "$set": { "revision": 1_i64 } },
+                None,
+            )
+            .await
+            .map(|result| result.modified_count)
+            .map_err(|err| err.to_string())
+    }
+
     fn has_usable_api_key(value: Option<&str>) -> bool {
         value.map(str::trim).is_some_and(|value| !value.is_empty())
     }
@@ -128,15 +140,39 @@ impl AppStore {
         config: &UserModelConfigRecord,
     ) -> Result<UserModelConfigRecord, String> {
         let stored = Self::encrypt_user_model_config(config.clone())?;
-        self.user_model_configs
-            .update_one(
-                doc! { "id": &stored.id },
-                to_set_document(&stored)?,
-                UpdateOptions::builder().upsert(true).build(),
+        let mut set_document = to_document(&stored).map_err(|err| err.to_string())?;
+        set_document.remove("_id");
+        set_document.remove("revision");
+        let expected_revision = i64::try_from(stored.revision)
+            .map_err(|_| "model config revision exceeds MongoDB integer range".to_string())?;
+        let filter = if stored.revision == 0 {
+            doc! { "id": &stored.id, "revision": { "$exists": false } }
+        } else {
+            doc! { "id": &stored.id, "revision": expected_revision }
+        };
+        let options = FindOneAndUpdateOptions::builder()
+            .upsert(stored.revision == 0)
+            .return_document(ReturnDocument::After)
+            .build();
+        let saved = self
+            .user_model_configs
+            .find_one_and_update(
+                filter,
+                doc! {
+                    "$set": set_document,
+                    "$inc": { "revision": 1_i64 },
+                },
+                options,
             )
             .await
             .map_err(|err| err.to_string())?;
-        Self::decrypt_user_model_config(stored)
+        let saved = saved.ok_or_else(|| {
+            format!(
+                "model config revision conflict: id={}, expected_revision={}",
+                stored.id, stored.revision
+            )
+        })?;
+        Self::decrypt_user_model_config(saved)
     }
 
     pub async fn delete_user_model_config(&self, id: &str) -> Result<bool, String> {

@@ -785,6 +785,7 @@ mod tests {
                     .expect("valid ChatOS service identity");
                     Json(json!({
                         "id": "model-1",
+                        "revision": 7,
                         "owner_user_id": "user-1",
                         "name": "Primary",
                         "provider": "openai",
@@ -814,6 +815,7 @@ mod tests {
         .expect("internal model runtime response");
 
         assert_eq!(record.id, "model-1");
+        assert_eq!(record.revision, 7);
         assert_eq!(record.owner_user_id, "user-1");
         assert_eq!(record.model, "gpt-5.6-sol");
         handle.abort();

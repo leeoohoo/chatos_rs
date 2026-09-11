@@ -19,6 +19,13 @@ impl AppState {
         let db = connect_database(&config).await?;
         let store = AppStore::new(db);
         store.initialize().await?;
+        let migrated_revision_count = store.migrate_legacy_model_revisions().await?;
+        if migrated_revision_count > 0 {
+            info!(
+                migrated_revision_count,
+                "migrated legacy model configs to revision 1"
+            );
+        }
         let migrated_model_count = store.migrate_legacy_model_task_enabled().await?;
         if migrated_model_count > 0 {
             info!(

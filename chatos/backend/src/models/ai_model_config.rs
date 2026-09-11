@@ -10,6 +10,7 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiModelConfig {
     pub id: String,
+    pub revision: u64,
     pub user_id: Option<String>,
     pub name: String,
     pub provider: String,

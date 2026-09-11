@@ -215,6 +215,7 @@ pub struct AgentAccountListItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserModelConfigRecord {
     pub id: String,
+    pub revision: u64,
     pub owner_user_id: String,
     #[serde(default)]
     pub source_provider_id: Option<String>,
@@ -563,6 +564,7 @@ mod tests {
     fn model(enabled: bool, task_enabled: Option<bool>) -> UserModelConfigRecord {
         UserModelConfigRecord {
             id: "model-1".to_string(),
+            revision: 1,
             owner_user_id: "user-1".to_string(),
             source_provider_id: Some("provider-1".to_string()),
             name: "Model".to_string(),

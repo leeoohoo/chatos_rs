@@ -398,12 +398,10 @@ mod tests {
     async fn public_router_does_not_expose_internal_routes() {
         let (base_url, server) = spawn_router(build_public_router(test_state().await)).await;
         let client = reqwest::Client::new();
-        for (method, path) in [
-            (
-                reqwest::Method::GET,
-                "/api/internal/users/user-1/model-settings",
-            ),
-        ] {
+        for (method, path) in [(
+            reqwest::Method::GET,
+            "/api/internal/users/user-1/model-settings",
+        )] {
             let status = client
                 .request(method, format!("{base_url}{path}"))
                 .send()
@@ -443,12 +441,10 @@ mod tests {
                 .status();
             assert_eq!(status, StatusCode::NOT_FOUND, "unexpected route: {path}");
         }
-        for (method, path) in [
-            (
-                reqwest::Method::GET,
-                "/api/internal/users/user-1/model-settings",
-            ),
-        ] {
+        for (method, path) in [(
+            reqwest::Method::GET,
+            "/api/internal/users/user-1/model-settings",
+        )] {
             let status = client
                 .request(method, format!("{base_url}{path}"))
                 .send()

@@ -310,6 +310,7 @@ pub(super) async fn refresh_provider_models_from_record(
         });
         let record = UserModelConfigRecord {
             id: target_id.clone(),
+            revision: existing.map_or(0, |item| item.revision),
             owner_user_id: provider_record.owner_user_id.clone(),
             source_provider_id: Some(provider_record.id.clone()),
             name: imported_model_name(&provider_record, model.as_str()),
@@ -389,6 +390,7 @@ mod tests {
     fn model(enabled: bool) -> UserModelConfigRecord {
         UserModelConfigRecord {
             id: "model-1".to_string(),
+            revision: 1,
             owner_user_id: "user-1".to_string(),
             source_provider_id: Some("provider-1".to_string()),
             name: "Provider / gpt-5.5".to_string(),

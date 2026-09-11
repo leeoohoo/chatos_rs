@@ -238,6 +238,7 @@ mod tests {
     fn model(source_provider_id: Option<&str>) -> UserModelConfigRecord {
         UserModelConfigRecord {
             id: "model-1".to_string(),
+            revision: 1,
             owner_user_id: "user-1".to_string(),
             source_provider_id: source_provider_id.map(ToOwned::to_owned),
             name: "Model".to_string(),

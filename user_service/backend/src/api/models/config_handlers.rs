@@ -101,6 +101,7 @@ pub(in crate::api) async fn create_model_config(
         .map_err(internal_error)?;
     let record = UserModelConfigRecord {
         id,
+        revision: existing.as_ref().map_or(0, |item| item.revision),
         owner_user_id: owner_user_id.clone(),
         source_provider_id: existing
             .as_ref()

@@ -55,6 +55,7 @@ pub(super) fn from_user_service_model_config(
     };
     AiModelConfig {
         id: record.id,
+        revision: record.revision,
         user_id: Some(record.owner_user_id),
         name: record.name,
         provider: normalize_provider(record.provider.as_str()),
@@ -142,6 +143,7 @@ pub(super) fn to_response_value(cfg: &AiModelConfig) -> Value {
     };
     let mut value = json!({
         "id": cfg.id,
+        "revision": cfg.revision,
         "name": cfg.name,
         "provider": cfg.provider,
         "prompt_vendor": cfg.prompt_vendor,
@@ -291,6 +293,7 @@ pub(super) fn build_model_config(
     let has_api_key = api_key.is_some();
     Ok(AiModelConfig {
         id,
+        revision: 0,
         user_id: Some(user_id),
         name,
         provider,
@@ -351,6 +354,7 @@ mod tests {
     fn response_hides_sensitive_runtime_fields() {
         let value = to_response_value(&AiModelConfig {
             id: "cfg_1".to_string(),
+            revision: 7,
             user_id: Some("user_1".to_string()),
             name: "Model".to_string(),
             provider: "gpt".to_string(),
@@ -375,6 +379,10 @@ mod tests {
         });
 
         assert!(value.get("api_key").is_none());
+        assert_eq!(
+            value.get("revision").and_then(|item| item.as_u64()),
+            Some(7)
+        );
         assert_eq!(
             value.get("base_url").and_then(|item| item.as_str()),
             Some("https://api.openai.com/v1")

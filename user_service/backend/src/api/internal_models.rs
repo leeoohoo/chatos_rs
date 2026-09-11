@@ -23,6 +23,7 @@ use super::{bad_request, forbidden, internal_error, not_found, ApiResult};
 #[derive(Debug, Serialize)]
 pub struct InternalModelRuntimeConfigResponse {
     pub id: String,
+    pub revision: u64,
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,
@@ -50,6 +51,7 @@ pub struct InternalUserModelSettingsResponse {
 #[derive(Debug, Serialize)]
 pub struct InternalTaskModelConfigResponse {
     pub id: String,
+    pub revision: u64,
     pub owner_user_id: Option<String>,
     pub owner_username: Option<String>,
     pub owner_display_name: Option<String>,
@@ -220,6 +222,7 @@ async fn load_task_model_configs(
         let enabled = config.enabled_for_tasks();
         out.push(InternalTaskModelConfigResponse {
             id: config.id,
+            revision: config.revision,
             owner_user_id: Some(config.owner_user_id),
             owner_username: None,
             owner_display_name: None,
@@ -390,6 +393,7 @@ pub async fn get_user_model_runtime_config(
 
         Ok(Json(InternalModelRuntimeConfigResponse {
             id: model_config.id,
+            revision: model_config.revision,
             owner_user_id: model_config.owner_user_id,
             name: model_config.name,
             provider: model_config.provider,

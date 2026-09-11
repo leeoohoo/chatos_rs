@@ -70,6 +70,7 @@ pub struct CreateUserServiceAgentAccountRequest {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserServiceModelConfigRecord {
     pub id: String,
+    pub revision: u64,
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,
@@ -106,6 +107,7 @@ pub struct UserServiceModelConfigRecord {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UserServiceInternalModelRuntimeRecord {
     pub id: String,
+    pub revision: u64,
     pub owner_user_id: String,
     pub name: String,
     pub provider: String,

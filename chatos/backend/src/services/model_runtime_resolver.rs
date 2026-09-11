@@ -72,6 +72,7 @@ fn from_user_service_model_config(
     };
     AiModelConfig {
         id: record.id,
+        revision: record.revision,
         user_id: Some(record.owner_user_id),
         name: record.name,
         provider: record.provider,
@@ -101,6 +102,7 @@ fn from_internal_user_service_model_runtime(
 ) -> AiModelConfig {
     AiModelConfig {
         id: record.id,
+        revision: record.revision,
         user_id: Some(record.owner_user_id),
         name: record.name,
         provider: record.provider,
@@ -487,6 +489,7 @@ mod tests {
     ) -> AiModelConfig {
         AiModelConfig {
             id: id.to_string(),
+            revision: 1,
             user_id: Some("user-1".to_string()),
             name: name.to_string(),
             provider: provider.to_string(),
