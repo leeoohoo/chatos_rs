@@ -947,6 +947,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_local_agent_host"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chatos_client_storage",
+ "chatos_local_agent_protocol",
+ "chatos_local_agent_runtime",
+ "chrono",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "chatos_local_agent_protocol"
 version = "0.1.0"
 dependencies = [
