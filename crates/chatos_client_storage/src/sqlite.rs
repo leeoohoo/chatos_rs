@@ -13,8 +13,10 @@ use fs2::FileExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
 
+use crate::canonical_json::canonicalize_encoded;
 use crate::record_store::{
-    RecordStore, RecordTransactionRepositories, StoredRow, DOMAIN_TABLES, SCHEMA_VERSION,
+    RecordStore, RecordTransactionRepositories, StoredPayload, StoredRow, DOMAIN_TABLES,
+    SCHEMA_VERSION,
 };
 use crate::sqlite_cipher::SqlitePayloadCipher;
 use crate::{
@@ -51,11 +53,12 @@ impl SqliteClientStorage {
             .connect_with(options)
             .await
             .map_err(unavailable)?;
-        migrate(&pool).await?;
+        let cipher = Arc::new(SqlitePayloadCipher::new(encryption_key));
+        migrate(&pool, &cipher).await?;
         Ok(Self {
             pool,
             _instance_lock: Arc::new(instance_lock),
-            cipher: Arc::new(SqlitePayloadCipher::new(encryption_key)),
+            cipher,
         })
     }
 
@@ -135,16 +138,30 @@ impl RecordStore for SqliteRecordStore<'_> {
         table: &'static str,
         owner_user_id: &str,
         id: &str,
-    ) -> StorageResult<Option<String>> {
+    ) -> StorageResult<Option<StoredPayload>> {
         assert_table(table)?;
-        let sql = format!("SELECT record_json FROM {table} WHERE owner_user_id = ? AND id = ?");
-        sqlx::query_scalar::<_, String>(&sql)
+        let sql = format!(
+            "SELECT revision, created_at, updated_at, record_json, record_digest \
+             FROM {table} WHERE owner_user_id = ? AND id = ?"
+        );
+        sqlx::query(&sql)
             .bind(owner_user_id)
             .bind(id)
             .fetch_optional(&mut *self.connection)
             .await
             .map_err(transaction_error)?
-            .map(|payload| self.cipher.decrypt(&payload))
+            .map(|row| {
+                Ok(StoredPayload {
+                    record_json: self.cipher.decrypt(
+                        &row.try_get::<String, _>("record_json")
+                            .map_err(transaction_error)?,
+                    )?,
+                    record_digest: row.try_get("record_digest").map_err(transaction_error)?,
+                    revision: row.try_get("revision").map_err(transaction_error)?,
+                    created_at: row.try_get("created_at").map_err(transaction_error)?,
+                    updated_at: row.try_get("updated_at").map_err(transaction_error)?,
+                })
+            })
             .transpose()
     }
 
@@ -157,7 +174,8 @@ impl RecordStore for SqliteRecordStore<'_> {
     ) -> StorageResult<Vec<StoredRow>> {
         assert_table(table)?;
         let sql = format!(
-            "SELECT id, record_json FROM {table} WHERE owner_user_id = ? \
+            "SELECT id, revision, created_at, updated_at, record_json, record_digest \
+             FROM {table} WHERE owner_user_id = ? \
              AND (? IS NULL OR id > ?) ORDER BY id ASC LIMIT ?"
         );
         sqlx::query(&sql)
@@ -172,10 +190,16 @@ impl RecordStore for SqliteRecordStore<'_> {
             .map(|row| {
                 Ok(StoredRow {
                     id: row.try_get("id").map_err(transaction_error)?,
-                    record_json: self.cipher.decrypt(
-                        &row.try_get::<String, _>("record_json")
-                            .map_err(transaction_error)?,
-                    )?,
+                    payload: StoredPayload {
+                        record_json: self.cipher.decrypt(
+                            &row.try_get::<String, _>("record_json")
+                                .map_err(transaction_error)?,
+                        )?,
+                        record_digest: row.try_get("record_digest").map_err(transaction_error)?,
+                        revision: row.try_get("revision").map_err(transaction_error)?,
+                        created_at: row.try_get("created_at").map_err(transaction_error)?,
+                        updated_at: row.try_get("updated_at").map_err(transaction_error)?,
+                    },
                 })
             })
             .collect()
@@ -190,12 +214,13 @@ impl RecordStore for SqliteRecordStore<'_> {
         created_at: &str,
         updated_at: &str,
         record_json: &str,
+        record_digest: &str,
     ) -> StorageResult<bool> {
         assert_table(table)?;
         let encrypted = self.cipher.encrypt(record_json)?;
         let sql = format!(
-            "INSERT INTO {table} (owner_user_id, id, revision, created_at, updated_at, record_json) \
-             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(owner_user_id, id) DO NOTHING"
+            "INSERT INTO {table} (owner_user_id, id, revision, created_at, updated_at, record_json, record_digest) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(owner_user_id, id) DO NOTHING"
         );
         Ok(sqlx::query(&sql)
             .bind(owner_user_id)
@@ -204,6 +229,7 @@ impl RecordStore for SqliteRecordStore<'_> {
             .bind(created_at)
             .bind(updated_at)
             .bind(encrypted)
+            .bind(record_digest)
             .execute(&mut *self.connection)
             .await
             .map_err(transaction_error)?
@@ -220,17 +246,19 @@ impl RecordStore for SqliteRecordStore<'_> {
         next_revision: i64,
         updated_at: &str,
         record_json: &str,
+        record_digest: &str,
     ) -> StorageResult<bool> {
         assert_table(table)?;
         let encrypted = self.cipher.encrypt(record_json)?;
         let sql = format!(
-            "UPDATE {table} SET revision = ?, updated_at = ?, record_json = ? \
+            "UPDATE {table} SET revision = ?, updated_at = ?, record_json = ?, record_digest = ? \
              WHERE owner_user_id = ? AND id = ? AND revision = ?"
         );
         Ok(sqlx::query(&sql)
             .bind(next_revision)
             .bind(updated_at)
             .bind(encrypted)
+            .bind(record_digest)
             .bind(owner_user_id)
             .bind(id)
             .bind(expected_revision)
@@ -279,7 +307,7 @@ impl RecordStore for SqliteRecordStore<'_> {
     }
 }
 
-async fn migrate(pool: &SqlitePool) -> StorageResult<()> {
+async fn migrate(pool: &SqlitePool, cipher: &SqlitePayloadCipher) -> StorageResult<()> {
     let mut connection = pool.acquire().await.map_err(unavailable)?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS chatos_client_schema_migrations (\
@@ -301,18 +329,20 @@ async fn migrate(pool: &SqlitePool) -> StorageResult<()> {
             reason: format!("database schema version {current} is newer than this client"),
         });
     }
-    if current == 0 {
+    if current < 0 {
+        return Err(StorageError::Migration {
+            version: SCHEMA_VERSION,
+            reason: format!("database schema version {current} is invalid"),
+        });
+    }
+    if current < i64::from(SCHEMA_VERSION) {
         let mut transaction = connection.begin().await.map_err(transaction_error)?;
-        for table in DOMAIN_TABLES {
-            let sql = format!(
-                "CREATE TABLE {table} (owner_user_id TEXT NOT NULL, id TEXT NOT NULL, \
-                 revision INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, \
-                 record_json TEXT NOT NULL, PRIMARY KEY(owner_user_id, id), CHECK(revision > 0))"
-            );
-            sqlx::query(&sql)
-                .execute(&mut *transaction)
-                .await
-                .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+        if current == 0 {
+            for table in DOMAIN_TABLES {
+                create_domain_table(&mut transaction, table).await?;
+            }
+        } else if current == 1 {
+            migrate_v1_to_v2(&mut transaction, cipher).await?;
         }
         sqlx::query(
             "INSERT INTO chatos_client_schema_migrations(version, applied_at) VALUES (?, ?)",
@@ -327,6 +357,81 @@ async fn migrate(pool: &SqlitePool) -> StorageResult<()> {
             .await
             .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
     }
+    Ok(())
+}
+
+async fn migrate_v1_to_v2(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    cipher: &SqlitePayloadCipher,
+) -> StorageResult<()> {
+    for table in DOMAIN_TABLES {
+        let old_table = format!("{table}_schema_v1");
+        sqlx::query(&format!("ALTER TABLE {table} RENAME TO {old_table}"))
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+        create_domain_table(transaction, table).await?;
+        let rows = sqlx::query(&format!(
+            "SELECT owner_user_id, id, revision, created_at, updated_at, record_json FROM {old_table}"
+        ))
+        .fetch_all(&mut **transaction)
+        .await
+        .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+        for row in rows {
+            let encrypted: String = row.try_get("record_json").map_err(transaction_error)?;
+            let plaintext = cipher.decrypt(&encrypted)?;
+            let canonical = canonicalize_encoded(&plaintext)?;
+            let encrypted = cipher.encrypt(&canonical.json)?;
+            let sql = format!(
+                "INSERT INTO {table} (owner_user_id, id, revision, created_at, updated_at, record_json, record_digest) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)"
+            );
+            sqlx::query(&sql)
+                .bind(
+                    row.try_get::<String, _>("owner_user_id")
+                        .map_err(transaction_error)?,
+                )
+                .bind(row.try_get::<String, _>("id").map_err(transaction_error)?)
+                .bind(
+                    row.try_get::<i64, _>("revision")
+                        .map_err(transaction_error)?,
+                )
+                .bind(
+                    row.try_get::<String, _>("created_at")
+                        .map_err(transaction_error)?,
+                )
+                .bind(
+                    row.try_get::<String, _>("updated_at")
+                        .map_err(transaction_error)?,
+                )
+                .bind(encrypted)
+                .bind(canonical.digest)
+                .execute(&mut **transaction)
+                .await
+                .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+        }
+        sqlx::query(&format!("DROP TABLE {old_table}"))
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+    }
+    Ok(())
+}
+
+async fn create_domain_table(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    table: &'static str,
+) -> StorageResult<()> {
+    let sql = format!(
+        "CREATE TABLE {table} (owner_user_id TEXT NOT NULL, id TEXT NOT NULL, \
+         revision INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, \
+         record_json TEXT NOT NULL, record_digest TEXT NOT NULL, \
+         PRIMARY KEY(owner_user_id, id), CHECK(revision > 0))"
+    );
+    sqlx::query(&sql)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
     Ok(())
 }
 

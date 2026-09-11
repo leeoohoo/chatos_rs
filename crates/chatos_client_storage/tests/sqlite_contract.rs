@@ -168,14 +168,23 @@ async fn sqlite_persists_only_authenticated_ciphertext() {
 
     let options = SqliteConnectOptions::new().filename(&path);
     let mut raw_connection = SqliteConnection::connect_with(&options).await.unwrap();
-    let row = sqlx::query("SELECT record_json FROM client_projects WHERE id = ?")
+    let row = sqlx::query("SELECT record_json, record_digest FROM client_projects WHERE id = ?")
         .bind("project-sensitive")
         .fetch_one(&mut raw_connection)
         .await
         .unwrap();
     let encrypted: String = row.try_get("record_json").unwrap();
+    let digest: String = row.try_get("record_digest").unwrap();
     assert!(encrypted.starts_with("chatos-encrypted-v1:"));
     assert!(!encrypted.contains("Preserve exactly"));
+    assert!(digest.starts_with("sha256:"));
+    assert_eq!(digest.len(), "sha256:".len() + 64);
+    let schema_version: i64 =
+        sqlx::query_scalar("SELECT MAX(version) FROM chatos_client_schema_migrations")
+            .fetch_one(&mut raw_connection)
+            .await
+            .unwrap();
+    assert_eq!(schema_version, 2);
     raw_connection.close().await.unwrap();
 
     let wrong_key = StorageEncryptionKey::new([99; 32]);
@@ -189,6 +198,91 @@ async fn sqlite_persists_only_authenticated_ciphertext() {
             if reason.contains("authentication failed")
     ));
     reopened.close().await;
+}
+
+#[tokio::test]
+async fn modified_record_digest_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite3");
+    let database = storage(&path).await;
+    database
+        .transaction(&mut CreateProject { record: None })
+        .await
+        .unwrap();
+    database.close().await;
+
+    let options = SqliteConnectOptions::new().filename(&path);
+    let mut raw_connection = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::query("UPDATE client_projects SET record_digest = ? WHERE id = ?")
+        .bind("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+        .bind("project-1")
+        .execute(&mut raw_connection)
+        .await
+        .unwrap();
+    raw_connection.close().await.unwrap();
+
+    let reopened = storage(&path).await;
+    let mut read = ReadProject { record: None };
+    assert_eq!(
+        reopened.transaction(&mut read).await,
+        Err(StorageError::RecordIntegrity {
+            table: "client_projects",
+            id: "project-1".to_string(),
+        })
+    );
+    reopened.close().await;
+}
+
+#[tokio::test]
+async fn schema_v1_is_atomically_rewritten_with_record_digests() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite3");
+    let database = storage(&path).await;
+    database
+        .transaction(&mut CreateProject { record: None })
+        .await
+        .unwrap();
+    database.close().await;
+
+    let options = SqliteConnectOptions::new().filename(&path);
+    let mut raw_connection = SqliteConnection::connect_with(&options).await.unwrap();
+    let table_names: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'client_%'",
+    )
+    .fetch_all(&mut raw_connection)
+    .await
+    .unwrap();
+    for table in table_names {
+        sqlx::query(&format!("ALTER TABLE {table} DROP COLUMN record_digest"))
+            .execute(&mut raw_connection)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM chatos_client_schema_migrations")
+        .execute(&mut raw_connection)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO chatos_client_schema_migrations(version, applied_at) VALUES (1, ?)")
+        .bind(Utc::now().to_rfc3339())
+        .execute(&mut raw_connection)
+        .await
+        .unwrap();
+    raw_connection.close().await.unwrap();
+
+    let reopened = storage(&path).await;
+    let mut read = ReadProject { record: None };
+    reopened.transaction(&mut read).await.unwrap();
+    assert_eq!(read.record.unwrap().name, "Website");
+    reopened.close().await;
+
+    let options = SqliteConnectOptions::new().filename(&path);
+    let mut raw_connection = SqliteConnection::connect_with(&options).await.unwrap();
+    let digest: String =
+        sqlx::query_scalar("SELECT record_digest FROM client_projects WHERE id = 'project-1'")
+            .fetch_one(&mut raw_connection)
+            .await
+            .unwrap();
+    assert!(digest.starts_with("sha256:"));
 }
 
 struct CreateThenFail;

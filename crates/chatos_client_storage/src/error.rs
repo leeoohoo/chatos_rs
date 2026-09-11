@@ -40,6 +40,8 @@ pub enum StorageError {
     InvalidData { reason: String },
     #[error("client storage transaction failed: {reason}")]
     Transaction { reason: String },
+    #[error("client storage record integrity check failed for {table}/{id}")]
+    RecordIntegrity { table: &'static str, id: String },
     #[error("client storage archive integrity check failed")]
     ArchiveIntegrity,
     #[error("client storage archive version {found} is unsupported; expected {expected}")]

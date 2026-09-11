@@ -9,8 +9,10 @@ use chrono::Utc;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::{Connection, PgConnection, PgPool, Row};
 
+use crate::canonical_json::canonicalize_encoded;
 use crate::record_store::{
-    RecordStore, RecordTransactionRepositories, StoredRow, DOMAIN_TABLES, SCHEMA_VERSION,
+    RecordStore, RecordTransactionRepositories, StoredPayload, StoredRow, DOMAIN_TABLES,
+    SCHEMA_VERSION,
 };
 use crate::{
     ClientStorage, PostgresConnectionSettings, PostgresTlsMode, StorageBackend, StorageError,
@@ -107,15 +109,28 @@ impl RecordStore for PostgresRecordStore<'_> {
         table: &'static str,
         owner_user_id: &str,
         id: &str,
-    ) -> StorageResult<Option<String>> {
+    ) -> StorageResult<Option<StoredPayload>> {
         let table = qualified_table(table)?;
-        let sql = format!("SELECT record_json FROM {table} WHERE owner_user_id = $1 AND id = $2");
-        sqlx::query_scalar(&sql)
+        let sql = format!(
+            "SELECT revision, created_at, updated_at, record_json, record_digest \
+             FROM {table} WHERE owner_user_id = $1 AND id = $2"
+        );
+        sqlx::query(&sql)
             .bind(owner_user_id)
             .bind(id)
             .fetch_optional(&mut *self.connection)
             .await
-            .map_err(transaction_error)
+            .map_err(transaction_error)?
+            .map(|row| {
+                Ok(StoredPayload {
+                    record_json: row.try_get("record_json").map_err(transaction_error)?,
+                    record_digest: row.try_get("record_digest").map_err(transaction_error)?,
+                    revision: row.try_get("revision").map_err(transaction_error)?,
+                    created_at: row.try_get("created_at").map_err(transaction_error)?,
+                    updated_at: row.try_get("updated_at").map_err(transaction_error)?,
+                })
+            })
+            .transpose()
     }
 
     async fn list_json(
@@ -127,7 +142,8 @@ impl RecordStore for PostgresRecordStore<'_> {
     ) -> StorageResult<Vec<StoredRow>> {
         let table = qualified_table(table)?;
         let sql = format!(
-            "SELECT id, record_json FROM {table} WHERE owner_user_id = $1 \
+            "SELECT id, revision, created_at, updated_at, record_json, record_digest \
+             FROM {table} WHERE owner_user_id = $1 \
              AND ($2::TEXT IS NULL OR id > $2) ORDER BY id ASC LIMIT $3"
         );
         sqlx::query(&sql)
@@ -141,7 +157,13 @@ impl RecordStore for PostgresRecordStore<'_> {
             .map(|row| {
                 Ok(StoredRow {
                     id: row.try_get("id").map_err(transaction_error)?,
-                    record_json: row.try_get("record_json").map_err(transaction_error)?,
+                    payload: StoredPayload {
+                        record_json: row.try_get("record_json").map_err(transaction_error)?,
+                        record_digest: row.try_get("record_digest").map_err(transaction_error)?,
+                        revision: row.try_get("revision").map_err(transaction_error)?,
+                        created_at: row.try_get("created_at").map_err(transaction_error)?,
+                        updated_at: row.try_get("updated_at").map_err(transaction_error)?,
+                    },
                 })
             })
             .collect()
@@ -156,11 +178,12 @@ impl RecordStore for PostgresRecordStore<'_> {
         created_at: &str,
         updated_at: &str,
         record_json: &str,
+        record_digest: &str,
     ) -> StorageResult<bool> {
         let table = qualified_table(table)?;
         let sql = format!(
-            "INSERT INTO {table} (owner_user_id, id, revision, created_at, updated_at, record_json) \
-             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(owner_user_id, id) DO NOTHING"
+            "INSERT INTO {table} (owner_user_id, id, revision, created_at, updated_at, record_json, record_digest) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT(owner_user_id, id) DO NOTHING"
         );
         Ok(sqlx::query(&sql)
             .bind(owner_user_id)
@@ -169,6 +192,7 @@ impl RecordStore for PostgresRecordStore<'_> {
             .bind(created_at)
             .bind(updated_at)
             .bind(record_json)
+            .bind(record_digest)
             .execute(&mut *self.connection)
             .await
             .map_err(transaction_error)?
@@ -185,16 +209,18 @@ impl RecordStore for PostgresRecordStore<'_> {
         next_revision: i64,
         updated_at: &str,
         record_json: &str,
+        record_digest: &str,
     ) -> StorageResult<bool> {
         let table = qualified_table(table)?;
         let sql = format!(
-            "UPDATE {table} SET revision = $1, updated_at = $2, record_json = $3 \
-             WHERE owner_user_id = $4 AND id = $5 AND revision = $6"
+            "UPDATE {table} SET revision = $1, updated_at = $2, record_json = $3, record_digest = $4 \
+             WHERE owner_user_id = $5 AND id = $6 AND revision = $7"
         );
         Ok(sqlx::query(&sql)
             .bind(next_revision)
             .bind(updated_at)
             .bind(record_json)
+            .bind(record_digest)
             .bind(owner_user_id)
             .bind(id)
             .bind(expected_revision)
@@ -293,17 +319,20 @@ async fn migrate(pool: &PgPool) -> StorageResult<()> {
             reason: format!("database schema version {current} is newer than this client"),
         });
     }
-    if current == 0 {
-        for table in DOMAIN_TABLES {
-            let sql = format!(
-                "CREATE TABLE chatos.{table} (owner_user_id TEXT NOT NULL, id TEXT NOT NULL, \
-                 revision BIGINT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, \
-                 record_json TEXT NOT NULL, PRIMARY KEY(owner_user_id, id), CHECK(revision > 0))"
-            );
-            sqlx::query(&sql)
-                .execute(&mut *transaction)
-                .await
-                .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+    if current < 0 {
+        return Err(StorageError::Migration {
+            version: SCHEMA_VERSION,
+            reason: format!("database schema version {current} is invalid"),
+        });
+    }
+    if current < i64::from(SCHEMA_VERSION) {
+        if current == 0 {
+            for table in DOMAIN_TABLES {
+                create_domain_table(&mut transaction, table).await?;
+            }
+        }
+        if current == 1 {
+            migrate_v1_to_v2(&mut transaction).await?;
         }
         sqlx::query(
             "INSERT INTO chatos.chatos_client_schema_migrations(version, applied_at) VALUES ($1, $2)",
@@ -318,6 +347,67 @@ async fn migrate(pool: &PgPool) -> StorageResult<()> {
         .commit()
         .await
         .map_err(|error| migration_error(SCHEMA_VERSION, error))
+}
+
+async fn migrate_v1_to_v2(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> StorageResult<()> {
+    for table in DOMAIN_TABLES {
+        let qualified = qualified_table(table)?;
+        sqlx::query(&format!(
+            "ALTER TABLE {qualified} ADD COLUMN record_digest TEXT"
+        ))
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+        let rows = sqlx::query(&format!(
+            "SELECT owner_user_id, id, record_json FROM {qualified}"
+        ))
+        .fetch_all(&mut **transaction)
+        .await
+        .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+        for row in rows {
+            let owner_user_id: String = row.try_get("owner_user_id").map_err(transaction_error)?;
+            let id: String = row.try_get("id").map_err(transaction_error)?;
+            let encoded: String = row.try_get("record_json").map_err(transaction_error)?;
+            let canonical = canonicalize_encoded(&encoded)?;
+            sqlx::query(&format!(
+                "UPDATE {qualified} SET record_json = $1, record_digest = $2 \
+                 WHERE owner_user_id = $3 AND id = $4"
+            ))
+            .bind(canonical.json)
+            .bind(canonical.digest)
+            .bind(owner_user_id)
+            .bind(id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+        }
+        sqlx::query(&format!(
+            "ALTER TABLE {qualified} ALTER COLUMN record_digest SET NOT NULL"
+        ))
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+    }
+    Ok(())
+}
+
+async fn create_domain_table(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    table: &'static str,
+) -> StorageResult<()> {
+    let sql = format!(
+        "CREATE TABLE chatos.{table} (owner_user_id TEXT NOT NULL, id TEXT NOT NULL, \
+         revision BIGINT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, \
+         record_json TEXT NOT NULL, record_digest TEXT NOT NULL, \
+         PRIMARY KEY(owner_user_id, id), CHECK(revision > 0))"
+    );
+    sqlx::query(&sql)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+    Ok(())
 }
 
 fn qualified_table(table: &'static str) -> StorageResult<String> {

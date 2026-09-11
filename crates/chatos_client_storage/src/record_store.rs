@@ -8,6 +8,7 @@ use chrono::Utc;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use crate::canonical_json::{encode_canonical, verify_canonical, CanonicalRecord};
 use crate::{
     AgentRecord, AgentRepository, ClientSettingRecord, ClientSettingsRepository, ClipboardRecord,
     ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery, MediaStateRecord,
@@ -17,7 +18,7 @@ use crate::{
     TaskRepository, TerminalHistoryRecord, TerminalHistoryRepository, TransactionRepositories,
 };
 
-pub(crate) const SCHEMA_VERSION: u32 = 1;
+pub(crate) const SCHEMA_VERSION: u32 = 2;
 pub(crate) const DOMAIN_TABLES: [&str; 11] = [
     "client_agents",
     "client_conversations",
@@ -34,7 +35,15 @@ pub(crate) const DOMAIN_TABLES: [&str; 11] = [
 
 pub(crate) struct StoredRow {
     pub id: String,
+    pub payload: StoredPayload,
+}
+
+pub(crate) struct StoredPayload {
     pub record_json: String,
+    pub record_digest: String,
+    pub revision: i64,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[async_trait]
@@ -44,7 +53,7 @@ pub(crate) trait RecordStore: Send {
         table: &'static str,
         owner_user_id: &str,
         id: &str,
-    ) -> StorageResult<Option<String>>;
+    ) -> StorageResult<Option<StoredPayload>>;
 
     async fn list_json(
         &mut self,
@@ -64,6 +73,7 @@ pub(crate) trait RecordStore: Send {
         created_at: &str,
         updated_at: &str,
         record_json: &str,
+        record_digest: &str,
     ) -> StorageResult<bool>;
 
     #[allow(clippy::too_many_arguments)]
@@ -76,6 +86,7 @@ pub(crate) trait RecordStore: Send {
         next_revision: i64,
         updated_at: &str,
         record_json: &str,
+        record_digest: &str,
     ) -> StorageResult<bool>;
 
     async fn delete(
@@ -238,7 +249,9 @@ where
         self.store
             .get_json(self.table, &query.scope.owner_user_id, &query.id)
             .await?
-            .map(decode_record)
+            .map(|payload| {
+                decode_record(self.table, &query.scope.owner_user_id, &query.id, payload)
+            })
             .transpose()
     }
 
@@ -264,7 +277,7 @@ where
         };
         let records = rows
             .into_iter()
-            .map(|row| decode_record(row.record_json))
+            .map(|row| decode_record(self.table, &query.scope.owner_user_id, &row.id, row.payload))
             .collect::<StorageResult<Vec<_>>>()?;
         Ok(RecordPage {
             records,
@@ -293,7 +306,8 @@ where
                         1,
                         &now.to_rfc3339(),
                         &now.to_rfc3339(),
-                        &encoded,
+                        &encoded.json,
+                        &encoded.digest,
                     )
                     .await?;
                 if !inserted {
@@ -333,7 +347,8 @@ where
                         expected_revision_i64,
                         next_revision_i64,
                         &command.record.metadata().updated_at.to_rfc3339(),
-                        &encoded,
+                        &encoded.json,
+                        &encoded.digest,
                     )
                     .await?;
                 if !updated {
@@ -374,7 +389,8 @@ where
                 revision,
                 &record.metadata().created_at.to_rfc3339(),
                 &record.metadata().updated_at.to_rfc3339(),
-                &encoded,
+                &encoded.json,
+                &encoded.digest,
             )
             .await?;
         if !inserted {
@@ -489,16 +505,34 @@ fn validate_record_identity(metadata: &RecordMetadata) -> StorageResult<()> {
     Ok(())
 }
 
-fn encode_record<Record: Serialize>(record: &Record) -> StorageResult<String> {
-    serde_json::to_string(record).map_err(|error| StorageError::InvalidData {
-        reason: format!("record serialization failed: {error}"),
-    })
+fn encode_record<Record: Serialize>(record: &Record) -> StorageResult<CanonicalRecord> {
+    encode_canonical(record)
 }
 
-fn decode_record<Record: DeserializeOwned>(encoded: String) -> StorageResult<Record> {
-    serde_json::from_str(&encoded).map_err(|error| StorageError::InvalidData {
-        reason: format!("stored record is invalid: {error}"),
-    })
+fn decode_record<Record: RepositoryRecord>(
+    table: &'static str,
+    owner_user_id: &str,
+    id: &str,
+    payload: StoredPayload,
+) -> StorageResult<Record> {
+    verify_canonical(table, id, &payload.record_json, &payload.record_digest)?;
+    let record: Record =
+        serde_json::from_str(&payload.record_json).map_err(|error| StorageError::InvalidData {
+            reason: format!("stored record is invalid: {error}"),
+        })?;
+    let metadata = record.metadata();
+    if metadata.id != id
+        || metadata.scope.owner_user_id != owner_user_id
+        || stored_revision(metadata.revision)? != payload.revision
+        || metadata.created_at.to_rfc3339() != payload.created_at
+        || metadata.updated_at.to_rfc3339() != payload.updated_at
+    {
+        return Err(StorageError::RecordIntegrity {
+            table,
+            id: id.to_string(),
+        });
+    }
+    Ok(record)
 }
 
 fn stored_revision(revision: u64) -> StorageResult<i64> {

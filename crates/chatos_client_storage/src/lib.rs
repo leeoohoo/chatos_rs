@@ -9,6 +9,7 @@
 
 mod archive;
 mod bootstrap;
+mod canonical_json;
 mod connection;
 mod contracts;
 mod error;
