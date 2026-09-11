@@ -5,6 +5,7 @@ use async_trait::async_trait;
 
 use crate::{
     AgentEventStateRecord, AgentMessageStateRecord, AgentRecord, AgentRunStateRecord,
+    AgentUiEventCursorQuery, AgentUiEventPage, AgentUiEventStateRecord, AppendAgentUiEvent,
     ClientSettingRecord, ClipboardRecord, ConversationRecord, ListQuery, MediaStateRecord,
     NotepadRecord, PluginStateRecord, ProjectRecord, ProviderContextStateRecord, PutRecord,
     RecordPage, RecordQuery, StorageResult, StoryRecord, SyncOutboxStateRecord, TaskRecord,
@@ -33,6 +34,23 @@ macro_rules! define_domain_repository {
 define_domain_repository!(AgentRepository, AgentRecord);
 define_domain_repository!(AgentRunStateRepository, AgentRunStateRecord);
 define_domain_repository!(AgentEventStateRepository, AgentEventStateRecord);
+
+#[async_trait]
+pub trait AgentUiEventStateRepository: Send {
+    async fn append(
+        &mut self,
+        command: AppendAgentUiEvent,
+    ) -> StorageResult<AgentUiEventStateRecord>;
+    async fn list_after(
+        &mut self,
+        query: &AgentUiEventCursorQuery,
+    ) -> StorageResult<AgentUiEventPage>;
+    async fn restore(
+        &mut self,
+        record: AgentUiEventStateRecord,
+    ) -> StorageResult<AgentUiEventStateRecord>;
+}
+
 define_domain_repository!(AgentMessageStateRepository, AgentMessageStateRecord);
 define_domain_repository!(ProviderContextStateRepository, ProviderContextStateRecord);
 define_domain_repository!(ToolExecutionStateRepository, ToolExecutionStateRecord);

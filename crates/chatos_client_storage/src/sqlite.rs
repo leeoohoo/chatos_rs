@@ -17,6 +17,7 @@ use crate::canonical_json::canonicalize_encoded;
 use crate::record_store::{
     RecordStore, RecordTransactionRepositories, StoredPayload, StoredRow, AUXILIARY_RUNTIME_TABLES,
     DOMAIN_TABLES, LEGACY_DOMAIN_TABLES, RUNTIME_DOMAIN_TABLES, SCHEMA_VERSION,
+    UI_EVENT_DOMAIN_TABLE, UI_EVENT_SEQUENCE_TABLE,
 };
 use crate::sqlite_cipher::SqlitePayloadCipher;
 use crate::{
@@ -305,6 +306,46 @@ impl RecordStore for SqliteRecordStore<'_> {
             .await
             .map_err(transaction_error)
     }
+
+    async fn allocate_ui_event_sequence(&mut self, owner_user_id: &str) -> StorageResult<u64> {
+        let sql = format!(
+            "INSERT INTO {UI_EVENT_SEQUENCE_TABLE} (owner_user_id, last_seq) VALUES (?, 1) \
+             ON CONFLICT(owner_user_id) DO UPDATE SET last_seq = last_seq + 1 \
+             WHERE last_seq < 9223372036854775807 RETURNING last_seq"
+        );
+        let sequence = sqlx::query_scalar::<_, i64>(&sql)
+            .bind(owner_user_id)
+            .fetch_optional(&mut *self.connection)
+            .await
+            .map_err(transaction_error)?
+            .ok_or(StorageError::InvalidData {
+                reason: "UI event sequence exhausted".to_string(),
+            })?;
+        u64::try_from(sequence).map_err(|_| StorageError::InvalidData {
+            reason: "database allocated an invalid UI event sequence".to_string(),
+        })
+    }
+
+    async fn advance_ui_event_sequence(
+        &mut self,
+        owner_user_id: &str,
+        event_seq: u64,
+    ) -> StorageResult<()> {
+        let event_seq = i64::try_from(event_seq).map_err(|_| StorageError::InvalidData {
+            reason: "UI event sequence exceeds the database range".to_string(),
+        })?;
+        let sql = format!(
+            "INSERT INTO {UI_EVENT_SEQUENCE_TABLE} (owner_user_id, last_seq) VALUES (?, ?) \
+             ON CONFLICT(owner_user_id) DO UPDATE SET last_seq = MAX(last_seq, excluded.last_seq)"
+        );
+        sqlx::query(&sql)
+            .bind(owner_user_id)
+            .bind(event_seq)
+            .execute(&mut *self.connection)
+            .await
+            .map_err(transaction_error)?;
+        Ok(())
+    }
 }
 
 async fn migrate(pool: &SqlitePool, cipher: &SqlitePayloadCipher) -> StorageResult<()> {
@@ -341,6 +382,7 @@ async fn migrate(pool: &SqlitePool, cipher: &SqlitePayloadCipher) -> StorageResu
             for table in DOMAIN_TABLES {
                 create_domain_table(&mut transaction, table).await?;
             }
+            create_ui_event_sequence_table(&mut transaction).await?;
         } else {
             if current == 1 {
                 migrate_v1_to_v2(&mut transaction, cipher).await?;
@@ -350,8 +392,14 @@ async fn migrate(pool: &SqlitePool, cipher: &SqlitePayloadCipher) -> StorageResu
                     create_domain_table(&mut transaction, table).await?;
                 }
             }
-            for table in AUXILIARY_RUNTIME_TABLES {
-                create_domain_table(&mut transaction, table).await?;
+            if current <= 3 {
+                for table in AUXILIARY_RUNTIME_TABLES {
+                    create_domain_table(&mut transaction, table).await?;
+                }
+            }
+            if current <= 4 {
+                create_domain_table(&mut transaction, UI_EVENT_DOMAIN_TABLE).await?;
+                create_ui_event_sequence_table(&mut transaction).await?;
             }
         }
         sqlx::query(
@@ -437,6 +485,20 @@ async fn create_domain_table(
          revision INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, \
          record_json TEXT NOT NULL, record_digest TEXT NOT NULL, \
          PRIMARY KEY(owner_user_id, id), CHECK(revision > 0))"
+    );
+    sqlx::query(&sql)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| migration_error(SCHEMA_VERSION, error))?;
+    Ok(())
+}
+
+async fn create_ui_event_sequence_table(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> StorageResult<()> {
+    let sql = format!(
+        "CREATE TABLE {UI_EVENT_SEQUENCE_TABLE} (owner_user_id TEXT PRIMARY KEY NOT NULL, \
+         last_seq INTEGER NOT NULL, CHECK(last_seq > 0))"
     );
     sqlx::query(&sql)
         .execute(&mut **transaction)

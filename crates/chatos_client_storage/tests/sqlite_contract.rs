@@ -184,7 +184,7 @@ async fn sqlite_persists_only_authenticated_ciphertext() {
             .fetch_one(&mut raw_connection)
             .await
             .unwrap();
-    assert_eq!(schema_version, 4);
+    assert_eq!(schema_version, 5);
     raw_connection.close().await.unwrap();
 
     let wrong_key = StorageEncryptionKey::new([99; 32]);
@@ -260,6 +260,8 @@ async fn schema_v1_is_atomically_rewritten_to_the_current_schema() {
             "client_provider_context",
             "client_tool_executions",
             "client_sync_outbox",
+            "client_agent_ui_events",
+            "client_agent_ui_event_sequences",
         ];
         let sql = if runtime_tables.contains(&table.as_str()) {
             format!("DROP TABLE {table}")
@@ -392,6 +394,51 @@ async fn only_one_client_host_can_own_a_sqlite_database() {
     first.close().await;
     let reopened = SqliteClientStorage::open(&profile, &key).await.unwrap();
     reopened.close().await;
+}
+
+#[tokio::test]
+async fn schema_v4_migrates_only_the_new_ui_event_tables() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite3");
+    let database = storage(&path).await;
+    database.close().await;
+
+    let options = SqliteConnectOptions::new().filename(&path);
+    let mut raw_connection = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::query("DROP TABLE client_agent_ui_events")
+        .execute(&mut raw_connection)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE client_agent_ui_event_sequences")
+        .execute(&mut raw_connection)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE chatos_client_schema_migrations SET version = 4 WHERE version = 5")
+        .execute(&mut raw_connection)
+        .await
+        .unwrap();
+    raw_connection.close().await.unwrap();
+
+    let migrated = storage(&path).await;
+    migrated.close().await;
+    let mut raw_connection =
+        SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    let table_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN \
+         ('client_agent_ui_events', 'client_agent_ui_event_sequences')",
+    )
+    .fetch_one(&mut raw_connection)
+    .await
+    .unwrap();
+    assert_eq!(table_count, 2);
+    let schema_version: i64 =
+        sqlx::query_scalar("SELECT MAX(version) FROM chatos_client_schema_migrations")
+            .fetch_one(&mut raw_connection)
+            .await
+            .unwrap();
+    assert_eq!(schema_version, 5);
 }
 
 struct StoreClipboard {

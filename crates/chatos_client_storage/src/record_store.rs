@@ -12,9 +12,10 @@ use crate::canonical_json::{encode_canonical, verify_canonical, CanonicalRecord}
 use crate::{
     AgentEventStateRecord, AgentEventStateRepository, AgentMessageStateRecord,
     AgentMessageStateRepository, AgentRecord, AgentRepository, AgentRunStateRecord,
-    AgentRunStateRepository, ClientSettingRecord, ClientSettingsRepository, ClipboardRecord,
-    ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery, MediaStateRecord,
-    MediaStateRepository, NotepadRecord, NotepadRepository, PluginStateRecord,
+    AgentRunStateRepository, AgentUiEventCursorQuery, AgentUiEventPage, AgentUiEventStateRecord,
+    AgentUiEventStateRepository, AppendAgentUiEvent, ClientSettingRecord, ClientSettingsRepository,
+    ClipboardRecord, ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery,
+    MediaStateRecord, MediaStateRepository, NotepadRecord, NotepadRepository, PluginStateRecord,
     PluginStateRepository, ProjectRecord, ProjectRepository, ProviderContextStateRecord,
     ProviderContextStateRepository, PutRecord, RecordMetadata, RecordPage, RecordQuery,
     StorageError, StorageResult, StoryRecord, StoryRepository, SyncOutboxStateRecord,
@@ -23,7 +24,7 @@ use crate::{
     TransactionRepositories,
 };
 
-pub(crate) const SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCHEMA_VERSION: u32 = 5;
 pub(crate) const LEGACY_DOMAIN_TABLES: [&str; 11] = [
     "client_agents",
     "client_conversations",
@@ -44,7 +45,9 @@ pub(crate) const AUXILIARY_RUNTIME_TABLES: [&str; 4] = [
     "client_tool_executions",
     "client_sync_outbox",
 ];
-pub(crate) const DOMAIN_TABLES: [&str; 17] = [
+pub(crate) const UI_EVENT_DOMAIN_TABLE: &str = "client_agent_ui_events";
+pub(crate) const UI_EVENT_SEQUENCE_TABLE: &str = "client_agent_ui_event_sequences";
+pub(crate) const DOMAIN_TABLES: [&str; 18] = [
     "client_agents",
     "client_conversations",
     "client_tasks",
@@ -58,6 +61,7 @@ pub(crate) const DOMAIN_TABLES: [&str; 17] = [
     "client_terminal_history",
     "client_agent_runs",
     "client_agent_events",
+    "client_agent_ui_events",
     "client_agent_messages",
     "client_provider_context",
     "client_tool_executions",
@@ -134,6 +138,18 @@ pub(crate) trait RecordStore: Send {
         owner_user_id: &str,
         id: &str,
     ) -> StorageResult<Option<i64>>;
+
+    /// Allocates the next owner-scoped UI sequence under the current database
+    /// transaction. A rolled-back transaction must not publish the sequence.
+    async fn allocate_ui_event_sequence(&mut self, owner_user_id: &str) -> StorageResult<u64>;
+
+    /// Advances the allocator when importing an archived event without ever
+    /// moving an existing owner sequence backwards.
+    async fn advance_ui_event_sequence(
+        &mut self,
+        owner_user_id: &str,
+        event_seq: u64,
+    ) -> StorageResult<()>;
 }
 
 pub(crate) struct RecordTransactionRepositories<'store> {
@@ -165,6 +181,13 @@ impl TransactionRepositories for RecordTransactionRepositories<'_> {
         Box::new(JsonRecordRepository::<AgentEventStateRecord>::new(
             self.store,
             "client_agent_events",
+        ))
+    }
+
+    fn agent_ui_events(&mut self) -> Box<dyn AgentUiEventStateRepository + '_> {
+        Box::new(JsonRecordRepository::<AgentUiEventStateRecord>::new(
+            self.store,
+            UI_EVENT_DOMAIN_TABLE,
         ))
     }
 
@@ -359,6 +382,31 @@ impl RepositoryRecord for AgentEventStateRecord {
             return Err(StorageError::InvalidData {
                 reason: "Agent event storage identity does not match the protocol record"
                     .to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl RepositoryRecord for AgentUiEventStateRecord {
+    fn metadata(&self) -> &RecordMetadata {
+        &self.metadata
+    }
+
+    fn metadata_mut(&mut self) -> &mut RecordMetadata {
+        &mut self.metadata
+    }
+
+    fn validate(&self) -> StorageResult<()> {
+        validate_record_identity(&self.metadata)?;
+        self.event
+            .validate()
+            .map_err(|error| StorageError::InvalidData {
+                reason: format!("invalid local Agent UI event: {error}"),
+            })?;
+        if self.metadata.id != ui_event_record_id(self.event.event_seq) {
+            return Err(StorageError::InvalidData {
+                reason: "Agent UI event storage identity does not match its sequence".to_string(),
             });
         }
         Ok(())
@@ -682,6 +730,119 @@ impl_domain_repository!(ClipboardRepository, ClipboardRecord);
 impl_domain_repository!(StoryRepository, StoryRecord);
 impl_domain_repository!(NotepadRepository, NotepadRecord);
 impl_domain_repository!(TerminalHistoryRepository, TerminalHistoryRecord);
+
+#[async_trait]
+impl AgentUiEventStateRepository for JsonRecordRepository<'_, AgentUiEventStateRecord> {
+    async fn append(
+        &mut self,
+        command: AppendAgentUiEvent,
+    ) -> StorageResult<AgentUiEventStateRecord> {
+        validate_append_ui_event(&command)?;
+        let event_seq = self
+            .store
+            .allocate_ui_event_sequence(&command.scope.owner_user_id)
+            .await?;
+        let now = Utc::now();
+        self.put_record(PutRecord {
+            record: AgentUiEventStateRecord {
+                metadata: RecordMetadata {
+                    id: ui_event_record_id(event_seq),
+                    scope: command.scope,
+                    origin_device_id: command.origin_device_id,
+                    revision: 0,
+                    created_at: now,
+                    updated_at: now,
+                },
+                event: chatos_local_agent_protocol::LocalAgentUiEvent {
+                    event_seq,
+                    emitted_at: now,
+                    event: command.payload,
+                },
+            },
+            expected_revision: None,
+        })
+        .await
+    }
+
+    async fn list_after(
+        &mut self,
+        query: &AgentUiEventCursorQuery,
+    ) -> StorageResult<AgentUiEventPage> {
+        query
+            .validate()
+            .map_err(|reason| StorageError::InvalidData {
+                reason: reason.to_string(),
+            })?;
+        if query.scope.owner_user_id.trim().is_empty() {
+            return Err(StorageError::InvalidData {
+                reason: "owner_user_id must not be empty".to_string(),
+            });
+        }
+        let cursor = (query.after_seq > 0).then(|| ui_event_record_id(query.after_seq));
+        let fetch_limit = query
+            .limit
+            .checked_add(1)
+            .ok_or(StorageError::InvalidData {
+                reason: "UI event page limit overflow".to_string(),
+            })?;
+        let mut rows = self
+            .store
+            .list_json(
+                self.table,
+                &query.scope.owner_user_id,
+                cursor.as_deref(),
+                fetch_limit,
+            )
+            .await?;
+        let has_more = rows.len() > query.limit as usize;
+        if has_more {
+            rows.truncate(query.limit as usize);
+        }
+        let records = rows
+            .into_iter()
+            .map(|row| decode_record(self.table, &query.scope.owner_user_id, &row.id, row.payload))
+            .collect::<StorageResult<Vec<AgentUiEventStateRecord>>>()?;
+        let next_seq = records
+            .last()
+            .map_or(query.after_seq, |record| record.event.event_seq);
+        Ok(AgentUiEventPage {
+            records,
+            next_seq,
+            has_more,
+        })
+    }
+
+    async fn restore(
+        &mut self,
+        record: AgentUiEventStateRecord,
+    ) -> StorageResult<AgentUiEventStateRecord> {
+        let owner_user_id = record.metadata.scope.owner_user_id.clone();
+        let event_seq = record.event.event_seq;
+        let restored = self.restore_record(record).await?;
+        self.store
+            .advance_ui_event_sequence(&owner_user_id, event_seq)
+            .await?;
+        Ok(restored)
+    }
+}
+
+fn validate_append_ui_event(command: &AppendAgentUiEvent) -> StorageResult<()> {
+    if command.scope.owner_user_id.trim().is_empty() {
+        return Err(StorageError::InvalidData {
+            reason: "owner_user_id must not be empty".to_string(),
+        });
+    }
+    if command.origin_device_id.trim().is_empty() {
+        return Err(StorageError::InvalidData {
+            reason: "origin_device_id must not be empty".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn ui_event_record_id(event_seq: u64) -> String {
+    format!("{event_seq:020}")
+}
 
 fn validate_record_identity(metadata: &RecordMetadata) -> StorageResult<()> {
     if metadata.id.trim().is_empty() {

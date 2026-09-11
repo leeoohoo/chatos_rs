@@ -578,7 +578,7 @@ pub struct LocalAgentUiEvent {
 }
 
 impl LocalAgentUiEvent {
-    fn validate(&self) -> Result<(), ProtocolError> {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.event_seq == 0 {
             return Err(ProtocolError::InvalidState {
                 reason: "UI event sequence must be positive",

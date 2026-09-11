@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_local_agent_protocol::{
-    AgentMessage, LocalAgentEvent, LocalAgentRun, ProviderContextItem, SyncOutboxItem,
-    ToolExecution,
+    AgentMessage, LocalAgentEvent, LocalAgentRun, LocalAgentUiEvent, LocalAgentUiEventPayload,
+    ProviderContextItem, SyncOutboxItem, ToolExecution,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,48 @@ pub struct AgentRunStateRecord {
 pub struct AgentEventStateRecord {
     pub metadata: RecordMetadata,
     pub event: LocalAgentEvent,
+}
+
+/// Durable, owner-scoped event consumed by native UI clients. `event_seq` is
+/// allocated by the selected database in the same transaction as the state
+/// change that produced the event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentUiEventStateRecord {
+    pub metadata: RecordMetadata,
+    pub event: LocalAgentUiEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AppendAgentUiEvent {
+    pub scope: RecordScope,
+    pub origin_device_id: String,
+    pub payload: LocalAgentUiEventPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentUiEventCursorQuery {
+    pub scope: RecordScope,
+    pub after_seq: u64,
+    pub limit: u32,
+}
+
+impl AgentUiEventCursorQuery {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.limit == 0 {
+            return Err("limit must be greater than zero");
+        }
+        if self.limit > ListQuery::MAX_LIMIT {
+            return Err("limit exceeds 500");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentUiEventPage {
+    pub records: Vec<AgentUiEventStateRecord>,
+    pub next_seq: u64,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

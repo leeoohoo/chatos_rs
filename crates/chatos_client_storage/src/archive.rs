@@ -8,15 +8,15 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AgentEventStateRecord, AgentMessageStateRecord, AgentRecord, AgentRunStateRecord,
-    ClientSettingRecord, ClientStorage, ClipboardRecord, ConversationRecord, ListQuery,
-    MediaStateRecord, NotepadRecord, PluginStateRecord, ProjectRecord, ProviderContextStateRecord,
-    RecordScope, StorageBackend, StorageError, StorageResult, StorageTransaction, StoryRecord,
-    SyncOutboxStateRecord, TaskRecord, TerminalHistoryRecord, ToolExecutionStateRecord,
-    TransactionRepositories,
+    AgentUiEventCursorQuery, AgentUiEventStateRecord, ClientSettingRecord, ClientStorage,
+    ClipboardRecord, ConversationRecord, ListQuery, MediaStateRecord, NotepadRecord,
+    PluginStateRecord, ProjectRecord, ProviderContextStateRecord, RecordScope, StorageBackend,
+    StorageError, StorageResult, StorageTransaction, StoryRecord, SyncOutboxStateRecord,
+    TaskRecord, TerminalHistoryRecord, ToolExecutionStateRecord, TransactionRepositories,
 };
 
 const ARCHIVE_FORMAT: &str = "chatos-client-storage";
-const ARCHIVE_VERSION: u32 = 3;
+const ARCHIVE_VERSION: u32 = 4;
 const EXPORT_PAGE_SIZE: u32 = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -33,6 +33,7 @@ pub struct StorageArchiveRecords {
     pub agents: Vec<AgentRecord>,
     pub agent_runs: Vec<AgentRunStateRecord>,
     pub agent_events: Vec<AgentEventStateRecord>,
+    pub agent_ui_events: Vec<AgentUiEventStateRecord>,
     pub agent_messages: Vec<AgentMessageStateRecord>,
     pub provider_context: Vec<ProviderContextStateRecord>,
     pub tool_executions: Vec<ToolExecutionStateRecord>,
@@ -149,6 +150,24 @@ impl StorageTransaction for ExportOperation {
         collect_records!(agents, agents);
         collect_records!(agent_runs, agent_runs);
         collect_records!(agent_events, agent_events);
+        loop {
+            let after_seq = records
+                .agent_ui_events
+                .last()
+                .map_or(0, |record| record.event.event_seq);
+            let page = repositories
+                .agent_ui_events()
+                .list_after(&AgentUiEventCursorQuery {
+                    scope: self.scope.clone(),
+                    after_seq,
+                    limit: EXPORT_PAGE_SIZE,
+                })
+                .await?;
+            records.agent_ui_events.extend(page.records);
+            if !page.has_more {
+                break;
+            }
+        }
         collect_records!(agent_messages, agent_messages);
         collect_records!(provider_context, provider_context);
         collect_records!(tool_executions, tool_executions);
@@ -208,6 +227,21 @@ impl StorageTransaction for ImportOperation<'_> {
         require_empty!(agents);
         require_empty!(agent_runs);
         require_empty!(agent_events);
+        if !repositories
+            .agent_ui_events()
+            .list_after(&AgentUiEventCursorQuery {
+                scope: self.archive.scope.clone(),
+                after_seq: 0,
+                limit: 1,
+            })
+            .await?
+            .records
+            .is_empty()
+        {
+            return Err(StorageError::InvalidData {
+                reason: "archive target owner scope is not empty".to_string(),
+            });
+        }
         require_empty!(agent_messages);
         require_empty!(provider_context);
         require_empty!(tool_executions);
@@ -234,6 +268,12 @@ impl StorageTransaction for ImportOperation<'_> {
         restore_records!(agents, agents);
         restore_records!(agent_runs, agent_runs);
         restore_records!(agent_events, agent_events);
+        for record in &self.archive.records.agent_ui_events {
+            repositories
+                .agent_ui_events()
+                .restore(record.clone())
+                .await?;
+        }
         restore_records!(agent_messages, agent_messages);
         restore_records!(provider_context, provider_context);
         restore_records!(tool_executions, tool_executions);
@@ -280,6 +320,7 @@ fn validate_archive(archive: &ClientStorageArchive) -> StorageResult<()> {
     validate_scope!(&archive.records.agents);
     validate_scope!(&archive.records.agent_runs);
     validate_scope!(&archive.records.agent_events);
+    validate_scope!(&archive.records.agent_ui_events);
     validate_scope!(&archive.records.agent_messages);
     validate_scope!(&archive.records.provider_context);
     validate_scope!(&archive.records.tool_executions);
