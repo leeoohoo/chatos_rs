@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::compat::extract_usage_snapshot;
+use crate::model_config::supports_responses_server_compaction;
 use crate::request::{AiRequestHandler, AiRequestOptions, AiResponse, StreamCallbacks};
 use crate::traits::{ModelRequest, RuntimeCallbacks};
 
@@ -86,7 +87,7 @@ pub(super) async fn dispatch_model_request(
         build_before_send_model_request_callback(&options.callbacks, request_debug);
 
     let started_at = Instant::now();
-    let result = request_handler
+    let raw_result = request_handler
         .handle_request_with_options(
             request.base_url.as_str(),
             request.api_key.as_str(),
@@ -118,17 +119,33 @@ pub(super) async fn dispatch_model_request(
                 force_identity_encoding,
                 stream: provider_stream,
                 output_format: request.output_format.clone(),
+                responses_compaction_threshold: (request.supports_responses
+                    && supports_responses_server_compaction(
+                        request.provider.as_str(),
+                        request.base_url.as_str(),
+                    ))
+                .then_some(super::ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS),
             },
         )
         .await;
-    let result = result.and_then(|response| {
+    let model_request_ms = started_at.elapsed().as_millis();
+    if let Some(callback) = &options.callbacks.on_model_response {
+        callback(build_model_response_event_payload(
+            &raw_result,
+            request,
+            iteration,
+            iteration_reason,
+            request_attempt,
+            model_request_ms,
+        ));
+    }
+    let result = raw_result.and_then(|response| {
         if let Some(error) = failed_ai_response_error(&response) {
             Err(error)
         } else {
             Ok(response)
         }
     });
-    let model_request_ms = started_at.elapsed().as_millis();
     match &result {
         Ok(response) => {
             let usage = response.usage.as_ref().map(extract_usage_snapshot);
@@ -143,6 +160,10 @@ pub(super) async fn dispatch_model_request(
                 provider_stream,
                 model_request_ms,
                 response_id = response.response_id.as_deref().unwrap_or(""),
+                provider_request_id = response.provider_request_id.as_deref().unwrap_or(""),
+                response_status = response.response_status.as_deref().unwrap_or(""),
+                terminal_event_type = response.terminal_event_type.as_deref().unwrap_or(""),
+                terminal_event_seen = response.terminal_event_seen,
                 tool_call_count = response
                     .tool_calls
                     .as_ref()
@@ -174,6 +195,94 @@ pub(super) async fn dispatch_model_request(
     result
 }
 
+fn build_model_response_event_payload(
+    result: &Result<AiResponse, String>,
+    request: &ModelRequest,
+    iteration: usize,
+    reason: &str,
+    request_attempt: usize,
+    elapsed_ms: u128,
+) -> Value {
+    match result {
+        Ok(response) => {
+            let usage = response.usage.as_ref().map(extract_usage_snapshot);
+            let mut output_item_types = serde_json::Map::new();
+            for item in &response.response_output_items {
+                let item_type = item
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let count = output_item_types
+                    .get(item_type)
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default()
+                    .saturating_add(1);
+                output_item_types.insert(item_type.to_string(), json!(count));
+            }
+            json!({
+                "model": request.model,
+                "iteration": iteration,
+                "reason": reason,
+                "request_attempt": request_attempt,
+                "elapsed_ms": u64::try_from(elapsed_ms).unwrap_or(u64::MAX),
+                "http_status": response.provider_http_status,
+                "response_id": response.response_id,
+                "provider_request_id": response.provider_request_id,
+                "terminal_event_type": response.terminal_event_type,
+                "terminal_event_seen": response.terminal_event_seen,
+                "response_status": response.response_status,
+                "incomplete_reason": response.incomplete_details
+                    .as_ref()
+                    .and_then(|value| value.get("reason"))
+                    .cloned(),
+                "parsed_sse_event_count": response.parsed_stream_event_count,
+                "malformed_sse_event_count": response.malformed_stream_event_count,
+                "output_item_count": response.response_output_items.len(),
+                "output_item_types": output_item_types,
+                "content_chars": response.content.chars().count(),
+                "reasoning_chars": response.reasoning.as_deref().map(|value| value.chars().count()).unwrap_or_default(),
+                "tool_call_count": response.tool_calls.as_ref().and_then(Value::as_array).map(Vec::len).unwrap_or_default(),
+                "input_tokens": usage.map(|value| value.input_tokens),
+                "cached_tokens": usage.map(|value| value.cached_tokens),
+                "output_tokens": usage.map(|value| value.output_tokens),
+                "reasoning_tokens": response.usage.as_ref()
+                    .and_then(|value| value.pointer("/output_tokens_details/reasoning_tokens"))
+                    .cloned(),
+                "raw_response_persisted": false,
+            })
+        }
+        Err(error) => json!({
+            "model": request.model,
+            "iteration": iteration,
+            "reason": reason,
+            "request_attempt": request_attempt,
+            "elapsed_ms": u64::try_from(elapsed_ms).unwrap_or(u64::MAX),
+            "response_status": "transport_or_parse_error",
+            "error_kind": model_response_error_kind(error),
+            "raw_response_persisted": false,
+        }),
+    }
+}
+
+fn model_response_error_kind(error: &str) -> &'static str {
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("incomplete responses sse stream") {
+        "incomplete_sse_stream"
+    } else if normalized.contains("timeout") || normalized.contains("timed out") {
+        "timeout"
+    } else if normalized.contains("status 429") || normalized.contains("rate limit") {
+        "rate_limit"
+    } else if normalized.contains("status 401") || normalized.contains("status 403") {
+        "authentication"
+    } else if normalized.contains("parse") || normalized.contains("malformed") {
+        "parse"
+    } else if normalized.contains("connect") || normalized.contains("transport") {
+        "transport"
+    } else {
+        "provider_error"
+    }
+}
+
 fn build_model_request_phase_payload(
     request: &ModelRequest,
     iteration: usize,
@@ -203,7 +312,11 @@ fn failed_ai_response_error(response: &AiResponse) -> Option<String> {
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let response_failed = finish_reason.is_some_and(|value| value.eq_ignore_ascii_case("failed"));
+    let response_failed = finish_reason.is_some_and(|value| {
+        value.eq_ignore_ascii_case("failed") || value.eq_ignore_ascii_case("incomplete")
+    }) || response.response_status.as_deref().is_some_and(|value| {
+        value.eq_ignore_ascii_case("failed") || value.eq_ignore_ascii_case("incomplete")
+    });
     if !response_failed && response.provider_error.is_none() {
         return None;
     }
@@ -219,6 +332,17 @@ fn failed_ai_response_error(response: &AiResponse) -> Option<String> {
         .filter(|value| !value.is_empty())
     {
         parts.push(format!("response_id={response_id}"));
+    }
+    if let Some(request_id) = response.provider_request_id.as_deref() {
+        parts.push(format!("provider_request_id={request_id}"));
+    }
+    if let Some(incomplete_reason) = response
+        .incomplete_details
+        .as_ref()
+        .and_then(|value| value.get("reason"))
+        .and_then(Value::as_str)
+    {
+        parts.push(format!("incomplete_reason={incomplete_reason}"));
     }
     parts.push(format!(
         "provider_error={}",
@@ -306,6 +430,7 @@ mod tests {
             usage: None,
             response_id: Some("resp_1".to_string()),
             response_output_items: Vec::new(),
+            ..AiResponse::default()
         };
 
         let error = failed_ai_response_error(&response).expect("failed response error");
@@ -327,12 +452,81 @@ mod tests {
             usage: None,
             response_id: None,
             response_output_items: Vec::new(),
+            ..AiResponse::default()
         };
 
         assert_eq!(
             failed_ai_response_error(&response).as_deref(),
             Some("ai response failed: finish_reason=failed; provider_error=unavailable")
         );
+    }
+
+    #[test]
+    fn incomplete_response_is_an_error_and_preserves_the_official_reason() {
+        let response = AiResponse {
+            finish_reason: Some("incomplete".to_string()),
+            response_status: Some("incomplete".to_string()),
+            incomplete_details: Some(json!({"reason": "max_output_tokens"})),
+            response_id: Some("resp_incomplete".to_string()),
+            provider_request_id: Some("req_abc".to_string()),
+            terminal_event_type: Some("response.incomplete".to_string()),
+            terminal_event_seen: true,
+            ..AiResponse::default()
+        };
+
+        let error = failed_ai_response_error(&response).expect("incomplete response error");
+
+        assert!(error.contains("finish_reason=incomplete"));
+        assert!(error.contains("incomplete_reason=max_output_tokens"));
+        assert!(error.contains("provider_request_id=req_abc"));
+    }
+
+    #[test]
+    fn model_response_event_is_bounded_and_contains_terminal_diagnostics() {
+        let response = AiResponse {
+            content: "visible".repeat(50_000),
+            reasoning: Some("private reasoning".repeat(50_000)),
+            response_status: Some("incomplete".to_string()),
+            incomplete_details: Some(json!({"reason": "max_output_tokens"})),
+            terminal_event_type: Some("response.incomplete".to_string()),
+            terminal_event_seen: true,
+            provider_request_id: Some("req_abc".to_string()),
+            provider_http_status: Some(200),
+            parsed_stream_event_count: 84,
+            malformed_stream_event_count: 0,
+            response_output_items: vec![json!({"type": "reasoning", "summary": "secret"})],
+            usage: Some(json!({
+                "input_tokens": 210_000,
+                "output_tokens": 4_000,
+                "output_tokens_details": {"reasoning_tokens": 3_900}
+            })),
+            ..AiResponse::default()
+        };
+        let request = ModelRequest::openai_compatible(
+            "https://api.openai.com/v1",
+            "secret",
+            "gpt-5.6-sol",
+            "openai",
+            Value::Null,
+        );
+
+        let payload = build_model_response_event_payload(
+            &Ok(response),
+            &request,
+            84,
+            "tool_results",
+            1,
+            1_234,
+        );
+
+        assert_eq!(payload["terminal_event_type"], "response.incomplete");
+        assert_eq!(payload["incomplete_reason"], "max_output_tokens");
+        assert_eq!(payload["reasoning_tokens"], 3_900);
+        assert_eq!(payload["output_item_types"]["reasoning"], 1);
+        assert_eq!(payload["raw_response_persisted"], false);
+        assert!(payload.to_string().len() < 2_000);
+        assert!(!payload.to_string().contains("private reasoning"));
+        assert!(!payload.to_string().contains("secret"));
     }
 
     #[test]

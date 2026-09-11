@@ -35,6 +35,48 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: context.root.appendingPathComponent("repo/.git").path))
     }
 
+    func testSignedOutSuspensionPreservesPersistentProjectAccessState() async throws {
+        let context = try context()
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let project = try await context.service.create(
+            ownerUserID: "alice",
+            draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "repo")
+        )
+
+        await context.connector.suspendForSignedOut()
+
+        let persisted = try NativeConnectorStateStore(
+            stateURL: context.root.appendingPathComponent("connector.json")
+        ).load()
+        XCTAssertEqual(persisted.user?.id, "alice")
+        XCTAssertEqual(persisted.deviceID, "device")
+        XCTAssertEqual(persisted.workspaces.map(\.id), ["ws", "root-ws"])
+        let deviceID = try await context.service.deviceID(ownerUserID: "alice")
+        XCTAssertEqual(deviceID, "device")
+        let registry = try await context.service.registry()
+        let record = try await registry.get(ownerUserID: "alice", id: project.id)
+        XCTAssertEqual(record?.draft.relativeRoot, "repo")
+    }
+
+    func testDisconnectOnlyBlocksServerAccessAndPreservesAllLocalState() async throws {
+        let context = try context()
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let stateURL = context.root.appendingPathComponent("connector.json")
+        let before = try NativeConnectorStateStore(stateURL: stateURL).load()
+
+        let status = try await context.connector.disconnect()
+
+        let after = try NativeConnectorStateStore(stateURL: stateURL).load()
+        XCTAssertEqual(after.user, before.user)
+        XCTAssertEqual(after.deviceID, before.deviceID)
+        XCTAssertEqual(after.deviceName, before.deviceName)
+        XCTAssertEqual(after.workspaces, before.workspaces)
+        XCTAssertEqual(after.gatewayConnectionEnabled, false)
+        XCTAssertFalse(status.connectorRunning)
+        let deviceID = try await context.service.deviceID(ownerUserID: "alice")
+        XCTAssertEqual(deviceID, "device")
+    }
+
     func testWrongAccountMissingDirectoryAndFileRootCannotCreateProjects() async throws {
         let context = try context()
         defer { try? FileManager.default.removeItem(at: context.root) }

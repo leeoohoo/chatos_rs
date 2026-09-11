@@ -17,6 +17,12 @@ struct StoryAgentStartView: View {
     @State private var policy: AgentRunPolicy?
     @State private var error: String?
 
+    private var replacesExistingPlan: Bool {
+        confirmation.stage == .refine && confirmation.targets.contains { id in
+            confirmation.project.segments.contains { $0.id == id && $0.detail != nil }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(confirmation.stage == .outline ? appModel.localized("分步分析完整剧情", english: "Plan the Story Step by Step")
@@ -24,7 +30,10 @@ struct StoryAgentStartView: View {
             Text(confirmation.project.title).font(.headline)
             Text(appModel.localized("将使用本剧情的文本模型进行多轮工具调用，可能产生文本模型费用。本次只规划文字，不生成图片或视频。", english: "Uses this story's text model for multiple tool-calling rounds and may incur text-model costs. This run plans text only, without generating images or videos."))
             if confirmation.stage == .outline {
-                Text(appModel.localized("包含人物文字画像、场景文字画像、道具描述与多个连续的 15 秒分段。", english: "Includes written character and scene profiles, prop descriptions and consecutive 15-second segments."))
+                Text(appModel.localized("包含人物文字画像、场景文字画像、道具描述、2–15秒剧情段与必要的独立转场段。", english: "Includes written profiles, props, 2–15 second story segments, and independent transitions where needed."))
+            } else if replacesExistingPlan {
+                Text(appModel.localized("将重新生成选定分段的镜头语言与首尾帧提示词。旧图片版本会保留，新计划应用后需要重新确认首帧与尾帧。",
+                                        english: "Regenerates the selected segment's shot language and frame prompts. Existing image versions are kept, and frames must be confirmed again after the new plan is applied."))
             } else {
                 Text(appModel.localized("仅细化选定的 \(confirmation.targets.count) 个未完成分段。", english: "Refines only the \(confirmation.targets.count) selected unfinished segments."))
             }
@@ -47,6 +56,7 @@ struct StoryAgentStartView: View {
                         guard let project = viewModel.project, project.id == confirmation.project.id,
                               try StoryAgentRun.digest(project) == StoryAgentRun.digest(confirmation.project) else { throw StoryAgentError.projectChanged }
                         if confirmation.stage == .outline { viewModel.planOutline() }
+                        else if replacesExistingPlan { viewModel.regenerateSegmentPlans(confirmation.targets) }
                         else { viewModel.refineSegments(confirmation.targets) }
                         dismiss()
                     } catch { self.error = error.localizedDescription }
@@ -73,13 +83,25 @@ struct StoryAgentRunPanel: View {
                 }
                 Text(label(run)).font(.caption).foregroundStyle(run.applied ? Color.green : .secondary)
                 if let event = run.events.last { Text(event.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                if viewModel.isBusy, viewModel.activeProjectID == run.projectID,
+                   !viewModel.streamingModelText.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(appModel.localized("模型实时输出", english: "Live Model Output"), systemImage: "waveform")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.purple)
+                        ScrollView {
+                            Text(viewModel.streamingModelText)
+                                .font(.caption.monospaced()).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }.frame(maxHeight: 110)
+                    }.padding(10).background(Color.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
+                }
                 Text(appModel.localized("草稿：\(run.draft.resources.count) 个素材 · \(run.draft.segments.count) 段 · \(run.draft.totalSeconds) 秒", english: "Draft: \(run.draft.resources.count) assets · \(run.draft.segments.count) segments · \(run.draft.totalSeconds) seconds"))
                     .font(.caption)
                 if let reason = run.checkpoint.stopReason { Text(reason).font(.caption).foregroundStyle(.orange).lineLimit(3) }
                 HStack {
                     Button(appModel.localized("草稿 / 运行记录", english: "Draft / Run History")) { showsHistory = true }
                     Spacer()
-                    if !run.applied {
+                    if !run.applied && run.abandonedAt == nil {
                         Button(run.checkpoint.status == .completed ? appModel.localized("应用草稿", english: "Apply Draft") : appModel.localized("恢复规划", english: "Resume Planning")) { resumeID = run.id }
                             .disabled(viewModel.isBusy || viewModel.isLoadingAgentRuns)
                     }
@@ -118,7 +140,7 @@ struct StoryAgentRunPanel: View {
                                 Text("\(run.checkpoint.modelCalls) / \(run.policy.maximumModelCalls) · \(run.draft.totalSeconds)s").monospacedDigit()
                                 Text(appModel.localized("使用 Memory Engine 记忆与压缩", english: "Uses Memory Engine memory and compaction"))
                                     .font(.caption).foregroundStyle(.secondary)
-                                if !run.applied && !viewModel.isBusy {
+                                if !run.applied && run.abandonedAt == nil && !viewModel.isBusy {
                                     Button(appModel.localized("恢复 / 应用这一条记录", english: "Resume / Apply This Run")) { showsHistory = false; resumeID = run.id }
                                 }
                                 DisclosureGroup(appModel.localized("人物文字画像", english: "Written Character Profiles")) {
@@ -140,7 +162,10 @@ struct StoryAgentRunPanel: View {
                                 DisclosureGroup(appModel.localized("分段草稿", english: "Segment Drafts")) {
                                     ForEach(run.draft.segments) { segment in
                                         VStack(alignment: .leading, spacing: 4) {
-                                            Text(segment.title + " · 15s").fontWeight(.medium)
+                                            Text(segment.title + " · " + (segment.kind == .transition
+                                                 ? appModel.localized("转场", english: "Transition")
+                                                 : appModel.localized("剧情", english: "Story"))
+                                                 + " · \(segment.seconds)s").fontWeight(.medium)
                                             Text(segment.synopsis)
                                             if let detail = segment.detail { Text(detail.videoPrompt) }
                                         }.font(.caption).textSelection(.enabled).padding(.vertical, 6)
@@ -163,6 +188,7 @@ struct StoryAgentRunPanel: View {
     }
     private func label(_ run: StoryAgentRun) -> String {
         if run.applied { return appModel.localized("规划完成 · 已应用", english: "Planning Complete · Applied") }
+        if run.abandonedAt != nil { return appModel.localized("中断草稿 · 已放弃", english: "Interrupted Draft · Discarded") }
         if run.checkpoint.status == .completed { return appModel.localized("草稿已完成 · 待应用", english: "Draft Complete · Awaiting Application") }
         if viewModel.isBusy && viewModel.activeProjectID == run.projectID && viewModel.latestAgentRun?.id == run.id {
             return appModel.localized("正在分步规划 · 草稿自动保存", english: "Planning Step by Step · Draft Autosaved")

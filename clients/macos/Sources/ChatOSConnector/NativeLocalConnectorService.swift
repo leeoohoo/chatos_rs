@@ -85,7 +85,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func fetchStatus() async throws -> LocalConnectorStatus {
-        if state.deviceID != nil, !gatewayConnected {
+        if state.deviceID != nil, state.gatewayConnectionEnabled != false, !gatewayConnected {
             try? await connectGateway()
         }
         return statusSnapshot()
@@ -114,32 +114,43 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         state.deviceID = device.id
         state.deviceName = resolvedName
         state.workspaces = [workspace]
+        state.gatewayConnectionEnabled = true
         try stateStore.save(state)
         try await connectGateway()
         try? await Task.sleep(for: .milliseconds(200))
         return statusSnapshot()
     }
 
+    public func suspendForSignedOut() async {
+        await stopServerAccess()
+        await pluginApplicationRuntime.stopAll()
+        await browserExtensionPairingRuntime.stop()
+    }
+
+    public func resumeServerAccess() async throws -> LocalConnectorStatus {
+        guard state.deviceID != nil else { throw NativeConnectorError.notPaired }
+        state.gatewayConnectionEnabled = true
+        try stateStore.save(state)
+        try await connectGateway()
+        return statusSnapshot()
+    }
+
     public func disconnect() async throws -> LocalConnectorStatus {
-        invalidateManagedRuntimeConfig()
-        shouldMaintainGatewayConnection = false
-        gatewayReconnectFailureCount = 0
-        let token = try accessToken()
+        let token = try? accessToken()
+        state.gatewayConnectionEnabled = false
+        await stopServerAccess()
+        try stateStore.save(state)
         if let deviceID = state.deviceID, let token {
             try? await gateway.disconnectDevice(token: token, id: deviceID)
         }
-        await stopGatewayConnection()
-        await pluginApplicationRuntime.stopAll()
-        await browserExtensionPairingRuntime.stop()
-        try secretStore.delete(account: Self.accessTokenAccount)
-        cachedAccessToken = nil
-        hasLoadedAccessToken = true
-        state.user = nil
-        state.deviceID = nil
-        state.deviceName = nil
-        state.workspaces = []
-        try stateStore.save(state)
         return statusSnapshot()
+    }
+
+    private func stopServerAccess() async {
+        invalidateManagedRuntimeConfig()
+        shouldMaintainGatewayConnection = false
+        gatewayReconnectFailureCount = 0
+        await stopGatewayConnection()
     }
 
     public func prepareForSystemSleep() async {
@@ -153,7 +164,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func recoverGatewayConnection(forceReconnect: Bool = false) async {
-        guard state.deviceID != nil else { return }
+        guard state.deviceID != nil, state.gatewayConnectionEnabled != false else { return }
         isSystemSleeping = false
         shouldMaintainGatewayConnection = true
         if forceReconnect {
@@ -587,7 +598,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         error: any Error
     ) async {
         guard webSocket === socket else { return }
-        let authenticationExpired = NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
+        let authenticationExpired = NativeConnectorGateway.isConnectorAuthenticationRejected(
             statusCode: (socket.response as? HTTPURLResponse)?.statusCode ?? 0,
             token: (try? accessToken()) ?? nil
         )

@@ -59,7 +59,8 @@ public extension StoryProject {
         }
         let segmentNodes = segments.map {
             StoryGraphNode(id: "segment:\($0.id)", entityID: $0.id, kind: .segment, name: $0.title,
-                summary: String($0.synopsis.prefix(300)), hasWrittenProfile: $0.detail != nil,
+                summary: "\($0.kind.rawValue) · \($0.seconds)s · " + String($0.synopsis.prefix(260)),
+                hasWrittenProfile: $0.detail != nil,
                 hasConfirmedImage: $0.firstFrame != nil, hasVideo: $0.video != nil)
         }
         let nodes = [projectNode] + characterNodes + sceneNodes + propNodes + segmentNodes

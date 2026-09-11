@@ -66,10 +66,19 @@ pub async fn list_task_runner_available_plugins(
     base_url: &str,
     access_token: &str,
     project_id: Option<&str>,
+    project_context: Option<&chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
 ) -> Result<Value, String> {
-    let mut query = vec![("task_profile", "default")];
+    let mut query = vec![("task_profile".to_string(), "default".to_string())];
     if let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) {
-        query.push(("project_id", project_id));
+        query.push(("project_id".to_string(), project_id.to_string()));
+    }
+    if let Some(project_context) = project_context {
+        project_context.validate()?;
+        query.push((
+            "project_context".to_string(),
+            serde_json::to_string(project_context)
+                .map_err(|error| format!("encode Task Plugin project context failed: {error}"))?,
+        ));
     }
     let request = task_runner_request(
         base_url,

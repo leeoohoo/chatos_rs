@@ -72,11 +72,17 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             client: client,
             providerTransport: transport
         ).generateImage(
-            .init(modelConfigID: "image-model", prompt: "orange fox", size: "1024x1024", count: 1)
+            .init(modelConfigID: "image-model", prompt: "orange fox", size: "1024x1024", count: 1,
+                  clientRequestID: "attempt-1", projectID: "project-1", resourceID: "character-1")
         )
 
         XCTAssertEqual(result.images.first?.base64Data, "aW1hZ2U=")
-        XCTAssertEqual(result.modelName, "gpt-image-1")
+        XCTAssertEqual(result.id, "provider-result-1")
+        XCTAssertEqual(result.images.first?.id, "provider-asset-1")
+        XCTAssertEqual(result.modelName, "provider-image-model")
+        XCTAssertEqual(result.clientRequestID, "attempt-1")
+        XCTAssertEqual(result.projectID, "project-1")
+        XCTAssertEqual(result.resourceID, "character-1")
         let requests = await transport.allRequests()
         XCTAssertEqual(requests.count, 2)
         XCTAssertEqual(requests[0].url.path, "/api/chatos/ai-model-configs/image-model")
@@ -230,6 +236,50 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         XCTAssertEqual(values.map(\.status), ["queued", "in_progress", "completed", "downloading"])
     }
 
+    func testMiniMaxNativeBothFrameRolesAreSentInOrder() async throws {
+        let transport = MiniMaxTransport()
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let first = ImageGenerationInputImage(name: "first.png", mimeType: "image/png", base64Data: png.base64EncodedString())
+        let last = ImageGenerationInputImage(name: "last.png", mimeType: "image/png", base64Data: png.base64EncodedString())
+        _ = try await miniMaxService(transport).generateVideo(.init(
+            modelConfigID: "h3", prompt: "Move from A to B", size: "768P", seconds: 4,
+            inputImage: first, lastFrameImage: last
+        )) { _ in }
+        let requests = await transport.allRequests()
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(requests[1].body)) as? [String: Any])
+        let content = try XCTUnwrap(payload["content"] as? [[String: Any]])
+        XCTAssertEqual(content.compactMap { $0["role"] as? String }, ["first_frame", "last_frame"])
+        XCTAssertEqual(payload["ratio"] as? String, "adaptive")
+    }
+
+    func testOpenAICompatibleH3SendsOfficialFirstAndLastFrameContentRoles() async throws {
+        let transport = NewAPIVideoTransport()
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let first = ImageGenerationInputImage(name: "first.png", mimeType: "image/png", base64Data: png.base64EncodedString())
+        let last = ImageGenerationInputImage(name: "last.png", mimeType: "image/png", base64Data: png.base64EncodedString())
+        _ = try await compatibleVideoService(transport).generateVideo(.init(
+            modelConfigID: "h3", prompt: "Move", size: "768P", seconds: 4,
+            inputImage: first, lastFrameImage: last
+        )) { _ in }
+        let requests = await transport.allRequests()
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(requests[1].body)) as? [String: Any])
+        let content = try XCTUnwrap(payload["content"] as? [[String: Any]])
+        XCTAssertEqual(content.first?["text"] as? String, "Move")
+        XCTAssertEqual(content.compactMap { $0["role"] as? String }, ["first_frame", "last_frame"])
+        XCTAssertNil(payload["prompt"])
+        XCTAssertNil(payload["input_reference"])
+    }
+
     func testMiniMaxTextGenerationUsesExplicitRatioAndPreservesRoutingPrefix() async throws {
         for base in ["https://relay.example/minimax/v1/", "https://relay.example/minimax/v2/video_generation"] {
             let transport = MiniMaxTransport(model: "MiniMax-H3-Max", base: base)
@@ -363,11 +413,13 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             XCTAssertEqual(requests[1].headers["Content-Type"], "application/json")
             let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(requests[1].body)) as? [String: Any])
             XCTAssertEqual(payload["model"] as? String, "MiniMax-H3")
-            XCTAssertEqual(payload["prompt"] as? String, "A running dog")
+            let content = try XCTUnwrap(payload["content"] as? [[String: Any]])
+            XCTAssertEqual(content.first?["text"] as? String, "A running dog")
             XCTAssertEqual(payload["duration"] as? Int, 4)
             XCTAssertEqual(payload["size"] as? String, "768P")
             XCTAssertEqual((payload["metadata"] as? [String: String])?["ratio"], "9:16")
-            XCTAssertNil(payload["content"])
+            XCTAssertNil(payload["prompt"])
+            XCTAssertNil(payload["input_reference"])
             XCTAssertNil(payload["resolution"])
             XCTAssertNil(payload["seconds"])
             let values = await progress.values()
@@ -375,7 +427,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         }
     }
 
-    func testCompatibleH3ReferenceImageUsesInputReferenceAndAdaptiveRatio() async throws {
+    func testCompatibleH3ReferenceImageUsesOfficialContentRoleAndAdaptiveRatio() async throws {
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -389,7 +441,11 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         )) { _ in }
         let requests = await transport.allRequests()
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(requests[1].body)) as? [String: Any])
-        XCTAssertEqual(payload["input_reference"] as? String, "data:image/png;base64,\(png.base64EncodedString())")
+        let content = try XCTUnwrap(payload["content"] as? [[String: Any]])
+        XCTAssertEqual(content.compactMap { $0["role"] as? String }, ["first_frame"])
+        XCTAssertEqual((content.last?["image_url"] as? [String: String])?["url"],
+                       "data:image/png;base64,\(png.base64EncodedString())")
+        XCTAssertNil(payload["input_reference"])
         XCTAssertEqual((payload["metadata"] as? [String: String])?["ratio"], "adaptive")
         XCTAssertEqual(payload["duration"] as? Int, 15)
         XCTAssertEqual(payload["size"] as? String, "2K")
@@ -572,7 +628,7 @@ private actor MediaGenerationTransport: HTTPTransport {
             body = Data(#"{"id":"video-1","status":"queued","progress":0,"model":"sora-2"}"#.utf8)
             headers = [:]
         } else {
-            body = Data(#"{"data":[{"b64_json":"aW1hZ2U=","revised_prompt":"orange fox in warm light"}]}"#.utf8)
+            body = Data(#"{"id":"provider-result-1","model":"provider-image-model","data":[{"id":"provider-asset-1","b64_json":"aW1hZ2U=","revised_prompt":"orange fox in warm light"}]}"#.utf8)
             headers = [:]
         }
         return HTTPResponse(statusCode: 200, headers: headers, body: body)

@@ -20,6 +20,19 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual(body["model"] as? String, "chosen-text-model")
     }
 
+    func testAgentFactoryUsesStreamingTransportForRuntimeCalls() async throws {
+        let transport = StoryPlanningTransport()
+        let model = try await makeService(transport).makeAgentModel(configID: "text-model", policy: .init())
+        let message = try await model.stream(messages: [.init(role: .user, content: "story")],
+                                             tools: [AgentToolDefinition(name: request.toolName, description: "test", schema: request.schema)],
+                                             timeout: 42, onEvent: { _ in })
+        XCTAssertEqual(message.toolCalls.first?.name, "story_save_outline")
+        let calls = await transport.requests()
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(calls[1].body)) as? [String: Any])
+        XCTAssertEqual(body["stream"] as? Bool, true)
+        XCTAssertEqual(calls[1].headers["Accept"], "text/event-stream")
+    }
+
     func testAgentFactoryRejectsUnsupportedProviderAndOldAccountSession() async throws {
         let native = StoryPlanningTransport(scenario: "native")
         do { _ = try await makeService(native).makeAgentModel(configID: "text", policy: .init()); XCTFail("Native protocol must not be guessed") } catch {}
@@ -101,5 +114,18 @@ private actor StoryPlanningTransport: HTTPTransport {
             body = ["choices": [["finish_reason": scenario == "truncated" ? "length" : "tool_calls", "message": ["tool_calls": tools]]]]
         }
         return .init(statusCode: 200, headers: [:], body: try JSONSerialization.data(withJSONObject: body))
+    }
+
+    func stream(_ request: HTTPRequest) async throws -> HTTPStreamResponse {
+        calls.append(request)
+        let pair = AsyncThrowingStream<Data, Error>.makeStream()
+        let sse = """
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"story_save_outline","arguments":"{\\\"summary\\\":\\\"test\\\"}"}}]},"finish_reason":"tool_calls"}]}
+
+        data: [DONE]
+
+        """
+        pair.continuation.yield(Data(sse.utf8)); pair.continuation.finish()
+        return .init(statusCode: 200, headers: ["content-type": "text/event-stream"], body: pair.stream)
     }
 }

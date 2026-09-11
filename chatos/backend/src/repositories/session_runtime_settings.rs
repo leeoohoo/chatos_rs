@@ -30,7 +30,6 @@ fn doc_to_settings(doc: &Document) -> Option<SessionRuntimeSettings> {
             .map(ToOwned::to_owned),
         workspace_root: doc.get_str("workspace_root").ok().map(ToOwned::to_owned),
         reasoning_enabled: doc.get_bool("reasoning_enabled").unwrap_or(false),
-        auto_create_task: doc.get_bool("auto_create_task").unwrap_or(false),
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
     })
@@ -51,6 +50,23 @@ pub async fn get_session_runtime_settings(
             )
             .await?;
             Ok(doc.and_then(|document| doc_to_settings(&document)))
+        })
+    })
+    .await
+}
+
+pub async fn purge_removed_task_settings() -> Result<u64, String> {
+    with_db(|db| {
+        Box::pin(async move {
+            db.collection::<Document>("session_runtime_settings")
+                .update_many(
+                    doc! { "auto_create_task": { "$exists": true } },
+                    doc! { "$unset": { "auto_create_task": 1 } },
+                    None,
+                )
+                .await
+                .map(|result| result.modified_count)
+                .map_err(|error| error.to_string())
         })
     })
     .await
@@ -78,10 +94,9 @@ pub async fn upsert_session_runtime_settings(
                 "session_id": &mongo_settings.session_id,
                 "user_id": &mongo_settings.user_id,
                 "reasoning_enabled": mongo_settings.reasoning_enabled,
-                "auto_create_task": mongo_settings.auto_create_task,
                 "updated_at": &mongo_settings.updated_at,
             };
-            let mut unset_doc = Document::new();
+            let mut unset_doc = doc! { "auto_create_task": 1 };
             for (key, value) in [
                 (
                     "selected_model_id",

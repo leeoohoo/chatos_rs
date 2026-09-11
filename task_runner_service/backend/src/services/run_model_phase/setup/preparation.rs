@@ -290,7 +290,10 @@ fn build_memory_scope(service: &RunService, task: &TaskRecord, run: &TaskRunReco
         include_recent_records: Some(true),
         include_thread_summary: Some(true),
         include_subject_memory: Some(true),
-        recent_record_limit: None,
+        // A task can run for hundreds of model steps. Replaying every pending
+        // memory record makes each request and its diagnostic state grow
+        // without bound, so keep a fixed recent semantic window.
+        recent_record_limit: Some(64),
         summary_limit: Some(2),
     })
 }

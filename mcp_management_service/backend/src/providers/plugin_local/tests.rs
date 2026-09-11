@@ -285,6 +285,7 @@ fn runtime_snapshot(
         agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: Some("project-1".to_string()),
+        client_project_context: None,
         device_id: None,
         run_id: Some("run-1".to_string()),
         execution_group_id: None,

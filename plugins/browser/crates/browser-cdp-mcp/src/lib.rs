@@ -1744,6 +1744,12 @@ mod tests {
             assert!(tool.pointer("/_meta/chatos~1timeoutMs").is_some());
             assert!(tool.pointer("/_meta/chatos~1toolResultMaxChars").is_some());
             assert!(tool.pointer("/_meta/chatos~1skillGate/allOf").is_some());
+            assert!(tool
+                .pointer("/_meta/chatos~1skillGate/evidenceArgument")
+                .is_none());
+            assert!(tool
+                .pointer("/_meta/chatos~1skillGate/selectByArgument")
+                .is_none());
             assert!(tool.pointer("/inputSchema/properties/skillEvidence").is_none());
             assert!(tool
                 .pointer("/inputSchema/required")

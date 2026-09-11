@@ -229,6 +229,24 @@ test('MCP exposes an AI-first single-step generation workflow without a model-su
       assert.equal(prepared.structuredContent.nextAction.targetNodeId, 'section:hero');
       assert.equal(prepared.content.some((item) => item.type === 'image' && item.mimeType === 'image/png'), true);
     }
+
+    const renamedThroughPortablePath = await client.callTool({
+      name: 'web_design_edit_scene',
+      arguments: {
+        documentId,
+        transactionId: 'transaction:mcp-rename-hero',
+        expectedRevision: 5,
+        reason: 'Use the approved semantic label for the hero region.',
+        command: {
+          type: 'update-node',
+          nodeId: 'section:hero',
+          patches: [{ path: 'name', value: 'Primary Hero' }]
+        }
+      }
+    });
+    assert.equal(renamedThroughPortablePath.isError, false);
+    assert.equal(renamedThroughPortablePath.structuredContent.scene.revision, 6);
+    assert.equal(renamedThroughPortablePath.structuredContent.commandType, 'update-node');
   } finally {
     await client.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });

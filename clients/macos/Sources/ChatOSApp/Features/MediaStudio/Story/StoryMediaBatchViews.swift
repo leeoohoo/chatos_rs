@@ -22,6 +22,11 @@ struct StoryMediaBatchStartView: View {
         do { _ = try viewModel.previewMediaBatch(kind: kind, targets: candidates.filter(selected.contains), models: models); return nil }
         catch { return error.localizedDescription }
     }
+    private var videoModel: MediaGenerationModel? { models.first { $0.id == project.models.videoModelID } }
+    private var previewIncludesVideo: Bool { preview?.steps.contains { $0.kind == .videos } == true }
+    private var videoOmitsTailFrame: Bool {
+        previewIncludesVideo && videoModel?.supportsVideoLastFrame != true
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(appModel.localized("按已保存描述制作", english: "Produce from Saved Descriptions")).font(.title2.bold())
@@ -31,6 +36,7 @@ struct StoryMediaBatchStartView: View {
                 Text(appModel.localized("一键全流程", english: "Full Pipeline")).tag(StoryMediaBatch.Kind.pipeline)
                 Text(appModel.localized("素材图片", english: "Asset Images")).tag(StoryMediaBatch.Kind.assets)
                 Text(appModel.localized("分段首帧", english: "First Frames")).tag(StoryMediaBatch.Kind.frames)
+                Text(appModel.localized("分段尾帧", english: "Last Frames")).tag(StoryMediaBatch.Kind.lastFrames)
                 Text(appModel.localized("分段视频", english: "Videos")).tag(StoryMediaBatch.Kind.videos)
             }.pickerStyle(.segmented)
             HStack {
@@ -54,16 +60,28 @@ struct StoryMediaBatchStartView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(height: 190)
             if kind == .pipeline {
-                Toggle(appModel.localized("自动采用本次新生成的素材和首帧，继续生成视频", english: "Use newly generated assets and first frames automatically, then generate videos"), isOn: $acceptsAutomaticVersions)
-                Text(appModel.localized("顺序：缺少的关联素材 → 缺少的首帧 → 所选视频。已有确认版本保持不变；已有未确认图片需先由你选定。", english: "Order: missing linked assets → missing first frames → selected videos. Existing confirmed versions are retained; select any existing unconfirmed images yourself first."))
+                Toggle(appModel.localized("自动采用本次新生成的素材与首尾帧，继续生成视频", english: "Use newly generated assets and first/last frames automatically, then generate videos"), isOn: $acceptsAutomaticVersions)
+                Text(appModel.localized("顺序：缺少的关联素材 → 首帧 → 尾帧 → 所选视频。已有确认版本保持不变；已有未确认图片需先由你选定。", english: "Order: missing linked assets → first frames → last frames → selected videos. Existing confirmed versions are retained; select any existing unconfirmed images yourself first."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let preview {
                 let imageCount = preview.steps.filter { $0.kind != .videos }.count
                 let videoCount = preview.steps.filter { $0.kind == .videos }.count
-                Text(appModel.localized("本次将提交：\(imageCount) 张图片，\(videoCount) 段视频（每段 15 秒）。", english: "Will submit \(imageCount) images and \(videoCount) videos (15 seconds each)."))
+                let videoSeconds = preview.steps.filter { $0.kind == .videos }.compactMap { step in
+                    project.segments.first { $0.id == step.targetID }?.seconds
+                }.reduce(0, +)
+                Text(appModel.localized("本次将提交：\(imageCount) 张图片，\(videoCount) 段视频，共 \(videoSeconds) 秒。", english: "Will submit \(imageCount) images and \(videoCount) videos totaling \(videoSeconds) seconds."))
                     .font(.headline)
                 Text(models.filter { $0.id == project.models.imageModelID || $0.id == project.models.videoModelID }.map { "\($0.name) · \($0.modelName)" }.joined(separator: "\n")).font(.caption)
+            }
+            if videoOmitsTailFrame {
+                Label(appModel.localized("当前 \(videoModel?.modelName ?? "视频模型") 通过 OpenAI 兼容 /v1/videos 接入：本批视频只发送首帧，不会发送已确认尾帧。尾帧仍会用于衔接下一段首帧。",
+                                         english: "The current \(videoModel?.modelName ?? "video model") uses the OpenAI-compatible /v1/videos connection. Videos in this batch send only first frames, not confirmed tail frames. Tail frames are still used to anchor the next segment's first frame."),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout.weight(.semibold)).foregroundStyle(.orange)
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.orange.opacity(0.22)))
             }
             if let previewError { Text(previewError).font(.caption).foregroundStyle(.orange) }
             Text(appModel.localized("将调用所选图片/视频模型并可能计费。失败后停止后续提交；恢复仅处理未完成目标，已保存视频任务只查询原 ID。", english: "Calls your image/video models and may incur charges. Stops subsequent submissions on failure. Resume handles unfinished targets only; saved video tasks are queried by their original IDs."))
@@ -71,7 +89,9 @@ struct StoryMediaBatchStartView: View {
             HStack {
                 Spacer()
                 Button(appModel.localized("取消", english: "Cancel")) { dismiss() }
-                Button(appModel.localized("确认并执行", english: "Confirm and Run")) {
+                Button(videoOmitsTailFrame
+                       ? appModel.localized("仅使用首帧，确认执行", english: "Confirm with First Frames Only")
+                       : appModel.localized("确认并执行", english: "Confirm and Run")) {
                     if let preview { viewModel.startMediaBatch(preview); dismiss() }
                 }.buttonStyle(.borderedProminent).disabled(preview == nil || viewModel.isBusy || (kind == .pipeline && !acceptsAutomaticVersions))
             }
@@ -93,12 +113,47 @@ struct StoryMediaBatchPanel: View {
     @State private var abandonID: UUID?
     var body: some View {
         if let latest = viewModel.projectMediaBatches.first {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(appModel.localized("制作队列（无文本 AI）", english: "Production Queue (No Text AI)")).font(.headline)
-                Text("\(latest.completedCount) / \(latest.steps.count) · " + status(latest)).font(.caption)
-                if let error = latest.error { Text(error).font(.caption).foregroundStyle(.orange).lineLimit(3) }
-                Button(appModel.localized("制作记录与恢复", english: "Production History & Recovery")) { history = true }
-            }.padding(12).background(Color.blue.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+            HStack(spacing: 16) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(queueColor(latest).opacity(0.11))
+                    Image(systemName: queueIcon(latest))
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(queueColor(latest))
+                }.frame(width: 46, height: 46)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text(appModel.localized("制作队列", english: "Production Queue"))
+                            .font(.headline)
+                        Text(kind(latest.kind))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(queueColor(latest))
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(queueColor(latest).opacity(0.09), in: Capsule())
+                        Text(status(latest))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ProgressView(value: Double(latest.completedCount), total: Double(max(latest.steps.count, 1)))
+                        .tint(queueColor(latest))
+                        .frame(maxWidth: 420)
+                    if let error = latest.error {
+                        Text(error).font(.caption).foregroundStyle(.orange).lineLimit(2)
+                    } else {
+                        Text(appModel.localized("已完成 \(latest.completedCount) / \(latest.steps.count) 个制作步骤", english: "\(latest.completedCount) of \(latest.steps.count) production steps complete"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 16)
+                Text(latest.updatedAt, format: .dateTime.month().day().hour().minute())
+                    .font(.caption).foregroundStyle(.secondary)
+                Button { history = true } label: {
+                    Label(appModel.localized("查看记录与恢复", english: "History & Recovery"), systemImage: "clock.arrow.circlepath")
+                }.buttonStyle(.bordered)
+            }
+            .padding(16)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(queueColor(latest).opacity(0.16)))
             .sheet(isPresented: $history) {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
@@ -139,6 +194,31 @@ struct StoryMediaBatchPanel: View {
         case .abandoned: appModel.localized("已结束", english: "Ended")
         case .needsReview: appModel.localized("需核对 / 恢复", english: "Review / Resume Required")
         default: viewModel.isBusy ? appModel.localized("执行中", english: "Running") : appModel.localized("已暂停 / 中断", english: "Paused / Interrupted")
+        }
+    }
+    private func kind(_ kind: StoryMediaBatch.Kind) -> String {
+        switch kind {
+        case .assets: appModel.localized("素材图片", english: "Asset Images")
+        case .frames: appModel.localized("分段首帧", english: "First Frames")
+        case .lastFrames: appModel.localized("分段尾帧", english: "Last Frames")
+        case .videos: appModel.localized("分段视频", english: "Videos")
+        case .pipeline: appModel.localized("一键全流程", english: "Full Pipeline")
+        }
+    }
+    private func queueColor(_ batch: StoryMediaBatch) -> Color {
+        switch batch.status {
+        case .completed: .green
+        case .needsReview: .orange
+        case .abandoned: .secondary
+        default: .blue
+        }
+    }
+    private func queueIcon(_ batch: StoryMediaBatch) -> String {
+        switch batch.status {
+        case .completed: "checkmark.circle.fill"
+        case .needsReview: "exclamationmark.triangle.fill"
+        case .abandoned: "stop.circle.fill"
+        default: "film.stack.fill"
         }
     }
 }

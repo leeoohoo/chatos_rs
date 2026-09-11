@@ -195,26 +195,45 @@ pub async fn list_context_records(
     limit: Option<i64>,
 ) -> Result<Vec<EngineRecord>, String> {
     let collection = record_collection(db);
-    let mut query = collection
-        .find(doc! {
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "thread_id": thread_id,
-            "$or": [
-                {"summary_status": "pending"},
-                {"summary_status": "summarizing"},
-                {"summary_status": {"$exists": false}},
-                {"summary_status": Bson::Null},
-                {"summary_status": ""},
-            ],
-        })
-        .sort(doc! {"created_at": 1, "id": 1});
-    if let Some(limit) = limit {
-        query = query.limit(limit.max(1));
+    let filter = doc! {
+        "tenant_id": tenant_id,
+        "source_id": source_id,
+        "thread_id": thread_id,
+        "$or": [
+            {"summary_status": "pending"},
+            {"summary_status": "summarizing"},
+            {"summary_status": {"$exists": false}},
+            {"summary_status": Bson::Null},
+            {"summary_status": ""},
+        ],
+    };
+    let (cursor, reverse_after_read) = match limit {
+        // Fetch the newest bounded window, then restore chronological order
+        // before composing model input. Applying an ascending limit would
+        // retain the oldest records and silently omit the current work.
+        Some(limit) => (
+            collection
+                .find(filter)
+                .sort(doc! {"created_at": -1, "id": -1})
+                .limit(limit.max(1))
+                .await
+                .map_err(|err| err.to_string())?,
+            true,
+        ),
+        None => (
+            collection
+                .find(filter)
+                .sort(doc! {"created_at": 1, "id": 1})
+                .await
+                .map_err(|err| err.to_string())?,
+            false,
+        ),
+    };
+    let mut records = collect_records(cursor).await?;
+    if reverse_after_read {
+        records.reverse();
     }
-    let cursor = query.await.map_err(|err| err.to_string())?;
-
-    collect_records(cursor).await
+    Ok(records)
 }
 
 fn parse_tool_call_count(record: &EngineRecord) -> usize {

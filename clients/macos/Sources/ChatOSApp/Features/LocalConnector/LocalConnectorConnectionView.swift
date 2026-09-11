@@ -51,7 +51,7 @@ struct LocalConnectorConnectionView: View {
                     Text(status.connectorRunning
                          ? model.localized("网关长连接正常", english: "Gateway connection is healthy")
                          : status.configured
-                            ? model.localized("已配对，正在等待网关", english: "Paired, waiting for gateway")
+                            ? model.localized("本机配置已保留，当前未连接", english: "Local configuration retained; currently disconnected")
                             : model.localized("尚未配对", english: "Not paired"))
                         .appFont(.headline)
                     Spacer()
@@ -62,7 +62,7 @@ struct LocalConnectorConnectionView: View {
                 LocalConnectorKeyValueRow(label: "Device ID", value: status.deviceID ?? "—", monospaced: true)
                 LocalConnectorKeyValueRow(label: model.localized("网关", english: "Gateway"), value: status.cloudBaseURL ?? "—", monospaced: true)
                 HStack {
-                    if status.configured {
+                    if status.connectorRunning {
                         Button(model.localized("断开配对", english: "Disconnect"), role: .destructive) { viewModel.disconnect() }
                     } else {
                         Button(model.localized("连接网关", english: "Connect Gateway")) { viewModel.reconnect() }
@@ -126,7 +126,7 @@ struct LocalConnectorConnectionView: View {
             return model.localized("已通过网关连接到 ChatOS", english: "Connected to ChatOS through the gateway")
         }
         return status.configured
-            ? model.localized("本机配置有效，长连接暂未建立", english: "Local configuration is valid; the persistent connection is not established")
+            ? model.localized("当前不接受服务端调用，本机数据不受影响", english: "Server calls are currently blocked; local data is unaffected")
             : model.localized("需要使用当前 ChatOS 登录态完成配对", english: "Pairing requires the current ChatOS session")
     }
 }

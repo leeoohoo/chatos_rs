@@ -555,6 +555,7 @@ fn copy_bounded_string_array(
     target.insert(field.to_string(), Value::Array(values));
 }
 
+#[cfg(test)]
 pub(super) fn paginate_run_events(
     events: Vec<crate::models::TaskRunEventRecord>,
     limit: usize,
@@ -566,6 +567,21 @@ pub(super) fn paginate_run_events(
         .into_iter()
         .skip(offset)
         .take(limit)
+        .map(|event| trim_event_for_chatos_detail(event, tool_text_limit_chars))
+        .map(ChatosMessageTaskRunEvent::from)
+        .collect::<Vec<_>>();
+    let has_more = offset.saturating_add(items.len()) < total;
+    (items, total, has_more)
+}
+
+pub(super) fn project_run_event_page(
+    events: Vec<crate::models::TaskRunEventRecord>,
+    total: usize,
+    offset: usize,
+    tool_text_limit_chars: usize,
+) -> (Vec<ChatosMessageTaskRunEvent>, usize, bool) {
+    let items = events
+        .into_iter()
         .map(|event| trim_event_for_chatos_detail(event, tool_text_limit_chars))
         .map(ChatosMessageTaskRunEvent::from)
         .collect::<Vec<_>>();

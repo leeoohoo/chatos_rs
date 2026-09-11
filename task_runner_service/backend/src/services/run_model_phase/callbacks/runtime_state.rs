@@ -640,14 +640,42 @@ impl RunService {
                     ));
                 }
             })),
-            on_turn_phase: None,
+            on_turn_phase: Some(Arc::new({
+                let store = store_for_callbacks.clone();
+                let run_id = run_id.clone();
+                let path_redactor = path_redactor.clone();
+                move |mut payload| {
+                    path_redactor.redact_value(&mut payload);
+                    store.append_run_event_sync(TaskRunEventRecord::new(
+                        run_id.clone(),
+                        "turn_phase",
+                        None,
+                        Some(sanitize_runtime_event_payload(payload)),
+                    ));
+                }
+            })),
             on_runtime_guidance_applied: None,
-            on_context_summarized_start: None,
-            on_context_summarized_stream: None,
-            on_context_summarized_end: None,
+            on_context_summarized_start: Some(context_event_callback(
+                store_for_callbacks.clone(),
+                run_id.clone(),
+                path_redactor.clone(),
+                "context_summary_start",
+            )),
+            on_context_summarized_stream: Some(context_event_callback(
+                store_for_callbacks.clone(),
+                run_id.clone(),
+                path_redactor.clone(),
+                "context_summary_stream",
+            )),
+            on_context_summarized_end: Some(context_event_callback(
+                store_for_callbacks.clone(),
+                run_id.clone(),
+                path_redactor.clone(),
+                "context_summary_end",
+            )),
             on_before_model_input: None,
             on_before_model_request: Some(Arc::new({
-                let store = store_for_callbacks;
+                let store = store_for_callbacks.clone();
                 let run_id = run_id.clone();
                 let pending = Arc::clone(&pending_stream_event);
                 let path_redactor = path_redactor.clone();
@@ -658,7 +686,7 @@ impl RunService {
                         &pending,
                         Some(&path_redactor),
                     );
-                    let mut payload = sanitize_runtime_event_payload(payload);
+                    let mut payload = summarize_model_request_event_payload(&payload);
                     path_redactor.redact_value(&mut payload);
                     store.append_run_event_sync(TaskRunEventRecord::new(
                         run_id.clone(),
@@ -669,11 +697,88 @@ impl RunService {
                 }
             })),
             on_before_send_model_request: None,
+            on_model_response: Some(Arc::new({
+                let store = store_for_callbacks;
+                let run_id = run_id.clone();
+                let path_redactor = path_redactor.clone();
+                move |mut payload| {
+                    path_redactor.redact_value(&mut payload);
+                    store.append_run_event_sync(TaskRunEventRecord::new(
+                        run_id.clone(),
+                        "model_response",
+                        Some("模型请求已结束".to_string()),
+                        Some(sanitize_runtime_event_payload(payload)),
+                    ));
+                }
+            })),
         }
     }
 }
 
+fn context_event_callback(
+    store: crate::store::AppStore,
+    run_id: String,
+    path_redactor: crate::services::path_redaction::WorkspacePathRedactor,
+    event_type: &'static str,
+) -> Arc<dyn Fn(Value) + Send + Sync> {
+    Arc::new(move |payload| {
+        let mut payload = summarize_context_event_payload(&payload);
+        path_redactor.redact_value(&mut payload);
+        store.append_run_event_sync(TaskRunEventRecord::new(
+            run_id.clone(),
+            event_type,
+            None,
+            Some(payload),
+        ));
+    })
+}
+
+fn summarize_context_event_payload(payload: &Value) -> Value {
+    let text_chars = payload
+        .get("chunk")
+        .or_else(|| payload.get("content"))
+        .and_then(Value::as_str)
+        .map(|value| value.chars().count())
+        .unwrap_or_default();
+    json!({
+        "phase": payload.get("phase").cloned().unwrap_or(Value::Null),
+        "reason": payload.get("reason").cloned().unwrap_or(Value::Null),
+        "running": payload.get("running").cloned().unwrap_or(Value::Null),
+        "generated": payload.get("generated").cloned().unwrap_or(Value::Null),
+        "compacted": payload.get("compacted").cloned().unwrap_or(Value::Null),
+        "failed": payload.get("failed").cloned().unwrap_or(Value::Null),
+        "text_chars": text_chars,
+        "raw_summary_persisted": false,
+    })
+}
+
 const EVENT_SECRET_VALUE_MASK: &str = "******";
+
+/// Persist only operational diagnostics for a model request.  The callback
+/// receives the exact outbound body, which can contain the entire accumulated
+/// conversation and every tool schema. Storing that body once per iteration
+/// makes run-event storage grow quadratically and causes detail reads to load
+/// hundreds of megabytes. Durable run events therefore keep only bounded
+/// operational diagnostics.
+fn summarize_model_request_event_payload(payload: &Value) -> Value {
+    let debug = payload.get("task_runner_debug").and_then(Value::as_object);
+    let debug_value = |key: &str| debug.and_then(|value| value.get(key)).cloned();
+
+    json!({
+        "model": payload.get("model").cloned().unwrap_or(Value::Null),
+        "iteration": debug_value("iteration").unwrap_or(Value::Null),
+        "reason": debug_value("reason").unwrap_or(Value::Null),
+        "request_attempt": debug_value("request_attempt").unwrap_or(Value::Null),
+        "input_item_count": debug_value("input_item_count").unwrap_or(Value::Null),
+        "input_bytes": debug_value("input_bytes").unwrap_or(Value::Null),
+        "tool_count": debug_value("tool_count").unwrap_or(Value::Null),
+        "supports_responses": debug_value("supports_responses").unwrap_or(Value::Null),
+        "stream": debug_value("stream").unwrap_or(Value::Null),
+        "connection_mode": debug_value("connection_mode").unwrap_or(Value::Null),
+        "read_timeout_seconds": debug_value("read_timeout_seconds").unwrap_or(Value::Null),
+        "request_body_persisted": false,
+    })
+}
 
 fn sanitize_runtime_event_payload(mut payload: Value) -> Value {
     sanitize_runtime_event_value(&mut payload);

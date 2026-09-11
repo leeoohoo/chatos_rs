@@ -20,33 +20,18 @@ struct NativeConnectorGatewayDTOTests {
     }
 
     @Test
-    func authenticatedUnauthorizedResponsePublishesSessionExpiration() async {
-        let center = NotificationCenter()
-        await confirmation("connector authentication expiration") { confirmed in
-            let observer = center.addObserver(
-                forName: .chatOSAuthenticationDidExpire,
-                object: nil,
-                queue: nil
-            ) { _ in
-                confirmed()
-            }
-            defer { center.removeObserver(observer) }
-
-            #expect(NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
-                statusCode: 401,
-                token: "expired-token",
-                notificationCenter: center
-            ))
-        }
-        #expect(!NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
+    func connectorUnauthorizedResponseIsKeptSeparateFromPrimaryAuthentication() {
+        #expect(NativeConnectorGateway.isConnectorAuthenticationRejected(
             statusCode: 401,
-            token: nil,
-            notificationCenter: center
+            token: "expired-token"
         ))
-        #expect(!NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
+        #expect(!NativeConnectorGateway.isConnectorAuthenticationRejected(
+            statusCode: 401,
+            token: nil
+        ))
+        #expect(!NativeConnectorGateway.isConnectorAuthenticationRejected(
             statusCode: 500,
-            token: "token",
-            notificationCenter: center
+            token: "token"
         ))
     }
 

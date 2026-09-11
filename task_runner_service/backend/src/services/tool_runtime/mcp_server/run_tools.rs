@@ -11,8 +11,8 @@ use crate::models::{
 
 use super::support::{ensure_task_startable_from_mcp, value_for_agent_tool};
 use super::{
-    decode_args, text_result, BatchTaskRunArgs, GetTaskMemoryContextArgs, ListRunsArgs,
-    ListTaskMemoryRecordsArgs, McpRequestContext, RunIdArgs, StartTaskRunArgs,
+    decode_args, text_result, BatchTaskRunArgs, GetTaskMemoryContextArgs, ListRunEventsArgs,
+    ListRunsArgs, ListTaskMemoryRecordsArgs, McpRequestContext, RunIdArgs, StartTaskRunArgs,
     TaskRunnerMcpService,
 };
 
@@ -196,18 +196,27 @@ impl TaskRunnerMcpService {
                 Ok(text_result(value_for_agent_tool(json!(run))))
             }
             "list_run_events" => {
-                let args: RunIdArgs = decode_args(args)?;
+                let args: ListRunEventsArgs = decode_args(args)?;
                 self.require_run_for_user_in_context(
                     args.run_id.as_str(),
                     current_user,
                     request_context,
                 )
                 .await?;
-                let events = self
+                let limit = args.limit.unwrap_or(40).clamp(1, 100);
+                let offset = args.offset.unwrap_or(0);
+                let (events, total) = self
                     .run_service
-                    .list_run_events(args.run_id.as_str())
+                    .list_run_events_page(args.run_id.as_str(), offset, limit)
                     .await?;
-                Ok(text_result(value_for_agent_tool(json!(events))))
+                let has_more = offset.saturating_add(events.len()) < total;
+                Ok(text_result(value_for_agent_tool(json!({
+                    "events": events,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "has_more": has_more,
+                }))))
             }
             other => Err(format!("unsupported run tool: {other}")),
         }

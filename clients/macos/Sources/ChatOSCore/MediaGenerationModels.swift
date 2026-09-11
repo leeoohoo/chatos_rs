@@ -42,6 +42,12 @@ public struct MediaGenerationModel: Codable, Identifiable, Sendable, Equatable {
             "cogvideo", "wan2", "wan-", "wan_",
         ].contains(where: value.contains)
     }
+
+    /// MiniMax H3/H3 Max accept official V2 `content` roles for first and last frames.
+    /// The same content envelope is supported by our NewAPI `/v1/videos` compatibility layer.
+    public var supportsVideoLastFrame: Bool {
+        VideoGenerationProfile(modelName: modelName).supportsLastFrame
+    }
 }
 
 public struct ImageGenerationRequest: Codable, Sendable, Equatable {
@@ -51,6 +57,11 @@ public struct ImageGenerationRequest: Codable, Sendable, Equatable {
     public var count: Int
     public var inputImage: ImageGenerationInputImage?
     public var referenceImages: [ImageGenerationInputImage]
+    /// Stable caller identities. These travel with the request/result so concurrent
+    /// generations never have to infer their target from array position.
+    public var clientRequestID: String?
+    public var projectID: String?
+    public var resourceID: String?
 
     public init(
         modelConfigID: String,
@@ -58,7 +69,10 @@ public struct ImageGenerationRequest: Codable, Sendable, Equatable {
         size: String?,
         count: Int,
         inputImage: ImageGenerationInputImage? = nil,
-        referenceImages: [ImageGenerationInputImage] = []
+        referenceImages: [ImageGenerationInputImage] = [],
+        clientRequestID: String? = nil,
+        projectID: String? = nil,
+        resourceID: String? = nil
     ) {
         self.modelConfigID = modelConfigID
         self.prompt = prompt
@@ -66,6 +80,9 @@ public struct ImageGenerationRequest: Codable, Sendable, Equatable {
         self.count = count
         self.inputImage = inputImage
         self.referenceImages = referenceImages
+        self.clientRequestID = clientRequestID
+        self.projectID = projectID
+        self.resourceID = resourceID
     }
 
     enum CodingKeys: String, CodingKey {
@@ -73,6 +90,9 @@ public struct ImageGenerationRequest: Codable, Sendable, Equatable {
         case prompt, size, count
         case inputImage = "input_image"
         case referenceImages = "reference_images"
+        case clientRequestID = "client_request_id"
+        case projectID = "project_id"
+        case resourceID = "resource_id"
     }
 
     public init(from decoder: Decoder) throws {
@@ -83,6 +103,9 @@ public struct ImageGenerationRequest: Codable, Sendable, Equatable {
         count = try values.decode(Int.self, forKey: .count)
         inputImage = try values.decodeIfPresent(ImageGenerationInputImage.self, forKey: .inputImage)
         referenceImages = try values.decodeIfPresent([ImageGenerationInputImage].self, forKey: .referenceImages) ?? []
+        clientRequestID = try values.decodeIfPresent(String.self, forKey: .clientRequestID)
+        projectID = try values.decodeIfPresent(String.self, forKey: .projectID)
+        resourceID = try values.decodeIfPresent(String.self, forKey: .resourceID)
     }
 }
 
@@ -140,19 +163,28 @@ public struct ImageGenerationResult: Codable, Sendable, Equatable {
     public var modelName: String
     public var createdAt: String
     public var images: [GeneratedMediaAsset]
+    public var clientRequestID: String?
+    public var projectID: String?
+    public var resourceID: String?
 
     public init(
         id: String,
         modelConfigID: String,
         modelName: String,
         createdAt: String,
-        images: [GeneratedMediaAsset]
+        images: [GeneratedMediaAsset],
+        clientRequestID: String? = nil,
+        projectID: String? = nil,
+        resourceID: String? = nil
     ) {
         self.id = id
         self.modelConfigID = modelConfigID
         self.modelName = modelName
         self.createdAt = createdAt
         self.images = images
+        self.clientRequestID = clientRequestID
+        self.projectID = projectID
+        self.resourceID = resourceID
     }
 
     enum CodingKeys: String, CodingKey {
@@ -161,6 +193,9 @@ public struct ImageGenerationResult: Codable, Sendable, Equatable {
         case modelName = "model"
         case createdAt = "created_at"
         case images
+        case clientRequestID = "client_request_id"
+        case projectID = "project_id"
+        case resourceID = "resource_id"
     }
 }
 
@@ -170,6 +205,7 @@ public struct VideoGenerationRequest: Sendable, Equatable {
     public var size: String
     public var seconds: Int
     public var inputImage: ImageGenerationInputImage?
+    public var lastFrameImage: ImageGenerationInputImage?
     public var ratio: String
 
     public init(
@@ -178,6 +214,7 @@ public struct VideoGenerationRequest: Sendable, Equatable {
         size: String,
         seconds: Int,
         inputImage: ImageGenerationInputImage? = nil,
+        lastFrameImage: ImageGenerationInputImage? = nil,
         ratio: String = "16:9"
     ) {
         self.modelConfigID = modelConfigID
@@ -185,6 +222,7 @@ public struct VideoGenerationRequest: Sendable, Equatable {
         self.size = size
         self.seconds = seconds
         self.inputImage = inputImage
+        self.lastFrameImage = lastFrameImage
         self.ratio = ratio
     }
 }
@@ -202,6 +240,7 @@ public enum VideoGenerationProfile: Sendable {
     }
 
     public var isMiniMax: Bool { self != .openAI }
+    public var supportsLastFrame: Bool { isMiniMax }
 
     public var sizes: [String] {
         switch self {

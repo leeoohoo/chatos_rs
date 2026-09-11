@@ -50,7 +50,7 @@ struct AgentRuntimeSettingsView: View {
     var body: some View {
         SettingsGroupedPage {
             LocalConnectorCard(model.localized("Agent 运行", english: "Agent Runtime"),
-                subtitle: model.localized("保存于这台 Mac，修改对下一次运行生效。默认最多调用模型 600 次，重试也计入。", english: "Stored on this Mac; changes apply to the next run. The default limit is 600 model calls, including retries."),
+                subtitle: model.localized("保存于这台 Mac，修改对下一次运行生效。默认最多调用模型 600 次；单次请求默认重试 5 次，并采用 1、2、4、8、16 秒指数退避。重试也计入调用次数。", english: "Stored on this Mac; changes apply to the next run. The defaults are 600 model calls and five retries per request with 1, 2, 4, 8, and 16-second exponential backoff. Retries count as model calls."),
                 systemImage: "arrow.triangle.2.circlepath") {
                 VStack(spacing: 12) {
                     ForEach([Field.calls, .approval, .story, .retries, .requestTimeout, .runTimeout, .noProgress], id: \.self) { field in row(field) }
@@ -62,12 +62,18 @@ struct AgentRuntimeSettingsView: View {
                 }
             }
             LocalConnectorCard(model.localized("上下文窗口与压缩", english: "Context Window & Compaction"),
-                subtitle: model.localized("窗口按所用模型调整。当前使用保守的 UTF-8 字节安全估计，不是精确 token 计数。阈值必须小于窗口减去输出预留。", english: "Match the window to your model. Input uses a conservative UTF-8 byte estimate, not exact token counts. The threshold must be below the window minus the output reserve."),
+                subtitle: model.localized("默认预算与 Task Runner 一致：250k 窗口、30k 输出预留、220k 触发压缩。输入按完整 JSON 请求约 4 字节/token 估算；支持精确计数的模型接入后可替换估算。", english: "Defaults match Task Runner: a 250k window, 30k output reserve, and compaction at 220k. Input is estimated from the complete JSON request at about four bytes per token; an exact provider count can replace the estimate when supported."),
                 systemImage: "text.alignleft") {
                 VStack(spacing: 12) {
                     ForEach([Field.window, .reserve, .threshold, .compactions, .summaryTimeout, .summaryPoll], id: \.self) { field in row(field) }
                     Divider()
-                    Text(model.localized("审批和剧情规划已使用公共循环。审批不会自动上传记录；剧情规划默认使用 Memory Engine，同步文字上下文并在接近窗口预算时进行压缩。", english: "Approval and story planning use the shared loop. Approval records are not uploaded automatically. Story planning uses Memory Engine by default to sync text context and compact it near the context-window budget."))
+                    if hasSavedPreferences {
+                        let context = saved.global.context ?? AgentContextPolicy()
+                        Text(model.localized("当前已保存生效值：窗口 \(context.windowTokens) · 预留 \(context.outputReserveTokens) · 压缩阈值 \(context.compactionThresholdTokens) · 最多 \(context.maximumCompactionPasses) 次", english: "Current saved values: window \(context.windowTokens) · reserve \(context.outputReserveTokens) · threshold \(context.compactionThresholdTokens) · up to \(context.maximumCompactionPasses) passes"))
+                            .appFont(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Text(model.localized("审批和剧情规划已使用公共循环。审批不会自动上传记录；剧情规划按 Task Runner 的 Memory Engine 流程同步记录、compose 上下文，并在达到软阈值时触发 active summary。", english: "Approval and story planning use the shared loop. Approval records are not uploaded automatically. Story planning follows Task Runner's Memory Engine flow: sync records, compose context, and trigger active summary at the soft threshold."))
                         .appFont(.caption).foregroundStyle(.secondary)
                     Text(model.localized("摘要使用 Memory Engine 配置的摘要 Agent，可能产生额外模型费用，不计入这里的 600 次调用。等待摘要或视频任务不消耗模型调用次数。", english: "Summaries use the Agent configured in Memory Engine and may incur additional model costs outside this 600-call budget. Waiting for summaries or videos does not consume model calls."))
                         .appFont(.caption).foregroundStyle(.secondary)

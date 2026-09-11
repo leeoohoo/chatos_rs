@@ -50,9 +50,11 @@ struct MemoryComposeDTO: Decodable, Sendable {
 struct MemorySummaryDTO: Decodable, Sendable {
     let thread_id: String
     let job_run_id: String?
+    let accepted: Bool
     let running: Bool
     let completed: Bool
     let failed: Bool
+    let generated: Bool
     let compacted: Bool
     let error_message: String?
 }

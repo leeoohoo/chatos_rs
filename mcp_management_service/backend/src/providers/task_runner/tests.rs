@@ -226,6 +226,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
     )
     .expect("provider");
     let mut routes = vec![route(SystemMcpKey::TaskRunnerService)];
+    let project_context = client_project_context();
     let snapshots = provider
         .prepare_routes(
             routes.as_mut_slice(),
@@ -233,6 +234,7 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
             "user-1",
             SystemAgentKey::ChatosConversationAgent,
             Some("project-1"),
+            Some(&project_context),
             None,
             Some("turn-1"),
             None,
@@ -261,6 +263,18 @@ async fn prepare_routes_discovers_dynamic_tools_with_owner_bound_identity() {
         chatos_plugin_management_sdk::SystemAgentKey::ChatosConversationAgent.as_str()
     );
     assert_eq!(headers["x-mcp-management-project-id"], "project-1");
+    let encoded_project_context = headers["x-mcp-management-client-project-context"]
+        .to_str()
+        .expect("client project context header");
+    let decoded_project_context =
+        urlencoding::decode(encoded_project_context).expect("decode client project context header");
+    assert_eq!(
+        serde_json::from_str::<chatos_mcp_management_sdk::ClientProjectContextSnapshot>(
+            decoded_project_context.as_ref()
+        )
+        .expect("deserialize client project context header"),
+        project_context
+    );
     assert_eq!(headers["x-mcp-management-turn-id"], "turn-1");
     assert_eq!(headers["x-mcp-management-task-profile"], "default");
     assert_eq!(
@@ -315,6 +329,21 @@ fn route(key: SystemMcpKey) -> ResolvedMcpRoute {
     }
 }
 
+fn client_project_context() -> chatos_mcp_management_sdk::ClientProjectContextSnapshot {
+    serde_json::from_value(json!({
+        "schemaVersion": 1,
+        "projectId": "project-1",
+        "projectName": "Project 1",
+        "projectRevision": 1,
+        "executionTarget": {
+            "deviceId": "device-1",
+            "workspaceId": "workspace-1",
+            "relativeRoot": "repo"
+        }
+    }))
+    .expect("client project context")
+}
+
 fn snapshot() -> RuntimeSessionSnapshot {
     RuntimeSessionSnapshot {
         session_id: "session-1".to_string(),
@@ -328,6 +357,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
             .to_string(),
         task_profile: Some("default".to_string()),
         project_id: Some("project-1".to_string()),
+        client_project_context: Some(client_project_context()),
         device_id: None,
         run_id: Some("run-1".to_string()),
         execution_group_id: None,

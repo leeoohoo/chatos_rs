@@ -57,8 +57,10 @@ use self::final_response::runtime_result_from_response;
 #[cfg(feature = "local-agent-loop")]
 use self::final_response::{handle_response_without_tool_calls, FinalResponseAction};
 #[cfg(feature = "local-agent-loop")]
+use self::input_items::append_runtime_input_items;
+#[cfg(feature = "local-agent-loop")]
 use self::input_items::empty_final_response_followup_item;
-use self::input_items::{append_runtime_input_items, estimated_json_tokens};
+use self::input_items::{append_lifecycle_input_items, estimated_json_tokens};
 #[cfg(feature = "local-agent-loop")]
 use self::input_items::{
     input_item_count, json_value_size_bytes, merge_current_turn_tool_history_into_input,
@@ -92,9 +94,7 @@ const EMPTY_FINAL_RESPONSE_ERROR: &str = "模型未返回可展示的最终结�
 #[cfg(feature = "local-agent-loop")]
 const MAX_CONSECUTIVE_FAILED_TOOL_BATCHES: usize = 8;
 const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS: usize = 250_000;
-const MODEL_CONTEXT_RESERVE_TOKENS: usize = 30_000;
-const ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS: usize =
-    DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS - MODEL_CONTEXT_RESERVE_TOKENS;
+const ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS: usize = 200_000;
 const OFFICIAL_TOKEN_COUNT_PREFLIGHT_TOKENS: usize =
     ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS - 20_000;
 const MAX_ACTIVE_CONTEXT_COMPACTION_PASSES: usize = 8;
@@ -281,10 +281,10 @@ impl AiRuntime {
             let (mut iteration_request, lifecycle_before) =
                 prepare_iteration_request(&request, &options, iteration, iteration_reason.as_str())
                     .await?;
-            if let Some(refresh) = options
+            let refresh = options
                 .iterative_context_refresh
                 .as_ref()
-                .filter(|refresh| refresh.has_memory_composer())
+                .filter(|refresh| refresh.has_memory_composer());
             {
                 let mut remaining_input_tokens = None;
                 let mut count_source = "local_estimate";
@@ -313,6 +313,9 @@ impl AiRuntime {
                     if compaction_pass == MAX_ACTIVE_CONTEXT_COMPACTION_PASSES {
                         break;
                     }
+                    let Some(refresh) = refresh else {
+                        break;
+                    };
                     match refresh.compact_active_context(&options.callbacks).await {
                         Ok(true) => {
                             request.previous_response_id = None;
@@ -325,7 +328,7 @@ impl AiRuntime {
                                 );
                                 runtime_followup_appended_to_request = true;
                             }
-                            iteration_request.input = append_runtime_input_items(
+                            iteration_request.input = append_lifecycle_input_items(
                                 request.input.clone(),
                                 lifecycle_before.input_items.as_slice(),
                             );
@@ -347,10 +350,11 @@ impl AiRuntime {
                 }
                 let remaining_input_tokens = remaining_input_tokens
                     .unwrap_or_else(|| estimated_iteration_input_tokens(&iteration_request));
-                if active_context_exceeds_hard_limit(remaining_input_tokens) {
+                let hard_limit = model_context_window_tokens(&iteration_request);
+                if remaining_input_tokens > hard_limit {
                     return Err(format!(
                         "主动上下文压缩后输入仍为 {} tokens（计数来源：{}），超过模型上下文硬限制 {} tokens，已停止本次模型请求以避免异常消耗",
-                        remaining_input_tokens, count_source, DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
+                        remaining_input_tokens, count_source, hard_limit
                     ));
                 }
                 if remaining_input_tokens > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS {
@@ -362,7 +366,7 @@ impl AiRuntime {
                         input_tokens = remaining_input_tokens,
                         token_count_source = count_source,
                         compaction_threshold = ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
-                        hard_limit = DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
+                        hard_limit,
                         "ai runtime continuing with input above active compaction threshold but within hard context limit"
                     );
                 }
@@ -553,6 +557,39 @@ impl AiRuntime {
                                     }
                                     continue;
                                 }
+                                RuntimeFinalResponseAction::ContinueReplacingResponse {
+                                    response: _replacement,
+                                    input_items,
+                                    reason,
+                                } => {
+                                    runtime_followup_items = input_items;
+                                    // The provider-side response is what the lifecycle hook
+                                    // rejected. Reusing its response id would retain the
+                                    // unauthorized hosted-tool result outside our sanitized
+                                    // continuation history.
+                                    set_next_continuation(
+                                        &mut request,
+                                        &mut continuation_input,
+                                        continuation_disabled,
+                                        &options,
+                                        None,
+                                        runtime_followup_items.as_slice(),
+                                    );
+                                    runtime_followup_appended_to_request = false;
+                                    iteration_reason = if reason.trim().is_empty() {
+                                        "lifecycle_sanitized_followup".to_string()
+                                    } else {
+                                        reason
+                                    };
+                                    if let Some(callback) = &options.callbacks.on_turn_phase {
+                                        callback(serde_json::json!({
+                                            "phase": "continue",
+                                            "reason": iteration_reason,
+                                            "iteration": iteration,
+                                        }));
+                                    }
+                                    continue;
+                                }
                             }
                         }
                         let lifecycle_metadata = if let Some(hook) = &options.lifecycle_hook {
@@ -720,10 +757,7 @@ impl AiRuntime {
                 options.record_options.assistant_metadata.clone(),
                 metadata_override,
             ),
-            response
-                .usage
-                .clone()
-                .map(|usage| serde_json::json!({ "provider_usage": usage })),
+            response.usage.as_ref().map(bounded_provider_usage_metadata),
         );
         writer
             .save_assistant_record(SaveAssistantRecordInput {
@@ -846,6 +880,17 @@ fn merge_record_metadata(base: Option<Value>, overlay: Option<Value>) -> Option<
     }
 }
 
+fn bounded_provider_usage_metadata(usage: &Value) -> Value {
+    let snapshot = crate::compat::extract_usage_snapshot(usage);
+    serde_json::json!({
+        "provider_usage": {
+            "input_tokens": snapshot.input_tokens,
+            "cached_tokens": snapshot.cached_tokens,
+            "output_tokens": snapshot.output_tokens,
+        }
+    })
+}
+
 struct IterationInputTokenCount {
     tokens: usize,
     source: &'static str,
@@ -952,8 +997,19 @@ fn estimated_iteration_input_tokens(request: &ModelRequest) -> usize {
     estimated_json_tokens(&payload)
 }
 
-fn active_context_exceeds_hard_limit(tokens: usize) -> bool {
-    tokens > DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
+fn model_context_window_tokens(request: &ModelRequest) -> usize {
+    if let Some(configured) = std::env::var("CHATOS_AI_CONTEXT_WINDOW_TOKENS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS)
+    {
+        return configured;
+    }
+    let model = request.model.trim().to_ascii_lowercase();
+    if model.starts_with("gpt-5.6-sol") {
+        return 1_050_000;
+    }
+    DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
 }
 
 async fn prepare_iteration_request(
@@ -976,7 +1032,7 @@ async fn prepare_iteration_request(
     };
     let mut iteration_request = request.clone();
     if !lifecycle_before.input_items.is_empty() {
-        iteration_request.input = append_runtime_input_items(
+        iteration_request.input = append_lifecycle_input_items(
             iteration_request.input,
             lifecycle_before.input_items.as_slice(),
         );

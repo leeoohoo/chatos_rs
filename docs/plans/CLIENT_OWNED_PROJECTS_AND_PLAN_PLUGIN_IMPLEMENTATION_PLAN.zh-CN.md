@@ -66,6 +66,7 @@ Task Runner Bridge 是曾经暴露给项目管理插件 UI 的宿主适配层。
 - 两端插件宿主只实现 `host.context.read`，无 Task Runner Bridge 或任务工作区。
 - 服务端与客户端模型设置均无 `task_runner_default_model_config_id`。
 - 其他项目作用域插件仍能从客户端获得项目上下文。
+- 项目内对话创建通用后台 Task 时，冻结的客户端 `project_context` 必须贯穿 ChatOS、MCP Management 和 Task Runner；只有 `project_id` 的请求必须失败，不能由服务端补全。
 - 全仓生产代码搜索不到上述退役协议或类型。
 
 ## 7. 发布顺序

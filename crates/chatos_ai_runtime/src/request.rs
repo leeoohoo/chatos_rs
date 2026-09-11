@@ -383,6 +383,13 @@ impl AiRequestHandler {
         if !response.status().is_success() {
             let status = response.status();
             let retry_after_ms = retry_after_delay_ms(response.headers());
+            let provider_request_id = response
+                .headers()
+                .get("x-request-id")
+                .or_else(|| response.headers().get("openai-request-id"))
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("unavailable")
+                .to_string();
             let body = read_error_response_text_limited(response).await;
             let body_preview = log_preview(body.as_str());
             warn!(
@@ -390,13 +397,16 @@ impl AiRequestHandler {
                 url = url.as_str(),
                 status = status.as_u16(),
                 retry_after_ms,
+                provider_request_id = provider_request_id.as_str(),
                 response_body = body_preview.as_str(),
                 "ai provider request failed"
             );
             let retry_hint = retry_after_ms
                 .map(|value| format!(" [retry_after_ms={value}]"))
                 .unwrap_or_default();
-            return Err(format!("status {status}{retry_hint}: {body}"));
+            return Err(format!(
+                "status {status}{retry_hint} [provider_request_id={provider_request_id}]: {body}"
+            ));
         }
 
         let parsed = parse_stream_response(
@@ -415,7 +425,13 @@ impl AiRequestHandler {
                     transport = transport_label(transport),
                     url = url.as_str(),
                     response_id = ai_response.response_id.as_deref().unwrap_or(""),
+                    provider_request_id = ai_response.provider_request_id.as_deref().unwrap_or(""),
                     finish_reason = ai_response.finish_reason.as_deref().unwrap_or(""),
+                    response_status = ai_response.response_status.as_deref().unwrap_or(""),
+                    terminal_event_type = ai_response.terminal_event_type.as_deref().unwrap_or(""),
+                    terminal_event_seen = ai_response.terminal_event_seen,
+                    parsed_sse_event_count = ai_response.parsed_stream_event_count,
+                    malformed_sse_event_count = ai_response.malformed_stream_event_count,
                     content_bytes = ai_response.content.len(),
                     reasoning_bytes = ai_response.reasoning.as_deref().map(str::len).unwrap_or(0),
                     tool_call_count = ai_response_tool_call_count(ai_response),
@@ -459,22 +475,31 @@ fn build_request_payload(
     options: &AiRequestOptions,
 ) -> Value {
     match transport {
-        AiTransport::Responses => build_responses_request_payload(
-            input,
-            model,
-            instructions,
-            options.prompt_cache_key.clone(),
-            options.previous_response_id.clone(),
-            tools,
-            options.request_cwd.clone(),
-            temperature,
-            max_output_tokens,
-            provider,
-            thinking_level,
-            options.stream,
-            options.include_prompt_cache_retention,
-            options.output_format.clone(),
-        ),
+        AiTransport::Responses => {
+            let mut payload = build_responses_request_payload(
+                input,
+                model,
+                instructions,
+                options.prompt_cache_key.clone(),
+                options.previous_response_id.clone(),
+                tools,
+                options.request_cwd.clone(),
+                temperature,
+                max_output_tokens,
+                provider,
+                thinking_level,
+                options.stream,
+                options.include_prompt_cache_retention,
+                options.output_format.clone(),
+            );
+            if let Some(threshold) = options.responses_compaction_threshold {
+                payload["context_management"] = serde_json::json!([{
+                    "type": "compaction",
+                    "compact_threshold": threshold,
+                }]);
+            }
+            payload
+        }
         AiTransport::ChatCompletions => build_chat_completions_request_payload(
             input,
             model,

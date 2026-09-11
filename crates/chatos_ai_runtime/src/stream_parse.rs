@@ -37,6 +37,10 @@ pub struct StreamState {
     pub provider_error: Option<Value>,
     pub response_obj: Option<Value>,
     pub sent_any_chunk: bool,
+    pub response_status: Option<String>,
+    pub incomplete_details: Option<Value>,
+    pub terminal_event_type: Option<String>,
+    pub terminal_event_seen: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -55,6 +59,10 @@ pub struct FinalizedStreamState {
     pub usage: Option<Value>,
     pub response_id: Option<String>,
     pub response_output_items: Vec<Value>,
+    pub response_status: Option<String>,
+    pub incomplete_details: Option<Value>,
+    pub terminal_event_type: Option<String>,
+    pub terminal_event_seen: bool,
 }
 
 pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> StreamPayload {
@@ -126,9 +134,12 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
                 }
                 payload.thinking = Some(reasoning_delta);
             }
-        } else if event_type == "response.completed" {
+        } else if event_type == "response.completed" || event_type == "response.incomplete" {
+            state.terminal_event_seen = true;
+            state.terminal_event_type = Some(event_type.to_string());
             if let Some(response) = event.get("response") {
                 state.response_obj = Some(response.clone());
+                capture_response_lifecycle(state, response);
                 ingest_tool_calls_from_response_output(state, response);
                 if state.full_content.is_empty() {
                     let extracted = extract_output_text(response);
@@ -140,6 +151,7 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
                 }
             } else {
                 state.response_obj = Some(event.clone());
+                capture_response_lifecycle(state, event);
                 ingest_tool_calls_from_response_output(state, event);
                 if state.full_content.is_empty() {
                     let extracted = extract_output_text(event);
@@ -151,9 +163,12 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
                 }
             }
         } else if event_type == "response.failed" {
+            state.terminal_event_seen = true;
+            state.terminal_event_type = Some(event_type.to_string());
             state.finish_reason = Some("failed".to_string());
             if let Some(response) = event.get("response") {
                 state.response_obj = Some(response.clone());
+                capture_response_lifecycle(state, response);
                 if let Some(error_obj) = response.get("error") {
                     if !error_obj.is_null() {
                         state.provider_error = Some(error_obj.clone());
@@ -211,6 +226,13 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
                 }
             }
         }
+        capture_response_lifecycle(state, event);
+        if let Some(status) = state.response_status.as_deref() {
+            if matches!(status, "completed" | "incomplete" | "failed") {
+                state.terminal_event_seen = true;
+                state.terminal_event_type = Some(format!("response.{status}"));
+            }
+        }
     }
 
     if let Some(id) = event
@@ -250,6 +272,22 @@ pub fn apply_responses_stream_event(state: &mut StreamState, event: &Value) -> S
     }
 
     payload
+}
+
+fn capture_response_lifecycle(state: &mut StreamState, response: &Value) {
+    if let Some(status) = response
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        state.response_status = Some(status.to_string());
+        state.finish_reason = Some(status.to_string());
+    }
+    state.incomplete_details = response
+        .get("incomplete_details")
+        .cloned()
+        .filter(|value| !value.is_null());
 }
 
 pub fn apply_chat_completions_stream_event(
@@ -335,6 +373,18 @@ pub fn finalize_responses_stream_state(state: &mut StreamState) -> FinalizedStre
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
     }
+    if state.response_status.is_none() {
+        state.response_status = response_val
+            .get("status")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+    }
+    if state.incomplete_details.is_none() {
+        state.incomplete_details = response_val
+            .get("incomplete_details")
+            .cloned()
+            .filter(|value| !value.is_null());
+    }
     if state.response_id.is_none() {
         state.response_id = response_val
             .get("id")
@@ -365,6 +415,10 @@ pub fn finalize_responses_stream_state(state: &mut StreamState) -> FinalizedStre
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default(),
+        response_status: state.response_status.clone(),
+        incomplete_details: state.incomplete_details.clone(),
+        terminal_event_type: state.terminal_event_type.clone(),
+        terminal_event_seen: state.terminal_event_seen,
     }
 }
 
@@ -378,6 +432,10 @@ pub fn finalize_chat_completions_stream_state(state: &mut StreamState) -> Finali
         usage: state.usage.clone(),
         response_id: state.response_id.clone(),
         response_output_items: Vec::new(),
+        response_status: state.finish_reason.clone(),
+        incomplete_details: None,
+        terminal_event_type: None,
+        terminal_event_seen: state.finish_reason.is_some(),
     }
 }
 

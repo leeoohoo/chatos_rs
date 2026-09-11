@@ -88,6 +88,15 @@ pub enum RuntimeFinalResponseAction {
         input_items: Vec<Value>,
         reason: String,
     },
+    /// Continue from a deliberately sanitized response.  This is used when a provider returned
+    /// output that was never authorized by the caller (for example a hosted image tool call).
+    /// The replacement prevents that output and any embedded binary payload from entering the
+    /// durable conversation history used by the next model step.
+    ContinueReplacingResponse {
+        response: Box<AiResponse>,
+        input_items: Vec<Value>,
+        reason: String,
+    },
     Replace(Box<AiResponse>),
 }
 

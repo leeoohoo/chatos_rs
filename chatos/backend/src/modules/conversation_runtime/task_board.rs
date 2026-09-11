@@ -1,20 +1,28 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::warn;
 
 use super::user_context::load_runtime_user_context;
 use crate::core::internal_context_locale::InternalContextLocale;
-#[cfg(test)]
-use crate::services::task_board_prompt::build_runtime_prefixed_input_items;
-use crate::services::task_board_prompt::format_task_board_prompt;
-use crate::services::task_manager::{list_tasks_for_context, TaskRecord};
+use crate::services::task_runner_api_client;
 
-const TASK_BOARD_ACTIVE_LIMIT: usize = 200;
-const TASK_BOARD_DONE_HISTORY_LIMIT: usize = 200;
+#[derive(Debug, Clone, Deserialize)]
+struct TaskRunnerMessageTasksResponse {
+    #[serde(default)]
+    items: Vec<TaskTurnTask>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TaskTurnTask {
+    id: String,
+    title: String,
+    status: String,
+    #[serde(default)]
+    result_summary: Option<String>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,7 +58,7 @@ pub async fn build_task_board_prompt(
     }
 
     let tasks = load_task_board_context_tasks(session_id, turn_id).await;
-    Some(format_task_board_prompt(tasks.as_slice(), locale))
+    Some(format_task_turn_prompt(tasks.as_slice(), locale))
         .filter(|content| !content.trim().is_empty())
 }
 
@@ -71,40 +79,38 @@ pub async fn build_task_turn_follow_up_directive(
     classify_task_turn_follow_up(tasks.as_slice(), locale)
 }
 
-async fn load_task_board_context_tasks(session_id: &str, turn_id: Option<&str>) -> Vec<TaskRecord> {
-    let active_tasks = list_tasks_for_context(session_id, turn_id, false, TASK_BOARD_ACTIVE_LIMIT)
-        .await
-        .unwrap_or_default();
-    let done_candidates =
-        list_tasks_for_context(session_id, turn_id, true, TASK_BOARD_DONE_HISTORY_LIMIT)
-            .await
-            .unwrap_or_default();
-    merge_task_board_context_tasks(active_tasks, done_candidates)
-}
-
-fn merge_task_board_context_tasks(
-    mut active_tasks: Vec<TaskRecord>,
-    done_candidates: Vec<TaskRecord>,
-) -> Vec<TaskRecord> {
-    let mut seen = active_tasks
-        .iter()
-        .map(|task| task.id.clone())
-        .collect::<HashSet<_>>();
-
-    for task in done_candidates {
-        if !is_done_status(task.status.as_str()) {
-            continue;
-        }
-        if seen.insert(task.id.clone()) {
-            active_tasks.push(task);
+async fn load_task_board_context_tasks(
+    session_id: &str,
+    turn_id: Option<&str>,
+) -> Vec<TaskTurnTask> {
+    let Some(turn_id) = turn_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+    let payload =
+        match task_runner_api_client::list_message_tasks("", session_id, None, Some(turn_id)).await
+        {
+            Ok(payload) => payload,
+            Err(error) => {
+                warn!(
+                    session_id,
+                    turn_id,
+                    detail = error,
+                    "Task Runner turn review lookup failed"
+                );
+                return Vec::new();
+            }
+        };
+    match serde_json::from_value::<TaskRunnerMessageTasksResponse>(payload) {
+        Ok(response) => response.items,
+        Err(error) => {
+            warn!(session_id, turn_id, detail = %error, "Task Runner turn review payload is invalid");
+            Vec::new()
         }
     }
-
-    active_tasks
 }
 
-pub fn classify_task_turn_follow_up(
-    tasks: &[crate::services::task_manager::TaskRecord],
+fn classify_task_turn_follow_up(
+    tasks: &[TaskTurnTask],
     locale: InternalContextLocale,
 ) -> Option<TaskTurnFollowUpDirective> {
     if tasks.is_empty() {
@@ -128,7 +134,7 @@ pub fn classify_task_turn_follow_up(
     } else {
         TaskTurnFollowUpMode::ReviewExecution
     };
-    let board_prompt = format_task_board_prompt(tasks, locale);
+    let board_prompt = format_task_turn_prompt(tasks, locale);
 
     Some(TaskTurnFollowUpDirective {
         mode,
@@ -142,6 +148,53 @@ pub fn classify_task_turn_follow_up(
             board_prompt.as_str(),
         ),
     })
+}
+
+fn format_task_turn_prompt(tasks: &[TaskTurnTask], locale: InternalContextLocale) -> String {
+    if tasks.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec![if locale.is_english() {
+        "Task Runner tasks created for this turn:".to_string()
+    } else {
+        "当前轮次创建的 Task Runner 任务：".to_string()
+    }];
+    for task in tasks {
+        lines.push(format!(
+            "- [{}] {} (`{}`)",
+            task.status.trim(),
+            compact_task_text(task.title.as_str(), 240),
+            task.id.trim()
+        ));
+        if let Some(summary) = task
+            .result_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!(
+                "  {}: {}",
+                if locale.is_english() {
+                    "Result"
+                } else {
+                    "结果"
+                },
+                compact_task_text(summary, 1_200)
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+fn compact_task_text(value: &str, max_chars: usize) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = normalized.chars();
+    let prefix = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{prefix}…")
+    } else {
+        prefix
+    }
 }
 
 pub fn parse_task_turn_review_outcome(content: &str) -> TaskTurnReviewOutcome {
@@ -218,12 +271,24 @@ pub async fn build_runtime_prefixed_input_items_for_turn(
     command_system_prompt: Option<&str>,
 ) -> Option<Vec<Value>> {
     let task_board_prompt = build_task_board_prompt(session_id, turn_id, locale).await;
-    build_runtime_prefixed_input_items(
-        task_board_prompt.as_deref(),
+    let prompts = [
         contact_system_prompt,
         builtin_mcp_system_prompt,
         command_system_prompt,
-    )
+        task_board_prompt.as_deref(),
+    ];
+    let items = prompts
+        .into_iter()
+        .filter_map(|prompt| prompt.map(str::trim).filter(|value| !value.is_empty()))
+        .map(|text| {
+            serde_json::json!({
+                "type": "message",
+                "role": "system",
+                "content": [{ "type": "input_text", "text": text }]
+            })
+        })
+        .collect::<Vec<_>>();
+    (!items.is_empty()).then_some(items)
 }
 
 fn build_task_turn_follow_up_guidance(
@@ -267,7 +332,7 @@ fn build_task_turn_follow_up_guidance(
 fn is_unfinished_status(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
-        "todo" | "doing"
+        "draft" | "ready" | "queued" | "running"
     )
 }
 
@@ -276,110 +341,50 @@ fn is_blocked_status(status: &str) -> bool {
 }
 
 fn is_done_status(status: &str) -> bool {
-    status.trim().eq_ignore_ascii_case("done")
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "succeeded" | "failed" | "cancelled" | "archived"
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_hidden_task_turn_review_metadata, classify_task_turn_follow_up,
-        parse_task_turn_review_outcome, strip_task_turn_review_marker, TaskTurnFollowUpMode,
-        TaskTurnReviewOutcome,
+        build_hidden_task_turn_review_metadata, classify_task_turn_follow_up, compact_task_text,
+        format_task_turn_prompt, parse_task_turn_review_outcome, strip_task_turn_review_marker,
+        TaskTurnFollowUpMode, TaskTurnReviewOutcome, TaskTurnTask,
     };
     use crate::core::internal_context_locale::InternalContextLocale;
-    use crate::services::task_manager::TaskRecord;
     use serde_json::Value;
 
-    fn build_task_record(id: &str, status: &str) -> TaskRecord {
-        TaskRecord {
+    fn build_task_record(id: &str, status: &str) -> TaskTurnTask {
+        TaskTurnTask {
             id: id.to_string(),
-            conversation_id: "session-1".to_string(),
-            conversation_turn_id: "turn-1".to_string(),
             title: id.to_string(),
-            details: String::new(),
-            priority: "medium".to_string(),
             status: status.to_string(),
-            tags: Vec::new(),
-            due_at: None,
-            outcome_summary: String::new(),
-            outcome_items: Vec::new(),
-            resume_hint: String::new(),
-            blocker_reason: String::new(),
-            blocker_needs: Vec::new(),
-            blocker_kind: String::new(),
-            completed_at: None,
-            last_outcome_at: None,
-            created_at: "2026-05-21T00:00:00Z".to_string(),
-            updated_at: "2026-05-21T00:00:00Z".to_string(),
+            result_summary: None,
         }
     }
 
     #[test]
-    fn merge_task_board_context_keeps_active_tasks_and_unique_done_history() {
-        let merged = super::merge_task_board_context_tasks(
-            vec![
-                build_task_record("todo-1", "todo"),
-                build_task_record("done-duplicate", "done"),
-            ],
-            vec![
-                build_task_record("todo-from-done-query", "todo"),
-                build_task_record("done-duplicate", "done"),
-                build_task_record("done-2", "done"),
-            ],
-        );
-
-        let ids = merged
-            .iter()
-            .map(|task| task.id.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["todo-1", "done-duplicate", "done-2"]);
+    fn task_turn_prompt_compacts_large_results() {
+        let tasks = vec![TaskTurnTask {
+            result_summary: Some("path/to/file ".repeat(1_000)),
+            ..build_task_record("task-1", "succeeded")
+        }];
+        let prompt = format_task_turn_prompt(tasks.as_slice(), InternalContextLocale::ZhCn);
+        assert!(prompt.contains("当前轮次创建的 Task Runner 任务"));
+        assert!(prompt.contains("[succeeded]"));
+        assert!(prompt.contains('…'));
+        assert!(prompt.chars().count() < 1_600);
+        assert_eq!(compact_task_text("  one\n two  ", 20), "one two");
     }
 
     #[test]
     fn classify_task_turn_follow_up_prefers_continue_when_unfinished_exists() {
         let tasks = vec![
-            TaskRecord {
-                id: "1".to_string(),
-                conversation_id: "session-1".to_string(),
-                conversation_turn_id: "turn-1".to_string(),
-                title: "A".to_string(),
-                details: String::new(),
-                priority: "medium".to_string(),
-                status: "doing".to_string(),
-                tags: Vec::new(),
-                due_at: None,
-                outcome_summary: String::new(),
-                outcome_items: Vec::new(),
-                resume_hint: String::new(),
-                blocker_reason: String::new(),
-                blocker_needs: Vec::new(),
-                blocker_kind: String::new(),
-                completed_at: None,
-                last_outcome_at: None,
-                created_at: "2026-05-21T00:00:00Z".to_string(),
-                updated_at: "2026-05-21T00:00:00Z".to_string(),
-            },
-            TaskRecord {
-                id: "2".to_string(),
-                conversation_id: "session-1".to_string(),
-                conversation_turn_id: "turn-1".to_string(),
-                title: "B".to_string(),
-                details: String::new(),
-                priority: "medium".to_string(),
-                status: "blocked".to_string(),
-                tags: Vec::new(),
-                due_at: None,
-                outcome_summary: String::new(),
-                outcome_items: Vec::new(),
-                resume_hint: String::new(),
-                blocker_reason: String::new(),
-                blocker_needs: Vec::new(),
-                blocker_kind: String::new(),
-                completed_at: None,
-                last_outcome_at: None,
-                created_at: "2026-05-21T00:00:00Z".to_string(),
-                updated_at: "2026-05-21T00:00:00Z".to_string(),
-            },
+            build_task_record("1", "running"),
+            build_task_record("2", "blocked"),
         ];
 
         let directive = classify_task_turn_follow_up(tasks.as_slice(), InternalContextLocale::ZhCn)
@@ -393,27 +398,7 @@ mod tests {
 
     #[test]
     fn classify_task_turn_follow_up_switches_to_review_when_all_non_blocked_done() {
-        let tasks = vec![TaskRecord {
-            id: "1".to_string(),
-            conversation_id: "session-1".to_string(),
-            conversation_turn_id: "turn-1".to_string(),
-            title: "A".to_string(),
-            details: String::new(),
-            priority: "medium".to_string(),
-            status: "done".to_string(),
-            tags: Vec::new(),
-            due_at: None,
-            outcome_summary: String::new(),
-            outcome_items: Vec::new(),
-            resume_hint: String::new(),
-            blocker_reason: String::new(),
-            blocker_needs: Vec::new(),
-            blocker_kind: String::new(),
-            completed_at: None,
-            last_outcome_at: None,
-            created_at: "2026-05-21T00:00:00Z".to_string(),
-            updated_at: "2026-05-21T00:00:00Z".to_string(),
-        }];
+        let tasks = vec![build_task_record("1", "succeeded")];
 
         let directive = classify_task_turn_follow_up(tasks.as_slice(), InternalContextLocale::EnUs)
             .expect("directive should exist");

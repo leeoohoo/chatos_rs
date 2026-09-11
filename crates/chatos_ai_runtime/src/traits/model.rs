@@ -348,4 +348,7 @@ pub struct RuntimeCallbacks {
     pub on_before_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
     /// Called with the exact provider payload immediately before it is sent.
     pub on_before_send_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
+    /// Receives a bounded operational summary after the provider request has
+    /// either parsed or failed. It must never contain raw model input/output.
+    pub on_model_response: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
 }

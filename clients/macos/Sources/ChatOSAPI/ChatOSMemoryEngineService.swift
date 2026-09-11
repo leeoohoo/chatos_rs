@@ -52,8 +52,9 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
     public func compose() async throws -> AgentMemoryContext {
         let body: [String: JSONValue] = [
             "tenant_id": .string(scope.tenantID), "source_id": .string(scope.sourceID), "thread_id": .string(scope.threadID),
+            "subject_id": .string(scope.subjectID),
             "policy": .object(["include_thread_summary": .bool(true), "include_recent_records": .bool(true),
-                               "include_subject_memory": .bool(false), "summary_limit": .number(2)]),
+                               "include_subject_memory": .bool(true), "summary_limit": .number(2)]),
         ]
         let result: MemoryComposeDTO = try await request("/context/compose", method: "POST", body: body)
         guard result.thread_id == scope.threadID, result.meta.recent_record_count == result.recent_records.count else {
@@ -62,7 +63,10 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         for record in result.recent_records {
             try validate(tenant: record.tenant_id, source: record.source_id, thread: record.thread_id)
         }
-        return .init(summaries: result.blocks.map(\.text), recentRecordIDs: result.recent_records.map(\.id))
+        return try .init(
+            blocks: result.blocks.map { .init(blockType: $0.block_type, text: $0.text) },
+            recentRecords: result.recent_records.map(contextRecord)
+        )
     }
 
     public func startSummary(reason: String) async throws -> AgentSummaryStatus {
@@ -94,8 +98,65 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
     }
     private func status(_ value: MemorySummaryDTO) throws -> AgentSummaryStatus {
         guard value.thread_id == scope.threadID, !(value.running && value.completed) else { throw AgentRuntimeError.scopeMismatch }
-        return .init(jobID: value.job_run_id, running: value.running, completed: value.completed,
-                     failed: value.failed, compacted: value.compacted, errorMessage: value.error_message)
+        return .init(jobID: value.job_run_id, accepted: value.accepted, running: value.running,
+                     completed: value.completed, failed: value.failed, generated: value.generated,
+                     compacted: value.compacted, errorMessage: value.error_message)
+    }
+    private func contextRecord(_ value: MemoryRecordDTO) throws -> AgentMemoryContextRecord {
+        guard let role = AgentMessage.Role(rawValue: value.role) else { throw ChatOSAPIError.invalidResponse }
+        let calls = role == .assistant ? toolCalls(value.structured_payload, metadata: value.metadata) : []
+        let toolCallID = role == .tool
+            ? jsonString(value.metadata, keys: ["tool_call_id", "toolCallId", "tool_callId"])
+                ?? jsonString(value.structured_payload, keys: ["tool_call_id", "toolCallId", "tool_callId"])
+            : nil
+        return .init(id: value.id, message: .init(role: role, content: value.content,
+                                                  toolCalls: calls, toolCallID: toolCallID))
+    }
+    private func toolCalls(_ payload: JSONValue?, metadata: JSONValue?) -> [AgentToolCall] {
+        let raw = jsonValue(payload, keys: ["tool_calls", "toolCalls"])
+            ?? jsonValue(metadata, keys: ["tool_calls", "toolCalls"])
+        let values: [JSONValue]
+        switch raw {
+        case let .array(items): values = items
+        case let .object(object): values = [.object(object)]
+        case let .string(text):
+            values = (try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))).map {
+                if case let .array(items) = $0 { return items }
+                return [$0]
+            } ?? []
+        default: values = []
+        }
+        return values.compactMap { value in
+            guard case let .object(object) = value,
+                  let id = string(object["id"]) ?? string(object["call_id"]),
+                  !id.isEmpty else { return nil }
+            let function: [String: JSONValue]
+            if case let .object(nested)? = object["function"] { function = nested } else { function = object }
+            guard let name = string(function["name"]), !name.isEmpty else { return nil }
+            let arguments = string(function["arguments"])
+                ?? function["arguments"].flatMap(compactJSON)
+                ?? "{}"
+            return .init(id: id, name: name, arguments: arguments)
+        }
+    }
+    private func jsonValue(_ value: JSONValue?, keys: [String]) -> JSONValue? {
+        guard case let .object(object)? = value else { return nil }
+        return keys.lazy.compactMap { object[$0] }.first
+    }
+    private func jsonString(_ value: JSONValue?, keys: [String]) -> String? {
+        keys.lazy.compactMap { key in
+            guard case let .object(object)? = value else { return nil }
+            return string(object[key])
+        }.first
+    }
+    private func string(_ value: JSONValue?) -> String? {
+        guard case let .string(text)? = value else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+    private func compactJSON(_ value: JSONValue) -> String? {
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
     private func request<T: Decodable & Sendable>(_ path: String) async throws -> T {
         try await client.request(path, timeoutInterval: 30, service: .memoryEngine, expectedAuthenticationSessionID: sessionID)

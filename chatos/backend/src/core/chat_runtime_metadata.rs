@@ -13,7 +13,6 @@ pub struct ChatRuntimeMetadata {
     pub project_root: Option<String>,
     pub workspace_root: Option<String>,
     pub remote_connection_id: Option<String>,
-    pub auto_create_task: Option<bool>,
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -47,14 +46,6 @@ pub fn metadata_string(metadata: Option<&Value>, path: &[&str]) -> Option<String
     normalize_optional_string(cursor.as_str().map(ToOwned::to_owned))
 }
 
-pub fn metadata_bool(metadata: Option<&Value>, path: &[&str]) -> Option<bool> {
-    let mut cursor = metadata?;
-    for key in path {
-        cursor = cursor.get(*key)?;
-    }
-    cursor.as_bool()
-}
-
 fn metadata_string_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<String> {
     paths
         .iter()
@@ -68,12 +59,6 @@ fn metadata_project_id_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> O
     })
 }
 
-fn metadata_bool_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<bool> {
-    paths
-        .iter()
-        .find_map(|path| metadata_bool_with_source(metadata, path))
-}
-
 fn with_source_metadata_prefix<'a>(path: &'a [&'a str]) -> Vec<&'a str> {
     let mut source_path = Vec::with_capacity(path.len() + 1);
     source_path.push("source_metadata");
@@ -85,13 +70,6 @@ fn metadata_string_with_source(metadata: Option<&Value>, path: &[&str]) -> Optio
     metadata_string(metadata, path).or_else(|| {
         let source_path = with_source_metadata_prefix(path);
         metadata_string(metadata, source_path.as_slice())
-    })
-}
-
-fn metadata_bool_with_source(metadata: Option<&Value>, path: &[&str]) -> Option<bool> {
-    metadata_bool(metadata, path).or_else(|| {
-        let source_path = with_source_metadata_prefix(path);
-        metadata_bool(metadata, source_path.as_slice())
     })
 }
 
@@ -180,13 +158,6 @@ impl ChatRuntimeMetadata {
                 &[
                     &["chat_runtime", "remote_connection_id"],
                     &["chat_runtime", "remoteConnectionId"],
-                ],
-            ),
-            auto_create_task: metadata_bool_aliases(
-                metadata,
-                &[
-                    &["chat_runtime", "auto_create_task"],
-                    &["chat_runtime", "autoCreateTask"],
                 ],
             ),
         }

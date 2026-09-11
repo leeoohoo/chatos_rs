@@ -25,7 +25,8 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(loaded.runs.first).applied)
         XCTAssertEqual(loaded.runs.first?.draft.characters, applied.characters)
         XCTAssertEqual(loaded.runs.first?.draft.scenes, applied.scenes)
-        XCTAssertEqual(result.toolReceipts.count, outlineCalls().count)
+        XCTAssertEqual(result.toolReceipts.count, outlineCalls().count - 1,
+                       "The deterministic validator should finish before asking the model for story_finish")
         var graphRun = result
         let graph = try StoryAgentTools.execute(call("story_read_graph", ["nodeOffset": 0, "edgeOffset": 0, "limit": 50]), run: &graphRun)
         XCTAssertTrue(graph.content.contains("characterInScene"))
@@ -153,7 +154,10 @@ final class StoryAgentTests: XCTestCase {
     func testApplyRejectsChangedProjectAndRecoversAppliedMarkerCrash() async throws {
         let store = fixture(); let original = project()
         var completed = try run(original)
-        for call in outlineCalls() { _ = try StoryAgentTools.execute(call, run: &completed) }
+        for call in outlineCalls() {
+            let outcome = try StoryAgentTools.execute(call, run: &completed)
+            completed.toolReceipts[call.id] = .init(name: call.name, arguments: call.arguments, outcome: outcome)
+        }
         completed.checkpoint.status = .completed
         var edited = original; edited.title = "Manual edit"
         try await store.save(edited, owner: "alice")
@@ -171,25 +175,121 @@ final class StoryAgentTests: XCTestCase {
 
     func testRefinementOnlyWritesFrozenTargetsAndRequiresAllOfThem() async throws {
         let store = fixture(); var project = project()
+        project.scenes = [.init(id: "room", name: "旧屋", profile: sceneProfile())]
         project.segments = ["s1", "s2", "s3"].enumerated().map {
             .init(id: $0.element, title: $0.element, synopsis: $0.element,
-                  sourceRange: .init(start: $0.offset, end: $0.offset + 1))
+                  sourceRange: .init(start: $0.offset, end: $0.offset + 1), sceneIDs: ["room"])
         }
         let run = try StoryAgentRun(project: project, owner: "alice", stage: .refine, targetIDs: ["s1", "s2"], policy: .init())
         let session = StoryAgentSession(run: run, store: store, publish: { _ in })
         let forbidden = try await session.execute(call("story_update_segment", ["segmentID": "s3", "detail": detail]))
         XCTAssertTrue(forbidden.isError)
-        _ = try await session.execute(call("story_update_segment", ["segmentID": "s1", "detail": detail]))
+        _ = try await session.execute(call("story_read_segment", ["segmentID": "s1"]))
+        let first = try await session.execute(call("story_update_segment", ["segmentID": "s1", "detail": detail]))
+        XCTAssertFalse(first.isError, first.content)
         let early = try await session.execute(call("story_finish", [:]))
         XCTAssertTrue(early.isError)
         var changed = detail; changed["firstFramePrompt"] = "different"
         let overwrite = try await session.execute(call("story_update_segment", ["segmentID": "s1", "detail": changed]))
         XCTAssertTrue(overwrite.isError)
-        _ = try await session.execute(call("story_update_segment", ["segmentID": "s2", "detail": detail]))
+        _ = try await session.execute(call("story_read_segment", ["segmentID": "s2"]))
+        let second = try await session.execute(call("story_update_segment", ["segmentID": "s2", "detail": detail]))
+        XCTAssertFalse(second.isError, second.content)
         let done = try await session.execute(call("story_finish", [:]))
-        XCTAssertFalse(done.isError)
+        XCTAssertFalse(done.isError, done.content)
         let profile = try await session.execute(call("story_save_scene_profile", sceneArguments))
         XCTAssertTrue(profile.isError)
+    }
+
+    func testRefinementRejectsShotLanguageUntilSegmentHasALinkedScene() async throws {
+        let store = fixture()
+        var value = project()
+        value.scenes = [.init(id: "room", name: "旧屋", profile: sceneProfile())]
+        value.segments = [.init(id: "s1", title: "进入", synopsis: "主角进入旧屋",
+                                sourceRange: .init(start: 0, end: value.source.count))]
+        let initial = try StoryAgentRun(project: value, owner: "alice", stage: .refine,
+                                        targetIDs: ["s1"], policy: .init())
+        let session = StoryAgentSession(run: initial, store: store, publish: { _ in })
+
+        _ = try await session.execute(call("story_read_segment", ["segmentID": "s1"]))
+        let rejected = try await session.execute(call("story_update_segment", ["segmentID": "s1", "detail": detail]))
+        XCTAssertTrue(rejected.isError)
+        XCTAssertTrue(rejected.content.contains("尚未完成"))
+    }
+
+    func testRefinementRegenerationKeepsImageVersionsButClearsTheirConfirmationsInDraft() throws {
+        var value = project()
+        var segment = StorySegment(
+            id: "s1", title: "existing", synopsis: "existing",
+            sourceRange: .init(start: 0, end: value.source.count)
+        )
+        segment.detail = try JSONDecoder().decode(
+            StorySegmentDetail.self,
+            from: JSONSerialization.data(withJSONObject: detail)
+        )
+        let first = StoryImage(filename: "first.png", mimeType: "image/png")
+        let last = StoryImage(filename: "last.png", mimeType: "image/png")
+        segment.firstFrames.images = [first]
+        segment.firstFrames.confirmedImageID = first.id
+        segment.lastFrames.images = [last]
+        segment.lastFrames.confirmedImageID = last.id
+        value.segments = [segment]
+
+        let run = try StoryAgentRun(
+            project: value, owner: "alice", stage: .refine,
+            targetIDs: [segment.id], policy: .init()
+        )
+
+        XCTAssertEqual(run.baseDigest, try StoryAgentRun.digest(value))
+        XCTAssertNil(run.draft.segments[0].detail)
+        XCTAssertEqual(run.draft.segments[0].firstFrames.images, [first])
+        XCTAssertEqual(run.draft.segments[0].lastFrames.images, [last])
+        XCTAssertNil(run.draft.segments[0].confirmedFrameID)
+        XCTAssertNil(run.draft.segments[0].confirmedLastFrameID)
+        XCTAssertFalse(run.draft.segments[0].useLastFrameForVideo)
+        XCTAssertEqual(value.segments[0].detail, segment.detail, "The canonical project must remain unchanged until the draft is applied")
+    }
+
+    func testReadSegmentReturnsNeighborShotPlansAndVisualContinuityState() throws {
+        var value = project()
+        let tail = StoryImage(filename: "tail.png", mimeType: "image/png")
+        var previous = StorySegment(id: "s1", title: "上一段", synopsis: "走到窗边",
+                                    sourceRange: .init(start: 0, end: 1))
+        previous.detail = .init(
+            firstFramePrompt: "人物站在门口",
+            shots: [.init(start: 0, end: 15, prompt: "人物从门口走到东侧窗边，镜头向右横移")],
+            continuityIn: "人物在门口", continuityOut: "人物面向东侧窗户，右手仍握钥匙",
+            audio: "脚步声", constraints: "灰色外套和暖色夕阳保持不变",
+            lastFramePrompt: "中景，人物停在东侧窗边，面朝右侧，右手握钥匙")
+        previous.lastFrames.images = [tail]
+        previous.confirmedLastFrameID = tail.id
+        previous.video = .init(filename: "previous.mp4", jobID: "job-1", modelName: "video-model")
+        let current = StorySegment(id: "s2", title: "当前段", synopsis: "人物打开窗户",
+                                   sourceRange: .init(start: 1, end: 2))
+        var next = StorySegment(id: "s3", title: "下一段", synopsis: "人物离开",
+                                sourceRange: .init(start: 2, end: 4))
+        next.detail = .init(firstFramePrompt: "人物转向门口",
+                            shots: [.init(start: 0, end: 15, prompt: "人物离开")],
+                            continuityIn: "人物仍在窗边", continuityOut: "人物离开",
+                            audio: "关门声", constraints: "保持外套", lastFramePrompt: "空房间")
+        value.segments = [previous, current, next]
+
+        var run = try StoryAgentRun(project: value, owner: "alice", stage: .refine,
+                                    targetIDs: ["s2"], policy: .init())
+        let outcome = try StoryAgentTools.execute(call("story_read_segment", ["segmentID": "s2"]), run: &run)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(outcome.content.utf8)) as? [String: Any])
+        XCTAssertEqual(object["sourceExcerpt"] as? String, "承")
+        let adjacent = try XCTUnwrap(object["adjacentContinuity"] as? [String: Any])
+        let previousState = try XCTUnwrap(adjacent["previous"] as? [String: Any])
+        XCTAssertEqual(previousState["lastFramePrompt"] as? String,
+                       "中景，人物停在东侧窗边，面朝右侧，右手握钥匙")
+        XCTAssertEqual(previousState["continuityOut"] as? String, "人物面向东侧窗户，右手仍握钥匙")
+        XCTAssertEqual(previousState["hasConfirmedLastFrame"] as? Bool, true)
+        XCTAssertEqual(previousState["videoCompleted"] as? Bool, true)
+        let shots = try XCTUnwrap(previousState["shots"] as? [[String: Any]])
+        XCTAssertTrue((shots.last?["prompt"] as? String)?.contains("向右横移") == true)
+        let nextState = try XCTUnwrap(adjacent["next"] as? [String: Any])
+        XCTAssertEqual(nextState["firstFramePrompt"] as? String, "人物转向门口")
     }
 
     func testLongGuidanceCanBeReadBeyondPreviewAndOldDraftSchemaIsRejected() throws {
@@ -286,6 +386,42 @@ final class StoryAgentTests: XCTestCase {
         for _ in 0..<500 where vm.isBusy || vm.isLoading || vm.isLoadingAgentRuns { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertFalse(vm.isBusy); XCTAssertFalse(vm.isLoading); XCTAssertFalse(vm.isLoadingAgentRuns)
     }
+    func testSegmentToolExplicitlyModelsTransitionKindAndDuration() throws {
+        let definition = try XCTUnwrap(StoryAgentTools.definitions(stage: .outline).first { $0.name == "story_append_segments" })
+        XCTAssertTrue(definition.description.contains("严禁每段都加"))
+        let schema = try XCTUnwrap(JSONSerialization.jsonObject(with: definition.schema) as? [String: Any])
+        let properties = try XCTUnwrap(schema["properties"] as? [String: Any])
+        let segments = try XCTUnwrap(properties["segments"] as? [String: Any])
+        let items = try XCTUnwrap(segments["items"] as? [String: Any])
+        let fields = try XCTUnwrap(items["properties"] as? [String: Any])
+        XCTAssertNotNil(fields["kind"])
+        XCTAssertNotNil(fields["seconds"])
+        XCTAssertTrue((items["required"] as? [String])?.contains("kind") == true)
+        XCTAssertTrue((items["required"] as? [String])?.contains("seconds") == true)
+
+        var value = try run(project())
+        value.readThrough = value.draft.source.count
+        let outcome = try StoryAgentTools.execute(call("story_append_segments", ["segments": [
+            ["id": "s1", "title": "开始", "synopsis": "开始", "kind": "story", "seconds": 8,
+             "sourceStart": 0, "sourceEnd": 2],
+            ["id": "t1", "title": "转场", "synopsis": "空间转场", "kind": "transition", "seconds": 3,
+             "sourceStart": 2, "sourceEnd": 2],
+            ["id": "s2", "title": "结束", "synopsis": "结束", "kind": "story", "seconds": 6,
+             "sourceStart": 2, "sourceEnd": 4],
+        ]]), run: &value)
+        XCTAssertFalse(outcome.isError)
+        XCTAssertEqual(value.draft.segments.map(\.kind), [.story, .transition, .story])
+        XCTAssertEqual(value.draft.segments.map(\.seconds), [8, 3, 6])
+        XCTAssertEqual(value.draft.totalSeconds, 17)
+    }
+
+    func testTransitionPolicyIsSelectiveAndOwnedByPlanningAgent() {
+        let system = StoryAgentTools.systemPrompt
+        XCTAssertTrue(system.contains("大多数边界应直接衔接"))
+        XCTAssertTrue(system.contains("严禁在每两个剧情段之间机械插入转场"))
+        XCTAssertTrue(system.contains("不能把转场判断留给用户手动补"))
+    }
+
     private func fixture() -> StoryProjectStore {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoryAgentTests-\(UUID())")
         addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
@@ -302,7 +438,8 @@ final class StoryAgentTests: XCTestCase {
         .init(id: UUID().uuidString, name: name, arguments: String(decoding: try! JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]), as: UTF8.self))
     }
     private func segment(_ id: String, _ start: Int, _ end: Int, refs: [String] = []) -> [String: Any] {
-        ["id": id, "title": id, "synopsis": "镜头情节", "sourceStart": start, "sourceEnd": end]
+        ["id": id, "title": id, "synopsis": "镜头情节", "kind": "story", "seconds": 15,
+         "sourceStart": start, "sourceEnd": end]
     }
     private var characterArguments: [String: Any] {
         ["id": "hero", "name": "主角", "profile": ["isProtagonist": true, "roleInStory": "寻找归途的人", "appearance": "原文未说明，视觉设定建议短发", "personality": "坚毅", "motivation": "回家", "relationships": "旅人", "costume": "原文未说明，视觉设定建议灰色外套", "consistencyNotes": "外套与发型保持一致"]]
@@ -319,7 +456,9 @@ final class StoryAgentTests: XCTestCase {
               lightingAndPalette: "暖色夕阳", keyElements: "木桌", atmosphere: "安静", consistencyNotes: "保持门窗方位一致")
     }
     private var detail: [String: Any] {
-        ["firstFramePrompt": "wide room", "shots": [["start": 0, "end": 15, "prompt": "tracking shot"]], "continuityIn": "enter", "continuityOut": "exit", "audio": "wind", "constraints": "same room"]
+        ["firstFramePrompt": "wide room", "lastFramePrompt": "room after movement",
+         "shots": [["start": 0, "end": 15, "prompt": "tracking shot"]],
+         "continuityIn": "enter", "continuityOut": "exit", "audio": "wind", "constraints": "same room"]
     }
     private func outlineCalls() -> [AgentToolCall] {
         [call("story_read_source", ["offset": 0, "limit": 4]), call("story_save_summary", ["summary": "完整剧情"]),
@@ -332,6 +471,7 @@ final class StoryAgentTests: XCTestCase {
     private func execute(_ run: StoryAgentRun, session: StoryAgentSession, model: ScriptedStoryModel) async throws -> StoryAgentRun {
         let checkpoint = try await AgentRuntime().run(checkpoint: run.checkpoint, scope: run.checkpoint.scope, policy: run.policy,
             model: model, tools: StoryAgentTools.definitions(stage: run.stage), execute: { try await session.execute($0) },
+            completionCheck: { await session.validatedCompletion() },
             record: { try await session.record($0, event: $1) })
         return try await session.finish(checkpoint)
     }
@@ -376,7 +516,9 @@ private actor StoryLoopMemory: AgentMemoryServicing {
     var entries: [AgentMemoryEntry] = []
     func ensureThread() async throws {}
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws { self.entries += entries }
-    func compose() async throws -> AgentMemoryContext { .init(summaries: [], recentRecordIDs: entries.map(\.id)) }
+    func compose() async throws -> AgentMemoryContext {
+        .init(blocks: [], recentRecords: entries.map { .init(id: $0.id, message: $0.message) })
+    }
     func startSummary(reason: String) async throws -> AgentSummaryStatus { throw AgentContextError.summaryFailed(nil) }
     func summaryStatus(jobID: String?) async throws -> AgentSummaryStatus { throw AgentContextError.summaryFailed(nil) }
 }

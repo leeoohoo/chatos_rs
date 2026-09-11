@@ -22,6 +22,7 @@ pub fn router() -> Router {
 #[derive(Debug, Deserialize)]
 struct AvailablePluginsQuery {
     project_id: Option<String>,
+    project_context: Option<String>,
 }
 
 async fn list_available_plugins(
@@ -33,6 +34,21 @@ async fn list_available_plugins(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let project_context = match query.project_context.as_deref() {
+        Some(value) => match serde_json::from_str::<
+            chatos_mcp_management_sdk::ClientProjectContextSnapshot,
+        >(value)
+        {
+            Ok(snapshot) => Some(snapshot),
+            Err(error_message) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid project_context: {error_message}"),
+                )
+            }
+        },
+        None => None,
+    };
     let Some(access_token) = access_token_scope::get_current_access_token() else {
         return error(
             StatusCode::UNAUTHORIZED,
@@ -47,6 +63,7 @@ async fn list_available_plugins(
         config.task_runner_base_url.as_str(),
         access_token.as_str(),
         project_id,
+        project_context.as_ref(),
     )
     .await
     {

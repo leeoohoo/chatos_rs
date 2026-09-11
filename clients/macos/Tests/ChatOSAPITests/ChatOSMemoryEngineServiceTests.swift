@@ -11,7 +11,8 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let entries = records(scope)
         try await service.sync(entries, reconciling: false)
         let composed = try await service.compose()
-        XCTAssertEqual(composed.recentRecordIDs, entries.map(\.id))
+        XCTAssertEqual(composed.recentRecords.map(\.id), entries.map(\.id))
+        XCTAssertEqual(composed.recentRecords.map(\.message), entries.map(\.message))
         let started = try await service.startSummary(reason: "active_context_budget")
         let status = try await service.summaryStatus(jobID: started.jobID)
         XCTAssertTrue(status.completed)
@@ -38,7 +39,8 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual((records[1]["structured_payload"] as? [String: Any])?["tool_call_id"] as? String, "call-a")
         XCTAssertNil(records[0]["summary_status"])
         let policy = try XCTUnwrap(try object(calls[2].body)["policy"] as? [String: Any])
-        XCTAssertEqual(policy["include_subject_memory"] as? Bool, false)
+        XCTAssertEqual(policy["include_subject_memory"] as? Bool, true)
+        XCTAssertEqual(try object(calls[2].body)["subject_id"] as? String, scope.subjectID)
         XCTAssertNil(policy["recent_record_limit"], "Do not silently drop unsummarized records")
         XCTAssertFalse(calls.contains { String(decoding: $0.body ?? Data(), as: UTF8.self).contains("user-token") })
     }
@@ -172,8 +174,9 @@ private actor MemoryTransport: HTTPTransport {
             result = ["thread_id": scope.threadID, "blocks": [], "recent_records": stored,
                       "meta": ["summary_count": 0, "recent_record_count": stored.count]]
         } else if path.contains("/active-summary/") {
-            result = ["thread_id": scope.threadID, "job_run_id": "job/a?b", "running": false,
-                      "completed": summaryError == nil, "failed": summaryError != nil, "compacted": summaryError == nil,
+            result = ["thread_id": scope.threadID, "job_run_id": "job/a?b", "accepted": true, "running": false,
+                      "completed": summaryError == nil, "failed": summaryError != nil,
+                      "generated": summaryError == nil, "compacted": summaryError == nil,
                       "error_message": summaryError as Any? ?? NSNull()]
         } else if path.contains("/records/") {
             result = ["item": stored.first { $0["id"] as? String == request.url.lastPathComponent } as Any? ?? NSNull()]

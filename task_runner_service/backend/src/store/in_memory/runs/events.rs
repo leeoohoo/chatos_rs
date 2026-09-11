@@ -34,6 +34,23 @@ impl InMemoryStore {
             .unwrap_or_default()
     }
 
+    pub(in crate::store) fn list_run_events_page(
+        &self,
+        run_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> (Vec<TaskRunEventRecord>, usize) {
+        let mut events = self.list_run_events(run_id);
+        events.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then(left.id.cmp(&right.id))
+        });
+        let total = events.len();
+        let items = events.into_iter().skip(offset).take(limit).collect();
+        (items, total)
+    }
+
     pub(in crate::store) fn get_run_event(
         &self,
         run_id: &str,

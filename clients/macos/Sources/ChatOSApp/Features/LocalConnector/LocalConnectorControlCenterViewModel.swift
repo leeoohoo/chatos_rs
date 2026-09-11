@@ -91,7 +91,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func disconnect() {
-        performAction(successNotice: "已断开这台设备与网关的配对。") {
+        performAction(successNotice: "已阻断服务端到本机的调用，本机数据和配置均已保留。") {
             self.status = try await self.service.disconnect()
         }
     }
@@ -114,15 +114,21 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         plugins = []
         browserExtensionPairedPluginIDs = []
         Task {
-            _ = try? await service.disconnect()
+            // A missing/expired login session is not an explicit request to erase this
+            // Mac's persisted project and workspace access state.
+            await service.suspendForSignedOut()
         }
     }
 
     func reconnect() {
-        performAction(successNotice: "设备已重新配对。") {
-            self.status = try await self.service.pairWithCurrentChatOSSession(
-                deviceName: Host.current().localizedName
-            )
+        performAction(successNotice: "服务端到本机的调用通道已恢复。") {
+            if self.status?.configured == true {
+                self.status = try await self.service.resumeServerAccess()
+            } else {
+                self.status = try await self.service.pairWithCurrentChatOSSession(
+                    deviceName: Host.current().localizedName
+                )
+            }
         }
     }
 

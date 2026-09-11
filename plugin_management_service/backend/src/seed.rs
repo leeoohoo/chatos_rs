@@ -62,7 +62,6 @@ const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "local_connector_client_agent",
     "memory_engine_context_agent",
 ];
-const CHATOS_NOTEPAD_AGENT_KEYS: &[&str] = &[CHATOS_CONVERSATION_AGENT_KEY];
 const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &[CHATOS_CONVERSATION_AGENT_KEY];
 const TASK_RUNNER_PHASE_AGENT_KEYS: &[&str] = &[TASK_RUNNER_RUN_AGENT_KEY];
 pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Result<(), String> {

@@ -34,26 +34,47 @@ public struct AgentMemoryEntry: Sendable {
     }
 }
 
+public struct AgentMemoryContextBlock: Equatable, Sendable {
+    public let blockType: String
+    public let text: String
+    public init(blockType: String, text: String) { self.blockType = blockType; self.text = text }
+}
+
+public struct AgentMemoryContextRecord: Equatable, Sendable {
+    public let id: String
+    public let message: AgentMessage
+    public init(id: String, message: AgentMessage) { self.id = id; self.message = message }
+}
+
+/// The native representation of Memory Engine's `ComposeContextResponse`.
+/// Keep both blocks and records: callers must use the composed response rather than rebuilding
+/// a different context from a list of record IDs.
 public struct AgentMemoryContext: Sendable {
-    public let summaries: [String]
-    public let recentRecordIDs: [String]
-    public init(summaries: [String], recentRecordIDs: [String]) {
-        self.summaries = summaries; self.recentRecordIDs = recentRecordIDs
+    public let blocks: [AgentMemoryContextBlock]
+    public let recentRecords: [AgentMemoryContextRecord]
+    public init(blocks: [AgentMemoryContextBlock], recentRecords: [AgentMemoryContextRecord]) {
+        self.blocks = blocks; self.recentRecords = recentRecords
     }
 }
 
 public struct AgentSummaryStatus: Sendable {
     public var jobID: String?
+    public var accepted: Bool
     public var running: Bool
     public var completed: Bool
     public var failed: Bool
+    public var generated: Bool
     public var compacted: Bool
     public var errorMessage: String?
-    public init(jobID: String? = nil, running: Bool = false, completed: Bool = false,
-                failed: Bool = false, compacted: Bool = false, errorMessage: String? = nil) {
-        self.jobID = jobID; self.running = running; self.completed = completed
-        self.failed = failed; self.compacted = compacted; self.errorMessage = errorMessage
+    public init(jobID: String? = nil, accepted: Bool = false, running: Bool = false,
+                completed: Bool = false, failed: Bool = false, generated: Bool = false,
+                compacted: Bool = false, errorMessage: String? = nil) {
+        self.jobID = jobID; self.accepted = accepted; self.running = running
+        self.completed = completed; self.failed = failed; self.generated = generated
+        self.compacted = compacted; self.errorMessage = errorMessage
     }
+
+    public var changedContext: Bool { generated || compacted }
 }
 
 public protocol AgentMemoryServicing: Sendable {
@@ -73,9 +94,6 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
     public var syncedDigest: String = ""
     public var threadCreated = false
     public var syncInFlightEnd: Int?
-    public var summaryJobID: String?
-    public var summaryRequested = false
-    public var summaryInputEstimate: Int?
     public var compactions = 0
     public init(scope: AgentMemoryScope, pinnedMessageCount: Int, recordEpoch: Date = Date()) {
         self.scope = scope; self.pinnedMessageCount = pinnedMessageCount; self.recordEpoch = recordEpoch
@@ -83,18 +101,22 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
 }
 
 public struct AgentContextPolicy: Codable, Equatable, Sendable {
-    /// Conservative configurable budget for unknown models; this is not model metadata.
-    public var windowTokens = 32_768
-    public var outputReserveTokens = 4_096
-    public var compactionThresholdTokens = 20_000
-    public var maximumCompactionPasses = 4
+    /// These defaults intentionally match `chatos_ai_runtime` so Task Runner and native
+    /// Agents use the same soft/hard budget semantics. Users can override them for a model.
+    public var windowTokens = 250_000
+    public var outputReserveTokens = 30_000
+    public var compactionThresholdTokens = 220_000
+    public var maximumCompactionPasses = 8
     public var summaryTimeoutSeconds = 120
-    public var summaryPollSeconds = 2
+    public var summaryPollSeconds = 10
     public init() {}
-    public var hardInputLimit: Int { windowTokens - outputReserveTokens }
+    /// Same distinction as Task Runner: the reserve defines the proactive compaction point;
+    /// the model window itself remains the hard failure limit.
+    public var reservedInputLimit: Int { windowTokens - outputReserveTokens }
+    public var hardInputLimit: Int { windowTokens }
     public func validate() throws {
         guard (2_048...2_000_000).contains(windowTokens), (256..<windowTokens).contains(outputReserveTokens),
-              (512..<hardInputLimit).contains(compactionThresholdTokens),
+              (512...reservedInputLimit).contains(compactionThresholdTokens),
               (1...16).contains(maximumCompactionPasses), (5...1_800).contains(summaryTimeoutSeconds),
               (1...30).contains(summaryPollSeconds) else { throw AgentRuntimeError.invalidPolicy }
     }
@@ -121,12 +143,30 @@ public enum AgentContextError: LocalizedError, Sendable {
 }
 
 public enum AgentContextBudget {
-    /// UTF-8 byte accounting deliberately overestimates ordinary text. It is a safety estimate,
-    /// not an exact tokenizer. Includes tool schemas, framing and an extra safety margin.
+    /// Mirrors `chatos_ai_runtime::estimated_json_tokens`: serialize the complete model-input
+    /// payload and use four JSON bytes per estimated token. This remains an estimate, but the
+    /// returned unit is tokens rather than raw UTF-8 bytes.
     public static func estimate(messages: [AgentMessage], tools: [AgentToolDefinition]) throws -> Int {
-        let transcript = try JSONEncoder().encode(messages).count
-        let definitions = tools.reduce(0) { $0 + $1.schema.count + $1.name.utf8.count + $1.description.utf8.count + 128 }
-        return transcript + definitions + 1_024
+        let messagePayload = messages.map { message -> [String: Any] in
+            var value: [String: Any] = ["role": message.role.rawValue, "content": message.content]
+            if let toolCallID = message.toolCallID { value["tool_call_id"] = toolCallID }
+            if !message.toolCalls.isEmpty {
+                value["tool_calls"] = message.toolCalls.map { call in
+                    ["id": call.id, "type": "function", "function": ["name": call.name, "arguments": call.arguments]]
+                }
+            }
+            return value
+        }
+        let toolPayload = try tools.map { tool -> [String: Any] in
+            ["type": "function", "function": [
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": try JSONSerialization.jsonObject(with: tool.schema),
+            ]]
+        }
+        let payload: [String: Any] = ["messages": messagePayload, "tools": toolPayload]
+        let bytes = try JSONSerialization.data(withJSONObject: payload).count
+        return max(1, (bytes + 3) / 4)
     }
 
     static func digest(_ messages: ArraySlice<AgentMessage>) throws -> String {

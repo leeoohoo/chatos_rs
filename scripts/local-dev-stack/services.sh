@@ -37,7 +37,7 @@ start_backend() {
   else
     echo "[INFO] starting $name without HTTP listener"
   fi
-  : >"$log_file"
+  rotate_service_log "$log_file"
   (
     cd "$ROOT_DIR"
     cargo "${cargo_args[@]}"
@@ -592,7 +592,7 @@ start_frontend() {
   stop_service_pid "$name"
   stop_port_if_needed "$port" "$name"
   echo "[INFO] starting $name on 0.0.0.0:$port"
-  : >"$log_file"
+  rotate_service_log "$log_file"
   local spawned_pid
   spawned_pid="$(
     spawn_detached "$ROOT_DIR/$app_dir" "$log_file" npm run dev -- --host 0.0.0.0 --port "$port" --strictPort

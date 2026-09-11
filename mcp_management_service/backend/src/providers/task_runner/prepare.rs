@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
-use chatos_mcp_management_sdk::{McpProviderKind, ResolvedMcpRoute};
+use chatos_mcp_management_sdk::{ClientProjectContextSnapshot, McpProviderKind, ResolvedMcpRoute};
 use chatos_mcp_service::METHOD_TOOLS_LIST;
 use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_service_runtime::http_body::read_response_bytes_limited;
@@ -25,6 +25,7 @@ impl TaskRunnerProvider {
         owner_user_id: &str,
         agent_key: SystemAgentKey,
         project_id: Option<&str>,
+        client_project_context: Option<&ClientProjectContextSnapshot>,
         run_id: Option<&str>,
         turn_id: Option<&str>,
         task_id: Option<&str>,
@@ -43,6 +44,7 @@ impl TaskRunnerProvider {
             session_id: runtime_session_id,
             expires_at_unix,
             project_id,
+            client_project_context,
             run_id,
             turn_id,
             task_id,

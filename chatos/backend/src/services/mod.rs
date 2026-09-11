@@ -38,7 +38,6 @@ pub(crate) mod shared_builtin_memory_readers;
 pub(crate) mod shared_builtin_notepad;
 pub(crate) mod shared_mcp_runtime;
 pub mod system_context_ai;
-pub mod task_board_prompt;
 pub mod task_manager;
 pub(crate) mod task_runner_api_client;
 pub(crate) mod text_normalization;

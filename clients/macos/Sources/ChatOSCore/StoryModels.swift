@@ -21,6 +21,11 @@ public struct StoryImageCollection: Codable, Equatable, Sendable {
     }
 }
 
+public enum StoryFrameRole: String, Codable, CaseIterable, Sendable {
+    case first
+    case last
+}
+
 public struct StoryCharacter: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var name: String
@@ -124,12 +129,14 @@ public struct StoryProject: Codable, Equatable, Identifiable, Sendable {
         updatedAt = try values.decode(Date.self, forKey: .updatedAt)
     }
 
-    public var totalSeconds: Int { segments.count * 15 }
+    public var totalSeconds: Int { segments.reduce(0) { $0 + $1.seconds } }
     public var completedCount: Int { segments.filter { $0.video != nil }.count }
     public var hasUnresolvedVideoJobs: Bool { segments.contains { $0.attempt != nil && $0.video == nil } }
     public var hasUnresolvedImageJobs: Bool {
         resources.contains { $0.media.generationAttemptID != nil }
-        || segments.contains { $0.firstFrames.generationAttemptID != nil }
+        || segments.contains {
+            $0.firstFrames.generationAttemptID != nil || $0.lastFrames.generationAttemptID != nil
+        }
     }
     public var hasUnresolvedJobs: Bool { hasUnresolvedVideoJobs || hasUnresolvedImageJobs }
     public var resources: [StoryResource] {
@@ -177,8 +184,8 @@ public struct StoryProject: Codable, Equatable, Identifiable, Sendable {
             guard !prop.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, prop.description.count <= 2_000 else { throw StoryError.invalidPlan }
         }
         let characterIDs = Set(characters.map(\.id)), sceneIDs = Set(scenes.map(\.id)), propIDs = Set(props.map(\.id))
-        for segment in segments {
-            guard segment.seconds == 15, !segment.id.isEmpty, segment.id.count <= 128,
+        for (segmentIndex, segment) in segments.enumerated() {
+            guard (2...15).contains(segment.seconds), !segment.id.isEmpty, segment.id.count <= 128,
                   !segment.title.isEmpty, segment.title.count <= 120, segment.synopsis.count <= 2_000,
                   segment.characterIDs.count + segment.sceneIDs.count + segment.propIDs.count <= 8,
                   Set(segment.characterIDs).count == segment.characterIDs.count,
@@ -188,9 +195,21 @@ public struct StoryProject: Codable, Equatable, Identifiable, Sendable {
                   segment.sceneIDs.allSatisfy(sceneIDs.contains),
                   segment.propIDs.allSatisfy(propIDs.contains) else { throw StoryError.invalidPlan }
             try segment.firstFrames.validate()
-            guard segment.sourceRange.start >= 0, segment.sourceRange.end > segment.sourceRange.start,
-                  segment.sourceRange.end <= source.count else { throw StoryError.invalidPlan }
-            if let detail = segment.detail { try detail.validate() }
+            try segment.lastFrames.validate()
+            guard segment.sourceRange.start >= 0, segment.sourceRange.end >= segment.sourceRange.start,
+                  segment.sourceRange.end <= source.count else {
+                throw StoryError.invalidPlan
+            }
+            if segment.kind == .transition {
+                guard segmentIndex > 0, segmentIndex + 1 < segments.count,
+                      segments[segmentIndex - 1].kind == .story,
+                      segments[segmentIndex + 1].kind == .story,
+                      segment.sourceRange.start == segment.sourceRange.end,
+                      segment.seconds <= 3 else { throw StoryError.invalidPlan }
+            } else {
+                guard segment.sourceRange.end > segment.sourceRange.start else { throw StoryError.invalidPlan }
+            }
+            if let detail = segment.detail { try detail.validate(duration: segment.seconds) }
         }
         guard Set(relations.map(\.id)).count == relations.count else { throw StoryError.invalidPlan }
         for relation in relations {
@@ -201,7 +220,8 @@ public struct StoryProject: Codable, Equatable, Identifiable, Sendable {
                   segments.first(where: { $0.id == relation.segmentID })?.sceneIDs.contains(relation.sceneID) == true,
                   !relation.action.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, relation.action.count <= 400,
                   !relation.position.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, relation.position.count <= 400,
-                  (0...14).contains(relation.startSecond), (1...15).contains(relation.endSecond),
+                  relation.startSecond >= 0,
+                  relation.endSecond <= (segments.first(where: { $0.id == relation.segmentID })?.seconds ?? 0),
                   relation.startSecond < relation.endSecond else { throw StoryError.invalidPlan }
         }
         for (index, relation) in relations.enumerated() {
@@ -266,13 +286,31 @@ public struct StoryImage: Codable, Equatable, Identifiable, Sendable {
     public var id = UUID()
     public var filename: String
     public var mimeType: String
-    public init(filename: String, mimeType: String) { self.filename = filename; self.mimeType = mimeType }
+    /// IDs are deliberately retained independently: the local file ID is not a
+    /// replacement for the caller attempt or the provider's response IDs.
+    public var sourceResourceID: String?
+    public var generationAttemptID: UUID?
+    public var providerResultID: String?
+    public var providerAssetID: String?
+    public init(filename: String, mimeType: String, sourceResourceID: String? = nil,
+                generationAttemptID: UUID? = nil, providerResultID: String? = nil,
+                providerAssetID: String? = nil) {
+        self.filename = filename; self.mimeType = mimeType; self.sourceResourceID = sourceResourceID
+        self.generationAttemptID = generationAttemptID; self.providerResultID = providerResultID
+        self.providerAssetID = providerAssetID
+    }
+}
+
+public enum StorySegmentKind: String, Codable, CaseIterable, Sendable {
+    case story
+    case transition
 }
 
 public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var title: String
     public var synopsis: String
+    public var kind: StorySegmentKind = .story
     public var seconds = 15
     public var sourceRange: StorySourceRange
     public var characterIDs: [String]
@@ -280,17 +318,52 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
     public var propIDs: [String]
     public var detail: StorySegmentDetail?
     public var firstFrames = StoryImageCollection()
+    /// Set only when the confirmed first frame was deterministically inherited from
+    /// the immediately preceding segment. User-selected/uploaded/generated frames keep this nil.
+    public var inheritedFirstFrameSourceSegmentID: String?
+    public var lastFrames = StoryImageCollection()
+    public var useLastFrameForVideo = true
     public var attempt: StoryVideoAttempt?
     public var previousAttempts: [StoryVideoAttempt] = []
     public var video: StoryVideo?
     public var error: String?
     public init(id: String, title: String, synopsis: String, sourceRange: StorySourceRange,
+                kind: StorySegmentKind = .story, seconds: Int = 15,
                 characterIDs: [String] = [], sceneIDs: [String] = [], propIDs: [String] = []) {
         self.id = id; self.title = title; self.synopsis = synopsis; self.sourceRange = sourceRange
+        self.kind = kind; self.seconds = seconds
         self.characterIDs = characterIDs; self.sceneIDs = sceneIDs; self.propIDs = propIDs
+    }
+    private enum CodingKeys: String, CodingKey {
+        case id, title, synopsis, kind, seconds, sourceRange, characterIDs, sceneIDs, propIDs, detail
+        case firstFrames, inheritedFirstFrameSourceSegmentID, lastFrames, useLastFrameForVideo
+        case attempt, previousAttempts, video, error
+    }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        synopsis = try values.decode(String.self, forKey: .synopsis)
+        kind = try values.decodeIfPresent(StorySegmentKind.self, forKey: .kind) ?? .story
+        seconds = try values.decodeIfPresent(Int.self, forKey: .seconds) ?? 15
+        sourceRange = try values.decode(StorySourceRange.self, forKey: .sourceRange)
+        characterIDs = try values.decodeIfPresent([String].self, forKey: .characterIDs) ?? []
+        sceneIDs = try values.decodeIfPresent([String].self, forKey: .sceneIDs) ?? []
+        propIDs = try values.decodeIfPresent([String].self, forKey: .propIDs) ?? []
+        detail = try values.decodeIfPresent(StorySegmentDetail.self, forKey: .detail)
+        firstFrames = try values.decodeIfPresent(StoryImageCollection.self, forKey: .firstFrames) ?? .init()
+        inheritedFirstFrameSourceSegmentID = try values.decodeIfPresent(String.self, forKey: .inheritedFirstFrameSourceSegmentID)
+        // version=2 projects written before tail-frame support intentionally decode to an empty collection.
+        lastFrames = try values.decodeIfPresent(StoryImageCollection.self, forKey: .lastFrames) ?? .init()
+        useLastFrameForVideo = try values.decodeIfPresent(Bool.self, forKey: .useLastFrameForVideo) ?? true
+        attempt = try values.decodeIfPresent(StoryVideoAttempt.self, forKey: .attempt)
+        previousAttempts = try values.decodeIfPresent([StoryVideoAttempt].self, forKey: .previousAttempts) ?? []
+        video = try values.decodeIfPresent(StoryVideo.self, forKey: .video)
+        error = try values.decodeIfPresent(String.self, forKey: .error)
     }
     public var resourceIDs: [String] { characterIDs + sceneIDs + propIDs }
     public var firstFrame: StoryImage? { firstFrames.confirmedImage }
+    public var lastFrame: StoryImage? { lastFrames.confirmedImage }
     public var confirmedFrameID: UUID? {
         get { firstFrames.confirmedImageID }
         set { firstFrames.confirmedImageID = newValue }
@@ -298,6 +371,17 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
     public var imageGenerationAttemptID: UUID? {
         get { firstFrames.generationAttemptID }
         set { firstFrames.generationAttemptID = newValue }
+    }
+    public var confirmedLastFrameID: UUID? {
+        get { lastFrames.confirmedImageID }
+        set { lastFrames.confirmedImageID = newValue }
+    }
+    public var lastFrameGenerationAttemptID: UUID? {
+        get { lastFrames.generationAttemptID }
+        set { lastFrames.generationAttemptID = newValue }
+    }
+    public func frames(for role: StoryFrameRole) -> StoryImageCollection {
+        role == .first ? firstFrames : lastFrames
     }
     public var isReady: Bool { detail != nil && firstFrame != nil && attempt == nil && video == nil }
 }
@@ -332,32 +416,47 @@ public struct StorySegmentDetail: Codable, Equatable, Sendable {
         public init(start: Int, end: Int, prompt: String) { self.start = start; self.end = end; self.prompt = prompt }
     }
     public var firstFramePrompt: String
+    public var lastFramePrompt: String?
     public var shots: [Shot]
     public var continuityIn: String
     public var continuityOut: String
     public var audio: String
     public var constraints: String
-    public init(firstFramePrompt: String, shots: [Shot], continuityIn: String, continuityOut: String, audio: String, constraints: String) {
+    public init(firstFramePrompt: String, shots: [Shot], continuityIn: String, continuityOut: String, audio: String,
+                constraints: String, lastFramePrompt: String? = nil) {
         self.firstFramePrompt = firstFramePrompt; self.shots = shots; self.continuityIn = continuityIn
         self.continuityOut = continuityOut; self.audio = audio; self.constraints = constraints
+        self.lastFramePrompt = lastFramePrompt
     }
-    public func validate() throws {
+    public func validate(duration: Int = 15) throws {
+        guard (2...15).contains(duration) else { throw StoryError.invalidPlan }
         guard !firstFramePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               firstFramePrompt.count <= 3_000, (1...8).contains(shots.count),
+              lastFramePrompt == nil || (!lastFramePrompt!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                         && lastFramePrompt!.count <= 3_000),
               continuityIn.count <= 1_000, continuityOut.count <= 1_000, audio.count <= 1_000,
               constraints.count <= 2_000 else { throw StoryError.invalidPlan }
         var cursor = 0
         for shot in shots {
-            guard shot.start == cursor, shot.end > shot.start, shot.end <= 15,
+            guard shot.start == cursor, shot.end > shot.start, shot.end <= duration,
                   !shot.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   shot.prompt.count <= 2_000 else { throw StoryError.invalidPlan }
             cursor = shot.end
         }
-        guard cursor == 15 else { throw StoryError.invalidPlan }
+        guard cursor == duration else { throw StoryError.invalidPlan }
     }
     public var videoPrompt: String {
         (["入镜：\(continuityIn)"] + shots.map { "\($0.start)–\($0.end)秒：\($0.prompt)" }
          + ["出镜：\(continuityOut)", "声音：\(audio)", "约束：\(constraints)"]).joined(separator: "\n")
+    }
+    /// Older projects did not persist a tail-frame prompt. Their final shot and exit state
+    /// provide a stable local fallback without forcing an AI migration or invalidating data.
+    public var effectiveLastFramePrompt: String {
+        if let value = lastFramePrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty { return value }
+        return [shots.last?.prompt, continuityOut].compactMap { value in
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return value
+        }.joined(separator: "\n")
     }
 }
 
@@ -367,11 +466,30 @@ public struct StoryVideoAttempt: Codable, Equatable, Sendable {
     public var prompt: String
     public var size: String
     public var ratio: String
+    public var seconds: Int
     public var jobID: String?
     public var status = "submitting"
     public var createdAt = Date()
-    public init(modelConfigID: String, prompt: String, size: String, ratio: String) {
+    public init(modelConfigID: String, prompt: String, size: String, ratio: String, seconds: Int = 15) {
         self.modelConfigID = modelConfigID; self.prompt = prompt; self.size = size; self.ratio = ratio
+        self.seconds = seconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, modelConfigID, prompt, size, ratio, seconds, jobID, status, createdAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        modelConfigID = try values.decode(String.self, forKey: .modelConfigID)
+        prompt = try values.decode(String.self, forKey: .prompt)
+        size = try values.decode(String.self, forKey: .size)
+        ratio = try values.decode(String.self, forKey: .ratio)
+        seconds = try values.decodeIfPresent(Int.self, forKey: .seconds) ?? 15
+        jobID = try values.decodeIfPresent(String.self, forKey: .jobID)
+        status = try values.decodeIfPresent(String.self, forKey: .status) ?? "submitting"
+        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
 
@@ -409,17 +527,23 @@ public protocol SessionBoundMediaGenerationServicing: MediaGenerationServicing {
     func boundToCurrentSession() async throws -> any MediaGenerationServicing
 }
 
+/// Distinguishes deterministic local/preflight rejection from a transport failure where a
+/// billable provider task may already have been created.
+public protocol MediaGenerationSubmissionFailure: Error {
+    var requestMayHaveBeenSubmitted: Bool { get }
+}
+
 public enum StoryError: LocalizedError {
     case invalidProject, invalidPlan, missingModel, unavailable, unsafeFile, unresolvedSubmission, unsupportedDuration
     public var errorDescription: String? {
         switch self {
         case .invalidProject: "剧情数据无效：请检查标题、模型和内容长度。"
-        case .invalidPlan: "剧情数据或分段计划无效：请检查人物、场景、关联关系和 0–15 秒镜头。"
+        case .invalidPlan: "剧情数据或分段计划无效：请检查分段类型、2–15 秒时长、人物、场景、关联关系和镜头时间线。"
         case .missingModel: "所选模型已不可用，请刷新模型列表并在剧情设置中重新选择。"
         case .unavailable: "当前文本模型不支持此规划协议，请选择支持工具调用的 OpenAI 兼容文本模型。"
         case .unsafeFile: "剧情素材文件无效、丢失或超出大小限制。"
         case .unresolvedSubmission: "上次提交结果尚未确认。为避免重复计费，不会自动重新提交；请先核对服务商任务记录。"
-        case .unsupportedDuration: "当前视频模型的客户端协议不支持 15 秒，请在剧情设置中选择支持 15 秒的模型。"
+        case .unsupportedDuration: "当前视频模型不支持这个分段时长，请调整为该模型支持的时长后再生成。"
         }
     }
 }

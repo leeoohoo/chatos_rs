@@ -1,16 +1,26 @@
 import Foundation
 
 public struct AgentRuntime: Sendable {
-    public init() {}
+    public typealias RetrySleeper = @Sendable (Duration) async throws -> Void
+    private let retrySleeper: RetrySleeper
+
+    public init(retrySleeper: @escaping RetrySleeper = { duration in
+        try await Task.sleep(for: duration)
+    }) {
+        self.retrySleeper = retrySleeper
+    }
     public typealias Executor = @Sendable (AgentToolCall) async throws -> AgentToolOutcome
+    public typealias CompletionCheck = @Sendable () async throws -> String?
     public typealias Recorder = @Sendable (AgentRunCheckpoint, AgentRunEvent) async throws -> Void
 
     public func run(
         checkpoint initial: AgentRunCheckpoint, scope: String, policy: AgentRunPolicy,
         model: any AgentModelClient, tools: [AgentToolDefinition],
         execute: @escaping Executor,
+        completionCheck: @escaping CompletionCheck = { nil },
         contextProvider: AgentMemoryContextProvider? = nil,
         shouldPause: @escaping @Sendable () async -> Bool = { false },
+        onModelStreamEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void = { _ in },
         record: @escaping Recorder = { _, _ in }
     ) async throws -> AgentRunCheckpoint {
         try policy.validate()
@@ -51,6 +61,11 @@ public struct AgentRuntime: Sendable {
                     return snapshot(state)
                 }
                 guard remainingTime() > 0 else { throw AgentRuntimeError.timeout }
+                if state.completionResult == nil, state.pendingCalls.isEmpty,
+                   let completion = try await completionCheck() {
+                    state.completionResult = completion
+                    try await emit("completion_detected", "业务数据已通过本地完整性校验，无需再次调用模型")
+                }
                 if let completion = state.completionResult {
                     if let contextProvider {
                         let synced = try await contextProvider.prepare(checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
@@ -140,7 +155,10 @@ public struct AgentRuntime: Sendable {
                     let requestMessages = messages
                     let timeout = min(Double(policy.requestTimeoutSeconds), remainingTime())
                     do {
-                        response = try await withTimeout(seconds: timeout) { try await model.complete(messages: requestMessages, tools: tools, timeout: timeout) }
+                        response = try await withTimeout(seconds: timeout) {
+                            try await model.stream(messages: requestMessages, tools: tools, timeout: timeout,
+                                                   onEvent: onModelStreamEvent)
+                        }
                         break
                     } catch {
                         if case AgentRuntimeError.contextOverflow = error, let contextProvider,
@@ -151,8 +169,14 @@ public struct AgentRuntime: Sendable {
                             continue
                         }
                         guard attempt < policy.maximumRequestRetries, AgentRuntimeError.isTransient(error) else { throw error }
-                        try await emit("model_retry", "暂时性模型请求错误，重试计入总调用次数")
-                        try await Task.sleep(for: .milliseconds(min(4_000, 250 * (attempt + 1))))
+                        let retryNumber = attempt + 1
+                        let delaySeconds = Self.retryDelaySeconds(forRetry: retryNumber)
+                        guard remainingTime() > Double(delaySeconds) else { throw AgentRuntimeError.timeout }
+                        try await emit(
+                            "model_retry",
+                            "暂时性模型请求失败；第 \(retryNumber) / \(policy.maximumRequestRetries) 次重试将在 \(delaySeconds) 秒后开始"
+                        )
+                        try await retrySleeper(.seconds(delaySeconds))
                     }
                 }
                 guard let response else { continue }
@@ -192,6 +216,11 @@ public struct AgentRuntime: Sendable {
             return call.name + ":" + String(decoding: normalized, as: UTF8.self)
         }
         return call.name + ":" + call.arguments
+    }
+
+    static func retryDelaySeconds(forRetry retryNumber: Int) -> Int {
+        guard retryNumber > 0 else { return 1 }
+        return min(16, 1 << min(retryNumber - 1, 4))
     }
 }
 

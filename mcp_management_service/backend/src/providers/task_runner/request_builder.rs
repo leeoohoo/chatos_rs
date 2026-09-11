@@ -9,6 +9,8 @@ use super::{
     ProviderCallError, TaskRunnerProvider, TaskRunnerRequestBinding, CALLER_SERVICE, TOKEN_AUDIENCE,
 };
 
+const CLIENT_PROJECT_CONTEXT_HEADER: &str = "x-mcp-management-client-project-context";
+
 impl TaskRunnerProvider {
     pub(in crate::providers) fn bound_request(
         &self,
@@ -43,6 +45,17 @@ impl TaskRunnerProvider {
             request = request
                 .header("x-mcp-management-project-id", project_id)
                 .header("x-chatos-project-id", project_id);
+        }
+        if let Some(project_context) = binding.client_project_context {
+            let json = serde_json::to_string(project_context).map_err(|error| {
+                ProviderCallError::provider_unavailable(format!(
+                    "encode client project context for Task Runner failed: {error}"
+                ))
+            })?;
+            request = request.header(
+                CLIENT_PROJECT_CONTEXT_HEADER,
+                urlencoding::encode(json.as_str()).into_owned(),
+            );
         }
         if let Some(owner_role) = binding.owner_role {
             request = request.header("x-mcp-management-owner-role", owner_role);

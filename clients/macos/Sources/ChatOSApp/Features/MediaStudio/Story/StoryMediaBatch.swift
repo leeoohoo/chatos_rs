@@ -3,7 +3,7 @@ import Foundation
 
 /// Deterministic production queue, never a model-controlled tool loop.
 struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
-    enum Kind: String, Codable, CaseIterable, Sendable { case assets, frames, videos, pipeline }
+    enum Kind: String, Codable, CaseIterable, Sendable { case assets, frames, lastFrames, videos, pipeline }
     enum Status: String, Codable, Sendable { case ready, running, paused, needsReview, completed, abandoned }
     struct Step: Codable, Equatable, Identifiable, Sendable {
         let kind: Kind
@@ -43,7 +43,8 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
         if kind == .pipeline {
             let segments = try targets.map { id in
                 guard let segment = project.segments.first(where: { $0.id == id }), segment.detail != nil,
-                      segment.video == nil, segment.attempt == nil, segment.imageGenerationAttemptID == nil else { throw StoryError.invalidPlan }
+                      segment.video == nil, segment.attempt == nil, segment.imageGenerationAttemptID == nil,
+                      segment.lastFrameGenerationAttemptID == nil else { throw StoryError.invalidPlan }
                 return segment
             }
             let refs = Set(segments.flatMap(\.resourceIDs))
@@ -54,9 +55,17 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
                     steps.append(.init(kind: .assets, targetID: asset.id))
                 }
             }
-            for segment in segments where segment.firstFrame == nil {
-                guard segment.firstFrames.images.isEmpty else { throw StoryBatchError.unconfirmedVersions }
-                steps.append(.init(kind: .frames, targetID: segment.id))
+            // Keep each segment's first/tail pair adjacent. Once a tail is generated and
+            // confirmed, the following segment can consume it as its continuity reference.
+            for segment in segments {
+                if segment.firstFrame == nil {
+                    guard segment.firstFrames.images.isEmpty else { throw StoryBatchError.unconfirmedVersions }
+                    steps.append(.init(kind: .frames, targetID: segment.id))
+                }
+                if segment.lastFrame == nil {
+                    guard segment.lastFrames.images.isEmpty else { throw StoryBatchError.unconfirmedVersions }
+                    steps.append(.init(kind: .lastFrames, targetID: segment.id))
+                }
             }
             steps += segments.map { .init(kind: .videos, targetID: $0.id) }
         } else {
@@ -68,6 +77,10 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
                     guard let segment = project.segments.first(where: { $0.id == id }), segment.detail != nil,
                           segment.attempt == nil, segment.video == nil, segment.imageGenerationAttemptID == nil,
                           segment.resourceIDs.allSatisfy({ project.resource(id: $0)?.confirmedImage != nil }) else { throw StoryError.invalidPlan }
+                case .lastFrames:
+                    guard let segment = project.segments.first(where: { $0.id == id }), segment.detail != nil,
+                          segment.attempt == nil, segment.video == nil, segment.lastFrameGenerationAttemptID == nil,
+                          segment.resourceIDs.allSatisfy({ project.resource(id: $0)?.confirmedImage != nil }) else { throw StoryError.invalidPlan }
                 case .videos:
                     guard project.segments.first(where: { $0.id == id })?.isReady == true else { throw StoryError.invalidPlan }
                 case .pipeline: break
@@ -78,7 +91,12 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
         for type in Set(steps.map(\.kind)) {
             let id = type == .videos ? project.models.videoModelID : project.models.imageModelID
             guard let model = models.first(where: { $0.id == id }), model.enabled, model.hasAPIKey else { throw StoryError.missingModel }
-            if type == .videos { guard VideoGenerationProfile(modelName: model.modelName).durations.contains(15) else { throw StoryError.unsupportedDuration } }
+            if type == .videos {
+                let durations = VideoGenerationProfile(modelName: model.modelName).durations
+                guard steps.filter({ $0.kind == .videos }).allSatisfy({ step in
+                    project.segments.first(where: { $0.id == step.targetID }).map { durations.contains($0.seconds) } == true
+                }) else { throw StoryError.unsupportedDuration }
+            }
         }
         self.id = UUID(); self.owner = owner; self.kind = kind; self.steps = steps; self.models = models
         self.consentAt = Date(); self.draft = project; self.expectedProjectDigest = try StoryAgentRun.digest(project)
@@ -87,8 +105,9 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
         switch kind {
         case .assets: project.resources.filter { $0.images.isEmpty && $0.imageGenerationAttemptID == nil }.map(\.id)
         case .frames: project.segments.filter { s in s.detail != nil && s.attempt == nil && s.video == nil && s.firstFrames.images.isEmpty && s.imageGenerationAttemptID == nil && s.resourceIDs.allSatisfy { project.resource(id: $0)?.confirmedImage != nil } }.map(\.id)
+        case .lastFrames: project.segments.filter { s in s.detail != nil && s.attempt == nil && s.video == nil && s.lastFrames.images.isEmpty && s.lastFrameGenerationAttemptID == nil && s.resourceIDs.allSatisfy { project.resource(id: $0)?.confirmedImage != nil } }.map(\.id)
         case .videos: project.segments.filter(\.isReady).map(\.id)
-        case .pipeline: project.segments.filter { $0.detail != nil && $0.attempt == nil && $0.video == nil && $0.imageGenerationAttemptID == nil }.map(\.id)
+        case .pipeline: project.segments.filter { $0.detail != nil && $0.attempt == nil && $0.video == nil && $0.imageGenerationAttemptID == nil && $0.lastFrameGenerationAttemptID == nil }.map(\.id)
         }
     }
     func validate(owner: String, projectID: UUID) throws {

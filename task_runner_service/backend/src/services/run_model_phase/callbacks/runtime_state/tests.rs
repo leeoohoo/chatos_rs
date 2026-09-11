@@ -3,6 +3,38 @@
 
 use super::*;
 
+#[test]
+fn model_request_event_keeps_diagnostics_without_persisting_request_body() {
+    let payload = json!({
+        "model": "gpt-test",
+        "input": [{"role": "user", "content": "private prompt".repeat(10_000)}],
+        "tools": [{"name": "large-tool", "description": "schema".repeat(10_000)}],
+        "task_runner_debug": {
+            "iteration": 42,
+            "reason": "tool_results",
+            "request_attempt": 1,
+            "input_item_count": 381,
+            "input_bytes": 8_600_000,
+            "tool_count": 74,
+            "supports_responses": true,
+            "stream": true,
+            "connection_mode": "pooled",
+            "read_timeout_seconds": 300
+        }
+    });
+
+    let summary = summarize_model_request_event_payload(&payload);
+
+    assert_eq!(summary["model"], "gpt-test");
+    assert_eq!(summary["iteration"], 42);
+    assert_eq!(summary["input_bytes"], 8_600_000);
+    assert_eq!(summary["tool_count"], 74);
+    assert_eq!(summary["request_body_persisted"], false);
+    assert!(summary.get("input").is_none());
+    assert!(summary.get("tools").is_none());
+    assert!(!summary.to_string().contains("private prompt"));
+}
+
 fn review_checkpoint(trigger: TaskExecutionReviewTrigger) -> TaskExecutionReviewCheckpoint {
     TaskExecutionReviewCheckpoint {
         iteration: 24,

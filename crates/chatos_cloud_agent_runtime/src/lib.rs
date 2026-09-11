@@ -878,6 +878,21 @@ fn append_response_output_items(
     } else {
         items.extend_from_slice(response_output_items);
     }
+    prune_items_before_latest_compaction(items)
+}
+
+/// OpenAI's stateless Responses protocol allows all items preceding the most
+/// recent encrypted compaction item to be discarded. Keeping them would defeat
+/// compaction and recreate quadratic durable-history growth.
+fn prune_items_before_latest_compaction(mut items: Vec<Value>) -> Vec<Value> {
+    if let Some(index) = items
+        .iter()
+        .rposition(|item| item.get("type").and_then(Value::as_str) == Some("compaction"))
+    {
+        if index > 0 {
+            items.drain(..index);
+        }
+    }
     items
 }
 
@@ -1592,6 +1607,31 @@ mod tests {
 
         assert_eq!(&batch_two[..batch_one.len()], batch_one.as_slice());
         assert_eq!(batch_two.last().unwrap()["call_id"], "call-2");
+    }
+
+    #[test]
+    fn latest_compaction_item_replaces_the_older_stateless_prefix() {
+        let previous = serde_json::json!([
+            {"role":"user","content":"old task"},
+            {"type":"reasoning","id":"rs-old","summary":[]}
+        ]);
+        let output = serde_json::json!([
+            {"type":"compaction","id":"cmp-1","encrypted_content":"opaque"},
+            {"type":"message","role":"assistant","content":[]}
+        ]);
+
+        let next = append_response_output_items(
+            previous.as_array().unwrap(),
+            output.as_array().unwrap(),
+            None,
+        );
+
+        assert_eq!(next.len(), 2);
+        assert_eq!(next[0]["type"], "compaction");
+        assert_eq!(next[1]["type"], "message");
+        assert!(!serde_json::to_string(&next)
+            .expect("serialize compacted history")
+            .contains("old task"));
     }
 
     #[test]

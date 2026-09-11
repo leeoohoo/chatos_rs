@@ -501,6 +501,20 @@ fn list_run_events_after_respects_limit() {
 }
 
 #[test]
+fn list_run_events_page_returns_only_the_requested_slice_and_total() {
+    let store = test_store();
+    store.append_run_event(run_event("evt-3", "2026-08-03T10:00:02Z"));
+    store.append_run_event(run_event("evt-1", "2026-08-03T10:00:00Z"));
+    store.append_run_event(run_event("evt-2", "2026-08-03T10:00:01Z"));
+
+    let (events, total) = store.list_run_events_page("run-1", 1, 1);
+
+    assert_eq!(total, 3);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].id, "evt-2");
+}
+
+#[test]
 fn run_event_retention_only_prunes_expired_events_for_terminal_runs() {
     let store = test_store();
     let mut terminal = queued_run();

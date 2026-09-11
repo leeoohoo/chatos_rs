@@ -94,6 +94,7 @@ struct NativeConnectorStateStoreTests {
         var state = NativeConnectorPersistentState.empty
         state.deviceID = "device-1"
         state.deviceName = "Test Mac"
+        state.gatewayConnectionEnabled = false
         state.developerMode = true
         state.sandboxEnabled = false
         state.permissionProfileID = ":read-only"
@@ -122,6 +123,7 @@ struct NativeConnectorStateStoreTests {
 
         #expect(restored.deviceID == "device-1")
         #expect(restored.deviceName == "Test Mac")
+        #expect(restored.gatewayConnectionEnabled == false)
         #expect(restored.developerMode)
         #expect(!restored.sandboxEnabled)
         #expect(restored.permissionProfileID == ":read-only")

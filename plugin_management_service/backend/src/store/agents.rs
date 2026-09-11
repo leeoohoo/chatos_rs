@@ -145,6 +145,46 @@ impl AppStore {
         Ok(())
     }
 
+    pub async fn remove_agent_prompt_profiles_except(
+        &self,
+        agent_key: &str,
+        allowed_profiles: &[&str],
+    ) -> Result<bool, String> {
+        let allowed_profiles = allowed_profiles
+            .iter()
+            .map(|profile| Bson::String((*profile).to_string()))
+            .collect::<Vec<_>>();
+        let unsupported_profile = doc! {
+            "$exists": true,
+            "$nin": Bson::Array(allowed_profiles),
+        };
+        let deleted = self
+            .agent_prompts
+            .delete_many(
+                doc! {
+                    "agent_key": agent_key,
+                    "profile": unsupported_profile.clone(),
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        let updated_versions = self
+            .agent_prompt_releases
+            .update_many(
+                doc! { "agent_key": agent_key },
+                doc! {
+                    "$pull": {
+                        "prompts": { "profile": unsupported_profile },
+                    },
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(deleted.deleted_count > 0 || updated_versions.modified_count > 0)
+    }
+
     pub async fn get_agent_prompt_bundle_version(
         &self,
     ) -> Result<Option<AgentPromptBundleVersionRecord>, String> {

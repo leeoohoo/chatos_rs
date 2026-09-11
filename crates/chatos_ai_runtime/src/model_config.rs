@@ -47,6 +47,15 @@ pub fn supports_previous_response_id(_provider: &str, base_url: &str) -> bool {
     !is_official_deepseek_base_url(base_url.as_str())
 }
 
+/// Server-side Responses compaction is an OpenAI-specific request extension.
+/// Do not send it to merely OpenAI-compatible gateways.
+pub fn supports_responses_server_compaction(provider: &str, base_url: &str) -> bool {
+    normalize_provider(provider) == "gpt" && {
+        let base_url = base_url.trim().to_ascii_lowercase();
+        base_url.is_empty() || base_url.contains("api.openai.com")
+    }
+}
+
 fn is_official_deepseek_base_url(base_url: &str) -> bool {
     base_url.contains("api.deepseek.com")
 }
@@ -179,7 +188,7 @@ mod tests {
         default_base_url_for_provider, effective_responses_support, normalize_provider,
         normalize_thinking_level, reasoning_effort_for_provider, supported_thinking_levels,
         supports_previous_response_id, supports_responses_input_token_count,
-        thinking_mode_for_provider,
+        supports_responses_server_compaction, thinking_mode_for_provider,
     };
 
     #[test]
@@ -189,6 +198,22 @@ mod tests {
         assert_eq!(normalize_provider("moonshot"), "kimi");
         assert_eq!(normalize_provider("zhipu"), "glm");
         assert_eq!(normalize_provider("openai-compatible"), "openai_compatible");
+    }
+
+    #[test]
+    fn server_compaction_is_restricted_to_the_official_openai_api() {
+        assert!(supports_responses_server_compaction(
+            "openai",
+            "https://api.openai.com/v1"
+        ));
+        assert!(!supports_responses_server_compaction(
+            "openai",
+            "https://gateway.example.test/v1"
+        ));
+        assert!(!supports_responses_server_compaction(
+            "openai_compatible",
+            "https://api.openai.com/v1"
+        ));
     }
 
     #[test]

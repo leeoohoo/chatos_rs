@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_mcp_management_sdk::{
-    ProjectExecutionContext, RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget,
-    WorkspaceProviderKind,
+    ClientProjectContextSnapshot, ProjectExecutionContext, RuntimeWorkspaceRouteTarget,
+    WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::PluginMcpServer;
 
@@ -55,6 +55,20 @@ fn snapshot(session_id: &str) -> RuntimeSessionSnapshot {
             .to_string(),
         task_profile: Some("default".to_string()),
         project_id: Some("project-1".to_string()),
+        client_project_context: Some(
+            serde_json::from_value::<ClientProjectContextSnapshot>(serde_json::json!({
+                "schemaVersion": 1,
+                "projectId": "project-1",
+                "projectName": "Project 1",
+                "projectRevision": 1,
+                "executionTarget": {
+                    "deviceId": "device-private-1",
+                    "workspaceId": "workspace-private-1",
+                    "relativeRoot": "repo"
+                }
+            }))
+            .expect("client project context"),
+        ),
         device_id: None,
         run_id: Some("run-1".to_string()),
         execution_group_id: Some("group-1".to_string()),
@@ -158,6 +172,13 @@ async fn memory_store_preserves_insert_get_and_atomic_remove_semantics() {
     let second = store.get("memory-session").await.unwrap().unwrap();
     assert_eq!(first.tenant_id, "tenant-1");
     assert_eq!(first.owner_user_id, "owner-1");
+    assert_eq!(
+        first
+            .client_project_context
+            .as_ref()
+            .map(|context| context.project_id.as_str()),
+        Some("project-1")
+    );
     let routes = first.routes_response();
     assert_eq!(routes.effective_mcp_ids, ["plugin-mcp-1"]);
     assert_eq!(

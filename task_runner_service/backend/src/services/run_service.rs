@@ -323,6 +323,15 @@ impl RunService {
         self.store.list_run_events(run_id).await
     }
 
+    pub async fn list_run_events_page(
+        &self,
+        run_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<TaskRunEventRecord>, usize), String> {
+        self.store.list_run_events_page(run_id, offset, limit).await
+    }
+
     pub async fn get_run_event(
         &self,
         run_id: &str,

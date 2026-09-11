@@ -44,10 +44,32 @@ final class AgentLoopSafetyTests: XCTestCase {
     func testRetriesConsumeBudget() async throws {
         let model = FailingModel()
         var policy = AgentRunPolicy(); policy.maximumModelCalls = 2
-        let result = try await AgentRuntime().run(checkpoint: base, scope: base.scope, policy: policy,
+        let result = try await AgentRuntime(retrySleeper: { _ in }).run(checkpoint: base, scope: base.scope, policy: policy,
             model: model, tools: runtimeTestTools, execute: { _ in .init("unused") })
         XCTAssertEqual(result.modelCalls, 2)
         XCTAssertEqual(result.status, .limitReached)
+    }
+
+    func testTransientFailuresUseFiveVisibleExponentiallySpacedRetries() async throws {
+        let delays = DelayRecorder()
+        let eventRecorder = EventRecorder()
+        let model = FailingModel()
+        var policy = AgentRunPolicy(); policy.maximumModelCalls = 10
+        let runtime = AgentRuntime(retrySleeper: { duration in await delays.append(duration) })
+        let result = try await runtime.run(
+            checkpoint: base, scope: base.scope, policy: policy,
+            model: model, tools: runtimeTestTools, execute: { _ in .init("unused") },
+            record: { _, event in await eventRecorder.append(event) }
+        )
+        XCTAssertEqual(result.modelCalls, 6, "Initial request plus five retries")
+        XCTAssertEqual(result.status, .failed)
+        let recordedDelays = await delays.values
+        XCTAssertEqual(recordedDelays, [.seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(16)])
+        let events = await eventRecorder.values
+        let retryEvents = events.filter { $0.kind == "model_retry" }
+        XCTAssertEqual(retryEvents.count, 5)
+        XCTAssertTrue(retryEvents.last?.detail.contains("5 / 5") == true)
+        XCTAssertTrue(retryEvents.last?.detail.contains("16 秒") == true)
     }
 
     func testSettingsPersistAndValidateOverridesAndWindowBudget() throws {
@@ -124,4 +146,12 @@ private struct SlowModel: AgentModelClient {
         try await Task.sleep(for: .seconds(2))
         return .init(role: .assistant, content: "late")
     }
+}
+private actor DelayRecorder {
+    var values: [Duration] = []
+    func append(_ value: Duration) { values.append(value) }
+}
+private actor EventRecorder {
+    var values: [AgentRunEvent] = []
+    func append(_ value: AgentRunEvent) { values.append(value) }
 }

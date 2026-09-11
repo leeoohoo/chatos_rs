@@ -31,6 +31,7 @@ fn ai_response(content: &str) -> AiResponse {
         usage: None,
         response_id: Some("response-1".to_string()),
         response_output_items: Vec::new(),
+        ..AiResponse::default()
     }
 }
 
@@ -364,6 +365,68 @@ async fn runtime_lifecycle_hook_keeps_empty_guidance_non_intrusive() {
     assert!(directive.input_items.is_empty());
     assert!(directive.stream_output);
     assert!(directive.tools_enabled);
+}
+
+#[tokio::test]
+async fn provider_hosted_tool_output_is_discarded_and_redirected_to_task_runner() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState::default());
+    let mut response = ai_response("图片已显示在上方");
+    response.response_output_items = vec![json!({
+        "id": "image-call-1",
+        "type": "image_generation_call",
+        "status": "completed",
+        "result": "base64-must-not-survive"
+    })];
+
+    let action = hook
+        .after_final_response(final_response_context(response))
+        .await
+        .expect("hosted tool recovery action");
+
+    match action {
+        RuntimeFinalResponseAction::ContinueReplacingResponse {
+            response,
+            input_items,
+            reason,
+        } => {
+            assert_eq!(reason, "unauthorized_provider_tool_recovery");
+            assert!(response.content.is_empty());
+            assert!(response.response_output_items.is_empty());
+            let guidance = Value::Array(input_items).to_string();
+            assert!(guidance.contains("Task Runner"));
+            assert!(guidance.contains("Web Design Studio"));
+            assert!(!guidance.contains("base64-must-not-survive"));
+        }
+        _ => panic!("expected sanitized continuation"),
+    }
+    assert_eq!(
+        hook.task_turn_state()
+            .expect("state")
+            .rejected_provider_tool_rounds,
+        1
+    );
+}
+
+#[tokio::test]
+async fn repeated_provider_hosted_tool_output_fails_without_claiming_delivery() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        rejected_provider_tool_rounds: 1,
+        ..TaskTurnLifecycleState::default()
+    });
+    let mut response = ai_response("generated");
+    response.response_output_items = vec![json!({
+        "type": "image_generation_call",
+        "status": "completed",
+        "result": "base64"
+    })];
+
+    let error = hook
+        .after_final_response(final_response_context(response))
+        .await
+        .expect_err("second hosted-tool violation must fail");
+
+    assert!(error.contains("未授权"));
+    assert!(error.contains("未将其结果作为交付"));
 }
 
 #[tokio::test]

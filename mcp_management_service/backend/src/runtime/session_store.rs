@@ -80,6 +80,7 @@ pub struct RuntimeSessionSnapshot {
     pub agent_key: String,
     pub task_profile: Option<String>,
     pub project_id: Option<String>,
+    pub client_project_context: Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
     pub device_id: Option<String>,
     pub run_id: Option<String>,
     pub execution_group_id: Option<String>,
@@ -210,6 +211,7 @@ struct PersistedRuntimeSessionSnapshot {
     task_profile: Option<String>,
     #[serde(default)]
     project_id: Option<String>,
+    client_project_context: Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
     device_id: Option<String>,
     run_id: Option<String>,
     #[serde(default)]
@@ -680,6 +682,7 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             agent_key: snapshot.agent_key.clone(),
             task_profile: snapshot.task_profile.clone(),
             project_id: snapshot.project_id.clone(),
+            client_project_context: snapshot.client_project_context.clone(),
             device_id: snapshot.device_id.clone(),
             run_id: snapshot.run_id.clone(),
             execution_group_id: snapshot.execution_group_id.clone(),
@@ -728,6 +731,7 @@ impl PersistedRuntimeSessionSnapshot {
             agent_key: self.agent_key,
             task_profile: self.task_profile,
             project_id: self.project_id,
+            client_project_context: self.client_project_context,
             device_id: self.device_id,
             run_id: self.run_id,
             execution_group_id: self.execution_group_id,

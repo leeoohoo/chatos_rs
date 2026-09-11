@@ -3,14 +3,90 @@
 
 use super::{
     ensure_task_runner_body_within_limit, exchange_task_runner_token_via_user_service,
-    signed_chatos_internal_request_with_secret, UserServiceTaskRunnerExchange,
+    list_task_runner_available_plugins, signed_chatos_internal_request_with_secret,
+    UserServiceTaskRunnerExchange,
 };
-use axum::extract::State;
+use axum::extract::{OriginalUri, State};
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
-use axum::{routing::post, Json, Router};
+use axum::{
+    routing::{get, post},
+    Json, Router,
+};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+#[tokio::test]
+async fn task_plugin_catalog_forwards_the_client_project_context() {
+    #[derive(Clone, Default)]
+    struct CatalogState(Arc<Mutex<Option<String>>>);
+
+    async fn handler(
+        State(state): State<CatalogState>,
+        OriginalUri(uri): OriginalUri,
+    ) -> Json<Value> {
+        *state.0.lock().await = Some(uri.to_string());
+        Json(json!({"selectable_plugins": []}))
+    }
+
+    let state = CatalogState::default();
+    let app = Router::new()
+        .route("/api/tasks/capabilities/catalog", get(handler))
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock Task Runner");
+    let address = listener.local_addr().expect("mock address");
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve mock Task Runner");
+    });
+    let project_context = serde_json::from_value(json!({
+        "schemaVersion": 1,
+        "projectId": "project-1",
+        "projectName": "项目一",
+        "projectRevision": 2,
+        "executionTarget": {
+            "deviceId": "device-1",
+            "workspaceId": "workspace-1",
+            "relativeRoot": "repos/project-1"
+        }
+    }))
+    .expect("client project context");
+
+    list_task_runner_available_plugins(
+        format!("http://{address}").as_str(),
+        "access-token",
+        Some("project-1"),
+        Some(&project_context),
+    )
+    .await
+    .expect("catalog response");
+
+    let uri = state.0.lock().await.clone().expect("captured catalog URI");
+    let parsed =
+        reqwest::Url::parse(format!("http://localhost{uri}").as_str()).expect("parse catalog URI");
+    let query = parsed
+        .query_pairs()
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        query.get("project_id").map(|value| value.as_ref()),
+        Some("project-1")
+    );
+    assert_eq!(
+        query.get("task_profile").map(|value| value.as_ref()),
+        Some("default")
+    );
+    assert_eq!(
+        serde_json::from_str::<chatos_mcp_management_sdk::ClientProjectContextSnapshot>(
+            query.get("project_context").expect("project context query")
+        )
+        .expect("decode project context query"),
+        project_context
+    );
+    handle.abort();
+}
 
 #[test]
 fn chatos_internal_request_uses_scoped_short_lived_token() {

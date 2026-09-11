@@ -224,10 +224,9 @@ struct NativeConnectorGateway: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
-        Self.publishAuthenticationExpirationIfNeeded(
-            statusCode: http.statusCode,
-            token: token
-        )
+        if Self.isConnectorAuthenticationRejected(statusCode: http.statusCode, token: token) {
+            throw NativeConnectorError.notPaired
+        }
         guard (200..<300).contains(http.statusCode) else {
             throw NativeConnectorError.server(
                 status: http.statusCode,
@@ -292,10 +291,9 @@ struct NativeConnectorGateway: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
-        Self.publishAuthenticationExpirationIfNeeded(
-            statusCode: http.statusCode,
-            token: token
-        )
+        if Self.isConnectorAuthenticationRejected(statusCode: http.statusCode, token: token) {
+            throw NativeConnectorError.notPaired
+        }
         guard (200..<300).contains(http.statusCode) else {
             let payload = try? decoder.decode(GatewayErrorDTO.self, from: data)
             throw NativeConnectorError.server(
@@ -328,10 +326,9 @@ struct NativeConnectorGateway: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
-        Self.publishAuthenticationExpirationIfNeeded(
-            statusCode: http.statusCode,
-            token: token
-        )
+        if Self.isConnectorAuthenticationRejected(statusCode: http.statusCode, token: token) {
+            throw NativeConnectorError.notPaired
+        }
         guard (200..<300).contains(http.statusCode) else {
             let payload = try? decoder.decode(GatewayErrorDTO.self, from: data)
             throw NativeConnectorError.server(
@@ -363,18 +360,17 @@ struct NativeConnectorGateway: Sendable {
         return request
     }
 
-    @discardableResult
-    static func publishAuthenticationExpirationIfNeeded(
+    /// Connector credentials are independent from the primary ChatOS login. A rejected
+    /// connector token requests re-pairing and must never expire the primary session.
+    static func isConnectorAuthenticationRejected(
         statusCode: Int,
-        token: String?,
-        notificationCenter: NotificationCenter = .default
+        token: String?
     ) -> Bool {
         guard statusCode == 401,
               let token,
               !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }
-        notificationCenter.post(name: .chatOSAuthenticationDidExpire, object: nil)
         return true
     }
 }

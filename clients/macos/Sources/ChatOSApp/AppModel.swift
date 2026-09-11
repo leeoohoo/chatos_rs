@@ -1128,8 +1128,15 @@ final class AppModel: ObservableObject {
                 return conversation
             }
             contactConversation = nil
-            if conversationID == nil, projectTab == .messages {
-                prepareProjectConversationIfNeeded(projectID: id)
+            if projectTab == .messages {
+                // ProjectRegistry is the project authority. Reconcile even an existing
+                // conversation whenever it becomes active so a client reinstall, connector
+                // re-pairing or workspace move cannot leave the server session bound to a stale
+                // device/workspace execution target.
+                prepareProjectConversationIfNeeded(
+                    projectID: id,
+                    force: conversationID != nil
+                )
             }
         case let .contact(id):
             let conversationID = contacts.first(where: { $0.id == id })?.conversationID

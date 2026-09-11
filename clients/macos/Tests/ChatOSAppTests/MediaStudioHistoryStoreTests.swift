@@ -1,3 +1,4 @@
+import AppKit
 import ChatOSAPI
 import ChatOSCore
 import Foundation
@@ -126,6 +127,26 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testMultipleGeneratedHistoryImagesCanBeAddedAsOrderedReferences() async throws {
+        let root = try directory()
+        var result = Self.image()
+        result.images = [
+            .init(id: "first", mimeType: "image/png", base64Data: Self.png.base64EncodedString()),
+            .init(id: "second", mimeType: "image/png", base64Data: Self.png.base64EncodedString()),
+        ]
+        _ = try await MediaStudioHistoryStore(root: root).saveImage(result, prompt: "two references", owner: "alice")
+        let vm = MediaStudioViewModel(service: HistoryGenerationService(), historyStore: .init(root: root))
+        vm.activate(userID: "alice")
+        try await wait { !vm.isLoadingHistory }
+        let assets = try XCTUnwrap(vm.history.first?.images)
+        vm.addGeneratedImagesAsReferences(assets)
+        try await wait { !vm.isLoadingInputImages }
+        XCTAssertNil(vm.errorMessage, vm.errorMessage ?? "")
+        XCTAssertEqual(vm.inputImages.count, 2)
+        XCTAssertEqual(vm.inputImages.map(\.name), ["generated-first.png", "generated-second.png"])
+    }
+
+    @MainActor
     private func wait(_ condition: () -> Bool) async throws {
         for _ in 0..<200 {
             if condition() { return }
@@ -134,7 +155,21 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         XCTFail("Timed out waiting for media studio")
     }
 
-    static let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7i8AAAAASUVORK5CYII=")!
+    static let png: Data = {
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 4,
+            pixelsHigh: 4,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )!
+        return bitmap.representation(using: .png, properties: [:])!
+    }()
 
     static func image() -> ImageGenerationResult {
         .init(id: "provider-image", modelConfigID: "image", modelName: "gpt-image-2", createdAt: "2026-09-09T00:00:00Z",

@@ -76,6 +76,17 @@ extension NativeLocalConnectorService {
     }
 
     public func fetchPlugins() async throws -> [LocalConnectorPlugin] {
+        do {
+            return try await fetchPluginsWithCurrentPairing()
+        } catch NativeConnectorError.notPaired {
+            // Switching between local and deployed gateways can leave only the connector token
+            // stale. Re-pair it once through the still-valid primary ChatOS session.
+            _ = try await pairWithCurrentChatOSSession(deviceName: Host.current().localizedName)
+            return try await fetchPluginsWithCurrentPairing()
+        }
+    }
+
+    private func fetchPluginsWithCurrentPairing() async throws -> [LocalConnectorPlugin] {
         let token = try requireAccessToken()
         let sources = try await gateway.pluginSources(token: token)
         if reconcileInstalledPluginIdentities(with: sources.items) {

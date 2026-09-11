@@ -202,7 +202,7 @@ fn default_active_summary_poll_interval_ms() -> u64 {
 }
 
 fn default_active_summary_poll_timeout_ms() -> u64 {
-    120_000
+    600_000
 }
 
 fn normalize_optional_token(token: Option<String>) -> Option<String> {

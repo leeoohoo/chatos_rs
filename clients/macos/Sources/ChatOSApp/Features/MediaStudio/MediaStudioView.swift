@@ -7,9 +7,8 @@ import UniformTypeIdentifiers
 struct MediaStudioView: View {
     @EnvironmentObject private var appModel: AppModel
     @ObservedObject var viewModel: MediaStudioViewModel
-    @State private var showsInputImageImporter = false
-    @State private var showsVideoInputImageImporter = false
     @State private var showsGeneratedImagePicker = false
+    @State private var showsGeneratedReferencePicker = false
     @State private var imagePreview: MediaStudioImagePreviewRequest?
     @State private var videoPreview: MediaStudioViewModel.VideoHistoryItem?
 
@@ -38,38 +37,15 @@ struct MediaStudioView: View {
             MediaStudioGeneratedImagePicker(viewModel: viewModel)
                 .environmentObject(appModel)
         }
+        .sheet(isPresented: $showsGeneratedReferencePicker) {
+            MediaStudioGeneratedReferencePicker(viewModel: viewModel)
+                .environmentObject(appModel)
+        }
         .onChange(of: appModel.authentication.phase) { _, _ in
             imagePreview = nil
             videoPreview = nil
             showsGeneratedImagePicker = false
-        }
-        .fileImporter(
-            isPresented: $showsInputImageImporter,
-            allowedContentTypes: [.image],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case let .success(urls):
-                if let url = urls.first {
-                    viewModel.selectInputImage(from: url)
-                }
-            case let .failure(error):
-                viewModel.reportInputImageError(error)
-            }
-        }
-        .fileImporter(
-            isPresented: $showsVideoInputImageImporter,
-            allowedContentTypes: [.image],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case let .success(urls):
-                if let url = urls.first {
-                    viewModel.selectVideoInputImage(from: url)
-                }
-            case let .failure(error):
-                viewModel.reportInputImageError(error)
-            }
+            showsGeneratedReferencePicker = false
         }
     }
 
@@ -543,10 +519,10 @@ struct MediaStudioView: View {
     private var inputImageSelector: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                fieldLabel(appModel.localized("参考图（可选）", english: "Reference Image (Optional)"))
+                fieldLabel(appModel.localized("参考图（可多选）", english: "Reference Images (Multiple)"))
                 Spacer()
-                if viewModel.inputImage != nil {
-                    Text(appModel.localized("图生图", english: "Image to Image"))
+                if !viewModel.inputImages.isEmpty {
+                    Text("\(viewModel.inputImages.count) / 8")
                         .font(.system(size: 9.5, weight: .semibold))
                         .foregroundStyle(.purple)
                         .padding(.horizontal, 7)
@@ -555,48 +531,31 @@ struct MediaStudioView: View {
                 }
             }
 
-            if let inputImage = viewModel.inputImage,
-               let data = Data(base64Encoded: inputImage.base64Data),
-               let image = NSImage(data: data) {
-                HStack(spacing: 11) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 76, height: 62)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+            Button { showsGeneratedReferencePicker = true } label: {
+                Label(appModel.localized("从生成记录选择多张", english: "Choose Multiple from Creations"),
+                      systemImage: "photo.stack")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.purple)
+            .disabled(viewModel.inputImages.count >= 8 || viewModel.isGenerating || viewModel.isLoadingInputImages)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(inputImage.name)
-                            .font(.system(size: 11.5, weight: .medium))
-                            .lineLimit(1)
-                        Text(appModel.localized(
-                            "提示词将描述如何修改这张图",
-                            english: "Your prompt describes how to transform this image"
-                        ))
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-
-                    Spacer(minLength: 4)
-
-                    VStack(spacing: 6) {
-                        Button {
-                            showsInputImageImporter = true
-                        } label: {
-                            Image(systemName: "arrow.triangle.2.circlepath")
+            if !viewModel.inputImages.isEmpty {
+                VStack(alignment: .leading, spacing: 9) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+                        ForEach(Array(viewModel.inputImages.enumerated()), id: \.offset) { index, input in
+                            inputReferenceCard(input, index: index)
                         }
-                        .buttonStyle(.borderless)
-                        .help(appModel.localized("更换参考图", english: "Replace reference image"))
-
-                        Button {
+                    }
+                    HStack {
+                        Button { chooseInputImages() } label: {
+                            Label(appModel.localized("继续添加", english: "Add More"), systemImage: "plus")
+                        }.disabled(viewModel.inputImages.count >= 8 || viewModel.isGenerating || viewModel.isLoadingInputImages)
+                        Spacer()
+                        Button(appModel.localized("全部清除", english: "Clear All"), role: .destructive) {
                             viewModel.removeInputImage()
-                        } label: {
-                            Image(systemName: "xmark")
-                        }
-                        .buttonStyle(.borderless)
-                        .help(appModel.localized("移除参考图", english: "Remove reference image"))
-                    }
+                        }.disabled(viewModel.isGenerating || viewModel.isLoadingInputImages)
+                    }.buttonStyle(.borderless).font(.system(size: 10.5, weight: .medium))
                 }
                 .padding(9)
                 .background(Color.purple.opacity(0.055), in: RoundedRectangle(cornerRadius: 11))
@@ -606,18 +565,18 @@ struct MediaStudioView: View {
                 }
             } else {
                 Button {
-                    showsInputImageImporter = true
+                    chooseInputImages()
                 } label: {
                     VStack(spacing: 7) {
                         Image(systemName: "photo.badge.plus")
                             .font(.system(size: 19, weight: .light))
                             .foregroundStyle(.purple)
                         Text(appModel.localized(
-                            "添加参考图，进行改图或风格迁移",
-                            english: "Add an image to edit or restyle"
+                            "添加一张或多张参考图",
+                            english: "Add One or More Reference Images"
                         ))
                             .font(.system(size: 11.5, weight: .medium))
-                        Text(appModel.localized("PNG、JPEG 或 WebP，最大 20 MB", english: "PNG, JPEG, or WebP up to 20 MB"))
+                        Text(appModel.localized("最多 8 张；每张最大 20 MB", english: "Up to 8 images; 20 MB each"))
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
@@ -631,12 +590,52 @@ struct MediaStudioView: View {
                     RoundedRectangle(cornerRadius: 11)
                         .stroke(Color.primary.opacity(0.11), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
                 }
-                .dropDestination(for: URL.self) { urls, _ in
-                    guard let url = urls.first else { return false }
-                    viewModel.selectInputImage(from: url)
-                    return true
-                }
             }
+            if viewModel.isLoadingInputImages {
+                HStack(spacing: 7) {
+                    ProgressView().controlSize(.small)
+                    Text(appModel.localized("正在读取参考图…", english: "Loading References…"))
+                }.font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard !urls.isEmpty else { return false }
+            viewModel.addInputImages(from: urls)
+            return true
+        }
+    }
+
+    private func chooseInputImages() {
+        let panel = NSOpenPanel()
+        panel.title = appModel.localized("选择参考图", english: "Choose Reference Images")
+        panel.message = appModel.localized(
+            "可一次选择多张图片，最多添加 8 张",
+            english: "Select multiple images at once, up to 8 in total"
+        )
+        panel.prompt = appModel.localized("添加", english: "Add")
+        panel.allowedContentTypes = [.image]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        viewModel.addInputImages(from: panel.urls)
+    }
+
+    private func inputReferenceCard(_ input: ImageGenerationInputImage, index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    if let data = Data(base64Encoded: input.base64Data), let image = NSImage(data: data) {
+                        Image(nsImage: image).resizable().scaledToFill()
+                    } else { Color.primary.opacity(0.04) }
+                }
+                .frame(height: 68).clipped().clipShape(RoundedRectangle(cornerRadius: 7))
+                Button { viewModel.removeInputImage(at: index) } label: {
+                    Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color.black.opacity(0.58))
+                }.buttonStyle(.plain).padding(4).disabled(viewModel.isGenerating)
+            }
+            Text("#\(index + 1) · \(input.name)").font(.system(size: 9.5, weight: .medium)).lineLimit(1)
         }
     }
 
@@ -970,7 +969,7 @@ struct MediaStudioView: View {
                         .font(.system(size: 11.5, weight: .medium))
                         .lineLimit(1)
                     Spacer()
-                    Button { showsVideoInputImageImporter = true } label: {
+                    Button { chooseVideoInputImage() } label: {
                         Image(systemName: "arrow.triangle.2.circlepath")
                     }
                     .buttonStyle(.borderless)
@@ -984,7 +983,7 @@ struct MediaStudioView: View {
                 .padding(9)
                 .background(Color.purple.opacity(0.055), in: RoundedRectangle(cornerRadius: 11))
             } else {
-                Button { showsVideoInputImageImporter = true } label: {
+                Button { chooseVideoInputImage() } label: {
                     Label(
                         appModel.localized("添加首帧参考图", english: "Add first-frame reference"),
                         systemImage: "photo.badge.plus"
@@ -999,13 +998,25 @@ struct MediaStudioView: View {
                     RoundedRectangle(cornerRadius: 11)
                         .stroke(Color.primary.opacity(0.11), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
                 }
-                .dropDestination(for: URL.self) { urls, _ in
-                    guard let url = urls.first else { return false }
-                    viewModel.selectVideoInputImage(from: url)
-                    return true
-                }
             }
         }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first else { return false }
+            viewModel.selectVideoInputImage(from: url)
+            return true
+        }
+    }
+
+    private func chooseVideoInputImage() {
+        let panel = NSOpenPanel()
+        panel.title = appModel.localized("选择视频首帧参考图", english: "Choose a Video First-frame Reference")
+        panel.prompt = appModel.localized("选择", english: "Choose")
+        panel.allowedContentTypes = [.image]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        viewModel.selectVideoInputImage(from: url)
     }
 
     private var historyWorkspace: some View {
@@ -1216,7 +1227,7 @@ struct GeneratedMediaAssetView: View {
     }
 }
 
-private struct LocalVideoPlayer: NSViewRepresentable {
+struct LocalVideoPlayer: NSViewRepresentable {
     let url: URL
 
     func makeNSView(context: Context) -> AVPlayerView {

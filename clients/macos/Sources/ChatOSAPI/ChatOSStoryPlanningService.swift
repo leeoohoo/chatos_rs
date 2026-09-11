@@ -28,6 +28,12 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
                 let response = try await transport.send(.init(url: url, method: "POST", headers: request.allHTTPHeaderFields ?? [:],
                     body: request.httpBody, timeoutInterval: request.timeoutInterval))
                 return (response.body, response.statusCode)
+            }, streamTransport: { request in
+                guard let url = request.url else { throw ChatOSAPIError.invalidEndpoint }
+                let response = try await transport.stream(.init(url: url, method: "POST",
+                    headers: request.allHTTPHeaderFields ?? [:], body: request.httpBody,
+                    timeoutInterval: request.timeoutInterval))
+                return .init(statusCode: response.statusCode, headers: response.headers, body: response.body)
             })
         return StorySessionBoundModel(model: model, client: client, session: session)
     }
@@ -78,6 +84,16 @@ private struct StorySessionBoundModel: AgentModelClient {
         guard try await client.currentAuthenticationSessionID() == session else { throw ChatOSAPIError.unauthorized }
         try Task.checkCancellation()
         let response = try await model.complete(messages: messages, tools: tools, timeout: timeout)
+        guard try await client.currentAuthenticationSessionID() == session else { throw ChatOSAPIError.unauthorized }
+        try Task.checkCancellation()
+        return response
+    }
+
+    func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
+                onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage {
+        guard try await client.currentAuthenticationSessionID() == session else { throw ChatOSAPIError.unauthorized }
+        try Task.checkCancellation()
+        let response = try await model.stream(messages: messages, tools: tools, timeout: timeout, onEvent: onEvent)
         guard try await client.currentAuthenticationSessionID() == session else { throw ChatOSAPIError.unauthorized }
         try Task.checkCancellation()
         return response

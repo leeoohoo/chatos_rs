@@ -19,6 +19,7 @@ import { ChromiumSceneImageRenderer } from './v2/headless-scene-renderer.js';
 import { AnnotationAiService } from './v2/annotation-ai-service.js';
 import { ProgressiveGenerationService, type SubmittedStepVerification } from './v2/progressive-generation-service.js';
 import { executeSceneEditorCommand, sceneEditorCommandRequestSchema } from './v2/scene-editor-command.js';
+import { jsonEncodedValueSchema, jsonScalarValueSchema, stringLiteralSchema } from './json-schema.js';
 import { SceneQueryIndex, type SceneQuery } from './v2/scene-query.js';
 import { indexSceneDocument } from './v2/scene-schema.js';
 import { SceneDocumentStore, SceneRevisionConflictError } from './v2/scene-store.js';
@@ -41,7 +42,7 @@ import {
 } from './schema.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '3.0.2';
+const SERVER_VERSION = '3.0.3';
 const store = new WebDesignDocumentStore();
 await store.initialize();
 const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
@@ -226,20 +227,20 @@ const patchOperationSchema = {
   oneOf: [
     {
       type: 'object',
-      properties: { op: { const: 'set_title' }, title: { type: 'string', minLength: 1, maxLength: 240 } },
+      properties: { op: stringLiteralSchema('set_title'), title: { type: 'string', minLength: 1, maxLength: 240 } },
       required: ['op', 'title'],
       additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'set_description' }, description: { type: 'string', maxLength: 4000 } },
+      properties: { op: stringLiteralSchema('set_description'), description: { type: 'string', maxLength: 4000 } },
       required: ['op', 'description'],
       additionalProperties: false
     },
     {
       type: 'object',
       properties: {
-        op: { const: 'set_viewport' },
+        op: stringLiteralSchema('set_viewport'),
         viewport: {
           type: 'object',
           properties: {
@@ -257,7 +258,7 @@ const patchOperationSchema = {
     {
       type: 'object',
       properties: {
-        op: { const: 'set_breakpoint' },
+        op: stringLiteralSchema('set_breakpoint'),
         device: { type: 'string', enum: ['desktop', 'tablet', 'mobile'] },
         width: { type: 'number', minimum: 1 },
         height: { type: 'number', minimum: 1 }
@@ -267,62 +268,62 @@ const patchOperationSchema = {
     },
     {
       type: 'object',
-      properties: { op: { const: 'upsert_page' }, page: { type: 'object', description: 'Complete page object with id, name, and slash-prefixed slug.' } },
+      properties: { op: stringLiteralSchema('upsert_page'), page: { type: 'object', description: 'Complete page object with id, name, and slash-prefixed slug.' } },
       required: ['op', 'page'],
       additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'remove_page' }, pageId: { type: 'string', minLength: 1, maxLength: 128 } },
+      properties: { op: stringLiteralSchema('remove_page'), pageId: { type: 'string', minLength: 1, maxLength: 128 } },
       required: ['op', 'pageId'],
       additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'upsert_asset' }, asset: { type: 'object', description: 'Complete image asset object matching the document schema.' } },
+      properties: { op: stringLiteralSchema('upsert_asset'), asset: { type: 'object', description: 'Complete image asset object matching the document schema.' } },
       required: ['op', 'asset'],
       additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'remove_asset' }, assetId: { type: 'string', minLength: 1, maxLength: 128 } },
+      properties: { op: stringLiteralSchema('remove_asset'), assetId: { type: 'string', minLength: 1, maxLength: 128 } },
       required: ['op', 'assetId'],
       additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'set_tokens' }, tokens: { type: 'object', description: 'Complete color, radii, and typography token groups.' } },
+      properties: { op: stringLiteralSchema('set_tokens'), tokens: { type: 'object', description: 'Complete color, radii, and typography token groups.' } },
       required: ['op', 'tokens'],
       additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'upsert_symbol' }, symbol: { type: 'object', description: 'Complete reusable symbol object matching the document schema.' } },
+      properties: { op: stringLiteralSchema('upsert_symbol'), symbol: { type: 'object', description: 'Complete reusable symbol object matching the document schema.' } },
       required: ['op', 'symbol'],
       additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'remove_symbol' }, symbolId: { type: 'string', minLength: 1, maxLength: 128 } },
+      properties: { op: stringLiteralSchema('remove_symbol'), symbolId: { type: 'string', minLength: 1, maxLength: 128 } },
       required: ['op', 'symbolId'],
       additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'upsert_component' }, component: webDesignComponentSchema },
+      properties: { op: stringLiteralSchema('upsert_component'), component: webDesignComponentSchema },
       required: ['op', 'component'],
       additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'remove_component' }, componentId: { type: 'string', minLength: 1, maxLength: 128 } },
+      properties: { op: stringLiteralSchema('remove_component'), componentId: { type: 'string', minLength: 1, maxLength: 128 } },
       required: ['op', 'componentId'],
       additionalProperties: false
     },
     {
       type: 'object',
       properties: {
-        op: { const: 'set_parent' },
+        op: stringLiteralSchema('set_parent'),
         componentId: { type: 'string', minLength: 1, maxLength: 128 },
         parentId: { type: 'string', minLength: 1, maxLength: 128 },
         slot: { type: 'string', minLength: 1, maxLength: 128 }
@@ -333,7 +334,7 @@ const patchOperationSchema = {
     {
       type: 'object',
       properties: {
-        op: { const: 'set_layout' },
+        op: stringLiteralSchema('set_layout'),
         componentId: { type: 'string', minLength: 1, maxLength: 128 },
         layout: { type: 'object', description: 'Container layout with mode free, flex-row, flex-column, or grid and its supported alignment, gap, padding, wrapping, or grid fields.' }
       },
@@ -344,14 +345,14 @@ const patchOperationSchema = {
       type: 'object',
       properties: op === 'move_component'
         ? {
-            op: { const: op },
+            op: stringLiteralSchema(op),
             componentId: { type: 'string', minLength: 1, maxLength: 128 },
             x: { type: 'number' },
             y: { type: 'number' },
             device: { type: 'string', enum: ['desktop', 'tablet', 'mobile'] }
           }
         : {
-            op: { const: op },
+            op: stringLiteralSchema(op),
             componentId: { type: 'string', minLength: 1, maxLength: 128 },
             width: { type: 'number', minimum: 1 },
             height: { type: 'number', minimum: 1 },
@@ -363,7 +364,7 @@ const patchOperationSchema = {
     {
       type: 'object',
       properties: {
-        op: { const: 'update_component' },
+        op: stringLiteralSchema('update_component'),
         componentId: { type: 'string', minLength: 1, maxLength: 128 },
         device: { type: 'string', enum: ['desktop', 'tablet', 'mobile'] },
         changes: { type: 'object', minProperties: 1, description: 'Only changed component fields: name, content, zIndex, style, states, locked, hidden, symbolOverrides, constraints, or interaction.' }
@@ -374,7 +375,7 @@ const patchOperationSchema = {
     {
       type: 'object',
       properties: {
-        op: { const: 'add_annotation' },
+        op: stringLiteralSchema('add_annotation'),
         componentId: { type: 'string', minLength: 1, maxLength: 128 },
         annotation: { type: 'object', description: 'Complete annotation with stable id, author, text, status, and timestamps.' }
       },
@@ -384,7 +385,7 @@ const patchOperationSchema = {
     {
       type: 'object',
       properties: {
-        op: { const: 'resolve_annotation' },
+        op: stringLiteralSchema('resolve_annotation'),
         componentId: { type: 'string', minLength: 1, maxLength: 128 },
         annotationId: { type: 'string', minLength: 1, maxLength: 128 }
       },
@@ -393,14 +394,14 @@ const patchOperationSchema = {
     },
     {
       type: 'object',
-      properties: { op: { const: 'add_request' }, request: { type: 'object', description: 'Complete AI work request with stable id, prompt, status, timestamps, and optional pageId or componentId.' } },
+      properties: { op: stringLiteralSchema('add_request'), request: { type: 'object', description: 'Complete AI work request with stable id, prompt, status, timestamps, and optional pageId or componentId.' } },
       required: ['op', 'request'],
       additionalProperties: false
     },
     {
       type: 'object',
       properties: {
-        op: { const: 'resolve_request' },
+        op: stringLiteralSchema('resolve_request'),
         requestId: { type: 'string', minLength: 1, maxLength: 128 },
         resolution: { type: 'string', maxLength: 4000 }
       },
@@ -470,7 +471,7 @@ const generationSceneOperationSchema = {
     {
       type: 'object',
       properties: {
-        op: { const: 'insert-node' }, parentId: { type: 'string', minLength: 1, maxLength: 160 },
+        op: stringLiteralSchema('insert-node'), parentId: { type: 'string', minLength: 1, maxLength: 160 },
         index: { type: 'integer', minimum: 0, maximum: 100000 }, slot: { type: 'string', minLength: 1, maxLength: 160 },
         node: { type: 'object', description: 'A complete Scene v2 node or detached subtree with stable semantic IDs.' }
       },
@@ -479,16 +480,28 @@ const generationSceneOperationSchema = {
     {
       type: 'object',
       properties: {
-        op: { const: 'update-node' }, nodeId: { type: 'string', minLength: 1, maxLength: 160 },
+        op: stringLiteralSchema('update-node'), nodeId: { type: 'string', minLength: 1, maxLength: 160 },
         patches: {
           type: 'array', minItems: 1, maxItems: 64,
           items: {
-            type: 'object',
-            properties: {
-              path: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 160 } },
-              value: {}
-            },
-            required: ['path', 'value'], additionalProperties: false
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  path: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 160 } },
+                  value: jsonScalarValueSchema
+                },
+                required: ['path', 'value'], additionalProperties: false
+              },
+              {
+                type: 'object',
+                properties: {
+                  path: { type: 'array', minItems: 1, maxItems: 16, items: { type: 'string', minLength: 1, maxLength: 160 } },
+                  valueJson: jsonEncodedValueSchema
+                },
+                required: ['path', 'valueJson'], additionalProperties: false
+              }
+            ]
           }
         }
       },
@@ -496,13 +509,13 @@ const generationSceneOperationSchema = {
     },
     {
       type: 'object',
-      properties: { op: { const: 'remove-node' }, nodeId: { type: 'string', minLength: 1, maxLength: 160 } },
+      properties: { op: stringLiteralSchema('remove-node'), nodeId: { type: 'string', minLength: 1, maxLength: 160 } },
       required: ['op', 'nodeId'], additionalProperties: false
     },
     {
       type: 'object',
       properties: {
-        op: { const: 'move-node' }, nodeId: { type: 'string', minLength: 1, maxLength: 160 },
+        op: stringLiteralSchema('move-node'), nodeId: { type: 'string', minLength: 1, maxLength: 160 },
         parentId: { type: 'string', minLength: 1, maxLength: 160 }, index: { type: 'integer', minimum: 0, maximum: 100000 },
         slot: { type: 'string', minLength: 1, maxLength: 160 }
       },
@@ -510,12 +523,12 @@ const generationSceneOperationSchema = {
     },
     {
       type: 'object',
-      properties: { op: { const: 'insert-variable-collection' }, index: { type: 'integer', minimum: 0, maximum: 10000 }, collection: { type: 'object' } },
+      properties: { op: stringLiteralSchema('insert-variable-collection'), index: { type: 'integer', minimum: 0, maximum: 10000 }, collection: { type: 'object' } },
       required: ['op', 'index', 'collection'], additionalProperties: false
     },
     {
       type: 'object',
-      properties: { op: { const: 'insert-responsive-rule' }, index: { type: 'integer', minimum: 0, maximum: 10000 }, rule: { type: 'object' } },
+      properties: { op: stringLiteralSchema('insert-responsive-rule'), index: { type: 'integer', minimum: 0, maximum: 10000 }, rule: { type: 'object' } },
       required: ['op', 'index', 'rule'], additionalProperties: false
     }
   ]
@@ -1290,6 +1303,40 @@ function objectArguments(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function decodeStructuredJson(value: unknown, label: string): Record<string, unknown> | unknown[] {
+  if (typeof value !== 'string') throw new Error(`${label} must be JSON text.`);
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(value);
+  } catch {
+    throw new Error(`${label} must contain valid JSON.`);
+  }
+  if (!decoded || typeof decoded !== 'object') throw new Error(`${label} must encode an object or array.`);
+  return decoded as Record<string, unknown> | unknown[];
+}
+
+function normalizeGenerationOperations(value: unknown): SceneTransactionOperation[] {
+  if (!Array.isArray(value)) return value as SceneTransactionOperation[];
+  return value.map((item, operationIndex) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item as SceneTransactionOperation;
+    const operation = item as Record<string, unknown>;
+    if (operation.op !== 'update-node' || !Array.isArray(operation.patches)) return item as SceneTransactionOperation;
+    return {
+      ...operation,
+      patches: operation.patches.map((entry, patchIndex) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+        const patch = entry as Record<string, unknown>;
+        if (!Object.hasOwn(patch, 'valueJson')) return patch;
+        const { valueJson, ...rest } = patch;
+        return {
+          ...rest,
+          value: decodeStructuredJson(valueJson, `operations[${operationIndex}].patches[${patchIndex}].valueJson`)
+        };
+      })
+    } as SceneTransactionOperation;
+  });
+}
+
 function changedComponentIds(operations: WebDesignPatchOperation[]): string[] {
   return [...new Set(operations.flatMap((operation) => {
     if (operation.op === 'upsert_component') return [operation.component.id];
@@ -1528,6 +1575,23 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const documentId = String(argumentsValue.documentId);
       await assertGenerationDocumentInScope(documentId);
       const { documentId: _documentId, ...request } = argumentsValue;
+      if (request.command && typeof request.command === 'object' && !Array.isArray(request.command)) {
+        const command = request.command as Record<string, unknown>;
+        if (command.type === 'update-node' && Array.isArray(command.patches)) {
+          command.patches = command.patches.map((item) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+            const patch = item as Record<string, unknown>;
+            const path = typeof patch.path === 'string' ? patch.path.split('.') : patch.path;
+            if (!Object.hasOwn(patch, 'valueJson')) return { ...patch, path };
+            const { valueJson, ...rest } = patch;
+            return {
+              ...rest,
+              path,
+              value: decodeStructuredJson(valueJson, 'command.patches[].valueJson')
+            };
+          });
+        }
+      }
       const edited = await executeSceneEditorCommand(generationRepositories.scenes, documentId, request, 'ai');
       const changedNodeIds = [...new Set([
         ...edited.summary.insertedNodeIds,
@@ -1559,7 +1623,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         attemptId: typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined,
         idempotencyKey: String(argumentsValue.idempotencyKey),
         transactionId: String(argumentsValue.transactionId),
-        operations: argumentsValue.operations as SceneTransactionOperation[],
+        operations: normalizeGenerationOperations(argumentsValue.operations),
         visualInputs: argumentsValue.visualInputs as GenerationArtifact[],
         verification: argumentsValue.verification as SubmittedStepVerification
       });
@@ -1571,7 +1635,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         attemptId: typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined,
         idempotencyKey: String(argumentsValue.idempotencyKey),
         transactionId: String(argumentsValue.transactionId),
-        operations: argumentsValue.operations as SceneTransactionOperation[],
+        operations: normalizeGenerationOperations(argumentsValue.operations),
         visualInputs: argumentsValue.visualInputs as GenerationArtifact[],
         verification: argumentsValue.verification as SubmittedStepVerification
       });
@@ -1583,7 +1647,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         attemptId: typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined,
         idempotencyKey: String(argumentsValue.idempotencyKey),
         transactionId: String(argumentsValue.transactionId),
-        operations: argumentsValue.operations as SceneTransactionOperation[],
+        operations: normalizeGenerationOperations(argumentsValue.operations),
         visualInputs: argumentsValue.visualInputs as GenerationArtifact[],
         verification: argumentsValue.verification as SubmittedStepVerification
       });

@@ -8,7 +8,7 @@ use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use serde_json::{json, Value};
 
 use super::{
-    build_chat_completions_request_payload, build_responses_request_payload,
+    build_chat_completions_request_payload, build_request_payload, build_responses_request_payload,
     effective_provider_for_request, emit_finalized_stream_callbacks, parse_timeout_seconds,
     response_items_to_chat_messages, validate_request_payload_size, AiRequestHandler,
     AiRequestOptions, AiTransport, StreamCallbacks,
@@ -21,6 +21,34 @@ async fn token_count_success(Json(payload): Json<Value>) -> Json<Value> {
         "object": "response.input_tokens",
         "input_tokens": 12_345
     }))
+}
+
+#[test]
+fn responses_payload_can_enable_server_side_compaction() {
+    let payload = build_request_payload(
+        AiTransport::Responses,
+        json!([{"role": "user", "content": "hello"}]),
+        "gpt-5.6-sol".to_string(),
+        None,
+        None,
+        None,
+        None,
+        Some("gpt".to_string()),
+        Some("high".to_string()),
+        &AiRequestOptions {
+            responses_compaction_threshold: Some(200_000),
+            ..AiRequestOptions::default()
+        },
+    );
+
+    assert_eq!(
+        payload.pointer("/context_management/0/type"),
+        Some(&json!("compaction"))
+    );
+    assert_eq!(
+        payload.pointer("/context_management/0/compact_threshold"),
+        Some(&json!(200_000))
+    );
 }
 
 async fn token_count_unsupported(
@@ -371,6 +399,7 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         force_identity_encoding: false,
         stream: true,
         output_format: None,
+        responses_compaction_threshold: None,
     };
     let payload = build_responses_request_payload(
         json!([]),

@@ -26,8 +26,10 @@ use super::internal_auth::{
     CHATOS_MESSAGES_READ_SCOPE,
 };
 mod projection;
+#[cfg(test)]
+use projection::paginate_run_events;
 use projection::{
-    paginate_run_events, redact_workspace_paths_internal, run_event_page,
+    project_run_event_page, redact_workspace_paths_internal, run_event_page,
     trim_event_for_chatos_detail, trim_run_for_chatos_detail,
 };
 
@@ -390,9 +392,9 @@ async fn get_chatos_message_run(
     };
     let (task, model_config) = tokio::try_join!(task_future, model_config_future)?;
     let (events, events_total, events_has_more) = if query.include_events.unwrap_or(true) {
-        let events = state
+        let (events, total) = state
             .run_service
-            .list_run_events(run.id.as_str())
+            .list_run_events_page(run.id.as_str(), event_offset, event_limit)
             .await
             .map_err(InternalApiError::internal)?;
         let tool_text_limit_chars = state
@@ -401,7 +403,7 @@ async fn get_chatos_message_run(
             .await
             .map_err(InternalApiError::internal)?
             .per_result_max_chars;
-        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars)
+        project_run_event_page(events, total, event_offset, tool_text_limit_chars)
     } else {
         (Vec::new(), 0, false)
     };
@@ -679,11 +681,10 @@ async fn get_chatos_message_run_event(
     }
     let event = state
         .run_service
-        .list_run_events(run.id.as_str())
+        .get_run_event(run.id.as_str(), event_id)
         .await
         .map_err(InternalApiError::internal)?
-        .into_iter()
-        .find(|event| event.id == event_id && event.run_id == run.id)
+        .filter(|event| event.run_id == run.id)
         .ok_or_else(|| InternalApiError::not_found("run event not found for message"))?;
     let tool_text_limit_chars = state
         .task_service
@@ -756,9 +757,9 @@ async fn get_chatos_message_graph_run(
         .map(|node| node.task)
         .ok_or_else(|| InternalApiError::not_found("run not found for graph"))?;
     let (events, events_total, events_has_more) = if query.include_events.unwrap_or(true) {
-        let events = state
+        let (events, total) = state
             .run_service
-            .list_run_events(run.id.as_str())
+            .list_run_events_page(run.id.as_str(), event_offset, event_limit)
             .await
             .map_err(InternalApiError::internal)?;
         let tool_text_limit_chars = state
@@ -767,7 +768,7 @@ async fn get_chatos_message_graph_run(
             .await
             .map_err(InternalApiError::internal)?
             .per_result_max_chars;
-        paginate_run_events(events, event_limit, event_offset, tool_text_limit_chars)
+        project_run_event_page(events, total, event_offset, tool_text_limit_chars)
     } else {
         (Vec::new(), 0, false)
     };

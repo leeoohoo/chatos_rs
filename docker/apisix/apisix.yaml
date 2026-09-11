@@ -463,6 +463,33 @@ routes:
       nodes:
         "local-connector-service-backend:39230": 1
 
+  # Path-based alias for native clients using the shared gateway origin (for example local
+  # development on 127.0.0.1:9080). The connector protocol spans several historical /api/*
+  # namespaces, so the client appends its unchanged protocol path beneath /api/connector.
+  - id: local-connector-client-api
+    priority: 530
+    uri: /api/connector/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      cors: *api_cors
+      client-control:
+        max_body_size: 134217728
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/connector/?(.*)"
+          - "/$1"
+    enable_websocket: true
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "local-connector-service-backend:39230": 1
+
   - id: task-runner-api
     priority: 520
     uri: /api/task/*

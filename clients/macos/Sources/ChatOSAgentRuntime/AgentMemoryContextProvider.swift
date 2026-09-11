@@ -15,15 +15,9 @@ public struct AgentContextPreparationFailure: Error, Sendable {
 public struct AgentMemoryContextProvider: Sendable {
     public let scope: AgentMemoryScope
     private let service: any AgentMemoryServicing
-    private let sleep: @Sendable (UInt64) async -> Void
 
-    public init(scope: AgentMemoryScope, service: any AgentMemoryServicing,
-                sleep: @escaping @Sendable (UInt64) async -> Void = {
-                    // Consume cancellation inside the suspended closure. Propagating that
-                    // error across an escaping async closure trips Swift 6.3 task teardown.
-                    try? await Task<Never, Never>.sleep(nanoseconds: $0)
-                }) {
-        self.scope = scope; self.service = service; self.sleep = sleep
+    public init(scope: AgentMemoryScope, service: any AgentMemoryServicing) {
+        self.scope = scope; self.service = service
     }
 
     /// Binds the application-selected Memory Engine scope to a durable checkpoint.
@@ -86,63 +80,65 @@ public struct AgentMemoryContextProvider: Sendable {
             }
             if synchronizeOnly { return .init(checkpoint: state, messages: []) }
             try await check(deadline: deadline, shouldPause: shouldPause)
-            var messages = try AgentContextAssembler.assemble(checkpoint: state, memory: state.memory!, context: await service.compose())
+
+            // This is the same boundary used by AiRuntime: observe a server-owned in-flight job
+            // before composing input. The checkpoint never owns a second summary state machine.
+            do {
+                if try await waitForInflightSummary(checkpoint: state, policy: policy, deadline: deadline,
+                                                    shouldPause: shouldPause, record: record) {
+                    state.memory!.compactions += 1
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // AiRuntime warns and continues here. Compose remains authoritative and will still
+                // fail closed if Memory Engine itself is unavailable.
+                try await emit(state, "context_summary_check_failed",
+                               "无法确认在途摘要状态，本轮继续从 Memory Engine compose：\(error.localizedDescription)", record: record)
+            }
+
+            var messages = try AgentContextAssembler.assemble(checkpoint: state, memory: state.memory!,
+                                                                context: await service.compose())
             var count = try AgentContextBudget.estimate(messages: messages, tools: tools)
             var force = forceCompaction
-            var passes = 0
-            while count > policy.compactionThresholdTokens || force || state.memory!.summaryRequested {
+            for _ in 0..<policy.maximumCompactionPasses where count > policy.compactionThresholdTokens || force {
                 try await check(deadline: deadline, shouldPause: shouldPause)
-                guard passes < policy.maximumCompactionPasses else { throw AgentContextError.budgetExceeded }
-                passes += 1
-                let before = state.memory!.summaryInputEstimate ?? count
-                var status: AgentSummaryStatus
-                if state.memory!.summaryRequested {
-                    status = try await service.summaryStatus(jobID: state.memory!.summaryJobID)
-                    if !status.running && !status.completed && !status.failed {
-                        status = try await service.startSummary(reason: "active_context_budget")
-                    }
-                } else {
-                    state.memory!.summaryRequested = true
-                    state.memory!.summaryInputEstimate = count
-                    try await emit(state, "context_compacting", "上下文接近预算，正在请求 Memory Engine 压缩", record: record)
-                    status = try await service.startSummary(reason: force ? "context_overflow" : "active_context_budget")
+                let before = count
+                let changed: Bool
+                do {
+                    changed = try await compactActiveContext(
+                        checkpoint: state, reason: force ? "context_overflow" : "active_context_budget",
+                        policy: policy, deadline: deadline, shouldPause: shouldPause, record: record
+                    )
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    if force || count > policy.hardInputLimit { throw error }
+                    try await emit(state, "context_summary_skipped",
+                                   "主动摘要失败，但输入仍在硬限制内，本轮继续：\(error.localizedDescription)", record: record)
+                    break
                 }
-                state.memory!.summaryJobID = status.jobID
-                try await emit(state, "context_summary_waiting", "正在等待 Memory Engine 摘要任务", record: record)
-                let summaryDeadline = min(deadline, Date().addingTimeInterval(Double(policy.summaryTimeoutSeconds)))
-                while status.running {
-                    try await check(deadline: deadline, shouldPause: shouldPause)
-                    guard Date() < summaryDeadline else { throw AgentContextError.summaryTimedOut }
-                    let remainingSeconds = max(0, summaryDeadline.timeIntervalSinceNow)
-                    let delaySeconds = min(Double(policy.summaryPollSeconds), remainingSeconds)
-                    guard delaySeconds > 0 else { throw AgentContextError.summaryTimedOut }
-                    let delayNanoseconds = UInt64(min(Double(UInt64.max), (delaySeconds * 1_000_000_000).rounded(.up)))
-                    await sleep(delayNanoseconds)
-                    try await check(deadline: deadline, shouldPause: shouldPause)
-                    guard Date() < summaryDeadline else { throw AgentContextError.summaryTimedOut }
-                    status = try await service.summaryStatus(jobID: state.memory!.summaryJobID)
+                guard changed else {
+                    if force || count > policy.hardInputLimit { throw AgentContextError.noImprovement }
+                    try await emit(state, "context_summary_skipped",
+                                   "Memory Engine 未生成摘要或压缩记录；输入仍在硬限制内，本轮不重复提交", record: record)
+                    break
                 }
-                guard !status.failed, status.completed else {
-                    throw AgentContextError.summaryFailed(status.errorMessage)
-                }
-                state.memory!.summaryRequested = false
-                state.memory!.summaryJobID = nil
-                state.memory!.summaryInputEstimate = nil
                 state.memory!.compactions += 1
-                try await emit(state, "context_summary_completed", "摘要任务结束，正在重新检查输入预算", record: record)
+                try await emit(state, "context_summary_completed", "摘要任务完成，正在从 Memory Engine 重新 compose 上下文", record: record)
                 try await check(deadline: deadline, shouldPause: shouldPause)
-                messages = try AgentContextAssembler.assemble(checkpoint: state, memory: state.memory!, context: await service.compose())
+                messages = try AgentContextAssembler.assemble(checkpoint: state, memory: state.memory!,
+                                                               context: await service.compose())
                 count = try AgentContextBudget.estimate(messages: messages, tools: tools)
-                // A completed/no-op job is not proof of useful compaction.
-                guard count < before else { throw AgentContextError.noImprovement }
                 force = false
-                try await emit(state, "context_compacted", "上下文安全估计由 \(before) 降至 \(count)，不是精确 token 数", record: record)
+                try await emit(state, "context_compacted", "模型输入估算由 \(before) 降至 \(count) tokens", record: record)
             }
             guard count <= policy.hardInputLimit else { throw AgentContextError.budgetExceeded }
             try await check(deadline: deadline, shouldPause: shouldPause)
             return .init(checkpoint: state, messages: messages)
         } catch {
-            // Preserve the last acknowledged sync cursor and in-flight summary ID on every exit.
+            // Preserve the last acknowledged record-sync cursor on every exit. Summary progress
+            // is recovered from Memory Engine itself on the next prepare call.
             throw AgentContextPreparationFailure(checkpoint: state, reason: error.localizedDescription,
                                                  cancelled: error is CancellationError)
         }
@@ -152,6 +148,66 @@ public struct AgentMemoryContextProvider: Sendable {
         try Task.checkCancellation()
         if await shouldPause() { throw CancellationError() }
         guard Date() < deadline else { throw AgentRuntimeError.timeout }
+    }
+
+    private func waitForInflightSummary(
+        checkpoint: AgentRunCheckpoint, policy: AgentContextPolicy, deadline: Date,
+        shouldPause: @escaping @Sendable () async -> Bool,
+        record: @escaping AgentRuntime.Recorder
+    ) async throws -> Bool {
+        let initial = try await service.summaryStatus(jobID: nil)
+        guard initial.running else { return false }
+        try await emit(checkpoint, "context_summary_waiting",
+                       "检测到当前线程正在压缩上下文，暂停新的模型请求", record: record)
+        let status = try await waitForSummary(initial, policy: policy, deadline: deadline,
+                                              shouldPause: shouldPause)
+        if status.failed {
+            try await emit(checkpoint, "context_summary_skipped",
+                           "在途摘要任务失败，本轮将使用 Memory Engine 当前可 compose 的上下文", record: record)
+            return false
+        }
+        return status.changedContext
+    }
+
+    private func compactActiveContext(
+        checkpoint: AgentRunCheckpoint, reason: String, policy: AgentContextPolicy, deadline: Date,
+        shouldPause: @escaping @Sendable () async -> Bool,
+        record: @escaping AgentRuntime.Recorder
+    ) async throws -> Bool {
+        try await emit(checkpoint, "context_compacting",
+                       reason == "context_overflow"
+                        ? "模型报告上下文溢出，正在请求 Memory Engine 压缩"
+                        : "上下文达到主动压缩阈值，正在请求 Memory Engine 压缩",
+                       record: record)
+        let initial = try await service.startSummary(reason: reason)
+        let status = try await waitForSummary(initial, policy: policy, deadline: deadline,
+                                              shouldPause: shouldPause)
+        if status.failed { throw AgentContextError.summaryFailed(status.errorMessage) }
+        return status.changedContext
+    }
+
+    private func waitForSummary(
+        _ initial: AgentSummaryStatus, policy: AgentContextPolicy, deadline: Date,
+        shouldPause: @escaping @Sendable () async -> Bool
+    ) async throws -> AgentSummaryStatus {
+        if initial.completed || initial.failed || !initial.running { return initial }
+        var status = initial
+        let summaryDeadline = min(deadline, Date().addingTimeInterval(Double(policy.summaryTimeoutSeconds)))
+        while status.running {
+            try await check(deadline: deadline, shouldPause: shouldPause)
+            guard Date() < summaryDeadline else { throw AgentContextError.summaryTimedOut }
+            let delay = min(Double(policy.summaryPollSeconds), max(0, summaryDeadline.timeIntervalSinceNow))
+            guard delay > 0 else { throw AgentContextError.summaryTimedOut }
+            let nanoseconds = UInt64(min(Double(UInt64.max), (delay * 1_000_000_000).rounded(.up)))
+            // Keep suspension in the current task frame. This also avoids the Swift 6.3
+            // cancellation/deallocation crash seen in the previous escaping sleep closure.
+            do { try await Task<Never, Never>.sleep(nanoseconds: nanoseconds) }
+            catch { throw CancellationError() }
+            try await check(deadline: deadline, shouldPause: shouldPause)
+            guard Date() < summaryDeadline else { throw AgentContextError.summaryTimedOut }
+            status = try await service.summaryStatus(jobID: initial.jobID)
+        }
+        return status
     }
 
     private func emit(_ checkpoint: AgentRunCheckpoint, _ kind: String, _ detail: String,

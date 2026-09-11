@@ -3,7 +3,7 @@
 
 use chrono::Utc;
 use futures_util::TryStreamExt;
-use mongodb::bson::{doc, Document, Regex};
+use mongodb::bson::{doc, Bson, Document, Regex};
 use mongodb::options::{FindOptions, ReplaceOptions};
 use mongodb::{Collection, Database};
 

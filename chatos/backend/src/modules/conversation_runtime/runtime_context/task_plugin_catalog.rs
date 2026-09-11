@@ -42,6 +42,7 @@ struct TaskPluginCommand {
 
 pub(super) async fn resolve_task_plugin_catalog_prompt(
     project_id: Option<&str>,
+    project_context: Option<&chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
     preferred_plugin_keys: &[String],
     locale: InternalContextLocale,
 ) -> Result<Option<String>, String> {
@@ -52,6 +53,7 @@ pub(super) async fn resolve_task_plugin_catalog_prompt(
         config.task_runner_base_url.as_str(),
         access_token.as_str(),
         project_id,
+        project_context,
     )
     .await?;
     let catalog = serde_json::from_value::<TaskPluginCatalogResponse>(payload)

@@ -198,6 +198,10 @@ pub(super) async fn resolve_runtime_session(
             request.owner_user_id.trim(),
             agent_key,
             request.project_id.as_deref(),
+            request
+                .project_context
+                .as_ref()
+                .map(|authorization| &authorization.snapshot),
             request.run_id.as_deref(),
             request.turn_id.as_deref(),
             request.task_id.as_deref(),
@@ -412,6 +416,9 @@ pub(super) async fn resolve_runtime_session(
             agent_key: agent_key.as_str().to_string(),
             task_profile: normalized(request.task_profile),
             project_id: request.project_id.clone(),
+            client_project_context: request
+                .project_context
+                .map(|authorization| authorization.snapshot),
             device_id,
             run_id: normalized(request.run_id),
             execution_group_id: normalized(request.execution_group_id),

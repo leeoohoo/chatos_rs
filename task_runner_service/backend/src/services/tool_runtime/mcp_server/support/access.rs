@@ -167,7 +167,55 @@ pub(crate) fn task_for_agent_tool(task: TaskRecord) -> Value {
 
 pub(crate) fn value_for_agent_tool(mut value: Value) -> Value {
     remove_internal_task_fields(&mut value);
+    compact_agent_tool_payload(&mut value);
     value
+}
+
+pub(crate) fn compact_agent_tool_payload(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                compact_agent_tool_payload(item);
+            }
+        }
+        Value::Object(object) => {
+            let keys = object.keys().cloned().collect::<Vec<_>>();
+            let mut truncated_fields = Vec::new();
+            for key in keys {
+                let Some(item) = object.get_mut(key.as_str()) else {
+                    continue;
+                };
+                let limit = match key.as_str() {
+                    "result_summary" => 2_400,
+                    "objective" | "description" | "error_message" => 6_000,
+                    _ => 12_000,
+                };
+                if let Value::String(text) = item {
+                    if let Some(compacted) = truncate_agent_tool_text(text.as_str(), limit) {
+                        *text = compacted;
+                        truncated_fields.push(Value::String(key));
+                    }
+                } else {
+                    compact_agent_tool_payload(item);
+                }
+            }
+            if !truncated_fields.is_empty() {
+                object.insert(
+                    "_truncated_fields".to_string(),
+                    Value::Array(truncated_fields),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn truncate_agent_tool_text(value: &str, max_chars: usize) -> Option<String> {
+    let mut chars = value.chars();
+    let prefix = chars.by_ref().take(max_chars).collect::<String>();
+    chars.next().is_some().then(|| {
+        format!("{prefix}\n… [truncated; use the task/run detail APIs for the full record]")
+    })
 }
 
 pub(crate) fn remove_internal_task_fields(value: &mut Value) {

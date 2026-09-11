@@ -63,6 +63,27 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         }
     }
 
+    match crate::repositories::session_runtime_settings::purge_removed_task_settings().await {
+        Ok(modified_count) => {
+            info!(
+                "Removed obsolete automatic task setting from sessions: modified_count={modified_count}"
+            );
+            core::runtime_health::mark_runtime_check_ok(
+                "session_task_setting_migration",
+                false,
+                format!("modified_count={modified_count}"),
+            );
+        }
+        Err(err) => {
+            warn!("Failed to clean obsolete automatic task setting: {err}");
+            core::runtime_health::mark_runtime_check_warn(
+                "session_task_setting_migration",
+                false,
+                format!("cleanup failed: {err}"),
+            );
+        }
+    }
+
     match services::auth_user_backfill::backfill_legacy_auth_users().await {
         Ok(report) => {
             info!(

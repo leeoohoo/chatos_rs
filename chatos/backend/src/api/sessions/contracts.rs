@@ -73,8 +73,6 @@ pub(super) struct UpdateSessionRuntimeSettingsRequest {
     pub(super) workspace_root: Option<Option<String>>,
     #[serde(alias = "reasoningEnabled")]
     pub(super) reasoning_enabled: Option<bool>,
-    #[serde(alias = "autoCreateTask")]
-    pub(super) auto_create_task: Option<bool>,
 }
 
 #[cfg(test)]
@@ -83,7 +81,12 @@ mod planning_mode_removal_tests {
 
     #[test]
     fn runtime_settings_reject_removed_planning_mode() {
-        for key in ["plan_mode_enabled", "planModeEnabled"] {
+        for key in [
+            "plan_mode_enabled",
+            "planModeEnabled",
+            "auto_create_task",
+            "autoCreateTask",
+        ] {
             assert!(
                 serde_json::from_value::<UpdateSessionRuntimeSettingsRequest>(
                     serde_json::json!({key: true})

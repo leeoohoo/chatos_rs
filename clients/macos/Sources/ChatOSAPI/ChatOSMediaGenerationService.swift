@@ -78,14 +78,16 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         } catch {
             throw MediaGenerationClientError.invalidProviderResponse
         }
-        let images = try payload.data.map { item -> GeneratedMediaAsset in
+        let resultID = payload.id ?? request.clientRequestID ?? "media_\(UUID().uuidString.lowercased())"
+        let images = try payload.data.enumerated().map { index, item -> GeneratedMediaAsset in
+            let assetID = item.id ?? "\(resultID):image:\(index)"
             if let base64Data = item.b64JSON ?? item.base64Data {
                 guard let decoded = Data(base64Encoded: base64Data),
                       decoded.count <= 20 * 1024 * 1024 else {
                     throw MediaGenerationClientError.invalidProviderResponse
                 }
                 return GeneratedMediaAsset(
-                    id: "image_\(UUID().uuidString.lowercased())",
+                    id: assetID,
                     mimeType: item.mimeType ?? "image/png",
                     base64Data: base64Data,
                     revisedPrompt: item.revisedPrompt
@@ -93,7 +95,7 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             }
             if let url = item.url, url.scheme?.lowercased() == "https" {
                 return GeneratedMediaAsset(
-                    id: "image_\(UUID().uuidString.lowercased())",
+                    id: assetID,
                     mimeType: item.mimeType ?? "image/png",
                     url: url,
                     revisedPrompt: item.revisedPrompt
@@ -106,11 +108,14 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         }
 
         return ImageGenerationResult(
-            id: "media_\(UUID().uuidString.lowercased())",
+            id: resultID,
             modelConfigID: request.modelConfigID,
-            modelName: runtime.model,
+            modelName: payload.model ?? runtime.model,
             createdAt: ISO8601DateFormatter().string(from: Date()),
-            images: images
+            images: images,
+            clientRequestID: request.clientRequestID,
+            projectID: request.projectID,
+            resourceID: request.resourceID
         )
     }
 
@@ -133,7 +138,12 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         _ request: VideoGenerationRequest, existingJobID: String?,
         progress: @escaping @Sendable (VideoGenerationProgress) async -> Void
     ) async throws -> VideoGenerationResult {
-        let runtime = try await loadRuntimeModel(id: request.modelConfigID)
+        let runtime: RuntimeModelConfig
+        do {
+            runtime = try await loadRuntimeModel(id: request.modelConfigID)
+        } catch {
+            throw MediaGenerationClientError.preflightFailed(error.localizedDescription)
+        }
         let wireProtocol = runtime.videoProtocol
         var job: ProviderVideoJob
         if let existingJobID {
@@ -324,20 +334,17 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         var headers = providerHeaders(runtime: runtime)
         let body: Data
         if profile.isMiniMax {
-            // H3 capabilities do not imply the native MiniMax wire protocol.
-            // New API accepts the OpenAI video envelope with H3-specific options.
+            // NewAPI's /v1/videos compatibility layer accepts MiniMax V2's top-level
+            // content array. Preserve the official first_frame/last_frame roles instead
+            // of flattening the first image into input_reference and dropping the tail.
             let validated = try miniMaxPayload(runtime: runtime, request: request, profile: profile)
-            var payload: [String: Any] = [
+            let payload: [String: Any] = [
                 "model": runtime.model,
-                "prompt": request.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                "content": validated["content"] as Any,
                 "duration": request.seconds,
                 "size": request.size,
                 "metadata": ["ratio": request.inputImage == nil ? request.ratio : "adaptive"],
             ]
-            if let content = validated["content"] as? [[String: Any]],
-               let reference = content.last?["image_url"] as? [String: String] {
-                payload["input_reference"] = reference["url"]
-            }
             headers["Content-Type"] = "application/json"
             body = try JSONSerialization.data(withJSONObject: payload)
         } else if let inputImage = request.inputImage {
@@ -395,24 +402,22 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         }
         var content: [[String: Any]] = [["type": "text", "text": prompt]]
         if let image = request.inputImage {
-            let mimeType = image.mimeType.lowercased()
-            guard ["image/png", "image/jpeg", "image/webp"].contains(mimeType),
-                  let data = Data(base64Encoded: image.base64Data), !data.isEmpty,
-                  data.count <= 20 * 1024 * 1024 else {
-                throw MediaGenerationClientError.invalidInputImage
-            }
-            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
-                  let height = properties[kCGImagePropertyPixelHeight] as? Int,
-                  (256...5760).contains(width), (256...5760).contains(height),
-                  (0.4...2.5).contains(Double(width) / Double(height)) else {
-                throw MediaGenerationClientError.invalidMiniMaxImageDimensions
-            }
+            try validateMiniMaxImage(image)
             content.append([
                 "type": "image_url",
-                "image_url": ["url": "data:\(mimeType);base64,\(image.base64Data)"],
+                "image_url": ["url": "data:\(image.mimeType.lowercased());base64,\(image.base64Data)"],
                 "role": "first_frame",
+            ])
+        }
+        if let image = request.lastFrameImage {
+            guard request.inputImage != nil, profile.supportsLastFrame else {
+                throw MediaGenerationClientError.unsupportedLastFrameProtocol
+            }
+            try validateMiniMaxImage(image)
+            content.append([
+                "type": "image_url",
+                "image_url": ["url": "data:\(image.mimeType.lowercased());base64,\(image.base64Data)"],
+                "role": "last_frame",
             ])
         }
         return [
@@ -420,8 +425,25 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             "content": content,
             "resolution": request.size,
             "duration": request.seconds,
-            "ratio": request.inputImage == nil ? request.ratio : "adaptive",
+            "ratio": request.inputImage == nil && request.lastFrameImage == nil ? request.ratio : "adaptive",
         ]
+    }
+
+    private static func validateMiniMaxImage(_ image: ImageGenerationInputImage) throws {
+        let mimeType = image.mimeType.lowercased()
+        guard ["image/png", "image/jpeg", "image/webp"].contains(mimeType),
+              let data = Data(base64Encoded: image.base64Data), !data.isEmpty,
+              data.count <= 20 * 1024 * 1024 else {
+            throw MediaGenerationClientError.invalidInputImage
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              (256...5760).contains(width), (256...5760).contains(height),
+              (0.4...2.5).contains(Double(width) / Double(height)) else {
+            throw MediaGenerationClientError.invalidMiniMaxImageDimensions
+        }
     }
 
     private static func miniMaxEndpoint(baseURL: String, jobID: String? = nil) throws -> URL {
@@ -709,10 +731,13 @@ private struct RuntimeModelConfig: Decodable, Sendable {
 }
 
 private struct ProviderImageResponse: Decodable, Sendable {
+    var id: String?
+    var model: String?
     var data: [ProviderImageItem]
 }
 
 private struct ProviderImageItem: Decodable, Sendable {
+    var id: String?
     var b64JSON: String?
     var base64Data: String?
     var url: URL?
@@ -720,6 +745,7 @@ private struct ProviderImageItem: Decodable, Sendable {
     var revisedPrompt: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case b64JSON = "b64_json"
         case base64Data = "base64"
         case url
@@ -746,7 +772,8 @@ private struct ProviderVideoJob: Sendable {
     }
 }
 
-private enum MediaGenerationClientError: LocalizedError {
+private enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailure {
+    case preflightFailed(String)
     case invalidModelConfiguration
     case invalidInputImage
     case invalidProviderResponse
@@ -758,10 +785,13 @@ private enum MediaGenerationClientError: LocalizedError {
     case videoFailed(String?)
     case invalidMiniMaxPrompt
     case invalidMiniMaxImageDimensions
+    case unsupportedLastFrameProtocol
     case videoEndpointReturnedHTML(String)
 
     var errorDescription: String? {
         switch self {
+        case let .preflightFailed(detail):
+            detail
         case .invalidModelConfiguration:
             "模型缺少可用的 API 地址或密钥，请检查模型配置。"
         case .invalidInputImage:
@@ -778,6 +808,8 @@ private enum MediaGenerationClientError: LocalizedError {
             "MiniMax 视频提示词不能为空，且不能超过 7000 字符。"
         case .invalidMiniMaxImageDimensions:
             "MiniMax 参考图宽高须为 256–5760 像素，宽高比须为 0.4–2.5。"
+        case .unsupportedLastFrameProtocol:
+            "尾帧约束需要同时提供首帧，且当前视频模型必须支持首尾帧生成。"
         case let .videoEndpointReturnedHTML(endpoint):
             "视频接口 \(endpoint) 返回了网页而非任务数据，请检查客户端协议与接口路径是否匹配。"
         case .invalidVideoContent:
@@ -786,6 +818,18 @@ private enum MediaGenerationClientError: LocalizedError {
             "视频生成等待超时，可以稍后重新尝试。"
         case let .videoFailed(detail):
             "视频生成失败：\(detail?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "模型未提供失败原因")"
+        }
+    }
+
+    var requestMayHaveBeenSubmitted: Bool {
+        switch self {
+        case .preflightFailed, .invalidModelConfiguration, .invalidInputImage,
+             .invalidVideoOptions, .invalidMiniMaxPrompt, .invalidMiniMaxImageDimensions,
+             .unsupportedLastFrameProtocol:
+            false
+        case .invalidProviderResponse, .responseTooLarge, .providerRejected,
+             .invalidVideoContent, .videoTimedOut, .videoFailed, .videoEndpointReturnedHTML:
+            true
         }
     }
 }

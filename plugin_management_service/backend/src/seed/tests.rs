@@ -104,11 +104,6 @@ fn retired_system_agents_are_unique_and_disjoint_from_the_runtime_catalog() {
 }
 
 #[test]
-fn all_chatos_runtime_agents_receive_the_notepad_binding() {
-    assert_eq!(CHATOS_NOTEPAD_AGENT_KEYS, [CHATOS_CONVERSATION_AGENT_KEY]);
-}
-
-#[test]
 fn only_the_conversation_agent_can_delegate_generic_task_runner_work() {
     assert_eq!(
         CHATOS_TASK_RUNNER_AGENT_KEYS,

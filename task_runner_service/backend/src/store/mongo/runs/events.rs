@@ -42,16 +42,42 @@ impl MongoStore {
         &self,
         run_id: &str,
     ) -> Result<Vec<TaskRunEventRecord>, String> {
-        self.load_collection_items_with_query(
-            &self.run_events,
-            doc! { "run_id": run_id },
-            Some(mongo_find_options(
-                doc! { "created_at": 1, "id": 1 },
-                None,
-                None,
-            )),
-        )
-        .await
+        let mut options = mongo_find_options(doc! { "created_at": 1, "id": 1 }, None, None);
+        options.projection = Some(doc! { "payload": 0 });
+        let items = self
+            .load_collection_items_with_query(
+                &self.run_events,
+                doc! { "run_id": run_id },
+                Some(options),
+            )
+            .await?;
+        self.hydrate_safe_run_event_payloads(items).await
+    }
+
+    pub(in crate::store) async fn list_run_events_page(
+        &self,
+        run_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<TaskRunEventRecord>, usize), String> {
+        let filter = doc! { "run_id": run_id };
+        let total = self
+            .run_events
+            .count_documents(filter.clone(), None)
+            .await
+            .map_err(|err| err.to_string())?;
+        // Read the page envelope without payloads first. Legacy model_request
+        // events contain the entire outbound request and can each be several
+        // megabytes; a page of those documents must never be materialized by a
+        // detail endpoint.
+        let mut page_options =
+            mongo_find_options(doc! { "created_at": 1, "id": 1 }, Some(offset), Some(limit));
+        page_options.projection = Some(doc! { "payload": 0 });
+        let items = self
+            .load_collection_items_with_query(&self.run_events, filter, Some(page_options))
+            .await?;
+        let items = self.hydrate_safe_run_event_payloads(items).await?;
+        Ok((items, usize::try_from(total).unwrap_or(usize::MAX)))
     }
 
     pub(in crate::store) async fn list_run_events_after(
@@ -71,16 +97,55 @@ impl MongoStore {
             },
             _ => doc! { "run_id": run_id },
         };
-        self.load_collection_items_with_query(
-            &self.run_events,
-            filter,
-            Some(mongo_find_options(
-                doc! { "created_at": 1, "id": 1 },
+        let mut options = mongo_find_options(doc! { "created_at": 1, "id": 1 }, None, Some(limit));
+        options.projection = Some(doc! { "payload": 0 });
+        let items = self
+            .load_collection_items_with_query(&self.run_events, filter, Some(options))
+            .await?;
+        self.hydrate_safe_run_event_payloads(items).await
+    }
+
+    async fn hydrate_safe_run_event_payloads(
+        &self,
+        mut items: Vec<TaskRunEventRecord>,
+    ) -> Result<Vec<TaskRunEventRecord>, String> {
+        let page_ids = items
+            .iter()
+            .map(|event| event.id.clone())
+            .collect::<Vec<_>>();
+        if page_ids.is_empty() {
+            return Ok(items);
+        }
+        // New model_request events contain only the bounded summary marked
+        // below. Other event types retain their ordinary payloads.
+        let full_events = self
+            .load_collection_items_with_query(
+                &self.run_events,
+                doc! {
+                    "id": { "$in": page_ids },
+                    "$or": [
+                        { "event_type": { "$ne": "model_request" } },
+                        { "payload.request_body_persisted": false },
+                    ],
+                },
                 None,
-                Some(limit),
-            )),
-        )
-        .await
+            )
+            .await?;
+        let mut full_by_id = full_events
+            .into_iter()
+            .map(|event| (event.id.clone(), event))
+            .collect::<BTreeMap<_, _>>();
+        for event in &mut items {
+            if let Some(full) = full_by_id.remove(event.id.as_str()) {
+                *event = full;
+            } else if event.event_type == "model_request" {
+                event.payload = Some(serde_json::json!({
+                    "legacy_request_body_omitted": true,
+                    "request_body_persisted": true,
+                }));
+            }
+        }
+        Ok(items)
     }
 
     pub(in crate::store) async fn latest_run_event_cursor(

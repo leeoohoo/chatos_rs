@@ -26,6 +26,9 @@ struct StoryAgentRun: Codable, Equatable, Identifiable, Sendable {
     var toolReceipts: [String: Receipt] = [:]
     var events: [AgentRunEvent] = []
     var applied = false
+    /// A recoverable draft can be dismissed without pretending that it was applied.
+    /// Optional keeps existing version-1 run files backward compatible.
+    var abandonedAt: Date?
     var updatedAt = Date()
 
     init(project: StoryProject, owner: String, stage: Stage, targetIDs: [String], policy: AgentRunPolicy) throws {
@@ -35,17 +38,33 @@ struct StoryAgentRun: Codable, Equatable, Identifiable, Sendable {
             guard project.segments.isEmpty else { throw StoryError.invalidPlan }
         } else {
             guard !targetIDs.isEmpty, Set(targetIDs).count == targetIDs.count,
-                  targetIDs.allSatisfy({ id in project.segments.contains { $0.id == id && $0.detail == nil && $0.attempt == nil && $0.video == nil } }) else { throw StoryError.invalidPlan }
+                  targetIDs.allSatisfy({ id in project.segments.contains { $0.id == id && $0.attempt == nil && $0.video == nil } }) else { throw StoryError.invalidPlan }
+        }
+        var preparedDraft = project
+        if stage == .refine {
+            for id in targetIDs {
+                guard let index = preparedDraft.segments.firstIndex(where: { $0.id == id }) else {
+                    throw StoryError.invalidPlan
+                }
+                // Regeneration is isolated in the run draft. Existing image versions remain
+                // available, but a newly applied prompt must be explicitly confirmed again.
+                preparedDraft.segments[index].detail = nil
+                preparedDraft.segments[index].confirmedFrameID = nil
+                preparedDraft.segments[index].confirmedLastFrameID = nil
+                preparedDraft.segments[index].useLastFrameForVideo = false
+            }
         }
         self.owner = owner; self.projectID = project.id; self.stage = stage; self.targetIDs = targetIDs
         self.baseDigest = try Self.digest(project); self.cloudMemory = true; self.consentAt = Date()
-        self.policy = policy; self.draft = project
+        self.policy = policy; self.draft = preparedDraft
         self.checkpoint = .init(scope: "story:\(owner):\(project.id):\(baseDigest):\(UUID())", messages: [
             .init(role: .system, content: StoryAgentTools.systemPrompt),
-            .init(role: .user, content: "当前阶段：\(stage.rawValue)。剧情长度 \(project.source.count) 个字符。先读取状态和原文工具，按阶段逐步保存计划，最后调用 story_finish。不要生成图片或视频。"),
+            .init(role: .user, content: StoryAgentTools.goalPrompt(
+                stage: stage, sourceLength: project.source.count, targetCount: targetIDs.count
+            )),
         ])
     }
-    var canResume: Bool { !applied && checkpoint.status != .completed }
+    var canResume: Bool { !applied && abandonedAt == nil && checkpoint.status != .completed }
     static func digest(_ project: StoryProject) throws -> String {
         var value = project; value.updatedAt = .distantPast
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
@@ -53,6 +72,7 @@ struct StoryAgentRun: Codable, Equatable, Identifiable, Sendable {
     }
     func validate(owner: String, projectID: UUID) throws {
         guard version == 1, self.owner == owner, self.projectID == projectID, draft.id == projectID,
+              !(applied && abandonedAt != nil),
               readThrough >= 0, readThrough <= draft.source.count, events.count <= 20_000 else { throw StoryAgentError.invalidRun }
         try draft.validate(); try policy.validate()
     }

@@ -260,6 +260,18 @@ impl AppStore {
         }
     }
 
+    pub async fn list_run_events_page(
+        &self,
+        run_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<TaskRunEventRecord>, usize), String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_run_events_page(run_id, offset, limit)),
+            Self::Mongo(store) => store.list_run_events_page(run_id, offset, limit).await,
+        }
+    }
+
     pub async fn has_run_event_type(&self, run_id: &str, event_type: &str) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.has_run_event_type(run_id, event_type)),

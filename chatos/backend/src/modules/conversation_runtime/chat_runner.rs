@@ -117,6 +117,10 @@ pub async fn run_bootstrapped_chat(input: BootstrappedChatInput<'_>) {
         resolved_turn_id,
         max_tokens,
     } = bootstrap;
+    // Requests resumed from an existing project conversation do not have to repeat project_id.
+    // The client-owned session snapshot has already been validated while resolving the runtime
+    // context, so use that resolved identity for the run and realtime/callback scope as well.
+    let project_id = runtime_context.resolved_project_id.clone().or(project_id);
 
     let use_tools = runtime_context.use_tools;
     let sink = build_chat_event_sink(
