@@ -71,26 +71,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn model_gateway_descriptor_is_protected_only() {
-        let path = "/api/model-gateway/descriptors/model-1";
-        let public_response = public_routes()
-            .oneshot(
-                Request::get(path)
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("route request");
-        assert_eq!(public_response.status(), StatusCode::NOT_FOUND);
+    async fn model_gateway_routes_are_protected_only() {
+        for (method, path) in [
+            ("GET", "/api/model-gateway/descriptors/model-1"),
+            ("POST", "/api/model-gateway/stream"),
+        ] {
+            let public_response = public_routes()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(Body::empty())
+                        .expect("build request"),
+                )
+                .await
+                .expect("route request");
+            assert_eq!(public_response.status(), StatusCode::NOT_FOUND);
 
-        let protected_response = protected_routes()
-            .oneshot(
-                Request::get(path)
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
-            .await
-            .expect("route request");
-        assert_eq!(protected_response.status(), StatusCode::UNAUTHORIZED);
+            let protected_response = protected_routes()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(Body::empty())
+                        .expect("build request"),
+                )
+                .await
+                .expect("route request");
+            assert_eq!(protected_response.status(), StatusCode::UNAUTHORIZED);
+        }
     }
 }

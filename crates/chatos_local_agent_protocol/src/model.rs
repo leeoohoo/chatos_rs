@@ -57,12 +57,12 @@ impl ModelRuntimeDescriptor {
                 reason: "maximum output tokens exceed the context window",
             });
         }
-        if self.supports_native_compaction
-            && (self.protocol != ModelProtocol::Responses
-                || self.context_strategy != ContextStrategy::ProviderNative)
+        if (self.context_strategy == ContextStrategy::ProviderNative)
+            != self.supports_native_compaction
+            || (self.supports_native_compaction && self.protocol != ModelProtocol::Responses)
         {
             return Err(ProtocolError::InvalidState {
-                reason: "native compaction requires Responses with provider-native context",
+                reason: "provider-native context requires Responses with native compaction",
             });
         }
         Ok(())
@@ -158,12 +158,33 @@ impl ModelGatewayRequest {
                 reason: "gateway output tokens exceed the frozen descriptor",
             });
         }
-        if self.parameters.native_compaction_threshold.is_some()
-            && !descriptor.supports_native_compaction
-        {
-            return Err(ProtocolError::InvalidState {
-                reason: "gateway request enabled unsupported native compaction",
-            });
+        match (
+            descriptor.context_strategy,
+            self.parameters.native_compaction_threshold,
+        ) {
+            (ContextStrategy::ProviderNative, Some(threshold)) => {
+                let reserved = threshold
+                    .checked_add(u64::from(self.parameters.maximum_output_tokens))
+                    .ok_or(ProtocolError::InvalidState {
+                        reason: "native compaction threshold exceeds the context window",
+                    })?;
+                if reserved > descriptor.context_window_tokens {
+                    return Err(ProtocolError::InvalidState {
+                        reason: "native compaction threshold leaves no configured output budget",
+                    });
+                }
+            }
+            (ContextStrategy::ProviderNative, None) => {
+                return Err(ProtocolError::InvalidState {
+                    reason: "provider-native context requires a compaction threshold",
+                });
+            }
+            (ContextStrategy::MemoryEngine, Some(_)) => {
+                return Err(ProtocolError::InvalidState {
+                    reason: "memory-engine context cannot enable native compaction",
+                });
+            }
+            (ContextStrategy::MemoryEngine, None) => {}
         }
         Ok(())
     }
@@ -177,14 +198,22 @@ pub enum ModelGatewayTerminalStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelGatewayTerminalSource {
+    Provider,
+    Gateway,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModelGatewayTerminal {
     pub status: ModelGatewayTerminalStatus,
+    pub source: ModelGatewayTerminalSource,
     pub response_id: Option<String>,
     pub provider_request_id: Option<String>,
-    pub provider_terminal_event: String,
-    pub provider_http_status: u16,
+    pub terminal_event: String,
+    pub provider_http_status: Option<u16>,
     pub usage: Option<Value>,
     pub output_items: Vec<Value>,
     pub incomplete_details: Option<Value>,
@@ -193,22 +222,43 @@ pub struct ModelGatewayTerminal {
 
 impl ModelGatewayTerminal {
     pub fn validate(&self, protocol: ModelProtocol) -> Result<(), ProtocolError> {
-        require_identifier("provider_terminal_event", &self.provider_terminal_event)?;
+        require_identifier("terminal_event", &self.terminal_event)?;
         if let Some(response_id) = &self.response_id {
             require_identifier("response_id", response_id)?;
         }
         if let Some(request_id) = &self.provider_request_id {
             require_identifier("provider_request_id", request_id)?;
         }
-        if self.provider_http_status == 0 {
+        if self.provider_http_status == Some(0) {
             return Err(ProtocolError::InvalidState {
-                reason: "provider HTTP status must be positive",
+                reason: "provider HTTP status must be positive when present",
             });
         }
-        if protocol == ModelProtocol::Responses && self.response_id.is_none() {
-            return Err(ProtocolError::InvalidState {
-                reason: "Responses terminal results require a response ID",
-            });
+        match self.source {
+            ModelGatewayTerminalSource::Provider => {
+                if self.provider_http_status.is_none() {
+                    return Err(ProtocolError::InvalidState {
+                        reason: "provider terminal results require an HTTP status",
+                    });
+                }
+                if protocol == ModelProtocol::Responses && self.response_id.is_none() {
+                    return Err(ProtocolError::InvalidState {
+                        reason: "Responses provider terminals require a response ID",
+                    });
+                }
+            }
+            ModelGatewayTerminalSource::Gateway => {
+                if self.status != ModelGatewayTerminalStatus::Failed {
+                    return Err(ProtocolError::InvalidState {
+                        reason: "gateway terminal results must be failed",
+                    });
+                }
+                if self.response_id.is_some() {
+                    return Err(ProtocolError::InvalidState {
+                        reason: "gateway terminal results cannot invent a response ID",
+                    });
+                }
+            }
         }
         let valid_details = match self.status {
             ModelGatewayTerminalStatus::Completed => {
@@ -247,7 +297,7 @@ pub enum ModelGatewayStreamEvent {
     ContentDelta { delta: String },
     ReasoningDelta { delta: String },
     OutputItem { item: Value },
-    Terminal { terminal: ModelGatewayTerminal },
+    Terminal { terminal: Box<ModelGatewayTerminal> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

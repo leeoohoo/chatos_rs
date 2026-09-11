@@ -132,7 +132,7 @@ impl ModelGatewayStreamAccumulator {
                     ));
                 }
                 terminal.validate(self.protocol)?;
-                self.terminal = Some(terminal);
+                self.terminal = Some(*terminal);
             }
         }
         Ok(())

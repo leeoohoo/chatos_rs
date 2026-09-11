@@ -3,7 +3,7 @@
 
 use chatos_local_agent_protocol::{
     ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
-    ModelGatewayTerminalStatus, ModelProtocol,
+    ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelProtocol,
 };
 use chatos_local_agent_runtime::{ModelGatewayStreamAccumulator, ModelGatewayStreamError};
 
@@ -19,15 +19,16 @@ fn envelope(sequence: u64, event: ModelGatewayStreamEvent) -> ModelGatewayStream
 fn terminal(status: ModelGatewayTerminalStatus) -> ModelGatewayTerminal {
     ModelGatewayTerminal {
         status,
+        source: ModelGatewayTerminalSource::Provider,
         response_id: Some("resp_1".to_string()),
         provider_request_id: Some("req_1".to_string()),
-        provider_terminal_event: match status {
+        terminal_event: match status {
             ModelGatewayTerminalStatus::Completed => "response.completed",
             ModelGatewayTerminalStatus::Incomplete => "response.incomplete",
             ModelGatewayTerminalStatus::Failed => "response.failed",
         }
         .to_string(),
-        provider_http_status: 200,
+        provider_http_status: Some(200),
         usage: Some(serde_json::json!({"input_tokens": 10, "output_tokens": 2})),
         output_items: vec![serde_json::json!({"type": "message", "id": "msg_1"})],
         incomplete_details: (status == ModelGatewayTerminalStatus::Incomplete)
@@ -86,7 +87,7 @@ fn completed_stream_preserves_terminal_identity_usage_and_output_items() {
         .accept(envelope(
             4,
             ModelGatewayStreamEvent::Terminal {
-                terminal: terminal(ModelGatewayTerminalStatus::Completed),
+                terminal: Box::new(terminal(ModelGatewayTerminalStatus::Completed)),
             },
         ))
         .unwrap();
@@ -135,7 +136,7 @@ fn gaps_request_changes_and_events_after_terminal_are_rejected() {
         .accept(envelope(
             1,
             ModelGatewayStreamEvent::Terminal {
-                terminal: terminal(ModelGatewayTerminalStatus::Completed),
+                terminal: Box::new(terminal(ModelGatewayTerminalStatus::Completed)),
             },
         ))
         .unwrap();
@@ -162,7 +163,7 @@ fn incomplete_and_failed_are_formal_terminal_results_not_empty_successes() {
             .accept(envelope(
                 1,
                 ModelGatewayStreamEvent::Terminal {
-                    terminal: terminal(status),
+                    terminal: Box::new(terminal(status)),
                 },
             ))
             .unwrap();

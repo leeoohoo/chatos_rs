@@ -6,8 +6,8 @@ use chatos_local_agent_protocol::{
     LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcRequest, LocalAgentRun,
     LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelGatewayParameters,
     ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
-    ModelGatewayTerminalStatus, ModelProtocol, ModelRuntimeDescriptor, ProtocolError,
-    ProviderContextItem, ToolEffect, ToolExecution, ToolExecutionStatus,
+    ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelProtocol, ModelRuntimeDescriptor,
+    ProtocolError, ProviderContextItem, ToolEffect, ToolExecution, ToolExecutionStatus,
     LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chrono::Utc;
@@ -112,13 +112,55 @@ fn gateway_request_contains_no_provider_secret_or_endpoint() {
 }
 
 #[test]
+fn gateway_request_requires_exactly_one_configured_context_strategy() {
+    let descriptor = model_descriptor();
+    let mut request = ModelGatewayRequest {
+        request_id: "request-1".to_string(),
+        model_config_id: descriptor.model_config_id.clone(),
+        model_config_revision: descriptor.revision,
+        protocol: descriptor.protocol,
+        input: serde_json::json!([{"role": "user", "content": "hello"}]),
+        tools: Vec::new(),
+        instructions: None,
+        parameters: ModelGatewayParameters {
+            maximum_output_tokens: 32_000,
+            reasoning_effort: None,
+            temperature: None,
+            native_compaction_threshold: None,
+        },
+    };
+    assert!(matches!(
+        request.validate_against(&descriptor),
+        Err(ProtocolError::InvalidState { .. })
+    ));
+
+    request.parameters.native_compaction_threshold = Some(368_001);
+    assert!(matches!(
+        request.validate_against(&descriptor),
+        Err(ProtocolError::InvalidState { .. })
+    ));
+
+    let mut memory_descriptor = descriptor;
+    memory_descriptor.context_strategy = ContextStrategy::MemoryEngine;
+    memory_descriptor.supports_native_compaction = false;
+    request.parameters.native_compaction_threshold = Some(200_000);
+    assert!(matches!(
+        request.validate_against(&memory_descriptor),
+        Err(ProtocolError::InvalidState { .. })
+    ));
+    request.parameters.native_compaction_threshold = None;
+    request.validate_against(&memory_descriptor).unwrap();
+}
+
+#[test]
 fn gateway_terminal_keeps_official_status_usage_and_request_identity() {
     let terminal = ModelGatewayTerminal {
         status: ModelGatewayTerminalStatus::Incomplete,
+        source: ModelGatewayTerminalSource::Provider,
         response_id: Some("resp_1".to_string()),
         provider_request_id: Some("req_1".to_string()),
-        provider_terminal_event: "response.incomplete".to_string(),
-        provider_http_status: 200,
+        terminal_event: "response.incomplete".to_string(),
+        provider_http_status: Some(200),
         usage: Some(serde_json::json!({"input_tokens": 100, "output_tokens": 20})),
         output_items: vec![serde_json::json!({"type": "message", "id": "msg_1"})],
         incomplete_details: Some(serde_json::json!({"reason": "max_output_tokens"})),
@@ -128,7 +170,9 @@ fn gateway_terminal_keeps_official_status_usage_and_request_identity() {
         request_id: "request-1".to_string(),
         sequence: 3,
         protocol: ModelProtocol::Responses,
-        event: ModelGatewayStreamEvent::Terminal { terminal },
+        event: ModelGatewayStreamEvent::Terminal {
+            terminal: Box::new(terminal),
+        },
     };
     envelope.validate().unwrap();
 
@@ -139,6 +183,38 @@ fn gateway_terminal_keeps_official_status_usage_and_request_identity() {
     terminal.incomplete_details = None;
     assert!(matches!(
         invalid.validate(),
+        Err(ProtocolError::InvalidState { .. })
+    ));
+}
+
+#[test]
+fn gateway_failures_cannot_impersonate_provider_terminals() {
+    let gateway_failure = ModelGatewayTerminal {
+        status: ModelGatewayTerminalStatus::Failed,
+        source: ModelGatewayTerminalSource::Gateway,
+        response_id: None,
+        provider_request_id: None,
+        terminal_event: "gateway.provider_request_failed".to_string(),
+        provider_http_status: None,
+        usage: None,
+        output_items: Vec::new(),
+        incomplete_details: None,
+        provider_error: Some(serde_json::json!({"message": "connection failed"})),
+    };
+    gateway_failure.validate(ModelProtocol::Responses).unwrap();
+
+    let mut invented_response = gateway_failure.clone();
+    invented_response.response_id = Some("resp_fake".to_string());
+    assert!(matches!(
+        invented_response.validate(ModelProtocol::Responses),
+        Err(ProtocolError::InvalidState { .. })
+    ));
+
+    let mut false_success = gateway_failure;
+    false_success.status = ModelGatewayTerminalStatus::Completed;
+    false_success.provider_error = None;
+    assert!(matches!(
+        false_success.validate(ModelProtocol::Responses),
         Err(ProtocolError::InvalidState { .. })
     ));
 }
