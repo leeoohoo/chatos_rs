@@ -224,6 +224,10 @@ impl MemoryEngineContextAdapter {
         })
     }
 
+    pub fn source_id(&self) -> &str {
+        self.source_id.as_str()
+    }
+
     pub fn with_wait_policy(
         mut self,
         wait_policy: ActiveSummaryWaitPolicy,

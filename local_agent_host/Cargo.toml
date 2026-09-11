@@ -7,17 +7,22 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aes-gcm = "0.10"
 async-trait = "0.1"
+base64 = "0.22"
 chatos_client_storage = { path = "../crates/chatos_client_storage" }
 chatos_local_agent_protocol = { path = "../crates/chatos_local_agent_protocol" }
 chatos_local_agent_runtime = { path = "../crates/chatos_local_agent_runtime" }
 chrono = "0.4"
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "sync", "time"] }
 tokio-util = "0.7"
+zeroize = "1"
 
 [dev-dependencies]
 async-trait = "0.1"
+memory_engine_sdk = { path = "../crates/memory_engine_sdk" }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -963,16 +963,21 @@ dependencies = [
 name = "chatos_local_agent_host"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm 0.10.3",
  "async-trait",
+ "base64 0.22.1",
  "chatos_client_storage",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
  "chrono",
+ "memory_engine_sdk",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "zeroize",
 ]
 
 [[package]]
