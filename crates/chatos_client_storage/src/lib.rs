@@ -12,6 +12,7 @@ mod connection;
 mod contracts;
 mod error;
 mod repositories;
+mod sqlite;
 mod transaction;
 
 pub use bootstrap::{
@@ -24,4 +25,5 @@ pub use connection::{
 pub use contracts::*;
 pub use error::{ConfigurationResult, StorageConfigurationError, StorageError, StorageResult};
 pub use repositories::*;
+pub use sqlite::SqliteClientStorage;
 pub use transaction::{ClientStorage, StorageTransaction, TransactionRepositories};

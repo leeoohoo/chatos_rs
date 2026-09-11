@@ -10,13 +10,13 @@ use crate::{
 
 /// Repository views bound to one backend transaction.
 pub trait TransactionRepositories: Send {
-    fn agents(&mut self) -> &mut dyn AgentRepository;
-    fn conversations(&mut self) -> &mut dyn ConversationRepository;
-    fn tasks(&mut self) -> &mut dyn TaskRepository;
-    fn projects(&mut self) -> &mut dyn ProjectRepository;
-    fn plugins(&mut self) -> &mut dyn PluginStateRepository;
-    fn media(&mut self) -> &mut dyn MediaStateRepository;
-    fn settings(&mut self) -> &mut dyn ClientSettingsRepository;
+    fn agents(&mut self) -> Box<dyn AgentRepository + '_>;
+    fn conversations(&mut self) -> Box<dyn ConversationRepository + '_>;
+    fn tasks(&mut self) -> Box<dyn TaskRepository + '_>;
+    fn projects(&mut self) -> Box<dyn ProjectRepository + '_>;
+    fn plugins(&mut self) -> Box<dyn PluginStateRepository + '_>;
+    fn media(&mut self) -> Box<dyn MediaStateRepository + '_>;
+    fn settings(&mut self) -> Box<dyn ClientSettingsRepository + '_>;
 }
 
 /// A caller-owned operation executed atomically by the selected backend.
