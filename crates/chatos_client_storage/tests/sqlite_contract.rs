@@ -165,3 +165,22 @@ async fn stale_updates_are_rejected_by_revision() {
         Err(StorageError::Conflict { actual_revision: 1 })
     );
 }
+
+#[tokio::test]
+async fn only_one_client_host_can_own_a_sqlite_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite3");
+    let profile = SqliteBootstrapProfile {
+        database_path: path,
+    };
+    let first = SqliteClientStorage::open(&profile).await.unwrap();
+
+    assert!(matches!(
+        SqliteClientStorage::open(&profile).await,
+        Err(StorageError::Unavailable { .. })
+    ));
+
+    first.close().await;
+    let reopened = SqliteClientStorage::open(&profile).await.unwrap();
+    reopened.close().await;
+}

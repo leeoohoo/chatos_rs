@@ -856,6 +856,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "fs2",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1955,6 +1956,16 @@ checksum = "b91aa448ca50d7e79433bdf3ee8d99215430d2ec02ade5aefab2a073a1822e8a"
 dependencies = [
  "autocfg",
  "tokio",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]

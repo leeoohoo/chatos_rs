@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::fs::{File, OpenOptions};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use fs2::FileExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
 
@@ -19,6 +23,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct SqliteClientStorage {
     pool: SqlitePool,
+    _instance_lock: Arc<File>,
 }
 
 impl SqliteClientStorage {
@@ -28,6 +33,7 @@ impl SqliteClientStorage {
             .map_err(|error| StorageError::InvalidData {
                 reason: error.to_string(),
             })?;
+        let instance_lock = acquire_instance_lock(&profile.database_path)?;
         let options = SqliteConnectOptions::new()
             .filename(&profile.database_path)
             .create_if_missing(true)
@@ -40,12 +46,38 @@ impl SqliteClientStorage {
             .await
             .map_err(unavailable)?;
         migrate(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            _instance_lock: Arc::new(instance_lock),
+        })
     }
 
     pub async fn close(self) {
         self.pool.close().await;
     }
+}
+
+fn acquire_instance_lock(database_path: &Path) -> StorageResult<File> {
+    let path = sqlite_lock_path(database_path);
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| StorageError::Unavailable {
+            reason: format!("could not open the SQLite instance lock: {error}"),
+        })?;
+    FileExt::try_lock_exclusive(&file).map_err(|error| StorageError::Unavailable {
+        reason: format!("SQLite is already owned by another client host: {error}"),
+    })?;
+    Ok(file)
+}
+
+fn sqlite_lock_path(database_path: &Path) -> PathBuf {
+    let mut path = database_path.as_os_str().to_os_string();
+    path.push(".lock");
+    PathBuf::from(path)
 }
 
 #[async_trait]
