@@ -76,6 +76,10 @@ impl ClientStorage for PostgresClientStorage {
 
     async fn transaction(&self, operation: &mut dyn StorageTransaction) -> StorageResult<()> {
         let mut transaction = self.pool.begin().await.map_err(transaction_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(&mut *transaction)
+            .await
+            .map_err(transaction_error)?;
         let result = {
             let connection: &mut PgConnection = &mut transaction;
             let mut store = PostgresRecordStore { connection };

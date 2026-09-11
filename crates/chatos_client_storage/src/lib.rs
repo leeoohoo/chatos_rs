@@ -7,6 +7,7 @@
 //! select a structured-data backend. Bootstrap profiles contain references to
 //! secrets, never PostgreSQL passwords or connection strings.
 
+mod archive;
 mod bootstrap;
 mod connection;
 mod contracts;
@@ -18,6 +19,10 @@ mod repositories;
 mod sqlite;
 mod transaction;
 
+pub use archive::{
+    decode_storage_archive, encode_storage_archive, export_storage_archive, import_storage_archive,
+    ClientStorageArchive, StorageArchiveRecords,
+};
 pub use bootstrap::{
     BootstrapStorageProfile, PostgresBootstrapProfile, SecretReference, SqliteBootstrapProfile,
     StorageBackend,

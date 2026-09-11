@@ -16,6 +16,9 @@ macro_rules! define_domain_repository {
             async fn get(&mut self, query: &RecordQuery) -> StorageResult<Option<$record>>;
             async fn list(&mut self, query: &ListQuery) -> StorageResult<RecordPage<$record>>;
             async fn put(&mut self, command: PutRecord<$record>) -> StorageResult<$record>;
+            /// Restores a verified archive record without changing its
+            /// revision or UTC timestamps. Existing records are rejected.
+            async fn restore(&mut self, record: $record) -> StorageResult<$record>;
             async fn delete(
                 &mut self,
                 query: &RecordQuery,

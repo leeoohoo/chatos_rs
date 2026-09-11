@@ -312,6 +312,45 @@ where
         Ok(command.record)
     }
 
+    async fn restore_record(&mut self, record: Record) -> StorageResult<Record> {
+        validate_record_identity(record.metadata())?;
+        if record.metadata().revision == 0 {
+            return Err(StorageError::InvalidData {
+                reason: "restored record revision must be greater than zero".to_string(),
+            });
+        }
+        if record.metadata().updated_at < record.metadata().created_at {
+            return Err(StorageError::InvalidData {
+                reason: "restored record updated_at precedes created_at".to_string(),
+            });
+        }
+        let owner_user_id = record.metadata().scope.owner_user_id.clone();
+        let id = record.metadata().id.clone();
+        let revision = stored_revision(record.metadata().revision)?;
+        let encoded = encode_record(&record)?;
+        let inserted = self
+            .store
+            .insert_json(
+                self.table,
+                &owner_user_id,
+                &id,
+                revision,
+                &record.metadata().created_at.to_rfc3339(),
+                &record.metadata().updated_at.to_rfc3339(),
+                &encoded,
+            )
+            .await?;
+        if !inserted {
+            return Err(StorageError::Conflict {
+                actual_revision: self
+                    .current_revision(&owner_user_id, &id)
+                    .await?
+                    .unwrap_or(0),
+            });
+        }
+        Ok(record)
+    }
+
     async fn delete_record(
         &mut self,
         query: &RecordQuery,
@@ -367,6 +406,9 @@ macro_rules! impl_domain_repository {
             }
             async fn put(&mut self, command: PutRecord<$record>) -> StorageResult<$record> {
                 self.put_record(command).await
+            }
+            async fn restore(&mut self, record: $record) -> StorageResult<$record> {
+                self.restore_record(record).await
             }
             async fn delete(
                 &mut self,
