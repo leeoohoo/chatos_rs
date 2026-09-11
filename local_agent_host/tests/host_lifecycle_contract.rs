@@ -90,8 +90,11 @@ impl LocalAgentContextRuntime for TestContextRuntime {
         _storage: &dyn ClientStorage,
         _scope: &RecordScope,
         _run: &LocalAgentRun,
-        _cancellation: &CancellationToken,
+        cancellation: &CancellationToken,
     ) -> Result<ModelStepContext, LocalAgentContextRuntimeError> {
+        if cancellation.is_cancelled() {
+            return Err(LocalAgentContextRuntimeError::Cancelled);
+        }
         Ok(ModelStepContext::ProviderNative(
             ProviderNativeContextWindow::empty(1).unwrap(),
         ))
@@ -129,6 +132,8 @@ impl LocalAgentContextRuntime for TestContextRuntime {
 
 struct ExecutingGateway {
     requests: Mutex<Vec<ModelGatewayRequest>>,
+    delay: std::time::Duration,
+    terminal_status: ModelGatewayTerminalStatus,
 }
 
 #[async_trait]
@@ -151,6 +156,7 @@ impl ModelGatewayClient for ExecutingGateway {
         _cancellation: CancellationToken,
     ) -> Result<ModelGatewayOutput, ModelGatewayClientError> {
         self.requests.lock().unwrap().push(request);
+        tokio::time::sleep(self.delay).await;
         let output_items = vec![serde_json::json!({
             "type": "message",
             "id": "provider-message-1",
@@ -158,23 +164,35 @@ impl ModelGatewayClient for ExecutingGateway {
             "content": []
         })];
         Ok(ModelGatewayOutput {
-            content: "Finished".to_string(),
+            content: if self.terminal_status == ModelGatewayTerminalStatus::Completed {
+                "Finished".to_string()
+            } else {
+                "partial output".to_string()
+            },
             reasoning: String::new(),
             output_items: output_items.clone(),
             terminal: ModelGatewayTerminal {
-                status: ModelGatewayTerminalStatus::Completed,
+                status: self.terminal_status,
                 source: ModelGatewayTerminalSource::Provider,
                 response_id: Some("response-1".to_string()),
                 provider_request_id: Some("provider-request-1".to_string()),
-                terminal_event: "response.completed".to_string(),
+                terminal_event: match self.terminal_status {
+                    ModelGatewayTerminalStatus::Completed => "response.completed",
+                    ModelGatewayTerminalStatus::Incomplete => "response.incomplete",
+                    ModelGatewayTerminalStatus::Failed => "response.failed",
+                }
+                .to_string(),
                 provider_http_status: Some(200),
                 usage: Some(serde_json::json!({
                     "input_tokens": 100,
                     "output_tokens": 10
                 })),
                 output_items,
-                incomplete_details: None,
-                provider_error: None,
+                incomplete_details: (self.terminal_status
+                    == ModelGatewayTerminalStatus::Incomplete)
+                    .then(|| serde_json::json!({"reason": "max_output_tokens"})),
+                provider_error: (self.terminal_status == ModelGatewayTerminalStatus::Failed)
+                    .then(|| serde_json::json!({"code": "provider_failed"})),
             },
         })
     }
@@ -192,6 +210,32 @@ impl ModelGatewayClient for ExecutingGateway {
             model_config_revision: request.model_config_revision,
             input_tokens: 100,
         })
+    }
+}
+
+struct RetryProfile;
+
+#[async_trait]
+impl LocalAgentProfile for RetryProfile {
+    fn profile_key(&self) -> &'static str {
+        "main_chat"
+    }
+
+    async fn prepare_model_step(
+        &self,
+        run: &LocalAgentRun,
+    ) -> Result<LocalAgentProfileStep, String> {
+        Profile.prepare_model_step(run).await
+    }
+
+    async fn interpret_completed_output(
+        &self,
+        _run: &LocalAgentRun,
+        _output: &ModelGatewayOutput,
+    ) -> Result<ModelStepResult, String> {
+        Ok(ModelStepResult::Retry(
+            serde_json::json!({"reason": "provider_busy"}),
+        ))
     }
 }
 
@@ -605,6 +649,8 @@ async fn host_executes_and_persists_one_claimed_model_step_end_to_end() {
     storage.transaction(&mut Seed { now }).await.unwrap();
     let gateway = Arc::new(ExecutingGateway {
         requests: Mutex::new(Vec::new()),
+        delay: std::time::Duration::ZERO,
+        terminal_status: ModelGatewayTerminalStatus::Completed,
     });
     let profiles =
         LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
@@ -671,6 +717,237 @@ async fn host_executes_and_persists_one_claimed_model_step_end_to_end() {
         committed.run_record.run.status,
         LocalAgentRunStatus::Succeeded
     );
+}
+
+#[tokio::test]
+async fn cancelled_context_becomes_a_durable_cancelled_model_completion() {
+    let now = Utc::now();
+    let gateway = Arc::new(ExecutingGateway {
+        requests: Mutex::new(Vec::new()),
+        delay: std::time::Duration::ZERO,
+        terminal_status: ModelGatewayTerminalStatus::Completed,
+    });
+    let (_directory, host) = model_test_host(
+        now,
+        gateway.clone(),
+        Arc::new(Profile),
+        LocalAgentHostPolicy::default(),
+    )
+    .await;
+    let requested = claim_model_request(&host, now).await;
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    host.execute_claimed_model_step(
+        &requested,
+        "access-token",
+        ModelGatewayCallbacks::default(),
+        cancellation,
+        now,
+    )
+    .await
+    .unwrap();
+    assert!(gateway.requests.lock().unwrap().is_empty());
+    let SchedulerTickResult::Claimed(completed) = host
+        .claim_next("claim-cancelled", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("cancelled completion was not scheduled");
+    };
+    let committed = host
+        .commit_claimed_protocol_event(&completed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        committed.run_record.run.status,
+        LocalAgentRunStatus::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn incomplete_provider_terminal_fails_the_run_instead_of_becoming_an_empty_result() {
+    let now = Utc::now();
+    let gateway = Arc::new(ExecutingGateway {
+        requests: Mutex::new(Vec::new()),
+        delay: std::time::Duration::ZERO,
+        terminal_status: ModelGatewayTerminalStatus::Incomplete,
+    });
+    let (_directory, host) = model_test_host(
+        now,
+        gateway,
+        Arc::new(Profile),
+        LocalAgentHostPolicy::default(),
+    )
+    .await;
+    let requested = claim_model_request(&host, now).await;
+
+    host.execute_claimed_model_step(
+        &requested,
+        "access-token",
+        ModelGatewayCallbacks::default(),
+        CancellationToken::new(),
+        now,
+    )
+    .await
+    .unwrap();
+    let SchedulerTickResult::Claimed(completed) = host
+        .claim_next("claim-incomplete", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("failed completion was not scheduled");
+    };
+    let committed = host
+        .commit_claimed_protocol_event(&completed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(committed.run_record.run.status, LocalAgentRunStatus::Failed);
+    assert_eq!(
+        committed.run_record.run.terminal_outcome,
+        Some(serde_json::json!({
+            "reason": "model_terminal_not_completed",
+            "status": "incomplete",
+            "terminal_event": "response.incomplete",
+            "response_id": "response-1",
+            "provider_request_id": "provider-request-1",
+            "provider_http_status": 200
+        }))
+    );
+}
+
+#[tokio::test]
+async fn host_alone_assigns_the_retry_deadline() {
+    let now = Utc::now();
+    let gateway = Arc::new(ExecutingGateway {
+        requests: Mutex::new(Vec::new()),
+        delay: std::time::Duration::ZERO,
+        terminal_status: ModelGatewayTerminalStatus::Completed,
+    });
+    let policy = LocalAgentHostPolicy {
+        model_retry_delay: chrono::Duration::seconds(30),
+        ..LocalAgentHostPolicy::default()
+    };
+    let (_directory, host) = model_test_host(now, gateway, Arc::new(RetryProfile), policy).await;
+    let execution_now = Utc::now();
+    let requested = claim_model_request(&host, execution_now).await;
+
+    host.execute_claimed_model_step(
+        &requested,
+        "access-token",
+        ModelGatewayCallbacks::default(),
+        CancellationToken::new(),
+        execution_now,
+    )
+    .await
+    .unwrap();
+    let SchedulerTickResult::Claimed(completed) =
+        host.claim_next("claim-retry", Utc::now()).await.unwrap()
+    else {
+        panic!("retry completion was not scheduled");
+    };
+    let committed = host
+        .commit_claimed_protocol_event(&completed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        committed.run_record.run.status,
+        LocalAgentRunStatus::RetryScheduled
+    );
+    assert_eq!(committed.emitted_events.len(), 1);
+    assert_eq!(
+        committed.emitted_events[0].event.event_type,
+        LocalAgentEventType::RetryDue
+    );
+    assert!(committed.emitted_events[0].event.available_at > now);
+}
+
+#[tokio::test]
+async fn long_model_execution_renews_its_claim_until_completion_is_durable() {
+    let now = Utc::now();
+    let gateway = Arc::new(ExecutingGateway {
+        requests: Mutex::new(Vec::new()),
+        delay: std::time::Duration::from_millis(140),
+        terminal_status: ModelGatewayTerminalStatus::Completed,
+    });
+    let policy = LocalAgentHostPolicy {
+        claim_ttl: chrono::Duration::milliseconds(90),
+        ..LocalAgentHostPolicy::default()
+    };
+    let (_directory, host) = model_test_host(now, gateway, Arc::new(Profile), policy).await;
+    let execution_now = Utc::now();
+    let requested = claim_model_request(&host, execution_now).await;
+
+    let completion = host
+        .execute_claimed_model_step(
+            &requested,
+            "access-token",
+            ModelGatewayCallbacks::default(),
+            CancellationToken::new(),
+            execution_now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        completion.event.event_type,
+        LocalAgentEventType::ModelStepCompleted
+    );
+}
+
+async fn model_test_host(
+    now: chrono::DateTime<Utc>,
+    gateway: Arc<dyn ModelGatewayClient>,
+    profile: Arc<dyn LocalAgentProfile>,
+    policy: LocalAgentHostPolicy,
+) -> (tempfile::TempDir, LocalAgentHost) {
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:model-test-host-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([37; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    storage.transaction(&mut Seed { now }).await.unwrap();
+    let profiles = LocalAgentProfileRegistry::new([profile]).unwrap();
+    let (host, _) = LocalAgentHost::start(
+        storage,
+        gateway,
+        Arc::new(TestContextRuntime),
+        Arc::new(Tools),
+        profiles,
+        scope(),
+        "device-1",
+        policy,
+        now,
+    )
+    .await
+    .unwrap();
+    (directory, host)
+}
+
+async fn claim_model_request(
+    host: &LocalAgentHost,
+    now: chrono::DateTime<Utc>,
+) -> AgentEventStateRecord {
+    let SchedulerTickResult::Claimed(started) =
+        host.claim_next("claim-start-helper", now).await.unwrap()
+    else {
+        panic!("run start was not claimed");
+    };
+    host.commit_claimed(&started, StepEvidence::None, now)
+        .await
+        .unwrap();
+    let SchedulerTickResult::Claimed(requested) =
+        host.claim_next("claim-model-helper", now).await.unwrap()
+    else {
+        panic!("model request was not claimed");
+    };
+    *requested
 }
 
 #[tokio::test]

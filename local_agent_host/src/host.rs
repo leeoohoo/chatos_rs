@@ -111,6 +111,8 @@ pub enum LocalAgentHostError {
     ModelStepPersistence(#[from] ModelStepPersistenceError),
     #[error("model retry deadline overflowed")]
     ModelRetryDeadlineOverflow,
+    #[error("model event claim renewal failed: {0}")]
+    ModelClaimRenewal(StorageError),
 }
 
 pub struct LocalAgentHost {
@@ -520,7 +522,8 @@ impl LocalAgentHost {
                             claim_until,
                         },
                     )
-                    .await?;
+                    .await
+                    .map_err(LocalAgentHostError::ModelClaimRenewal)?;
                 }
             }
         }
