@@ -5,12 +5,13 @@ use std::{collections::VecDeque, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentMessageStateRecord, ClientStorage, RecordQuery, RecordScope, SecretReference,
-    SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey, StorageResult,
-    StorageTransaction, SyncOutboxStateRecord, TransactionRepositories,
+    AgentMessageStateRecord, AgentUiEventCursorQuery, ClientStorage, RecordQuery, RecordScope,
+    SecretReference, SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey,
+    StorageResult, StorageTransaction, SyncOutboxStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, MemorySyncStatus, MessageMode, SyncOutboxStatus,
+    AgentMessage, AgentMessageRole, LocalAgentUiEvent, LocalAgentUiEventPayload, MemorySyncStatus,
+    MessageMode, SyncOutboxStatus,
 };
 use chatos_local_agent_runtime::{
     claim_memory_sync_batch, record_semantic_message, ClaimMemorySyncBatchRequest, MemorySyncApi,
@@ -130,6 +131,36 @@ fn policy(maximum_attempts: u32) -> MemorySyncPolicy {
     }
 }
 
+struct ReadUiEvents(Vec<LocalAgentUiEvent>);
+
+#[async_trait]
+impl StorageTransaction for ReadUiEvents {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.0 = repositories
+            .agent_ui_events()
+            .list_after(&AgentUiEventCursorQuery {
+                scope: scope(),
+                after_seq: 0,
+                limit: 100,
+            })
+            .await?
+            .records
+            .into_iter()
+            .map(|record| record.event)
+            .collect();
+        Ok(())
+    }
+}
+
+async fn read_ui_events(storage: &SqliteClientStorage) -> Vec<LocalAgentUiEvent> {
+    let mut operation = ReadUiEvents(Vec::new());
+    storage.transaction(&mut operation).await.unwrap();
+    operation.0
+}
+
 #[tokio::test]
 async fn successful_batches_are_grouped_by_thread_and_not_sent_twice() {
     let now = Utc::now();
@@ -180,6 +211,17 @@ async fn successful_batches_are_grouped_by_thread_and_not_sent_twice() {
         now,
     )
     .await;
+    let events = read_ui_events(storage.as_ref()).await;
+    assert_eq!(
+        events.len(),
+        4,
+        "idempotent re-entry emits no duplicate status"
+    );
+    let LocalAgentUiEventPayload::MemorySync(status) = &events[3].event else {
+        panic!("Memory Sync completion must publish its aggregate state");
+    };
+    assert_eq!(status.pending_count, 0);
+    assert_eq!(status.failed_count, 0);
 }
 
 #[tokio::test]
@@ -220,6 +262,16 @@ async fn transport_failures_back_off_and_eventually_become_explicit_failures() {
     assert_eq!(state.0.message.memory_sync_status, MemorySyncStatus::Failed);
     assert_eq!(state.1.item.status, SyncOutboxStatus::Failed);
     assert_eq!(state.1.item.attempt_count, 2);
+    let events = read_ui_events(storage.as_ref()).await;
+    let LocalAgentUiEventPayload::MemorySync(status) = &events.last().unwrap().event else {
+        panic!("permanent Memory Sync failure must be visible to the UI");
+    };
+    assert_eq!(status.pending_count, 0);
+    assert_eq!(status.failed_count, 1);
+    assert_eq!(
+        status.last_error_code.as_deref(),
+        Some("memory_sync_failed")
+    );
 }
 
 #[tokio::test]

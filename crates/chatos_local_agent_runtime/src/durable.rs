@@ -15,6 +15,7 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 
 use crate::pagination::advance_cursor;
+use crate::ui_events::{append_run_snapshot, append_tool_snapshot};
 use crate::{reduce_claimed_event, ReducerPolicy, Reduction, StepEvidence};
 
 #[derive(Debug, Clone)]
@@ -300,6 +301,7 @@ async fn exhaust_event_attempts(
             expected_revision: Some(run_revision),
         })
         .await?;
+    append_run_snapshot(repositories, &run_record).await?;
     fail_event(repositories, event_record, "event attempt limit exceeded").await?;
 
     if disposition == AttemptLimitDisposition::RunFailed {
@@ -402,6 +404,7 @@ async fn mark_unknown_irreversible_tools(
                         expected_revision: Some(expected_revision),
                     })
                     .await?;
+                append_tool_snapshot(repositories, &record).await?;
             }
             unknown.push(record);
         }
@@ -507,6 +510,7 @@ impl StorageTransaction for ReduceAndCommitOperation {
                 expected_revision: Some(run_revision),
             })
             .await?;
+        append_run_snapshot(repositories, &run_record).await?;
 
         let event_revision = event_record.metadata.revision;
         event_record.event.status = LocalAgentEventStatus::Applied;

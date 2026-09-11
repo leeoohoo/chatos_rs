@@ -5,13 +5,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, PutRecord, RecordMetadata,
-    RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
+    AgentEventStateRecord, AgentRunStateRecord, AgentUiEventCursorQuery, ClientStorage, PutRecord,
+    RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
     StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
     ContextStrategy, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
-    LocalAgentRunStatus, ModelProtocol, ModelRuntimeDescriptor, ToolExecutionStatus,
+    LocalAgentRunStatus, LocalAgentUiEvent, LocalAgentUiEventPayload, ModelProtocol,
+    ModelRuntimeDescriptor, ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
     begin_tool_execution, complete_tool_execution, inspect_tool_batch, prepare_tool_batch,
@@ -174,6 +175,36 @@ fn prepare_request() -> PrepareToolBatchRequest {
     }
 }
 
+struct ReadUiEvents(Vec<LocalAgentUiEvent>);
+
+#[async_trait]
+impl StorageTransaction for ReadUiEvents {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.0 = repositories
+            .agent_ui_events()
+            .list_after(&AgentUiEventCursorQuery {
+                scope: scope(),
+                after_seq: 0,
+                limit: 100,
+            })
+            .await?
+            .records
+            .into_iter()
+            .map(|record| record.event)
+            .collect();
+        Ok(())
+    }
+}
+
+async fn read_ui_events(storage: &SqliteClientStorage) -> Vec<LocalAgentUiEvent> {
+    let mut operation = ReadUiEvents(Vec::new());
+    storage.transaction(&mut operation).await.unwrap();
+    operation.0
+}
+
 #[tokio::test]
 async fn batch_and_arguments_are_frozen_idempotently_before_execution() {
     let (_directory, storage) = storage("project-1").await;
@@ -189,6 +220,17 @@ async fn batch_and_arguments_are_frozen_idempotently_before_execution() {
     assert_eq!(first.calls.len(), 2);
     assert_eq!(first.calls[0].tool_name, "read_file");
     assert!(first.calls[0].invocation_id.starts_with("tool:"));
+    let events = read_ui_events(storage.as_ref()).await;
+    assert_eq!(
+        events.len(),
+        2,
+        "idempotent preparation emits no duplicates"
+    );
+    assert!(events.iter().all(|event| matches!(
+        &event.event,
+        LocalAgentUiEventPayload::ToolSnapshot(snapshot)
+            if snapshot.status == ToolExecutionStatus::Requested
+    )));
 }
 
 #[tokio::test]
@@ -234,6 +276,12 @@ async fn read_execution_can_resume_and_completion_is_idempotent() {
         .unwrap();
     assert!(!state.all_completed);
     assert!(!state.outcome_unknown);
+    let events = read_ui_events(storage.as_ref()).await;
+    assert_eq!(events.len(), 4, "only real tool transitions are published");
+    let LocalAgentUiEventPayload::ToolSnapshot(snapshot) = &events[3].event else {
+        panic!("tool completion must publish a tool snapshot");
+    };
+    assert_eq!(snapshot.status, ToolExecutionStatus::Succeeded);
 }
 
 #[tokio::test]

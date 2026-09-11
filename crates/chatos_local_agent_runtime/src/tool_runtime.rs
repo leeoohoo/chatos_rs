@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use crate::digest::canonical_json_digest;
+use crate::ui_events::append_tool_snapshot;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreparedToolCall {
@@ -146,7 +147,7 @@ impl StorageTransaction for PrepareToolBatchOperation {
             if let Some(existing) = existing {
                 validate_existing_execution(&existing.execution, &execution)?;
             } else {
-                repositories
+                let stored = repositories
                     .tool_executions()
                     .put(PutRecord {
                         record: ToolExecutionStateRecord {
@@ -163,6 +164,7 @@ impl StorageTransaction for PrepareToolBatchOperation {
                         expected_revision: None,
                     })
                     .await?;
+                append_tool_snapshot(repositories, &stored).await?;
             }
             calls.push(PreparedToolCall {
                 invocation_id,
@@ -397,6 +399,7 @@ impl StorageTransaction for BeginToolExecutionOperation {
                         expected_revision: Some(revision),
                     })
                     .await?;
+                append_tool_snapshot(repositories, &record).await?;
                 BeginToolExecutionResult::Execute(record)
             }
             ToolExecutionStatus::Started if record.execution.effect == ToolEffect::Read => {
@@ -412,6 +415,7 @@ impl StorageTransaction for BeginToolExecutionOperation {
                         expected_revision: Some(revision),
                     })
                     .await?;
+                append_tool_snapshot(repositories, &record).await?;
                 BeginToolExecutionResult::NeedsReview(record)
             }
             ToolExecutionStatus::Succeeded | ToolExecutionStatus::Failed => {
@@ -508,15 +512,15 @@ impl StorageTransaction for MarkToolOutcomeUnknownOperation {
         }
         let revision = record.metadata.revision;
         record.execution.status = ToolExecutionStatus::OutcomeUnknown;
-        self.result = Some(
-            repositories
-                .tool_executions()
-                .put(PutRecord {
-                    record,
-                    expected_revision: Some(revision),
-                })
-                .await?,
-        );
+        let record = repositories
+            .tool_executions()
+            .put(PutRecord {
+                record,
+                expected_revision: Some(revision),
+            })
+            .await?;
+        append_tool_snapshot(repositories, &record).await?;
+        self.result = Some(record);
         Ok(())
     }
 }
@@ -569,15 +573,15 @@ impl StorageTransaction for CompleteToolExecutionOperation {
             .map_err(|error| StorageError::InvalidData {
                 reason: format!("tool completion is invalid: {error}"),
             })?;
-        self.result = Some(
-            repositories
-                .tool_executions()
-                .put(PutRecord {
-                    record,
-                    expected_revision: Some(revision),
-                })
-                .await?,
-        );
+        let record = repositories
+            .tool_executions()
+            .put(PutRecord {
+                record,
+                expected_revision: Some(revision),
+            })
+            .await?;
+        append_tool_snapshot(repositories, &record).await?;
+        self.result = Some(record);
         Ok(())
     }
 }

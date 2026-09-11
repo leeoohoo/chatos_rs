@@ -3,15 +3,16 @@
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, PutRecord, RecordMetadata,
-    RecordQuery, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageEncryptionKey, StorageResult, StorageTransaction, ToolExecutionStateRecord,
-    TransactionRepositories,
+    AgentEventStateRecord, AgentRunStateRecord, AgentUiEventCursorQuery, ClientStorage, PutRecord,
+    RecordMetadata, RecordQuery, RecordScope, SecretReference, SqliteBootstrapProfile,
+    SqliteClientStorage, StorageEncryptionKey, StorageResult, StorageTransaction,
+    ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
     ContextStrategy, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
-    LocalAgentRunStatus, ModelProtocol, ModelRuntimeDescriptor, ModelStepCompletion,
-    ModelStepResult, ToolEffect, ToolExecution, ToolExecutionStatus,
+    LocalAgentRunStatus, LocalAgentUiEvent, LocalAgentUiEventPayload, ModelProtocol,
+    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ToolEffect, ToolExecution,
+    ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
     claim_event, record_model_step_completion, reduce_and_commit, AttemptLimitDisposition,
@@ -162,6 +163,30 @@ async fn empty_storage() -> (tempfile::TempDir, SqliteClientStorage) {
     (directory, storage)
 }
 
+struct ReadUiEvents(Vec<LocalAgentUiEvent>);
+
+#[async_trait]
+impl StorageTransaction for ReadUiEvents {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.0 = repositories
+            .agent_ui_events()
+            .list_after(&AgentUiEventCursorQuery {
+                scope: scope(),
+                after_seq: 0,
+                limit: 100,
+            })
+            .await?
+            .records
+            .into_iter()
+            .map(|record| record.event)
+            .collect();
+        Ok(())
+    }
+}
+
 struct SeedModelRunning;
 
 #[async_trait]
@@ -278,6 +303,13 @@ async fn claim_and_reduction_commit_are_durable_and_idempotent() {
         committed.emitted_events[0].event.event_type,
         LocalAgentEventType::ModelStepRequested
     );
+    let mut ui_events = ReadUiEvents(Vec::new());
+    storage.transaction(&mut ui_events).await.unwrap();
+    assert_eq!(ui_events.0.len(), 1);
+    let LocalAgentUiEventPayload::RunSnapshot(snapshot) = &ui_events.0[0].event else {
+        panic!("reduction must atomically publish a Run snapshot");
+    };
+    assert_eq!(snapshot.status, LocalAgentRunStatus::ModelReady);
     assert_eq!(
         claim_event(
             &storage,

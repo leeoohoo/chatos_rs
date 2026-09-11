@@ -18,6 +18,7 @@ mod recovery;
 mod reducer;
 mod scheduler;
 mod tool_runtime;
+mod ui_events;
 
 pub use context::*;
 pub use durable::*;

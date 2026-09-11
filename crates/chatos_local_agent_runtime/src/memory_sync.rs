@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use crate::ui_events::append_memory_sync_status;
 use crate::{digest::canonical_json_digest, digest::stable_digest_id, pagination::advance_cursor};
 
 #[derive(Debug, Clone)]
@@ -65,6 +66,8 @@ impl StorageTransaction for RecordSemanticMessageOperation {
         let request = self.request.take().ok_or(StorageError::Transaction {
             reason: "semantic message request was already consumed".to_string(),
         })?;
+        let event_scope = request.scope.clone();
+        let event_origin_device_id = request.origin_device_id.clone();
         request
             .message
             .validate()
@@ -121,8 +124,13 @@ impl StorageTransaction for RecordSemanticMessageOperation {
                 last_error: None,
             },
         };
-        let stored_message = put_message_idempotently(repositories, message_record).await?;
-        let stored_outbox = put_outbox_idempotently(repositories, outbox_record).await?;
+        let (stored_message, message_created) =
+            put_message_idempotently(repositories, message_record).await?;
+        let (stored_outbox, outbox_created) =
+            put_outbox_idempotently(repositories, outbox_record).await?;
+        if message_created || outbox_created {
+            append_memory_sync_status(repositories, &event_scope, &event_origin_device_id).await?;
+        }
         self.result = Some(RecordedSemanticMessage {
             message: stored_message,
             outbox: stored_outbox,
@@ -134,7 +142,7 @@ impl StorageTransaction for RecordSemanticMessageOperation {
 async fn put_message_idempotently(
     repositories: &mut dyn TransactionRepositories,
     record: AgentMessageStateRecord,
-) -> StorageResult<AgentMessageStateRecord> {
+) -> StorageResult<(AgentMessageStateRecord, bool)> {
     let query = RecordQuery {
         scope: record.metadata.scope.clone(),
         id: record.metadata.id.clone(),
@@ -147,25 +155,26 @@ async fn put_message_idempotently(
         if MemorySyncRecord::from_message(&existing.message)?.digest()?
             == MemorySyncRecord::from_message(&record.message)?.digest()?
         {
-            return Ok(existing);
+            return Ok((existing, false));
         }
         return Err(StorageError::Conflict {
             actual_revision: existing.metadata.revision,
         });
     }
-    repositories
+    let stored = repositories
         .agent_messages()
         .put(PutRecord {
             record,
             expected_revision: None,
         })
-        .await
+        .await?;
+    Ok((stored, true))
 }
 
 async fn put_outbox_idempotently(
     repositories: &mut dyn TransactionRepositories,
     record: SyncOutboxStateRecord,
-) -> StorageResult<SyncOutboxStateRecord> {
+) -> StorageResult<(SyncOutboxStateRecord, bool)> {
     let query = RecordQuery {
         scope: record.metadata.scope.clone(),
         id: record.metadata.id.clone(),
@@ -179,19 +188,20 @@ async fn put_outbox_idempotently(
             && existing.item.record_id == record.item.record_id
             && existing.item.payload_digest == record.item.payload_digest
         {
-            return Ok(existing);
+            return Ok((existing, false));
         }
         return Err(StorageError::Conflict {
             actual_revision: existing.metadata.revision,
         });
     }
-    repositories
+    let stored = repositories
         .sync_outbox()
         .put(PutRecord {
             record,
             expected_revision: None,
         })
-        .await
+        .await?;
+    Ok((stored, true))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,6 +312,7 @@ impl StorageTransaction for ClaimMemorySyncBatchOperation {
 
         let mut claimed = Vec::new();
         let mut exhausted = Vec::new();
+        let mut event_origin_device_id = None;
         for mut outbox in candidates {
             let message_query = RecordQuery {
                 scope: request.scope.clone(),
@@ -320,6 +331,8 @@ impl StorageTransaction for ClaimMemorySyncBatchOperation {
                 return invalid_data("Memory Sync outbox payload digest no longer matches message");
             }
             if outbox.item.attempt_count >= request.policy.maximum_attempts {
+                event_origin_device_id
+                    .get_or_insert_with(|| outbox.metadata.origin_device_id.clone());
                 let outbox_revision = outbox.metadata.revision;
                 outbox.item.status = SyncOutboxStatus::Failed;
                 outbox.item.last_error = Some("memory_sync_attempt_limit_exceeded".to_string());
@@ -343,6 +356,7 @@ impl StorageTransaction for ClaimMemorySyncBatchOperation {
                 continue;
             }
             let revision = outbox.metadata.revision;
+            event_origin_device_id.get_or_insert_with(|| outbox.metadata.origin_device_id.clone());
             outbox.item.status = SyncOutboxStatus::InFlight;
             outbox.item.attempt_count =
                 outbox.item.attempt_count.checked_add(1).ok_or_else(|| {
@@ -364,6 +378,9 @@ impl StorageTransaction for ClaimMemorySyncBatchOperation {
                 message,
                 remote_record,
             });
+        }
+        if let Some(origin_device_id) = event_origin_device_id {
+            append_memory_sync_status(repositories, &request.scope, &origin_device_id).await?;
         }
         self.result = Some(ClaimedMemorySyncBatch {
             records: claimed,
@@ -601,6 +618,8 @@ impl StorageTransaction for CompleteMemorySyncOperation {
         let request = self.request.take().ok_or(StorageError::Transaction {
             reason: "Memory Sync completion request was already consumed".to_string(),
         })?;
+        let event_scope = request.scope.clone();
+        let mut event_origin_device_id = None;
         let mut completion = MemorySyncCompletion::default();
         for claim in request.claims {
             let query = RecordQuery {
@@ -612,6 +631,7 @@ impl StorageTransaction for CompleteMemorySyncOperation {
                 .get(&query)
                 .await?
                 .ok_or(StorageError::NotFound)?;
+            event_origin_device_id.get_or_insert_with(|| outbox.metadata.origin_device_id.clone());
             if outbox.item.status != SyncOutboxStatus::InFlight
                 || outbox.item.attempt_count != claim.attempt_count
             {
@@ -663,6 +683,9 @@ impl StorageTransaction for CompleteMemorySyncOperation {
                     expected_revision: Some(message_revision),
                 })
                 .await?;
+        }
+        if let Some(origin_device_id) = event_origin_device_id {
+            append_memory_sync_status(repositories, &event_scope, &origin_device_id).await?;
         }
         self.result = Some(completion);
         Ok(())
