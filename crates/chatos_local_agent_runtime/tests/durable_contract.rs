@@ -5,15 +5,16 @@ use async_trait::async_trait;
 use chatos_client_storage::{
     AgentEventStateRecord, AgentRunStateRecord, ClientStorage, PutRecord, RecordMetadata,
     RecordQuery, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
+    StorageEncryptionKey, StorageResult, StorageTransaction, ToolExecutionStateRecord,
+    TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
     ContextStrategy, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun,
-    LocalAgentRunStatus,
+    LocalAgentRunStatus, ToolEffect, ToolExecution, ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
-    claim_event, reduce_and_commit, EventClaimRequest, EventClaimResult, ReduceAndCommitRequest,
-    ReducerPolicy, StepEvidence,
+    claim_event, reduce_and_commit, AttemptLimitDisposition, EventClaimRequest, EventClaimResult,
+    ReduceAndCommitRequest, ReducerPolicy, StepEvidence,
 };
 use chrono::{Duration, Utc};
 
@@ -129,6 +130,20 @@ async fn storage() -> (tempfile::TempDir, SqliteClientStorage) {
     (directory, storage)
 }
 
+async fn empty_storage() -> (tempfile::TempDir, SqliteClientStorage) {
+    let directory = tempfile::tempdir().unwrap();
+    let storage = SqliteClientStorage::open(
+        &SqliteBootstrapProfile {
+            database_path: directory.path().join("client.sqlite3"),
+            encryption_secret: SecretReference::new("test:sqlite-key").unwrap(),
+        },
+        &StorageEncryptionKey::new([42; 32]),
+    )
+    .await
+    .unwrap();
+    (directory, storage)
+}
+
 #[tokio::test]
 async fn claim_and_reduction_commit_are_durable_and_idempotent() {
     let (_directory, storage) = storage().await;
@@ -142,6 +157,7 @@ async fn claim_and_reduction_commit_are_durable_and_idempotent() {
             claim_token: "claim-1".to_string(),
             now,
             claim_until: now + Duration::seconds(30),
+            max_attempts: 3,
         },
     )
     .await
@@ -190,6 +206,7 @@ async fn claim_and_reduction_commit_are_durable_and_idempotent() {
                 claim_token: "claim-2".to_string(),
                 now,
                 claim_until: now + Duration::seconds(30),
+                max_attempts: 3,
             },
         )
         .await
@@ -211,6 +228,7 @@ async fn a_stale_claim_token_cannot_reduce_the_event() {
             claim_token: "active-claim".to_string(),
             now,
             claim_until: now + Duration::seconds(30),
+            max_attempts: 3,
         },
     )
     .await
@@ -253,4 +271,217 @@ async fn a_stale_claim_token_cannot_reduce_the_event() {
     let mut read = ReadEvent(None);
     storage.transaction(&mut read).await.unwrap();
     assert_eq!(read.0.unwrap().event.status, LocalAgentEventStatus::Claimed);
+}
+
+struct ReadAttemptLimitState {
+    run: Option<AgentRunStateRecord>,
+    event: Option<AgentEventStateRecord>,
+    tool: Option<ToolExecutionStateRecord>,
+    terminal_event: Option<AgentEventStateRecord>,
+}
+
+#[async_trait]
+impl StorageTransaction for ReadAttemptLimitState {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.run = repositories
+            .agent_runs()
+            .get(&RecordQuery {
+                scope: scope(),
+                id: "run-1".to_string(),
+            })
+            .await?;
+        self.event = repositories
+            .agent_events()
+            .get(&RecordQuery {
+                scope: scope(),
+                id: "event-1".to_string(),
+            })
+            .await?;
+        self.tool = repositories
+            .tool_executions()
+            .get(&RecordQuery {
+                scope: scope(),
+                id: "invocation-1".to_string(),
+            })
+            .await?;
+        self.terminal_event = repositories
+            .agent_events()
+            .get(&RecordQuery {
+                scope: scope(),
+                id: "run-1:2:run_terminal:0".to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+fn empty_attempt_limit_state() -> ReadAttemptLimitState {
+    ReadAttemptLimitState {
+        run: None,
+        event: None,
+        tool: None,
+        terminal_event: None,
+    }
+}
+
+#[tokio::test]
+async fn exhausted_ordinary_event_fails_run_and_emits_terminal_event_atomically() {
+    let (_directory, storage) = storage().await;
+    let now = Utc::now();
+    assert!(matches!(
+        claim_event(
+            &storage,
+            EventClaimRequest {
+                scope: scope(),
+                event_id: "event-1".to_string(),
+                device_id: "device-1".to_string(),
+                claim_token: "claim-1".to_string(),
+                now,
+                claim_until: now + Duration::seconds(30),
+                max_attempts: 1,
+            },
+        )
+        .await
+        .unwrap(),
+        EventClaimResult::Acquired(_)
+    ));
+
+    let result = claim_event(
+        &storage,
+        EventClaimRequest {
+            scope: scope(),
+            event_id: "event-1".to_string(),
+            device_id: "device-1".to_string(),
+            claim_token: "claim-2".to_string(),
+            now: now + Duration::seconds(31),
+            claim_until: now + Duration::seconds(61),
+            max_attempts: 1,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result,
+        EventClaimResult::AttemptsExhausted {
+            disposition: AttemptLimitDisposition::RunFailed,
+        }
+    );
+
+    let mut state = empty_attempt_limit_state();
+    storage.transaction(&mut state).await.unwrap();
+    assert_eq!(state.run.unwrap().run.status, LocalAgentRunStatus::Failed);
+    assert_eq!(
+        state.event.unwrap().event.status,
+        LocalAgentEventStatus::Failed
+    );
+    assert_eq!(
+        state.terminal_event.unwrap().event.event_type,
+        LocalAgentEventType::RunTerminal
+    );
+}
+
+struct SeedUnknownIrreversibleTool {
+    now: chrono::DateTime<Utc>,
+}
+
+#[async_trait]
+impl StorageTransaction for SeedUnknownIrreversibleTool {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let (mut run, mut event) = seed_records();
+        run.run.created_at = self.now;
+        run.run.updated_at = self.now;
+        run.run.status = LocalAgentRunStatus::WaitingToolResult;
+        run.run.pending_batch_id = Some("batch-1".to_string());
+        event.event.event_type = LocalAgentEventType::ToolBatchRequested;
+        event.event.status = LocalAgentEventStatus::Claimed;
+        event.event.attempt_count = 1;
+        event.event.claimed_by_device_id = Some("device-old".to_string());
+        event.event.claim_token = Some("claim-old".to_string());
+        event.event.claim_until = Some(self.now - Duration::seconds(1));
+        repositories
+            .agent_runs()
+            .put(PutRecord {
+                record: run,
+                expected_revision: None,
+            })
+            .await?;
+        repositories
+            .agent_events()
+            .put(PutRecord {
+                record: event,
+                expected_revision: None,
+            })
+            .await?;
+        repositories
+            .tool_executions()
+            .put(PutRecord {
+                record: ToolExecutionStateRecord {
+                    metadata: metadata("invocation-1", self.now),
+                    execution: ToolExecution {
+                        invocation_id: "invocation-1".to_string(),
+                        run_id: "run-1".to_string(),
+                        batch_id: "batch-1".to_string(),
+                        tool_call_id: "call-1".to_string(),
+                        tool_name: "write_file".to_string(),
+                        effect: ToolEffect::Write,
+                        arguments_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+                        status: ToolExecutionStatus::Started,
+                        bounded_result: None,
+                        started_at: Some(self.now - Duration::seconds(10)),
+                        completed_at: None,
+                    },
+                },
+                expected_revision: None,
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn exhausted_event_never_replays_an_unknown_irreversible_tool() {
+    let now = Utc::now();
+    let (_directory, storage) = empty_storage().await;
+    storage
+        .transaction(&mut SeedUnknownIrreversibleTool { now })
+        .await
+        .unwrap();
+
+    let result = claim_event(
+        &storage,
+        EventClaimRequest {
+            scope: scope(),
+            event_id: "event-1".to_string(),
+            device_id: "device-1".to_string(),
+            claim_token: "claim-new".to_string(),
+            now,
+            claim_until: now + Duration::seconds(30),
+            max_attempts: 1,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result,
+        EventClaimResult::AttemptsExhausted {
+            disposition: AttemptLimitDisposition::NeedsReview,
+        }
+    );
+
+    let mut state = empty_attempt_limit_state();
+    storage.transaction(&mut state).await.unwrap();
+    let run = state.run.unwrap().run;
+    assert_eq!(run.status, LocalAgentRunStatus::NeedsReview);
+    assert!(run.pending_interaction.is_some());
+    assert_eq!(
+        state.tool.unwrap().execution.status,
+        ToolExecutionStatus::OutcomeUnknown
+    );
+    assert!(state.terminal_event.is_none());
 }

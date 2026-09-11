@@ -3,12 +3,16 @@
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, PutRecord, RecordMetadata,
-    RecordQuery, RecordScope, StorageError, StorageResult, StorageTransaction,
-    TransactionRepositories,
+    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery, PutRecord,
+    RecordMetadata, RecordQuery, RecordScope, StorageError, StorageResult, StorageTransaction,
+    ToolExecutionStateRecord, TransactionRepositories,
 };
-use chatos_local_agent_protocol::{LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType};
+use chatos_local_agent_protocol::{
+    LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentRunStatus,
+    ToolExecutionStatus,
+};
 use chrono::{DateTime, Utc};
+use serde_json::json;
 
 use crate::{reduce_claimed_event, ReducerPolicy, Reduction, StepEvidence};
 
@@ -20,6 +24,15 @@ pub struct EventClaimRequest {
     pub claim_token: String,
     pub now: DateTime<Utc>,
     pub claim_until: DateTime<Utc>,
+    pub max_attempts: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttemptLimitDisposition {
+    RunFailed,
+    NeedsReview,
+    StaleEventDiscarded,
+    TerminalEventDiscarded,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +40,9 @@ pub enum EventClaimResult {
     Acquired(Box<AgentEventStateRecord>),
     NotAvailable,
     AlreadyFinished,
+    AttemptsExhausted {
+        disposition: AttemptLimitDisposition,
+    },
 }
 
 pub async fn claim_event(
@@ -36,6 +52,11 @@ pub async fn claim_event(
     if request.claim_until <= request.now {
         return Err(StorageError::InvalidData {
             reason: "event claim lease must end after the claim time".to_string(),
+        });
+    }
+    if request.max_attempts == 0 {
+        return Err(StorageError::InvalidData {
+            reason: "event max attempts must be greater than zero".to_string(),
         });
     }
     let mut operation = ClaimEventOperation {
@@ -81,6 +102,18 @@ impl StorageTransaction for ClaimEventOperation {
             self.result = Some(EventClaimResult::NotAvailable);
             return Ok(());
         }
+        if record.event.attempt_count >= self.request.max_attempts {
+            self.result = Some(
+                exhaust_event_attempts(
+                    repositories,
+                    &self.request.scope,
+                    &mut record,
+                    self.request.now,
+                )
+                .await?,
+            );
+            return Ok(());
+        }
         let expected_revision = record.metadata.revision;
         record.event.status = LocalAgentEventStatus::Claimed;
         record.event.attempt_count =
@@ -104,6 +137,210 @@ impl StorageTransaction for ClaimEventOperation {
         self.result = Some(EventClaimResult::Acquired(Box::new(claimed)));
         Ok(())
     }
+}
+
+async fn exhaust_event_attempts(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+    event_record: &mut AgentEventStateRecord,
+    now: DateTime<Utc>,
+) -> StorageResult<EventClaimResult> {
+    let run_query = RecordQuery {
+        scope: scope.clone(),
+        id: event_record.event.run_id.clone(),
+    };
+    let mut run_record = repositories
+        .agent_runs()
+        .get(&run_query)
+        .await?
+        .ok_or(StorageError::NotFound)?;
+    if run_record.run.status.is_terminal() {
+        fail_event(repositories, event_record, "run is already terminal").await?;
+        return Ok(EventClaimResult::AttemptsExhausted {
+            disposition: AttemptLimitDisposition::TerminalEventDiscarded,
+        });
+    }
+    if event_record.event.expected_version != run_record.run.version {
+        fail_event(
+            repositories,
+            event_record,
+            "event expected version no longer matches the run",
+        )
+        .await?;
+        return Ok(EventClaimResult::AttemptsExhausted {
+            disposition: AttemptLimitDisposition::StaleEventDiscarded,
+        });
+    }
+
+    let unknown_tools =
+        mark_unknown_irreversible_tools(repositories, scope, &event_record.event.run_id).await?;
+    let run_revision = run_record.metadata.revision;
+    run_record.run.version =
+        run_record
+            .run
+            .version
+            .checked_add(1)
+            .ok_or(StorageError::InvalidData {
+                reason: "run version overflow while exhausting event attempts".to_string(),
+            })?;
+    run_record.run.updated_at = now;
+    run_record.run.pending_batch_id = None;
+    let disposition = if unknown_tools.is_empty() {
+        run_record.run.status = LocalAgentRunStatus::Failed;
+        run_record.run.pending_interaction = None;
+        run_record.run.terminal_outcome = Some(json!({
+            "reason": "event_attempt_limit_exceeded",
+            "event_id": event_record.event.event_id,
+            "attempt_count": event_record.event.attempt_count,
+        }));
+        AttemptLimitDisposition::RunFailed
+    } else {
+        let unknown_count = unknown_tools.len();
+        let invocation_ids = unknown_tools
+            .iter()
+            .take(100)
+            .map(|record| record.execution.invocation_id.as_str())
+            .collect::<Vec<_>>();
+        run_record.run.status = LocalAgentRunStatus::NeedsReview;
+        run_record.run.terminal_outcome = None;
+        run_record.run.pending_interaction = Some(json!({
+            "type": "review_unknown_tool_outcomes",
+            "event_id": event_record.event.event_id,
+            "unknown_count": unknown_count,
+            "invocation_ids": invocation_ids,
+        }));
+        AttemptLimitDisposition::NeedsReview
+    };
+    let run_record = repositories
+        .agent_runs()
+        .put(PutRecord {
+            record: run_record,
+            expected_revision: Some(run_revision),
+        })
+        .await?;
+    fail_event(repositories, event_record, "event attempt limit exceeded").await?;
+
+    if disposition == AttemptLimitDisposition::RunFailed {
+        let terminal_id = stable_event_id(
+            &run_record.run.run_id,
+            run_record.run.version,
+            LocalAgentEventType::RunTerminal,
+            0,
+        );
+        repositories
+            .agent_events()
+            .put(PutRecord {
+                record: AgentEventStateRecord {
+                    metadata: RecordMetadata {
+                        id: terminal_id.clone(),
+                        scope: scope.clone(),
+                        origin_device_id: event_record.metadata.origin_device_id.clone(),
+                        revision: 0,
+                        created_at: now,
+                        updated_at: now,
+                    },
+                    event: LocalAgentEvent {
+                        event_id: terminal_id,
+                        run_id: run_record.run.run_id.clone(),
+                        event_type: LocalAgentEventType::RunTerminal,
+                        expected_version: run_record.run.version,
+                        available_at: now,
+                        status: LocalAgentEventStatus::Pending,
+                        attempt_count: 0,
+                        claimed_by_device_id: None,
+                        claim_token: None,
+                        claim_until: None,
+                        causation_id: event_record.event.event_id.clone(),
+                        correlation_id: event_record.event.correlation_id.clone(),
+                        bounded_payload: json!({"reason": "event_attempt_limit_exceeded"}),
+                        last_error: None,
+                    },
+                },
+                expected_revision: None,
+            })
+            .await?;
+    }
+    Ok(EventClaimResult::AttemptsExhausted { disposition })
+}
+
+async fn fail_event(
+    repositories: &mut dyn TransactionRepositories,
+    record: &mut AgentEventStateRecord,
+    reason: &str,
+) -> StorageResult<()> {
+    let expected_revision = record.metadata.revision;
+    record.event.status = LocalAgentEventStatus::Failed;
+    record.event.claimed_by_device_id = None;
+    record.event.claim_token = None;
+    record.event.claim_until = None;
+    record.event.last_error = Some(reason.to_string());
+    repositories
+        .agent_events()
+        .put(PutRecord {
+            record: record.clone(),
+            expected_revision: Some(expected_revision),
+        })
+        .await?;
+    Ok(())
+}
+
+async fn mark_unknown_irreversible_tools(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+    run_id: &str,
+) -> StorageResult<Vec<ToolExecutionStateRecord>> {
+    let mut cursor = None;
+    let mut unknown = Vec::new();
+    loop {
+        let page = repositories
+            .tool_executions()
+            .list(&ListQuery {
+                scope: scope.clone(),
+                cursor: cursor.clone(),
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        for mut record in page.records {
+            if record.execution.run_id != run_id
+                || !record.execution.effect.requires_durable_start()
+                || !matches!(
+                    record.execution.status,
+                    ToolExecutionStatus::Started | ToolExecutionStatus::OutcomeUnknown
+                )
+            {
+                continue;
+            }
+            if record.execution.status == ToolExecutionStatus::Started {
+                let expected_revision = record.metadata.revision;
+                record.execution.status = ToolExecutionStatus::OutcomeUnknown;
+                record = repositories
+                    .tool_executions()
+                    .put(PutRecord {
+                        record,
+                        expected_revision: Some(expected_revision),
+                    })
+                    .await?;
+            }
+            unknown.push(record);
+        }
+        if !advance_page_cursor(&mut cursor, page.next_cursor)? {
+            break;
+        }
+    }
+    Ok(unknown)
+}
+
+fn advance_page_cursor(current: &mut Option<String>, next: Option<String>) -> StorageResult<bool> {
+    let Some(next) = next else {
+        return Ok(false);
+    };
+    if current.as_deref() == Some(next.as_str()) {
+        return Err(StorageError::InvalidData {
+            reason: "repository pagination cursor did not advance".to_string(),
+        });
+    }
+    *current = Some(next);
+    Ok(true)
 }
 
 pub struct ReduceAndCommitRequest {
