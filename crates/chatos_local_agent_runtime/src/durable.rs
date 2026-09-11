@@ -15,7 +15,9 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 
 use crate::pagination::advance_cursor;
-use crate::ui_events::{append_run_snapshot, append_tool_snapshot};
+use crate::ui_events::{
+    append_pending_user_interaction, append_run_snapshot, append_tool_snapshot,
+};
 use crate::{reduce_claimed_event, ReducerPolicy, Reduction, StepEvidence};
 
 #[derive(Debug, Clone)]
@@ -511,6 +513,7 @@ impl StorageTransaction for ReduceAndCommitOperation {
             })
             .await?;
         append_run_snapshot(repositories, &run_record).await?;
+        append_pending_user_interaction(repositories, &run_record).await?;
 
         let event_revision = event_record.metadata.revision;
         event_record.event.status = LocalAgentEventStatus::Applied;

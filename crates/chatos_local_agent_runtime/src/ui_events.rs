@@ -5,7 +5,11 @@ use chatos_client_storage::{
     AgentRunStateRecord, AppendAgentUiEvent, ListQuery, RecordScope, StorageError, StorageResult,
     ToolExecutionStateRecord, TransactionRepositories,
 };
-use chatos_local_agent_protocol::{LocalAgentUiEventPayload, MemorySyncUiStatus, SyncOutboxStatus};
+use chatos_local_agent_protocol::{
+    LocalAgentUiEventPayload, MemorySyncUiStatus, SyncOutboxStatus, UserInteractionQuestion,
+    UserInteractionRequest,
+};
+use serde::Deserialize;
 
 use crate::pagination::advance_cursor;
 
@@ -19,6 +23,58 @@ pub(crate) async fn append_run_snapshot(
             scope: record.metadata.scope.clone(),
             origin_device_id: record.metadata.origin_device_id.clone(),
             payload: LocalAgentUiEventPayload::RunSnapshot(Box::new(record.run.clone())),
+        })
+        .await?;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PendingAskUserInteraction {
+    #[serde(rename = "type")]
+    interaction_type: String,
+    interaction_id: String,
+    question: UserInteractionQuestion,
+}
+
+pub(crate) async fn append_pending_user_interaction(
+    repositories: &mut dyn TransactionRepositories,
+    record: &AgentRunStateRecord,
+) -> StorageResult<()> {
+    let Some(pending) = record.run.pending_interaction.clone() else {
+        return Ok(());
+    };
+    if pending.get("type").and_then(serde_json::Value::as_str) != Some("ask_user") {
+        return Ok(());
+    }
+    let pending: PendingAskUserInteraction =
+        serde_json::from_value(pending).map_err(|error| StorageError::InvalidData {
+            reason: format!("pending Ask User interaction is invalid: {error}"),
+        })?;
+    if pending.interaction_type != "ask_user" || pending.question.prompt.trim().is_empty() {
+        return Err(StorageError::InvalidData {
+            reason: "pending Ask User interaction has an invalid type or empty prompt".to_string(),
+        });
+    }
+    let request = UserInteractionRequest {
+        interaction_id: pending.interaction_id,
+        run_id: record.run.run_id.clone(),
+        prompt: pending.question.prompt,
+        options: pending.question.options,
+        image_references: pending.question.image_references,
+        details: pending.question.details,
+    };
+    request
+        .validate()
+        .map_err(|error| StorageError::InvalidData {
+            reason: format!("pending Ask User interaction is invalid: {error}"),
+        })?;
+    repositories
+        .agent_ui_events()
+        .append(AppendAgentUiEvent {
+            scope: record.metadata.scope.clone(),
+            origin_device_id: record.metadata.origin_device_id.clone(),
+            payload: LocalAgentUiEventPayload::UserInteraction(request),
         })
         .await?;
     Ok(())

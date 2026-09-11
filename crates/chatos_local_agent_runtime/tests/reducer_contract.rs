@@ -173,7 +173,9 @@ fn ask_user_preserves_the_visual_question_for_durable_storage() {
     let run = run(LocalAgentRunStatus::ModelRunning);
     let question = serde_json::json!({
         "prompt": "Choose a visual direction",
-        "image_refs": ["preview-1"]
+        "options": [],
+        "image_references": ["preview-1"],
+        "details": null
     });
     let reduction = reduce_claimed_event(
         &run,

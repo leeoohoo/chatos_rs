@@ -9,6 +9,8 @@ use chatos_local_agent_protocol::{
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
+use crate::digest::stable_digest_id;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReducerPolicy {
     pub max_retries: u32,
@@ -359,8 +361,12 @@ fn reduce_model_result(
         }
         ModelStepResult::AskUser(question) => {
             next.status = LocalAgentRunStatus::Paused;
+            let version = next.version.to_string();
+            let interaction_id =
+                stable_digest_id("interaction", &[next.run_id.as_str(), version.as_str()]);
             next.pending_interaction = Some(json!({
                 "type": "ask_user",
+                "interaction_id": interaction_id,
                 "question": question.clone(),
             }));
             *human_interaction = Some(HumanInteraction::AskUser(question));

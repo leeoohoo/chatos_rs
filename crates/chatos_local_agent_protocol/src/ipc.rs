@@ -265,8 +265,11 @@ pub struct UserInteractionAnswer {
 }
 
 impl UserInteractionAnswer {
-    fn validate(&self) -> Result<(), ProtocolError> {
-        if self.text.as_deref().is_none_or(str::is_empty)
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self
+            .text
+            .as_deref()
+            .is_none_or(|text| text.trim().is_empty())
             && self.selected_option_ids.is_empty()
             && self.attachments.is_empty()
         {
@@ -652,10 +655,17 @@ pub struct UserInteractionRequest {
     pub details: Option<Value>,
 }
 
-impl UserInteractionRequest {
-    fn validate(&self) -> Result<(), ProtocolError> {
-        require_identifier("interaction_id", &self.interaction_id)?;
-        require_identifier("run_id", &self.run_id)?;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct UserInteractionQuestion {
+    pub prompt: String,
+    pub options: Vec<UserInteractionOption>,
+    pub image_references: Vec<String>,
+    pub details: Option<Value>,
+}
+
+impl UserInteractionQuestion {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
         if self.prompt.trim().is_empty() {
             return Err(ProtocolError::EmptyPayload {
                 field: "interaction_prompt",
@@ -671,6 +681,20 @@ impl UserInteractionRequest {
             require_bounded_json("interaction_details", details)?;
         }
         Ok(())
+    }
+}
+
+impl UserInteractionRequest {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("interaction_id", &self.interaction_id)?;
+        require_identifier("run_id", &self.run_id)?;
+        UserInteractionQuestion {
+            prompt: self.prompt.clone(),
+            options: self.options.clone(),
+            image_references: self.image_references.clone(),
+            details: self.details.clone(),
+        }
+        .validate()
     }
 }
 

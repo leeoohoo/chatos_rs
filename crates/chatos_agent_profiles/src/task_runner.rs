@@ -9,7 +9,10 @@ use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileStep, Model
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::shared::{parse_tool_arguments, validate_context_strategy};
+use crate::shared::{
+    ask_user_schema as shared_ask_user_schema, parse_tool_arguments, validate_ask_user_arguments,
+    validate_context_strategy,
+};
 
 pub const TASK_RUNNER_PROFILE_KEY: &str = "task_runner";
 pub const TASK_RUNNER_ASK_USER_TOOL: &str = "task_runner_ask_user";
@@ -313,17 +316,10 @@ fn effective_tool_schemas(snapshot: &TaskRunnerCapabilitySnapshot) -> Vec<Value>
 }
 
 fn ask_user_schema() -> Value {
-    json!({
-        "type": "function",
-        "name": TASK_RUNNER_ASK_USER_TOOL,
-        "description": "Ask one blocking question that requires a user decision.",
-        "parameters": {
-            "type": "object",
-            "properties": {"question": {"type": "string"}},
-            "required": ["question"],
-            "additionalProperties": false
-        }
-    })
+    shared_ask_user_schema(
+        TASK_RUNNER_ASK_USER_TOOL,
+        "Ask one blocking question that requires a user decision. Include relevant visual references whenever the decision depends on an image or UI state.",
+    )
 }
 
 fn report_outcome_schema() -> Value {
@@ -382,15 +378,9 @@ fn interpret_task_runner_output(
         let name = call.get("name").and_then(Value::as_str).unwrap_or_default();
         if name == TASK_RUNNER_ASK_USER_TOOL {
             let arguments = parse_tool_arguments(call)?;
-            let question = arguments
-                .get("question")
-                .and_then(Value::as_str)
-                .filter(|question| !question.trim().is_empty())
-                .ok_or_else(|| "task_runner_ask_user requires a non-empty question".to_string())?;
-            return Ok(ModelStepResult::AskUser(json!({
-                "question": question,
-                "project_id": run.project_id,
-            })));
+            return Ok(ModelStepResult::AskUser(validate_ask_user_arguments(
+                arguments,
+            )?));
         }
         if name == TASK_RUNNER_REPORT_OUTCOME_TOOL {
             let arguments = parse_tool_arguments(call)?;
@@ -706,7 +696,11 @@ mod tests {
                 call(
                     "call-1",
                     TASK_RUNNER_ASK_USER_TOOL,
-                    json!({"question": "Which?"}),
+                    json!({
+                        "prompt": "Which?",
+                        "options": [],
+                        "image_references": []
+                    }),
                 ),
                 call("call-2", "read_file", json!({"path": "src/lib.rs"})),
             ]),
@@ -714,6 +708,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("only tool call"));
+    }
+
+    #[test]
+    fn task_runner_ask_user_preserves_visual_references_without_project_fields() {
+        let result = interpret_task_runner_output(
+            &run(),
+            &output(vec![call(
+                "call-ask",
+                TASK_RUNNER_ASK_USER_TOOL,
+                json!({
+                    "prompt": "Pick a visual direction",
+                    "options": [],
+                    "image_references": ["task-preview-1"],
+                    "details": {"region": "hero"}
+                }),
+            )]),
+            &context(),
+        )
+        .unwrap();
+        let ModelStepResult::AskUser(question) = result else {
+            panic!("expected Ask User result");
+        };
+        assert_eq!(question["image_references"][0], "task-preview-1");
+        assert!(question.get("project_id").is_none());
     }
 
     #[test]

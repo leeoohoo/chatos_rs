@@ -10,15 +10,15 @@ use chatos_local_agent_protocol::{
     ModelStepCompletion,
 };
 use chatos_local_agent_runtime::{
-    begin_tool_execution, build_local_tool_invocation, complete_tool_execution, inspect_tool_batch,
-    mark_tool_outcome_unknown, prepare_tool_batch, reduce_and_commit, renew_event_claim,
-    request_run_control, scan_recoverable_work, validate_local_tool_outcome,
-    BeginToolExecutionRequest, BeginToolExecutionResult, CommittedReduction,
-    CompleteToolExecutionRequest, DurableScheduler, LocalToolRuntime,
-    MarkToolOutcomeUnknownRequest, ModelGatewayClient, PrepareToolBatchRequest, RecoveryIssue,
-    ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest, RequestRunControl,
-    RunControlAction, SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor,
-    StepEvidence,
+    answer_run_interaction, begin_tool_execution, build_local_tool_invocation,
+    complete_tool_execution, inspect_tool_batch, mark_tool_outcome_unknown, prepare_tool_batch,
+    reduce_and_commit, renew_event_claim, request_run_control, scan_recoverable_work,
+    validate_local_tool_outcome, AnswerRunInteraction, BeginToolExecutionRequest,
+    BeginToolExecutionResult, CommittedReduction, CompleteToolExecutionRequest, DurableScheduler,
+    LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayClient, PrepareToolBatchRequest,
+    RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest,
+    RequestRunControl, RunControlAction, SchedulerTickRequest, SchedulerTickResult,
+    SingleModelStepExecutor, StepEvidence,
 };
 use chrono::{DateTime, Duration, Utc};
 use tokio::sync::Mutex;
@@ -185,6 +185,29 @@ impl LocalAgentHost {
         .await?;
         self.scheduler.lock().await.schedule(&event);
         Ok(event)
+    }
+
+    pub async fn answer_user_question(
+        &self,
+        command: chatos_local_agent_protocol::AnswerUserQuestionCommand,
+        causation_id: impl Into<String>,
+        now: DateTime<Utc>,
+    ) -> Result<AgentEventStateRecord, LocalAgentHostError> {
+        let answered = answer_run_interaction(
+            self.storage.as_ref(),
+            AnswerRunInteraction {
+                scope: self.scope.clone(),
+                run_id: command.run_id,
+                interaction_id: command.interaction_id,
+                answer: command.answer,
+                origin_device_id: self.device_id.clone(),
+                causation_id: causation_id.into(),
+                now,
+            },
+        )
+        .await?;
+        self.scheduler.lock().await.schedule(&answered.resume_event);
+        Ok(answered.resume_event)
     }
 
     pub async fn commit_claimed(
@@ -448,6 +471,16 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostControlExecutor {
             LocalAgentCommand::PauseRun { run_id } => (run_id, RunControlAction::Pause),
             LocalAgentCommand::ResumeRun { run_id } => (run_id, RunControlAction::Resume),
             LocalAgentCommand::CancelRun { run_id } => (run_id, RunControlAction::Cancel),
+            LocalAgentCommand::AnswerUserQuestion(command) => {
+                return self
+                    .host
+                    .answer_user_question(command, request_id, Utc::now())
+                    .await
+                    .map(|event| LocalAgentIpcResponse::Accepted {
+                        operation_id: event.event.event_id,
+                    })
+                    .map_err(run_control_ipc_error);
+            }
             other => return self.next.execute_mutation(request_id, other).await,
         };
         self.host
@@ -456,13 +489,17 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostControlExecutor {
             .map(|event| LocalAgentIpcResponse::Accepted {
                 operation_id: event.event.event_id,
             })
-            .map_err(|error| LocalAgentIpcError {
-                code: "run_control_rejected".to_string(),
-                message: error.to_string(),
-                retryable: matches!(
-                    error,
-                    LocalAgentHostError::Storage(StorageError::Unavailable { .. })
-                ),
-            })
+            .map_err(run_control_ipc_error)
+    }
+}
+
+fn run_control_ipc_error(error: LocalAgentHostError) -> LocalAgentIpcError {
+    LocalAgentIpcError {
+        code: "run_control_rejected".to_string(),
+        message: error.to_string(),
+        retryable: matches!(
+            error,
+            LocalAgentHostError::Storage(StorageError::Unavailable { .. })
+        ),
     }
 }

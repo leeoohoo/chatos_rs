@@ -1,8 +1,53 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_local_agent_protocol::{ContextStrategy, LocalAgentRun};
-use serde_json::Value;
+use chatos_local_agent_protocol::{ContextStrategy, LocalAgentRun, UserInteractionQuestion};
+use serde_json::{json, Value};
+
+pub(crate) fn ask_user_schema(name: &str, description: &str) -> Value {
+    json!({
+        "type": "function",
+        "name": name,
+        "description": description,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string"},
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "option_id": {"type": "string"},
+                            "label": {"type": "string"},
+                            "description": {"type": ["string", "null"]}
+                        },
+                        "required": ["option_id", "label", "description"],
+                        "additionalProperties": false
+                    }
+                },
+                "image_references": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                },
+                "details": {}
+            },
+            "required": ["prompt", "options", "image_references"],
+            "additionalProperties": false
+        }
+    })
+}
+
+pub(crate) fn validate_ask_user_arguments(arguments: Value) -> Result<Value, String> {
+    let question: UserInteractionQuestion = serde_json::from_value(arguments).map_err(|error| {
+        format!("Ask User arguments do not match the visual question contract: {error}")
+    })?;
+    question
+        .validate()
+        .map_err(|error| format!("Ask User arguments are invalid: {error}"))?;
+    serde_json::to_value(question)
+        .map_err(|error| format!("failed to serialize Ask User arguments: {error}"))
+}
 
 pub(crate) fn parse_tool_arguments(call: &Value) -> Result<Value, String> {
     let arguments = call.get("arguments").cloned().unwrap_or(Value::Null);

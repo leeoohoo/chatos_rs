@@ -8,7 +8,9 @@ use chatos_local_agent_protocol::{LocalAgentRun, ModelStepResult};
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileStep, ModelGatewayOutput};
 use serde_json::{json, Value};
 
-use crate::shared::{parse_tool_arguments, validate_context_strategy};
+use crate::shared::{
+    ask_user_schema, parse_tool_arguments, validate_ask_user_arguments, validate_context_strategy,
+};
 
 pub const MAIN_CHAT_PROFILE_KEY: &str = "main_chat";
 pub const MAIN_CHAT_ASK_USER_TOOL: &str = "ask_user";
@@ -130,7 +132,7 @@ fn interpret_main_chat_output(
                 if ask_question.is_some() || !task_calls.is_empty() {
                     return Err("ask_user must be the only tool call in a model step".to_string());
                 }
-                ask_question = Some(arguments);
+                ask_question = Some(validate_ask_user_arguments(arguments)?);
             }
             MAIN_CHAT_CREATE_TASK_TOOL => {
                 if ask_question.is_some() {
@@ -163,17 +165,10 @@ fn main_chat_boundary_prompt() -> String {
 
 fn main_chat_tools() -> Vec<Value> {
     vec![
-        json!({
-            "type": "function",
-            "name": MAIN_CHAT_ASK_USER_TOOL,
-            "description": "Ask one material blocking question.",
-            "parameters": {
-                "type": "object",
-                "properties": {"question": {"type": "string"}},
-                "required": ["question"],
-                "additionalProperties": true
-            }
-        }),
+        ask_user_schema(
+            MAIN_CHAT_ASK_USER_TOOL,
+            "Ask one material blocking question. Include relevant visual references whenever the decision depends on an image or UI state.",
+        ),
         json!({
             "type": "function",
             "name": MAIN_CHAT_CREATE_TASK_TOOL,
@@ -213,17 +208,54 @@ mod tests {
 
     #[test]
     fn project_execution_becomes_a_local_task_command() {
-        let output = output(vec![json!({
+        let gateway_output = output(vec![json!({
             "type": "function_call",
             "call_id": "call-1",
             "name": MAIN_CHAT_CREATE_TASK_TOOL,
             "arguments": "{\"objective\":\"implement it\",\"project_id\":\"project-1\"}"
         })]);
-        let result = interpret_main_chat_output(None, "capabilities-1", &output).unwrap();
+        let result = interpret_main_chat_output(None, "capabilities-1", &gateway_output).unwrap();
         let ModelStepResult::ToolCommand(payload) = result else {
             panic!("expected task command");
         };
         assert_eq!(payload["calls"][0]["name"], MAIN_CHAT_CREATE_TASK_TOOL);
+    }
+
+    #[test]
+    fn ask_user_requires_and_preserves_the_visual_question_contract() {
+        let visual_output = output(vec![json!({
+            "type": "function_call",
+            "call_id": "call-ask",
+            "name": MAIN_CHAT_ASK_USER_TOOL,
+            "arguments": {
+                "prompt": "Which composition should I continue?",
+                "options": [{
+                    "option_id": "asymmetric",
+                    "label": "Asymmetric",
+                    "description": "More visual tension"
+                }],
+                "image_references": ["composition-preview-1"],
+                "details": {"annotation_id": "annotation-1"}
+            }
+        })]);
+        let result = interpret_main_chat_output(None, "capabilities-1", &visual_output).unwrap();
+        let ModelStepResult::AskUser(question) = result else {
+            panic!("expected Ask User result");
+        };
+        assert_eq!(question["prompt"], "Which composition should I continue?");
+        assert_eq!(question["image_references"][0], "composition-preview-1");
+
+        let obsolete = output(vec![json!({
+            "type": "function_call",
+            "call_id": "call-obsolete",
+            "name": MAIN_CHAT_ASK_USER_TOOL,
+            "arguments": {"question": "Which one?"}
+        })]);
+        assert!(
+            interpret_main_chat_output(None, "capabilities-1", &obsolete)
+                .unwrap_err()
+                .contains("visual question contract")
+        );
     }
 
     #[test]

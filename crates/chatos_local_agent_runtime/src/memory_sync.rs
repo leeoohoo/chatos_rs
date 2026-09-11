@@ -66,77 +66,84 @@ impl StorageTransaction for RecordSemanticMessageOperation {
         let request = self.request.take().ok_or(StorageError::Transaction {
             reason: "semantic message request was already consumed".to_string(),
         })?;
-        let event_scope = request.scope.clone();
-        let event_origin_device_id = request.origin_device_id.clone();
-        request
-            .message
-            .validate()
-            .map_err(|error| StorageError::InvalidData {
-                reason: format!("invalid semantic message: {error}"),
-            })?;
-        if request.message.message_mode != MessageMode::Semantic
-            || request.message.memory_sync_status != MemorySyncStatus::Pending
-        {
-            return invalid_data(
-                "only pending semantic messages can create Memory Engine outbox records",
-            );
-        }
-        if request.origin_device_id.trim().is_empty() {
-            return invalid_data("semantic message origin device must not be empty");
-        }
-        let remote_record = MemorySyncRecord::from_message(&request.message)?;
-        let payload_digest = remote_record.digest()?;
-        let outbox_id = stable_digest_id(
-            "memory",
-            &[
-                request.scope.owner_user_id.as_str(),
-                request.message.record_id.as_str(),
-            ],
-        );
-        let message_record = AgentMessageStateRecord {
-            metadata: RecordMetadata {
-                id: request.message.record_id.clone(),
-                scope: request.scope.clone(),
-                origin_device_id: request.origin_device_id.clone(),
-                revision: 0,
-                created_at: request.now,
-                updated_at: request.now,
-            },
-            message: request.message,
-        };
-        let outbox_record = SyncOutboxStateRecord {
-            metadata: RecordMetadata {
-                id: outbox_id.clone(),
-                scope: request.scope.clone(),
-                origin_device_id: request.origin_device_id,
-                revision: 0,
-                created_at: request.now,
-                updated_at: request.now,
-            },
-            item: SyncOutboxItem {
-                outbox_id,
-                destination: SyncDestination::MemoryEngine,
-                record_id: message_record.message.record_id.clone(),
-                payload_digest,
-                status: SyncOutboxStatus::Pending,
-                attempt_count: 0,
-                available_at: request.now,
-                last_error: None,
-            },
-        };
-        let (stored_message, message_created) =
-            put_message_idempotently(repositories, message_record).await?;
-        let (stored_outbox, outbox_created) =
-            put_outbox_idempotently(repositories, outbox_record).await?;
-        if message_created || outbox_created {
-            append_memory_sync_status(repositories, &event_scope, &event_origin_device_id).await?;
-        }
-        self.result = Some(RecordedSemanticMessage {
-            message: stored_message,
-            outbox: stored_outbox,
-        });
+        self.result = Some(persist_semantic_message(repositories, request).await?);
         Ok(())
     }
+}
+
+pub(crate) async fn persist_semantic_message(
+    repositories: &mut dyn TransactionRepositories,
+    request: RecordSemanticMessageRequest,
+) -> StorageResult<RecordedSemanticMessage> {
+    let event_scope = request.scope.clone();
+    let event_origin_device_id = request.origin_device_id.clone();
+    request
+        .message
+        .validate()
+        .map_err(|error| StorageError::InvalidData {
+            reason: format!("invalid semantic message: {error}"),
+        })?;
+    if request.message.message_mode != MessageMode::Semantic
+        || request.message.memory_sync_status != MemorySyncStatus::Pending
+    {
+        return invalid_data(
+            "only pending semantic messages can create Memory Engine outbox records",
+        );
+    }
+    if request.origin_device_id.trim().is_empty() {
+        return invalid_data("semantic message origin device must not be empty");
+    }
+    let remote_record = MemorySyncRecord::from_message(&request.message)?;
+    let payload_digest = remote_record.digest()?;
+    let outbox_id = stable_digest_id(
+        "memory",
+        &[
+            request.scope.owner_user_id.as_str(),
+            request.message.record_id.as_str(),
+        ],
+    );
+    let message_record = AgentMessageStateRecord {
+        metadata: RecordMetadata {
+            id: request.message.record_id.clone(),
+            scope: request.scope.clone(),
+            origin_device_id: request.origin_device_id.clone(),
+            revision: 0,
+            created_at: request.now,
+            updated_at: request.now,
+        },
+        message: request.message,
+    };
+    let outbox_record = SyncOutboxStateRecord {
+        metadata: RecordMetadata {
+            id: outbox_id.clone(),
+            scope: request.scope.clone(),
+            origin_device_id: request.origin_device_id,
+            revision: 0,
+            created_at: request.now,
+            updated_at: request.now,
+        },
+        item: SyncOutboxItem {
+            outbox_id,
+            destination: SyncDestination::MemoryEngine,
+            record_id: message_record.message.record_id.clone(),
+            payload_digest,
+            status: SyncOutboxStatus::Pending,
+            attempt_count: 0,
+            available_at: request.now,
+            last_error: None,
+        },
+    };
+    let (stored_message, message_created) =
+        put_message_idempotently(repositories, message_record).await?;
+    let (stored_outbox, outbox_created) =
+        put_outbox_idempotently(repositories, outbox_record).await?;
+    if message_created || outbox_created {
+        append_memory_sync_status(repositories, &event_scope, &event_origin_device_id).await?;
+    }
+    Ok(RecordedSemanticMessage {
+        message: stored_message,
+        outbox: stored_outbox,
+    })
 }
 
 async fn put_message_idempotently(

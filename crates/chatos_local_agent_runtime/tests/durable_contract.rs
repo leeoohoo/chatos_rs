@@ -251,6 +251,107 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
     let decoded: ModelStepCompletion = serde_json::from_value(first.event.bounded_payload).unwrap();
     assert!(matches!(decoded.result, ModelStepResult::Final(_)));
 }
+
+#[tokio::test]
+async fn ask_user_reduction_publishes_a_visual_interaction_with_the_run_snapshot() {
+    let (_directory, storage) = empty_storage().await;
+    storage.transaction(&mut SeedModelRunning).await.unwrap();
+    let now = Utc::now();
+    let question = serde_json::json!({
+        "prompt": "Choose the homepage art direction",
+        "options": [{
+            "option_id": "editorial",
+            "label": "Editorial",
+            "description": "Typography-led and spacious"
+        }],
+        "image_references": ["homepage-preview-1"],
+        "details": {"annotation_id": "annotation-1"}
+    });
+    let completion = record_model_step_completion(
+        &storage,
+        RecordModelStepCompletionRequest {
+            scope: scope(),
+            run_id: "run-1".to_string(),
+            completion: ModelStepCompletion {
+                result: ModelStepResult::AskUser(question.clone()),
+                pending_batch_id: None,
+                retry_at: None,
+            },
+            origin_device_id: "device-1".to_string(),
+            causation_id: "model-request-1".to_string(),
+            correlation_id: "conversation-1".to_string(),
+            now,
+        },
+    )
+    .await
+    .unwrap();
+    let claimed = claim_event(
+        &storage,
+        EventClaimRequest {
+            scope: scope(),
+            event_id: completion.event.event_id,
+            device_id: "device-1".to_string(),
+            claim_token: "ask-user-claim".to_string(),
+            now,
+            claim_until: now + Duration::seconds(30),
+            max_attempts: 3,
+        },
+    )
+    .await
+    .unwrap();
+    let EventClaimResult::Acquired(claimed) = claimed else {
+        panic!("Ask User completion must be claimable");
+    };
+    let committed = reduce_and_commit(
+        &storage,
+        ReduceAndCommitRequest {
+            scope: scope(),
+            event_id: claimed.event.event_id,
+            claim_token: "ask-user-claim".to_string(),
+            origin_device_id: "device-1".to_string(),
+            evidence: StepEvidence::Model {
+                result: ModelStepResult::AskUser(question),
+                pending_batch_id: None,
+                retry_at: None,
+            },
+            now,
+            policy: ReducerPolicy::default(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(committed.run_record.run.status, LocalAgentRunStatus::Paused);
+
+    let mut ui_events = ReadUiEvents(Vec::new());
+    storage.transaction(&mut ui_events).await.unwrap();
+    assert_eq!(ui_events.0.len(), 2);
+    assert!(matches!(
+        ui_events.0[0].event,
+        LocalAgentUiEventPayload::RunSnapshot(_)
+    ));
+    let LocalAgentUiEventPayload::UserInteraction(interaction) = &ui_events.0[1].event else {
+        panic!("second UI event must be the Ask User interaction");
+    };
+    assert_eq!(interaction.run_id, "run-1");
+    assert_eq!(interaction.prompt, "Choose the homepage art direction");
+    assert_eq!(interaction.options[0].option_id, "editorial");
+    assert_eq!(interaction.image_references, ["homepage-preview-1"]);
+    assert_eq!(
+        interaction.details.as_ref().unwrap()["annotation_id"],
+        "annotation-1"
+    );
+    assert_eq!(
+        committed
+            .run_record
+            .run
+            .pending_interaction
+            .as_ref()
+            .unwrap()["interaction_id"],
+        interaction.interaction_id
+    );
+    assert_eq!(ui_events.0[1].event_seq, ui_events.0[0].event_seq + 1);
+}
+
 #[tokio::test]
 async fn claim_and_reduction_commit_are_durable_and_idempotent() {
     let (_directory, storage) = storage().await;

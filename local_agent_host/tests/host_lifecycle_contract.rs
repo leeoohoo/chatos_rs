@@ -14,10 +14,10 @@ use chatos_local_agent_host::{
     LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry,
 };
 use chatos_local_agent_protocol::{
-    ContextStrategy, LocalAgentCommand, LocalAgentEvent, LocalAgentEventStatus,
-    LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse, LocalAgentRun,
-    LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTokenCount, ModelProtocol,
-    ModelRuntimeDescriptor, ModelStepResult,
+    AnswerUserQuestionCommand, ContextStrategy, LocalAgentCommand, LocalAgentEvent,
+    LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
+    LocalAgentRun, LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTokenCount, ModelProtocol,
+    ModelRuntimeDescriptor, ModelStepResult, UserInteractionAnswer,
 };
 use chatos_local_agent_runtime::{
     LocalAgentProfile, LocalAgentProfileStep, LocalToolInvocation, LocalToolOutcome,
@@ -164,6 +164,49 @@ impl StorageTransaction for SeedRunOnly {
                         updated_at: self.now,
                     },
                     run: run(self.now),
+                },
+                expected_revision: None,
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+struct SeedPausedRunOnly {
+    now: chrono::DateTime<Utc>,
+}
+
+#[async_trait]
+impl StorageTransaction for SeedPausedRunOnly {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let mut paused = run(self.now);
+        paused.status = LocalAgentRunStatus::Paused;
+        paused.pending_interaction = Some(serde_json::json!({
+            "type": "ask_user",
+            "interaction_id": "interaction-1",
+            "question": {
+                "prompt": "Choose a direction",
+                "options": [],
+                "image_references": [],
+                "details": null
+            }
+        }));
+        repositories
+            .agent_runs()
+            .put(PutRecord {
+                record: AgentRunStateRecord {
+                    metadata: RecordMetadata {
+                        id: "run-1".to_string(),
+                        scope: scope(),
+                        origin_device_id: "device-1".to_string(),
+                        revision: 0,
+                        created_at: self.now,
+                        updated_at: self.now,
+                    },
+                    run: paused,
                 },
                 expected_revision: None,
             })
@@ -415,6 +458,74 @@ async fn host_schedules_a_durable_control_request_immediately() {
     assert_eq!(
         claimed.event.event_type,
         LocalAgentEventType::PauseRequested
+    );
+}
+
+#[tokio::test]
+async fn host_persists_an_answer_and_schedules_resume_through_ipc() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:answer-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([13; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    storage
+        .transaction(&mut SeedPausedRunOnly { now })
+        .await
+        .unwrap();
+    let profiles =
+        LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
+    let (host, _) = LocalAgentHost::start(
+        storage,
+        Arc::new(Gateway),
+        Arc::new(Tools),
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+    let host = Arc::new(host);
+    let executor =
+        LocalAgentHostControlExecutor::new(host.clone(), Arc::new(UnusedMutationExecutor));
+    let response = executor
+        .execute_mutation(
+            "ipc-answer-1",
+            LocalAgentCommand::AnswerUserQuestion(AnswerUserQuestionCommand {
+                run_id: "run-1".to_string(),
+                interaction_id: "interaction-1".to_string(),
+                answer: UserInteractionAnswer {
+                    text: Some("Use editorial".to_string()),
+                    selected_option_ids: Vec::new(),
+                    attachments: Vec::new(),
+                },
+            }),
+        )
+        .await
+        .unwrap();
+    let LocalAgentIpcResponse::Accepted { operation_id } = response else {
+        panic!("answer must return an accepted resume event");
+    };
+    let SchedulerTickResult::Claimed(claimed) = host
+        .claim_next("answer-claim", Utc::now() + chrono::Duration::seconds(1))
+        .await
+        .unwrap()
+    else {
+        panic!("answer resume event was not scheduled");
+    };
+    assert_eq!(claimed.event.event_id, operation_id);
+    assert_eq!(
+        claimed.event.event_type,
+        LocalAgentEventType::ResumeRequested
     );
 }
 
