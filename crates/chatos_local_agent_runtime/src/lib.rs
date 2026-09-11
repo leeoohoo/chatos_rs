@@ -5,6 +5,7 @@
 //! it advances one claimed event and never calls a model, tool, queue, or
 //! database by itself.
 
+mod context;
 mod durable;
 mod model_gateway;
 mod model_gateway_client;
@@ -13,6 +14,7 @@ mod recovery;
 mod reducer;
 mod scheduler;
 
+pub use context::*;
 pub use durable::*;
 pub use model_gateway::*;
 pub use model_gateway_client::*;
