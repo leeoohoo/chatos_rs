@@ -944,10 +944,22 @@ pub struct RecordModelStepCompletionRequest {
     pub scope: RecordScope,
     pub run_id: String,
     pub completion: ModelStepCompletion,
+    pub assistant_message: Option<CompletedAssistantMessage>,
     pub origin_device_id: String,
     pub causation_id: String,
     pub correlation_id: String,
     pub now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompletedAssistantMessage {
+    pub record_id: String,
+    pub turn_id: String,
+    pub content: Option<String>,
+    pub reasoning: Option<String>,
+    pub structured_payload: Option<serde_json::Value>,
+    pub response_id: Option<String>,
+    pub message_source: String,
 }
 
 pub async fn record_model_step_completion(
@@ -960,6 +972,7 @@ pub async fn record_model_step_completion(
         .map_err(|error| StorageError::InvalidData {
             reason: error.to_string(),
         })?;
+    validate_completed_assistant_message(request.assistant_message.as_ref())?;
     let mut operation = RecordModelStepCompletionOperation {
         request: Some(request),
         result: None,
@@ -997,6 +1010,14 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
                 reason: "model completion requires a model_running run".to_string(),
             });
         }
+        persist_completed_assistant_message(
+            repositories,
+            &run,
+            request.assistant_message,
+            &request.origin_device_id,
+            request.now,
+        )
+        .await?;
         let event_id = stable_event_id(
             request.run_id.as_str(),
             run.run.version,
@@ -1060,6 +1081,101 @@ impl StorageTransaction for RecordModelStepCompletionOperation {
         );
         Ok(())
     }
+}
+
+fn validate_completed_assistant_message(
+    message: Option<&CompletedAssistantMessage>,
+) -> StorageResult<()> {
+    let Some(message) = message else {
+        return Ok(());
+    };
+    for value in [
+        message.record_id.as_str(),
+        message.turn_id.as_str(),
+        message.message_source.as_str(),
+    ] {
+        if value.trim().is_empty() {
+            return Err(StorageError::InvalidData {
+                reason: "completed assistant message identifiers must not be empty".to_string(),
+            });
+        }
+    }
+    if message
+        .content
+        .as_deref()
+        .is_none_or(|content| content.trim().is_empty())
+        && message
+            .reasoning
+            .as_deref()
+            .is_none_or(|reasoning| reasoning.trim().is_empty())
+        && message.structured_payload.is_none()
+    {
+        return Err(StorageError::InvalidData {
+            reason: "completed assistant message must contain semantic output".to_string(),
+        });
+    }
+    Ok(())
+}
+
+async fn persist_completed_assistant_message(
+    repositories: &mut dyn TransactionRepositories,
+    run_record: &AgentRunStateRecord,
+    message: Option<CompletedAssistantMessage>,
+    origin_device_id: &str,
+    now: DateTime<Utc>,
+) -> StorageResult<Option<RecordedSemanticMessage>> {
+    let Some(message) = message else {
+        return Ok(None);
+    };
+    let existing_identity = {
+        let mut messages = repositories.agent_messages();
+        messages
+            .get(&RecordQuery {
+                scope: run_record.metadata.scope.clone(),
+                id: message.record_id.clone(),
+            })
+            .await?
+            .map(|record| (record.message.sequence, record.message.created_at))
+    };
+    let (sequence, created_at) = match existing_identity {
+        Some(identity) => identity,
+        None => (
+            next_semantic_message_sequence(
+                repositories,
+                &run_record.metadata.scope,
+                &run_record.run.owner_entity_id,
+            )
+            .await?,
+            now,
+        ),
+    };
+    persist_semantic_message(
+        repositories,
+        RecordSemanticMessageRequest {
+            scope: run_record.metadata.scope.clone(),
+            message: AgentMessage {
+                record_id: message.record_id,
+                run_id: run_record.run.run_id.clone(),
+                thread_id: run_record.run.owner_entity_id.clone(),
+                turn_id: message.turn_id,
+                sequence,
+                role: AgentMessageRole::Assistant,
+                content: message.content,
+                reasoning: message.reasoning,
+                structured_payload: message.structured_payload,
+                tool_call_id: None,
+                response_id: message.response_id,
+                message_mode: MessageMode::Semantic,
+                message_source: message.message_source,
+                memory_sync_status: MemorySyncStatus::Pending,
+                created_at,
+            },
+            origin_device_id: origin_device_id.to_string(),
+            now,
+        },
+    )
+    .await
+    .map(Some)
 }
 
 const fn event_type_name(event_type: LocalAgentEventType) -> &'static str {

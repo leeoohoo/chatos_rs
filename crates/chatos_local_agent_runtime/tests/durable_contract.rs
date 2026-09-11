@@ -16,9 +16,9 @@ use chatos_local_agent_protocol::{
 };
 use chatos_local_agent_runtime::{
     claim_event, create_local_agent_run, record_model_step_completion, reduce_and_commit,
-    AttemptLimitDisposition, CreateLocalAgentRunRequest, EventClaimRequest, EventClaimResult,
-    InitialRunMessage, RecordModelStepCompletionRequest, ReduceAndCommitRequest, ReducerPolicy,
-    StepEvidence,
+    AttemptLimitDisposition, CompletedAssistantMessage, CreateLocalAgentRunRequest,
+    EventClaimRequest, EventClaimResult, InitialRunMessage, RecordModelStepCompletionRequest,
+    ReduceAndCommitRequest, ReducerPolicy, StepEvidence,
 };
 use chrono::{Duration, Utc};
 
@@ -394,6 +394,15 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
             pending_batch_id: None,
             retry_at: None,
         },
+        assistant_message: Some(CompletedAssistantMessage {
+            record_id: "assistant-message-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            content: Some("Done".to_string()),
+            reasoning: None,
+            structured_payload: None,
+            response_id: Some("response-1".to_string()),
+            message_source: "main_chat".to_string(),
+        }),
         origin_device_id: "device-1".to_string(),
         causation_id: "model-request-1".to_string(),
         correlation_id: "conversation-1".to_string(),
@@ -413,6 +422,15 @@ async fn model_completion_is_durable_and_idempotent_before_reduction() {
     assert_eq!(first.event.expected_version, 2);
     let decoded: ModelStepCompletion = serde_json::from_value(first.event.bounded_payload).unwrap();
     assert!(matches!(decoded.result, ModelStepResult::Final(_)));
+    let mut counts = CountCreatedRecords {
+        runs: 0,
+        events: 0,
+        messages: 0,
+        outbox: 0,
+    };
+    storage.transaction(&mut counts).await.unwrap();
+    assert_eq!(counts.messages, 1);
+    assert_eq!(counts.outbox, 1);
 }
 
 #[tokio::test]
@@ -440,6 +458,15 @@ async fn ask_user_reduction_publishes_a_visual_interaction_with_the_run_snapshot
                 pending_batch_id: None,
                 retry_at: None,
             },
+            assistant_message: Some(CompletedAssistantMessage {
+                record_id: "assistant-ask-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                content: Some("Please choose a direction".to_string()),
+                reasoning: None,
+                structured_payload: Some(question.clone()),
+                response_id: Some("response-ask-1".to_string()),
+                message_source: "main_chat".to_string(),
+            }),
             origin_device_id: "device-1".to_string(),
             causation_id: "model-request-1".to_string(),
             correlation_id: "conversation-1".to_string(),
@@ -487,13 +514,17 @@ async fn ask_user_reduction_publishes_a_visual_interaction_with_the_run_snapshot
 
     let mut ui_events = ReadUiEvents(Vec::new());
     storage.transaction(&mut ui_events).await.unwrap();
-    assert_eq!(ui_events.0.len(), 2);
+    assert_eq!(ui_events.0.len(), 3);
     assert!(matches!(
         ui_events.0[0].event,
+        LocalAgentUiEventPayload::MemorySync(_)
+    ));
+    assert!(matches!(
+        ui_events.0[1].event,
         LocalAgentUiEventPayload::RunSnapshot(_)
     ));
-    let LocalAgentUiEventPayload::UserInteraction(interaction) = &ui_events.0[1].event else {
-        panic!("second UI event must be the Ask User interaction");
+    let LocalAgentUiEventPayload::UserInteraction(interaction) = &ui_events.0[2].event else {
+        panic!("final UI event must be the Ask User interaction");
     };
     assert_eq!(interaction.run_id, "run-1");
     assert_eq!(interaction.prompt, "Choose the homepage art direction");
@@ -512,7 +543,7 @@ async fn ask_user_reduction_publishes_a_visual_interaction_with_the_run_snapshot
             .unwrap()["interaction_id"],
         interaction.interaction_id
     );
-    assert_eq!(ui_events.0[1].event_seq, ui_events.0[0].event_seq + 1);
+    assert_eq!(ui_events.0[2].event_seq, ui_events.0[1].event_seq + 1);
 }
 
 #[tokio::test]
