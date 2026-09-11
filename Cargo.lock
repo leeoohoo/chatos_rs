@@ -967,6 +967,7 @@ dependencies = [
  "chatos_service_runtime",
  "chrono",
  "futures-util",
+ "memory_engine_sdk",
  "reqwest",
  "serde_json",
  "tempfile",
