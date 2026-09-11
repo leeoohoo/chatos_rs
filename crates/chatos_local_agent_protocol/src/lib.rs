@@ -21,7 +21,7 @@ pub use model::*;
 pub use run::*;
 pub use tool::*;
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 3;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 4;
 pub const MAX_BOUNDED_JSON_BYTES: usize = 64 * 1024;
 pub const MAX_ENCRYPTED_CONTEXT_BYTES: usize = 128 * 1024;
 pub const MAX_MODEL_GATEWAY_JSON_BYTES: usize = 8 * 1024 * 1024;
