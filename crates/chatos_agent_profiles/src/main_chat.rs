@@ -90,14 +90,22 @@ impl LocalAgentProfile for MainChatAgentProfile {
 
     async fn interpret_completed_output(
         &self,
-        _run: &LocalAgentRun,
+        run: &LocalAgentRun,
         output: &ModelGatewayOutput,
     ) -> Result<ModelStepResult, String> {
-        interpret_main_chat_output(output)
+        interpret_main_chat_output(
+            run.project_id.as_deref(),
+            run.capability_snapshot_ref.as_str(),
+            output,
+        )
     }
 }
 
-fn interpret_main_chat_output(output: &ModelGatewayOutput) -> Result<ModelStepResult, String> {
+fn interpret_main_chat_output(
+    project_id: Option<&str>,
+    capability_snapshot_ref: &str,
+    output: &ModelGatewayOutput,
+) -> Result<ModelStepResult, String> {
     let calls = output
         .terminal
         .output_items
@@ -131,6 +139,7 @@ fn interpret_main_chat_output(output: &ModelGatewayOutput) -> Result<ModelStepRe
                 task_calls.push(json!({
                     "call_id": call.get("call_id"),
                     "name": name,
+                    "effect": "write",
                     "arguments": arguments,
                 }));
             }
@@ -140,7 +149,11 @@ fn interpret_main_chat_output(output: &ModelGatewayOutput) -> Result<ModelStepRe
     if let Some(question) = ask_question {
         Ok(ModelStepResult::AskUser(question))
     } else {
-        Ok(ModelStepResult::ToolCommand(json!({"calls": task_calls})))
+        Ok(ModelStepResult::ToolCommand(json!({
+            "project_id": project_id,
+            "capability_snapshot_ref": capability_snapshot_ref,
+            "calls": task_calls,
+        })))
     }
 }
 
@@ -206,7 +219,7 @@ mod tests {
             "name": MAIN_CHAT_CREATE_TASK_TOOL,
             "arguments": "{\"objective\":\"implement it\",\"project_id\":\"project-1\"}"
         })]);
-        let result = interpret_main_chat_output(&output).unwrap();
+        let result = interpret_main_chat_output(None, "capabilities-1", &output).unwrap();
         let ModelStepResult::ToolCommand(payload) = result else {
             panic!("expected task command");
         };
@@ -221,7 +234,7 @@ mod tests {
             "name": "write_file",
             "arguments": "{}"
         })]);
-        assert!(interpret_main_chat_output(&output)
+        assert!(interpret_main_chat_output(None, "capabilities-1", &output)
             .unwrap_err()
             .contains("unauthorized tool"));
     }

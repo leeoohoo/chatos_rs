@@ -159,7 +159,18 @@ pub fn reduce_claimed_event(
         }
         LocalAgentEventType::ToolBatchRequested => {
             require_status(run, event, &[LocalAgentRunStatus::WaitingToolResult])?;
-            require_no_evidence(event, &evidence)?;
+            let StepEvidence::ToolBatch { outcome_unknown } = evidence else {
+                return Err(ReducerError::InvalidEvidence {
+                    event_type: event.event_type,
+                });
+            };
+            emit(
+                &mut emitted_events,
+                &next,
+                LocalAgentEventType::ToolBatchCompleted,
+                now,
+                json!({"outcome_unknown": outcome_unknown}),
+            );
         }
         LocalAgentEventType::ToolBatchCompleted => {
             require_status(run, event, &[LocalAgentRunStatus::WaitingToolResult])?;

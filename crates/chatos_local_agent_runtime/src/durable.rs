@@ -70,6 +70,87 @@ pub async fn claim_event(
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct RenewEventClaimRequest {
+    pub scope: RecordScope,
+    pub event_id: String,
+    pub device_id: String,
+    pub claim_token: String,
+    pub now: DateTime<Utc>,
+    pub claim_until: DateTime<Utc>,
+}
+
+/// Extends only the exact active lease. A stale worker can never recover a
+/// lease after another device or claim token has acquired the event.
+pub async fn renew_event_claim(
+    storage: &dyn ClientStorage,
+    request: RenewEventClaimRequest,
+) -> StorageResult<AgentEventStateRecord> {
+    if request.claim_until <= request.now {
+        return Err(StorageError::InvalidData {
+            reason: "renewed event lease must end after the renewal time".to_string(),
+        });
+    }
+    let mut operation = RenewEventClaimOperation {
+        request: Some(request),
+        result: None,
+    };
+    storage.transaction(&mut operation).await?;
+    operation.result.ok_or(StorageError::Transaction {
+        reason: "event claim renewal returned no event".to_string(),
+    })
+}
+
+struct RenewEventClaimOperation {
+    request: Option<RenewEventClaimRequest>,
+    result: Option<AgentEventStateRecord>,
+}
+
+#[async_trait]
+impl StorageTransaction for RenewEventClaimOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let request = self.request.take().ok_or(StorageError::Transaction {
+            reason: "event claim renewal request was already consumed".to_string(),
+        })?;
+        let query = RecordQuery {
+            scope: request.scope,
+            id: request.event_id,
+        };
+        let mut record = repositories
+            .agent_events()
+            .get(&query)
+            .await?
+            .ok_or(StorageError::NotFound)?;
+        if record.event.status != LocalAgentEventStatus::Claimed
+            || record.event.claimed_by_device_id.as_deref() != Some(request.device_id.as_str())
+            || record.event.claim_token.as_deref() != Some(request.claim_token.as_str())
+            || record
+                .event
+                .claim_until
+                .is_none_or(|deadline| deadline < request.now)
+        {
+            return Err(StorageError::Conflict {
+                actual_revision: record.metadata.revision,
+            });
+        }
+        let revision = record.metadata.revision;
+        record.event.claim_until = Some(request.claim_until);
+        self.result = Some(
+            repositories
+                .agent_events()
+                .put(PutRecord {
+                    record,
+                    expected_revision: Some(revision),
+                })
+                .await?,
+        );
+        Ok(())
+    }
+}
+
 struct ClaimEventOperation {
     request: EventClaimRequest,
     result: Option<EventClaimResult>,

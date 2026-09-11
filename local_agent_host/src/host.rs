@@ -4,13 +4,19 @@
 use std::sync::Arc;
 
 use chatos_client_storage::{AgentEventStateRecord, ClientStorage, RecordScope, StorageError};
+use chatos_local_agent_protocol::{LocalAgentEventType, ModelStepCompletion};
 use chatos_local_agent_runtime::{
-    reduce_and_commit, scan_recoverable_work, CommittedReduction, DurableScheduler,
-    ModelGatewayClient, RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy, SchedulerTickRequest,
-    SchedulerTickResult, SingleModelStepExecutor, StepEvidence,
+    begin_tool_execution, build_local_tool_invocation, complete_tool_execution, inspect_tool_batch,
+    mark_tool_outcome_unknown, prepare_tool_batch, reduce_and_commit, renew_event_claim,
+    scan_recoverable_work, validate_local_tool_outcome, BeginToolExecutionRequest,
+    BeginToolExecutionResult, CommittedReduction, CompleteToolExecutionRequest, DurableScheduler,
+    LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayClient, PrepareToolBatchRequest,
+    RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest,
+    SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor, StepEvidence,
 };
 use chrono::{DateTime, Duration, Utc};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::{LocalAgentProfileRegistry, ProfileRegistryError};
 
@@ -49,6 +55,16 @@ pub enum LocalAgentHostError {
     Profile(#[from] ProfileRegistryError),
     #[error("event {actual} does not match the claimed event {expected}")]
     ClaimedEventMismatch { expected: String, actual: String },
+    #[error("event {0} is not a claimed local tool batch")]
+    NotToolBatch(String),
+    #[error("local tool runtime failed after invocation start: {0}")]
+    ToolRuntime(String),
+    #[error("local tool runtime returned an invalid outcome: {0}")]
+    InvalidToolOutcome(String),
+    #[error("local tool batch still has uncompleted invocations")]
+    IncompleteToolBatch,
+    #[error("claimed event payload is invalid: {0}")]
+    InvalidEventPayload(String),
 }
 
 pub struct LocalAgentHost {
@@ -59,6 +75,7 @@ pub struct LocalAgentHost {
     scheduler: Mutex<DurableScheduler>,
     profiles: LocalAgentProfileRegistry,
     model_steps: SingleModelStepExecutor,
+    tool_runtime: Arc<dyn LocalToolRuntime>,
 }
 
 impl LocalAgentHost {
@@ -66,6 +83,7 @@ impl LocalAgentHost {
     pub async fn start(
         storage: Arc<dyn ClientStorage>,
         gateway: Arc<dyn ModelGatewayClient>,
+        tool_runtime: Arc<dyn LocalToolRuntime>,
         profiles: LocalAgentProfileRegistry,
         scope: RecordScope,
         device_id: impl Into<String>,
@@ -104,6 +122,7 @@ impl LocalAgentHost {
                 scheduler: Mutex::new(DurableScheduler::from_recovery(scope, &plan)),
                 profiles,
                 model_steps: SingleModelStepExecutor::new(gateway),
+                tool_runtime,
             },
             report,
         ))
@@ -169,6 +188,195 @@ impl LocalAgentHost {
             .await
             .schedule_all(committed.emitted_events.iter());
         Ok(committed)
+    }
+
+    /// Applies events whose evidence is already encoded in their durable
+    /// payload. Model and tool completion payloads are decoded here so native
+    /// callers cannot accidentally supply different evidence.
+    pub async fn commit_claimed_protocol_event(
+        &self,
+        claimed: &AgentEventStateRecord,
+        now: DateTime<Utc>,
+    ) -> Result<CommittedReduction, LocalAgentHostError> {
+        let evidence = match claimed.event.event_type {
+            LocalAgentEventType::ModelStepCompleted => {
+                let completion: ModelStepCompletion = serde_json::from_value(
+                    claimed.event.bounded_payload.clone(),
+                )
+                .map_err(|error| LocalAgentHostError::InvalidEventPayload(error.to_string()))?;
+                StepEvidence::from(completion)
+            }
+            LocalAgentEventType::ToolBatchCompleted => {
+                let outcome_unknown = claimed
+                    .event
+                    .bounded_payload
+                    .get("outcome_unknown")
+                    .and_then(serde_json::Value::as_bool)
+                    .ok_or_else(|| {
+                        LocalAgentHostError::InvalidEventPayload(
+                            "tool batch completion has no outcome_unknown flag".to_string(),
+                        )
+                    })?;
+                StepEvidence::ToolBatch { outcome_unknown }
+            }
+            LocalAgentEventType::ToolBatchRequested => {
+                return Err(LocalAgentHostError::NotToolBatch(
+                    claimed.event.event_id.clone(),
+                ));
+            }
+            _ => StepEvidence::None,
+        };
+        self.commit_claimed(claimed, evidence, now).await
+    }
+
+    /// Executes one already-claimed tool batch. Invocation identities and
+    /// arguments are frozen before dispatch; irreversible calls are marked
+    /// started before I/O and are never replayed after an indeterminate exit.
+    pub async fn execute_claimed_tool_batch(
+        &self,
+        claimed: &AgentEventStateRecord,
+        cancellation: CancellationToken,
+        now: DateTime<Utc>,
+    ) -> Result<CommittedReduction, LocalAgentHostError> {
+        if claimed.metadata.id != claimed.event.event_id {
+            return Err(LocalAgentHostError::ClaimedEventMismatch {
+                expected: claimed.metadata.id.clone(),
+                actual: claimed.event.event_id.clone(),
+            });
+        }
+        if claimed.event.event_type != LocalAgentEventType::ToolBatchRequested {
+            return Err(LocalAgentHostError::NotToolBatch(
+                claimed.event.event_id.clone(),
+            ));
+        }
+        let claim_token = claimed.event.claim_token.clone().unwrap_or_default();
+        let batch = prepare_tool_batch(
+            self.storage.as_ref(),
+            PrepareToolBatchRequest {
+                scope: self.scope.clone(),
+                event_id: claimed.event.event_id.clone(),
+                claim_token: claim_token.clone(),
+                now,
+            },
+        )
+        .await?;
+
+        'calls: for call in &batch.calls {
+            match begin_tool_execution(
+                self.storage.as_ref(),
+                BeginToolExecutionRequest {
+                    scope: self.scope.clone(),
+                    invocation_id: call.invocation_id.clone(),
+                    now: Utc::now(),
+                },
+            )
+            .await?
+            {
+                BeginToolExecutionResult::Execute(_) => {
+                    let invocation = build_local_tool_invocation(&batch, call);
+                    match self
+                        .execute_tool_with_claim_renewal(
+                            claimed.event.event_id.as_str(),
+                            claim_token.as_str(),
+                            invocation,
+                            cancellation.clone(),
+                        )
+                        .await
+                    {
+                        Ok(outcome) => {
+                            validate_local_tool_outcome(&outcome)
+                                .map_err(LocalAgentHostError::InvalidToolOutcome)?;
+                            complete_tool_execution(
+                                self.storage.as_ref(),
+                                CompleteToolExecutionRequest {
+                                    scope: self.scope.clone(),
+                                    invocation_id: call.invocation_id.clone(),
+                                    status: outcome.status,
+                                    bounded_result: outcome.bounded_result,
+                                    now: Utc::now(),
+                                },
+                            )
+                            .await?;
+                        }
+                        Err(_error) if call.effect.requires_durable_start() => {
+                            mark_tool_outcome_unknown(
+                                self.storage.as_ref(),
+                                MarkToolOutcomeUnknownRequest {
+                                    scope: self.scope.clone(),
+                                    invocation_id: call.invocation_id.clone(),
+                                },
+                            )
+                            .await?;
+                            // The batch is still reduced below so the Run
+                            // enters needs_review instead of retrying the call.
+                            break 'calls;
+                        }
+                        Err(error) => return Err(LocalAgentHostError::ToolRuntime(error)),
+                    }
+                }
+                BeginToolExecutionResult::AlreadyCompleted(_) => {}
+                BeginToolExecutionResult::NeedsReview(_) => break 'calls,
+            }
+        }
+
+        let state = inspect_tool_batch(self.storage.as_ref(), self.scope.clone(), &batch).await?;
+        if !state.all_completed && !state.outcome_unknown {
+            return Err(LocalAgentHostError::IncompleteToolBatch);
+        }
+        self.commit_claimed(
+            claimed,
+            StepEvidence::ToolBatch {
+                outcome_unknown: state.outcome_unknown,
+            },
+            Utc::now(),
+        )
+        .await
+    }
+
+    async fn execute_tool_with_claim_renewal(
+        &self,
+        event_id: &str,
+        claim_token: &str,
+        invocation: chatos_local_agent_runtime::LocalToolInvocation,
+        cancellation: CancellationToken,
+    ) -> Result<chatos_local_agent_runtime::LocalToolOutcome, String> {
+        let renewal_period = self
+            .policy
+            .claim_ttl
+            .to_std()
+            .map_err(|_| "tool event claim TTL cannot be represented".to_string())?
+            / 3;
+        if renewal_period.is_zero() {
+            return Err("tool event claim renewal period is zero".to_string());
+        }
+        let first_tick = tokio::time::Instant::now() + renewal_period;
+        let mut interval = tokio::time::interval_at(first_tick, renewal_period);
+        let execution = self.tool_runtime.execute(invocation, cancellation);
+        tokio::pin!(execution);
+        loop {
+            tokio::select! {
+                outcome = &mut execution => return outcome,
+                _ = interval.tick() => {
+                    let now = Utc::now();
+                    let claim_until = now
+                        .checked_add_signed(self.policy.claim_ttl)
+                        .ok_or_else(|| "tool event claim renewal overflow".to_string())?;
+                    renew_event_claim(
+                        self.storage.as_ref(),
+                        RenewEventClaimRequest {
+                            scope: self.scope.clone(),
+                            event_id: event_id.to_string(),
+                            device_id: self.device_id.clone(),
+                            claim_token: claim_token.to_string(),
+                            now,
+                            claim_until,
+                        },
+                    )
+                    .await
+                    .map_err(|error| format!("tool event claim renewal failed: {error}"))?;
+                }
+            }
+        }
     }
 
     pub async fn refresh_recovery(

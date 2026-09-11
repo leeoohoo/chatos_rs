@@ -119,6 +119,32 @@ fn tool_commands_freeze_a_batch_before_execution() {
 }
 
 #[test]
+fn completed_local_execution_emits_a_durable_batch_completion() {
+    let mut run = run(LocalAgentRunStatus::WaitingToolResult);
+    run.pending_batch_id = Some("batch-1".to_string());
+    let reduction = reduce_claimed_event(
+        &run,
+        &event(&run, LocalAgentEventType::ToolBatchRequested),
+        StepEvidence::ToolBatch {
+            outcome_unknown: false,
+        },
+        Utc::now(),
+        ReducerPolicy::default(),
+    )
+    .unwrap();
+    assert_eq!(reduction.run.status, LocalAgentRunStatus::WaitingToolResult);
+    assert_eq!(reduction.emitted_events.len(), 1);
+    assert_eq!(
+        reduction.emitted_events[0].event_type,
+        LocalAgentEventType::ToolBatchCompleted
+    );
+    assert_eq!(
+        reduction.emitted_events[0].bounded_payload["outcome_unknown"],
+        false
+    );
+}
+
+#[test]
 fn unknown_tool_outcome_requires_human_review_and_is_not_replayed() {
     let mut run = run(LocalAgentRunStatus::WaitingToolResult);
     run.pending_batch_id = Some("batch-1".to_string());

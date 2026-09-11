@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chatos_client_storage::{
@@ -16,8 +16,9 @@ use chatos_local_agent_protocol::{
     ModelRuntimeDescriptor, ModelStepResult,
 };
 use chatos_local_agent_runtime::{
-    LocalAgentProfile, LocalAgentProfileStep, ModelGatewayCallbacks, ModelGatewayClient,
-    ModelGatewayClientError, ModelGatewayOutput, SchedulerTickResult, StepEvidence,
+    LocalAgentProfile, LocalAgentProfileStep, LocalToolInvocation, LocalToolOutcome,
+    LocalToolRuntime, ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError,
+    ModelGatewayOutput, SchedulerTickResult, StepEvidence,
 };
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
@@ -47,6 +48,44 @@ impl LocalAgentProfile for Profile {
 }
 
 struct Gateway;
+
+struct Tools;
+
+#[async_trait]
+impl LocalToolRuntime for Tools {
+    async fn execute(
+        &self,
+        _invocation: LocalToolInvocation,
+        _cancellation: CancellationToken,
+    ) -> Result<LocalToolOutcome, String> {
+        unreachable!("not executed by lifecycle test")
+    }
+}
+
+struct RecordingTools {
+    invocations: Mutex<Vec<LocalToolInvocation>>,
+    delay: std::time::Duration,
+    fail: bool,
+}
+
+#[async_trait]
+impl LocalToolRuntime for RecordingTools {
+    async fn execute(
+        &self,
+        invocation: LocalToolInvocation,
+        _cancellation: CancellationToken,
+    ) -> Result<LocalToolOutcome, String> {
+        self.invocations.lock().unwrap().push(invocation);
+        tokio::time::sleep(self.delay).await;
+        if self.fail {
+            Err("local transport became indeterminate".to_string())
+        } else {
+            Ok(LocalToolOutcome::succeeded(
+                serde_json::json!({"verified": true}),
+            ))
+        }
+    }
+}
 
 #[async_trait]
 impl ModelGatewayClient for Gateway {
@@ -139,6 +178,80 @@ impl StorageTransaction for Seed {
     }
 }
 
+struct SeedToolBatch {
+    now: chrono::DateTime<Utc>,
+    effect: &'static str,
+}
+
+#[async_trait]
+impl StorageTransaction for SeedToolBatch {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let mut run = run(self.now);
+        run.profile_key = "task_runner".to_string();
+        run.owner_entity_type = "task".to_string();
+        run.owner_entity_id = "task-1".to_string();
+        run.project_id = Some("project-1".to_string());
+        run.status = LocalAgentRunStatus::WaitingToolResult;
+        run.pending_batch_id = Some("batch-1".to_string());
+        let metadata = |id: &str| RecordMetadata {
+            id: id.to_string(),
+            scope: scope(),
+            origin_device_id: "device-1".to_string(),
+            revision: 0,
+            created_at: self.now,
+            updated_at: self.now,
+        };
+        repositories
+            .agent_runs()
+            .put(PutRecord {
+                record: AgentRunStateRecord {
+                    metadata: metadata("run-1"),
+                    run,
+                },
+                expected_revision: None,
+            })
+            .await?;
+        repositories
+            .agent_events()
+            .put(PutRecord {
+                record: AgentEventStateRecord {
+                    metadata: metadata("event-tool-1"),
+                    event: LocalAgentEvent {
+                        event_id: "event-tool-1".to_string(),
+                        run_id: "run-1".to_string(),
+                        event_type: LocalAgentEventType::ToolBatchRequested,
+                        expected_version: 1,
+                        available_at: self.now,
+                        status: LocalAgentEventStatus::Pending,
+                        attempt_count: 0,
+                        claimed_by_device_id: None,
+                        claim_token: None,
+                        claim_until: None,
+                        causation_id: "model-step-1".to_string(),
+                        correlation_id: "task-1".to_string(),
+                        bounded_payload: serde_json::json!({
+                            "project_id": "project-1",
+                            "capability_snapshot_ref": "capabilities-1",
+                            "calls": [{
+                                "call_id": "call-1",
+                                "name": "project_tool",
+                                "effect": self.effect,
+                                "arguments": {"path": "src/lib.rs"}
+                            }]
+                        }),
+                        last_error: None,
+                    },
+                },
+                expected_revision: None,
+            })
+            .await?;
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn host_recovers_claims_commits_and_schedules_the_next_event() {
     let now = Utc::now();
@@ -160,6 +273,7 @@ async fn host_recovers_claims_commits_and_schedules_the_next_event() {
     let (host, report) = LocalAgentHost::start(
         storage,
         Arc::new(Gateway),
+        Arc::new(Tools),
         profiles,
         scope(),
         "device-1",
@@ -193,6 +307,148 @@ async fn host_recovers_claims_commits_and_schedules_the_next_event() {
         LocalAgentEventType::ModelStepRequested
     );
     assert_eq!(next.event.expected_version, 2);
+}
+
+#[tokio::test]
+async fn host_renews_the_claim_and_commits_a_successful_local_tool_batch() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:tool-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([41; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    storage
+        .transaction(&mut SeedToolBatch {
+            now,
+            effect: "read",
+        })
+        .await
+        .unwrap();
+    let tools = Arc::new(RecordingTools {
+        invocations: Mutex::new(Vec::new()),
+        delay: std::time::Duration::from_millis(140),
+        fail: false,
+    });
+    let profiles =
+        LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
+    let policy = LocalAgentHostPolicy {
+        claim_ttl: chrono::Duration::milliseconds(90),
+        ..LocalAgentHostPolicy::default()
+    };
+    let (host, _) = LocalAgentHost::start(
+        storage,
+        Arc::new(Gateway),
+        tools.clone(),
+        profiles,
+        scope(),
+        "device-1",
+        policy,
+        now,
+    )
+    .await
+    .unwrap();
+    let SchedulerTickResult::Claimed(claimed) = host.claim_next("tool-claim-1", now).await.unwrap()
+    else {
+        panic!("tool batch was not claimed");
+    };
+    let committed = host
+        .execute_claimed_tool_batch(&claimed, CancellationToken::new(), now)
+        .await
+        .unwrap();
+    assert_eq!(tools.invocations.lock().unwrap().len(), 1);
+    assert_eq!(committed.emitted_events.len(), 1);
+    assert_eq!(
+        committed.emitted_events[0].event.event_type,
+        LocalAgentEventType::ToolBatchCompleted
+    );
+
+    let SchedulerTickResult::Claimed(completed) = host
+        .claim_next("tool-complete-1", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("tool completion was not claimed");
+    };
+    let committed = host
+        .commit_claimed_protocol_event(&completed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        committed.run_record.run.status,
+        LocalAgentRunStatus::ContinuationReady
+    );
+}
+
+#[tokio::test]
+async fn indeterminate_irreversible_tool_result_moves_the_run_to_review() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:unknown-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([40; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    storage
+        .transaction(&mut SeedToolBatch {
+            now,
+            effect: "write",
+        })
+        .await
+        .unwrap();
+    let tools = Arc::new(RecordingTools {
+        invocations: Mutex::new(Vec::new()),
+        delay: std::time::Duration::ZERO,
+        fail: true,
+    });
+    let profiles =
+        LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
+    let (host, _) = LocalAgentHost::start(
+        storage,
+        Arc::new(Gateway),
+        tools,
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+    let SchedulerTickResult::Claimed(claimed) = host.claim_next("tool-claim-1", now).await.unwrap()
+    else {
+        panic!("tool batch was not claimed");
+    };
+    host.execute_claimed_tool_batch(&claimed, CancellationToken::new(), now)
+        .await
+        .unwrap();
+    let SchedulerTickResult::Claimed(completed) = host
+        .claim_next("tool-complete-1", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("tool completion was not claimed");
+    };
+    let committed = host
+        .commit_claimed_protocol_event(&completed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        committed.run_record.run.status,
+        LocalAgentRunStatus::NeedsReview
+    );
 }
 
 fn scope() -> RecordScope {

@@ -15,6 +15,7 @@ mod pagination;
 mod recovery;
 mod reducer;
 mod scheduler;
+mod tool_runtime;
 
 pub use context::*;
 pub use durable::*;
@@ -25,3 +26,4 @@ pub use model_step::*;
 pub use recovery::*;
 pub use reducer::*;
 pub use scheduler::*;
+pub use tool_runtime::*;
