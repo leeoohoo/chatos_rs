@@ -7,18 +7,20 @@ use async_trait::async_trait;
 use chatos_client_storage::{AgentEventStateRecord, ClientStorage, RecordScope, StorageError};
 use chatos_local_agent_protocol::{
     LocalAgentCommand, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
-    ModelRuntimeDescriptor,
+    ModelRuntimeDescriptor, ModelStepCompletion,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, begin_model_step_execution, begin_tool_execution,
     build_local_tool_invocation, complete_tool_execution, create_local_agent_run,
-    inspect_tool_batch, mark_tool_outcome_unknown, prepare_tool_batch, reduce_and_commit,
-    renew_event_claim, request_run_control, scan_recoverable_work, validate_local_tool_outcome,
-    AnswerRunInteraction, BeganModelStepExecution, BeginModelStepExecutionRequest,
-    BeginToolExecutionRequest, BeginToolExecutionResult, CommittedReduction,
-    CompleteToolExecutionRequest, CreateLocalAgentRunRequest, CreatedLocalAgentRun,
-    DurableModelStepCompletionPayload, DurableScheduler, InitialRunMessage, LocalToolRuntime,
-    MarkToolOutcomeUnknownRequest, ModelGatewayClient, PrepareToolBatchRequest, RecoveryIssue,
+    inspect_tool_batch, mark_tool_outcome_unknown, prepare_tool_batch,
+    record_model_step_completion, reduce_and_commit, renew_event_claim, request_run_control,
+    scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
+    BeganModelStepExecution, BeginModelStepExecutionRequest, BeginToolExecutionRequest,
+    BeginToolExecutionResult, CommittedReduction, CompleteToolExecutionRequest,
+    CompletedAssistantMessage, CreateLocalAgentRunRequest, CreatedLocalAgentRun,
+    DurableModelStepCompletionPayload, DurableProviderContextCommit, DurableScheduler,
+    InitialRunMessage, LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayClient,
+    PrepareToolBatchRequest, RecordModelStepCompletionRequest, RecoveryIssue,
     ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest, RequestRunControl,
     RunControlAction, SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor,
     StepEvidence,
@@ -320,6 +322,43 @@ impl LocalAgentHost {
             },
         )
         .await?)
+    }
+
+    pub async fn record_claimed_model_step_completion(
+        &self,
+        claimed: &AgentEventStateRecord,
+        completion: ModelStepCompletion,
+        assistant_message: Option<CompletedAssistantMessage>,
+        provider_context_commit: Option<DurableProviderContextCommit>,
+        now: DateTime<Utc>,
+    ) -> Result<AgentEventStateRecord, LocalAgentHostError> {
+        if claimed.metadata.id != claimed.event.event_id {
+            return Err(LocalAgentHostError::ClaimedEventMismatch {
+                expected: claimed.metadata.id.clone(),
+                actual: claimed.event.event_id.clone(),
+            });
+        }
+        if claimed.event.event_type != LocalAgentEventType::ModelStepRequested {
+            return Err(LocalAgentHostError::NotModelStep(
+                claimed.event.event_id.clone(),
+            ));
+        }
+        let event = record_model_step_completion(
+            self.storage.as_ref(),
+            RecordModelStepCompletionRequest {
+                scope: self.scope.clone(),
+                request_event_id: claimed.event.event_id.clone(),
+                claim_token: claimed.event.claim_token.clone().unwrap_or_default(),
+                completion,
+                assistant_message,
+                provider_context_commit,
+                origin_device_id: self.device_id.clone(),
+                now,
+            },
+        )
+        .await?;
+        self.scheduler.lock().await.schedule(&event);
+        Ok(event)
     }
 
     /// Applies events whose evidence is already encoded in their durable

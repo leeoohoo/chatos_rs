@@ -17,12 +17,12 @@ use chatos_local_agent_protocol::{
     AnswerUserQuestionCommand, ContextStrategy, LocalAgentCommand, LocalAgentEvent,
     LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
     LocalAgentRun, LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTokenCount, ModelProtocol,
-    ModelRuntimeDescriptor, ModelStepResult, UserInteractionAnswer,
+    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, UserInteractionAnswer,
 };
 use chatos_local_agent_runtime::{
-    LocalAgentProfile, LocalAgentProfileStep, LocalToolInvocation, LocalToolOutcome,
-    LocalToolRuntime, ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError,
-    ModelGatewayOutput, SchedulerTickResult, StepEvidence,
+    CompletedAssistantMessage, LocalAgentProfile, LocalAgentProfileStep, LocalToolInvocation,
+    LocalToolOutcome, LocalToolRuntime, ModelGatewayCallbacks, ModelGatewayClient,
+    ModelGatewayClientError, ModelGatewayOutput, SchedulerTickResult, StepEvidence,
 };
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
@@ -408,6 +408,41 @@ async fn host_recovers_claims_commits_and_schedules_the_next_event() {
     assert_eq!(
         begun.request_event.event.status,
         LocalAgentEventStatus::Claimed
+    );
+    let completion = host
+        .record_claimed_model_step_completion(
+            &next,
+            ModelStepCompletion {
+                result: ModelStepResult::Final(serde_json::json!({"text": "done"})),
+                pending_batch_id: None,
+                retry_at: None,
+            },
+            Some(CompletedAssistantMessage {
+                record_id: "assistant-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                content: Some("Done".to_string()),
+                reasoning: None,
+                structured_payload: None,
+                response_id: Some("response-1".to_string()),
+                message_source: "main_chat".to_string(),
+            }),
+            None,
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        completion.event.event_type,
+        LocalAgentEventType::ModelStepCompleted
+    );
+    let SchedulerTickResult::Claimed(scheduled_completion) =
+        host.claim_next("claim-3", now).await.unwrap()
+    else {
+        panic!("durable model completion was not scheduled");
+    };
+    assert_eq!(
+        scheduled_completion.event.event_id,
+        completion.event.event_id
     );
 }
 
