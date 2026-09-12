@@ -43,6 +43,7 @@ extension NativeLocalAgentCredentialStore: NativeLocalAgentCredentialAccess {}
 
 protocol NativeLocalAgentHostSupervising: Sendable {
     func state() async -> NativeLocalAgentHostState
+    func stateUpdates() async -> AsyncStream<NativeLocalAgentHostState>
     func start(
         accountID: String,
         configurationProvider: @escaping @Sendable () async throws
@@ -239,6 +240,10 @@ public actor NativeLocalAgentAccountSession {
 
     public func state() async -> NativeLocalAgentHostState {
         await supervisor.state()
+    }
+
+    public func stateUpdates() async -> AsyncStream<NativeLocalAgentHostState> {
+        await supervisor.stateUpdates()
     }
 
     public func client(accountID: String) async throws -> NativeLocalAgentIPCClient {

@@ -1,3 +1,4 @@
+import ChatOSConnector
 import SwiftUI
 
 struct RootView: View {
@@ -17,6 +18,14 @@ struct RootView: View {
             ZStack(alignment: .topTrailing) {
                 detail
                     .workspaceFill()
+
+                LocalAgentHostStatusView(
+                    state: model.localAgentHostState,
+                    error: model.localAgentHostError
+                )
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity, alignment: .top)
+                .zIndex(40)
 
                 GlobalApprovalOverlayHost(viewModel: model.localConnectorControl)
                     .padding(18)
@@ -90,6 +99,79 @@ struct RootView: View {
             }
         }
         .workspaceFill()
+    }
+}
+
+private struct LocalAgentHostStatusView: View {
+    @EnvironmentObject private var model: AppModel
+    let state: NativeLocalAgentHostState
+    let error: String?
+
+    @ViewBuilder
+    var body: some View {
+        switch state {
+        case .running:
+            EmptyView()
+        case .starting:
+            status(
+                model.localized("正在启动本地 Agent…", english: "Starting Local Agent…"),
+                systemImage: "arrow.triangle.2.circlepath",
+                color: .secondary,
+                showsProgress: true
+            )
+        case let .restarting(_, attempt):
+            status(
+                model.localized(
+                    "本地 Agent 正在恢复（第 \(attempt) 次）…",
+                    english: "Recovering Local Agent (attempt \(attempt))…"
+                ),
+                systemImage: "exclamationmark.arrow.triangle.2.circlepath",
+                color: .orange,
+                showsProgress: true
+            )
+        case let .failed(_, reason):
+            status(
+                error ?? reason,
+                systemImage: "exclamationmark.triangle.fill",
+                color: .red,
+                showsProgress: false
+            )
+        case .stopped:
+            if let error {
+                status(
+                    error,
+                    systemImage: "stop.circle.fill",
+                    color: .red,
+                    showsProgress: false
+                )
+            }
+        }
+    }
+
+    private func status(
+        _ text: String,
+        systemImage: String,
+        color: Color,
+        showsProgress: Bool
+    ) -> some View {
+        HStack(spacing: 8) {
+            if showsProgress {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: systemImage)
+            }
+            Text(text)
+                .appFont(.caption.weight(.medium))
+                .lineLimit(2)
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().stroke(color.opacity(0.24), lineWidth: 1))
+        .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
+        .padding(.horizontal, 24)
+        .accessibilityLabel(text)
     }
 }
 

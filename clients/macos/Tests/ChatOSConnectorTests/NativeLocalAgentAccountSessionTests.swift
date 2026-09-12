@@ -282,6 +282,14 @@ private actor FakeLocalAgentSupervisor: NativeLocalAgentHostSupervising {
 
     func state() async -> NativeLocalAgentHostState { hostState }
 
+    func stateUpdates() async -> AsyncStream<NativeLocalAgentHostState> {
+        let state = hostState
+        return AsyncStream { continuation in
+            continuation.yield(state)
+            continuation.finish()
+        }
+    }
+
     func start(
         accountID: String,
         configurationProvider: @escaping @Sendable () async throws

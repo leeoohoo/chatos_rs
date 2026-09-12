@@ -38,7 +38,7 @@ struct NativeLocalAgentEventHubTests {
         ]
         let client = EventClient(events: events, runs: [run.runID: run])
         let sink = EventSink()
-        let hub = NativeLocalAgentEventHub(client: client, sink: sink)
+        let hub = NativeLocalAgentEventHub(clientProvider: { client }, sink: sink)
 
         let result = try await hub.drainAvailableEvents()
 
@@ -62,7 +62,7 @@ struct NativeLocalAgentEventHubTests {
         let events = [hostEvent(sequence: 1), hostEvent(sequence: 2)]
         let client = EventClient(events: events)
         let sink = EventSink(failOnceAt: 2)
-        let hub = NativeLocalAgentEventHub(client: client, sink: sink)
+        let hub = NativeLocalAgentEventHub(clientProvider: { client }, sink: sink)
 
         await #expect(throws: TestEventError.applyFailed) {
             _ = try await hub.drainAvailableEvents()
@@ -81,13 +81,37 @@ struct NativeLocalAgentEventHubTests {
     func rejectsUnorderedPage() async throws {
         let client = EventClient(events: [hostEvent(sequence: 2), hostEvent(sequence: 1)])
         let sink = EventSink()
-        let hub = NativeLocalAgentEventHub(client: client, sink: sink)
+        let hub = NativeLocalAgentEventHub(clientProvider: { client }, sink: sink)
 
         await #expect(throws: NativeLocalAgentEventHubError.self) {
             _ = try await hub.drainAvailableEvents()
         }
         #expect(await sink.appliedEvents().isEmpty)
         #expect(await client.acknowledgements().isEmpty)
+    }
+
+    @Test("resolves the replacement IPC client after a supervised Host restart")
+    func followsRestartedHostEndpoint() async throws {
+        let first = EventClient(events: [hostEvent(sequence: 1)])
+        let replacement = EventClient(events: [hostEvent(sequence: 2)], cursor: 1)
+        let provider = EventClientProvider(client: first)
+        let sink = EventSink()
+        let hub = NativeLocalAgentEventHub(
+            clientProvider: { await provider.client() },
+            sink: sink
+        )
+
+        let beforeRestart = try await hub.drainAvailableEvents()
+        await provider.install(replacement)
+        let afterRestart = try await hub.drainAvailableEvents()
+
+        #expect(beforeRestart.acknowledgedSequence == 1)
+        #expect(afterRestart.initialSequence == 1)
+        #expect(afterRestart.acknowledgedSequence == 2)
+        #expect(await first.acknowledgements() == [1])
+        #expect(await replacement.acknowledgements() == [2])
+        #expect(await provider.requestCount() == 2)
+        #expect(await sink.appliedEvents().map(\.sequence) == [1, 2])
     }
 }
 
@@ -143,10 +167,12 @@ private actor EventClient: NativeLocalAgentEventClient {
 
     init(
         events: [LocalAgentUIEvent],
-        runs: [String: LocalAgentRunSnapshot] = [:]
+        runs: [String: LocalAgentRunSnapshot] = [:],
+        cursor: UInt64 = 0
     ) {
         self.allEvents = events
         self.runsByID = runs
+        self.cursor = cursor
     }
 
     func run(id: String) async throws -> LocalAgentRunSnapshot {
@@ -203,6 +229,26 @@ private actor EventClient: NativeLocalAgentEventClient {
     func currentCursor() -> UInt64 { cursor }
     func bindingRequestCount() -> Int { bindingRequests }
     func runRequestCount() -> Int { runRequests }
+}
+
+private actor EventClientProvider {
+    private var current: EventClient
+    private var requests = 0
+
+    init(client: EventClient) {
+        current = client
+    }
+
+    func client() -> any NativeLocalAgentEventClient {
+        requests += 1
+        return current
+    }
+
+    func install(_ client: EventClient) {
+        current = client
+    }
+
+    func requestCount() -> Int { requests }
 }
 
 private actor EventSink: LocalAgentUIEventApplying {

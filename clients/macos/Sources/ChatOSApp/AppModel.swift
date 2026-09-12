@@ -132,6 +132,7 @@ final class AppModel: ObservableObject {
     private var isApplyingLanguagePreferences = false
     private var languagePreferencesSaveTask: Task<Void, Never>?
     private var localAgentLifecycleTask: Task<Void, Never>?
+    private var localAgentStateObservationTask: Task<Void, Never>?
     private var localAgentEventHub: NativeLocalAgentEventHub?
     private var requestedLocalAgentIdentity: String?
     var mainWindowPresentationHandler: (() -> Void)?
@@ -844,6 +845,8 @@ final class AppModel: ObservableObject {
             }
             requestedLocalAgentIdentity = nil
             localAgentHostError = nil
+            localAgentStateObservationTask?.cancel()
+            localAgentStateObservationTask = nil
             let previousLifecycleTask = localAgentLifecycleTask
             let accountSession = localAgentAccountSession
             localAgentLifecycleTask = Task { [weak self] in
@@ -933,7 +936,10 @@ final class AppModel: ObservableObject {
                 let compositeSink = NativeLocalAgentCompositeEventSink(
                     sinks: [historyStore, taskEventSink]
                 )
-                let eventHub = NativeLocalAgentEventHub(client: client, sink: compositeSink)
+                let eventHub = NativeLocalAgentEventHub(
+                    clientProvider: { try await accountSession.activeClient() },
+                    sink: compositeSink
+                )
                 await eventHub.start()
                 let state = await accountSession.state()
                 guard authenticatedUserID == accountID,
@@ -947,6 +953,7 @@ final class AppModel: ObservableObject {
                 }
                 localAgentEventHub = eventHub
                 localAgentHostState = state
+                observeLocalAgentHostState(accountID: accountID, generation: generation)
             } catch {
                 guard authenticatedUserID == accountID,
                       workspaceAccountGeneration == generation
@@ -994,6 +1001,37 @@ final class AppModel: ObservableObject {
                     reason: error.localizedDescription
                 )
                 localAgentHostError = error.localizedDescription
+            }
+        }
+    }
+
+    private func observeLocalAgentHostState(accountID: String, generation: UInt64) {
+        localAgentStateObservationTask?.cancel()
+        let accountSession = localAgentAccountSession
+        localAgentStateObservationTask = Task { [weak self] in
+            let updates = await accountSession.stateUpdates()
+            for await state in updates {
+                guard !Task.isCancelled,
+                      let self,
+                      authenticatedUserID == accountID,
+                      workspaceAccountGeneration == generation
+                else { return }
+                switch state {
+                case let .failed(stateAccountID, reason) where stateAccountID == accountID:
+                    localAgentHostError = reason
+                case let .running(stateAccountID, _, _, _) where stateAccountID == accountID:
+                    localAgentHostError = nil
+                case .stopped:
+                    // A signed-in account must never silently appear healthy
+                    // after its desired Host has stopped.
+                    localAgentHostError = localized(
+                        "本地 Agent Host 已停止",
+                        english: "Local Agent Host stopped"
+                    )
+                default:
+                    break
+                }
+                localAgentHostState = state
             }
         }
     }

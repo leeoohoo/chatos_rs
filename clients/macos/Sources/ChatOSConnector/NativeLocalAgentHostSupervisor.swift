@@ -23,6 +23,7 @@ public actor NativeLocalAgentHostSupervisor {
     private var monitor: Task<Void, Never>?
     private var generation: UInt64 = 0
     private var currentState: NativeLocalAgentHostState = .stopped
+    private var stateContinuations: [UUID: AsyncStream<NativeLocalAgentHostState>.Continuation] = [:]
 
     public init(
         launcher: NativeLocalAgentHostProcessLauncher = .init(),
@@ -43,6 +44,17 @@ public actor NativeLocalAgentHostSupervisor {
 
     public func state() -> NativeLocalAgentHostState { currentState }
 
+    public func stateUpdates() -> AsyncStream<NativeLocalAgentHostState> {
+        let subscriptionID = UUID()
+        return AsyncStream { continuation in
+            stateContinuations[subscriptionID] = continuation
+            continuation.yield(currentState)
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeStateContinuation(subscriptionID) }
+            }
+        }
+    }
+
     /// Starts one Host for the authenticated account. The provider is invoked
     /// again after a crash so every restart obtains fresh Keychain-backed
     /// credentials and a new launch frame instead of retaining or replaying
@@ -62,13 +74,13 @@ public actor NativeLocalAgentHostSupervisor {
         generation &+= 1
         desiredAccountID = accountID
         self.configurationProvider = configurationProvider
-        currentState = .starting(accountID: accountID)
+        publishState(.starting(accountID: accountID))
         do {
             try await launch(accountID: accountID, restartCount: 0, generation: generation)
         } catch {
             desiredAccountID = nil
             self.configurationProvider = nil
-            currentState = .failed(accountID: accountID, reason: sanitizedReason(error))
+            publishState(.failed(accountID: accountID, reason: sanitizedReason(error)))
             throw error
         }
     }
@@ -82,7 +94,7 @@ public actor NativeLocalAgentHostSupervisor {
         monitor?.cancel()
         monitor = nil
         await stopCurrentProcess()
-        currentState = .stopped
+        publishState(.stopped)
     }
 
     private func launch(
@@ -102,12 +114,12 @@ public actor NativeLocalAgentHostSupervisor {
             return
         }
         process = launched
-        currentState = .running(
+        publishState(.running(
             accountID: accountID,
             processID: launched.ready.processID,
             clientEndpoint: launched.ready.clientEndpoint,
             restartCount: restartCount
-        )
+        ))
         monitor?.cancel()
         monitor = Task { [weak self, launched] in
             let status = await launched.waitForExit()
@@ -138,7 +150,7 @@ public actor NativeLocalAgentHostSupervisor {
         var lastReason = "Host 意外退出（状态码 \(status)）"
         for (offset, delay) in restartDelays.enumerated() {
             let attempt = restartCount + offset + 1
-            currentState = .restarting(accountID: accountID, attempt: attempt)
+            publishState(.restarting(accountID: accountID, attempt: attempt))
             do {
                 try await Task.sleep(for: delay)
                 guard desiredAccountID == accountID, generation == expectedGeneration else { return }
@@ -157,7 +169,7 @@ public actor NativeLocalAgentHostSupervisor {
         guard desiredAccountID == accountID, generation == expectedGeneration else { return }
         desiredAccountID = nil
         configurationProvider = nil
-        currentState = .failed(accountID: accountID, reason: lastReason)
+        publishState(.failed(accountID: accountID, reason: lastReason))
     }
 
     private func stopCurrentProcess() async {
@@ -175,5 +187,17 @@ public actor NativeLocalAgentHostSupervisor {
             return error.errorDescription ?? "本地 Agent Host 启动失败"
         }
         return "本地 Agent Host 启动失败"
+    }
+
+    private func publishState(_ state: NativeLocalAgentHostState) {
+        guard currentState != state else { return }
+        currentState = state
+        for continuation in stateContinuations.values {
+            continuation.yield(state)
+        }
+    }
+
+    private func removeStateContinuation(_ id: UUID) {
+        stateContinuations.removeValue(forKey: id)
     }
 }

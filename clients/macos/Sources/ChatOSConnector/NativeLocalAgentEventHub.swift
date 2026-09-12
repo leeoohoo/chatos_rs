@@ -56,6 +56,9 @@ public struct NativeLocalAgentEventDrainResult: Equatable, Sendable {
 /// It is intentionally independent from chat views: closing or switching a
 /// page cannot stop Local Agent execution or cursor advancement.
 public actor NativeLocalAgentEventHub {
+    public typealias ClientProvider = @Sendable () async throws
+        -> any NativeLocalAgentEventClient
+
     private enum Route: Sendable {
         case mainChat(LocalAgentMainChatRunBinding)
         case otherProfile
@@ -65,16 +68,16 @@ public actor NativeLocalAgentEventHub {
     private static let idleDelay: Duration = .milliseconds(350)
     private static let maximumFailureDelay: Duration = .seconds(15)
 
-    private let client: any NativeLocalAgentEventClient
+    private let clientProvider: ClientProvider
     private let sink: any LocalAgentUIEventApplying
     private var routes: [String: Route] = [:]
     private var worker: Task<Void, Never>?
 
     public init(
-        client: any NativeLocalAgentEventClient,
+        clientProvider: @escaping ClientProvider,
         sink: any LocalAgentUIEventApplying
     ) {
-        self.client = client
+        self.clientProvider = clientProvider
         self.sink = sink
     }
 
@@ -98,6 +101,10 @@ public actor NativeLocalAgentEventHub {
     }
 
     public func drainAvailableEvents() async throws -> NativeLocalAgentEventDrainResult {
+        // Resolve the IPC endpoint for every drain. A supervised Host restart
+        // creates a new endpoint; retaining the startup client would leave the
+        // event loop permanently attached to the dead process.
+        let client = try await clientProvider()
         let initial = try await client.uiEventCursor()
         var cursor = initial
         var count = 0
@@ -116,7 +123,7 @@ public actor NativeLocalAgentEventHub {
 
             for event in page.events {
                 try Task.checkCancellation()
-                let binding = try await mainChatBinding(for: event.event)
+                let binding = try await mainChatBinding(for: event.event, client: client)
                 try await sink.applyLocalAgentUIEvent(
                     event,
                     mainChatBinding: binding
@@ -169,7 +176,8 @@ public actor NativeLocalAgentEventHub {
     }
 
     private func mainChatBinding(
-        for payload: LocalAgentUIEventPayload
+        for payload: LocalAgentUIEventPayload,
+        client: any NativeLocalAgentEventClient
     ) async throws -> LocalAgentMainChatRunBinding? {
         guard let runID = payload.runID else { return nil }
         if let route = routes[runID] {

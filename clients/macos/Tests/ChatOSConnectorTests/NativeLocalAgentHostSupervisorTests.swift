@@ -15,6 +15,17 @@ struct NativeLocalAgentHostSupervisorTests {
             restartDelays: [.milliseconds(10)]
         )
         let launches = LaunchCounter()
+        let stateStream = await supervisor.stateUpdates()
+        let observedStates = Task { () -> [NativeLocalAgentHostState] in
+            var states: [NativeLocalAgentHostState] = []
+            for await state in stateStream {
+                states.append(state)
+                if case let .running(_, _, _, restartCount) = state, restartCount == 1 {
+                    return states
+                }
+            }
+            return states
+        }
 
         try await supervisor.start(accountID: "user-1") {
             await launches.increment()
@@ -28,6 +39,15 @@ struct NativeLocalAgentHostSupervisorTests {
             return false
         }
         #expect(await launches.value == 2)
+        let states = await observedStates.value
+        #expect(states.contains(.starting(accountID: "user-1")))
+        #expect(states.contains(.restarting(accountID: "user-1", attempt: 1)))
+        #expect(states.contains(where: {
+            if case let .running(accountID, _, _, restartCount) = $0 {
+                return accountID == "user-1" && restartCount == 1
+            }
+            return false
+        }))
         await supervisor.logout()
         #expect(await supervisor.state() == .stopped)
     }
