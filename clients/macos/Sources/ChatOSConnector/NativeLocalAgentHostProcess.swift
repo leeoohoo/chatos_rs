@@ -225,6 +225,10 @@ public struct NativeLocalAgentHostProcessLauncher: Sendable {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = standardError
+        let exitObserver = NativeProcessExitObserver()
+        process.terminationHandler = { process in
+            exitObserver.finish(status: process.terminationStatus)
+        }
         do {
             try process.run()
         } catch {
@@ -236,12 +240,11 @@ public struct NativeLocalAgentHostProcessLauncher: Sendable {
             standardError.fileHandleForWriting.closeFile()
             throw NativeLocalAgentHostLaunchError.processLaunchFailed(error.localizedDescription)
         }
-        // `Process.waitUntilExit()` must have exactly one owner. In particular,
-        // the startup error path and the successfully launched Host must never
-        // race by creating independent waiters for the same native process.
-        let exitTask = Task.detached(priority: .utility) { [process] in
-            process.waitUntilExit()
-            return process.terminationStatus
+        // Foundation can publish `isRunning == false` before a concurrent
+        // `waitUntilExit()` returns. Observe the one termination callback set
+        // before launch and fan that durable result to every async waiter.
+        let exitTask = Task.detached(priority: .utility) {
+            await exitObserver.wait()
         }
         input.fileHandleForReading.closeFile()
         output.fileHandleForWriting.closeFile()
@@ -380,6 +383,39 @@ public struct NativeLocalAgentHostProcessLauncher: Sendable {
         guard ready.clientEndpoint == configuration.expectedClientEndpoint else {
             throw NativeLocalAgentHostLaunchError.readyEndpointMismatch
         }
+    }
+}
+
+private final class NativeProcessExitObserver: @unchecked Sendable {
+    private let lock = NSLock()
+    private var status: Int32?
+    private var continuation: CheckedContinuation<Int32, Never>?
+
+    func wait() async -> Int32 {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if let status {
+                lock.unlock()
+                continuation.resume(returning: status)
+                return
+            }
+            precondition(self.continuation == nil)
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    func finish(status: Int32) {
+        lock.lock()
+        guard self.status == nil else {
+            lock.unlock()
+            return
+        }
+        self.status = status
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: status)
     }
 }
 
