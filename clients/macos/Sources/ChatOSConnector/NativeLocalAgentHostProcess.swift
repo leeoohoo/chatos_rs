@@ -40,7 +40,7 @@ public struct NativeLocalAgentHostLaunchConfiguration: Sendable {
     public let executableURL: URL
     public let launchID: String
     public let expectedClientEndpoint: String
-    public let launchRequestJSON: Data
+    public let launchMaterial: NativeLocalAgentHostLaunchMaterial
     public let readyTimeout: Duration
 
     public init(
@@ -68,8 +68,57 @@ public struct NativeLocalAgentHostLaunchConfiguration: Sendable {
         self.executableURL = executableURL
         self.launchID = launchID
         self.expectedClientEndpoint = expectedClientEndpoint
-        self.launchRequestJSON = launchRequestJSON
+        self.launchMaterial = try NativeLocalAgentHostLaunchMaterial(launchRequestJSON)
         self.readyTimeout = readyTimeout
+    }
+}
+
+public final class NativeLocalAgentHostLaunchMaterial: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requestJSON: Data?
+
+    public init(_ requestJSON: Data) throws {
+        guard !requestJSON.isEmpty, requestJSON.count <= 1024 * 1024 else {
+            throw NativeLocalAgentHostLaunchError.invalidConfiguration(
+                "本地 Agent Host 启动凭据大小无效"
+            )
+        }
+        self.requestJSON = requestJSON
+    }
+
+    deinit {
+        lock.lock()
+        zeroize(&requestJSON)
+        lock.unlock()
+    }
+
+    fileprivate func consume() throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let data = requestJSON else {
+            throw NativeLocalAgentHostLaunchError.invalidConfiguration(
+                "本地 Agent Host 启动凭据已经使用"
+            )
+        }
+        requestJSON = nil
+        return data
+    }
+
+    func snapshotForTesting() throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let requestJSON else {
+            throw NativeLocalAgentHostLaunchError.invalidConfiguration(
+                "本地 Agent Host 启动凭据已经使用"
+            )
+        }
+        return requestJSON
+    }
+
+    private func zeroize(_ value: inout Data?) {
+        let count = value?.count ?? 0
+        value?.resetBytes(in: 0..<count)
+        value = nil
     }
 }
 
@@ -139,8 +188,10 @@ public struct NativeLocalAgentHostProcessLauncher: Sendable {
         }
 
         do {
+            var launchRequestJSON = try configuration.launchMaterial.consume()
+            defer { launchRequestJSON.resetBytes(in: 0..<launchRequestJSON.count) }
             try writeLaunchFrame(
-                configuration.launchRequestJSON,
+                launchRequestJSON,
                 to: input.fileHandleForWriting
             )
             let ready = try await readReadyFrame(

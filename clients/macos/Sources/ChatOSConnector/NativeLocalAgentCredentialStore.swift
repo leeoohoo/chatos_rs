@@ -84,7 +84,9 @@ public actor NativeLocalAgentCredentialStore {
         guard Self.valid(accountID), Self.valid(reference) else {
             throw NativeLocalAgentCredentialStoreError.invalidReference
         }
-        return "\(accountID)/\(reference)"
+        // Length-prefixing prevents account/reference boundary collisions
+        // without exposing secret material. Rust uses the same v1 key function.
+        return "v1:\(accountID.utf8.count):\(accountID)\(reference)"
     }
 
     private static func valid(_ value: String) -> Bool {
