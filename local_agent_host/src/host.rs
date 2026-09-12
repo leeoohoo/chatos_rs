@@ -20,7 +20,8 @@ use chatos_local_agent_runtime::{
     CompletedAssistantMessage, CreateLocalAgentRunRequest, CreatedLocalAgentRun,
     DurableModelStepCompletionPayload, DurableProviderContextCommit, DurableScheduler,
     ExecutedModelStep, InitialRunMessage, LocalToolRuntime, MarkToolOutcomeUnknownRequest,
-    ModelGatewayCallbacks, ModelGatewayClient, ModelStepExecutorError, ModelStepPersistenceError,
+    ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError, ModelGatewayStreamError,
+    ModelInputTokenGuardError, ModelStepExecutorError, ModelStepPersistenceError,
     PrepareToolBatchRequest, RecordModelStepCompletionRequest, RecoveryIssue,
     ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest, RequestRunControl,
     RunControlAction, SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor,
@@ -41,6 +42,7 @@ pub struct LocalAgentHostPolicy {
     pub claim_ttl: Duration,
     pub maximum_event_attempts: u32,
     pub model_retry_delay: Duration,
+    pub maximum_model_retry_delay: Duration,
     pub reducer: ReducerPolicy,
 }
 
@@ -50,6 +52,7 @@ impl Default for LocalAgentHostPolicy {
             claim_ttl: Duration::seconds(90),
             maximum_event_attempts: 3,
             model_retry_delay: Duration::seconds(5),
+            maximum_model_retry_delay: Duration::minutes(5),
             reducer: ReducerPolicy::default(),
         }
     }
@@ -190,9 +193,10 @@ impl LocalAgentHost {
         if policy.claim_ttl <= Duration::zero()
             || policy.maximum_event_attempts == 0
             || policy.model_retry_delay <= Duration::zero()
+            || policy.maximum_model_retry_delay < policy.model_retry_delay
         {
             return Err(LocalAgentHostError::InvalidConfiguration(
-                "claim TTL, event attempt limit, and model retry delay must be positive",
+                "claim TTL, event attempt limit, and model retry delay bounds are invalid",
             ));
         }
         let plan = scan_recoverable_work(storage.as_ref(), scope.clone(), now).await?;
@@ -490,14 +494,23 @@ impl LocalAgentHost {
                     token_assessments: Vec::new(),
                     provider_context_commit: None,
                 },
-                None => return Err(error),
+                None => match retryable_model_execution(&error) {
+                    Some(details) => ExecutedModelStep {
+                        result: ModelStepResult::Retry(details),
+                        output: None,
+                        token_assessments: Vec::new(),
+                        provider_context_commit: None,
+                    },
+                    None => return Err(error),
+                },
             },
         };
         let completion_now = Utc::now();
         let retry_at = if matches!(&executed.result, ModelStepResult::Retry(_)) {
+            let retry_delay = model_retry_delay(&run, self.policy)?;
             Some(
                 completion_now
-                    .checked_add_signed(self.policy.model_retry_delay)
+                    .checked_add_signed(retry_delay)
                     .ok_or(LocalAgentHostError::ModelRetryDeadlineOverflow)?,
             )
         } else {
@@ -917,4 +930,48 @@ fn bounded_runtime_error(error: &str) -> &str {
         end -= 1;
     }
     &error[..end]
+}
+
+fn retryable_model_execution(error: &LocalAgentHostError) -> Option<serde_json::Value> {
+    let gateway = match error {
+        LocalAgentHostError::ModelStepExecutor(ModelStepExecutorError::Gateway(error)) => error,
+        LocalAgentHostError::ModelStepExecutor(ModelStepExecutorError::TokenGuard(
+            ModelInputTokenGuardError::ExactCount(error),
+        )) => error,
+        _ => return None,
+    };
+    if !retryable_gateway_error(gateway) {
+        return None;
+    }
+    let detail = gateway.to_string();
+    Some(serde_json::json!({
+        "reason": "model_gateway_unavailable",
+        "detail": bounded_runtime_error(detail.as_str()),
+    }))
+}
+
+fn retryable_gateway_error(error: &ModelGatewayClientError) -> bool {
+    match error {
+        ModelGatewayClientError::Transport { .. } | ModelGatewayClientError::StreamTransport(_) => {
+            true
+        }
+        ModelGatewayClientError::HttpStatus { status, .. } => {
+            *status == 408 || *status == 429 || *status >= 500
+        }
+        ModelGatewayClientError::StreamContract(ModelGatewayStreamError::MissingTerminal) => true,
+        _ => false,
+    }
+}
+
+fn model_retry_delay(
+    run: &chatos_local_agent_protocol::LocalAgentRun,
+    policy: LocalAgentHostPolicy,
+) -> Result<Duration, LocalAgentHostError> {
+    let exponent = run.retry_count.min(30);
+    let factor = 1_i32 << exponent;
+    Ok(policy
+        .model_retry_delay
+        .checked_mul(factor)
+        .ok_or(LocalAgentHostError::ModelRetryDeadlineOverflow)?
+        .min(policy.maximum_model_retry_delay))
 }

@@ -162,6 +162,51 @@ struct ExecutingGateway {
     terminal_status: ModelGatewayTerminalStatus,
 }
 
+struct RetryableGateway {
+    requests: Mutex<Vec<ModelGatewayRequest>>,
+}
+
+#[async_trait]
+impl ModelGatewayClient for RetryableGateway {
+    async fn descriptor(
+        &self,
+        _access_token: &str,
+        _model_config_id: &str,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelRuntimeDescriptor, ModelGatewayClientError> {
+        unreachable!("descriptor is frozen into the Run")
+    }
+
+    async fn stream(
+        &self,
+        _access_token: &str,
+        _descriptor: &ModelRuntimeDescriptor,
+        request: ModelGatewayRequest,
+        _callbacks: ModelGatewayCallbacks,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelGatewayOutput, ModelGatewayClientError> {
+        self.requests.lock().unwrap().push(request);
+        Err(ModelGatewayClientError::Transport {
+            kind: "connection_reset",
+        })
+    }
+
+    async fn count_input_tokens(
+        &self,
+        _access_token: &str,
+        _descriptor: &ModelRuntimeDescriptor,
+        request: &ModelGatewayRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelGatewayTokenCount, ModelGatewayClientError> {
+        Ok(ModelGatewayTokenCount {
+            request_id: request.request_id.clone(),
+            model_config_id: request.model_config_id.clone(),
+            model_config_revision: request.model_config_revision,
+            input_tokens: 100,
+        })
+    }
+}
+
 #[async_trait]
 impl ModelGatewayClient for ExecutingGateway {
     async fn descriptor(
@@ -1015,6 +1060,56 @@ async fn host_alone_assigns_the_retry_deadline() {
         LocalAgentEventType::RetryDue
     );
     assert!(committed.emitted_events[0].event.available_at > now);
+}
+
+#[tokio::test]
+async fn transient_gateway_failure_becomes_a_durable_retry_instead_of_an_expired_claim() {
+    let now = Utc::now();
+    let gateway = Arc::new(RetryableGateway {
+        requests: Mutex::new(Vec::new()),
+    });
+    let (_directory, host) = model_test_host(
+        now,
+        gateway.clone(),
+        Arc::new(Profile),
+        LocalAgentHostPolicy::default(),
+    )
+    .await;
+    let requested = claim_model_request(&host, now).await;
+
+    host.execute_claimed_model_step(
+        &requested,
+        "access-token",
+        ModelGatewayCallbacks::default(),
+        CancellationToken::new(),
+        now,
+    )
+    .await
+    .unwrap();
+    assert_eq!(gateway.requests.lock().unwrap().len(), 1);
+    let SchedulerTickResult::Claimed(completed) = host
+        .claim_next("claim-gateway-retry", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("gateway retry completion was not scheduled");
+    };
+    let committed = host
+        .commit_claimed_protocol_event(&completed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        committed.run_record.run.status,
+        LocalAgentRunStatus::RetryScheduled
+    );
+    assert_eq!(committed.run_record.run.retry_count, 1);
+    assert_eq!(
+        committed.emitted_events[0].event.bounded_payload,
+        serde_json::json!({
+            "reason": "model_gateway_unavailable",
+            "detail": "model gateway transport failed (connection_reset)"
+        })
+    );
 }
 
 #[tokio::test]
