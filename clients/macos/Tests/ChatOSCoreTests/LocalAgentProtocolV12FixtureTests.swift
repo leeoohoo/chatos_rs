@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v11 fixtures")
-struct LocalAgentProtocolV11FixtureTests {
+@Suite("Shared Local Agent protocol v12 fixtures")
+struct LocalAgentProtocolV12FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV11FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 11)
+        #expect(localAgentProtocolVersion == 12)
         #expect(encoded == fixture)
     }
 
@@ -54,13 +54,40 @@ struct LocalAgentProtocolV11FixtureTests {
         #expect(task.projectID == "project-1")
     }
 
+    @Test("decodes shared Task Graph and Run detail projections")
+    func taskProjectionResponses() throws {
+        let decoder = LocalAgentProtocolJSON.decoder()
+        let graphReply = try decoder.decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("task_graph_response.json"))
+        )
+        guard case let .taskGraph(graph) = graphReply.response else {
+            Issue.record("Expected a Task Graph response")
+            return
+        }
+        #expect(graph.rootTaskIDs == ["task-1"])
+        #expect(graph.nodes.first?.task.task.projectID == "project-1")
+
+        let detailReply = try decoder.decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("task_run_detail_response.json"))
+        )
+        guard case let .taskRunDetail(detail) = detailReply.response else {
+            Issue.record("Expected a Task Run detail response")
+            return
+        }
+        #expect(detail.run.run.runID == "task-run-2")
+        #expect(detail.run.resultSummary == "Design implemented")
+        #expect(detail.eventsTotal == 1)
+    }
+
     private func fixtureURL(_ name: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v11")
+            .appendingPathComponent("shared/fixtures/local_agent/v12")
             .appendingPathComponent(name)
     }
 }

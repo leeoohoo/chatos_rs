@@ -14,11 +14,11 @@ use chatos_local_agent_host::{
     LocalAgentIpcMutationExecutor, LocalAgentIpcServer, LocalAgentIpcServerError,
 };
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, LocalAgentCommand,
-    LocalAgentHostState, LocalAgentHostUiStatus, LocalAgentIpcError, LocalAgentIpcReply,
-    LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunStatus,
-    LocalAgentUiEventPayload, MemorySyncStatus, MessageMode, ModelProtocol, ModelRuntimeDescriptor,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, GetTaskGraphCommand,
+    GetTaskRunDetailCommand, LocalAgentCommand, LocalAgentHostState, LocalAgentHostUiStatus,
+    LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse,
+    LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEventPayload, MemorySyncStatus, MessageMode,
+    ModelProtocol, ModelRuntimeDescriptor, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
 use chrono::Utc;
@@ -410,6 +410,51 @@ async fn task_queries_restore_the_frozen_owner_scoped_task_identity() {
     };
     assert_eq!(tasks.as_slice(), [task.as_ref().clone()]);
     assert!(next_cursor.is_none());
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn task_graph_and_run_detail_are_project_frozen_storage_projections() {
+    let (_directory, _storage, executor, server) = server().await;
+    let graph_reply = server
+        .handle_request(request(
+            "request-task-graph",
+            LocalAgentCommand::GetTaskGraph(GetTaskGraphCommand {
+                source_thread_id: "thread-1".to_string(),
+                source_turn_id: "turn-1".to_string(),
+            }),
+        ))
+        .await;
+    let LocalAgentIpcResponse::TaskGraph(graph) = graph_reply.response else {
+        panic!("GetTaskGraph must return the stored source-turn projection");
+    };
+    assert_eq!(graph.root_task_ids, ["task-1"]);
+    assert!(graph.edges.is_empty());
+    let node = &graph.nodes[0];
+    assert_eq!(node.task.task.project_id, "project-1");
+    assert_eq!(
+        node.task.current_run.run.project_id.as_deref(),
+        Some("project-1")
+    );
+
+    let detail_reply = server
+        .handle_request(request(
+            "request-task-run-detail",
+            LocalAgentCommand::GetTaskRunDetail(GetTaskRunDetailCommand {
+                task_id: "task-1".to_string(),
+                run_id: "task-run-1".to_string(),
+                event_limit: 40,
+                event_offset: 0,
+            }),
+        ))
+        .await;
+    let LocalAgentIpcResponse::TaskRunDetail(detail) = detail_reply.response else {
+        panic!("GetTaskRunDetail must return the stored historical Run projection");
+    };
+    assert_eq!(detail.task.current_run_id, "task-run-1");
+    assert_eq!(detail.run.run.owner_entity_id, "task-1");
+    assert_eq!(detail.run.run.project_id.as_deref(), Some("project-1"));
+    assert_eq!(detail.events_total, 0);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 

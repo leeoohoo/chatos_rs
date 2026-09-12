@@ -384,8 +384,8 @@ final class ConversationSessionViewModel: ObservableObject {
         taskGraphAvailabilityTasks[turn.id] = Task { [weak self] in
             do {
                 let graph = try await messageTaskGraphService.fetchGraph(
-                    messageID: turn.userMessage.id,
-                    lookup: turn.resolvedMessageTaskLookup
+                    sourceThreadID: turn.sessionID,
+                    sourceTurnID: turn.id
                 )
                 guard !Task.isCancelled,
                       self?.taskGraphAvailabilityRevisions[turn.id] == turn.revision else {

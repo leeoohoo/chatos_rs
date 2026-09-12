@@ -102,7 +102,7 @@ final class AppModel: ObservableObject {
     let realtimeService: ChatOSRealtimeClient
     private let commandService: NativeLocalAgentConversationCommandService
     private let turnProcessService: ChatOSTurnProcessService
-    let messageTaskGraphService: ChatOSMessageTaskGraphService
+    let messageTaskGraphService: NativeLocalAgentTaskGraphService
     private let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
     private let askUserPromptService: NativeLocalAgentAskUserPromptService
     private let localAgentRunControlService: NativeLocalAgentRunControlService
@@ -238,7 +238,9 @@ final class AppModel: ObservableObject {
         )
         self.commandService = commandService
         self.turnProcessService = ChatOSTurnProcessService(client: apiClient)
-        self.messageTaskGraphService = ChatOSMessageTaskGraphService(client: apiClient)
+        self.messageTaskGraphService = NativeLocalAgentTaskGraphService(
+            accountSession: localAgentAccountSession
+        )
         self.runtimeSettingsService = runtimeSettingsService
         self.askUserPromptService = askUserPromptService
         self.localAgentRunControlService = localAgentRunControlService
@@ -478,37 +480,23 @@ final class AppModel: ObservableObject {
     }
 
     func retryPetActivity(_ activity: PetActivity, instruction: String) async throws {
-        guard let messageID = activity.route.messageID?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !messageID.isEmpty,
+        guard let taskID = activity.route.taskID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !taskID.isEmpty,
               let runID = activity.route.runID?.trimmingCharacters(in: .whitespacesAndNewlines),
               !runID.isEmpty else {
             throw PetActivityActionError.retryUnavailable
         }
-        _ = try await messageTaskGraphService.retryRun(
-            messageID: messageID,
-            runID: runID,
-            lookup: MessageTaskLookup(
-                sessionID: activity.route.conversationID,
-                turnID: activity.route.turnID
-            ),
+        _ = try await messageTaskGraphService.retryTask(
+            taskID: taskID,
+            expectedRunID: runID,
             instruction: instruction
         )
     }
 
     func cancelPetActivity(_ activity: PetActivity) async throws {
-        if let messageID = activity.route.messageID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !messageID.isEmpty,
-           let taskID = activity.route.taskID?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let taskID = activity.route.taskID?.trimmingCharacters(in: .whitespacesAndNewlines),
            !taskID.isEmpty {
-            try await messageTaskGraphService.cancelTask(
-                messageID: messageID,
-                taskID: taskID,
-                lookup: MessageTaskLookup(
-                    sessionID: activity.route.conversationID,
-                    turnID: activity.route.turnID
-                ),
-                reason: "用户从全局宠物面板取消任务"
-            )
+            try await messageTaskGraphService.cancelTask(taskID: taskID)
             return
         }
 
@@ -523,32 +511,20 @@ final class AppModel: ObservableObject {
     }
 
     func loadPetTask(_ activity: PetActivity) async throws -> MessageTask {
-        guard let messageID = activity.route.messageID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !messageID.isEmpty,
-              let taskID = activity.route.taskID?
+        guard let taskID = activity.route.taskID?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
               !taskID.isEmpty else {
             throw PetActivityActionError.taskDetailUnavailable
         }
-        let lookup = MessageTaskLookup(
-            sessionID: activity.route.conversationID,
-            turnID: activity.route.turnID
-        )
-        let task = try await messageTaskGraphService.fetchTask(
-            messageID: messageID,
-            taskID: taskID,
-            lookup: lookup
-        )
+        let task = try await messageTaskGraphService.fetchTask(taskID: taskID)
         guard let runID = (activity.route.runID ?? task.lastRunID)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !runID.isEmpty else {
             return task
         }
         let runDetail = try? await messageTaskGraphService.fetchRun(
-            messageID: messageID,
+            taskID: taskID,
             runID: runID,
-            lookup: lookup,
             includeEvents: true,
             eventLimit: 40,
             eventOffset: 0

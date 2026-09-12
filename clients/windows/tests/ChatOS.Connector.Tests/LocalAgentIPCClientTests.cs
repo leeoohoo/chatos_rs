@@ -34,7 +34,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesTheSharedV11RetryTaskAndTaskSnapshotFixtures()
+    public async Task UsesTheSharedV12RetryTaskAndTaskSnapshotFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("retry_task_request.json")));
@@ -49,7 +49,7 @@ public sealed class LocalAgentIPCClientTests
             "Preserve the approved visual hierarchy.")));
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
-        Assert.Equal(11u, LocalAgentProtocol.Version);
+        Assert.Equal(12u, LocalAgentProtocol.Version);
         Assert.True(JsonElement.DeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));
@@ -65,6 +65,45 @@ public sealed class LocalAgentIPCClientTests
         Assert.Equal("task-run-2", task.CurrentRunId);
         Assert.Equal(["task-run-1", "task-run-2"], task.RunIds);
         Assert.Equal("project-1", task.ProjectId);
+    }
+
+    [Fact]
+    public async Task UsesSharedV12TaskGraphAndRunDetailProjections()
+    {
+        using var graphFixture = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("task_graph_response.json")));
+        var graphTransport = new RecordingTransport(request => Reply(
+            request,
+            graphFixture.RootElement.GetProperty("response").GetRawText()));
+        var graphClient = new WindowsLocalAgentIPCClient("user-1", graphTransport);
+
+        var graph = await graphClient.GetTaskGraphAsync("thread-1", "turn-1");
+
+        Assert.Equal(["task-1"], graph.RootTaskIds);
+        Assert.Equal("project-1", Assert.Single(graph.Nodes).Task.Task.ProjectId);
+        using (var request = JsonDocument.Parse(graphTransport.Request!))
+        {
+            var command = request.RootElement.GetProperty("command");
+            Assert.Equal("get_task_graph", command.GetProperty("type").GetString());
+            Assert.Equal(
+                "thread-1",
+                command.GetProperty("payload").GetProperty("source_thread_id").GetString());
+        }
+
+        using var detailFixture = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("task_run_detail_response.json")));
+        var detailTransport = new RecordingTransport(request => Reply(
+            request,
+            detailFixture.RootElement.GetProperty("response").GetRawText()));
+        var detailClient = new WindowsLocalAgentIPCClient("user-1", detailTransport);
+
+        var detail = await detailClient.GetTaskRunDetailAsync(
+            "task-1",
+            "task-run-2",
+            eventLimit: 40);
+
+        Assert.Equal("task-run-2", detail.Run.Run.RunId);
+        Assert.Equal("run_started", Assert.Single(detail.Events).EventType);
     }
 
     [Fact]
@@ -271,7 +310,7 @@ public sealed class LocalAgentIPCClientTests
             "shared",
             "fixtures",
             "local_agent",
-            "v11",
+            "v12",
             name));
 
     private static MemoryStream FrameHeader(uint length, byte[]? body = null)

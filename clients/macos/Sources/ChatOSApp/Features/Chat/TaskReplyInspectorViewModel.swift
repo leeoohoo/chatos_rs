@@ -103,7 +103,6 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         guard let callback = selection.reply.taskCallback else { return }
         loadGeneration += 1
         let generation = loadGeneration
-        let selection = selection
         let requestedSection = section
         let cachedTask = task?.id == callback.taskID ? task : nil
         loadTask?.cancel()
@@ -116,7 +115,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
             do {
                 switch requestedSection {
                 case .process:
-                    let loadedTask = try await fetchTask(callback: callback, selection: selection)
+                    let loadedTask = try await fetchTask(callback: callback)
                     guard !Task.isCancelled, generation == loadGeneration else { return }
                     apply(loadedTask)
                 case .detail:
@@ -126,17 +125,15 @@ final class TaskReplyInspectorViewModel: ObservableObject {
                             runID: knownRunID,
                             cachedTask: cachedTask,
                             callback: callback,
-                            selection: selection,
                             generation: generation
                         )
                     } else {
-                        let loadedTask = try await fetchTask(callback: callback, selection: selection)
+                        let loadedTask = try await fetchTask(callback: callback)
                         guard !Task.isCancelled, generation == loadGeneration else { return }
                         apply(loadedTask)
                         await loadLatestRun(
                             for: loadedTask,
                             callback: callback,
-                            selection: selection,
                             generation: generation
                         )
                     }
@@ -159,10 +156,9 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         errorMessage = nil
         Task {
             do {
-                _ = try await service.retryRun(
-                    messageID: selection.reply.message.id,
-                    runID: runID,
-                    lookup: lookup(callback, selection: selection),
+                _ = try await service.retryTask(
+                    taskID: callback.taskID,
+                    expectedRunID: runID,
                     instruction: retryInstruction
                 )
                 retryInstruction = ""
@@ -182,15 +178,13 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     private func loadLatestRun(
         for loadedTask: MessageTask,
         callback: TaskRunnerCallbackReference,
-        selection: TaskReplySelection,
         generation: Int
     ) async {
         guard let runID = callback.runID ?? loadedTask.lastRunID else { return }
         do {
             let detail = try await service.fetchRun(
-                messageID: selection.reply.message.id,
+                taskID: callback.taskID,
                 runID: runID,
-                lookup: lookup(callback, selection: selection),
                 includeEvents: false,
                 eventLimit: 1,
                 eventOffset: 0
@@ -210,14 +204,12 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         runID: String,
         cachedTask: MessageTask?,
         callback: TaskRunnerCallbackReference,
-        selection: TaskReplySelection,
         generation: Int
     ) async {
         do {
             let detail = try await service.fetchRun(
-                messageID: selection.reply.message.id,
+                taskID: callback.taskID,
                 runID: runID,
-                lookup: lookup(callback, selection: selection),
                 includeEvents: false,
                 eventLimit: 1,
                 eventOffset: 0
@@ -230,7 +222,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
             modelOutputError = error.localizedDescription
             guard cachedTask == nil else { return }
             do {
-                let loadedTask = try await fetchTask(callback: callback, selection: selection)
+                let loadedTask = try await fetchTask(callback: callback)
                 guard !Task.isCancelled, generation == loadGeneration else { return }
                 apply(loadedTask)
             } catch {
@@ -240,15 +232,8 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         }
     }
 
-    private func fetchTask(
-        callback: TaskRunnerCallbackReference,
-        selection: TaskReplySelection
-    ) async throws -> MessageTask {
-        try await service.fetchTask(
-            messageID: selection.reply.message.id,
-            taskID: callback.taskID,
-            lookup: lookup(callback, selection: selection)
-        )
+    private func fetchTask(callback: TaskRunnerCallbackReference) async throws -> MessageTask {
+        try await service.fetchTask(taskID: callback.taskID)
     }
 
     private func apply(_ loadedTask: MessageTask) {
@@ -259,14 +244,4 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         )
     }
 
-    private func lookup(
-        _ callback: TaskRunnerCallbackReference,
-        selection: TaskReplySelection
-    ) -> MessageTaskLookup {
-        MessageTaskLookup(
-            sessionID: callback.sourceSessionID ?? selection.turn.sessionID,
-            turnID: callback.sourceTurnID ?? selection.turn.id,
-            sourceUserMessageID: callback.sourceUserMessageID ?? selection.turn.userMessage.id
-        )
-    }
 }

@@ -163,6 +163,55 @@ struct NativeLocalAgentIPCClientTests {
         #expect(payload["limit"] as? Int == 20)
     }
 
+    @Test("queries Rust-owned Task Graph and historical Run detail projections")
+    func queriesTaskProjections() async throws {
+        let graphTransport = try FixtureLocalAgentTransport(
+            fixture: fixtureURL("task_graph_response.json")
+        )
+        let graphClient = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: graphTransport
+        )
+        let graph = try await graphClient.taskGraph(
+            sourceThreadID: "thread-1",
+            sourceTurnID: "turn-1"
+        )
+        #expect(graph.rootTaskIDs == ["task-1"])
+        #expect(graph.nodes.first?.task.currentRun.resultSummary == "Design implemented")
+        let graphRequest = try #require(await graphTransport.request())
+        let graphObject = try #require(
+            JSONSerialization.jsonObject(with: graphRequest) as? [String: Any]
+        )
+        let graphCommand = try #require(graphObject["command"] as? [String: Any])
+        #expect(graphCommand["type"] as? String == "get_task_graph")
+        let graphPayload = try #require(graphCommand["payload"] as? [String: Any])
+        #expect(graphPayload["source_thread_id"] as? String == "thread-1")
+
+        let detailTransport = try FixtureLocalAgentTransport(
+            fixture: fixtureURL("task_run_detail_response.json")
+        )
+        let detailClient = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: detailTransport
+        )
+        let detail = try await detailClient.taskRunDetail(
+            taskID: "task-1",
+            runID: "task-run-2",
+            eventLimit: 40,
+            eventOffset: 0
+        )
+        #expect(detail.run.run.runID == "task-run-2")
+        #expect(detail.events.first?.eventType == "run_started")
+        let detailRequest = try #require(await detailTransport.request())
+        let detailObject = try #require(
+            JSONSerialization.jsonObject(with: detailRequest) as? [String: Any]
+        )
+        let detailCommand = try #require(detailObject["command"] as? [String: Any])
+        #expect(detailCommand["type"] as? String == "get_task_run_detail")
+        let detailPayload = try #require(detailCommand["payload"] as? [String: Any])
+        #expect(detailPayload["event_limit"] as? Int == 40)
+    }
+
     @Test("encodes one project Plugin capability for Host validation")
     func encodesPluginCapabilityMutation() async throws {
         let transport = RecordingLocalAgentTransport(responseType: "success")
@@ -202,6 +251,41 @@ struct NativeLocalAgentIPCClientTests {
             _ = try await client.accepted(.pauseRun(runID: "run-1"))
         }
     }
+
+    private func fixtureURL(_ name: String) -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("shared/fixtures/local_agent/v12")
+            .appendingPathComponent(name)
+    }
+}
+
+private actor FixtureLocalAgentTransport: LocalAgentFrameTransport {
+    private let fixture: [String: Any]
+    private var lastRequest: Data?
+
+    init(fixture url: URL) throws {
+        fixture = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+    }
+
+    func exchange(_ request: Data) async throws -> Data {
+        lastRequest = request
+        let requestObject = try #require(
+            JSONSerialization.jsonObject(with: request) as? [String: Any]
+        )
+        return try JSONSerialization.data(withJSONObject: [
+            "protocol_version": localAgentProtocolVersion,
+            "request_id": requestObject["request_id"] as? String ?? "missing",
+            "response": try #require(fixture["response"]),
+        ])
+    }
+
+    func request() -> Data? { lastRequest }
 }
 
 private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {

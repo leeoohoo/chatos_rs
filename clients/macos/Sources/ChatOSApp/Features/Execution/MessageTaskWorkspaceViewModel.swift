@@ -123,13 +123,11 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
               !isRetrying else { return }
         isRetrying = true
         errorMessage = nil
-        let target = target(for: task)
         Task {
             do {
-                _ = try await graphService.retryRun(
-                    messageID: target.messageID,
-                    runID: runID,
-                    lookup: target.lookup,
+                _ = try await graphService.retryTask(
+                    taskID: task.id,
+                    expectedRunID: runID,
                     instruction: retryInstruction
                 )
                 retryInstruction = ""
@@ -151,10 +149,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     func stopRealtime() {
         realtimeTask?.cancel()
         realtimeTask = nil
-    }
-
-    var baseLookup: MessageTaskLookup {
-        turn.resolvedMessageTaskLookup
     }
 
     var expectsTaskGraph: Bool {

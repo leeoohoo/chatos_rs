@@ -15,8 +15,8 @@
 - SQLite/PostgreSQL 公共 Storage Provider、契约测试、连接配置、导入导出主体已经存在，但尚未覆盖全部客户端业务数据。
 - macOS 已接入本地 Host、IPC、Main Chat/Task 创建、事件恢复、Ask User、工具授权、暂停、继续和取消。
 - Windows 已有 Host 进程、Named Pipe IPC 和 DPAPI 凭据基础，但尚未达到 macOS 业务接入和原生 UI 等价。
-- macOS 仍使用远程 `ChatOSMessageTaskGraphService` 读取、取消和重试 Task。
-- Task 聚合仍需完成真正的多 Run/Retry 权威模型。
+- macOS Task Graph、Run Detail、取消和重试已切换到本地 Host，远程 Service 与 DTO 已删除。
+- Task 已完成真正的多 Run/Retry 权威模型，并保留全部历史 Run。
 - 旧 Swift `ChatOSAgentRuntime`、服务端 Cloud Agent、Task Runner Service 及其队列和状态基础设施仍存在于生产代码。
 - 会话、项目、Notepad、剧情、媒体、插件和设置等现有客户端存储尚未全部迁入统一 Provider。
 
@@ -83,6 +83,7 @@
 - 删除业务层直接 SQLite/PostgreSQL Driver、JSON 文件业务库和平台专属数据库实现。
 - 高级设置完整实现 SQLite 默认与 PostgreSQL 自选；凭据只进入 Keychain/DPAPI。
 - 补齐双后端 migration、事务、排序、并发 lease、备份、显式导入导出和故障测试。
+- 为 Agent Event、Message 与 Tool Execution 增加按 `owner_user_id + run_id` 的领域查询及双后端索引，Run Detail 禁止长期依赖 owner 全量扫描。
 
 完成门槛：存储审计器对生产代码零违规；全部业务在两个 Provider 上通过同一契约；PostgreSQL 故障明确失败且不创建 SQLite 替代数据。
 
@@ -129,9 +130,10 @@
 ## 6. 实施记录
 
 - 2026-09-12：客户端公共 Rust 协议、Storage、Runtime、Profile 与 Host 已从顶层旧目录迁入 `clients/shared/rust`；Cargo workspace 与直接引用已切换到新边界。
-- 2026-09-12：Rust Task schema v2 与协议 v11 已实现 `initial_run_id + current_run_id + run_ids`，Retry 原子创建新 Run、保留历史、冻结复用项目/模型/Prompt/Capability 身份，并通过 Runtime/Host 全量测试。
-- 2026-09-12：Rust、Swift、C# 已统一到协议 v11；共享 Retry/Task Snapshot 黄金夹具由 Rust、Swift 和 Windows 测试共同读取。macOS 当前 Run 投影已支持 Retry，并拒绝历史 Run 迟到事件污染当前状态。
-- 验证记录：Rust Protocol、Runtime、Host 全量通过；macOS 除独立 Plugin HTTP 启动时序用例外的 173 项回归通过，该用例本轮首次全量执行出现一次就绪超时；当前 macOS v11 定向测试通过。当前 macOS 主机未安装 .NET SDK，Windows 测试尚未执行，不能记为通过。
-- 当前在制：阶段 1，本地 Task Graph/Run Detail 公共 Rust 投影与类型化 IPC。
-- 下一切片：macOS Task Workspace/Reply Inspector/Pet 切到本地投影与本地 Retry/Cancel，并删除 `ChatOSMessageTaskGraphService` 及远程 DTO/测试/注入。
-- 完成状态：阶段 1—8 均未达到完整门槛。
+- 2026-09-12：Rust Task schema v2 与协议 v12 已实现 `initial_run_id + current_run_id + run_ids`，Retry 原子创建新 Run、保留历史、冻结复用项目/模型/Prompt/Capability 身份，并通过 Runtime/Host 全量测试。
+- 2026-09-12：Rust、Swift、C# 已统一到协议 v12；共享 Retry、Task Snapshot、Task Graph 与 Run Detail 黄金夹具由 Rust、Swift 和 Windows 测试共同读取。macOS 当前 Run 投影已支持 Retry，并拒绝历史 Run 迟到事件污染当前状态。
+- 2026-09-13：公共 Rust Host 已成为 Task Graph 与 Run Detail 的唯一投影实现；Run Detail 合并 Agent Event、Message 与 Tool Execution，并使用来源前缀生成跨表唯一事件 ID。macOS 的 Task Workspace、Reply Inspector、Pet、Retry 与 Cancel 已全部切到本地 Service；远程 `ChatOSMessageTaskGraphService`、DTO 和测试已删除。
+- 验证记录：`cargo test -p chatos_local_agent_protocol -p chatos_local_agent_host`、`swift test --skip NativePluginRuntimeTests`、客户端存储边界审计、Cargo metadata 与静态远程路径搜索全部通过。macOS 全量回归期间发现并修复终端退出状态早于尾部 stdout 落库的竞态，定向连续执行 10 次及全量回归均通过。当前 macOS 主机未安装 .NET SDK，Windows v12 代码和共享夹具测试尚未在 Windows/.NET 环境执行，不能记为通过。
+- 当前在制：阶段 2，完成 Main Chat 与 Task 的本地结果闭环。
+- 下一切片：以本地稳定 ID 关联来源 turn、Task 与全部 Run，并整体删除 `MessageTaskLookup`、远程任务回调解析和服务端 Agent 状态订阅语义。
+- 完成状态：阶段 1 已达到完成门槛；阶段 2—8 尚未达到完整门槛。

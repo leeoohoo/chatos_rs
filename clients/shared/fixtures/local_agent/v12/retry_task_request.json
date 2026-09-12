@@ -1,5 +1,5 @@
 {
-  "protocol_version": 11,
+  "protocol_version": 12,
   "request_id": "request-retry-task-1",
   "owner_user_id": "user-1",
   "command": {

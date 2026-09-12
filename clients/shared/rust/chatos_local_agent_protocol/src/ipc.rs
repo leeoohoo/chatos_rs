@@ -73,6 +73,8 @@ pub enum LocalAgentCommand {
     DecideToolApproval(ToolApprovalCommand),
     GetRun { run_id: String },
     GetTask { task_id: String },
+    GetTaskGraph(GetTaskGraphCommand),
+    GetTaskRunDetail(GetTaskRunDetailCommand),
     GetMainChatRunBinding { run_id: String },
     ListRuns { cursor: Option<String>, limit: u32 },
     ListTasks { cursor: Option<String>, limit: u32 },
@@ -100,6 +102,8 @@ impl LocalAgentCommand {
             | Self::GetRun { run_id }
             | Self::GetMainChatRunBinding { run_id } => require_identifier("run_id", run_id),
             Self::GetTask { task_id } => require_identifier("task_id", task_id),
+            Self::GetTaskGraph(command) => command.validate(),
+            Self::GetTaskRunDetail(command) => command.validate(),
             Self::AnswerUserQuestion(command) => command.validate(),
             Self::DecideToolApproval(command) => command.validate(),
             Self::ListRuns { cursor, limit } | Self::ListTasks { cursor, limit } => {
@@ -124,6 +128,37 @@ impl LocalAgentCommand {
             Self::InstallProjectPluginCapability(command) => command.validate(),
             Self::RemoveProjectPluginCapability(command) => command.validate(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GetTaskGraphCommand {
+    pub source_thread_id: String,
+    pub source_turn_id: String,
+}
+
+impl GetTaskGraphCommand {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("source_thread_id", &self.source_thread_id)?;
+        require_identifier("source_turn_id", &self.source_turn_id)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GetTaskRunDetailCommand {
+    pub task_id: String,
+    pub run_id: String,
+    pub event_limit: u32,
+    pub event_offset: u32,
+}
+
+impl GetTaskRunDetailCommand {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("task_id", &self.task_id)?;
+        require_identifier("run_id", &self.run_id)?;
+        validate_page(None, self.event_limit)
     }
 }
 
@@ -504,6 +539,193 @@ impl LocalAgentTaskSnapshot {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentTaskRunSummary {
+    pub run: LocalAgentRun,
+    pub result_summary: Option<String>,
+    pub report_content: Option<String>,
+    pub error_message: Option<String>,
+}
+
+impl LocalAgentTaskRunSummary {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        self.run.validate()?;
+        for value in [
+            self.result_summary.as_deref(),
+            self.report_content.as_deref(),
+            self.error_message.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if value.trim().is_empty() {
+                return Err(ProtocolError::InvalidState {
+                    reason: "Task Run summary text must be non-empty when present",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentTaskProjection {
+    pub task: LocalAgentTaskSnapshot,
+    pub current_run: LocalAgentTaskRunSummary,
+}
+
+impl LocalAgentTaskProjection {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        self.task.validate()?;
+        self.current_run.validate()?;
+        if self.task.current_run_id != self.current_run.run.run_id
+            || self.current_run.run.owner_entity_type != "task"
+            || self.current_run.run.owner_entity_id != self.task.task_id
+            || self.current_run.run.project_id.as_deref() != Some(self.task.project_id.as_str())
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "Task projection identity does not match its current Run",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentTaskGraphNode {
+    pub task: LocalAgentTaskProjection,
+    pub depth: u32,
+    pub is_root: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentTaskGraphEdge {
+    pub edge_id: String,
+    pub source_task_id: String,
+    pub target_task_id: String,
+    pub kind: String,
+}
+
+impl LocalAgentTaskGraphEdge {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("edge_id", &self.edge_id)?;
+        require_identifier("source_task_id", &self.source_task_id)?;
+        require_identifier("target_task_id", &self.target_task_id)?;
+        require_identifier("task_graph_edge_kind", &self.kind)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentTaskGraphSnapshot {
+    pub source_thread_id: String,
+    pub source_turn_id: String,
+    pub root_task_ids: Vec<String>,
+    pub nodes: Vec<LocalAgentTaskGraphNode>,
+    pub edges: Vec<LocalAgentTaskGraphEdge>,
+}
+
+impl LocalAgentTaskGraphSnapshot {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("source_thread_id", &self.source_thread_id)?;
+        require_identifier("source_turn_id", &self.source_turn_id)?;
+        let mut node_ids = BTreeSet::new();
+        for node in &self.nodes {
+            node.task.validate()?;
+            if node.task.task.source_thread_id != self.source_thread_id
+                || node.task.task.source_turn_id != self.source_turn_id
+                || !node_ids.insert(node.task.task.task_id.as_str())
+            {
+                return Err(ProtocolError::InvalidState {
+                    reason: "Task Graph nodes must be unique and match the requested source",
+                });
+            }
+        }
+        let roots = self.root_task_ids.iter().collect::<BTreeSet<_>>();
+        if roots.len() != self.root_task_ids.len()
+            || roots
+                .iter()
+                .any(|task_id| !node_ids.contains(task_id.as_str()))
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "Task Graph roots must be unique graph nodes",
+            });
+        }
+        for edge in &self.edges {
+            edge.validate()?;
+            if !node_ids.contains(edge.source_task_id.as_str())
+                || !node_ids.contains(edge.target_task_id.as_str())
+            {
+                return Err(ProtocolError::InvalidState {
+                    reason: "Task Graph edge endpoint is not a graph node",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentTaskRunEvent {
+    pub event_id: String,
+    pub event_type: String,
+    pub message: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl LocalAgentTaskRunEvent {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("event_id", &self.event_id)?;
+        require_identifier("event_type", &self.event_type)?;
+        if self
+            .message
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "Task Run event message must be non-empty when present",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentTaskRunDetail {
+    pub task: LocalAgentTaskSnapshot,
+    pub run: LocalAgentTaskRunSummary,
+    pub events: Vec<LocalAgentTaskRunEvent>,
+    pub events_total: u32,
+    pub events_has_more: bool,
+}
+
+impl LocalAgentTaskRunDetail {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        self.task.validate()?;
+        self.run.validate()?;
+        if self.run.run.owner_entity_type != "task"
+            || self.run.run.owner_entity_id != self.task.task_id
+            || !self.task.run_ids.contains(&self.run.run.run_id)
+            || self.run.run.project_id.as_deref() != Some(self.task.project_id.as_str())
+            || self.events_total < self.events.len() as u32
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "Task Run detail identity or event count is invalid",
+            });
+        }
+        for event in &self.events {
+            event.validate()?;
+        }
+        Ok(())
+    }
+}
+
 impl ToolApprovalCommand {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         require_identifier("invocation_id", &self.invocation_id)?;
@@ -532,6 +754,8 @@ pub enum LocalAgentIpcResponse {
     },
     Run(Box<LocalAgentRun>),
     Task(Box<LocalAgentTaskSnapshot>),
+    TaskGraph(Box<LocalAgentTaskGraphSnapshot>),
+    TaskRunDetail(Box<LocalAgentTaskRunDetail>),
     MainChatRunBinding(MainChatRunBinding),
     Runs {
         runs: Vec<LocalAgentRun>,
@@ -566,6 +790,8 @@ impl LocalAgentIpcResponse {
             }
             Self::Run(run) => run.validate(),
             Self::Task(task) => task.validate(),
+            Self::TaskGraph(graph) => graph.validate(),
+            Self::TaskRunDetail(detail) => detail.validate(),
             Self::MainChatRunBinding(binding) => binding.validate(),
             Self::Runs { runs, next_cursor } => {
                 for run in runs {

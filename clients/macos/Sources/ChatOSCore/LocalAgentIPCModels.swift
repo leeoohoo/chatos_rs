@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 11
+public let localAgentProtocolVersion: UInt32 = 12
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -239,6 +239,8 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case decideToolApproval(invocationID: String, decision: LocalAgentToolApprovalDecision, reason: String?)
     case getRun(runID: String)
     case getTask(taskID: String)
+    case getTaskGraph(sourceThreadID: String, sourceTurnID: String)
+    case getTaskRunDetail(taskID: String, runID: String, eventLimit: UInt32, eventOffset: UInt32)
     case getMainChatRunBinding(runID: String)
     case listRuns(cursor: String?, limit: UInt32)
     case listTasks(cursor: String?, limit: UInt32)
@@ -263,6 +265,16 @@ extension LocalAgentCommand: Encodable {
     private enum CodingKeys: String, CodingKey { case type, payload }
     private struct RunPayload: Encodable { let runID: String }
     private struct TaskPayload: Encodable { let taskID: String }
+    private struct TaskGraphPayload: Encodable {
+        let sourceThreadID: String
+        let sourceTurnID: String
+    }
+    private struct TaskRunDetailPayload: Encodable {
+        let taskID: String
+        let runID: String
+        let eventLimit: UInt32
+        let eventOffset: UInt32
+    }
     private struct ListPayload: Encodable {
         let cursor: String?
         let limit: UInt32
@@ -337,6 +349,26 @@ extension LocalAgentCommand: Encodable {
         case let .getTask(taskID):
             try container.encode("get_task", forKey: .type)
             try container.encode(TaskPayload(taskID: taskID), forKey: .payload)
+        case let .getTaskGraph(sourceThreadID, sourceTurnID):
+            try container.encode("get_task_graph", forKey: .type)
+            try container.encode(
+                TaskGraphPayload(
+                    sourceThreadID: sourceThreadID,
+                    sourceTurnID: sourceTurnID
+                ),
+                forKey: .payload
+            )
+        case let .getTaskRunDetail(taskID, runID, eventLimit, eventOffset):
+            try container.encode("get_task_run_detail", forKey: .type)
+            try container.encode(
+                TaskRunDetailPayload(
+                    taskID: taskID,
+                    runID: runID,
+                    eventLimit: eventLimit,
+                    eventOffset: eventOffset
+                ),
+                forKey: .payload
+            )
         case let .getMainChatRunBinding(runID):
             try encodeRun("get_main_chat_run_binding", runID, into: &container)
         case let .listRuns(cursor, limit):
@@ -562,6 +594,119 @@ public struct LocalAgentTaskSnapshot: Codable, Equatable, Sendable {
         self.modelConfigRevision = modelConfigRevision
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+}
+
+public struct LocalAgentTaskRunSummary: Codable, Equatable, Sendable {
+    public var run: LocalAgentRunSnapshot
+    public var resultSummary: String?
+    public var reportContent: String?
+    public var errorMessage: String?
+
+    public init(
+        run: LocalAgentRunSnapshot,
+        resultSummary: String? = nil,
+        reportContent: String? = nil,
+        errorMessage: String? = nil
+    ) {
+        self.run = run
+        self.resultSummary = resultSummary
+        self.reportContent = reportContent
+        self.errorMessage = errorMessage
+    }
+}
+
+public struct LocalAgentTaskProjection: Codable, Equatable, Sendable {
+    public var task: LocalAgentTaskSnapshot
+    public var currentRun: LocalAgentTaskRunSummary
+
+    public init(task: LocalAgentTaskSnapshot, currentRun: LocalAgentTaskRunSummary) {
+        self.task = task
+        self.currentRun = currentRun
+    }
+}
+
+public struct LocalAgentTaskGraphNode: Codable, Equatable, Sendable {
+    public var task: LocalAgentTaskProjection
+    public var depth: UInt32
+    public var isRoot: Bool
+
+    public init(task: LocalAgentTaskProjection, depth: UInt32, isRoot: Bool) {
+        self.task = task
+        self.depth = depth
+        self.isRoot = isRoot
+    }
+}
+
+public struct LocalAgentTaskGraphEdge: Codable, Equatable, Sendable {
+    public var edgeID: String
+    public var sourceTaskID: String
+    public var targetTaskID: String
+    public var kind: String
+
+    public init(edgeID: String, sourceTaskID: String, targetTaskID: String, kind: String) {
+        self.edgeID = edgeID
+        self.sourceTaskID = sourceTaskID
+        self.targetTaskID = targetTaskID
+        self.kind = kind
+    }
+}
+
+public struct LocalAgentTaskGraphSnapshot: Codable, Equatable, Sendable {
+    public var sourceThreadID: String
+    public var sourceTurnID: String
+    public var rootTaskIDs: [String]
+    public var nodes: [LocalAgentTaskGraphNode]
+    public var edges: [LocalAgentTaskGraphEdge]
+
+    public init(
+        sourceThreadID: String,
+        sourceTurnID: String,
+        rootTaskIDs: [String],
+        nodes: [LocalAgentTaskGraphNode],
+        edges: [LocalAgentTaskGraphEdge]
+    ) {
+        self.sourceThreadID = sourceThreadID
+        self.sourceTurnID = sourceTurnID
+        self.rootTaskIDs = rootTaskIDs
+        self.nodes = nodes
+        self.edges = edges
+    }
+}
+
+public struct LocalAgentTaskRunEvent: Codable, Equatable, Sendable {
+    public var eventID: String
+    public var eventType: String
+    public var message: String?
+    public var createdAt: String
+
+    public init(eventID: String, eventType: String, message: String?, createdAt: String) {
+        self.eventID = eventID
+        self.eventType = eventType
+        self.message = message
+        self.createdAt = createdAt
+    }
+}
+
+public struct LocalAgentTaskRunDetail: Codable, Equatable, Sendable {
+    public var task: LocalAgentTaskSnapshot
+    public var run: LocalAgentTaskRunSummary
+    public var events: [LocalAgentTaskRunEvent]
+    public var eventsTotal: UInt32
+    public var eventsHasMore: Bool
+
+    public init(
+        task: LocalAgentTaskSnapshot,
+        run: LocalAgentTaskRunSummary,
+        events: [LocalAgentTaskRunEvent],
+        eventsTotal: UInt32,
+        eventsHasMore: Bool
+    ) {
+        self.task = task
+        self.run = run
+        self.events = events
+        self.eventsTotal = eventsTotal
+        self.eventsHasMore = eventsHasMore
     }
 }
 
@@ -895,6 +1040,8 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case runCreated(operationID: String, run: LocalAgentRunSnapshot)
     case run(LocalAgentRunSnapshot)
     case task(LocalAgentTaskSnapshot)
+    case taskGraph(LocalAgentTaskGraphSnapshot)
+    case taskRunDetail(LocalAgentTaskRunDetail)
     case mainChatRunBinding(LocalAgentMainChatRunBinding)
     case runs([LocalAgentRunSnapshot], nextCursor: String?)
     case tasks([LocalAgentTaskSnapshot], nextCursor: String?)
@@ -939,6 +1086,14 @@ extension LocalAgentResponse: Decodable {
             self = .runCreated(operationID: value.operationID, run: value.run)
         case "run": self = .run(try container.decode(LocalAgentRunSnapshot.self, forKey: .payload))
         case "task": self = .task(try container.decode(LocalAgentTaskSnapshot.self, forKey: .payload))
+        case "task_graph":
+            self = .taskGraph(
+                try container.decode(LocalAgentTaskGraphSnapshot.self, forKey: .payload)
+            )
+        case "task_run_detail":
+            self = .taskRunDetail(
+                try container.decode(LocalAgentTaskRunDetail.self, forKey: .payload)
+            )
         case "main_chat_run_binding":
             self = .mainChatRunBinding(
                 try container.decode(LocalAgentMainChatRunBinding.self, forKey: .payload)

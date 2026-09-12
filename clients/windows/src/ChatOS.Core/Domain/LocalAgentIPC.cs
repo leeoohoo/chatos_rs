@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 11;
+    public const uint Version = 12;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -90,6 +90,18 @@ public sealed record LocalAgentCommand
     public static LocalAgentCommand GetRun(string runId) => RunCommand("get_run", runId);
     public static LocalAgentCommand GetTask(string taskId) =>
         new("get_task", new TaskPayload(taskId));
+    public static LocalAgentCommand GetTaskGraph(string sourceThreadId, string sourceTurnId) =>
+        new("get_task_graph", new TaskGraphPayload(sourceThreadId, sourceTurnId));
+    public static LocalAgentCommand GetTaskRunDetail(
+        string taskId,
+        string runId,
+        uint eventLimit,
+        uint eventOffset) =>
+        new("get_task_run_detail", new TaskRunDetailPayload(
+            taskId,
+            runId,
+            eventLimit,
+            eventOffset));
     public static LocalAgentCommand GetMainChatRunBinding(string runId) =>
         RunCommand("get_main_chat_run_binding", runId);
 
@@ -168,6 +180,12 @@ public sealed record LocalAgentCommand
 
     private sealed record RunPayload(string RunId);
     private sealed record TaskPayload(string TaskId);
+    private sealed record TaskGraphPayload(string SourceThreadId, string SourceTurnId);
+    private sealed record TaskRunDetailPayload(
+        string TaskId,
+        string RunId,
+        uint EventLimit,
+        uint EventOffset);
     private sealed record ListPayload(string? Cursor, uint Limit);
     private sealed record EventsPayload(ulong AfterSeq, uint Limit);
     private sealed record AcknowledgeEventsPayload(ulong ThroughSeq);
@@ -288,6 +306,47 @@ public sealed record LocalAgentTaskSnapshot(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
+public sealed record LocalAgentTaskRunSummary(
+    LocalAgentRunSnapshot Run,
+    string? ResultSummary,
+    string? ReportContent,
+    string? ErrorMessage);
+
+public sealed record LocalAgentTaskProjection(
+    LocalAgentTaskSnapshot Task,
+    LocalAgentTaskRunSummary CurrentRun);
+
+public sealed record LocalAgentTaskGraphNode(
+    LocalAgentTaskProjection Task,
+    uint Depth,
+    bool IsRoot);
+
+public sealed record LocalAgentTaskGraphEdge(
+    string EdgeId,
+    string SourceTaskId,
+    string TargetTaskId,
+    string Kind);
+
+public sealed record LocalAgentTaskGraphSnapshot(
+    string SourceThreadId,
+    string SourceTurnId,
+    IReadOnlyList<string> RootTaskIds,
+    IReadOnlyList<LocalAgentTaskGraphNode> Nodes,
+    IReadOnlyList<LocalAgentTaskGraphEdge> Edges);
+
+public sealed record LocalAgentTaskRunEvent(
+    string EventId,
+    string EventType,
+    string? Message,
+    DateTimeOffset CreatedAt);
+
+public sealed record LocalAgentTaskRunDetail(
+    LocalAgentTaskSnapshot Task,
+    LocalAgentTaskRunSummary Run,
+    IReadOnlyList<LocalAgentTaskRunEvent> Events,
+    uint EventsTotal,
+    bool EventsHasMore);
+
 public enum LocalAgentStoredMessageRole
 {
     System,
@@ -372,6 +431,10 @@ public sealed record LocalAgentRunCreatedResponse(
     LocalAgentRunSnapshot Run) : LocalAgentResponse("run_created");
 public sealed record LocalAgentRunResponse(LocalAgentRunSnapshot Run) : LocalAgentResponse("run");
 public sealed record LocalAgentTaskResponse(LocalAgentTaskSnapshot Task) : LocalAgentResponse("task");
+public sealed record LocalAgentTaskGraphResponse(
+    LocalAgentTaskGraphSnapshot Graph) : LocalAgentResponse("task_graph");
+public sealed record LocalAgentTaskRunDetailResponse(
+    LocalAgentTaskRunDetail Detail) : LocalAgentResponse("task_run_detail");
 public sealed record LocalAgentMainChatRunBindingResponse(
     LocalAgentMainChatRunBinding Binding) : LocalAgentResponse("main_chat_run_binding");
 public sealed record LocalAgentRunsResponse(

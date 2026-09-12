@@ -5,14 +5,17 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentUiEventCursorQuery, ClientSettingRecord, ClientStorage, ListQuery, PutRecord,
-    RecordMetadata, RecordQuery, RecordScope, StorageError, StorageResult, StorageTransaction,
-    TaskRecord, TransactionRepositories,
+    AgentEventStateRecord, AgentMessageStateRecord, AgentUiEventCursorQuery, ClientSettingRecord,
+    ClientStorage, ListQuery, PutRecord, RecordMetadata, RecordQuery, RecordScope, StorageError,
+    StorageResult, StorageTransaction, TaskRecord, ToolExecutionStateRecord,
+    TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessageRole, LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply,
-    LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentTaskSnapshot, MainChatRunBinding,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    AgentMessageRole, GetTaskGraphCommand, GetTaskRunDetailCommand, LocalAgentCommand,
+    LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse,
+    LocalAgentRun, LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection,
+    LocalAgentTaskRunDetail, LocalAgentTaskRunEvent, LocalAgentTaskRunSummary,
+    LocalAgentTaskSnapshot, MainChatRunBinding, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
 use chrono::Utc;
@@ -214,6 +217,28 @@ impl LocalAgentIpcServer {
                         })
                     })
             }
+            LocalAgentCommand::GetTaskGraph(command) => {
+                let mut operation = GetTaskGraphOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| operation.response.ok_or(StorageError::NotFound))
+            }
+            LocalAgentCommand::GetTaskRunDetail(command) => {
+                let mut operation = GetTaskRunDetailOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| operation.response.ok_or(StorageError::NotFound))
+            }
             LocalAgentCommand::GetMainChatRunBinding { run_id } => {
                 let mut operation = GetMainChatRunBindingOperation {
                     scope: self.scope.clone(),
@@ -383,6 +408,355 @@ fn task_snapshot(record: TaskRecord) -> StorageResult<LocalAgentTaskSnapshot> {
         reason: format!("Task snapshot is invalid: {error}"),
     })?;
     Ok(task)
+}
+
+struct GetTaskGraphOperation {
+    scope: RecordScope,
+    command: GetTaskGraphCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetTaskGraphOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let mut records = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = repositories
+                .tasks()
+                .list(&ListQuery {
+                    scope: self.scope.clone(),
+                    cursor: cursor.clone(),
+                    limit: ListQuery::MAX_LIMIT,
+                })
+                .await?;
+            for record in page.records {
+                let state = DurableTaskState::from_record(&record)?;
+                if state.source_thread_id == self.command.source_thread_id
+                    && state.source_turn_id == self.command.source_turn_id
+                {
+                    records.push(record);
+                }
+            }
+            let Some(next) = page.next_cursor else { break };
+            ensure_cursor_advanced(cursor.as_deref(), &next, "Task Graph")?;
+            cursor = Some(next);
+        }
+
+        let mut nodes = Vec::with_capacity(records.len());
+        for record in records {
+            let task = task_snapshot(record)?;
+            let current_run = repositories
+                .agent_runs()
+                .get(&RecordQuery {
+                    scope: self.scope.clone(),
+                    id: task.current_run_id.clone(),
+                })
+                .await?
+                .ok_or_else(|| StorageError::InvalidData {
+                    reason: format!(
+                        "Task {} current Run {} does not exist",
+                        task.task_id, task.current_run_id
+                    ),
+                })?
+                .run;
+            nodes.push(LocalAgentTaskGraphNode {
+                task: LocalAgentTaskProjection {
+                    task,
+                    current_run: task_run_summary(current_run),
+                },
+                depth: 0,
+                is_root: true,
+            });
+        }
+        nodes.sort_by(|left, right| {
+            left.task
+                .task
+                .created_at
+                .cmp(&right.task.task.created_at)
+                .then_with(|| left.task.task.task_id.cmp(&right.task.task.task_id))
+        });
+        let graph = LocalAgentTaskGraphSnapshot {
+            source_thread_id: self.command.source_thread_id.clone(),
+            source_turn_id: self.command.source_turn_id.clone(),
+            root_task_ids: nodes
+                .iter()
+                .map(|node| node.task.task.task_id.clone())
+                .collect(),
+            nodes,
+            edges: Vec::new(),
+        };
+        graph.validate().map_err(protocol_projection_error)?;
+        self.response = Some(LocalAgentIpcResponse::TaskGraph(Box::new(graph)));
+        Ok(())
+    }
+}
+
+struct GetTaskRunDetailOperation {
+    scope: RecordScope,
+    command: GetTaskRunDetailCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetTaskRunDetailOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let task_record = repositories
+            .tasks()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: self.command.task_id.clone(),
+            })
+            .await?
+            .ok_or(StorageError::NotFound)?;
+        let task = task_snapshot(task_record)?;
+        if !task.run_ids.contains(&self.command.run_id) {
+            return Err(StorageError::NotFound);
+        }
+        let run = repositories
+            .agent_runs()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: self.command.run_id.clone(),
+            })
+            .await?
+            .ok_or(StorageError::NotFound)?
+            .run;
+        if run.owner_entity_type != "task"
+            || run.owner_entity_id != task.task_id
+            || run.owner_user_id != self.scope.owner_user_id
+        {
+            return Err(StorageError::NotFound);
+        }
+
+        let mut events = task_run_events(repositories, &self.scope, &run.run_id).await?;
+        events.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
+        let total = u32::try_from(events.len()).map_err(|_| StorageError::InvalidData {
+            reason: "Task Run event count exceeds the protocol limit".to_string(),
+        })?;
+        let offset = self.command.event_offset as usize;
+        let limit = self.command.event_limit as usize;
+        let page = events
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect::<Vec<_>>();
+        let detail = LocalAgentTaskRunDetail {
+            task,
+            run: task_run_summary(run),
+            events: page,
+            events_total: total,
+            events_has_more: offset.saturating_add(limit) < total as usize,
+        };
+        detail.validate().map_err(protocol_projection_error)?;
+        self.response = Some(LocalAgentIpcResponse::TaskRunDetail(Box::new(detail)));
+        Ok(())
+    }
+}
+
+async fn task_run_events(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+    run_id: &str,
+) -> StorageResult<Vec<LocalAgentTaskRunEvent>> {
+    let mut projected = Vec::new();
+
+    let mut cursor = None;
+    loop {
+        let page = repositories
+            .agent_events()
+            .list(&ListQuery {
+                scope: scope.clone(),
+                cursor: cursor.clone(),
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        projected.extend(
+            page.records
+                .into_iter()
+                .filter(|record| record.event.run_id == run_id)
+                .map(project_agent_event),
+        );
+        let Some(next) = page.next_cursor else { break };
+        ensure_cursor_advanced(cursor.as_deref(), &next, "Agent event")?;
+        cursor = Some(next);
+    }
+
+    let mut cursor = None;
+    loop {
+        let page = repositories
+            .agent_messages()
+            .list(&ListQuery {
+                scope: scope.clone(),
+                cursor: cursor.clone(),
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        projected.extend(
+            page.records
+                .into_iter()
+                .filter(|record| record.message.run_id == run_id)
+                .map(project_agent_message),
+        );
+        let Some(next) = page.next_cursor else { break };
+        ensure_cursor_advanced(cursor.as_deref(), &next, "Agent message")?;
+        cursor = Some(next);
+    }
+
+    let mut cursor = None;
+    loop {
+        let page = repositories
+            .tool_executions()
+            .list(&ListQuery {
+                scope: scope.clone(),
+                cursor: cursor.clone(),
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        projected.extend(
+            page.records
+                .into_iter()
+                .filter(|record| record.execution.run_id == run_id)
+                .map(project_tool_execution),
+        );
+        let Some(next) = page.next_cursor else { break };
+        ensure_cursor_advanced(cursor.as_deref(), &next, "Tool execution")?;
+        cursor = Some(next);
+    }
+    Ok(projected)
+}
+
+fn project_agent_event(record: AgentEventStateRecord) -> LocalAgentTaskRunEvent {
+    let event_type = enum_wire_name(&record.event.event_type);
+    let message = record
+        .event
+        .last_error
+        .clone()
+        .or_else(|| bounded_value_text(&record.event.bounded_payload));
+    LocalAgentTaskRunEvent {
+        event_id: format!("run_event:{}", record.event.event_id),
+        event_type,
+        message,
+        created_at: record.metadata.created_at,
+    }
+}
+
+fn project_agent_message(record: AgentMessageStateRecord) -> LocalAgentTaskRunEvent {
+    let role = enum_wire_name(&record.message.role);
+    let message = record
+        .message
+        .content
+        .clone()
+        .or(record.message.reasoning.clone())
+        .or_else(|| {
+            record
+                .message
+                .structured_payload
+                .as_ref()
+                .and_then(bounded_value_text)
+        });
+    LocalAgentTaskRunEvent {
+        event_id: format!("message:{}", record.message.record_id),
+        event_type: format!("message_{role}"),
+        message,
+        created_at: record.message.created_at,
+    }
+}
+
+fn project_tool_execution(record: ToolExecutionStateRecord) -> LocalAgentTaskRunEvent {
+    let status = enum_wire_name(&record.execution.status);
+    let result = record
+        .execution
+        .bounded_result
+        .as_ref()
+        .and_then(bounded_value_text);
+    let message = Some(match result {
+        Some(result) => format!("{}: {result}", record.execution.tool_name),
+        None => record.execution.tool_name.clone(),
+    });
+    LocalAgentTaskRunEvent {
+        event_id: format!("tool:{}", record.execution.invocation_id),
+        event_type: format!("tool_{status}"),
+        message,
+        created_at: record.metadata.created_at,
+    }
+}
+
+fn task_run_summary(run: LocalAgentRun) -> LocalAgentTaskRunSummary {
+    let outcome = run.terminal_outcome.as_ref();
+    let result_summary =
+        outcome.and_then(|value| text_field(value, &["summary", "result_summary", "message"]));
+    let report_content = outcome.and_then(|value| {
+        text_field(value, &["report_content", "report", "result"])
+            .or_else(|| serde_json::to_string_pretty(value).ok())
+    });
+    let error_message = outcome.and_then(|value| {
+        text_field(
+            value,
+            &["error_message", "failure_reason", "reason", "error"],
+        )
+    });
+    LocalAgentTaskRunSummary {
+        run,
+        result_summary,
+        report_content,
+        error_message,
+    }
+}
+
+fn text_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    let object = value.as_object()?;
+    keys.iter().find_map(|key| {
+        object
+            .get(*key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn bounded_value_text(value: &serde_json::Value) -> Option<String> {
+    if value.is_null() {
+        None
+    } else if let Some(value) = value.as_str() {
+        (!value.trim().is_empty()).then(|| value.to_string())
+    } else {
+        serde_json::to_string(value).ok()
+    }
+}
+
+fn enum_wire_name<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn ensure_cursor_advanced(previous: Option<&str>, next: &str, domain: &str) -> StorageResult<()> {
+    if previous == Some(next) {
+        Err(StorageError::InvalidData {
+            reason: format!("{domain} pagination cursor did not advance"),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn protocol_projection_error(error: chatos_local_agent_protocol::ProtocolError) -> StorageError {
+    StorageError::InvalidData {
+        reason: format!("Local Agent projection is invalid: {error}"),
+    }
 }
 
 #[async_trait]

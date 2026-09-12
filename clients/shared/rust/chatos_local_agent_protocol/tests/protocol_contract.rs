@@ -15,14 +15,18 @@ use chatos_local_agent_protocol::{
 };
 use chrono::Utc;
 
-const RETRY_TASK_REQUEST_V11: &str =
-    include_str!("../../../fixtures/local_agent/v11/retry_task_request.json");
-const TASK_SNAPSHOT_RESPONSE_V11: &str =
-    include_str!("../../../fixtures/local_agent/v11/task_snapshot_response.json");
+const RETRY_TASK_REQUEST_V12: &str =
+    include_str!("../../../fixtures/local_agent/v12/retry_task_request.json");
+const TASK_SNAPSHOT_RESPONSE_V12: &str =
+    include_str!("../../../fixtures/local_agent/v12/task_snapshot_response.json");
+const TASK_GRAPH_RESPONSE_V12: &str =
+    include_str!("../../../fixtures/local_agent/v12/task_graph_response.json");
+const TASK_RUN_DETAIL_RESPONSE_V12: &str =
+    include_str!("../../../fixtures/local_agent/v12/task_run_detail_response.json");
 
 #[test]
-fn shared_v11_retry_task_request_is_the_authoritative_native_contract() {
-    let request: LocalAgentIpcRequest = serde_json::from_str(RETRY_TASK_REQUEST_V11).unwrap();
+fn shared_v12_retry_task_request_is_the_authoritative_native_contract() {
+    let request: LocalAgentIpcRequest = serde_json::from_str(RETRY_TASK_REQUEST_V12).unwrap();
     request.validate().unwrap();
     assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
     let LocalAgentCommand::RetryTask(command) = request.command else {
@@ -33,8 +37,8 @@ fn shared_v11_retry_task_request_is_the_authoritative_native_contract() {
 }
 
 #[test]
-fn shared_v11_task_snapshot_response_preserves_all_runs_and_current_run() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_SNAPSHOT_RESPONSE_V11).unwrap();
+fn shared_v12_task_snapshot_response_preserves_all_runs_and_current_run() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_SNAPSHOT_RESPONSE_V12).unwrap();
     reply.validate().unwrap();
     assert_eq!(reply.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
     let LocalAgentIpcResponse::Task(task) = reply.response else {
@@ -42,6 +46,33 @@ fn shared_v11_task_snapshot_response_preserves_all_runs_and_current_run() {
     };
     assert_eq!(task.current_run_id, "task-run-2");
     assert_eq!(task.run_ids, ["task-run-1", "task-run-2"]);
+}
+
+#[test]
+fn shared_v12_task_graph_is_a_valid_owner_scoped_projection() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_GRAPH_RESPONSE_V12).unwrap();
+    reply.validate().unwrap();
+    let LocalAgentIpcResponse::TaskGraph(graph) = reply.response else {
+        panic!("fixture must contain a Task Graph response");
+    };
+    assert_eq!(graph.root_task_ids, ["task-1"]);
+    assert_eq!(graph.nodes[0].task.task.project_id, "project-1");
+    assert!(graph.edges.is_empty());
+}
+
+#[test]
+fn shared_v12_task_run_detail_preserves_result_and_event_page() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_RUN_DETAIL_RESPONSE_V12).unwrap();
+    reply.validate().unwrap();
+    let LocalAgentIpcResponse::TaskRunDetail(detail) = reply.response else {
+        panic!("fixture must contain a Task Run detail response");
+    };
+    assert_eq!(detail.run.run.run_id, "task-run-2");
+    assert_eq!(
+        detail.run.result_summary.as_deref(),
+        Some("Design implemented")
+    );
+    assert_eq!(detail.events_total, 1);
 }
 
 #[test]

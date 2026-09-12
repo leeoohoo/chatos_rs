@@ -139,6 +139,34 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
             : throw Unexpected("task", response.Type);
     }
 
+    public async Task<LocalAgentTaskGraphSnapshot> GetTaskGraphAsync(
+        string sourceThreadId,
+        string sourceTurnId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            LocalAgentCommand.GetTaskGraph(sourceThreadId, sourceTurnId),
+            cancellationToken).ConfigureAwait(false);
+        return response is LocalAgentTaskGraphResponse graph
+            ? graph.Graph
+            : throw Unexpected("task_graph", response.Type);
+    }
+
+    public async Task<LocalAgentTaskRunDetail> GetTaskRunDetailAsync(
+        string taskId,
+        string runId,
+        uint eventLimit = 40,
+        uint eventOffset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            LocalAgentCommand.GetTaskRunDetail(taskId, runId, eventLimit, eventOffset),
+            cancellationToken).ConfigureAwait(false);
+        return response is LocalAgentTaskRunDetailResponse detail
+            ? detail.Detail
+            : throw Unexpected("task_run_detail", response.Type);
+    }
+
     public async Task<LocalAgentMainChatRunBinding> GetMainChatRunBindingAsync(
         string runId,
         CancellationToken cancellationToken = default)
@@ -246,6 +274,10 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
                 "run_created" => RunCreated(RequirePayload<RunCreatedPayload>(hasPayload, payload)),
                 "run" => new LocalAgentRunResponse(RequirePayload<LocalAgentRunSnapshot>(hasPayload, payload)),
                 "task" => new LocalAgentTaskResponse(RequirePayload<LocalAgentTaskSnapshot>(hasPayload, payload)),
+                "task_graph" => new LocalAgentTaskGraphResponse(
+                    RequirePayload<LocalAgentTaskGraphSnapshot>(hasPayload, payload)),
+                "task_run_detail" => new LocalAgentTaskRunDetailResponse(
+                    RequirePayload<LocalAgentTaskRunDetail>(hasPayload, payload)),
                 "main_chat_run_binding" => new LocalAgentMainChatRunBindingResponse(
                     RequirePayload<LocalAgentMainChatRunBinding>(hasPayload, payload)),
                 "runs" => Runs(RequirePayload<RunsPayload>(hasPayload, payload)),

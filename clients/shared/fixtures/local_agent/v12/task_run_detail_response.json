@@ -1,0 +1,75 @@
+{
+  "protocol_version": 12,
+  "request_id": "request-task-run-detail-1",
+  "response": {
+    "type": "task_run_detail",
+    "payload": {
+      "task": {
+        "task_id": "task-1",
+        "revision": 2,
+        "source_thread_id": "thread-1",
+        "source_turn_id": "turn-1",
+        "project_id": "project-1",
+        "current_run_id": "task-run-2",
+        "run_ids": ["task-run-1", "task-run-2"],
+        "objective": "Implement the approved visual design",
+        "acceptance_criteria": ["Match the approved visual", "Pass visual QA"],
+        "status": "succeeded",
+        "model_config_id": "model-task-1",
+        "model_config_revision": 4,
+        "created_at": "2026-09-12T03:00:00Z",
+        "updated_at": "2026-09-12T03:01:00Z"
+      },
+      "run": {
+        "run": {
+          "run_id": "task-run-2",
+          "profile_key": "task_runner",
+          "owner_user_id": "user-1",
+          "owner_entity_type": "task",
+          "owner_entity_id": "task-1",
+          "project_id": "project-1",
+          "status": "succeeded",
+          "version": 2,
+          "step_seq": 1,
+          "iteration": 1,
+          "retry_count": 0,
+          "model_config_id": "model-task-1",
+          "model_config_revision": 4,
+          "model_runtime_snapshot": {
+            "model_config_id": "model-task-1",
+            "revision": 4,
+            "provider": "openai",
+            "model": "gpt-5",
+            "protocol": "responses",
+            "context_window_tokens": 400000,
+            "maximum_output_tokens": 32000,
+            "context_strategy": "provider_native",
+            "supports_streaming": true,
+            "supports_native_compaction": true,
+            "supports_input_token_count": true
+          },
+          "context_strategy": "provider_native",
+          "prompt_revision": "task-prompt-1",
+          "capability_snapshot_ref": "task-capabilities-1",
+          "pending_batch_id": null,
+          "pending_interaction": null,
+          "terminal_outcome": {"summary": "Design implemented"},
+          "deadline_at": null,
+          "created_at": "2026-09-12T03:00:10Z",
+          "updated_at": "2026-09-12T03:01:00Z"
+        },
+        "result_summary": "Design implemented",
+        "report_content": "{\n  \"summary\": \"Design implemented\"\n}",
+        "error_message": null
+      },
+      "events": [{
+        "event_id": "run_event:event-1",
+        "event_type": "run_started",
+        "message": null,
+        "created_at": "2026-09-12T03:00:10Z"
+      }],
+      "events_total": 1,
+      "events_has_more": false
+    }
+  }
+}

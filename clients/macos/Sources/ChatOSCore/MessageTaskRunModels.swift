@@ -71,40 +71,31 @@ public struct MessageTaskRunDetail: Sendable, Equatable {
 }
 
 public protocol MessageTaskGraphServicing: Sendable {
-    func fetchGraph(messageID: String, lookup: MessageTaskLookup?) async throws -> MessageTaskGraphSnapshot
-    func fetchTask(messageID: String, taskID: String, lookup: MessageTaskLookup?) async throws -> MessageTask
+    func fetchGraph(sourceThreadID: String, sourceTurnID: String) async throws -> MessageTaskGraphSnapshot
+    func fetchTask(taskID: String) async throws -> MessageTask
     func fetchRun(
-        messageID: String,
+        taskID: String,
         runID: String,
-        lookup: MessageTaskLookup?,
         includeEvents: Bool,
         eventLimit: Int,
         eventOffset: Int
     ) async throws -> MessageTaskRunDetail
-    func retryRun(
-        messageID: String,
-        runID: String,
-        lookup: MessageTaskLookup?,
+    func retryTask(
+        taskID: String,
+        expectedRunID: String,
         instruction: String?
     ) async throws -> MessageTaskRun
-    func cancelTask(
-        messageID: String,
-        taskID: String,
-        lookup: MessageTaskLookup?,
-        reason: String?
-    ) async throws
+    func cancelTask(taskID: String) async throws
 }
 
 public extension MessageTaskGraphServicing {
     func fetchRun(
-        messageID: String,
-        runID: String,
-        lookup: MessageTaskLookup?
+        taskID: String,
+        runID: String
     ) async throws -> MessageTaskRunDetail {
         try await fetchRun(
-            messageID: messageID,
+            taskID: taskID,
             runID: runID,
-            lookup: lookup,
             includeEvents: true,
             eventLimit: 40,
             eventOffset: 0

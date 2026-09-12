@@ -8,8 +8,8 @@ extension MessageTaskWorkspaceViewModel {
 
         do {
             let refreshedGraph = try await graphService.fetchGraph(
-                messageID: turn.userMessage.id,
-                lookup: baseLookup
+                sourceThreadID: turn.sessionID,
+                sourceTurnID: turn.id
             )
             guard refreshGeneration == workspaceRefreshGeneration else { return }
             applyGraph(refreshedGraph)
@@ -32,7 +32,6 @@ extension MessageTaskWorkspaceViewModel {
         loadedModelOutputRunID = nil
         isLoadingModelOutput = false
         isLoadingMoreRunEvents = false
-        let target = target(for: task)
         let requestedTaskID = task.id
         Task {
             defer {
@@ -41,11 +40,7 @@ extension MessageTaskWorkspaceViewModel {
                 }
             }
             do {
-                let detail = try await graphService.fetchTask(
-                    messageID: target.messageID,
-                    taskID: task.id,
-                    lookup: target.lookup
-                )
+                let detail = try await graphService.fetchTask(taskID: task.id)
                 guard selectedTask?.id == requestedTaskID else { return }
                 taskDetail = detail
                 if inspectorSection == .detail {
@@ -64,7 +59,6 @@ extension MessageTaskWorkspaceViewModel {
               loadedModelOutputRunID != runID,
               !isLoadingModelOutput else { return }
         isLoadingModelOutput = true
-        let target = target(for: task)
         let requestedTaskID = task.id
         Task {
             defer {
@@ -74,9 +68,8 @@ extension MessageTaskWorkspaceViewModel {
             }
             do {
                 let detail = try await graphService.fetchRun(
-                    messageID: target.messageID,
+                    taskID: task.id,
                     runID: runID,
-                    lookup: target.lookup,
                     includeEvents: false,
                     eventLimit: 1,
                     eventOffset: 0
@@ -95,7 +88,6 @@ extension MessageTaskWorkspaceViewModel {
         let preferredRunID = task.id == initialTaskID ? initialRunID : nil
         guard let runID = preferredRunID ?? task.lastRunID, !isLoadingRun else { return }
         isLoadingRun = true
-        let target = target(for: task)
         let requestedTaskID = task.id
         Task {
             defer {
@@ -105,9 +97,8 @@ extension MessageTaskWorkspaceViewModel {
             }
             do {
                 let detail = try await graphService.fetchRun(
-                    messageID: target.messageID,
+                    taskID: task.id,
                     runID: runID,
-                    lookup: target.lookup,
                     includeEvents: true,
                     eventLimit: 40,
                     eventOffset: 0
@@ -127,15 +118,13 @@ extension MessageTaskWorkspaceViewModel {
               let current = runDetail,
               current.eventsHasMore,
               !isLoadingMoreRunEvents else { return }
-        let target = target(for: task)
         isLoadingMoreRunEvents = true
         Task {
             defer { isLoadingMoreRunEvents = false }
             do {
                 let page = try await graphService.fetchRun(
-                    messageID: target.messageID,
+                    taskID: task.id,
                     runID: current.run.id,
-                    lookup: target.lookup,
                     includeEvents: true,
                     eventLimit: 50,
                     eventOffset: current.events.count
@@ -155,32 +144,11 @@ extension MessageTaskWorkspaceViewModel {
         }
     }
 
-    func target(for task: MessageTask) -> (messageID: String, lookup: MessageTaskLookup) {
-        let messageID = task.sourceUserMessageID?.isEmpty == false
-            ? task.sourceUserMessageID!
-            : turn.userMessage.id
-        return (
-            messageID,
-            MessageTaskLookup(
-                sessionID: task.sourceSessionID ?? graph?.sourceSessionID ?? turn.sessionID,
-                turnID: task.sourceTurnID ?? graph?.sourceTurnID ?? turn.id,
-                sourceUserMessageID: task.sourceUserMessageID
-                    ?? graph?.sourceUserMessageID
-                    ?? turn.userMessage.id
-            )
-        )
-    }
-
     func refreshSelectedInspectorState() async {
         guard let selectedTask else { return }
         let requestedTaskID = selectedTask.id
-        let target = target(for: selectedTask)
         do {
-            let detail = try await graphService.fetchTask(
-                messageID: target.messageID,
-                taskID: selectedTask.id,
-                lookup: target.lookup
-            )
+            let detail = try await graphService.fetchTask(taskID: selectedTask.id)
             guard self.selectedTask?.id == requestedTaskID else { return }
             taskDetail = detail
 
@@ -194,9 +162,8 @@ extension MessageTaskWorkspaceViewModel {
                 break
             case .detail:
                 let run = try await graphService.fetchRun(
-                    messageID: target.messageID,
+                    taskID: detail.id,
                     runID: runID,
-                    lookup: target.lookup,
                     includeEvents: false,
                     eventLimit: 1,
                     eventOffset: 0
@@ -206,9 +173,8 @@ extension MessageTaskWorkspaceViewModel {
                 taskDetail = detail.merging(run: run.run)
             case .run:
                 let run = try await graphService.fetchRun(
-                    messageID: target.messageID,
+                    taskID: detail.id,
                     runID: runID,
-                    lookup: target.lookup,
                     includeEvents: true,
                     eventLimit: 40,
                     eventOffset: 0

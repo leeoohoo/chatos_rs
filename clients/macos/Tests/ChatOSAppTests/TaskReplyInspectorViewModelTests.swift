@@ -130,8 +130,8 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     }
 
     func fetchGraph(
-        messageID: String,
-        lookup: MessageTaskLookup?
+        sourceThreadID: String,
+        sourceTurnID: String
     ) async throws -> MessageTaskGraphSnapshot {
         MessageTaskGraphSnapshot(
             rootTaskIDs: [],
@@ -141,19 +141,14 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         )
     }
 
-    func fetchTask(
-        messageID: String,
-        taskID: String,
-        lookup: MessageTaskLookup?
-    ) async throws -> MessageTask {
+    func fetchTask(taskID: String) async throws -> MessageTask {
         taskCalls += 1
         return task()
     }
 
     func fetchRun(
-        messageID: String,
+        taskID: String,
         runID: String,
-        lookup: MessageTaskLookup?,
         includeEvents: Bool,
         eventLimit: Int,
         eventOffset: Int
@@ -175,21 +170,15 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         )
     }
 
-    func retryRun(
-        messageID: String,
-        runID: String,
-        lookup: MessageTaskLookup?,
+    func retryTask(
+        taskID: String,
+        expectedRunID: String,
         instruction: String?
     ) async throws -> MessageTaskRun {
-        MessageTaskRun(id: runID, taskID: "task-1")
+        MessageTaskRun(id: expectedRunID, taskID: taskID)
     }
 
-    func cancelTask(
-        messageID: String,
-        taskID: String,
-        lookup: MessageTaskLookup?,
-        reason: String?
-    ) async throws {}
+    func cancelTask(taskID: String) async throws {}
 
     private func task() -> MessageTask {
         MessageTask(

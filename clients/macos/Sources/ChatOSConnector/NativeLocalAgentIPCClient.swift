@@ -329,6 +329,39 @@ public actor NativeLocalAgentIPCClient {
         return task
     }
 
+    public func taskGraph(
+        sourceThreadID: String,
+        sourceTurnID: String
+    ) async throws -> LocalAgentTaskGraphSnapshot {
+        let response = try await send(
+            .getTaskGraph(sourceThreadID: sourceThreadID, sourceTurnID: sourceTurnID)
+        )
+        guard case let .taskGraph(graph) = response else {
+            throw unexpected("task_graph", response)
+        }
+        return graph
+    }
+
+    public func taskRunDetail(
+        taskID: String,
+        runID: String,
+        eventLimit: UInt32,
+        eventOffset: UInt32
+    ) async throws -> LocalAgentTaskRunDetail {
+        let response = try await send(
+            .getTaskRunDetail(
+                taskID: taskID,
+                runID: runID,
+                eventLimit: eventLimit,
+                eventOffset: eventOffset
+            )
+        )
+        guard case let .taskRunDetail(detail) = response else {
+            throw unexpected("task_run_detail", response)
+        }
+        return detail
+    }
+
     public func mainChatRunBinding(
         runID: String
     ) async throws -> LocalAgentMainChatRunBinding {
@@ -401,6 +434,8 @@ private extension LocalAgentResponse {
         case .runCreated: "run_created"
         case .run: "run"
         case .task: "task"
+        case .taskGraph: "task_graph"
+        case .taskRunDetail: "task_run_detail"
         case .mainChatRunBinding: "main_chat_run_binding"
         case .runs: "runs"
         case .tasks: "tasks"

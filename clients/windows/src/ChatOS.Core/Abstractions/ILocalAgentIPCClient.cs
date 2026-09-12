@@ -37,6 +37,18 @@ public interface ILocalAgentIPCClient
         string taskId,
         CancellationToken cancellationToken = default);
 
+    Task<LocalAgentTaskGraphSnapshot> GetTaskGraphAsync(
+        string sourceThreadId,
+        string sourceTurnId,
+        CancellationToken cancellationToken = default);
+
+    Task<LocalAgentTaskRunDetail> GetTaskRunDetailAsync(
+        string taskId,
+        string runId,
+        uint eventLimit = 40,
+        uint eventOffset = 0,
+        CancellationToken cancellationToken = default);
+
     Task<LocalAgentMainChatRunBinding> GetMainChatRunBindingAsync(
         string runId,
         CancellationToken cancellationToken = default);
