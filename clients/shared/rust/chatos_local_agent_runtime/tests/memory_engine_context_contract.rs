@@ -8,9 +8,9 @@ use chatos_local_agent_runtime::{
     ActiveSummaryWaitPolicy, MemoryEngineContextAdapter, MemoryEngineContextApi,
     MemoryEngineContextError, MemoryEngineContextScope,
 };
-use memory_engine_sdk::{
-    ComposeContextBlock, ComposeContextMeta, ComposeContextResponse, EngineRecord,
-    RunThreadActiveSummaryResponse, SdkComposeContextRequest,
+use chatos_memory_client::{
+    ComposeContextBlock, ComposeContextMeta, ComposeContextRequest, ComposeContextResponse,
+    EngineRecord, RunThreadActiveSummaryResponse,
 };
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
@@ -28,7 +28,7 @@ struct MockMemoryApi {
 impl MemoryEngineContextApi for MockMemoryApi {
     async fn compose_context(
         &self,
-        request: &SdkComposeContextRequest,
+        request: &ComposeContextRequest,
     ) -> Result<ComposeContextResponse, String> {
         self.calls
             .lock()

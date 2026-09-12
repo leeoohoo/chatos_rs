@@ -13,8 +13,8 @@ use chatos_local_agent_protocol::{
     AgentMessage, AgentMessageRole, MemorySyncStatus, MessageMode, SyncDestination, SyncOutboxItem,
     SyncOutboxStatus,
 };
+use chatos_memory_client::{BatchSyncRecordsRequest, MemoryEngineClient, UpsertRecordInput};
 use chrono::{DateTime, Utc};
-use memory_engine_sdk::{MemoryEngineClient, SdkBatchSyncRecordsRequest, UpsertRecordInput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -641,7 +641,7 @@ impl MemorySyncApi for MemoryEngineClient {
         cancellation: CancellationToken,
     ) -> Result<MemorySyncApiReceipt, String> {
         let record_count = request.records.len();
-        let engine_request = SdkBatchSyncRecordsRequest {
+        let engine_request = BatchSyncRecordsRequest {
             tenant_id: request.tenant_id,
             records: request
                 .records

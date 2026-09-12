@@ -8,9 +8,9 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chatos_local_agent_protocol::MAX_MODEL_GATEWAY_JSON_BYTES;
-use memory_engine_sdk::{
-    ComposeContextPolicy, ComposeContextResponse, EngineRecord, MemoryEngineClient,
-    RunThreadActiveSummaryResponse, SdkComposeContextRequest,
+use chatos_memory_client::{
+    ComposeContextPolicy, ComposeContextRequest, ComposeContextResponse, EngineRecord,
+    MemoryEngineClient, RunThreadActiveSummaryResponse,
 };
 use serde_json::{json, Value};
 use tokio::time::{sleep, Instant};
@@ -140,7 +140,7 @@ pub enum MemoryEngineContextError {
 pub trait MemoryEngineContextApi: Send + Sync {
     async fn compose_context(
         &self,
-        request: &SdkComposeContextRequest,
+        request: &ComposeContextRequest,
     ) -> Result<ComposeContextResponse, String>;
 
     async fn run_active_summary(
@@ -162,7 +162,7 @@ pub trait MemoryEngineContextApi: Send + Sync {
 impl MemoryEngineContextApi for MemoryEngineClient {
     async fn compose_context(
         &self,
-        request: &SdkComposeContextRequest,
+        request: &ComposeContextRequest,
     ) -> Result<ComposeContextResponse, String> {
         MemoryEngineClient::compose_context(self, request).await
     }
@@ -364,7 +364,7 @@ impl MemoryEngineContextAdapter {
         if cancellation.is_cancelled() {
             return Err(MemoryEngineContextError::Cancelled);
         }
-        let request = SdkComposeContextRequest {
+        let request = ComposeContextRequest {
             tenant_id: scope.tenant_id.clone(),
             subject_id: scope.subject_id.clone(),
             related_subject_ids: (!scope.related_subject_ids.is_empty())

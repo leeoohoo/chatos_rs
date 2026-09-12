@@ -21,10 +21,10 @@ use chatos_local_agent_runtime::{
     MemorySyncApiReceipt, MemorySyncApiRequest, MemorySyncPolicy, MemorySynchronizer,
     ModelStepContext, ProviderNativeContextCommit, RecordSemanticMessageRequest,
 };
-use chrono::Utc;
-use memory_engine_sdk::{
-    ComposeContextResponse, RunThreadActiveSummaryResponse, SdkComposeContextRequest,
+use chatos_memory_client::{
+    ComposeContextRequest, ComposeContextResponse, RunThreadActiveSummaryResponse,
 };
+use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
 struct UnusedMemoryEngine;
@@ -33,7 +33,7 @@ struct UnusedMemoryEngine;
 impl MemoryEngineContextApi for UnusedMemoryEngine {
     async fn compose_context(
         &self,
-        _request: &SdkComposeContextRequest,
+        _request: &ComposeContextRequest,
     ) -> Result<ComposeContextResponse, String> {
         unreachable!("provider-native test must not call Memory Engine")
     }
@@ -76,7 +76,7 @@ struct RecordingMemoryEngine {
 impl MemoryEngineContextApi for RecordingMemoryEngine {
     async fn compose_context(
         &self,
-        _request: &SdkComposeContextRequest,
+        _request: &ComposeContextRequest,
     ) -> Result<ComposeContextResponse, String> {
         unreachable!("context composition belongs to the model executor")
     }

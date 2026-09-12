@@ -12,10 +12,8 @@ SHARED_RUST = ROOT / "clients/shared/rust"
 # explicit and prevents a client crate from silently acquiring another legacy
 # top-level crate dependency while the old implementation is being removed.
 EXPECTED_LEGACY_EDGES = {
-    ("chatos_local_agent_runtime", "memory_engine_sdk"),
     ("chatos_local_agent_host", "chatos_mcp_runtime"),
     ("chatos_local_agent_host", "chatos_plugin_management_sdk"),
-    ("chatos_local_agent_host", "memory_engine_sdk"),
 }
 
 
@@ -42,7 +40,15 @@ class ClientSharedBoundaryTests(unittest.TestCase):
             (SHARED_RUST / "chatos_local_agent_runtime/Cargo.toml").read_text()
         )
         self.assertNotIn("chatos_service_runtime", manifest["dependencies"])
+        self.assertNotIn("memory_engine_sdk", manifest["dependencies"])
         self.assertIn("chatos_client_http", manifest["dependencies"])
+
+    def test_local_host_uses_client_owned_memory_boundary(self) -> None:
+        manifest = tomllib.loads(
+            (SHARED_RUST / "local_agent_host/Cargo.toml").read_text()
+        )
+        self.assertNotIn("memory_engine_sdk", manifest["dependencies"])
+        self.assertIn("chatos_memory_client", manifest["dependencies"])
 
 
 if __name__ == "__main__":

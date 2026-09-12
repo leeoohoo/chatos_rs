@@ -16,11 +16,11 @@ use chatos_local_agent_runtime::{
     ModelStepContext, ModelStepExecutorError, ModelStepPersistenceError,
     ProviderNativeContextWindow, SingleModelStepExecutor,
 };
-use chrono::{Duration, Utc};
-use memory_engine_sdk::{
-    ComposeContextBlock, ComposeContextMeta, ComposeContextResponse,
-    RunThreadActiveSummaryResponse, SdkComposeContextRequest,
+use chatos_memory_client::{
+    ComposeContextBlock, ComposeContextMeta, ComposeContextRequest, ComposeContextResponse,
+    RunThreadActiveSummaryResponse,
 };
+use chrono::{Duration, Utc};
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -332,7 +332,7 @@ struct MockMemoryApi {
 impl MemoryEngineContextApi for MockMemoryApi {
     async fn compose_context(
         &self,
-        _request: &SdkComposeContextRequest,
+        _request: &ComposeContextRequest,
     ) -> Result<ComposeContextResponse, String> {
         self.compose_responses
             .lock()
