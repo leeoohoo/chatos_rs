@@ -459,7 +459,7 @@ actor NativeMCPTerminalStore {
         return true
     }
 
-    private func finish(id: String, exitCode: Int) {
+    private func finish(id: String, exitCode: Int) async {
         guard let process = processes[id] else { return }
         process.output.fileHandleForReading.readabilityHandler = nil
         process.error.fileHandleForReading.readabilityHandler = nil
@@ -467,6 +467,10 @@ actor NativeMCPTerminalStore {
         let stderr = process.error.fileHandleForReading.readDataToEndOfFile()
         if !stdout.isEmpty { append(kind: "stdout", data: stdout, to: id) }
         if !stderr.isEmpty { append(kind: "stderr", data: stderr, to: id) }
+        // A readability handler may already have consumed the final bytes and queued its
+        // actor append just before termination. Let that append commit before exposing the
+        // process as exited, so process_wait cannot observe a terminal state with missing tail output.
+        await Task.yield()
         process.status = "exited"
         process.exitCode = exitCode
         process.lastActiveAt = Self.timestamp()
