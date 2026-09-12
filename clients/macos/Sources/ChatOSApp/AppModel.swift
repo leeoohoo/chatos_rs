@@ -108,6 +108,7 @@ final class AppModel: ObservableObject {
     private let workspaceService: ChatOSWorkspaceService
     private let localConnectorService: NativeLocalConnectorService
     private let localAgentAccountSession: NativeLocalAgentAccountSession
+    private let localAgentConversationScopes = NativeLocalAgentConversationScopeStore()
     private let projectConversationService: ChatOSProjectConversationService
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionService: NativeRemoteConnectionService
@@ -724,6 +725,11 @@ final class AppModel: ObservableObject {
         workspaceProjects = snapshot.projects
         workspaceContacts = snapshot.contacts
         workspaceConversations = snapshot.conversations
+        await localAgentConversationScopes.update(
+            conversations: snapshot.conversations,
+            accountID: ownerUserID
+        )
+        guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
         let resources = WorkspaceResourceResolver.resolve(snapshot)
         contacts = resources.contacts
         projects = resources.projects
@@ -845,6 +851,10 @@ final class AppModel: ObservableObject {
                 projectConversationPreparationErrors = [:]
             }
             authenticatedUserID = session.user.id
+            let localAgentConversationScopes = localAgentConversationScopes
+            Task {
+                await localAgentConversationScopes.activate(accountID: session.user.id)
+            }
             mediaStudio.activate(userID: session.user.id)
             loadLanguagePreferences()
             localConnectorControl.activate(pairIfNeeded: true)
@@ -856,6 +866,10 @@ final class AppModel: ObservableObject {
             workspaceAccountGeneration += 1
             let localAgentGeneration = workspaceAccountGeneration
             authenticatedUserID = nil
+            let localAgentConversationScopes = localAgentConversationScopes
+            Task {
+                await localAgentConversationScopes.deactivate()
+            }
             requestedLocalAgentIdentity = nil
             localAgentHostError = nil
             let previousLifecycleTask = localAgentLifecycleTask
