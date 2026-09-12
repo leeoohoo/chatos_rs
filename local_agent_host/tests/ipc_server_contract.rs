@@ -6,18 +6,19 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentRunStateRecord, AppendAgentUiEvent, ClientStorage, PutRecord, RecordMetadata, RecordScope,
-    SecretReference, SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey,
-    StorageResult, StorageTransaction, TransactionRepositories,
+    AgentMessageStateRecord, AgentRunStateRecord, AppendAgentUiEvent, ClientStorage, PutRecord,
+    RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
+    StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_host::{
     LocalAgentIpcMutationExecutor, LocalAgentIpcServer, LocalAgentIpcServerError,
 };
 use chatos_local_agent_protocol::{
-    ContextStrategy, LocalAgentCommand, LocalAgentHostState, LocalAgentHostUiStatus,
-    LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse,
-    LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEventPayload, ModelProtocol,
-    ModelRuntimeDescriptor, LOCAL_AGENT_PROTOCOL_VERSION,
+    AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentCommand, LocalAgentHostState,
+    LocalAgentHostUiStatus, LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest,
+    LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEventPayload,
+    MemorySyncStatus, MessageMode, ModelProtocol, ModelRuntimeDescriptor,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chrono::Utc;
 
@@ -90,6 +91,39 @@ impl StorageTransaction for Seed {
                         updated_at: run.updated_at,
                     },
                     run,
+                },
+                expected_revision: None,
+            })
+            .await?;
+        repositories
+            .agent_messages()
+            .put(PutRecord {
+                record: AgentMessageStateRecord {
+                    metadata: RecordMetadata {
+                        id: "message-1".to_string(),
+                        scope: scope(),
+                        origin_device_id: "device-1".to_string(),
+                        revision: 0,
+                        created_at: Utc::now(),
+                        updated_at: Utc::now(),
+                    },
+                    message: AgentMessage {
+                        record_id: "message-1".to_string(),
+                        run_id: "run-1".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        turn_id: "turn-1".to_string(),
+                        sequence: 1,
+                        role: AgentMessageRole::User,
+                        content: Some("Design it".to_string()),
+                        reasoning: None,
+                        structured_payload: None,
+                        tool_call_id: None,
+                        response_id: None,
+                        message_mode: MessageMode::Semantic,
+                        message_source: "main_chat".to_string(),
+                        memory_sync_status: MemorySyncStatus::Pending,
+                        created_at: Utc::now(),
+                    },
                 },
                 expected_revision: None,
             })
@@ -195,6 +229,67 @@ async fn query_commands_are_owner_scoped_and_keep_request_correlation() {
     };
     assert_eq!(events.len(), 1);
     assert_eq!(next_seq, 1);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn main_chat_binding_and_ui_cursor_are_storage_backed() {
+    let (_directory, _storage, executor, server) = server().await;
+    let reply = server
+        .handle_request(request(
+            "request-binding",
+            LocalAgentCommand::GetMainChatRunBinding {
+                run_id: "run-1".to_string(),
+            },
+        ))
+        .await;
+    let LocalAgentIpcResponse::MainChatRunBinding(binding) = reply.response else {
+        panic!("Main Chat binding must come from the durable initial message");
+    };
+    assert_eq!(binding.thread_id, "thread-1");
+    assert_eq!(binding.turn_id, "turn-1");
+    assert_eq!(binding.message_id, "message-1");
+
+    let initial = server
+        .handle_request(request(
+            "request-cursor-initial",
+            LocalAgentCommand::GetUiEventCursor,
+        ))
+        .await;
+    assert!(matches!(
+        initial.response,
+        LocalAgentIpcResponse::UiEventCursor { event_seq: 0 }
+    ));
+    let acknowledged = server
+        .handle_request(request(
+            "request-cursor-ack",
+            LocalAgentCommand::AcknowledgeUiEvents { through_seq: 1 },
+        ))
+        .await;
+    assert!(matches!(
+        acknowledged.response,
+        LocalAgentIpcResponse::UiEventCursor { event_seq: 1 }
+    ));
+    let restored = server
+        .handle_request(request(
+            "request-cursor-restored",
+            LocalAgentCommand::GetUiEventCursor,
+        ))
+        .await;
+    assert!(matches!(
+        restored.response,
+        LocalAgentIpcResponse::UiEventCursor { event_seq: 1 }
+    ));
+    let impossible = server
+        .handle_request(request(
+            "request-cursor-impossible",
+            LocalAgentCommand::AcknowledgeUiEvents { through_seq: 2 },
+        ))
+        .await;
+    assert!(matches!(
+        impossible.response,
+        LocalAgentIpcResponse::Error(_)
+    ));
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 

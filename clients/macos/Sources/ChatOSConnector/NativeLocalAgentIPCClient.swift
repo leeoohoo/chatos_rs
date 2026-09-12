@@ -313,6 +313,16 @@ public actor NativeLocalAgentIPCClient {
         return run
     }
 
+    public func mainChatRunBinding(
+        runID: String
+    ) async throws -> LocalAgentMainChatRunBinding {
+        let response = try await send(.getMainChatRunBinding(runID: runID))
+        guard case let .mainChatRunBinding(binding) = response else {
+            throw unexpected("main_chat_run_binding", response)
+        }
+        return binding
+    }
+
     public func runs(cursor: String? = nil, limit: UInt32 = 100) async throws -> (
         runs: [LocalAgentRunSnapshot], nextCursor: String?
     ) {
@@ -333,6 +343,23 @@ public actor NativeLocalAgentIPCClient {
         return (events, nextSequence, hasMore)
     }
 
+    public func uiEventCursor() async throws -> UInt64 {
+        let response = try await send(.getUIEventCursor)
+        guard case let .uiEventCursor(sequence) = response else {
+            throw unexpected("ui_event_cursor", response)
+        }
+        return sequence
+    }
+
+    @discardableResult
+    public func acknowledgeUIEvents(through sequence: UInt64) async throws -> UInt64 {
+        let response = try await send(.acknowledgeUIEvents(throughSequence: sequence))
+        guard case let .uiEventCursor(acknowledged) = response else {
+            throw unexpected("ui_event_cursor", response)
+        }
+        return acknowledged
+    }
+
     private func unexpected(
         _ expected: String,
         _ response: LocalAgentResponse
@@ -347,8 +374,10 @@ private extension LocalAgentResponse {
         case .accepted: "accepted"
         case .runCreated: "run_created"
         case .run: "run"
+        case .mainChatRunBinding: "main_chat_run_binding"
         case .runs: "runs"
         case .events: "events"
+        case .uiEventCursor: "ui_event_cursor"
         case .storageProfile: "storage_profile"
         case .postgresConnectionTest: "postgres_connection_test"
         case .dataTransfer: "data_transfer"

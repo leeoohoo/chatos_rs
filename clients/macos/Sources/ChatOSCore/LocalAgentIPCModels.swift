@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 7
+public let localAgentProtocolVersion: UInt32 = 8
 
 public enum LocalAgentJSONValue: Codable, Equatable, Sendable {
     case null
@@ -188,8 +188,11 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case answerUserQuestion(runID: String, interactionID: String, answer: LocalAgentUserAnswer)
     case decideToolApproval(invocationID: String, decision: LocalAgentToolApprovalDecision, reason: String?)
     case getRun(runID: String)
+    case getMainChatRunBinding(runID: String)
     case listRuns(cursor: String?, limit: UInt32)
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
+    case getUIEventCursor
+    case acknowledgeUIEvents(throughSequence: UInt64)
     case getStorageProfile
     case testPostgresConnection(connectionSecretReference: String)
     case applyStorageProfile(profile: LocalAgentStorageProfileSelection, confirmNoActiveRuns: Bool)
@@ -215,6 +218,7 @@ extension LocalAgentCommand: Encodable {
         let afterSeq: UInt64
         let limit: UInt32
     }
+    private struct AcknowledgeEventsPayload: Encodable { let throughSeq: UInt64 }
     private struct AnswerPayload: Encodable {
         let runID: String
         let interactionID: String
@@ -274,12 +278,22 @@ extension LocalAgentCommand: Encodable {
             try container.encode(ApprovalPayload(invocationID: invocationID, decision: decision, reason: reason), forKey: .payload)
         case let .getRun(runID):
             try encodeRun("get_run", runID, into: &container)
+        case let .getMainChatRunBinding(runID):
+            try encodeRun("get_main_chat_run_binding", runID, into: &container)
         case let .listRuns(cursor, limit):
             try container.encode("list_runs", forKey: .type)
             try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
         case let .subscribeRunEvents(afterSequence, limit):
             try container.encode("subscribe_run_events", forKey: .type)
             try container.encode(EventsPayload(afterSeq: afterSequence, limit: limit), forKey: .payload)
+        case .getUIEventCursor:
+            try container.encode("get_ui_event_cursor", forKey: .type)
+        case let .acknowledgeUIEvents(throughSequence):
+            try container.encode("acknowledge_ui_events", forKey: .type)
+            try container.encode(
+                AcknowledgeEventsPayload(throughSeq: throughSequence),
+                forKey: .payload
+            )
         case .getStorageProfile:
             try container.encode("get_storage_profile", forKey: .type)
         case let .testPostgresConnection(reference):
@@ -390,15 +404,227 @@ public struct LocalAgentRunSnapshot: Codable, Equatable, Sendable {
     public var updatedAt: String
 }
 
-public struct LocalAgentUIEvent: Codable, Equatable, Sendable {
+public struct LocalAgentUIEvent: Decodable, Equatable, Sendable {
     public var eventSeq: UInt64
     public var emittedAt: String
-    public var event: LocalAgentTaggedValue
+    public var event: LocalAgentUIEventPayload
+
+    public init(eventSeq: UInt64, emittedAt: String, event: LocalAgentUIEventPayload) {
+        self.eventSeq = eventSeq
+        self.emittedAt = emittedAt
+        self.event = event
+    }
 }
 
-public struct LocalAgentTaggedValue: Codable, Equatable, Sendable {
-    public var type: String
-    public var payload: LocalAgentJSONValue?
+public struct LocalAgentMainChatRunBinding: Codable, Equatable, Sendable {
+    public var runID: String
+    public var threadID: String
+    public var turnID: String
+    public var messageID: String
+
+    public init(runID: String, threadID: String, turnID: String, messageID: String) {
+        self.runID = runID
+        self.threadID = threadID
+        self.turnID = turnID
+        self.messageID = messageID
+    }
+}
+
+public enum LocalAgentModelStreamDeltaKind: String, Decodable, Equatable, Sendable {
+    case content, reasoning, status
+}
+
+public struct LocalAgentModelStreamEvent: Decodable, Equatable, Sendable {
+    public var runID: String
+    public var stepSeq: UInt64
+    public var deltaKind: LocalAgentModelStreamDeltaKind
+    public var delta: String
+
+    public init(
+        runID: String,
+        stepSeq: UInt64,
+        deltaKind: LocalAgentModelStreamDeltaKind,
+        delta: String
+    ) {
+        self.runID = runID
+        self.stepSeq = stepSeq
+        self.deltaKind = deltaKind
+        self.delta = delta
+    }
+}
+
+public enum LocalAgentToolEffect: String, Decodable, Equatable, Sendable {
+    case read
+    case idempotentWrite = "idempotent_write"
+    case write, billable, terminal
+}
+
+public enum LocalAgentToolExecutionStatus: String, Decodable, Equatable, Sendable {
+    case requested
+    case awaitingApproval = "awaiting_approval"
+    case approved, started, succeeded, failed, rejected
+    case outcomeUnknown = "outcome_unknown"
+}
+
+public struct LocalAgentToolSnapshot: Decodable, Equatable, Sendable {
+    public var invocationID: String
+    public var runID: String
+    public var batchID: String
+    public var toolCallID: String
+    public var toolName: String
+    public var effect: LocalAgentToolEffect
+    public var argumentsDigest: String
+    public var status: LocalAgentToolExecutionStatus
+    public var boundedResult: LocalAgentJSONValue?
+    public var approvalDecidedAt: String?
+    public var approvalReason: String?
+    public var startedAt: String?
+    public var completedAt: String?
+
+    public init(
+        invocationID: String,
+        runID: String,
+        batchID: String,
+        toolCallID: String,
+        toolName: String,
+        effect: LocalAgentToolEffect,
+        argumentsDigest: String,
+        status: LocalAgentToolExecutionStatus,
+        boundedResult: LocalAgentJSONValue? = nil,
+        approvalDecidedAt: String? = nil,
+        approvalReason: String? = nil,
+        startedAt: String? = nil,
+        completedAt: String? = nil
+    ) {
+        self.invocationID = invocationID
+        self.runID = runID
+        self.batchID = batchID
+        self.toolCallID = toolCallID
+        self.toolName = toolName
+        self.effect = effect
+        self.argumentsDigest = argumentsDigest
+        self.status = status
+        self.boundedResult = boundedResult
+        self.approvalDecidedAt = approvalDecidedAt
+        self.approvalReason = approvalReason
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+    }
+}
+
+public struct LocalAgentUserInteractionOption: Decodable, Equatable, Sendable {
+    public var optionID: String
+    public var label: String
+    public var description: String?
+
+    public init(optionID: String, label: String, description: String? = nil) {
+        self.optionID = optionID
+        self.label = label
+        self.description = description
+    }
+}
+
+public struct LocalAgentUserInteractionEvent: Decodable, Equatable, Sendable {
+    public var interactionID: String
+    public var runID: String
+    public var prompt: String
+    public var options: [LocalAgentUserInteractionOption]
+    public var imageReferences: [String]
+    public var details: LocalAgentJSONValue?
+
+    public init(
+        interactionID: String,
+        runID: String,
+        prompt: String,
+        options: [LocalAgentUserInteractionOption],
+        imageReferences: [String],
+        details: LocalAgentJSONValue? = nil
+    ) {
+        self.interactionID = interactionID
+        self.runID = runID
+        self.prompt = prompt
+        self.options = options
+        self.imageReferences = imageReferences
+        self.details = details
+    }
+}
+
+public struct LocalAgentMemorySyncStatus: Decodable, Equatable, Sendable {
+    public var runID: String?
+    public var pendingCount: UInt64
+    public var failedCount: UInt64
+    public var lastErrorCode: String?
+
+    public init(
+        runID: String? = nil,
+        pendingCount: UInt64,
+        failedCount: UInt64,
+        lastErrorCode: String? = nil
+    ) {
+        self.runID = runID
+        self.pendingCount = pendingCount
+        self.failedCount = failedCount
+        self.lastErrorCode = lastErrorCode
+    }
+}
+
+public enum LocalAgentHostRuntimeState: String, Decodable, Equatable, Sendable {
+    case starting, ready
+    case storageUnavailable = "storage_unavailable"
+    case shuttingDown = "shutting_down"
+}
+
+public struct LocalAgentHostRuntimeStatus: Decodable, Equatable, Sendable {
+    public var state: LocalAgentHostRuntimeState
+    public var activeRunCount: UInt64
+    public var errorCode: String?
+
+    public init(
+        state: LocalAgentHostRuntimeState,
+        activeRunCount: UInt64,
+        errorCode: String? = nil
+    ) {
+        self.state = state
+        self.activeRunCount = activeRunCount
+        self.errorCode = errorCode
+    }
+}
+
+public enum LocalAgentUIEventPayload: Equatable, Sendable {
+    case runSnapshot(LocalAgentRunSnapshot)
+    case modelStream(LocalAgentModelStreamEvent)
+    case toolSnapshot(LocalAgentToolSnapshot)
+    case userInteraction(LocalAgentUserInteractionEvent)
+    case memorySync(LocalAgentMemorySyncStatus)
+    case hostStatus(LocalAgentHostRuntimeStatus)
+}
+
+extension LocalAgentUIEventPayload: Decodable {
+    private enum CodingKeys: String, CodingKey { case type, payload }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(String.self, forKey: .type) {
+        case "run_snapshot":
+            self = .runSnapshot(try container.decode(LocalAgentRunSnapshot.self, forKey: .payload))
+        case "model_stream":
+            self = .modelStream(try container.decode(LocalAgentModelStreamEvent.self, forKey: .payload))
+        case "tool_snapshot":
+            self = .toolSnapshot(try container.decode(LocalAgentToolSnapshot.self, forKey: .payload))
+        case "user_interaction":
+            self = .userInteraction(try container.decode(LocalAgentUserInteractionEvent.self, forKey: .payload))
+        case "memory_sync":
+            self = .memorySync(try container.decode(LocalAgentMemorySyncStatus.self, forKey: .payload))
+        case "host_status":
+            self = .hostStatus(try container.decode(LocalAgentHostRuntimeStatus.self, forKey: .payload))
+        case let type:
+            throw DecodingError.dataCorruptedError(
+                forKey: .type,
+                in: container,
+                debugDescription: "Unknown local Agent UI event type: \(type)"
+            )
+        }
+    }
 }
 
 public struct LocalAgentStorageProfile: Codable, Equatable, Sendable {
@@ -434,8 +660,10 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case accepted(operationID: String)
     case runCreated(operationID: String, run: LocalAgentRunSnapshot)
     case run(LocalAgentRunSnapshot)
+    case mainChatRunBinding(LocalAgentMainChatRunBinding)
     case runs([LocalAgentRunSnapshot], nextCursor: String?)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
+    case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
     case postgresConnectionTest(LocalAgentPostgresConnectionTest)
     case dataTransfer(LocalAgentDataTransfer)
@@ -459,6 +687,7 @@ extension LocalAgentResponse: Decodable {
         let nextSeq: UInt64
         let hasMore: Bool
     }
+    private struct UIEventCursor: Decodable { let eventSeq: UInt64 }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -469,12 +698,20 @@ extension LocalAgentResponse: Decodable {
             let value = try container.decode(RunCreated.self, forKey: .payload)
             self = .runCreated(operationID: value.operationID, run: value.run)
         case "run": self = .run(try container.decode(LocalAgentRunSnapshot.self, forKey: .payload))
+        case "main_chat_run_binding":
+            self = .mainChatRunBinding(
+                try container.decode(LocalAgentMainChatRunBinding.self, forKey: .payload)
+            )
         case "runs":
             let value = try container.decode(Runs.self, forKey: .payload)
             self = .runs(value.runs, nextCursor: value.nextCursor)
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)
+        case "ui_event_cursor":
+            self = .uiEventCursor(
+                eventSequence: try container.decode(UIEventCursor.self, forKey: .payload).eventSeq
+            )
         case "storage_profile": self = .storageProfile(try container.decode(LocalAgentStorageProfile.self, forKey: .payload))
         case "postgres_connection_test": self = .postgresConnectionTest(try container.decode(LocalAgentPostgresConnectionTest.self, forKey: .payload))
         case "data_transfer": self = .dataTransfer(try container.decode(LocalAgentDataTransfer.self, forKey: .payload))

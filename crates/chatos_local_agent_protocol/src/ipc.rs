@@ -71,8 +71,11 @@ pub enum LocalAgentCommand {
     AnswerUserQuestion(AnswerUserQuestionCommand),
     DecideToolApproval(ToolApprovalCommand),
     GetRun { run_id: String },
+    GetMainChatRunBinding { run_id: String },
     ListRuns { cursor: Option<String>, limit: u32 },
     SubscribeRunEvents { after_seq: u64, limit: u32 },
+    GetUiEventCursor,
+    AcknowledgeUiEvents { through_seq: u64 },
     GetStorageProfile,
     TestPostgresConnection(PostgresConnectionTestCommand),
     ApplyStorageProfile(ApplyStorageProfileCommand),
@@ -90,11 +93,22 @@ impl LocalAgentCommand {
             Self::PauseRun { run_id }
             | Self::ResumeRun { run_id }
             | Self::CancelRun { run_id }
-            | Self::GetRun { run_id } => require_identifier("run_id", run_id),
+            | Self::GetRun { run_id }
+            | Self::GetMainChatRunBinding { run_id } => require_identifier("run_id", run_id),
             Self::AnswerUserQuestion(command) => command.validate(),
             Self::DecideToolApproval(command) => command.validate(),
             Self::ListRuns { cursor, limit } => validate_page(cursor.as_deref(), *limit),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
+            Self::GetUiEventCursor => Ok(()),
+            Self::AcknowledgeUiEvents { through_seq } => {
+                if *through_seq == 0 {
+                    Err(ProtocolError::InvalidState {
+                        reason: "acknowledged UI event sequence must be positive",
+                    })
+                } else {
+                    Ok(())
+                }
+            }
             Self::GetStorageProfile => Ok(()),
             Self::TestPostgresConnection(command) => command.validate(),
             Self::ApplyStorageProfile(command) => command.validate(),
@@ -414,6 +428,7 @@ pub enum LocalAgentIpcResponse {
         run: Box<LocalAgentRun>,
     },
     Run(Box<LocalAgentRun>),
+    MainChatRunBinding(MainChatRunBinding),
     Runs {
         runs: Vec<LocalAgentRun>,
         next_cursor: Option<String>,
@@ -422,6 +437,9 @@ pub enum LocalAgentIpcResponse {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
         has_more: bool,
+    },
+    UiEventCursor {
+        event_seq: u64,
     },
     StorageProfile(ClientStorageProfileDescriptor),
     PostgresConnectionTest(PostgresConnectionTestResult),
@@ -439,6 +457,7 @@ impl LocalAgentIpcResponse {
                 run.validate()
             }
             Self::Run(run) => run.validate(),
+            Self::MainChatRunBinding(binding) => binding.validate(),
             Self::Runs { runs, next_cursor } => {
                 for run in runs {
                     run.validate()?;
@@ -461,12 +480,36 @@ impl LocalAgentIpcResponse {
                 }
                 Ok(())
             }
+            Self::UiEventCursor { .. } => Ok(()),
             Self::StorageProfile(profile) => profile.validate(),
             Self::PostgresConnectionTest(result) => result.validate(),
             Self::DataTransfer(result) => result.validate(),
             Self::Success => Ok(()),
             Self::Error(error) => error.validate(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MainChatRunBinding {
+    pub run_id: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub message_id: String,
+}
+
+impl MainChatRunBinding {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        for (field, value) in [
+            ("run_id", self.run_id.as_str()),
+            ("thread_id", self.thread_id.as_str()),
+            ("turn_id", self.turn_id.as_str()),
+            ("message_id", self.message_id.as_str()),
+        ] {
+            require_identifier(field, value)?;
+        }
+        Ok(())
     }
 }
 

@@ -49,9 +49,41 @@ struct NativeLocalAgentIPCClientTests {
         #expect(page.events.count == 1)
         #expect(page.nextSequence == 9_007_199_254_740_993)
         #expect(page.hasMore)
-        #expect(page.events[0].event.payload == .object([
-            "model_config_id": .string("opaque-value"),
-        ]))
+        #expect(page.events[0].event == .hostStatus(LocalAgentHostRuntimeStatus(
+            state: .ready,
+            activeRunCount: 3,
+            errorCode: nil
+        )))
+    }
+
+    @Test("restores the durable UI cursor and authoritative Main Chat binding")
+    func decodesCursorAndBinding() async throws {
+        let cursorTransport = RecordingLocalAgentTransport(responseType: "ui_event_cursor")
+        let cursorClient = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: cursorTransport
+        )
+        #expect(try await cursorClient.uiEventCursor() == 41)
+        #expect(try await cursorClient.acknowledgeUIEvents(through: 42) == 41)
+        let cursorRequest = try #require(await cursorTransport.lastRequest())
+        let cursorObject = try #require(
+            JSONSerialization.jsonObject(with: cursorRequest) as? [String: Any]
+        )
+        let cursorCommand = try #require(cursorObject["command"] as? [String: Any])
+        #expect(cursorCommand["type"] as? String == "acknowledge_ui_events")
+        let cursorPayload = try #require(cursorCommand["payload"] as? [String: Any])
+        #expect(cursorPayload["through_seq"] as? Int == 42)
+
+        let bindingTransport = RecordingLocalAgentTransport(responseType: "main_chat_run_binding")
+        let bindingClient = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: bindingTransport
+        )
+        let binding = try await bindingClient.mainChatRunBinding(runID: "run-1")
+        #expect(binding.runID == "run-1")
+        #expect(binding.threadID == "thread-1")
+        #expect(binding.turnID == "turn-1")
+        #expect(binding.messageID == "message-1")
     }
 
     @Test("creates a Run and returns its authoritative local identity")
@@ -152,11 +184,29 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
                         "emitted_at": "2026-09-12T03:00:00Z",
                         "event": [
                             "type": "host_status",
-                            "payload": ["model_config_id": "opaque-value"],
+                            "payload": [
+                                "state": "ready",
+                                "active_run_count": 3,
+                            ],
                         ],
                     ]],
                     "next_seq": UInt64(9_007_199_254_740_993),
                     "has_more": true,
+                ],
+            ]
+        case "ui_event_cursor":
+            response = [
+                "type": "ui_event_cursor",
+                "payload": ["event_seq": 41],
+            ]
+        case "main_chat_run_binding":
+            response = [
+                "type": "main_chat_run_binding",
+                "payload": [
+                    "run_id": "run-1",
+                    "thread_id": "thread-1",
+                    "turn_id": "turn-1",
+                    "message_id": "message-1",
                 ],
             ]
         case "success":
