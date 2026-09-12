@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 5;
+    public const uint Version = 6;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -125,6 +125,26 @@ public sealed record LocalAgentCommand
             expectedArchiveDigest,
             confirmNoActiveRuns));
 
+    public static LocalAgentCommand InstallProjectPluginCapability(
+        string projectId,
+        string pluginId,
+        string releaseId,
+        JsonElement capabilityRecord) =>
+        new("install_project_plugin_capability", new InstallPluginCapabilityPayload(
+            projectId,
+            pluginId,
+            releaseId,
+            capabilityRecord));
+
+    public static LocalAgentCommand RemoveProjectPluginCapability(
+        string projectId,
+        string pluginId,
+        string releaseId) =>
+        new("remove_project_plugin_capability", new RemovePluginCapabilityPayload(
+            projectId,
+            pluginId,
+            releaseId));
+
     private static LocalAgentCommand RunCommand(string type, string runId) =>
         new(type, new RunPayload(runId));
 
@@ -147,6 +167,15 @@ public sealed record LocalAgentCommand
         string SourceReference,
         string ExpectedArchiveDigest,
         bool ConfirmNoActiveRuns);
+    private sealed record InstallPluginCapabilityPayload(
+        string ProjectId,
+        string PluginId,
+        string ReleaseId,
+        JsonElement CapabilityRecord);
+    private sealed record RemovePluginCapabilityPayload(
+        string ProjectId,
+        string PluginId,
+        string ReleaseId);
 }
 
 public sealed record LocalAgentStorageProfileSelection

@@ -13,6 +13,7 @@ use crate::{
     LocalAgentIpcMutationExecutor, LocalAgentIpcServer, LocalAgentIpcServerError,
     LocalAgentMemorySyncWorker, LocalAgentMemorySyncWorkerError, LocalAgentMemorySyncWorkerExit,
     LocalAgentStorageIpcExecutor, LocalAgentStoragePlatform, LocalAgentWorkerExit,
+    LocalCapabilityIpcExecutor, RegisteredLocalCapabilityRuntime, StoredLocalCapabilityLoader,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -221,9 +222,12 @@ impl LocalAgentHostService {
 pub fn build_local_agent_ipc_server(
     storage: Arc<dyn ClientStorage>,
     scope: RecordScope,
+    device_id: String,
     host: Arc<LocalAgentHost>,
     session: LocalAgentExecutionSession,
     storage_platform: Arc<dyn LocalAgentStoragePlatform>,
+    capability_loader: Arc<StoredLocalCapabilityLoader>,
+    capability_registry: Arc<RegisteredLocalCapabilityRuntime>,
     terminal_mutation_executor: Arc<dyn LocalAgentIpcMutationExecutor>,
 ) -> Result<Arc<LocalAgentIpcServer>, LocalAgentIpcServerError> {
     let storage_executor: Arc<dyn LocalAgentIpcMutationExecutor> =
@@ -233,8 +237,17 @@ pub fn build_local_agent_ipc_server(
             storage_platform,
             terminal_mutation_executor,
         ));
+    let capability_executor: Arc<dyn LocalAgentIpcMutationExecutor> =
+        Arc::new(LocalCapabilityIpcExecutor::new(
+            storage.clone(),
+            scope.clone(),
+            device_id,
+            capability_loader,
+            capability_registry,
+            storage_executor,
+        ));
     let control_executor: Arc<dyn LocalAgentIpcMutationExecutor> = Arc::new(
-        LocalAgentHostControlExecutor::new(host.clone(), storage_executor),
+        LocalAgentHostControlExecutor::new(host.clone(), capability_executor),
     );
     let creation_executor: Arc<dyn LocalAgentIpcMutationExecutor> = Arc::new(
         LocalAgentHostCreationExecutor::new(host, session, control_executor),

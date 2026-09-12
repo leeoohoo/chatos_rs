@@ -975,6 +975,7 @@ dependencies = [
  "chrono",
  "libc",
  "memory_engine_sdk",
+ "parking_lot",
  "ring",
  "security-framework 3.7.0",
  "serde",

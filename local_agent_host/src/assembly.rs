@@ -125,16 +125,19 @@ pub async fn assemble_local_agent_host(
         owner_user_id: request.owner_user_id.clone(),
     };
     let capability_runtime = Arc::new(RegisteredLocalCapabilityRuntime::new());
-    StoredLocalCapabilityLoader::new(
-        storage.clone(),
-        scope.clone(),
-        request.device_id.clone(),
-        capability_platform,
-    )
-    .map_err(LocalAgentHostAssemblyError::Capabilities)?
-    .load(capability_runtime.as_ref())
-    .await
-    .map_err(LocalAgentHostAssemblyError::Capabilities)?;
+    let capability_loader = Arc::new(
+        StoredLocalCapabilityLoader::new(
+            storage.clone(),
+            scope.clone(),
+            request.device_id.clone(),
+            capability_platform,
+        )
+        .map_err(LocalAgentHostAssemblyError::Capabilities)?,
+    );
+    capability_loader
+        .load(capability_runtime.as_ref())
+        .await
+        .map_err(LocalAgentHostAssemblyError::Capabilities)?;
     let attachment_resolver = Arc::new(
         LocalAttachmentGrantResolver::open(&request.attachment_grant_directory)
             .map_err(|error| LocalAgentHostAssemblyError::Host(error.to_string()))?,
@@ -229,9 +232,12 @@ pub async fn assemble_local_agent_host(
     let ipc_server = build_local_agent_ipc_server(
         storage,
         scope,
+        request.device_id.clone(),
         host,
         session.clone(),
         storage_platform,
+        capability_loader,
+        capability_runtime.clone(),
         terminal_mutation_executor,
     )?;
     let client_endpoint = request.ipc_endpoint.client_endpoint().to_string();

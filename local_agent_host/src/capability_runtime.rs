@@ -2,11 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chatos_agent_profiles::{TaskRunnerCapabilitySnapshot, TaskRunnerExecutionTool};
 use chatos_mcp_runtime::McpExecutor;
+use parking_lot::RwLock;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -22,6 +23,23 @@ pub struct RegisteredLocalCapabilityBundle {
     pub plugin_release_snapshot: Value,
     pub execution_tools: Vec<TaskRunnerExecutionTool>,
     pub executor: Arc<McpExecutor>,
+}
+
+/// A complete Registry image that has already passed every structural and
+/// MCP schema check. Capability persistence accepts only this value, which
+/// lets the subsequent in-memory swap be infallible and non-poisoning.
+pub struct ValidatedLocalCapabilityReplacement {
+    bundles: Vec<RegisteredLocalCapabilityBundle>,
+}
+
+impl ValidatedLocalCapabilityReplacement {
+    pub fn len(&self) -> usize {
+        self.bundles.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bundles.is_empty()
+    }
 }
 
 /// Single trusted registry shared by Task planning and tool execution. Native
@@ -40,10 +58,7 @@ impl RegisteredLocalCapabilityRuntime {
 
     pub fn register(&self, bundle: RegisteredLocalCapabilityBundle) -> Result<(), String> {
         validate_bundle(&bundle)?;
-        let mut bundles = self
-            .bundles
-            .write()
-            .map_err(|_| "local capability registry lock is poisoned".to_string())?;
+        let mut bundles = self.bundles.write();
         if let Some(existing) = bundles.iter_mut().find(|existing| {
             existing.owner_user_id == bundle.owner_user_id
                 && existing.project_id == bundle.project_id
@@ -56,6 +71,14 @@ impl RegisteredLocalCapabilityRuntime {
     }
 
     pub fn replace_all(&self, bundles: Vec<RegisteredLocalCapabilityBundle>) -> Result<(), String> {
+        let replacement = Self::validate_replacement(bundles)?;
+        self.replace_validated(replacement);
+        Ok(())
+    }
+
+    pub fn validate_replacement(
+        bundles: Vec<RegisteredLocalCapabilityBundle>,
+    ) -> Result<ValidatedLocalCapabilityReplacement, String> {
         let mut identities = HashSet::new();
         for bundle in &bundles {
             validate_bundle(bundle)?;
@@ -66,18 +89,15 @@ impl RegisteredLocalCapabilityRuntime {
                 ));
             }
         }
-        *self
-            .bundles
-            .write()
-            .map_err(|_| "local capability registry lock is poisoned".to_string())? = bundles;
-        Ok(())
+        Ok(ValidatedLocalCapabilityReplacement { bundles })
+    }
+
+    pub fn replace_validated(&self, replacement: ValidatedLocalCapabilityReplacement) {
+        *self.bundles.write() = replacement.bundles;
     }
 
     pub fn remove_project(&self, owner_user_id: &str, project_id: &str) -> Result<(), String> {
-        let mut bundles = self
-            .bundles
-            .write()
-            .map_err(|_| "local capability registry lock is poisoned".to_string())?;
+        let mut bundles = self.bundles.write();
         bundles.retain(|bundle| {
             bundle.owner_user_id != owner_user_id || bundle.project_id != project_id
         });
@@ -85,10 +105,7 @@ impl RegisteredLocalCapabilityRuntime {
     }
 
     pub fn is_empty(&self) -> Result<bool, String> {
-        self.bundles
-            .read()
-            .map(|bundles| bundles.is_empty())
-            .map_err(|_| "local capability registry lock is poisoned".to_string())
+        Ok(self.bundles.read().is_empty())
     }
 }
 
@@ -108,10 +125,7 @@ impl LocalTaskCapabilityResolver for RegisteredLocalCapabilityRuntime {
         {
             return Err("local capability request identity is invalid".to_string());
         }
-        let bundles = self
-            .bundles
-            .read()
-            .map_err(|_| "local capability registry lock is poisoned".to_string())?;
+        let bundles = self.bundles.read();
         let bundle = bundles
             .iter()
             .find(|bundle| {
@@ -139,10 +153,7 @@ impl FrozenMcpExecutorProvider for RegisteredLocalCapabilityRuntime {
         if cancellation.is_cancelled() {
             return Err("local MCP executor resolution was cancelled".to_string());
         }
-        let bundles = self
-            .bundles
-            .read()
-            .map_err(|_| "local capability registry lock is poisoned".to_string())?;
+        let bundles = self.bundles.read();
         let bundle = bundles
             .iter()
             .find(|bundle| {

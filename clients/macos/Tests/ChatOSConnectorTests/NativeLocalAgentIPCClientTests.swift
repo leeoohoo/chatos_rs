@@ -28,7 +28,7 @@ struct NativeLocalAgentIPCClientTests {
         let object = try #require(
             JSONSerialization.jsonObject(with: request) as? [String: Any]
         )
-        #expect(object["protocol_version"] as? Int == 5)
+        #expect(object["protocol_version"] as? Int == 6)
         #expect(object["owner_user_id"] as? String == "user-1")
         let command = try #require(object["command"] as? [String: Any])
         #expect(command["type"] as? String == "answer_user_question")
@@ -52,6 +52,33 @@ struct NativeLocalAgentIPCClientTests {
         #expect(page.events[0].event.payload == .object([
             "model_config_id": .string("opaque-value"),
         ]))
+    }
+
+    @Test("encodes one project Plugin capability for Host validation")
+    func encodesPluginCapabilityMutation() async throws {
+        let transport = RecordingLocalAgentTransport(responseType: "success")
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+
+        let response = try await client.send(.installProjectPluginCapability(
+            projectID: "project-1",
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            capabilityRecord: .object([
+                "schema_version": .signed(1),
+                "project_id": .string("project-1"),
+            ])
+        ))
+
+        #expect(response == .success)
+        let request = try #require(await transport.lastRequest())
+        let object = try #require(JSONSerialization.jsonObject(with: request) as? [String: Any])
+        let command = try #require(object["command"] as? [String: Any])
+        #expect(command["type"] as? String == "install_project_plugin_capability")
+        let payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["project_id"] as? String == "project-1")
+        #expect(payload["plugin_id"] as? String == "plugin-1")
+        let capability = try #require(payload["capability_record"] as? [String: Any])
+        #expect(capability["schema_version"] as? Int == 1)
     }
 
     @Test("rejects a response correlated to another request")
@@ -102,6 +129,8 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
                     "has_more": true,
                 ],
             ]
+        case "success":
+            response = ["type": "success"]
         default:
             response = [
                 "type": "accepted",
@@ -109,7 +138,7 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
             ]
         }
         return try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 5,
+            "protocol_version": 6,
             "request_id": requestID,
             "response": response,
         ])

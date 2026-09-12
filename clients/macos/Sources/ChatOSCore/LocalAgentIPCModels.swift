@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 5
+public let localAgentProtocolVersion: UInt32 = 6
 
 public enum LocalAgentJSONValue: Codable, Equatable, Sendable {
     case null
@@ -195,6 +195,13 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case applyStorageProfile(profile: LocalAgentStorageProfileSelection, confirmNoActiveRuns: Bool)
     case exportClientData(destinationReference: String, includeLargePayloadReferences: Bool)
     case importClientData(sourceReference: String, expectedArchiveDigest: String, confirmNoActiveRuns: Bool)
+    case installProjectPluginCapability(
+        projectID: String,
+        pluginID: String,
+        releaseID: String,
+        capabilityRecord: LocalAgentJSONValue
+    )
+    case removeProjectPluginCapability(projectID: String, pluginID: String, releaseID: String)
 }
 
 extension LocalAgentCommand: Encodable {
@@ -231,6 +238,17 @@ extension LocalAgentCommand: Encodable {
         let sourceReference: String
         let expectedArchiveDigest: String
         let confirmNoActiveRuns: Bool
+    }
+    private struct InstallPluginCapabilityPayload: Encodable {
+        let projectID: String
+        let pluginID: String
+        let releaseID: String
+        let capabilityRecord: LocalAgentJSONValue
+    }
+    private struct RemovePluginCapabilityPayload: Encodable {
+        let projectID: String
+        let pluginID: String
+        let releaseID: String
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -276,6 +294,27 @@ extension LocalAgentCommand: Encodable {
         case let .importClientData(reference, digest, confirmed):
             try container.encode("import_client_data", forKey: .type)
             try container.encode(ImportPayload(sourceReference: reference, expectedArchiveDigest: digest, confirmNoActiveRuns: confirmed), forKey: .payload)
+        case let .installProjectPluginCapability(projectID, pluginID, releaseID, capability):
+            try container.encode("install_project_plugin_capability", forKey: .type)
+            try container.encode(
+                InstallPluginCapabilityPayload(
+                    projectID: projectID,
+                    pluginID: pluginID,
+                    releaseID: releaseID,
+                    capabilityRecord: capability
+                ),
+                forKey: .payload
+            )
+        case let .removeProjectPluginCapability(projectID, pluginID, releaseID):
+            try container.encode("remove_project_plugin_capability", forKey: .type)
+            try container.encode(
+                RemovePluginCapabilityPayload(
+                    projectID: projectID,
+                    pluginID: pluginID,
+                    releaseID: releaseID
+                ),
+                forKey: .payload
+            )
         }
     }
 

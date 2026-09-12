@@ -29,6 +29,7 @@ use crate::{
         verify_resolved_executable_name, verify_runtime_declaration, MAXIMUM_RUNTIME_ENVIRONMENT,
     },
     RegisteredLocalCapabilityBundle, RegisteredLocalCapabilityRuntime,
+    ValidatedLocalCapabilityReplacement,
 };
 
 pub const STORED_LOCAL_CAPABILITY_SCHEMA_VERSION: u32 = 1;
@@ -182,6 +183,16 @@ impl StoredLocalCapabilityLoader {
 
     pub async fn load(&self, registry: &RegisteredLocalCapabilityRuntime) -> Result<usize, String> {
         let records = self.load_records().await?;
+        let replacement = self.build_replacement(records).await?;
+        let registered = replacement.len();
+        registry.replace_validated(replacement);
+        Ok(registered)
+    }
+
+    pub(crate) async fn build_replacement(
+        &self,
+        records: Vec<PluginStateRecord>,
+    ) -> Result<ValidatedLocalCapabilityReplacement, String> {
         let mut projects = BTreeMap::<String, ProjectCapabilities>::new();
         for record in records {
             let verified = self.verify_record(record).await?;
@@ -194,12 +205,10 @@ impl StoredLocalCapabilityLoader {
         for (_, project) in projects {
             bundles.push(project.build(self.executor_factory.as_ref()).await?);
         }
-        let registered = bundles.len();
-        registry.replace_all(bundles)?;
-        Ok(registered)
+        RegisteredLocalCapabilityRuntime::validate_replacement(bundles)
     }
 
-    async fn load_records(&self) -> Result<Vec<PluginStateRecord>, String> {
+    pub(crate) async fn load_records(&self) -> Result<Vec<PluginStateRecord>, String> {
         let mut records = Vec::new();
         let mut cursor = None;
         loop {

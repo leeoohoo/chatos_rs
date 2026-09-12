@@ -4,6 +4,7 @@
 mod assembly;
 mod attachment_grants;
 mod bootstrap;
+mod capability_ipc;
 mod capability_loader;
 mod capability_runtime;
 mod capability_validation;
@@ -31,6 +32,7 @@ mod worker;
 pub use assembly::*;
 pub use attachment_grants::*;
 pub use bootstrap::*;
+pub use capability_ipc::*;
 pub use capability_loader::*;
 pub use capability_runtime::*;
 pub use context_runtime::*;

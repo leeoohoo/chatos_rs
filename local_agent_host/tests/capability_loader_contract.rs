@@ -9,17 +9,20 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chatos_agent_profiles::{TaskRunnerExecutionTool, TaskRunnerProjectSnapshot};
 use chatos_client_storage::{
-    ClientStorage, PluginStateRecord, ProjectRecord, PutRecord, RecordMetadata, RecordScope,
-    SecretReference, SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey,
-    StorageResult, StorageTransaction, TransactionRepositories,
+    ClientStorage, ListQuery, PluginStateRecord, ProjectRecord, PutRecord, RecordMetadata,
+    RecordPage, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
+    StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_host::{
-    LocalCapabilityExecutorFactory, LocalCapabilityPlatform, LocalTaskCapabilityRequest,
-    LocalTaskCapabilityResolver, RegisteredLocalCapabilityRuntime, ResolvedLocalMcpServer,
-    StoredLocalCapabilityLoader, StoredLocalCapabilityRecord, StoredLocalMcpComponent,
-    STORED_LOCAL_CAPABILITY_SCHEMA_VERSION,
+    LocalAgentIpcMutationExecutor, LocalCapabilityExecutorFactory, LocalCapabilityIpcExecutor,
+    LocalCapabilityPlatform, LocalTaskCapabilityRequest, LocalTaskCapabilityResolver,
+    RegisteredLocalCapabilityRuntime, ResolvedLocalMcpServer, StoredLocalCapabilityLoader,
+    StoredLocalCapabilityRecord, StoredLocalMcpComponent, STORED_LOCAL_CAPABILITY_SCHEMA_VERSION,
 };
-use chatos_local_agent_protocol::ToolEffect;
+use chatos_local_agent_protocol::{
+    InstallProjectPluginCapabilityCommand, LocalAgentCommand, LocalAgentIpcError,
+    LocalAgentIpcResponse, RemoveProjectPluginCapabilityCommand, ToolEffect,
+};
 use chatos_mcp_runtime::{
     BuiltinToolProvider, McpBuiltinServer, McpExecutor, ToolCallContext, ToolStreamChunkCallback,
 };
@@ -195,13 +198,56 @@ impl StorageTransaction for PutFixtures {
                 expected_revision: None,
             })
             .await?;
-        repositories
-            .plugins()
-            .put(PutRecord {
-                record: self.plugin.take().unwrap(),
-                expected_revision: None,
-            })
-            .await?;
+        if let Some(plugin) = self.plugin.take() {
+            repositories
+                .plugins()
+                .put(PutRecord {
+                    record: plugin,
+                    expected_revision: None,
+                })
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+struct RejectTail;
+
+#[async_trait]
+impl LocalAgentIpcMutationExecutor for RejectTail {
+    async fn execute_mutation(
+        &self,
+        _request_id: &str,
+        _command: LocalAgentCommand,
+    ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError> {
+        Err(LocalAgentIpcError {
+            code: "unexpected_test_command".to_string(),
+            message: "unexpected test command".to_string(),
+            retryable: false,
+        })
+    }
+}
+
+struct ListStoredPlugins {
+    page: Option<RecordPage<PluginStateRecord>>,
+}
+
+#[async_trait]
+impl StorageTransaction for ListStoredPlugins {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.page = Some(
+            repositories
+                .plugins()
+                .list(&ListQuery {
+                    scope: scope(),
+                    cursor: None,
+                    limit: ListQuery::MAX_LIMIT,
+                })
+                .await?,
+        );
         Ok(())
     }
 }
@@ -325,6 +371,152 @@ async fn rejects_tools_list_schema_drift_after_local_mcp_initialization() {
     assert!(error.contains("schema differs"), "{error}");
 }
 
+#[tokio::test]
+async fn ipc_installs_idempotently_then_removes_one_verified_project_capability() {
+    let directory = tempfile::tempdir().unwrap();
+    let storage = storage(directory.path()).await;
+    put_project_only(storage.as_ref()).await;
+    let registry = Arc::new(RegisteredLocalCapabilityRuntime::new());
+    let loader = Arc::new(
+        StoredLocalCapabilityLoader::with_executor_factory(
+            storage.clone(),
+            scope(),
+            "device-1",
+            Arc::new(Platform::new()),
+            Arc::new(Factory::exact()),
+        )
+        .unwrap(),
+    );
+    loader.load(registry.as_ref()).await.unwrap();
+    let executor = LocalCapabilityIpcExecutor::new(
+        storage.clone(),
+        scope(),
+        "device-1",
+        loader,
+        registry.clone(),
+        Arc::new(RejectTail),
+    );
+    let capability = serde_json::to_value(signed_capability()).unwrap();
+    let install = || {
+        LocalAgentCommand::InstallProjectPluginCapability(InstallProjectPluginCapabilityCommand {
+            project_id: "project-1".to_string(),
+            plugin_id: "plugin-demo".to_string(),
+            release_id: "release-1".to_string(),
+            capability_record: capability.clone(),
+        })
+    };
+
+    assert_eq!(
+        executor
+            .execute_mutation("install-1", install())
+            .await
+            .unwrap(),
+        LocalAgentIpcResponse::Success
+    );
+    let first = stored_plugins(storage.as_ref()).await;
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].metadata.revision, 1);
+    assert!(registry
+        .resolve_capabilities(&capability_request(), CancellationToken::new())
+        .await
+        .is_ok());
+
+    assert_eq!(
+        executor
+            .execute_mutation("install-1", install())
+            .await
+            .unwrap(),
+        LocalAgentIpcResponse::Success
+    );
+    let retried = stored_plugins(storage.as_ref()).await;
+    assert_eq!(retried.len(), 1);
+    assert_eq!(retried[0].metadata.revision, 1);
+
+    let mismatch = executor
+        .execute_mutation(
+            "remove-stale",
+            LocalAgentCommand::RemoveProjectPluginCapability(
+                RemoveProjectPluginCapabilityCommand {
+                    project_id: "project-1".to_string(),
+                    plugin_id: "plugin-demo".to_string(),
+                    release_id: "release-stale".to_string(),
+                },
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(mismatch.code, "plugin_release_mismatch");
+    assert_eq!(stored_plugins(storage.as_ref()).await.len(), 1);
+
+    assert_eq!(
+        executor
+            .execute_mutation(
+                "remove-1",
+                LocalAgentCommand::RemoveProjectPluginCapability(
+                    RemoveProjectPluginCapabilityCommand {
+                        project_id: "project-1".to_string(),
+                        plugin_id: "plugin-demo".to_string(),
+                        release_id: "release-1".to_string(),
+                    },
+                ),
+            )
+            .await
+            .unwrap(),
+        LocalAgentIpcResponse::Success
+    );
+    assert!(stored_plugins(storage.as_ref()).await.is_empty());
+    assert!(registry
+        .resolve_capabilities(&capability_request(), CancellationToken::new())
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn ipc_rejects_invalid_capability_before_storage_or_registry_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let storage = storage(directory.path()).await;
+    put_project_only(storage.as_ref()).await;
+    let registry = Arc::new(RegisteredLocalCapabilityRuntime::new());
+    let loader = Arc::new(
+        StoredLocalCapabilityLoader::with_executor_factory(
+            storage.clone(),
+            scope(),
+            "device-1",
+            Arc::new(Platform::new()),
+            Arc::new(Factory::exact()),
+        )
+        .unwrap(),
+    );
+    let executor = LocalCapabilityIpcExecutor::new(
+        storage.clone(),
+        scope(),
+        "device-1",
+        loader,
+        registry.clone(),
+        Arc::new(RejectTail),
+    );
+    let mut capability = signed_capability();
+    capability.install_source.release.signature.signature_base64 = STANDARD.encode([0_u8; 64]);
+
+    let error = executor
+        .execute_mutation(
+            "install-invalid",
+            LocalAgentCommand::InstallProjectPluginCapability(
+                InstallProjectPluginCapabilityCommand {
+                    project_id: "project-1".to_string(),
+                    plugin_id: "plugin-demo".to_string(),
+                    release_id: "release-1".to_string(),
+                    capability_record: serde_json::to_value(capability).unwrap(),
+                },
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "plugin_capability_rejected");
+    assert!(stored_plugins(storage.as_ref()).await.is_empty());
+    assert!(registry.is_empty().unwrap());
+}
+
 async fn storage(root: &std::path::Path) -> Arc<dyn ClientStorage> {
     Arc::new(
         SqliteClientStorage::open(
@@ -337,6 +529,22 @@ async fn storage(root: &std::path::Path) -> Arc<dyn ClientStorage> {
         .await
         .unwrap(),
     )
+}
+
+async fn put_project_only(storage: &dyn ClientStorage) {
+    storage
+        .transaction(&mut PutFixtures {
+            project: Some(project_record()),
+            plugin: None,
+        })
+        .await
+        .unwrap();
+}
+
+async fn stored_plugins(storage: &dyn ClientStorage) -> Vec<PluginStateRecord> {
+    let mut operation = ListStoredPlugins { page: None };
+    storage.transaction(&mut operation).await.unwrap();
+    operation.page.unwrap().records
 }
 
 async fn put_record(storage: &dyn ClientStorage, record: PluginStateRecord) {

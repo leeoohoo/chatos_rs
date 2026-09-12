@@ -2,14 +2,15 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, LocalAgentCommand,
-    LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcRequest,
-    LocalAgentRun, LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelGatewayParameters,
+    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot,
+    InstallProjectPluginCapabilityCommand, LocalAgentCommand, LocalAgentEvent,
+    LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcRequest, LocalAgentRun,
+    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelGatewayParameters,
     ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
     ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
     ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ProtocolError,
-    ProviderContextItem, ToolEffect, ToolExecution, ToolExecutionStatus,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    ProviderContextItem, RemoveProjectPluginCapabilityCommand, ToolEffect, ToolExecution,
+    ToolExecutionStatus, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chrono::Utc;
 
@@ -151,6 +152,54 @@ fn gateway_request_contains_no_provider_secret_or_endpoint() {
     assert!(matches!(
         stale.validate_against(&descriptor),
         Err(ProtocolError::InvalidState { .. })
+    ));
+}
+
+#[test]
+fn plugin_capability_mutations_are_strict_bounded_project_commands() {
+    let install = LocalAgentIpcRequest {
+        protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+        request_id: "install-1".to_string(),
+        owner_user_id: "user-1".to_string(),
+        command: LocalAgentCommand::InstallProjectPluginCapability(
+            InstallProjectPluginCapabilityCommand {
+                project_id: "project-1".to_string(),
+                plugin_id: "plugin-1".to_string(),
+                release_id: "release-1".to_string(),
+                capability_record: serde_json::json!({"schema_version": 1}),
+            },
+        ),
+    };
+    install.validate().unwrap();
+    let encoded = serde_json::to_value(&install).unwrap();
+    assert_eq!(
+        encoded["command"]["type"],
+        "install_project_plugin_capability"
+    );
+
+    let remove = LocalAgentIpcRequest {
+        protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+        request_id: "remove-1".to_string(),
+        owner_user_id: "user-1".to_string(),
+        command: LocalAgentCommand::RemoveProjectPluginCapability(
+            RemoveProjectPluginCapabilityCommand {
+                project_id: "project-1".to_string(),
+                plugin_id: "plugin-1".to_string(),
+                release_id: "release-1".to_string(),
+            },
+        ),
+    };
+    remove.validate().unwrap();
+
+    let mut invalid = install;
+    if let LocalAgentCommand::InstallProjectPluginCapability(command) = &mut invalid.command {
+        command.capability_record = serde_json::Value::Null;
+    }
+    assert!(matches!(
+        invalid.validate(),
+        Err(ProtocolError::InvalidJson {
+            field: "capability_record"
+        })
     ));
 }
 

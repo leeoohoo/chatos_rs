@@ -23,7 +23,7 @@ public sealed class LocalAgentIPCClientTests
         Assert.Equal("operation-1", operationId);
         using var request = JsonDocument.Parse(transport.Request!);
         var root = request.RootElement;
-        Assert.Equal(5u, root.GetProperty("protocol_version").GetUInt32());
+        Assert.Equal(6u, root.GetProperty("protocol_version").GetUInt32());
         Assert.Equal("user-1", root.GetProperty("owner_user_id").GetString());
         var command = root.GetProperty("command");
         Assert.Equal("answer_user_question", command.GetProperty("type").GetString());
@@ -58,6 +58,30 @@ public sealed class LocalAgentIPCClientTests
         Assert.Equal("postgres", profile.GetProperty("backend").GetString());
         Assert.Equal("secret-postgres-1", profile.GetProperty("connection_secret_reference").GetString());
         Assert.False(profile.TryGetProperty("database_reference", out _));
+    }
+
+    [Fact]
+    public async Task EncodesOneSelectedPluginCapabilityInsteadOfAnInstallerStateEnvelope()
+    {
+        var transport = new RecordingTransport(request => Reply(request, """
+            {"type":"success"}
+            """));
+        var client = new WindowsLocalAgentIPCClient("user-1", transport);
+        using var capability = JsonDocument.Parse("""{"schema_version":1,"project_id":"project-1"}""");
+
+        await client.SendAsync(LocalAgentCommand.InstallProjectPluginCapability(
+            "project-1",
+            "plugin-1",
+            "release-1",
+            capability.RootElement.Clone()));
+
+        using var request = JsonDocument.Parse(transport.Request!);
+        var command = request.RootElement.GetProperty("command");
+        Assert.Equal("install_project_plugin_capability", command.GetProperty("type").GetString());
+        var payload = command.GetProperty("payload");
+        Assert.Equal("project-1", payload.GetProperty("project_id").GetString());
+        Assert.Equal("plugin-1", payload.GetProperty("plugin_id").GetString());
+        Assert.Equal(1, payload.GetProperty("capability_record").GetProperty("schema_version").GetInt32());
     }
 
     [Fact]
@@ -97,7 +121,7 @@ public sealed class LocalAgentIPCClientTests
     {
         var wrongRequest = new RecordingTransport(_ => JsonSerializer.SerializeToUtf8Bytes(new
         {
-            protocol_version = 5,
+            protocol_version = 6,
             request_id = "another-request",
             response = new { type = "success" },
         }));
@@ -185,7 +209,7 @@ public sealed class LocalAgentIPCClientTests
         bool trusted) =>
         Assert.Equal(trusted, WindowsLocalAgentServerIdentityVerifier.IsExpectedUserSid(actual, expected));
 
-    private static byte[] Reply(byte[] request, string responseJson, uint protocolVersion = 5)
+    private static byte[] Reply(byte[] request, string responseJson, uint protocolVersion = 6)
     {
         using var requestDocument = JsonDocument.Parse(request);
         var requestId = requestDocument.RootElement.GetProperty("request_id").GetString();

@@ -17,6 +17,7 @@ chatos_local_agent_runtime = { path = "../crates/chatos_local_agent_runtime" }
 chatos_mcp_runtime = { path = "../crates/chatos_mcp_runtime" }
 chatos_plugin_management_sdk = { path = "../crates/chatos_plugin_management_sdk" }
 memory_engine_sdk = { path = "../crates/memory_engine_sdk" }
+parking_lot = "0.12"
 chrono = "0.4"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
