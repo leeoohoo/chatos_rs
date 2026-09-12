@@ -5,17 +5,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chatos_client_http::{
+    classify_http_request_error, consume_sse_json_stream_with_progress_timeout,
+    read_response_json_limited, read_response_preview_text_limited_or_message,
+    ERROR_BODY_PREVIEW_LIMIT_BYTES,
+};
 use chatos_local_agent_protocol::{
     ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent,
     ModelGatewayTokenCount, ModelRuntimeDescriptor, MAX_MODEL_GATEWAY_JSON_BYTES,
     MAX_MODEL_GATEWAY_STREAM_BYTES,
-};
-use chatos_service_runtime::{
-    classify_http_request_error, consume_sse_json_stream_with_progress_timeout,
-    http_body::{
-        read_response_json_limited, read_response_preview_text_limited_or_message,
-        ERROR_BODY_PREVIEW_LIMIT_BYTES,
-    },
 };
 use futures_util::StreamExt;
 use reqwest::{header, Client, Url};

@@ -889,6 +889,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_client_http"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "chatos_client_storage"
 version = "0.1.0"
 dependencies = [
@@ -1006,9 +1019,9 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "chatos_client_http",
  "chatos_client_storage",
  "chatos_local_agent_protocol",
- "chatos_service_runtime",
  "chrono",
  "futures-util",
  "memory_engine_sdk",

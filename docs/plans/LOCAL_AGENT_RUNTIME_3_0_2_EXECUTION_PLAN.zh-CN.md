@@ -133,6 +133,7 @@
 - 2026-09-12：Rust Task schema v2 与协议 v12 已实现 `initial_run_id + current_run_id + run_ids`，Retry 原子创建新 Run、保留历史、冻结复用项目/模型/Prompt/Capability 身份，并通过 Runtime/Host 全量测试。
 - 2026-09-12：Rust、Swift、C# 已统一到协议 v12；共享 Retry、Task Snapshot、Task Graph 与 Run Detail 黄金夹具由 Rust、Swift 和 Windows 测试共同读取。macOS 当前 Run 投影已支持 Retry，并拒绝历史 Run 迟到事件污染当前状态。
 - 2026-09-13：公共 Rust Host 已成为 Task Graph 与 Run Detail 的唯一投影实现；Run Detail 合并 Agent Event、Message 与 Tool Execution，并使用来源前缀生成跨表唯一事件 ID。macOS 的 Task Workspace、Reply Inspector、Pet、Retry 与 Cancel 已全部切到本地 Service；远程 `ChatOSMessageTaskGraphService`、DTO 和测试已删除。
+- 2026-09-13：从 `clients/shared` 切断对服务端 `chatos_service_runtime` 的直接依赖；新增客户端公共 `chatos_client_http`，只提供有界 HTTP 响应、错误分类和带进度超时的 SSE 解析，不携带服务发现、内部服务令牌或服务端生命周期。新增边界测试锁定剩余 4 条旧顶层 crate 依赖，后续清单只能缩减、不得扩张。
 - 验证记录：`cargo test -p chatos_local_agent_protocol -p chatos_local_agent_host`、`swift test --skip NativePluginRuntimeTests`、客户端存储边界审计、Cargo metadata 与静态远程路径搜索全部通过。macOS 全量回归期间发现并修复终端退出状态早于尾部 stdout 落库的竞态，定向连续执行 10 次及全量回归均通过。当前 macOS 主机未安装 .NET SDK，Windows v12 代码和共享夹具测试尚未在 Windows/.NET 环境执行，不能记为通过。
 - 当前在制：阶段 2，完成 Main Chat 与 Task 的本地结果闭环。
 - 下一切片：以本地稳定 ID 关联来源 turn、Task 与全部 Run，并整体删除 `MessageTaskLookup`、远程任务回调解析和服务端 Agent 状态订阅语义。

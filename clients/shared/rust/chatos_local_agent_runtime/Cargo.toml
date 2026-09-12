@@ -9,8 +9,8 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1"
 chatos_client_storage = { path = "../chatos_client_storage" }
+chatos_client_http = { path = "../chatos_client_http" }
 chatos_local_agent_protocol = { path = "../chatos_local_agent_protocol" }
-chatos_service_runtime = { path = "../../../../crates/chatos_service_runtime" }
 chrono = "0.4"
 futures-util = "0.3"
 memory_engine_sdk = { path = "../../../../crates/memory_engine_sdk" }
