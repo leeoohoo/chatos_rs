@@ -5,7 +5,20 @@ using Windows.Security.Credentials;
 
 namespace ChatOS.Connector.LocalAgent;
 
-public sealed class WindowsLocalAgentCredentialStore
+internal interface IWindowsLocalAgentCredentialStore
+{
+    ValueTask<string?> LoadCredentialAsync(
+        string accountId,
+        string reference,
+        CancellationToken cancellationToken = default);
+
+    Task<byte[]?> LoadDeviceKeyAsync(
+        string accountId,
+        string reference,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class WindowsLocalAgentCredentialStore : IWindowsLocalAgentCredentialStore
 {
     public const string CredentialResource = "ChatOS.Windows.LocalAgent.Credentials.v1";
     private const int MaximumSecretBytes = 64 * 1024;
@@ -207,7 +220,7 @@ public sealed class WindowsLocalAgentCredentialStore
     {
         ValidateIdentity(accountId, nameof(accountId));
         ValidateIdentity(reference, nameof(reference));
-        return $"{accountId}/{reference}";
+        return $"v1:{Encoding.UTF8.GetByteCount(accountId)}:{accountId}{reference}";
     }
 
     private static void ValidateIdentity(string value, string parameter)
