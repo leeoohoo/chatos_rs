@@ -1267,7 +1267,7 @@ impl StorageTransaction for LoadTaskRecord {
     }
 }
 
-fn stable_host_id(prefix: &str, values: &[&str]) -> String {
+pub(crate) fn stable_host_id(prefix: &str, values: &[&str]) -> String {
     let mut hasher = Sha256::new();
     for value in values {
         hasher.update((value.len() as u64).to_be_bytes());

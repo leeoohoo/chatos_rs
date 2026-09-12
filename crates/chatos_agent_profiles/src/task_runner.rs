@@ -27,6 +27,27 @@ pub struct TaskRunnerProjectSnapshot {
     pub authority_snapshot: Value,
 }
 
+impl TaskRunnerProjectSnapshot {
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, value) in [
+            ("project_id", self.project_id.as_str()),
+            ("project snapshot revision", self.snapshot_revision.as_str()),
+            (
+                "working directory reference",
+                self.working_directory_ref.as_str(),
+            ),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("{field} must not be empty"));
+            }
+        }
+        if !self.authority_snapshot.is_object() {
+            return Err("project authority snapshot must be an object".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRunnerPromptSnapshot {
@@ -34,6 +55,24 @@ pub struct TaskRunnerPromptSnapshot {
     pub base_system_prompt: String,
     pub task_prompt: String,
     pub skill_snapshot: Value,
+}
+
+impl TaskRunnerPromptSnapshot {
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, value) in [
+            ("prompt revision", self.prompt_revision.as_str()),
+            ("base system prompt", self.base_system_prompt.as_str()),
+            ("task prompt", self.task_prompt.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("{field} must not be empty"));
+            }
+        }
+        if !self.skill_snapshot.is_object() {
+            return Err("skill snapshot must be an object".to_string());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -50,6 +89,18 @@ pub struct TaskRunnerCapabilitySnapshot {
     pub snapshot_ref: String,
     pub plugin_release_snapshot: Value,
     pub execution_tools: Vec<TaskRunnerExecutionTool>,
+}
+
+impl TaskRunnerCapabilitySnapshot {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.snapshot_ref.trim().is_empty() {
+            return Err("capability snapshot reference must not be empty".to_string());
+        }
+        if !self.plugin_release_snapshot.is_object() {
+            return Err("plugin release snapshot must be an object".to_string());
+        }
+        validate_execution_tools(&self.execution_tools).map(|_| ())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +198,9 @@ fn validate_task_runner_context(
     run: &LocalAgentRun,
     context: &TaskRunnerStepContext,
 ) -> Result<(), String> {
+    context.project_snapshot.validate()?;
+    context.prompt_snapshot.validate()?;
+    context.capability_snapshot.validate()?;
     let project_id = run
         .project_id
         .as_deref()
@@ -154,25 +208,8 @@ fn validate_task_runner_context(
     if context.project_snapshot.project_id != project_id {
         return Err("project snapshot does not match the frozen run project_id".to_string());
     }
-    for (field, value) in [
-        (
-            "project snapshot revision",
-            context.project_snapshot.snapshot_revision.as_str(),
-        ),
-        (
-            "working directory reference",
-            context.project_snapshot.working_directory_ref.as_str(),
-        ),
-        ("task objective", context.objective.as_str()),
-        (
-            "base system prompt",
-            context.prompt_snapshot.base_system_prompt.as_str(),
-        ),
-        ("task prompt", context.prompt_snapshot.task_prompt.as_str()),
-    ] {
-        if value.trim().is_empty() {
-            return Err(format!("{field} must not be empty"));
-        }
+    if context.objective.trim().is_empty() {
+        return Err("task objective must not be empty".to_string());
     }
     if context.prompt_snapshot.prompt_revision != run.prompt_revision {
         return Err("prompt snapshot does not match the frozen run revision".to_string());

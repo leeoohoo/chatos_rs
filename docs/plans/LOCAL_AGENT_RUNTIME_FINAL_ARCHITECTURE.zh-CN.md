@@ -444,6 +444,8 @@ Agent Runtime 至少使用以下逻辑表；SQLite 与 PostgreSQL 使用同一�
 
 TaskRunner 是一个本地 Profile 和本地域模型，不再代表独立服务。UI 可以继续使用“任务”和“Run”概念，但所有数据和执行状态来自 Local Agent Host。
 
+Task 创建必须经过本地可信规划器：它从当前 Client Storage 中按 `owner_user_id + project_id` 读取项目记录，从固定设置记录读取 Task Runner Prompt，通过本地 Capability Resolver 选择已安装且已授权的 Plugin Release/工具，然后生成上述完整冻结快照。模型只能提交 objective 与 acceptance criteria，不能提交模型配置、工作区引用、项目快照、Prompt、Plugin 或工具 Schema。工作目录在模型上下文中只能出现不透明 grant ID，本地 authority payload 不发送给 Model Gateway。
+
 ## 9. 服务端模型配置与无状态 Model Gateway
 
 ### 9.1 模型配置必须保留在服务端
