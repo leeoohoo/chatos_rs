@@ -36,13 +36,10 @@ public sealed class ConversationTurnItemViewModel
                     reply.TaskCallback is null
                         ? null
                         : new MessageTaskGraphRequest(
-                            TaskGraphMessageId,
+                            turn.MessageTaskLookup?.ConversationId ?? turn.ConversationId,
+                            turn.MessageTaskLookup?.TurnId ?? turn.Id,
                             reply.TaskCallback.TaskId,
-                            reply.TaskCallback.RunId,
-                            turn.MessageTaskLookup ?? new MessageTaskLookup(
-                                turn.ConversationId,
-                                turn.Id,
-                                turn.UserMessage.Id))))
+                            reply.TaskCallback.RunId)))
                 : turn.FinalAssistantMessage is { } final
                     ? new[]
                     {
@@ -102,10 +99,10 @@ public sealed record ConversationReplyItemViewModel(
 }
 
 public sealed record MessageTaskGraphRequest(
-    string MessageId,
+    string SourceThreadId,
+    string SourceTurnId,
     string TaskId,
-    string? RunId,
-    MessageTaskLookup Lookup);
+    string? RunId);
 
 public sealed partial class AskUserFieldInputViewModel : ObservableObject
 {

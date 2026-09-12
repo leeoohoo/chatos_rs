@@ -145,6 +145,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWindowsLocalAgentStartupRecovery, WindowsLocalAgentStartupRecovery>();
         services.AddSingleton<IWindowsLocalAgentEventHub, WindowsLocalAgentEventHub>();
         services.AddSingleton<IWindowsLocalAgentClientRuntime, WindowsLocalAgentClientRuntime>();
+        services.AddSingleton<ILocalAgentTaskService, WindowsLocalAgentTaskService>();
+        services.AddSingleton<ILocalAgentTaskService, WindowsLocalAgentTaskService>();
         services.AddSingleton<IControlledNetworkGuardClient>(provider =>
             new ControlledNetworkGuardClient(provider.GetRequiredService<INetworkGuardTransport>()));
         services.AddSingleton(provider => new NetworkGuardLeaseCoordinator(

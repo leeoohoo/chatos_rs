@@ -14,7 +14,7 @@
 - Rust Local Agent 协议、Durable Runtime、Profile、Model Gateway、Provider Context、Memory Sync 和本地 Plugin/MCP 执行主体已经存在。
 - SQLite/PostgreSQL 公共 Storage Provider、契约测试、连接配置、导入导出主体已经存在，但尚未覆盖全部客户端业务数据。
 - macOS 已接入本地 Host、IPC、Main Chat/Task 创建、事件恢复、Ask User、工具授权、暂停、继续和取消。
-- Windows 已有 Host 进程、Named Pipe IPC 和 DPAPI 凭据基础，但尚未达到 macOS 业务接入和原生 UI 等价。
+- Windows 已完成 Host、账户生命周期、原子恢复、账户级事件泵和 Task Presentation 本地化，但 Main Chat 创建、Ask User、授权、人工复核及 Pet 的剩余远程状态源尚未达到 macOS 等价。
 - macOS Task Graph、Run Detail、取消和重试已切换到本地 Host，远程 Service 与 DTO 已删除。
 - Task 已完成真正的多 Run/Retry 权威模型，并保留全部历史 Run。
 - 旧 Swift `ChatOSAgentRuntime`、服务端 Cloud Agent、Task Runner Service 及其队列和状态基础设施仍存在于生产代码。
@@ -162,6 +162,8 @@
 - 2026-09-13：阶段 4 第三个切片建立 Windows 唯一 Client Runtime 事务边界：登录后的生产顺序固定为 Host 启动、同一 IPC Client/Host lifetime 完整分页恢复、账户级 Event Hub 启动，任一步失败都会停止事件泵、清空投影并退出 Host Session。恢复层同时读取全部 Task、Run、每个 Run 的完整 Run Detail、Main Chat 持久消息绑定和已确认 UI cursor，严格验证 owner、Profile、Task 全历史 Run、冻结 `project_id`、分页推进、事件唯一性及 Main Chat 消息身份后才一次性发布不可变快照。
 - Windows Event Hub 独立于聊天页面生命周期；每轮 drain 都从 Account Session 解析 Supervisor 当前 Named Pipe endpoint，页面校验和全部身份解析成功后才原子应用并确认 cursor。Host 在恢复中换代时整个恢复重做，不拼接两代快照；同端点持续不可用有界失败，协议/数据错误立即 fail-closed。每个 Run 的 `snapshot_event_sequence` 阻止权威恢复快照被旧 UI 事件覆盖，确认失败后的同页重放在原生投影内幂等。
 - Windows 恢复与事件泵验证记录：新增 6 项定向用例，覆盖 Main Chat/Task/Run/cursor 原子恢复、冻结项目拒绝、当前 Client 换端点、应用后确认、无效事件不确认、恢复换端点整轮重试及非法快照整体回滚；`ChatOS.Connector.Tests` 全量 337 项通过。
+- 2026-09-13：Windows Task Presentation 已直接消费唯一 Local Agent Task/Run/Graph 类型，不再映射回远程 `MessageTaskGraph` 领域模型。任务图只按冻结的 `source_thread_id + source_turn_id` 查询；Task Detail 可选择当前及全部历史 Run；Retry 只允许当前终态 Run，并在返回后逐项验证账户、`project_id`、模型配置及修订、Prompt、Capability、Context Strategy 和 Model Runtime Snapshot 均未改变，同时验证新 Run 成为当前 Run且旧 Run 仍在历史中；Cancel 只发送当前 `run_id + expected_version`。账户投影清空时任务面板立即关闭并清屏，Pet 的 Task 取消入口也已切换到同一精确本地 Run Control。
+- 本切片同时删除 Windows `IMessageTaskGraphService`、`MessageTaskGraphService`、全部远程 Task Graph DTO/领域模型、API 注入及对应 API 测试，不保留兼容适配器。新增 Connector 契约测试 4 项与 Presentation 行为测试 4 项；`ChatOS.Connector.Tests` 全量 341 项、`ChatOS.Presentation.Tests` 全量 48 项、`ChatOS.Api.Tests` 全量 41 项、`ChatOS.Core.Tests` 全量 19 项通过。macOS 上 Desktop 构建进入 WinUI XAML Compiler 后因 Windows `XamlCompiler.exe` 无法执行而停止，WinUI XAML 和原生行为仍必须由 Windows runner 验收。
 - 当前在制：阶段 4，完成 Windows 与 macOS 等价接入。
-- 下一切片：把 Windows Conversation 与 Task Presentation 改为消费唯一 Local Agent Projection，接入本地创建、Run Control、Ask User 与工具授权；每完成一个 UI 闭环立即删除对应的远程 History、Realtime 或 Message Task Graph 生产路径，不保留双轨。
+- 下一切片：把 Windows Main Chat 的创建、恢复和结果回填改为消费唯一 Local Agent Projection，并在同一切片删除对应远程 History/Command/Realtime 路径；随后依次完成 Ask User、工具授权、人工复核和 Pet 本地投影，不保留双轨。
 - 完成状态：阶段 1、阶段 2、阶段 3 已达到完成门槛；阶段 4—8 尚未达到完整门槛。

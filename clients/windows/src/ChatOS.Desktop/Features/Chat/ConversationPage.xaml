@@ -473,13 +473,16 @@
                         <ScrollViewer Grid.Column="2" Padding="16" VerticalScrollBarVisibility="Auto">
                             <StackPanel Spacing="12">
                                 <StackPanel Spacing="3">
-                                    <TextBlock Text="{x:Bind TaskGraph.SelectedTask.Title, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                                    <TextBlock Text="{x:Bind TaskGraph.SelectedTask.Objective, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSPageTitleTextStyle}" />
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <TextBlock Text="{x:Bind TaskGraph.SelectedTask.Status, Mode=OneWay}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                        <TextBlock Text="{x:Bind TaskGraph.RunDetail.Run.Id, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Text="{x:Bind TaskGraph.RunDetail.Run.Run.RunId, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                     </StackPanel>
-                                    <TextBlock Text="{x:Bind TaskGraph.SelectedTask.Description, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                    <TextBlock Text="{x:Bind TaskGraph.SelectedTask.Objective, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                    <ComboBox
+                                        DisplayMemberPath="DisplayName"
+                                        ItemsSource="{x:Bind TaskGraph.Runs}"
+                                        SelectedItem="{x:Bind TaskGraph.SelectedRun, Mode=OneWay}"
+                                        SelectionChanged="OnTaskRunSelectionChanged" />
                                 </StackPanel>
 
                                 <Border Style="{StaticResource ChatOSCardStyle}">
@@ -495,7 +498,7 @@
                                     <TextBlock Text="{x:Bind Localization.ExecutionProcess, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                     <ItemsControl ItemsSource="{x:Bind TaskGraph.RunEvents}">
                                         <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="core:MessageTaskRunEvent">
+                                            <DataTemplate x:DataType="core:LocalAgentRunTimelineEvent">
                                                 <Border Margin="0,2" Padding="9" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="7">
                                                     <StackPanel Spacing="2">
                                                         <TextBlock Text="{x:Bind EventType}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
@@ -515,7 +518,6 @@
                                 <Border Style="{StaticResource ChatOSCardStyle}">
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="{x:Bind Localization.TaskActions, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                        <TextBox PlaceholderText="{x:Bind Localization.OptionalCancelReason, Mode=OneWay}" Text="{x:Bind TaskGraph.CancelReason, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         <Button Command="{x:Bind TaskGraph.CancelTaskCommand}" Content="{x:Bind Localization.CancelTask, Mode=OneWay}" IsEnabled="{x:Bind TaskGraph.CanCancel, Mode=OneWay}" />
                                         <TextBox PlaceholderText="{x:Bind Localization.OptionalRetryInstruction, Mode=OneWay}" Text="{x:Bind TaskGraph.RetryInstruction, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         <Button Command="{x:Bind TaskGraph.RetryRunCommand}" Content="{x:Bind Localization.RetryRun, Mode=OneWay}" IsEnabled="{x:Bind TaskGraph.CanRetry, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />

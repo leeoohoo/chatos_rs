@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 using ChatOS.Presentation.Chat;
@@ -9,181 +10,168 @@ namespace ChatOS.Presentation.Tests;
 public sealed class MessageTaskGraphViewModelTests
 {
     [Fact]
-    public async Task OpenSelectsRequestedTaskByStableIdAndLoadsItsRun()
+    public async Task OpensGraphBySourceIdentityAndAllowsCurrentAndHistoricalRuns()
     {
-        var service = new TaskGraphServiceDouble();
+        var service = new LocalTaskServiceDouble();
         using var viewModel = new MessageTaskGraphViewModel(service, new ImmediateUiDispatcher());
 
         await viewModel.OpenAsync(new MessageTaskGraphRequest(
-            "message-1",
-            "task-2",
-            "run-2",
-            new MessageTaskLookup("conversation-1", "turn-1", "message-1")));
+            "thread-1", "turn-1", "task-1", "run-2"));
 
-        Assert.True(viewModel.IsOpen);
-        Assert.Equal("task-2", viewModel.SelectedTask?.Id);
-        Assert.Equal("实现 Windows 客户端", viewModel.SelectedTask?.Title);
-        Assert.Equal("blocked", viewModel.SelectedTask?.Status);
-        Assert.Equal("run-2", viewModel.RunDetail?.Run.Id);
-        Assert.Equal("task-2", viewModel.RunDetail?.Run.TaskId);
+        Assert.Equal(("thread-1", "turn-1"), service.GraphSource);
+        Assert.Equal(["run-2", "run-1"], viewModel.Runs.Select(value => value.RunId));
+        Assert.Equal("run-2", viewModel.RunDetail?.Run.Run.RunId);
+
+        await viewModel.SelectRunAsync(viewModel.Runs[1]);
+
+        Assert.Equal("run-1", viewModel.RunDetail?.Run.Run.RunId);
+        Assert.False(viewModel.CanCancel);
+        Assert.False(viewModel.CanRetry);
     }
 
     [Fact]
-    public async Task LoadMoreEventsAppendsByEventIdentityWithoutRepeatingOlderPage()
+    public async Task RetryCreatesNewCurrentRunAndPreservesProjectAndHistory()
     {
-        var service = new TaskGraphServiceDouble();
+        var service = new LocalTaskServiceDouble(currentStatus: LocalAgentRunStatus.Failed);
         using var viewModel = new MessageTaskGraphViewModel(service, new ImmediateUiDispatcher());
         await viewModel.OpenAsync(new MessageTaskGraphRequest(
-            "message-1",
-            "task-2",
-            "run-2",
-            new MessageTaskLookup("conversation-1", null, null)));
+            "thread-1", "turn-1", "task-1", "run-2"));
+        viewModel.RetryInstruction = "use the recovered compiler";
 
-        await viewModel.LoadMoreEventsCommand.ExecuteAsync(null);
+        await viewModel.RetryRunCommand.ExecuteAsync(null);
 
-        Assert.Equal(new[] { "event-1", "event-2" }, viewModel.RunEvents.Select(static value => value.Id));
-        Assert.False(viewModel.EventsHasMore);
-        Assert.Equal(2, viewModel.EventsTotal);
+        Assert.Equal(("task-1", "run-2", "use the recovered compiler"), service.RetryRequest);
+        Assert.Equal("project-1", viewModel.SelectedTask?.ProjectId);
+        Assert.Equal("run-3", viewModel.SelectedTask?.CurrentRunId);
+        Assert.Equal(["run-1", "run-2", "run-3"], viewModel.SelectedTask?.RunIds);
+        Assert.Equal("run-3", viewModel.RunDetail?.Run.Run.RunId);
     }
 
     [Fact]
-    public async Task CancelUsesSelectedTaskIdentityAndRefreshesAuthoritativeGraph()
+    public async Task CancelUsesExactCurrentRunAndVersion()
     {
-        var service = new TaskGraphServiceDouble();
+        var service = new LocalTaskServiceDouble();
         using var viewModel = new MessageTaskGraphViewModel(service, new ImmediateUiDispatcher());
         await viewModel.OpenAsync(new MessageTaskGraphRequest(
-            "message-1",
-            "task-2",
-            "run-2",
-            new MessageTaskLookup("conversation-1", null, null)));
-        viewModel.CancelReason = "用户取消";
+            "thread-1", "turn-1", "task-1", "run-2"));
 
         await viewModel.CancelTaskCommand.ExecuteAsync(null);
 
-        Assert.Equal(("message-1", "task-2", "用户取消"), service.LastCancellation);
-        Assert.True(service.GraphFetchCount >= 2);
+        Assert.Equal(("task-1", "run-2", (ulong)7), service.CancelRequest);
     }
 
-    private sealed class TaskGraphServiceDouble : IMessageTaskGraphService
+    [Fact]
+    public async Task AccountProjectionClearImmediatelyClosesAndDropsTaskData()
     {
-        public int GraphFetchCount { get; private set; }
+        var service = new LocalTaskServiceDouble();
+        using var viewModel = new MessageTaskGraphViewModel(service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync(new MessageTaskGraphRequest(
+            "thread-1", "turn-1", "task-1", "run-2"));
 
-        public (string MessageId, string TaskId, string? Reason)? LastCancellation { get; private set; }
+        service.ClearAccountProjection();
 
-        public Task<MessageTaskGraphSnapshot> FetchGraphAsync(
-            string messageId,
-            MessageTaskLookup? lookup,
-            CancellationToken cancellationToken = default)
+        Assert.False(viewModel.IsOpen);
+        Assert.Empty(viewModel.Nodes);
+        Assert.Empty(viewModel.Runs);
+        Assert.Null(viewModel.SelectedTask);
+        Assert.Null(viewModel.RunDetail);
+    }
+
+    private sealed class LocalTaskServiceDouble : ILocalAgentTaskService
+    {
+        private readonly DateTimeOffset _now = DateTimeOffset.Parse("2026-09-13T00:00:00Z");
+        private LocalAgentTaskSnapshot _task;
+        private readonly Dictionary<string, LocalAgentRunSnapshot> _runs;
+
+        public LocalTaskServiceDouble(LocalAgentRunStatus currentStatus = LocalAgentRunStatus.ModelRunning)
         {
-            GraphFetchCount++;
-            return Task.FromResult(new MessageTaskGraphSnapshot(
-                new[] { "task-2" },
-                new[]
-                {
-                    Node(MakeTask("task-1", "准备环境", "completed", "run-1"), 0),
-                    Node(MakeTask("task-2", "实现 Windows 客户端", "blocked", "run-2"), 1),
-                },
-                new[] { new MessageTaskGraphEdge("edge-1", "task-1", "task-2", "prerequisite") },
-                lookup?.ConversationId,
-                lookup?.TurnId,
-                lookup?.SourceUserMessageId));
+            _runs = new Dictionary<string, LocalAgentRunSnapshot>(StringComparer.Ordinal)
+            {
+                ["run-1"] = Run("run-1", LocalAgentRunStatus.Succeeded, 4),
+                ["run-2"] = Run("run-2", currentStatus, 7),
+            };
+            _task = TaskSnapshot("run-2", ["run-1", "run-2"]);
         }
 
-        public Task<MessageTask> FetchTaskAsync(
-            string messageId,
+        public event EventHandler? AccountProjectionCleared;
+        public (string ThreadId, string TurnId)? GraphSource { get; private set; }
+        public (string TaskId, string RunId, string? Instruction)? RetryRequest { get; private set; }
+        public (string TaskId, string RunId, ulong Version)? CancelRequest { get; private set; }
+
+        public void ClearAccountProjection() => AccountProjectionCleared?.Invoke(this, EventArgs.Empty);
+
+        public Task<LocalAgentTaskGraphSnapshot> GetGraphAsync(
+            string sourceThreadId,
+            string sourceTurnId,
+            CancellationToken cancellationToken = default)
+        {
+            GraphSource = (sourceThreadId, sourceTurnId);
+            var run = _runs[_task.CurrentRunId];
+            return Task.FromResult(new LocalAgentTaskGraphSnapshot(
+                sourceThreadId,
+                sourceTurnId,
+                [_task.TaskId],
+                [new LocalAgentTaskGraphNode(
+                    new LocalAgentTaskProjection(
+                        _task,
+                        new LocalAgentTaskRunSummary(run, null, null, null)),
+                    0,
+                    true)],
+                []));
+        }
+
+        public Task<LocalAgentTaskSnapshot> GetTaskAsync(
             string taskId,
-            MessageTaskLookup? lookup,
-            CancellationToken cancellationToken = default) => Task.FromResult(
-            taskId == "task-2"
-                ? MakeTask("task-2", "实现 Windows 客户端", "blocked", "run-2")
-                : MakeTask("task-1", "准备环境", "completed", "run-1"));
+            CancellationToken cancellationToken = default) => Task.FromResult(_task);
 
-        public Task<MessageTaskRunDetail> FetchRunAsync(
-            string messageId,
+        public Task<LocalAgentTaskRunDetail> GetRunDetailAsync(
+            string taskId,
             string runId,
-            MessageTaskLookup? lookup,
-            bool includeEvents = true,
-            int eventLimit = 40,
-            int eventOffset = 0,
+            uint eventLimit = 40,
+            uint eventOffset = 0,
             CancellationToken cancellationToken = default)
         {
-            var task = MakeTask("task-2", "实现 Windows 客户端", "blocked", runId);
-            var events = eventOffset == 0
-                ? new[] { new MessageTaskRunEvent("event-1", "thinking", "开始", null) }
-                : new[]
-                {
-                    new MessageTaskRunEvent("event-1", "thinking", "开始", null),
-                    new MessageTaskRunEvent("event-2", "tool", "完成", null),
-                };
-            return Task.FromResult(new MessageTaskRunDetail(
-                task,
-                new MessageTaskRun(runId, task.Id, "failed", null, null, null, null, null, "blocked"),
-                events,
-                2,
-                eventOffset == 0));
+            var run = _runs[runId];
+            return Task.FromResult(new LocalAgentTaskRunDetail(
+                _task,
+                new LocalAgentTaskRunSummary(run, $"result-{runId}", null, null),
+                [new LocalAgentRunTimelineEvent($"event-{runId}", "model", runId, _now)],
+                1,
+                false));
         }
 
-        public Task<MessageTaskRun> RetryRunAsync(
-            string messageId,
-            string runId,
-            MessageTaskLookup? lookup,
+        public Task<LocalAgentRunCreatedResponse> RetryCurrentRunAsync(
+            string taskId,
+            string expectedRunId,
             string? instruction,
-            CancellationToken cancellationToken = default) => Task.FromResult(
-            new MessageTaskRun("run-new", "task-2", "queued", null, null, null, null, null, null));
-
-        public Task CancelTaskAsync(
-            string messageId,
-            string taskId,
-            MessageTaskLookup? lookup,
-            string? reason,
             CancellationToken cancellationToken = default)
         {
-            LastCancellation = (messageId, taskId, reason);
+            RetryRequest = (taskId, expectedRunId, instruction);
+            var run = Run("run-3", LocalAgentRunStatus.Queued, 1);
+            _runs.Add(run.RunId, run);
+            _task = TaskSnapshot(run.RunId, ["run-1", "run-2", run.RunId]);
+            return Task.FromResult(new LocalAgentRunCreatedResponse("operation-3", run));
+        }
+
+        public Task CancelCurrentRunAsync(
+            string taskId,
+            string runId,
+            ulong expectedVersion,
+            CancellationToken cancellationToken = default)
+        {
+            CancelRequest = (taskId, runId, expectedVersion);
             return Task.CompletedTask;
         }
 
-        private static MessageTaskGraphNode Node(MessageTask task, int depth) => new(
-            task,
-            depth,
-            depth == 1,
-            true,
-            Array.Empty<MessageTask>());
+        private LocalAgentTaskSnapshot TaskSnapshot(string currentRunId, IReadOnlyList<string> runIds) => new(
+            "task-1", 1, "thread-1", "turn-1", "project-1", "run-1", currentRunId,
+            runIds, "Build Windows", ["Tests pass"], "running", "model-1", 3, _now, _now);
 
-        private static MessageTask MakeTask(string id, string title, string status, string runId) => new(
-            Id: id,
-            Title: title,
-            Description: null,
-            Objective: null,
-            Status: status,
-            Priority: null,
-            Tags: Array.Empty<string>(),
-            DefaultModelConfigId: null,
-            DefaultModelConfig: null,
-            CreatorUserId: null,
-            CreatorUsername: null,
-            CreatorDisplayName: null,
-            ResultSummary: null,
-            ProcessLog: null,
-            LastRunId: runId,
-            LastRunStatus: status,
-            LastRun: new MessageTaskLastRunSummary(runId, status, null, null, null, null, null, null),
-            ParentTaskId: null,
-            ParentTask: null,
-            SourceRunId: null,
-            SourceRun: null,
-            SourceConversationId: "conversation-1",
-            SourceTurnId: null,
-            SourceUserMessageId: null,
-            PrerequisiteTaskIds: Array.Empty<string>(),
-            PrerequisiteTasks: Array.Empty<MessageTaskReference>(),
-            ProjectTaskId: null,
-            ExecutionClientRef: null,
-            DependencyContextRefs: Array.Empty<string>(),
-            ScheduleJson: null,
-            TaskToolStateJson: null,
-            McpConfigJson: null,
-            InputPayloadJson: null,
-            CreatedAt: null,
-            UpdatedAt: null);
+        private LocalAgentRunSnapshot Run(string id, LocalAgentRunStatus status, ulong version) => new(
+            id, "task_runner", "user-1", "task", "task-1", "project-1", status,
+            version, 0, 0, 0, "model-1", 3, EmptyJson(), "provider_compaction",
+            "prompt-1", "capability-1", null, null, null, null, _now, _now);
     }
+
+    private static JsonElement EmptyJson() => JsonDocument.Parse("{}").RootElement.Clone();
 }

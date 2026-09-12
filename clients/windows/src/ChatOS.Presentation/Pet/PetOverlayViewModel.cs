@@ -14,7 +14,7 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
     private readonly PetActivityCoordinator _coordinator;
     private readonly IRealtimeClient _realtime;
     private readonly IConversationCommandService _conversationCommands;
-    private readonly IMessageTaskGraphService _taskGraph;
+    private readonly ILocalAgentTaskService _taskGraph;
     private readonly IAskUserPromptService _askUser;
     private readonly LocalizationViewModel _localization;
     private readonly IUiDispatcher _dispatcher;
@@ -28,7 +28,7 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
         PetActivityCoordinator coordinator,
         IRealtimeClient realtime,
         IConversationCommandService conversationCommands,
-        IMessageTaskGraphService taskGraph,
+        ILocalAgentTaskService taskGraph,
         IAskUserPromptService askUser,
         LocalizationViewModel localization,
         IUiDispatcher dispatcher)
@@ -245,15 +245,26 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
         await RunBusyAsync(async token =>
         {
             var activity = selected.Activity;
-            if (activity.Route.MessageId is { Length: > 0 } messageId &&
-                activity.Route.TaskId is { Length: > 0 } taskId &&
-                activity.Route.ConversationId is { Length: > 0 } conversationId)
+            if (activity.Source == PetActivitySource.TaskRunner)
             {
-                await _taskGraph.CancelTaskAsync(
-                    messageId,
+                var taskId = activity.Route.TaskId;
+                var runId = activity.Route.RunId;
+                if (string.IsNullOrWhiteSpace(taskId) || string.IsNullOrWhiteSpace(runId))
+                {
+                    throw new InvalidOperationException(_localization.Text(
+                        "这个任务事件缺少精确的 Task 或 Run 标识，无法取消。",
+                        "This task activity is missing its exact Task or Run identity and cannot be cancelled."));
+                }
+                var detail = await _taskGraph.GetRunDetailAsync(
                     taskId,
-                    new MessageTaskLookup(conversationId, activity.Route.TurnId, activity.Route.MessageId),
-                    _localization.Text("用户从桌面宠物取消任务", "Cancelled from the desktop pet"),
+                    runId,
+                    1,
+                    0,
+                    token).ConfigureAwait(false);
+                await _taskGraph.CancelCurrentRunAsync(
+                    taskId,
+                    runId,
+                    detail.Run.Run.Version,
                     token).ConfigureAwait(false);
             }
             else if (activity.Route.ConversationId is { Length: > 0 } conversation)
@@ -271,8 +282,8 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
             }
 
             await _dispatcher.InvokeAsync(() => ActionMessage = _localization.Text(
-                "已发送取消请求，状态会在服务端确认后更新。",
-                "Cancellation requested. The status will update after server confirmation."), token)
+                "已发送取消请求，本地运行状态确认后会自动更新。",
+                "Cancellation requested. The local run status will update after confirmation."), token)
                 .ConfigureAwait(false);
         }, cancellationToken).ConfigureAwait(false);
     }

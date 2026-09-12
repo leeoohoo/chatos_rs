@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading.Channels;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
@@ -46,7 +47,7 @@ public sealed class PetOverlayViewModelTests
     }
 
     [Fact]
-    public async Task Running_task_cancel_uses_the_full_message_task_lookup()
+    public async Task Running_task_cancel_uses_the_exact_local_run_version()
     {
         var route = new PetActivityRoute(
             ConversationId: "conversation-one",
@@ -63,9 +64,9 @@ public sealed class PetOverlayViewModelTests
 
         await viewModel.CancelSelectedAsync();
 
-        Assert.Equal("message-one", tasks.CancelledMessageId);
         Assert.Equal("task-one", tasks.CancelledTaskId);
-        Assert.Equal(new MessageTaskLookup("conversation-one", "turn-one", "message-one"), tasks.Lookup);
+        Assert.Equal("run-one", tasks.CancelledRunId);
+        Assert.Equal((ulong)9, tasks.CancelledVersion);
         Assert.Contains("取消请求", viewModel.ActionMessage);
     }
 
@@ -74,8 +75,12 @@ public sealed class PetOverlayViewModelTests
     {
         var commands = new FakeConversationCommandService();
         var route = new PetActivityRoute(ConversationId: "conversation-one", TurnId: "turn-one");
+        var activity = Activity("chat", PetActivityKind.Reviewing, "Reviewing", route) with
+        {
+            Source = PetActivitySource.Chat,
+        };
         var viewModel = Create(
-            new FakeInboxService(Activity("chat", PetActivityKind.Reviewing, "Reviewing", route)),
+            new FakeInboxService(activity),
             commands: commands);
         await viewModel.RefreshAsync();
         await viewModel.SelectAsync(Assert.Single(viewModel.Activities));
@@ -280,29 +285,61 @@ public sealed class PetOverlayViewModelTests
         }
     }
 
-    private sealed class FakeTaskGraphService : IMessageTaskGraphService
+    private sealed class FakeTaskGraphService : ILocalAgentTaskService
     {
-        public string? CancelledMessageId { get; private set; }
         public string? CancelledTaskId { get; private set; }
-        public MessageTaskLookup? Lookup { get; private set; }
+        public string? CancelledRunId { get; private set; }
+        public ulong? CancelledVersion { get; private set; }
 
-        public Task CancelTaskAsync(
-            string messageId,
+        public event EventHandler? AccountProjectionCleared
+        {
+            add { }
+            remove { }
+        }
+
+        public Task CancelCurrentRunAsync(
             string taskId,
-            MessageTaskLookup? lookup,
-            string? reason,
+            string runId,
+            ulong expectedVersion,
             CancellationToken cancellationToken = default)
         {
-            CancelledMessageId = messageId;
             CancelledTaskId = taskId;
-            Lookup = lookup;
+            CancelledRunId = runId;
+            CancelledVersion = expectedVersion;
             return Task.CompletedTask;
         }
 
-        public Task<MessageTaskGraphSnapshot> FetchGraphAsync(string messageId, MessageTaskLookup? lookup, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<MessageTask> FetchTaskAsync(string messageId, string taskId, MessageTaskLookup? lookup, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<MessageTaskRunDetail> FetchRunAsync(string messageId, string runId, MessageTaskLookup? lookup, bool includeEvents = true, int eventLimit = 40, int eventOffset = 0, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<MessageTaskRun> RetryRunAsync(string messageId, string runId, MessageTaskLookup? lookup, string? instruction, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<LocalAgentTaskRunDetail> GetRunDetailAsync(
+            string taskId,
+            string runId,
+            uint eventLimit = 40,
+            uint eventOffset = 0,
+            CancellationToken cancellationToken = default)
+        {
+            var now = DateTimeOffset.Parse("2026-09-13T00:00:00Z");
+            var run = new LocalAgentRunSnapshot(
+                runId, "task_runner", "user-one", "task", taskId, "project-one",
+                LocalAgentRunStatus.ModelRunning, 9, 0, 0, 0, "model-one", 1,
+                JsonDocument.Parse("{}").RootElement.Clone(), "memory_engine", "prompt-one",
+                "capability-one", null, null, null, null, now, now);
+            var task = new LocalAgentTaskSnapshot(
+                taskId, 1, "conversation-one", "turn-one", "project-one", runId, runId,
+                [runId], "Build", ["Done"], "running", "model-one", 1, now, now);
+            return Task.FromResult(new LocalAgentTaskRunDetail(
+                task,
+                new LocalAgentTaskRunSummary(run, null, null, null),
+                [],
+                0,
+                false));
+        }
+
+        public Task<LocalAgentTaskGraphSnapshot> GetGraphAsync(string sourceThreadId, string sourceTurnId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<LocalAgentTaskSnapshot> GetTaskAsync(string taskId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<LocalAgentRunCreatedResponse> RetryCurrentRunAsync(string taskId,
+            string expectedRunId, string? instruction,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class FakeAskUserPromptService : IAskUserPromptService

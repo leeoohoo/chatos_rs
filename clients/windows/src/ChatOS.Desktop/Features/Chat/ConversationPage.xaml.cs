@@ -58,6 +58,15 @@ public sealed partial class ConversationPage : UserControl
         }
     }
 
+    private async void OnTaskRunSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox { SelectedItem: LocalAgentTaskRunChoiceViewModel run }
+            && !string.Equals(TaskGraph.RequestedRunId, run.RunId, StringComparison.Ordinal))
+        {
+            await TaskGraph.SelectRunAsync(run);
+        }
+    }
+
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _timelineScrollViewer ??= FindDescendant<ScrollViewer>(TimelineList);

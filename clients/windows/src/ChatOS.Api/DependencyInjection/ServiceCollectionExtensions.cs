@@ -5,7 +5,6 @@ using ChatOS.Api.AskUser;
 using ChatOS.Api.Conversation;
 using ChatOS.Api.Realtime;
 using ChatOS.Api.Projects;
-using ChatOS.Api.Tasks;
 using ChatOS.Api.Workspace;
 using ChatOS.Api.Notepad;
 using ChatOS.Core.Abstractions;
@@ -48,7 +47,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectFilesystemService, ProjectFilesystemService>();
         services.AddSingleton<IProjectRunService, ProjectRunService>();
         services.AddSingleton<INotepadService, NotepadService>();
-        services.AddSingleton<IMessageTaskGraphService, MessageTaskGraphService>();
         services.AddSingleton<IPetActivityInboxService, PetActivityInboxService>();
         services.AddSingleton<WebSocketTicketService>();
         services.AddSingleton<IRealtimeClient, ChatOSRealtimeClient>();
