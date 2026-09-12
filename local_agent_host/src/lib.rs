@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod assembly;
+mod attachment_grants;
 mod bootstrap;
 mod capability_runtime;
 mod context_runtime;
@@ -22,6 +23,7 @@ mod tool_runtime;
 mod worker;
 
 pub use assembly::*;
+pub use attachment_grants::*;
 pub use bootstrap::*;
 pub use capability_runtime::*;
 pub use context_runtime::*;

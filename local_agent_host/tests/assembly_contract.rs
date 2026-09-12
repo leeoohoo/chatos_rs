@@ -12,8 +12,7 @@ use base64::Engine;
 use chatos_local_agent_host::{
     assemble_local_agent_host, read_local_agent_host_launch_request,
     LocalAgentHostAssemblyDependencies, LocalAgentIpcMutationExecutor, LocalAgentStoragePlatform,
-    LocalAttachmentLocator, LocalAttachmentResolver, RegisteredLocalCapabilityRuntime,
-    LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
+    RegisteredLocalCapabilityRuntime, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
 };
 use chatos_local_agent_protocol::{
     ClientStorageProfileDescriptor, ClientStorageProfileSelection, LocalAgentCommand,
@@ -24,15 +23,6 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio_util::sync::CancellationToken;
-
-struct Attachments;
-
-#[async_trait]
-impl LocalAttachmentResolver for Attachments {
-    async fn resolve(&self, _attachment: &LocalAttachmentLocator) -> Result<Vec<u8>, String> {
-        Err("no attachment grant was registered".to_string())
-    }
-}
 
 struct Platform;
 
@@ -91,6 +81,13 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
     let directory = tempfile::tempdir().unwrap();
     let socket_path = directory.path().join("local-agent.sock");
     let database_path = directory.path().join("client.sqlite");
+    let grant_directory = directory.path().join("attachment-grants");
+    std::fs::create_dir(&grant_directory).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&grant_directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
     let launch = json!({
         "protocol_version": LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
         "launch_id": "launch-assembly-1",
@@ -101,6 +98,7 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
             "transport": "unix_socket",
             "path": socket_path,
         },
+        "attachment_grant_directory": grant_directory,
         "model_gateway_base_url": "https://api.example.com",
         "memory_engine_base_url": "https://memory.example.com",
         "memory_source_id": "local-agent",
@@ -131,7 +129,6 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
     let assembly = assemble_local_agent_host(
         &request,
         LocalAgentHostAssemblyDependencies {
-            attachment_resolver: Arc::new(Attachments),
             storage_platform: Arc::new(Platform),
             terminal_mutation_executor: Arc::new(Terminal),
             capability_runtime: capability_runtime.clone(),

@@ -20,7 +20,7 @@ use crate::{
     LocalAgentHostIpcEndpoint, LocalAgentHostPolicy, LocalAgentHostService,
     LocalAgentHostStartupReport, LocalAgentHostWorker, LocalAgentIpcMutationExecutor,
     LocalAgentIpcServerError, LocalAgentProfileRegistry, LocalAgentStoragePlatform,
-    LocalAttachmentResolver, ProviderContextEncryptionKey, RegisteredLocalCapabilityRuntime,
+    LocalAttachmentGrantResolver, ProviderContextEncryptionKey, RegisteredLocalCapabilityRuntime,
     StandardLocalAgentContextRuntime, StoredLocalTaskCreationPlanner,
     StoredMainChatContextProvider, StoredTaskRunnerContextProvider,
 };
@@ -28,7 +28,6 @@ use crate::{
 const MEMORY_ENGINE_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub struct LocalAgentHostAssemblyDependencies {
-    pub attachment_resolver: Arc<dyn LocalAttachmentResolver>,
     pub storage_platform: Arc<dyn LocalAgentStoragePlatform>,
     pub terminal_mutation_executor: Arc<dyn LocalAgentIpcMutationExecutor>,
     pub capability_runtime: Arc<RegisteredLocalCapabilityRuntime>,
@@ -80,6 +79,10 @@ pub async fn assemble_local_agent_host(
     let scope = RecordScope {
         owner_user_id: request.owner_user_id.clone(),
     };
+    let attachment_resolver = Arc::new(
+        LocalAttachmentGrantResolver::open(&request.attachment_grant_directory)
+            .map_err(|error| LocalAgentHostAssemblyError::Host(error.to_string()))?,
+    );
     let gateway = Arc::new(
         HttpModelGatewayClient::new(request.model_gateway_base_url.as_str())
             .map_err(|error| LocalAgentHostAssemblyError::ModelGateway(error.to_string()))?,
@@ -114,12 +117,12 @@ pub async fn assemble_local_agent_host(
     let main_context = Arc::new(StoredMainChatContextProvider::new(
         storage.clone(),
         scope.clone(),
-        dependencies.attachment_resolver.clone(),
+        attachment_resolver.clone(),
     ));
     let task_context = Arc::new(StoredTaskRunnerContextProvider::new(
         storage.clone(),
         scope.clone(),
-        dependencies.attachment_resolver,
+        attachment_resolver,
     ));
     let profiles = LocalAgentProfileRegistry::new([
         Arc::new(MainChatAgentProfile::new(main_context)) as Arc<dyn LocalAgentProfile>,

@@ -280,6 +280,7 @@ pub struct LocalAgentHostLaunchRequest {
     pub device_id: String,
     pub worker_id: String,
     pub ipc_endpoint: LocalAgentHostIpcEndpoint,
+    pub attachment_grant_directory: String,
     pub model_gateway_base_url: String,
     pub memory_engine_base_url: String,
     pub memory_source_id: String,
@@ -297,6 +298,7 @@ impl fmt::Debug for LocalAgentHostLaunchRequest {
             .field("device_id", &self.device_id)
             .field("worker_id", &self.worker_id)
             .field("ipc_endpoint", &self.ipc_endpoint)
+            .field("attachment_grant_directory", &"[PRIVATE DIRECTORY]")
             .field("model_gateway_base_url", &self.model_gateway_base_url)
             .field("memory_engine_base_url", &self.memory_engine_base_url)
             .field("memory_source_id", &self.memory_source_id)
@@ -323,6 +325,12 @@ impl LocalAgentHostLaunchRequest {
         validate_service_url("model_gateway_base_url", &self.model_gateway_base_url)?;
         validate_service_url("memory_engine_base_url", &self.memory_engine_base_url)?;
         self.ipc_endpoint.validate()?;
+        let grant_directory = Path::new(&self.attachment_grant_directory);
+        if !grant_directory.is_absolute() || self.attachment_grant_directory.trim().is_empty() {
+            return Err(LocalAgentHostBootstrapError::InvalidIdentity(
+                "attachment_grant_directory",
+            ));
+        }
         self.storage_profile
             .validate()
             .map_err(|_| LocalAgentHostBootstrapError::StorageCredentialMismatch)?;

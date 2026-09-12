@@ -12,7 +12,7 @@ use chatos_local_agent_host::{
 use serde_json::{json, Value};
 use std::io::Cursor;
 
-fn sqlite_launch(socket_path: &str) -> Value {
+fn sqlite_launch(socket_path: &str, attachment_grant_directory: &str) -> Value {
     json!({
         "protocol_version": LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
         "launch_id": "launch-1",
@@ -23,6 +23,7 @@ fn sqlite_launch(socket_path: &str) -> Value {
             "transport": "unix_socket",
             "path": socket_path,
         },
+        "attachment_grant_directory": attachment_grant_directory,
         "model_gateway_base_url": "https://api.example.com",
         "memory_engine_base_url": "https://memory.example.com",
         "memory_source_id": "local-agent",
@@ -55,7 +56,11 @@ fn framed(value: &Value) -> Cursor<Vec<u8>> {
 async fn reads_one_strict_length_prefixed_launch_request() {
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("agent.sock");
-    let mut input = framed(&sqlite_launch(socket.to_str().unwrap()));
+    let grants = private_grant_directory(directory.path());
+    let mut input = framed(&sqlite_launch(
+        socket.to_str().unwrap(),
+        grants.to_str().unwrap(),
+    ));
 
     let request = read_local_agent_host_launch_request(&mut input)
         .await
@@ -94,7 +99,8 @@ async fn reads_one_strict_length_prefixed_launch_request() {
 async fn rejects_unknown_fields_and_profile_credential_mismatches() {
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("agent.sock");
-    let mut unknown = sqlite_launch(socket.to_str().unwrap());
+    let grants = private_grant_directory(directory.path());
+    let mut unknown = sqlite_launch(socket.to_str().unwrap(), grants.to_str().unwrap());
     unknown
         .as_object_mut()
         .unwrap()
@@ -106,7 +112,7 @@ async fn rejects_unknown_fields_and_profile_credential_mismatches() {
         LocalAgentHostBootstrapError::InvalidJson
     );
 
-    let mut mismatch = sqlite_launch(socket.to_str().unwrap());
+    let mut mismatch = sqlite_launch(socket.to_str().unwrap(), grants.to_str().unwrap());
     mismatch["credentials"]["storage"]["encryption_secret_reference"] = json!("another-secret");
     assert_eq!(
         read_local_agent_host_launch_request(&mut framed(&mismatch))
@@ -120,7 +126,8 @@ async fn rejects_unknown_fields_and_profile_credential_mismatches() {
 async fn rejects_remote_postgres_without_verified_tls() {
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("agent.sock");
-    let mut request = sqlite_launch(socket.to_str().unwrap());
+    let grants = private_grant_directory(directory.path());
+    let mut request = sqlite_launch(socket.to_str().unwrap(), grants.to_str().unwrap());
     request["storage_profile"] = json!({
         "backend": "postgres",
         "connection_secret": "postgres-secret-1",
@@ -148,17 +155,33 @@ async fn rejects_remote_postgres_without_verified_tls() {
 async fn never_renders_launch_credentials_in_debug_output() {
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("agent.sock");
-    let request =
-        read_local_agent_host_launch_request(&mut framed(&sqlite_launch(socket.to_str().unwrap())))
-            .await
-            .unwrap();
+    let grants = private_grant_directory(directory.path());
+    let request = read_local_agent_host_launch_request(&mut framed(&sqlite_launch(
+        socket.to_str().unwrap(),
+        grants.to_str().unwrap(),
+    )))
+    .await
+    .unwrap();
 
     let rendered = format!("{request:?}");
 
     assert!(!rendered.contains("private-model-token"));
     assert!(!rendered.contains(STANDARD.encode([3_u8; 32]).as_str()));
     assert!(!rendered.contains(STANDARD.encode([7_u8; 32]).as_str()));
+    assert!(!rendered.contains(grants.to_str().unwrap()));
+    assert!(rendered.contains("[PRIVATE DIRECTORY]"));
     assert!(rendered.contains("[REDACTED]"));
+}
+
+fn private_grant_directory(parent: &std::path::Path) -> std::path::PathBuf {
+    let path = parent.join("attachment-grants");
+    std::fs::create_dir(&path).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    path
 }
 
 #[tokio::test]
