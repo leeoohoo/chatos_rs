@@ -64,9 +64,29 @@ impl LocalAgentHostWorker {
             let claim_token = self.next_claim_token(now)?;
             match self.host.claim_next(claim_token, now).await? {
                 SchedulerTickResult::Claimed(claimed) => {
-                    self.host
-                        .process_claimed_event(&claimed, &self.session, Utc::now())
-                        .await?;
+                    let mut process = Box::pin(self.host.process_claimed_event(
+                        &claimed,
+                        &self.session,
+                        Utc::now(),
+                    ));
+                    tokio::select! {
+                        biased;
+                        result = &mut process => { result?; }
+                        _ = shutdown.cancelled() => {
+                            // The execution session owns cancellation for the
+                            // current model/tool I/O. Cancelling only the outer
+                            // Worker loop would otherwise wait for that I/O to
+                            // finish before the Host process could stop.
+                            self.session.cancel();
+                            process.await?;
+                            processed_event_count = processed_event_count.checked_add(1).ok_or(
+                                LocalAgentHostError::InvalidConfiguration(
+                                    "local Agent worker event counter overflowed",
+                                ),
+                            )?;
+                            return Ok(LocalAgentWorkerExit { processed_event_count });
+                        }
+                    }
                     processed_event_count = processed_event_count.checked_add(1).ok_or(
                         LocalAgentHostError::InvalidConfiguration(
                             "local Agent worker event counter overflowed",
