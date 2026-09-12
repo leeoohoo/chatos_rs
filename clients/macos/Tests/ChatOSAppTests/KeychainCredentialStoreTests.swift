@@ -6,7 +6,6 @@ import Testing
 struct KeychainCredentialStoreTests {
     @Test("access token is stored, replaced and removed through Keychain")
     func keychainRoundTrip() async throws {
-        guard KeychainCredentialStore.defaultKeychainIsUnlocked() else { return }
         let service = "com.chatos.tests.authentication.\(UUID().uuidString)"
         let account = "access-token"
         let writer = KeychainCredentialStore(service: service, account: account)

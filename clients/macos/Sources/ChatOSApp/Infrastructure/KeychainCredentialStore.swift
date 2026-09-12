@@ -20,7 +20,6 @@ actor KeychainCredentialStore: CredentialStoring {
 
     func loadAccessToken() async throws -> String? {
         if hasLoadedAccessToken { return cachedAccessToken }
-        try ensureDefaultKeychainUnlocked()
 
         var query = nonInteractiveQuery
         query[kSecReturnData as String] = true
@@ -50,7 +49,6 @@ actor KeychainCredentialStore: CredentialStoring {
             return
         }
         if hasLoadedAccessToken, cachedAccessToken == normalized { return }
-        try ensureDefaultKeychainUnlocked()
 
         let data = Data(normalized.utf8)
         let updateStatus = SecItemUpdate(
@@ -73,7 +71,6 @@ actor KeychainCredentialStore: CredentialStoring {
 
     func deleteAccessToken() async throws {
         if hasLoadedAccessToken, cachedAccessToken == nil { return }
-        try ensureDefaultKeychainUnlocked()
         let status = SecItemDelete(nonInteractiveQuery as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw keychainError(status)
@@ -97,22 +94,6 @@ actor KeychainCredentialStore: CredentialStoring {
         var query = baseQuery
         query[kSecUseAuthenticationContext as String] = context
         return query
-    }
-
-    static func defaultKeychainIsUnlocked() -> Bool {
-        var keychain: SecKeychain?
-        guard SecKeychainCopyDefault(&keychain) == errSecSuccess, let keychain else {
-            return false
-        }
-        var status: SecKeychainStatus = 0
-        return SecKeychainGetStatus(keychain, &status) == errSecSuccess
-            && status & UInt32(kSecUnlockStateStatus) != 0
-    }
-
-    private func ensureDefaultKeychainUnlocked() throws {
-        guard Self.defaultKeychainIsUnlocked() else {
-            throw keychainError(errSecInteractionNotAllowed)
-        }
     }
 
     private func keychainError(_ status: OSStatus) -> NSError {

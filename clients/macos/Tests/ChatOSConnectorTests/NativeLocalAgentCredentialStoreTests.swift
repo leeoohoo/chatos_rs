@@ -12,7 +12,7 @@ struct NativeLocalAgentCredentialStoreTests {
     func roundTripsAccountScopedSecrets() async throws {
         let service = "com.chatos.tests.local-agent.\(UUID().uuidString)"
         let store = try NativeLocalAgentCredentialStore(service: service)
-        guard await store.isUnlocked() else { return }
+        guard await store.isAvailableForNonInteractiveAccess() else { return }
         let reference = "sqlite-device-key"
         func cleanUp() async {
             try? await store.delete(accountID: "user-1", reference: reference)
@@ -71,7 +71,7 @@ struct NativeLocalAgentCredentialStoreTests {
         let store = try NativeLocalAgentCredentialStore(
             service: "com.chatos.tests.local-agent.\(UUID().uuidString)"
         )
-        guard !(await store.isUnlocked()) else { return }
+        guard !(await store.isAvailableForNonInteractiveAccess()) else { return }
         await #expect(
             throws: NativeLocalAgentCredentialStoreError.keychain(
                 operation: "load",

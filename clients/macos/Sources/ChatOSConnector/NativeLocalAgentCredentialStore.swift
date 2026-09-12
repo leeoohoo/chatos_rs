@@ -83,14 +83,13 @@ public actor NativeLocalAgentCredentialStore {
         }
     }
 
-    func isUnlocked() -> Bool {
-        var keychain: SecKeychain?
-        guard SecKeychainCopyDefault(&keychain) == errSecSuccess, let keychain else {
-            return false
-        }
-        var status: SecKeychainStatus = 0
-        return SecKeychainGetStatus(keychain, &status) == errSecSuccess
-            && status & UInt32(kSecUnlockStateStatus) != 0
+    func isAvailableForNonInteractiveAccess() -> Bool {
+        var query = nonInteractiveQuery(account: "availability-probe")
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 
     private func nonInteractiveQuery(account: String) -> [String: Any] {
