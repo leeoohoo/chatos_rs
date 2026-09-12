@@ -7,7 +7,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AUDIT = ROOT / "crates/chatos_client_storage/audit/legacy_access.json"
+AUDIT = ROOT / "clients/shared/rust/chatos_client_storage/audit/legacy_access.json"
 
 
 def load_audit() -> dict:

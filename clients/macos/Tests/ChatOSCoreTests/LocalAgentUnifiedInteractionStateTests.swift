@@ -52,7 +52,7 @@ struct LocalAgentUnifiedInteractionStateTests {
 
         let task = unifiedTaskSnapshot()
         let taskRun = unifiedRunSnapshot(
-            runID: task.runID,
+            runID: task.currentRunID,
             profileKey: "task_runner",
             ownerEntityType: "task",
             ownerEntityID: task.taskID,
@@ -175,7 +175,8 @@ private func unifiedTaskSnapshot() -> LocalAgentTaskSnapshot {
         sourceThreadID: "thread-1",
         sourceTurnID: "task-turn",
         projectID: "project-1",
-        runID: "task-run",
+        currentRunID: "task-run",
+        runIDs: ["task-run"],
         objective: "Complete the approved visual direction",
         acceptanceCriteria: ["Pass visual review"],
         status: "running",

@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 6;
+    public const uint Version = 11;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -46,6 +46,11 @@ public sealed record LocalAgentCreateTask(
     LocalAgentFrozenSnapshot ProjectSnapshot,
     LocalAgentFrozenSnapshot CapabilitySnapshot);
 
+public sealed record LocalAgentRetryTask(
+    string TaskId,
+    string ExpectedRunId,
+    string? Instruction);
+
 public sealed record LocalAgentUserAnswer(
     string? Text,
     IReadOnlyList<string> SelectedOptionIds,
@@ -78,10 +83,15 @@ public sealed record LocalAgentCommand
         new("create_main_chat_turn", value);
 
     public static LocalAgentCommand CreateTask(LocalAgentCreateTask value) => new("create_task", value);
+    public static LocalAgentCommand RetryTask(LocalAgentRetryTask value) => new("retry_task", value);
     public static LocalAgentCommand PauseRun(string runId) => RunCommand("pause_run", runId);
     public static LocalAgentCommand ResumeRun(string runId) => RunCommand("resume_run", runId);
     public static LocalAgentCommand CancelRun(string runId) => RunCommand("cancel_run", runId);
     public static LocalAgentCommand GetRun(string runId) => RunCommand("get_run", runId);
+    public static LocalAgentCommand GetTask(string taskId) =>
+        new("get_task", new TaskPayload(taskId));
+    public static LocalAgentCommand GetMainChatRunBinding(string runId) =>
+        RunCommand("get_main_chat_run_binding", runId);
 
     public static LocalAgentCommand AnswerUserQuestion(
         string runId,
@@ -98,8 +108,16 @@ public sealed record LocalAgentCommand
     public static LocalAgentCommand ListRuns(string? cursor = null, uint limit = 100) =>
         new("list_runs", new ListPayload(cursor, limit));
 
+    public static LocalAgentCommand ListTasks(string? cursor = null, uint limit = 100) =>
+        new("list_tasks", new ListPayload(cursor, limit));
+
     public static LocalAgentCommand SubscribeRunEvents(ulong afterSequence, uint limit = 200) =>
         new("subscribe_run_events", new EventsPayload(afterSequence, limit));
+
+    public static LocalAgentCommand GetUIEventCursor() => new("get_ui_event_cursor", null);
+
+    public static LocalAgentCommand AcknowledgeUIEvents(ulong throughSequence) =>
+        new("acknowledge_ui_events", new AcknowledgeEventsPayload(throughSequence));
 
     public static LocalAgentCommand GetStorageProfile() => new("get_storage_profile", null);
 
@@ -149,8 +167,10 @@ public sealed record LocalAgentCommand
         new(type, new RunPayload(runId));
 
     private sealed record RunPayload(string RunId);
+    private sealed record TaskPayload(string TaskId);
     private sealed record ListPayload(string? Cursor, uint Limit);
     private sealed record EventsPayload(ulong AfterSeq, uint Limit);
+    private sealed record AcknowledgeEventsPayload(ulong ThroughSeq);
     private sealed record AnswerPayload(string RunId, string InteractionId, LocalAgentUserAnswer Answer);
     private sealed record ApprovalPayload(
         string InvocationId,
@@ -252,6 +272,67 @@ public sealed record LocalAgentRunSnapshot(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
+public sealed record LocalAgentTaskSnapshot(
+    string TaskId,
+    ulong Revision,
+    string SourceThreadId,
+    string SourceTurnId,
+    string ProjectId,
+    string CurrentRunId,
+    IReadOnlyList<string> RunIds,
+    string Objective,
+    IReadOnlyList<string> AcceptanceCriteria,
+    string Status,
+    string ModelConfigId,
+    ulong ModelConfigRevision,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public enum LocalAgentStoredMessageRole
+{
+    System,
+    User,
+    Assistant,
+    Tool,
+}
+
+public enum LocalAgentStoredMessageMode
+{
+    Semantic,
+    ProviderContext,
+}
+
+public enum LocalAgentStoredMemorySyncStatus
+{
+    Pending,
+    Synced,
+    Failed,
+}
+
+public sealed record LocalAgentStoredMessage(
+    string RecordId,
+    string RunId,
+    string ThreadId,
+    string TurnId,
+    ulong Sequence,
+    LocalAgentStoredMessageRole Role,
+    string? Content,
+    string? Reasoning,
+    JsonElement? StructuredPayload,
+    string? ToolCallId,
+    string? ResponseId,
+    LocalAgentStoredMessageMode MessageMode,
+    string MessageSource,
+    LocalAgentStoredMemorySyncStatus MemorySyncStatus,
+    DateTimeOffset CreatedAt);
+
+public sealed record LocalAgentMainChatRunBinding(
+    string RunId,
+    string ThreadId,
+    string TurnId,
+    string MessageId,
+    LocalAgentStoredMessage UserMessage);
+
 public sealed record LocalAgentTaggedValue(string Type, JsonElement? Payload);
 
 public sealed record LocalAgentUIEvent(
@@ -286,14 +367,25 @@ public sealed record LocalAgentIPCErrorPayload(
 
 public abstract record LocalAgentResponse(string Type);
 public sealed record LocalAgentAcceptedResponse(string OperationId) : LocalAgentResponse("accepted");
+public sealed record LocalAgentRunCreatedResponse(
+    string OperationId,
+    LocalAgentRunSnapshot Run) : LocalAgentResponse("run_created");
 public sealed record LocalAgentRunResponse(LocalAgentRunSnapshot Run) : LocalAgentResponse("run");
+public sealed record LocalAgentTaskResponse(LocalAgentTaskSnapshot Task) : LocalAgentResponse("task");
+public sealed record LocalAgentMainChatRunBindingResponse(
+    LocalAgentMainChatRunBinding Binding) : LocalAgentResponse("main_chat_run_binding");
 public sealed record LocalAgentRunsResponse(
     IReadOnlyList<LocalAgentRunSnapshot> Runs,
     string? NextCursor) : LocalAgentResponse("runs");
+public sealed record LocalAgentTasksResponse(
+    IReadOnlyList<LocalAgentTaskSnapshot> Tasks,
+    string? NextCursor) : LocalAgentResponse("tasks");
 public sealed record LocalAgentEventsResponse(
     IReadOnlyList<LocalAgentUIEvent> Events,
     ulong NextSequence,
     bool HasMore) : LocalAgentResponse("events");
+public sealed record LocalAgentUIEventCursorResponse(
+    ulong EventSequence) : LocalAgentResponse("ui_event_cursor");
 public sealed record LocalAgentStorageProfileResponse(
     LocalAgentStorageProfile Profile) : LocalAgentResponse("storage_profile");
 public sealed record LocalAgentPostgresConnectionTestResponse(
@@ -306,6 +398,10 @@ public sealed record LocalAgentErrorResponse(
 
 public sealed record LocalAgentRunPage(
     IReadOnlyList<LocalAgentRunSnapshot> Runs,
+    string? NextCursor);
+
+public sealed record LocalAgentTaskPage(
+    IReadOnlyList<LocalAgentTaskSnapshot> Tasks,
     string? NextCursor);
 
 public sealed record LocalAgentEventPage(

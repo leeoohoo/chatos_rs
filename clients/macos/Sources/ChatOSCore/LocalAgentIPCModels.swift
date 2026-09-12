@@ -3,7 +3,44 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 10
+public let localAgentProtocolVersion: UInt32 = 11
+
+public enum LocalAgentProtocolJSON {
+    public static func encoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    public static func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .custom { path in
+            let source = path.last?.stringValue ?? ""
+            let components = source.split(separator: "_")
+            guard let first = components.first else { return LocalAgentCodingKey(source) }
+            let value = String(first) + components.dropFirst().map { component in
+                switch component.lowercased() {
+                case "id": "ID"
+                case "ids": "IDs"
+                case "ok": "OK"
+                case "url": "URL"
+                default: component.prefix(1).uppercased() + component.dropFirst()
+                }
+            }.joined()
+            return LocalAgentCodingKey(value)
+        }
+        return decoder
+    }
+}
+
+private struct LocalAgentCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int? = nil
+    init(_ stringValue: String) { self.stringValue = stringValue }
+    init?(stringValue: String) { self.init(stringValue) }
+    init?(intValue: Int) { return nil }
+}
 
 public enum LocalAgentJSONValue: Codable, Equatable, Sendable {
     case null
@@ -152,6 +189,18 @@ public struct LocalAgentCreateTask: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalAgentRetryTask: Codable, Equatable, Sendable {
+    public var taskID: String
+    public var expectedRunID: String
+    public var instruction: String?
+
+    public init(taskID: String, expectedRunID: String, instruction: String? = nil) {
+        self.taskID = taskID
+        self.expectedRunID = expectedRunID
+        self.instruction = instruction
+    }
+}
+
 public struct LocalAgentUserAnswer: Codable, Equatable, Sendable {
     public var text: String?
     public var selectedOptionIDs: [String]
@@ -182,6 +231,7 @@ public enum LocalAgentToolApprovalDecision: String, Codable, Equatable, Sendable
 public enum LocalAgentCommand: Equatable, Sendable {
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
     case createTask(LocalAgentCreateTask)
+    case retryTask(LocalAgentRetryTask)
     case pauseRun(runID: String)
     case resumeRun(runID: String)
     case cancelRun(runID: String)
@@ -266,6 +316,9 @@ extension LocalAgentCommand: Encodable {
             try container.encode(payload, forKey: .payload)
         case let .createTask(payload):
             try container.encode("create_task", forKey: .type)
+            try container.encode(payload, forKey: .payload)
+        case let .retryTask(payload):
+            try container.encode("retry_task", forKey: .type)
             try container.encode(payload, forKey: .payload)
         case let .pauseRun(runID):
             try encodeRun("pause_run", runID, into: &container)
@@ -469,7 +522,8 @@ public struct LocalAgentTaskSnapshot: Codable, Equatable, Sendable {
     public var sourceThreadID: String
     public var sourceTurnID: String
     public var projectID: String
-    public var runID: String
+    public var currentRunID: String
+    public var runIDs: [String]
     public var objective: String
     public var acceptanceCriteria: [String]
     public var status: String
@@ -484,7 +538,8 @@ public struct LocalAgentTaskSnapshot: Codable, Equatable, Sendable {
         sourceThreadID: String,
         sourceTurnID: String,
         projectID: String,
-        runID: String,
+        currentRunID: String,
+        runIDs: [String],
         objective: String,
         acceptanceCriteria: [String],
         status: String,
@@ -498,7 +553,8 @@ public struct LocalAgentTaskSnapshot: Codable, Equatable, Sendable {
         self.sourceThreadID = sourceThreadID
         self.sourceTurnID = sourceTurnID
         self.projectID = projectID
-        self.runID = runID
+        self.currentRunID = currentRunID
+        self.runIDs = runIDs
         self.objective = objective
         self.acceptanceCriteria = acceptanceCriteria
         self.status = status

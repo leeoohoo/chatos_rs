@@ -1,11 +1,12 @@
 # Native clients
 
-ChatOS 3.0 uses independent native clients that share cloud APIs, Realtime, Local Connector, plugin, and artifact protocols—not platform UI source code.
+ChatOS 3.0 uses two native shells over one shared client architecture.
 
-- `macos/`: Swift 6.2 and SwiftUI client with the native Local Connector, plugin applications, project tools, and macOS global productivity utilities.
-- `windows/`: .NET 8, C#, and WinUI 3 client with the native Local Connector, plugin runtime, Network Guard, and self-contained installer workflow.
+- `shared/`: the authoritative Rust Local Agent Runtime, Host, Storage Provider, generated native contracts, golden fixtures, and cross-platform conformance rules.
+- `macos/`: Swift 6.2/SwiftUI UI plus Keychain, Unix Socket, process lifecycle, and other macOS adapters.
+- `windows/`: .NET 8/WinUI 3 UI plus DPAPI, Named Pipe, process lifecycle, and other Windows adapters.
 
-Both clients keep local credentials and device capabilities on the user's machine while cloud services remain authoritative for project business data. Platform-specific behavior and parity are tested independently.
+Agent state, client business data, Task/Run projection, retry, context management, and tool semantics are implemented once under `shared/`. Platform directories must not contain a second Agent loop or independently reinterpret the shared state machine. Model configuration, Memory Engine, plugin management, authentication, and the stateless model gateway remain server APIs; Agent execution and plugin tools run locally.
 
 Build and test commands are exposed from the repository `Makefile`; platform-specific packaging and installation instructions live in each client directory.
 

@@ -118,6 +118,26 @@ struct NativeLocalAgentIPCClientTests {
         #expect(created.run.ownerEntityID == "thread-1")
     }
 
+    @Test("retries a Task as a new Run with the expected current Run identity")
+    func retriesTask() async throws {
+        let transport = RecordingLocalAgentTransport(responseType: "run_created")
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+
+        _ = try await client.retryTask(LocalAgentRetryTask(
+            taskID: "task-1",
+            expectedRunID: "task-run-1",
+            instruction: "Preserve the approved visual hierarchy."
+        ))
+
+        let request = try #require(await transport.lastRequest())
+        let object = try #require(JSONSerialization.jsonObject(with: request) as? [String: Any])
+        let command = try #require(object["command"] as? [String: Any])
+        #expect(command["type"] as? String == "retry_task")
+        let payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["task_id"] as? String == "task-1")
+        #expect(payload["expected_run_id"] as? String == "task-run-1")
+    }
+
     @Test("restores Task identity and frozen planning input from the Host")
     func restoresTaskSnapshots() async throws {
         let transport = RecordingLocalAgentTransport(responseType: "tasks")
@@ -127,7 +147,8 @@ struct NativeLocalAgentIPCClientTests {
 
         let task = try #require(page.tasks.first)
         #expect(task.taskID == "task-1")
-        #expect(task.runID == "task-run-1")
+        #expect(task.currentRunID == "task-run-2")
+        #expect(task.runIDs == ["task-run-1", "task-run-2"])
         #expect(task.sourceThreadID == "thread-1")
         #expect(task.sourceTurnID == "turn-1")
         #expect(task.projectID == "project-1")
@@ -260,7 +281,8 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
                         "source_thread_id": "thread-1",
                         "source_turn_id": "turn-1",
                         "project_id": "project-1",
-                        "run_id": "task-run-1",
+                        "current_run_id": "task-run-2",
+                        "run_ids": ["task-run-1", "task-run-2"],
                         "objective": "Implement the approved visual design",
                         "acceptance_criteria": [
                             "Match the approved visual",

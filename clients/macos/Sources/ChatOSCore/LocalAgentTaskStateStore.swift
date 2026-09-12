@@ -108,12 +108,23 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
         var restoredTaskIDByRunID: [String: String] = [:]
 
         for task in tasks {
-            guard let run = runsByID[task.runID] else {
+            try Self.validateTaskRunIDs(task)
+            guard let run = runsByID[task.currentRunID] else {
                 throw LocalAgentTaskStateError.missingRun(task.taskID)
             }
-            try Self.validate(task: task, run: run)
-            guard restored[task.taskID] == nil, restoredTaskIDByRunID[run.runID] == nil else {
+            try Self.validate(task: task, run: run, requireCurrentRun: true)
+            guard restored[task.taskID] == nil else {
                 throw LocalAgentTaskStateError.identityMismatch("任务或 Run ID 重复")
+            }
+            for runID in task.runIDs {
+                guard let historicalRun = runsByID[runID] else {
+                    throw LocalAgentTaskStateError.missingRun(task.taskID)
+                }
+                try Self.validate(task: task, run: historicalRun, requireCurrentRun: false)
+                guard restoredTaskIDByRunID[runID] == nil else {
+                    throw LocalAgentTaskStateError.identityMismatch("任务或 Run ID 重复")
+                }
+                restoredTaskIDByRunID[runID] = task.taskID
             }
             let interaction = LocalAgentUIPresentation.pendingUserInteraction(run)
             restored[task.taskID] = LocalAgentTaskState(
@@ -129,7 +140,6 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
                     )
                 }
             )
-            restoredTaskIDByRunID[run.runID] = task.taskID
         }
         for run in taskRuns where restoredTaskIDByRunID[run.runID] == nil {
             throw LocalAgentTaskStateError.missingTask(run.runID)
@@ -146,17 +156,19 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
         _ task: LocalAgentTaskSnapshot,
         run: LocalAgentRunSnapshot
     ) throws {
-        try Self.validate(task: task, run: run)
-        if let existingTaskID = taskIDByRunID[run.runID], existingTaskID != task.taskID {
-            throw LocalAgentTaskStateError.identityMismatch("同一个 Run 关联到两个任务")
-        }
-        if let existing = tasksByID[task.taskID], existing.run.runID != run.runID {
-            throw LocalAgentTaskStateError.identityMismatch("同一个任务关联到两个 Run")
+        try Self.validateTaskRunIDs(task)
+        try Self.validate(task: task, run: run, requireCurrentRun: true)
+        for runID in task.runIDs {
+            if let existingTaskID = taskIDByRunID[runID], existingTaskID != task.taskID {
+                throw LocalAgentTaskStateError.identityMismatch("同一个 Run 关联到两个任务")
+            }
         }
         let previous = tasksByID[task.taskID]
+        let changedRun = previous?.run.runID != run.runID
         let restoredInteraction = LocalAgentUIPresentation.pendingUserInteraction(run)
         let userPrompt: AskUserPrompt?
-        if let previousPrompt = previous?.userPrompt,
+        if !changedRun,
+           let previousPrompt = previous?.userPrompt,
            previousPrompt.id == restoredInteraction?.interactionID {
             userPrompt = previousPrompt
         } else if let restoredInteraction {
@@ -167,32 +179,38 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
                 emittedAt: run.updatedAt
             )
         } else {
-            userPrompt = previous?.userPrompt
+            userPrompt = changedRun ? nil : previous?.userPrompt
         }
         tasksByID[task.taskID] = LocalAgentTaskState(
             task: task,
             run: run,
-            modelSteps: previous?.modelSteps ?? [],
-            tools: previous?.tools ?? [],
+            modelSteps: changedRun ? [] : (previous?.modelSteps ?? []),
+            tools: changedRun ? [] : (previous?.tools ?? []),
             pendingInteraction: restoredInteraction,
             userPrompt: userPrompt,
-            memorySync: previous?.memorySync,
-            lastAppliedEventSequence: previous?.lastAppliedEventSequence ?? 0
+            memorySync: changedRun ? nil : previous?.memorySync,
+            lastAppliedEventSequence: changedRun ? 0 : (previous?.lastAppliedEventSequence ?? 0)
         )
-        taskIDByRunID[run.runID] = task.taskID
+        taskIDByRunID = taskIDByRunID.filter {
+            $0.value != task.taskID || task.runIDs.contains($0.key)
+        }
+        for runID in task.runIDs {
+            taskIDByRunID[runID] = task.taskID
+        }
         notify(task.sourceThreadID)
     }
 
     public func applyLocalAgentTaskEvent(_ event: LocalAgentUIEvent) throws {
         guard let runID = event.event.runID,
               let taskID = taskIDByRunID[runID],
-              var state = tasksByID[taskID]
+              var state = tasksByID[taskID],
+              state.task.currentRunID == runID
         else { return }
         guard event.eventSeq > state.lastAppliedEventSequence else { return }
 
         switch event.event {
         case let .runSnapshot(run):
-            try Self.validate(task: state.task, run: run)
+            try Self.validate(task: state.task, run: run, requireCurrentRun: true)
             state.run = run
             if let interaction = LocalAgentUIPresentation.pendingUserInteraction(run) {
                 state.pendingInteraction = interaction
@@ -429,12 +447,14 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
 
     private static func validate(
         task: LocalAgentTaskSnapshot,
-        run: LocalAgentRunSnapshot
+        run: LocalAgentRunSnapshot,
+        requireCurrentRun: Bool
     ) throws {
         guard run.profileKey == "task_runner",
               run.ownerEntityType == "task",
               run.ownerEntityID == task.taskID,
-              run.runID == task.runID,
+              task.runIDs.contains(run.runID),
+              !requireCurrentRun || run.runID == task.currentRunID,
               run.ownerUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
               run.projectID == task.projectID,
               run.modelConfigID == task.modelConfigID,
@@ -442,6 +462,18 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
         else {
             throw LocalAgentTaskStateError.identityMismatch(
                 "Task、Run、项目或模型快照不匹配"
+            )
+        }
+    }
+
+    private static func validateTaskRunIDs(_ task: LocalAgentTaskSnapshot) throws {
+        let runIDs = Set(task.runIDs)
+        guard !task.runIDs.isEmpty,
+              runIDs.count == task.runIDs.count,
+              runIDs.contains(task.currentRunID)
+        else {
+            throw LocalAgentTaskStateError.identityMismatch(
+                "当前 Run 必须唯一地包含在 Task Run 历史中"
             )
         }
     }

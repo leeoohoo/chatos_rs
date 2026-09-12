@@ -46,6 +46,37 @@ struct NativeLocalAgentTaskEventSinkTests {
         #expect(restored.lastAppliedEventSequence == 7)
         #expect(restored.run.runID == "run-2")
     }
+
+    @Test("switches an existing Task to the new current Run after retry")
+    func discoversRetryRun() async throws {
+        var task = taskSnapshot(id: "task-1", runID: "run-1")
+        var oldRun = runSnapshot(id: "run-1", taskID: "task-1")
+        oldRun.status = .failed
+        let client = TaskStateClient(tasks: [task], runs: [oldRun])
+        let store = LocalAgentTaskStateStore()
+        let sink = NativeLocalAgentTaskEventSink(client: client, store: store)
+        try await sink.restore()
+
+        let retryRun = runSnapshot(id: "run-2", taskID: "task-1")
+        task.revision = 2
+        task.currentRunID = retryRun.runID
+        task.runIDs = [oldRun.runID, retryRun.runID]
+        await client.install(task: task, run: retryRun)
+
+        try await sink.applyLocalAgentUIEvent(
+            LocalAgentUIEvent(
+                eventSeq: 8,
+                emittedAt: "2026-09-12T03:02:00Z",
+                event: .runSnapshot(retryRun)
+            ),
+            mainChatBinding: nil
+        )
+
+        let restored = try #require(await store.localAgentTask(taskID: task.taskID))
+        #expect(restored.task.runIDs == ["run-1", "run-2"])
+        #expect(restored.run.runID == "run-2")
+        #expect(restored.lastAppliedEventSequence == 8)
+    }
 }
 
 private actor TaskStateClient: NativeLocalAgentTaskStateClient {
@@ -90,7 +121,8 @@ private func taskSnapshot(id: String, runID: String) -> LocalAgentTaskSnapshot {
         sourceThreadID: "thread-1",
         sourceTurnID: "turn-1",
         projectID: "project-1",
-        runID: runID,
+        currentRunID: runID,
+        runIDs: [runID],
         objective: "Design \(id)",
         acceptanceCriteria: ["Match the approved visual"],
         status: "running",

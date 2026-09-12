@@ -68,7 +68,7 @@ chatos_service_runtime = { path = "../../crates/chatos_service_runtime" }
 chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
 chatos_local_workspace = { path = "../../crates/chatos_local_workspace" }
-chatos_local_agent_protocol = { path = "../../crates/chatos_local_agent_protocol" }
+chatos_local_agent_protocol = { path = "../../clients/shared/rust/chatos_local_agent_protocol" }
 
 [features]
 pdf = []

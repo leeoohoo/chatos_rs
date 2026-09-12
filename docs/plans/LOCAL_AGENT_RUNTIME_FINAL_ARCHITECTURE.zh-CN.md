@@ -694,49 +694,28 @@ UI 必须分别展示：
 ## 15. 目标代码结构
 
 ```text
-crates/
-├─ chatos_client_storage/
-│  ├─ contracts/
-│  ├─ repositories/
-│  ├─ migrations/
-│  ├─ sqlite/
-│  └─ postgres/
-├─ chatos_local_agent_protocol/
-│  ├─ run.rs
-│  ├─ event.rs
-│  ├─ message.rs
-│  ├─ tool.rs
-│  └─ ipc.rs
-├─ chatos_local_agent_runtime/
-│  ├─ reducer.rs
-│  ├─ scheduler.rs
-│  ├─ storage.rs
-│  ├─ model_step.rs
-│  ├─ context/
-│  │  ├─ provider_native.rs
-│  │  └─ memory_engine.rs
-│  ├─ memory_sync.rs
-│  └─ tool_runtime.rs
-└─ chatos_agent_profiles/
-   ├─ main_chat.rs
-   ├─ task_runner.rs
-   ├─ approval.rs
-   └─ story.rs
-
-local_agent_host/
-├─ main.rs
-├─ ipc_server.rs
-├─ profile_registry.rs
-└─ lifecycle.rs
+clients/shared/
+├─ rust/
+│  ├─ chatos_client_storage/
+│  ├─ chatos_local_agent_protocol/
+│  ├─ chatos_local_agent_runtime/
+│  ├─ chatos_agent_profiles/
+│  └─ local_agent_host/
+├─ contracts/             # 由 Rust 协议生成的客户端契约，不手写第二份语义
+├─ fixtures/              # macOS/Windows 共用的协议与状态投影黄金夹具
+├─ conformance/           # 两个平台必须共同通过的行为清单
+└─ codegen/               # Swift/C# 类型生成与漂移检查入口
 
 clients/macos/
-└─ Native UI + typed Local Agent Host client
+└─ SwiftUI、Keychain、Unix Socket 与平台生命周期适配
 
 clients/windows/
-└─ Native UI + typed Local Agent Host client
+└─ Windows UI、DPAPI、Named Pipe 与平台生命周期适配
 ```
 
-最终代码不包含主聊天和 Task Runner 的第二套 Swift/C# Agent Loop。
+`clients/shared` 内的 Rust 协议与 Host 是客户端业务状态和投影语义的唯一实现；
+负责让两个原生客户端消费同一契约与同一组黄金夹具。平台目录不得分别实现
+Task Graph、状态归约、重试、上下文或 Agent Loop。
 
 ## 16. 实施工作包
 

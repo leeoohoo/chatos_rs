@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using ChatOS.Connector.LocalAgent;
 using ChatOS.Core.Domain;
@@ -23,13 +24,47 @@ public sealed class LocalAgentIPCClientTests
         Assert.Equal("operation-1", operationId);
         using var request = JsonDocument.Parse(transport.Request!);
         var root = request.RootElement;
-        Assert.Equal(6u, root.GetProperty("protocol_version").GetUInt32());
+        Assert.Equal(LocalAgentProtocol.Version, root.GetProperty("protocol_version").GetUInt32());
         Assert.Equal("user-1", root.GetProperty("owner_user_id").GetString());
         var command = root.GetProperty("command");
         Assert.Equal("answer_user_question", command.GetProperty("type").GetString());
         var answer = command.GetProperty("payload").GetProperty("answer");
         Assert.Equal("option-1", answer.GetProperty("selected_option_ids")[0].GetString());
         Assert.False(answer.TryGetProperty("selected_option_i_ds", out _));
+    }
+
+    [Fact]
+    public async Task UsesTheSharedV11RetryTaskAndTaskSnapshotFixtures()
+    {
+        using var expectedRequest = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("retry_task_request.json")));
+        var requestTransport = new RecordingTransport(request => Reply(request, """
+            {"type":"accepted","payload":{"operation_id":"operation-1"}}
+            """));
+        var requestClient = new WindowsLocalAgentIPCClient("user-1", requestTransport);
+
+        await requestClient.SendAsync(LocalAgentCommand.RetryTask(new LocalAgentRetryTask(
+            "task-1",
+            "task-run-1",
+            "Preserve the approved visual hierarchy.")));
+
+        using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
+        Assert.Equal(11u, LocalAgentProtocol.Version);
+        Assert.True(JsonElement.DeepEquals(
+            expectedRequest.RootElement.GetProperty("command"),
+            actualRequest.RootElement.GetProperty("command")));
+
+        using var expectedReply = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("task_snapshot_response.json")));
+        var responseJson = expectedReply.RootElement.GetProperty("response").GetRawText();
+        var responseTransport = new RecordingTransport(request => Reply(request, responseJson));
+        var responseClient = new WindowsLocalAgentIPCClient("user-1", responseTransport);
+
+        var task = await responseClient.GetTaskAsync("task-1");
+
+        Assert.Equal("task-run-2", task.CurrentRunId);
+        Assert.Equal(["task-run-1", "task-run-2"], task.RunIds);
+        Assert.Equal("project-1", task.ProjectId);
     }
 
     [Fact]
@@ -121,7 +156,7 @@ public sealed class LocalAgentIPCClientTests
     {
         var wrongRequest = new RecordingTransport(_ => JsonSerializer.SerializeToUtf8Bytes(new
         {
-            protocol_version = 6,
+            protocol_version = LocalAgentProtocol.Version,
             request_id = "another-request",
             response = new { type = "success" },
         }));
@@ -209,7 +244,10 @@ public sealed class LocalAgentIPCClientTests
         bool trusted) =>
         Assert.Equal(trusted, WindowsLocalAgentServerIdentityVerifier.IsExpectedUserSid(actual, expected));
 
-    private static byte[] Reply(byte[] request, string responseJson, uint protocolVersion = 6)
+    private static byte[] Reply(
+        byte[] request,
+        string responseJson,
+        uint protocolVersion = LocalAgentProtocol.Version)
     {
         using var requestDocument = JsonDocument.Parse(request);
         var requestId = requestDocument.RootElement.GetProperty("request_id").GetString();
@@ -221,6 +259,20 @@ public sealed class LocalAgentIPCClientTests
             response = response.RootElement.Clone(),
         });
     }
+
+    private static string Fixture(
+        string name,
+        [CallerFilePath] string sourceFile = "") =>
+        Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(sourceFile)!,
+            "..",
+            "..",
+            "..",
+            "shared",
+            "fixtures",
+            "local_agent",
+            "v11",
+            name));
 
     private static MemoryStream FrameHeader(uint length, byte[]? body = null)
     {

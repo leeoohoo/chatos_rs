@@ -63,6 +63,32 @@ struct LocalAgentTaskStateStoreTests {
         #expect(await store.localAgentTasks(sessionID: "thread-1").map(\.id) == ["task-1"])
     }
 
+    @Test("restores a retried Task from its current Run and ignores historical Run events")
+    func restoresRetriedTask() async throws {
+        let store = LocalAgentTaskStateStore()
+        var task = taskSnapshot()
+        task.revision = 2
+        task.currentRunID = "task-run-2"
+        task.runIDs = ["task-run-1", "task-run-2"]
+        var historicalRun = runSnapshot()
+        historicalRun.status = .failed
+        var currentRun = runSnapshot()
+        currentRun.runID = "task-run-2"
+        currentRun.status = .modelRunning
+
+        try await store.restoreLocalAgentTasks([task], runs: [historicalRun, currentRun])
+        try await store.applyLocalAgentTaskEvent(LocalAgentUIEvent(
+            eventSeq: 20,
+            emittedAt: "2026-09-12T03:04:00Z",
+            event: .runSnapshot(historicalRun)
+        ))
+
+        let restored = try #require(await store.localAgentTask(taskID: task.taskID))
+        #expect(restored.run.runID == "task-run-2")
+        #expect(restored.run.status == .modelRunning)
+        #expect(restored.lastAppliedEventSequence == 0)
+    }
+
     @Test("rejects a Task whose frozen project identity differs from its Run")
     func rejectsProjectDrift() async {
         let store = LocalAgentTaskStateStore()
@@ -238,7 +264,8 @@ private func taskSnapshot() -> LocalAgentTaskSnapshot {
         sourceThreadID: "thread-1",
         sourceTurnID: "turn-1",
         projectID: "project-1",
-        runID: "task-run-1",
+        currentRunID: "task-run-1",
+        runIDs: ["task-run-1"],
         objective: "Implement the approved visual design",
         acceptanceCriteria: ["Match the approved reference", "Pass visual QA"],
         status: "running",

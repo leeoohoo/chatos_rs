@@ -245,8 +245,8 @@ public actor NativeLocalAgentIPCClient {
         }
         self.ownerUserID = ownerUserID
         self.transport = transport
-        self.encoder = JSONEncoder.localAgentEncoder()
-        self.decoder = JSONDecoder.localAgentDecoder()
+        self.encoder = LocalAgentProtocolJSON.encoder()
+        self.decoder = LocalAgentProtocolJSON.decoder()
     }
 
     public func send(_ command: LocalAgentCommand) async throws -> LocalAgentResponse {
@@ -301,6 +301,16 @@ public actor NativeLocalAgentIPCClient {
         _ command: LocalAgentCreateTask
     ) async throws -> (operationID: String, run: LocalAgentRunSnapshot) {
         let response = try await send(.createTask(command))
+        guard case let .runCreated(operationID, run) = response else {
+            throw unexpected("run_created", response)
+        }
+        return (operationID, run)
+    }
+
+    public func retryTask(
+        _ command: LocalAgentRetryTask
+    ) async throws -> (operationID: String, run: LocalAgentRunSnapshot) {
+        let response = try await send(.retryTask(command))
         guard case let .runCreated(operationID, run) = response else {
             throw unexpected("run_created", response)
         }
@@ -403,43 +413,4 @@ private extension LocalAgentResponse {
         case .error: "error"
         }
     }
-}
-
-private extension JSONEncoder {
-    static func localAgentEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        encoder.outputFormatting = [.sortedKeys]
-        return encoder
-    }
-}
-
-private extension JSONDecoder {
-    static func localAgentDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .custom { path in
-            let source = path.last?.stringValue ?? ""
-            let components = source.split(separator: "_")
-            guard let first = components.first else { return AnyCodingKey(source) }
-            let value = String(first) + components.dropFirst().map { component in
-                switch component.lowercased() {
-                case "id": "ID"
-                case "ids": "IDs"
-                case "ok": "OK"
-                case "url": "URL"
-                default: component.prefix(1).uppercased() + component.dropFirst()
-                }
-            }.joined()
-            return AnyCodingKey(value)
-        }
-        return decoder
-    }
-}
-
-private struct AnyCodingKey: CodingKey {
-    let stringValue: String
-    let intValue: Int? = nil
-    init(_ stringValue: String) { self.stringValue = stringValue }
-    init?(stringValue: String) { self.init(stringValue) }
-    init?(intValue: Int) { return nil }
 }

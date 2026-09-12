@@ -1,0 +1,13 @@
+{
+  "protocol_version": 11,
+  "request_id": "request-retry-task-1",
+  "owner_user_id": "user-1",
+  "command": {
+    "type": "retry_task",
+    "payload": {
+      "task_id": "task-1",
+      "expected_run_id": "task-run-1",
+      "instruction": "Preserve the approved visual hierarchy."
+    }
+  }
+}

@@ -57,7 +57,7 @@ public actor NativeLocalAgentTaskEventSink: LocalAgentUIEventApplying {
         async let runs = allRuns()
         let (taskSnapshots, runSnapshots) = try await (tasks, runs)
         try await store.restoreLocalAgentTasks(taskSnapshots, runs: runSnapshots)
-        taskRunIDs = Set(taskSnapshots.map(\.runID))
+        taskRunIDs = Set(taskSnapshots.flatMap(\.runIDs))
         ignoredRunIDs = Set(runSnapshots.lazy
             .filter { $0.profileKey != "task_runner" }
             .map(\.runID))
@@ -86,7 +86,7 @@ public actor NativeLocalAgentTaskEventSink: LocalAgentUIEventApplying {
             }
             let task = try await client.task(id: run.ownerEntityID)
             try await store.registerLocalAgentTask(task, run: run)
-            taskRunIDs.insert(runID)
+            taskRunIDs.formUnion(task.runIDs)
         }
         try await store.applyLocalAgentTaskEvent(event)
     }

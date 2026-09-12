@@ -102,6 +102,21 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
             : throw Unexpected("accepted", response.Type);
     }
 
+    public Task<LocalAgentRunCreatedResponse> CreateMainChatTurnAsync(
+        LocalAgentCreateMainChatTurn command,
+        CancellationToken cancellationToken = default) =>
+        SendRunCreatingCommandAsync(LocalAgentCommand.CreateMainChatTurn(command), cancellationToken);
+
+    public Task<LocalAgentRunCreatedResponse> CreateTaskAsync(
+        LocalAgentCreateTask command,
+        CancellationToken cancellationToken = default) =>
+        SendRunCreatingCommandAsync(LocalAgentCommand.CreateTask(command), cancellationToken);
+
+    public Task<LocalAgentRunCreatedResponse> RetryTaskAsync(
+        LocalAgentRetryTask command,
+        CancellationToken cancellationToken = default) =>
+        SendRunCreatingCommandAsync(LocalAgentCommand.RetryTask(command), cancellationToken);
+
     public async Task<LocalAgentRunSnapshot> GetRunAsync(
         string runId,
         CancellationToken cancellationToken = default)
@@ -111,6 +126,29 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
         return response is LocalAgentRunResponse run
             ? run.Run
             : throw Unexpected("run", response.Type);
+    }
+
+    public async Task<LocalAgentTaskSnapshot> GetTaskAsync(
+        string taskId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(LocalAgentCommand.GetTask(taskId), cancellationToken)
+            .ConfigureAwait(false);
+        return response is LocalAgentTaskResponse task
+            ? task.Task
+            : throw Unexpected("task", response.Type);
+    }
+
+    public async Task<LocalAgentMainChatRunBinding> GetMainChatRunBindingAsync(
+        string runId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            LocalAgentCommand.GetMainChatRunBinding(runId),
+            cancellationToken).ConfigureAwait(false);
+        return response is LocalAgentMainChatRunBindingResponse binding
+            ? binding.Binding
+            : throw Unexpected("main_chat_run_binding", response.Type);
     }
 
     public async Task<LocalAgentRunPage> ListRunsAsync(
@@ -125,6 +163,18 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
             : throw Unexpected("runs", response.Type);
     }
 
+    public async Task<LocalAgentTaskPage> ListTasksAsync(
+        string? cursor = null,
+        uint limit = 100,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(LocalAgentCommand.ListTasks(cursor, limit), cancellationToken)
+            .ConfigureAwait(false);
+        return response is LocalAgentTasksResponse page
+            ? new LocalAgentTaskPage(page.Tasks, page.NextCursor)
+            : throw Unexpected("tasks", response.Type);
+    }
+
     public async Task<LocalAgentEventPage> SubscribeRunEventsAsync(
         ulong afterSequence,
         uint limit = 200,
@@ -136,6 +186,37 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
         return response is LocalAgentEventsResponse page
             ? new LocalAgentEventPage(page.Events, page.NextSequence, page.HasMore)
             : throw Unexpected("events", response.Type);
+    }
+
+    public async Task<ulong> GetUIEventCursorAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(LocalAgentCommand.GetUIEventCursor(), cancellationToken)
+            .ConfigureAwait(false);
+        return response is LocalAgentUIEventCursorResponse cursor
+            ? cursor.EventSequence
+            : throw Unexpected("ui_event_cursor", response.Type);
+    }
+
+    public async Task<ulong> AcknowledgeUIEventsAsync(
+        ulong throughSequence,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            LocalAgentCommand.AcknowledgeUIEvents(throughSequence),
+            cancellationToken).ConfigureAwait(false);
+        return response is LocalAgentUIEventCursorResponse cursor
+            ? cursor.EventSequence
+            : throw Unexpected("ui_event_cursor", response.Type);
+    }
+
+    private async Task<LocalAgentRunCreatedResponse> SendRunCreatingCommandAsync(
+        LocalAgentCommand command,
+        CancellationToken cancellationToken)
+    {
+        var response = await SendAsync(command, cancellationToken).ConfigureAwait(false);
+        return response is LocalAgentRunCreatedResponse created
+            ? created
+            : throw Unexpected("run_created", response.Type);
     }
 
     private static LocalAgentResponse DecodeResponse(JsonElement value)
@@ -162,9 +243,16 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
             {
                 "accepted" => new LocalAgentAcceptedResponse(
                     RequirePayload<AcceptedPayload>(hasPayload, payload).OperationId),
+                "run_created" => RunCreated(RequirePayload<RunCreatedPayload>(hasPayload, payload)),
                 "run" => new LocalAgentRunResponse(RequirePayload<LocalAgentRunSnapshot>(hasPayload, payload)),
+                "task" => new LocalAgentTaskResponse(RequirePayload<LocalAgentTaskSnapshot>(hasPayload, payload)),
+                "main_chat_run_binding" => new LocalAgentMainChatRunBindingResponse(
+                    RequirePayload<LocalAgentMainChatRunBinding>(hasPayload, payload)),
                 "runs" => Runs(RequirePayload<RunsPayload>(hasPayload, payload)),
+                "tasks" => Tasks(RequirePayload<TasksPayload>(hasPayload, payload)),
                 "events" => Events(RequirePayload<EventsPayload>(hasPayload, payload)),
+                "ui_event_cursor" => new LocalAgentUIEventCursorResponse(
+                    RequirePayload<UIEventCursorPayload>(hasPayload, payload).EventSeq),
                 "storage_profile" => new LocalAgentStorageProfileResponse(
                     RequirePayload<LocalAgentStorageProfile>(hasPayload, payload)),
                 "postgres_connection_test" => new LocalAgentPostgresConnectionTestResponse(
@@ -196,6 +284,12 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
     private static LocalAgentRunsResponse Runs(RunsPayload payload) =>
         new(payload.Runs, payload.NextCursor);
 
+    private static LocalAgentRunCreatedResponse RunCreated(RunCreatedPayload payload) =>
+        new(payload.OperationId, payload.Run);
+
+    private static LocalAgentTasksResponse Tasks(TasksPayload payload) =>
+        new(payload.Tasks, payload.NextCursor);
+
     private static LocalAgentEventsResponse Events(EventsPayload payload) =>
         new(payload.Events, payload.NextSeq, payload.HasMore);
 
@@ -214,7 +308,10 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
         JsonElement Response);
 
     private sealed record AcceptedPayload(string OperationId);
+    private sealed record RunCreatedPayload(string OperationId, LocalAgentRunSnapshot Run);
     private sealed record RunsPayload(IReadOnlyList<LocalAgentRunSnapshot> Runs, string? NextCursor);
+    private sealed record TasksPayload(IReadOnlyList<LocalAgentTaskSnapshot> Tasks, string? NextCursor);
+    private sealed record UIEventCursorPayload(ulong EventSeq);
     private sealed record EventsPayload(
         IReadOnlyList<LocalAgentUIEvent> Events,
         ulong NextSeq,

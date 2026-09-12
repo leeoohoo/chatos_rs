@@ -17,7 +17,27 @@ public interface ILocalAgentIPCClient
         LocalAgentCommand command,
         CancellationToken cancellationToken = default);
 
+    Task<LocalAgentRunCreatedResponse> CreateMainChatTurnAsync(
+        LocalAgentCreateMainChatTurn command,
+        CancellationToken cancellationToken = default);
+
+    Task<LocalAgentRunCreatedResponse> CreateTaskAsync(
+        LocalAgentCreateTask command,
+        CancellationToken cancellationToken = default);
+
+    Task<LocalAgentRunCreatedResponse> RetryTaskAsync(
+        LocalAgentRetryTask command,
+        CancellationToken cancellationToken = default);
+
     Task<LocalAgentRunSnapshot> GetRunAsync(
+        string runId,
+        CancellationToken cancellationToken = default);
+
+    Task<LocalAgentTaskSnapshot> GetTaskAsync(
+        string taskId,
+        CancellationToken cancellationToken = default);
+
+    Task<LocalAgentMainChatRunBinding> GetMainChatRunBindingAsync(
         string runId,
         CancellationToken cancellationToken = default);
 
@@ -26,8 +46,19 @@ public interface ILocalAgentIPCClient
         uint limit = 100,
         CancellationToken cancellationToken = default);
 
+    Task<LocalAgentTaskPage> ListTasksAsync(
+        string? cursor = null,
+        uint limit = 100,
+        CancellationToken cancellationToken = default);
+
     Task<LocalAgentEventPage> SubscribeRunEventsAsync(
         ulong afterSequence,
         uint limit = 200,
+        CancellationToken cancellationToken = default);
+
+    Task<ulong> GetUIEventCursorAsync(CancellationToken cancellationToken = default);
+
+    Task<ulong> AcknowledgeUIEventsAsync(
+        ulong throughSequence,
         CancellationToken cancellationToken = default);
 }
