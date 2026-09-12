@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+import ChatOSCore
 import Foundation
 import Security
 
@@ -80,6 +81,7 @@ public actor NativeLocalAgentAccountSession {
     private let randomBytes: @Sendable (Int) throws -> Data
     private var activeAccountID: String?
     private var activeSettings: NativeLocalAgentHostBootstrapSettings?
+    private let attachmentStager = NativeLocalAgentAttachmentStager()
 
     public init() throws {
         self.credentials = try NativeLocalAgentCredentialStore()
@@ -240,6 +242,25 @@ public actor NativeLocalAgentAccountSession {
         }
         let transport = try NativeLocalAgentUnixTransport(socketPath: endpoint)
         return try NativeLocalAgentIPCClient(ownerUserID: accountID, transport: transport)
+    }
+
+    public func stageAttachments(
+        _ attachments: [ConversationAttachmentDraft],
+        accountID: String
+    ) throws -> [LocalAgentAttachmentReference] {
+        guard let activeAccountID else {
+            throw NativeLocalAgentAccountSessionError.inactive
+        }
+        guard activeAccountID == accountID else {
+            throw NativeLocalAgentAccountSessionError.accountMismatch
+        }
+        guard let activeSettings else {
+            throw NativeLocalAgentAccountSessionError.inactive
+        }
+        return try attachmentStager.stage(
+            attachments,
+            in: activeSettings.attachmentGrantDirectory
+        )
     }
 
     private func stop(accountID: String) async {

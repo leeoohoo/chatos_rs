@@ -106,9 +106,9 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
         credentialValues: [String: Data]
     ) async throws -> NativeLocalAgentHostLaunchConfiguration {
         try validate(settings)
-        try ensurePrivateDirectory(settings.runtimeDirectory)
-        try ensurePrivateDirectory(settings.attachmentGrantDirectory)
-        try ensurePrivateDirectory(settings.platformStateDirectory)
+        try Self.ensurePrivateDirectory(settings.runtimeDirectory)
+        try Self.ensurePrivateDirectory(settings.attachmentGrantDirectory)
+        try Self.ensurePrivateDirectory(settings.platformStateDirectory)
         let launchID = "launch-\(UUID().uuidString.lowercased())"
         let workerID = "worker-\(UUID().uuidString.lowercased())"
         let socketURL = settings.runtimeDirectory
@@ -238,7 +238,7 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
         }
     }
 
-    private func ensurePrivateDirectory(_ url: URL) throws {
+    static func ensurePrivateDirectory(_ url: URL) throws {
         guard url.isFileURL, url.path.hasPrefix("/") else {
             throw NativeLocalAgentHostBootstrapError.privateDirectoryRequired
         }

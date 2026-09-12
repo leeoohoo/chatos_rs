@@ -80,8 +80,8 @@ extension ConversationSessionViewModel {
         errors: [String] = []
     ) {
         let maximumCount = 20
-        let maximumFileBytes = 20 * 1024 * 1024
-        let maximumTotalBytes = 20 * 1024 * 1024
+        let maximumFileBytes = 5 * 1024 * 1024
+        let maximumTotalBytes = 6 * 1024 * 1024
         var accepted: [ConversationAttachmentDraft] = []
         var messages = errors
         var totalBytes = attachments.reduce(0) { $0 + $1.size }
@@ -92,11 +92,11 @@ extension ConversationSessionViewModel {
                 break
             }
             if attachment.size > maximumFileBytes {
-                messages.append("“\(attachment.name)”超过 20 MB")
+                messages.append("“\(attachment.name)”超过 5 MB")
                 continue
             }
             if totalBytes + attachment.size > maximumTotalBytes {
-                messages.append("附件总大小不能超过 20 MB")
+                messages.append("附件总大小不能超过 6 MB")
                 continue
             }
             accepted.append(attachment)
