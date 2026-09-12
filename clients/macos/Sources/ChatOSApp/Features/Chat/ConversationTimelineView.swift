@@ -39,7 +39,6 @@ struct ConversationTimelineView: View {
                 MessageTaskWorkspaceSheet(
                     turn: turn,
                     graphService: graphService,
-                    realtimeService: conversation.realtimeService,
                     initialTaskID: requestedTaskID,
                     initialRunID: requestedRunID
                 )

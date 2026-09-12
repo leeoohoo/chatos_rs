@@ -10,7 +10,6 @@ final class PetOverlayStore: ObservableObject {
     private var expirationTask: Task<Void, Never>?
     private var sourceVersions: [PetActivitySource: Int64] = [:]
     private var dismissedActivityIdentities: [String: Date] = [:]
-    var onDisposition: ((PetActivity, PetActivityDisposition) -> Void)?
 
     private static let maximumDismissedActivities = 256
 
@@ -140,30 +139,22 @@ final class PetOverlayStore: ObservableObject {
 
     func removeProcessActivities() {
         reducer.remove(kinds: [.working, .reviewing])
-        bumpAllCloudVersions()
+        bumpAllTaskVersions()
         publishPresentation()
     }
 
     func removeCompletionActivities() {
         reducer.remove(kinds: [.succeeded])
-        bumpAllCloudVersions()
+        bumpAllTaskVersions()
         publishPresentation()
     }
 
-    func dismiss(
-        _ activity: PetActivity,
-        disposition: PetActivityDisposition = .ignored
-    ) {
+    func dismiss(_ activity: PetActivity) {
         dismissedActivityIdentities[activityIdentity(activity)] = Date()
         trimDismissedActivities()
         reducer.apply(.remove(id: activity.id))
         bumpVersion(for: activity.source)
         publishPresentation()
-        onDisposition?(activity, disposition)
-    }
-
-    func restoreDismissal(_ activity: PetActivity) {
-        dismissedActivityIdentities.removeValue(forKey: activityIdentity(activity))
     }
 
     private func publishPresentation() {
@@ -181,8 +172,8 @@ final class PetOverlayStore: ObservableObject {
         sourceVersions[source, default: 0] &+= 1
     }
 
-    private func bumpAllCloudVersions() {
-        for source in Self.cloudSources {
+    private func bumpAllTaskVersions() {
+        for source in Self.taskSources {
             bumpVersion(for: source)
         }
     }
@@ -211,10 +202,8 @@ final class PetOverlayStore: ObservableObject {
         }
     }
 
-    private static let cloudSources: [PetActivitySource] = [
+    private static let taskSources: [PetActivitySource] = [
         .askUserPrompt,
-        .chat,
-        .taskBoard,
         .taskRunner,
     ]
 
@@ -223,8 +212,6 @@ final class PetOverlayStore: ObservableObject {
         if id.hasPrefix("local-approval:") || id.hasPrefix("local-approval-event:") {
             return .localApproval
         }
-        if id.hasPrefix("chat:") { return .chat }
-        if id.hasPrefix("task-review:") || id.hasPrefix("task-board:") { return .taskBoard }
         if id.hasPrefix("task-runner:") { return .taskRunner }
         return nil
     }

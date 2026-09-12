@@ -255,6 +255,17 @@ struct LocalAgentTaskStateStoreTests {
             )
         }
     }
+
+    @Test("publishes one global update for native Pet projection")
+    func publishesGlobalUpdates() async throws {
+        let store = LocalAgentTaskStateStore()
+        let stream = await store.localAgentTaskUpdates()
+        var iterator = stream.makeAsyncIterator()
+
+        try await store.registerLocalAgentTask(taskSnapshot(), run: runSnapshot())
+
+        #expect(await iterator.next() != nil)
+    }
 }
 
 private func taskSnapshot() -> LocalAgentTaskSnapshot {

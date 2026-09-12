@@ -99,14 +99,12 @@ final class AppModel: ObservableObject {
 
     private let conversationService: ChatOSConversationService
     private let apiClient: ChatOSAPIClient
-    let realtimeService: ChatOSRealtimeClient
     private let commandService: NativeLocalAgentConversationCommandService
     private let turnProcessService: ChatOSTurnProcessService
     let messageTaskGraphService: NativeLocalAgentTaskGraphService
     private let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
     private let askUserPromptService: NativeLocalAgentAskUserPromptService
     private let localAgentRunControlService: NativeLocalAgentRunControlService
-    private let petActivityInboxService: ChatOSPetActivityInboxService
     private let workspaceService: ChatOSWorkspaceService
     private let localConnectorService: NativeLocalConnectorService
     private let localAgentAccountSession: NativeLocalAgentAccountSession
@@ -244,11 +242,6 @@ final class AppModel: ObservableObject {
         self.runtimeSettingsService = runtimeSettingsService
         self.askUserPromptService = askUserPromptService
         self.localAgentRunControlService = localAgentRunControlService
-        self.petActivityInboxService = ChatOSPetActivityInboxService(client: apiClient)
-        self.realtimeService = ChatOSRealtimeClient(
-            apiClient: apiClient,
-            conversationService: conversationService
-        )
         idleSleepController.setEnabled(preventsIdleSystemSleep)
         authentication.$phase
             .removeDuplicates()
@@ -500,13 +493,6 @@ final class AppModel: ObservableObject {
             return
         }
 
-        if activity.source == .chat,
-           let runID = activity.route.runID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !runID.isEmpty {
-            try await commandService.cancelRun(runID: runID)
-            return
-        }
-
         throw PetActivityActionError.cancelUnavailable
     }
 
@@ -580,17 +566,6 @@ final class AppModel: ObservableObject {
             promptID: prompt.id,
             sessionID: prompt.sessionID
         )
-    }
-
-    func applyPetActivityDisposition(
-        _ disposition: PetActivityDisposition,
-        to activity: PetActivity
-    ) async throws {
-        try await petActivityInboxService.apply(disposition, to: activity)
-    }
-
-    func recoverPetActivities() async throws -> [PetActivity] {
-        try await petActivityInboxService.fetchOpenActivities(limit: 500)
     }
 
     var interfaceDynamicTypeSize: DynamicTypeSize {
@@ -1392,7 +1367,6 @@ final class AppModel: ObservableObject {
             initialTurns: [],
             historyStore: historyStore,
             remoteService: conversationService,
-            realtimeService: nil,
             commandService: commandService,
             turnProcessService: turnProcessService,
             messageTaskGraphService: messageTaskGraphService,

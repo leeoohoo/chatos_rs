@@ -9,7 +9,7 @@ struct PetStateReducerTests {
         var reducer = PetStateReducer()
         reducer.apply(.upsert(.init(
             id: "work-1",
-            source: .chat,
+            source: .taskRunner,
             kind: .working,
             title: "执行中",
             updatedAt: now
@@ -126,7 +126,7 @@ struct PetStateReducerTests {
         var reducer = PetStateReducer()
         reducer.apply(.upsert(.init(
             id: "work-1",
-            source: .chat,
+            source: .taskRunner,
             kind: .working,
             title: "执行中"
         )))
@@ -162,7 +162,7 @@ struct PetStateReducerTests {
         )))
         reducer.apply(.upsert(.init(
             id: "blocked-1",
-            source: .taskBoard,
+            source: .taskRunner,
             kind: .blocked,
             title: "任务阻塞"
         )))
@@ -192,27 +192,4 @@ struct PetStateReducerTests {
         #expect(activities.map(\.id) == ["approval-1", "work-1"])
     }
 
-    @Test
-    func specificTaskHidesDuplicateConversationLevelProgress() {
-        var reducer = PetStateReducer()
-        let route = PetActivityRoute(conversationID: "conversation-1")
-        reducer.apply(.upsert(.init(
-            id: "chat-progress",
-            source: .chat,
-            kind: .working,
-            title: "AI 正在处理任务",
-            route: route
-        )))
-        reducer.apply(.upsert(.init(
-            id: "task-progress",
-            source: .taskRunner,
-            kind: .working,
-            title: "任务正在执行",
-            route: route
-        )))
-
-        let activities = reducer.visibleActivities()
-        #expect(activities.map(\.id) == ["task-progress"])
-        #expect(reducer.presentation().activeWorkCount == 1)
-    }
 }

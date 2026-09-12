@@ -27,15 +27,4 @@ public struct ChatOSConversationService: ConversationRemoteServicing {
         )
     }
 
-    public func issueWebSocketTicket() async throws -> String {
-        let response: WebSocketTicketDTO = try await client.request(
-            "/auth/ws-ticket",
-            method: "POST"
-        )
-        let ticket = response.ticket.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !ticket.isEmpty else {
-            throw ChatOSAPIError.missingWebSocketTicket
-        }
-        return ticket
-    }
 }

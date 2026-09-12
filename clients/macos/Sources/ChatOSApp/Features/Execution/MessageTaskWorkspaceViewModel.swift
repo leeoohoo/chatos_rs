@@ -21,7 +21,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     }
 
     let turn: ConversationTurn
-    @Published private(set) var executionActivity: [ConversationRealtimeProcessUpdate] = []
     @Published private(set) var graph: MessageTaskGraphSnapshot?
     @Published private(set) var selectedTask: MessageTask?
     @Published var taskDetail: MessageTask?
@@ -39,11 +38,9 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     let graphService: any MessageTaskGraphServicing
-    let realtimeService: (any ConversationRealtimeStreaming)?
     let initialTaskID: String?
     let initialRunID: String?
     var pollingTask: Task<Void, Never>?
-    var realtimeTask: Task<Void, Never>?
     var loadedModelOutputRunID: String?
     var workspaceRefreshGeneration = 0
     var emptyGraphRetryAttemptsRemaining = MessageTaskWorkspaceViewModel.emptyGraphRetryLimit
@@ -51,13 +48,11 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     init(
         turn: ConversationTurn,
         graphService: any MessageTaskGraphServicing,
-        realtimeService: (any ConversationRealtimeStreaming)? = nil,
         initialTaskID: String? = nil,
         initialRunID: String? = nil
     ) {
         self.turn = turn
         self.graphService = graphService
-        self.realtimeService = realtimeService
         self.initialTaskID = initialTaskID
         self.initialRunID = initialRunID
         if initialRunID != nil {
@@ -67,7 +62,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
 
     deinit {
         pollingTask?.cancel()
-        realtimeTask?.cancel()
     }
 
     var displayGraph: MessageTaskGraphSnapshot? {
@@ -82,7 +76,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         errorMessage = nil
         Task {
             await refreshWorkspaceState(refreshInspector: false)
-            startRealtime()
             startPollingIfNeeded()
             isLoading = false
         }
@@ -146,11 +139,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         pollingTask = nil
     }
 
-    func stopRealtime() {
-        realtimeTask?.cancel()
-        realtimeTask = nil
-    }
-
     var expectsTaskGraph: Bool {
         initialTaskID != nil || initialRunID != nil
     }
@@ -205,21 +193,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
                 ?? normalized.nodes.first
             if let initial {
                 select(initial.task, section: initialRunID == nil ? nil : .run)
-            }
-        }
-    }
-
-    func applyRealtimeSignal(_ signal: ConversationRealtimeSignal) {
-        guard signal.turnID == turn.id,
-              let update = signal.processUpdate else { return }
-        if let last = executionActivity.last,
-           last.title == update.title,
-           last.status == update.status {
-            executionActivity[executionActivity.count - 1] = update
-        } else {
-            executionActivity.append(update)
-            if executionActivity.count > 80 {
-                executionActivity.removeFirst(executionActivity.count - 80)
             }
         }
     }

@@ -19,5 +19,4 @@ public struct ConversationHistoryQuery: Sendable, Equatable {
 
 public protocol ConversationRemoteServicing: Sendable {
     func fetchHistory(_ query: ConversationHistoryQuery) async throws -> HistoryPage
-    func issueWebSocketTicket() async throws -> String
 }

@@ -190,35 +190,6 @@ extension MessageTaskWorkspaceViewModel {
         }
     }
 
-    func startRealtime() {
-        guard let realtimeService, realtimeTask == nil else { return }
-        let sessionID = turn.sessionID
-        realtimeTask = Task { [weak self] in
-            let stream = await realtimeService.events(sessionID: sessionID)
-            do {
-                for try await signal in stream {
-                    guard let self, !Task.isCancelled else { return }
-                    if signal.kind == .reconcile {
-                        await self.refreshWorkspaceState(refreshInspector: true)
-                        self.startPollingIfNeeded()
-                        continue
-                    }
-                    self.applyRealtimeSignal(signal)
-                    if signal.turnID == self.turn.id,
-                       [.completed, .failed, .cancelled, .persisted].contains(signal.kind) {
-                        await self.refreshWorkspaceState(refreshInspector: true)
-                        self.startPollingIfNeeded()
-                    }
-                }
-            } catch {
-                guard let self, !Task.isCancelled else { return }
-                if self.errorMessage == nil {
-                    self.errorMessage = "实时进度连接已中断：\(error.localizedDescription)"
-                }
-            }
-        }
-    }
-
     func startPollingIfNeeded(force: Bool = false) {
         stopPolling()
         let shouldPollActiveTask = graph?.nodes.contains(where: { $0.task.isActive }) == true

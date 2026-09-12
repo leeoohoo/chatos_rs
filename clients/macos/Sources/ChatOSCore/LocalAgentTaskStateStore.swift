@@ -86,6 +86,7 @@ public protocol LocalAgentTaskStateStoring: Sendable {
     func localAgentTasks(sessionID: String?) async -> [LocalAgentTaskState]
     func localAgentTask(taskID: String) async -> LocalAgentTaskState?
     func localAgentTaskUpdates(sessionID: String) async -> AsyncStream<Void>
+    func localAgentTaskUpdates() async -> AsyncStream<Void>
 }
 
 /// Native Task Runner projection derived only from Host Task/Run snapshots and
@@ -95,6 +96,7 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
     private var tasksByID: [String: LocalAgentTaskState] = [:]
     private var taskIDByRunID: [String: String] = [:]
     private var updateContinuations: [String: [UUID: AsyncStream<Void>.Continuation]] = [:]
+    private var globalUpdateContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
 
     public init() {}
 
@@ -301,6 +303,16 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
         }
     }
 
+    public func localAgentTaskUpdates() -> AsyncStream<Void> {
+        let subscriptionID = UUID()
+        return AsyncStream { continuation in
+            globalUpdateContinuations[subscriptionID] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeGlobalContinuation(subscriptionID) }
+            }
+        }
+    }
+
     public func localAgentPrompts(
         sessionID: String,
         limit: Int
@@ -441,8 +453,13 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
         }
     }
 
+    private func removeGlobalContinuation(_ id: UUID) {
+        globalUpdateContinuations[id] = nil
+    }
+
     private func notify(_ sessionID: String) {
         updateContinuations[sessionID]?.values.forEach { $0.yield(()) }
+        globalUpdateContinuations.values.forEach { $0.yield(()) }
     }
 
     private static func validate(

@@ -8,9 +8,7 @@ final class PetOverlayCoordinator {
     private let store: PetOverlayStore
     private let preferences: PetPreferencesStore
     private let windowController: PetOverlayWindowController
-    private var realtimeTask: Task<Void, Never>?
-    private var recoveryTask: Task<Void, Never>?
-    private var refreshTask: Task<Void, Never>?
+    private var localTaskUpdateTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
     private var isAuthenticated = false
 
@@ -53,27 +51,11 @@ final class PetOverlayCoordinator {
         )
 
         store.startExpirationMonitoring()
-        store.onDisposition = { [weak self, weak model] activity, disposition in
-            guard activity.inboxID != nil else { return }
-            Task {
-                do {
-                    try await model?.applyPetActivityDisposition(disposition, to: activity)
-                } catch {
-                    await MainActor.run {
-                        self?.store.restoreDismissal(activity)
-                        self?.store.apply(.upsert(activity))
-                        self?.recoverCloudState()
-                    }
-                }
-            }
-        }
         bind(model: model)
     }
 
     deinit {
-        realtimeTask?.cancel()
-        recoveryTask?.cancel()
-        refreshTask?.cancel()
+        localTaskUpdateTask?.cancel()
     }
 
     func openFile(_ request: PetFileOpenRequest) {
@@ -103,13 +85,6 @@ final class PetOverlayCoordinator {
             .receive(on: RunLoop.main)
             .sink { [weak store] event in
                 store?.showApprovalEvent(event)
-            }
-            .store(in: &cancellables)
-
-        Publishers.CombineLatest(model.$projects, model.$contacts)
-            .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
-            .sink { [weak self] _, _ in
-                self?.recoverCloudState()
             }
             .store(in: &cancellables)
 
@@ -154,99 +129,44 @@ final class PetOverlayCoordinator {
         if authenticated != isAuthenticated {
             isAuthenticated = authenticated
             if authenticated {
-                startRealtime()
-                recoverCloudState()
-                startStatusRefresh()
+                startLocalTaskUpdates()
             } else {
-                realtimeTask?.cancel()
-                realtimeTask = nil
-                recoveryTask?.cancel()
-                recoveryTask = nil
-                refreshTask?.cancel()
-                refreshTask = nil
+                localTaskUpdateTask?.cancel()
+                localTaskUpdateTask = nil
                 store.clear()
             }
         }
         windowController.setVisible(authenticated && enabled)
     }
 
-    private func startRealtime() {
-        guard realtimeTask == nil, let model else { return }
-        let realtime = model.realtimeService
-        realtimeTask = Task { [weak self] in
-            let stream = await realtime.petActivityEvents()
-            do {
-                for try await event in stream {
-                    guard let self, !Task.isCancelled else { return }
-                    if event == .reconcile {
-                        self.recoverCloudState()
-                        continue
-                    }
-                    if self.shouldApply(event) {
-                        self.store.apply(event)
-                    }
-                }
-            } catch {
-                guard let self, !Task.isCancelled else { return }
-                self.store.apply(.upsert(PetActivity(
-                    id: "pet-realtime-connection",
-                    source: .chat,
-                    kind: .failed,
-                    title: "全局事件连接已中断",
-                    detail: "ChatOS 会自动尝试重新连接",
-                    expiresAt: Date().addingTimeInterval(8)
-                )))
-            }
-            self?.realtimeTask = nil
-        }
-    }
-
-    private func startStatusRefresh() {
-        guard refreshTask == nil else { return }
-        refreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(20))
-                guard let self, !Task.isCancelled else { return }
-                if self.store.presentation.activeWorkCount > 0 {
-                    self.recoverCloudState()
-                }
-            }
-        }
-    }
-
-    private func recoverCloudState() {
-        guard isAuthenticated, let model else { return }
-        recoveryTask?.cancel()
-        let sources: [PetActivitySource] = [
-            .askUserPrompt,
-            .chat,
-            .taskBoard,
-            .taskRunner,
-        ]
-        let expectedVersions = store.versions(for: sources)
-        recoveryTask = Task { [weak self, weak model] in
-            do {
-                guard let model else { return }
-                let activities = try await model.recoverPetActivities()
-                guard let self, !Task.isCancelled else { return }
-                let visibleActivities = activities.filter {
-                    self.shouldApply(.upsert($0))
-                }
-                self.store.reconcileActivities(
-                    visibleActivities,
-                    sources: sources,
-                    expectedVersions: expectedVersions
-                )
-                self.recoveryTask = nil
-            } catch {
+    private func startLocalTaskUpdates() {
+        guard localTaskUpdateTask == nil, let model else { return }
+        let taskStore = model.localAgentTaskStateStore
+        localTaskUpdateTask = Task { [weak self] in
+            guard let self else { return }
+            let stream = await taskStore.localAgentTaskUpdates()
+            await self.reconcileLocalTasks(from: taskStore)
+            for await _ in stream {
                 guard !Task.isCancelled else { return }
-                self?.recoveryTask = nil
+                await self.reconcileLocalTasks(from: taskStore)
             }
         }
     }
 
-    private func shouldApply(_ event: PetActivityEvent) -> Bool {
-        guard case let .upsert(activity) = event else { return true }
+    private func reconcileLocalTasks(from taskStore: LocalAgentTaskStateStore) async {
+        let sources: [PetActivitySource] = [.askUserPrompt, .taskRunner]
+        let expectedVersions = store.versions(for: sources)
+        let states = await taskStore.localAgentTasks(sessionID: nil)
+        guard !Task.isCancelled else { return }
+        let activities = PetActivityRecoveryMapper.activities(from: states).filter(shouldApply)
+        store.reconcileActivities(
+            activities,
+            sources: sources,
+            expectedVersions: expectedVersions
+        )
+    }
+
+    private func shouldApply(_ activity: PetActivity) -> Bool {
         if !preferences.showProcess,
            activity.kind == .working || activity.kind == .reviewing {
             return false

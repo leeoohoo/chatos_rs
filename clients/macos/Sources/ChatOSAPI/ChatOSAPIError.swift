@@ -10,7 +10,6 @@ public enum ChatOSAPIError: Error, Sendable, Equatable {
     case server(statusCode: Int, message: String)
     case serverDetail(statusCode: Int, message: String, code: String?, challengePrompt: String?)
     case decoding(String)
-    case missingWebSocketTicket
     case missingModelConfiguration
 }
 
@@ -33,8 +32,6 @@ extension ChatOSAPIError: LocalizedError {
             message.isEmpty ? "服务器请求失败。" : message
         case .decoding:
             "服务器数据格式与客户端不一致。"
-        case .missingWebSocketTicket:
-            "无法建立实时连接，请稍后重试。"
         case .missingModelConfiguration:
             "当前会话没有可用的模型配置，请先在设置中选择模型。"
         }

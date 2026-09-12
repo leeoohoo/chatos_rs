@@ -4,118 +4,109 @@ import Testing
 
 struct PetActivityRecoveryMapperTests {
     @Test
-    func authoritativeCancelledTaskRemovesStaleRunningActivity() {
-        let now = Date()
-        let staleActivity = PetActivity(
-            id: "task-runner:task-1",
-            source: .taskRunner,
-            kind: .working,
-            title: "任务正在执行",
-            route: PetActivityRoute(messageID: "message-1", taskID: "task-1"),
-            updatedAt: now.addingTimeInterval(-3_600)
-        )
-        let task = MessageTask(
-            id: "task-1",
-            title: "使用 Safari 搜索并总结今日 AI 新闻",
-            status: "cancelled",
-            updatedAt: now.addingTimeInterval(-3_000)
-        )
+    func runningTaskUsesAuthoritativeLocalIdentity() throws {
+        let state = makeState(status: .modelRunning)
 
-        let reconciled = PetActivityRecoveryMapper.applyingAuthoritativeTask(
-            task,
-            to: staleActivity,
-            now: now
-        )
+        let activity = try #require(PetActivityRecoveryMapper.activity(from: state))
 
-        #expect(reconciled == nil)
+        #expect(activity.id == "task-runner:task-1")
+        #expect(activity.source == .taskRunner)
+        #expect(activity.kind == .working)
+        #expect(activity.route.projectID == "project-1")
+        #expect(activity.route.conversationID == "session-1")
+        #expect(activity.route.turnID == "turn-1")
+        #expect(activity.route.taskID == "task-1")
+        #expect(activity.route.runID == "run-1")
+        #expect(activity.activityVersion == "run-1:3")
     }
 
     @Test
-    func authoritativeTaskStatusAndTitleOverrideRunLogStatus() throws {
-        let now = Date()
-        let staleActivity = PetActivity(
-            id: "task-runner:task-1",
-            source: .taskRunner,
-            kind: .cancelled,
-            title: "旧状态",
-            route: PetActivityRoute(messageID: "message-1", taskID: "task-1"),
-            updatedAt: now.addingTimeInterval(-60)
-        )
-        let task = MessageTask(
-            id: "task-1",
-            title: "真实任务名称",
-            status: "running",
-            lastRunID: "run-2",
-            updatedAt: now
+    func pendingLocalInteractionBecomesAskUserActivity() throws {
+        var state = makeState(status: .paused)
+        state.userPrompt = AskUserPrompt(
+            id: "prompt-1",
+            sessionID: "session-1",
+            turnID: "turn-1",
+            kind: "choice",
+            status: .pending,
+            title: "选择方案",
+            message: "请选择视觉方向",
+            allowsCancel: true
         )
 
-        let reconciled = try #require(PetActivityRecoveryMapper.applyingAuthoritativeTask(
-            task,
-            to: staleActivity,
-            now: now
-        ))
+        let activity = try #require(PetActivityRecoveryMapper.activity(from: state))
 
-        #expect(reconciled.kind == .working)
-        #expect(reconciled.title == "任务「真实任务名称」正在执行")
-        #expect(reconciled.route.runID == "run-2")
-        #expect(reconciled.expiresAt == nil)
+        #expect(activity.id == "ask-user:prompt-1")
+        #expect(activity.source == .askUserPrompt)
+        #expect(activity.kind == .waitingForUser)
+        #expect(activity.route.promptID == "prompt-1")
+        #expect(activity.route.taskID == "task-1")
     }
 
     @Test
-    func recentCompletionBridgesInboxDeliveryWithoutBecomingPermanent() throws {
-        let now = Date()
-        let runningActivity = PetActivity(
-            id: "task-runner:task-1",
-            source: .taskRunner,
-            kind: .working,
-            title: "任务正在执行",
-            route: PetActivityRoute(messageID: "message-1", taskID: "task-1"),
-            updatedAt: now.addingTimeInterval(-60)
-        )
-        let task = MessageTask(
-            id: "task-1",
-            title: "整理调研结论",
-            status: "completed",
-            resultSummary: "已经整理完成",
-            updatedAt: now
-        )
+    func completedTaskUsesLocalTerminalOutcomeAndRetention() throws {
+        let now = Date(timeIntervalSince1970: 2_000)
+        var state = makeState(status: .succeeded, updatedAt: "1970-01-01T00:33:00Z")
+        state.run.terminalOutcome = .object(["text": .string("设计稿已完成")])
 
-        let completed = try #require(PetActivityRecoveryMapper.applyingAuthoritativeTask(
-            task,
-            to: runningActivity,
-            now: now.addingTimeInterval(60)
-        ))
+        let activity = try #require(PetActivityRecoveryMapper.activity(from: state, now: now))
 
-        #expect(completed.kind == .succeeded)
-        #expect(completed.detail == "已经整理完成")
-        #expect(completed.expiresAt != nil)
+        #expect(activity.kind == .succeeded)
+        #expect(activity.detail == "设计稿已完成")
+        #expect(activity.expiresAt == Date(timeIntervalSince1970: 2_580))
     }
 
     @Test
-    func oldCompletionIsNotResurrectedAsUnreadPetWork() {
-        let now = Date()
-        let runningActivity = PetActivity(
-            id: "task-runner:task-old",
-            source: .taskRunner,
-            kind: .working,
-            title: "旧任务",
-            route: PetActivityRoute(messageID: "message-old", taskID: "task-old"),
-            updatedAt: now.addingTimeInterval(-86_400)
+    func expiredTerminalTaskIsNotRestored() {
+        let state = makeState(status: .failed, updatedAt: "1970-01-01T00:10:00Z")
+        let activity = PetActivityRecoveryMapper.activity(
+            from: state,
+            now: Date(timeIntervalSince1970: 2_000)
         )
-        let task = MessageTask(
-            id: "task-old",
-            title: "旧任务",
-            status: "completed",
-            updatedAt: now.addingTimeInterval(-86_400)
-        )
-
-        let recovered = PetActivityRecoveryMapper.applyingAuthoritativeTask(
-            task,
-            to: runningActivity,
-            now: now
-        )
-
-        #expect(recovered == nil)
+        #expect(activity == nil)
     }
 
+    private func makeState(
+        status: LocalAgentRunStatus,
+        updatedAt: String = "2026-09-13T01:00:00Z"
+    ) -> LocalAgentTaskState {
+        let task = LocalAgentTaskSnapshot(
+            taskID: "task-1",
+            revision: 2,
+            sourceThreadID: "session-1",
+            sourceTurnID: "turn-1",
+            projectID: "project-1",
+            currentRunID: "run-1",
+            runIDs: ["run-1"],
+            objective: "完成网站视觉设计",
+            acceptanceCriteria: ["通过视觉审查"],
+            status: status.rawValue,
+            modelConfigID: "model-1",
+            modelConfigRevision: 1,
+            createdAt: "2026-09-13T00:00:00Z",
+            updatedAt: updatedAt
+        )
+        let run = LocalAgentRunSnapshot(
+            runID: "run-1",
+            profileKey: "task_runner",
+            ownerUserID: "user-1",
+            ownerEntityType: "task",
+            ownerEntityID: "task-1",
+            projectID: "project-1",
+            status: status,
+            version: 3,
+            stepSeq: 2,
+            iteration: 2,
+            retryCount: 0,
+            modelConfigID: "model-1",
+            modelConfigRevision: 1,
+            modelRuntimeSnapshot: .object([:]),
+            contextStrategy: "memory_engine",
+            promptRevision: "prompt-v1",
+            capabilitySnapshotRef: "capability-1",
+            createdAt: "2026-09-13T00:00:00Z",
+            updatedAt: updatedAt
+        )
+        return LocalAgentTaskState(task: task, run: run)
+    }
 }

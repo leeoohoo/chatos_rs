@@ -3,8 +3,6 @@ import Foundation
 public enum PetActivitySource: String, Sendable, Equatable, Codable {
     case localApproval
     case askUserPrompt
-    case chat
-    case taskBoard
     case taskRunner
 }
 
@@ -46,22 +44,6 @@ public enum PetActivityKind: String, Sendable, Equatable, Codable {
         case .cancelled: 50
         }
     }
-}
-
-public enum PetActivityInboxStatus: String, Sendable, Equatable, Codable {
-    case unread
-    case displayed
-    case acknowledged
-    case ignored
-    case handled
-    case resolved
-    case expired
-}
-
-public enum PetActivityDisposition: String, Sendable, Equatable, Codable {
-    case acknowledged
-    case ignored
-    case handled
 }
 
 public enum PetAnimationState: String, Sendable, Equatable, Codable {
@@ -110,8 +92,6 @@ public struct PetActivity: Identifiable, Sendable, Equatable, Codable {
     public var route: PetActivityRoute
     public var eventID: String?
     public var eventSequence: Int64?
-    public var inboxID: String?
-    public var inboxStatus: PetActivityInboxStatus?
     public var activityVersion: String?
     public var updatedAt: Date
     public var expiresAt: Date?
@@ -125,8 +105,6 @@ public struct PetActivity: Identifiable, Sendable, Equatable, Codable {
         route: PetActivityRoute = .init(),
         eventID: String? = nil,
         eventSequence: Int64? = nil,
-        inboxID: String? = nil,
-        inboxStatus: PetActivityInboxStatus? = nil,
         activityVersion: String? = nil,
         updatedAt: Date = Date(),
         expiresAt: Date? = nil
@@ -139,8 +117,6 @@ public struct PetActivity: Identifiable, Sendable, Equatable, Codable {
         self.route = route
         self.eventID = eventID
         self.eventSequence = eventSequence
-        self.inboxID = inboxID
-        self.inboxStatus = inboxStatus
         self.activityVersion = activityVersion
         self.updatedAt = updatedAt
         self.expiresAt = expiresAt
@@ -178,8 +154,4 @@ public struct PetPresentation: Sendable, Equatable {
         activeWorkCount: 0,
         attentionCount: 0
     )
-}
-
-public protocol PetActivityStreaming: Sendable {
-    func petActivityEvents() async -> AsyncThrowingStream<PetActivityEvent, Error>
 }

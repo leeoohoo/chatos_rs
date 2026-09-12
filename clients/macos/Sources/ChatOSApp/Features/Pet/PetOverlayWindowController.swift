@@ -625,7 +625,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         let completedTaskCount = scope == .primary
             ? store.activities.filter {
                 $0.kind == .succeeded
-                    && ($0.source == .taskRunner || $0.source == .taskBoard)
+                    && $0.source == .taskRunner
             }.count
             : 0
         let height: CGFloat

@@ -65,7 +65,3 @@ struct SessionMessageDTO: Decodable, Sendable {
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
     }
 }
-
-struct WebSocketTicketDTO: Decodable, Sendable {
-    var ticket: String
-}

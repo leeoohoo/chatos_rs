@@ -67,22 +67,7 @@ public struct PetStateReducer: Sendable {
             .filter { activity in
                 activity.expiresAt.map { $0 > date } ?? true
             }
-        let conversationsWithSpecificWork = Set(candidates.compactMap { activity -> String? in
-            guard activity.kind == .working || activity.kind == .reviewing,
-                  activity.source == .taskRunner || activity.source == .taskBoard else {
-                return nil
-            }
-            return activity.route.conversationID
-        })
         return candidates
-            .filter { activity in
-                guard activity.kind == .working || activity.kind == .reviewing,
-                      activity.source == .chat,
-                      let conversationID = activity.route.conversationID else {
-                    return true
-                }
-                return !conversationsWithSpecificWork.contains(conversationID)
-            }
             .sorted { lhs, rhs in
                 let lhsPriority = presentationPriority(for: lhs)
                 let rhsPriority = presentationPriority(for: rhs)

@@ -6,99 +6,6 @@ import XCTest
 
 @MainActor
 final class ConversationSessionViewModelTests: XCTestCase {
-    func testReconnectReconcileRefreshesConversationHistory() async throws {
-        let remoteService = ConversationRemoteServiceStub()
-        let realtimeService = ConversationRealtimeServiceStub()
-        let viewModel = ConversationSessionViewModel(
-            sessionID: "session-1",
-            initialTurns: [],
-            historyStore: ConversationHistoryStore(),
-            remoteService: remoteService,
-            realtimeService: realtimeService
-        )
-
-        try await waitUntil {
-            let hasSubscriber = await realtimeService.hasSubscriber(sessionID: "session-1")
-            return viewModel.turns.first?.revision == 1
-                && !viewModel.isRefreshing
-                && hasSubscriber
-        }
-
-        await realtimeService.yield(
-            ConversationRealtimeSignal(
-                eventID: "reconcile-1",
-                eventSequence: 0,
-                sessionID: "session-1",
-                turnID: nil,
-                kind: .reconcile,
-                eventName: "conversation.reconcile",
-                timestamp: "2026-09-03T08:00:00Z"
-            )
-        )
-
-        try await waitUntil {
-            viewModel.turns.first?.revision == 2
-                && viewModel.turns.first?.finalAssistantMessage?.text == "任务已完成"
-        }
-
-        let requestedSessionIDs = await remoteService.requestedSessionIDs()
-        XCTAssertEqual(requestedSessionIDs, ["session-1", "session-1"])
-    }
-
-    func testRealtimeReconcileRefreshesSilently() async throws {
-        let remoteService = ConversationRemoteServiceStub()
-        let realtimeService = ConversationRealtimeServiceStub()
-        let viewModel = ConversationSessionViewModel(
-            sessionID: "session-1",
-            initialTurns: [],
-            historyStore: ConversationHistoryStore(),
-            remoteService: remoteService,
-            realtimeService: realtimeService
-        )
-
-        try await waitUntil {
-            await remoteService.requestCount() == 1 && !viewModel.isRefreshing
-        }
-        await remoteService.setFetchDelay(milliseconds: 300)
-
-        await realtimeService.yield(Self.reconcileSignal(id: "reconcile-silent"))
-
-        try await waitUntil {
-            await remoteService.requestCount() == 2
-        }
-        XCTAssertFalse(viewModel.isRefreshing)
-    }
-
-    func testRealtimeSignalsAreCoalescedIntoOneRefresh() async throws {
-        let remoteService = ConversationRemoteServiceStub()
-        let realtimeService = ConversationRealtimeServiceStub()
-        let viewModel = ConversationSessionViewModel(
-            sessionID: "session-1",
-            initialTurns: [],
-            historyStore: ConversationHistoryStore(),
-            remoteService: remoteService,
-            realtimeService: realtimeService
-        )
-
-        try await waitUntil {
-            let hasSubscriber = await realtimeService.hasSubscriber(sessionID: "session-1")
-            return await remoteService.requestCount() == 1
-                && !viewModel.isRefreshing
-                && hasSubscriber
-        }
-
-        await realtimeService.yield(Self.reconcileSignal(id: "reconcile-1"))
-        await realtimeService.yield(Self.reconcileSignal(id: "reconcile-2"))
-        await realtimeService.yield(Self.reconcileSignal(id: "reconcile-3"))
-
-        try await waitUntil {
-            await remoteService.requestCount() == 2
-        }
-        try await Task.sleep(for: .milliseconds(350))
-        let requestCount = await remoteService.requestCount()
-        XCTAssertEqual(requestCount, 2)
-    }
-
     func testUnchangedSnapshotDoesNotPublishViewUpdates() async throws {
         let turn = ConversationRemoteServiceStub.turn(revision: 1)
         let viewModel = ConversationSessionViewModel(
@@ -166,18 +73,6 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.hasTaskGraph(for: turn))
         XCTAssertEqual(viewModel.tasks(for: turn.id).first?.task.taskID, "task-1")
         XCTAssertEqual(viewModel.tasks(for: turn.id).first?.run.runID, "task-run-1")
-    }
-
-    private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
-        ConversationRealtimeSignal(
-            eventID: id,
-            eventSequence: 0,
-            sessionID: "session-1",
-            turnID: nil,
-            kind: .reconcile,
-            eventName: "conversation.reconcile",
-            timestamp: "2026-09-03T08:00:00Z"
-        )
     }
 
     private static func taskSnapshot() -> LocalAgentTaskSnapshot {
@@ -275,10 +170,6 @@ private actor ConversationRemoteServiceStub: ConversationRemoteServicing {
         )
     }
 
-    func issueWebSocketTicket() async throws -> String {
-        "ticket"
-    }
-
     func requestedSessionIDs() -> [String] {
         queries.map(\.sessionID)
     }
@@ -315,30 +206,5 @@ private actor ConversationRemoteServiceStub: ConversationRemoteServicing {
             startedAt: Date(timeIntervalSince1970: 1),
             completedAt: revision > 1 ? Date(timeIntervalSince1970: 2) : nil
         )
-    }
-}
-
-private actor ConversationRealtimeServiceStub: ConversationRealtimeStreaming {
-    private var continuations: [
-        String: AsyncThrowingStream<ConversationRealtimeSignal, Error>.Continuation
-    ] = [:]
-
-    func events(
-        sessionID: String
-    ) async -> AsyncThrowingStream<ConversationRealtimeSignal, Error> {
-        let (stream, continuation) = AsyncThrowingStream.makeStream(
-            of: ConversationRealtimeSignal.self,
-            throwing: Error.self
-        )
-        continuations[sessionID] = continuation
-        return stream
-    }
-
-    func hasSubscriber(sessionID: String) -> Bool {
-        continuations[sessionID] != nil
-    }
-
-    func yield(_ signal: ConversationRealtimeSignal) {
-        continuations[signal.sessionID]?.yield(signal)
     }
 }

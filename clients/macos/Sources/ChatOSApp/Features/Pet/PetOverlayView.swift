@@ -286,7 +286,7 @@ struct PetMessageView: View {
                     onLoadPrompt: onLoadPrompt,
                     onSubmitPrompt: onSubmitPrompt,
                     onCancelPrompt: onCancelPrompt,
-                    onResolved: { store.dismiss(activity, disposition: .handled) }
+                    onResolved: { store.dismiss(activity) }
                 )
             } else if activity.kind == .blocked || activity.kind == .failed {
                 retryContent(activity)
@@ -353,7 +353,7 @@ struct PetMessageView: View {
                                     .controlSize(.mini)
                             }
                             Button {
-                                store.dismiss(completed, disposition: .acknowledged)
+                                store.dismiss(completed)
                             } label: {
                                 Image(systemName: "checkmark")
                             }
@@ -524,7 +524,7 @@ struct PetMessageView: View {
             HStack {
                 Button("忽略") {
                     interactionState.isMessageExpanded = false
-                    store.dismiss(activity, disposition: .ignored)
+                    store.dismiss(activity)
                 }
                 Spacer()
                 Button(canLoadTask(activity)
@@ -575,7 +575,7 @@ struct PetMessageView: View {
                 if activity.kind == .succeeded || activity.kind == .cancelled {
                     Button("知道了") {
                         interactionState.isMessageExpanded = false
-                        store.dismiss(activity, disposition: .acknowledged)
+                        store.dismiss(activity)
                     }
                 }
                 Spacer()
@@ -618,9 +618,6 @@ struct PetMessageView: View {
     private func shouldShowGenericDetailButton(_ activity: PetActivity) -> Bool {
         if canLoadTask(activity) {
             return true
-        }
-        if activity.kind == .succeeded, activity.source == .chat {
-            return displayText(activity.detail) == nil
         }
         return true
     }
@@ -713,7 +710,7 @@ struct PetMessageView: View {
                 retryInstruction = ""
                 actionMessage = model.localized("已提交重新处理", english: "Retry submitted")
                 actionSucceeded = true
-                store.dismiss(activity, disposition: .handled)
+                store.dismiss(activity)
             } catch {
                 actionMessage = error.localizedDescription
                 actionSucceeded = false
@@ -729,7 +726,7 @@ struct PetMessageView: View {
         Task {
             do {
                 try await onCancel(activity)
-                store.dismiss(activity, disposition: .handled)
+                store.dismiss(activity)
             } catch {
                 cancellationErrors[activity.id] = error.localizedDescription
             }
@@ -771,10 +768,6 @@ struct PetMessageView: View {
            displayText(activity.route.taskID) != nil {
             return true
         }
-        if activity.source == .chat {
-            return displayText(activity.route.conversationID) != nil
-                && displayText(activity.route.turnID) != nil
-        }
         return false
     }
 
@@ -795,7 +788,7 @@ struct PetMessageView: View {
         store.activities.filter {
             $0.id != activityID
                 && $0.kind == .succeeded
-                && ($0.source == .taskRunner || $0.source == .taskBoard)
+                && $0.source == .taskRunner
         }
     }
 

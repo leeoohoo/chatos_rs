@@ -51,7 +51,6 @@ final class ConversationSessionViewModel: ObservableObject {
     let turnProcessService: (any TurnProcessServicing)?
     let messageTaskGraphService: (any MessageTaskGraphServicing)?
     private let remoteService: (any ConversationRemoteServicing)?
-    let realtimeService: (any ConversationRealtimeStreaming)?
     private let runtimeSettingsService: (any ConversationRuntimeSettingsServicing)?
     let askUserPromptService: (any AskUserPromptServicing)?
     let localAgentRunControlService: (any LocalAgentRunControlServicing)?
@@ -59,7 +58,6 @@ final class ConversationSessionViewModel: ObservableObject {
     private var olderCursor: String?
     private var requestGeneration: Int64 = 0
     private var inFlightOlderCursor: String?
-    private var realtimeTask: Task<Void, Never>?
     private var localAgentUpdateTask: Task<Void, Never>?
     private var localAgentTaskUpdateTask: Task<Void, Never>?
     private var historyRetryTask: Task<Void, Never>?
@@ -76,7 +74,6 @@ final class ConversationSessionViewModel: ObservableObject {
         initialTurns: [ConversationTurn],
         historyStore: any ConversationHistoryStoring,
         remoteService: (any ConversationRemoteServicing)? = nil,
-        realtimeService: (any ConversationRealtimeStreaming)? = nil,
         commandService: (any ConversationCommandServicing)? = nil,
         turnProcessService: (any TurnProcessServicing)? = nil,
         messageTaskGraphService: (any MessageTaskGraphServicing)? = nil,
@@ -90,7 +87,6 @@ final class ConversationSessionViewModel: ObservableObject {
         self.selectedTurnID = initialTurns.last?.id
         self.historyStore = historyStore
         self.remoteService = remoteService
-        self.realtimeService = realtimeService
         self.commandService = commandService
         self.turnProcessService = turnProcessService
         self.messageTaskGraphService = messageTaskGraphService
@@ -103,7 +99,6 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     deinit {
-        realtimeTask?.cancel()
         localAgentUpdateTask?.cancel()
         localAgentTaskUpdateTask?.cancel()
         historyRetryTask?.cancel()
@@ -121,7 +116,6 @@ final class ConversationSessionViewModel: ObservableObject {
         refreshLatestSilently()
         startLocalAgentUpdates()
         startLocalAgentTaskUpdates()
-        startRealtime()
     }
 
     private func startLocalAgentUpdates() {
@@ -368,7 +362,6 @@ final class ConversationSessionViewModel: ObservableObject {
         await historyStore.mergeCachedTurns(initialTurns, sessionID: sessionID)
         await refreshSnapshot()
         refreshLatest()
-        startRealtime()
     }
 
     var selectedModelDisplayName: String {
@@ -521,38 +514,6 @@ final class ConversationSessionViewModel: ObservableObject {
         reasoningEnabled = settings.reasoningEnabled
     }
 
-    private func startRealtime() {
-        guard let realtimeService, realtimeTask == nil else { return }
-        let sessionID = sessionID
-
-        realtimeTask = Task { [weak self] in
-            let stream = await realtimeService.events(sessionID: sessionID)
-            do {
-                for try await signal in stream {
-                    guard let self else { return }
-                    if signal.askUserPromptUpdate != nil {
-                        await self.refreshAskUserPrompts()
-                        continue
-                    }
-                    switch signal.kind {
-                    case .failed:
-                        self.sendError = signal.processUpdate?.detail?.trimmingCharacters(
-                            in: .whitespacesAndNewlines
-                        ).nonEmptyValue ?? "AI 处理失败，请检查模型配置后重试。"
-                        self.refreshLatestSilently()
-                    case .reconcile, .persisted, .completed, .cancelled:
-                        self.refreshLatestSilently()
-                    case .started, .updated, .unknown:
-                        break
-                    }
-                }
-            } catch {
-                guard let self else { return }
-                self.historyError = error.localizedDescription
-            }
-        }
-    }
-
     func refreshSnapshot() async {
         let snapshot = await historyStore.snapshot(sessionID: sessionID)
         if turns != snapshot.turns {
@@ -567,10 +528,4 @@ final class ConversationSessionViewModel: ObservableObject {
         }
     }
 
-}
-
-private extension String {
-    var nonEmptyValue: String? {
-        isEmpty ? nil : self
-    }
 }
