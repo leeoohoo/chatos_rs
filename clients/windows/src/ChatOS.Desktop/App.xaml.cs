@@ -21,6 +21,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.System.Power;
 using ChatOS.Connector.Runtime;
+using ChatOS.Connector.LocalAgent;
 
 namespace ChatOS.Desktop;
 
@@ -45,7 +46,7 @@ public partial class App : Application
 
         builder.Services
             .AddChatOSApi(builder.Configuration)
-            .AddChatOSConnector()
+            .AddChatOSConnector(builder.Configuration)
             .AddChatOSPresentation();
         builder.Services.AddSingleton<IUiDispatcher>(_ => new DispatcherQueueUiDispatcher(
             DispatcherQueue.GetForCurrentThread()
@@ -93,7 +94,26 @@ public partial class App : Application
         ApplySystemSuspendStatus();
 
         _window = _host.Services.GetRequiredService<MainWindow>();
+        _window.Closed += OnMainWindowClosed;
         _window.Activate();
+    }
+
+    private async void OnMainWindowClosed(object sender, WindowEventArgs args)
+    {
+        if (_window is not null)
+        {
+            _window.Closed -= OnMainWindowClosed;
+        }
+        try
+        {
+            await _host.Services.GetRequiredService<IWindowsLocalAgentAccountSession>()
+                .LogoutAsync();
+            await _host.StopAsync();
+        }
+        catch
+        {
+            // The Host process is also bound to the desktop process job object.
+        }
     }
 
     private void OnSystemSuspendStatusChanged(object? sender, object args) => ApplySystemSuspendStatus();

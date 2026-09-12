@@ -17,7 +17,19 @@ public sealed record WindowsLocalAgentHostState(
     int RestartCount = 0,
     string? FailureReason = null);
 
-public sealed class WindowsLocalAgentHostSupervisor : IAsyncDisposable
+internal interface IWindowsLocalAgentHostSupervisor : IAsyncDisposable
+{
+    Task<WindowsLocalAgentHostState> GetStateAsync();
+
+    Task StartAsync(
+        string accountId,
+        Func<CancellationToken, Task<WindowsLocalAgentHostLaunchConfiguration>> configurationProvider,
+        CancellationToken cancellationToken = default);
+
+    Task LogoutAsync();
+}
+
+public sealed class WindowsLocalAgentHostSupervisor : IWindowsLocalAgentHostSupervisor
 {
     private readonly IWindowsLocalAgentHostProcessLauncher _launcher;
     private readonly IReadOnlyList<TimeSpan> _restartDelays;

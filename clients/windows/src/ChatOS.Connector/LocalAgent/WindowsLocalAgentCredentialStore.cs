@@ -7,12 +7,34 @@ namespace ChatOS.Connector.LocalAgent;
 
 internal interface IWindowsLocalAgentCredentialStore
 {
+    ValueTask SaveCredentialAsync(
+        string accountId,
+        string reference,
+        string secret,
+        CancellationToken cancellationToken = default);
+
     ValueTask<string?> LoadCredentialAsync(
         string accountId,
         string reference,
         CancellationToken cancellationToken = default);
 
+    ValueTask DeleteCredentialAsync(
+        string accountId,
+        string reference,
+        CancellationToken cancellationToken = default);
+
+    Task SaveDeviceKeyAsync(
+        string accountId,
+        string reference,
+        ReadOnlyMemory<byte> key,
+        CancellationToken cancellationToken = default);
+
     Task<byte[]?> LoadDeviceKeyAsync(
+        string accountId,
+        string reference,
+        CancellationToken cancellationToken = default);
+
+    ValueTask DeleteDeviceKeyAsync(
         string accountId,
         string reference,
         CancellationToken cancellationToken = default);

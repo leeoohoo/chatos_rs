@@ -68,6 +68,7 @@ public sealed class PetQuickChatViewModelTests
         null!,
         null!,
         null!,
+        null!,
         new RemoteConnectionsViewModel(null!, null!, dispatcher),
         Localization(dispatcher));
 

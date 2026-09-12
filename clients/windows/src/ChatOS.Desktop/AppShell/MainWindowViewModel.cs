@@ -8,6 +8,7 @@ using ChatOS.Presentation.Chat;
 using ChatOS.Presentation.Projects;
 using ChatOS.Presentation.Settings;
 using ChatOS.Presentation.Remote;
+using ChatOS.Connector.LocalAgent;
 
 namespace ChatOS.Desktop.AppShell;
 
@@ -17,6 +18,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly IWorkspaceRelationsService _workspaceRelations;
     private readonly IProjectRegistry _projectRegistry;
     private readonly ILocalProjectsService _localProjects;
+    private readonly IWindowsLocalAgentAccountSession _localAgentAccountSession;
     private string? _ownerUserId;
     private long _accountGeneration;
     private long _refreshGeneration;
@@ -33,6 +35,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IWorkspaceRelationsService workspaceRelations,
         IProjectRegistry projectRegistry,
         ILocalProjectsService localProjects,
+        IWindowsLocalAgentAccountSession localAgentAccountSession,
         IProjectConversationService projectConversations,
         ILocalConnectorControlService localConnectorControl,
         ConversationSessionViewModel conversation,
@@ -46,6 +49,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _workspaceRelations = workspaceRelations;
         _projectRegistry = projectRegistry;
         _localProjects = localProjects;
+        _localAgentAccountSession = localAgentAccountSession;
         _projectConversations = projectConversations;
         _localConnectorControl = localConnectorControl;
         Conversation = conversation;
@@ -269,6 +273,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (authenticationGeneration != AccountGeneration) return;
             if (session is not null)
             {
+                await _localAgentAccountSession.ActivateAsync(session.User.Id, cancellationToken);
+                if (authenticationGeneration != AccountGeneration)
+                {
+                    await _localAgentAccountSession.LogoutAsync();
+                    return;
+                }
                 ApplySession(session);
                 await ReloadWorkspaceCoreAsync(cancellationToken);
             }
@@ -300,6 +310,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var authenticationGeneration = AccountGeneration;
             var session = await _authenticationService.LoginAsync(Username, Password);
             if (authenticationGeneration != AccountGeneration) return;
+            await _localAgentAccountSession.ActivateAsync(session.User.Id);
+            if (authenticationGeneration != AccountGeneration)
+            {
+                await _localAgentAccountSession.LogoutAsync();
+                return;
+            }
             Password = string.Empty;
             ApplySession(session);
             await ReloadWorkspaceCoreAsync();
@@ -343,6 +359,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task LogoutAsync()
     {
+        Exception? localAgentError = null;
+        try
+        {
+            await _localAgentAccountSession.LogoutAsync();
+        }
+        catch (Exception exception)
+        {
+            localAgentError = exception;
+        }
         CancelSelectionActivation();
         _accountCancellation.Cancel();
         _accountCancellation.Dispose();
@@ -364,7 +389,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         await Conversation.OpenAsync(null, "ChatOS");
         CurrentUserLabel = string.Empty;
         IsAuthenticated = false;
-        ErrorMessage = null;
+        ErrorMessage = localAgentError?.Message;
     }
 
     partial void OnSelectedResourceChanged(ShellResourceViewModel? value)

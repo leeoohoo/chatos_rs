@@ -48,14 +48,11 @@ public sealed class WindowsCredentialTokenStore : IAuthTokenStore
     {
         try
         {
-            foreach (var credential in _vault.FindAllByResource(ResourceName))
-            {
-                _vault.Remove(credential);
-            }
+            _vault.Remove(_vault.Retrieve(ResourceName, UserName));
         }
         catch
         {
-            // PasswordVault throws when a resource has no stored credentials.
+            // PasswordVault reports an absent exact credential as an exception.
         }
     }
 }

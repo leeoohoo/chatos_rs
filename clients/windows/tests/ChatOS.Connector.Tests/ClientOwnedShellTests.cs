@@ -3,6 +3,7 @@ using ChatOS.Connector.Persistence;
 using ChatOS.Connector.Relay;
 using ChatOS.Connector.Runtime;
 using ChatOS.Connector.Workspaces;
+using ChatOS.Connector.LocalAgent;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 using ChatOS.Core.State;
@@ -23,6 +24,7 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
     private readonly Auth _auth = new();
     private readonly Relations _relations = new();
     private readonly Conversations _conversations = new();
+    private readonly LocalAgentSession _localAgent = new();
     private MainWindowViewModel _shell = null!;
     private LocalProjectRecord _aliceProject = null!;
 
@@ -52,11 +54,35 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
             ? Task.FromResult<IReadOnlyList<RemoteConnection>>([]) : throw new NotSupportedException(method.Name));
         var localization = new LocalizationViewModel(new AppPreferencesManager(
             Stub<IAppPreferencesStore>((_, _) => throw new NotSupportedException())), dispatcher);
-        _shell = new(_auth, _relations, _registry, _projects, _conversations, localControl,
+        _shell = new(_auth, _relations, _registry, _projects, _localAgent,
+            _conversations, localControl,
             new ConversationSessionViewModel(null!, null!, null!, null!, null!, null!, new(), dispatcher),
             new ProjectFilesViewModel(null!, dispatcher), new ProjectGitViewModel(null!, dispatcher),
             new ProjectRunViewModel(null!, dispatcher),
             new RemoteConnectionsViewModel(remote, localControl, dispatcher), localization);
+    }
+
+    private sealed class LocalAgentSession : IWindowsLocalAgentAccountSession
+    {
+        public List<string> ActivatedAccounts { get; } = [];
+        public Exception? StartError { get; set; }
+        public Task ActivateAsync(string accountId, CancellationToken cancellationToken = default) =>
+            StartError is null ? Record(accountId) : Task.FromException(StartError);
+        public Task UpdateAccessTokenAsync(string accountId, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+        public Task LogoutAsync() => Task.CompletedTask;
+        public Task<ILocalAgentIPCClient> GetClientAsync(
+            string accountId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<WindowsLocalAgentHostState> GetStateAsync() => Task.FromResult(
+            new WindowsLocalAgentHostState(WindowsLocalAgentHostStatus.Stopped));
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        private Task Record(string accountId)
+        {
+            ActivatedAccounts.Add(accountId);
+            return Task.CompletedTask;
+        }
     }
 
     public async Task DisposeAsync()
@@ -76,9 +102,22 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
         Assert.False(loading.IsCompleted);
         pending.SetException(new IOException("offline"));
         await loading;
+        Assert.Equal("alice", Assert.Single(_localAgent.ActivatedAccounts));
         Assert.Equal("Alice project", Assert.Single(_shell.Projects).Title);
         Assert.Equal("offline", _shell.ErrorMessage);
         Assert.Equal(0, _conversations.Calls);
+    }
+
+    [Fact]
+    public async Task HostStartupFailureDoesNotPublishAHalfActiveAccount()
+    {
+        _localAgent.StartError = new InvalidOperationException("Local Agent Host failed to start.");
+
+        await _shell.InitializeAsync();
+
+        Assert.False(_shell.IsAuthenticated);
+        Assert.Empty(_shell.Projects);
+        Assert.Equal("Local Agent Host failed to start.", _shell.ErrorMessage);
     }
 
     [Fact]

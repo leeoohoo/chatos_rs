@@ -16,14 +16,18 @@ using ChatOS.Connector.NetworkGuard;
 using ChatOS.Connector.LocalAgent;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.State;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ChatOS.Connector.DependencyInjection;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddChatOSConnector(this IServiceCollection services)
+    public static IServiceCollection AddChatOSConnector(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
+        ArgumentNullException.ThrowIfNull(configuration);
         services.AddSingleton<IAuthTokenStore, WindowsCredentialTokenStore>();
         services.AddSingleton<IConnectorAccessTokenStore, WindowsCredentialConnectorTokenStore>();
         services.AddSingleton<IConnectorSecretStore, WindowsCredentialConnectorSecretStore>();
@@ -131,6 +135,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConnectorSandboxSettingsStore, SqliteConnectorSandboxSettingsStore>();
         services.AddSingleton<INetworkGuardTransport, NamedPipeNetworkGuardTransport>();
         services.AddSingleton<ILocalAgentIPCClientFactory, WindowsLocalAgentIPCClientFactory>();
+        services.AddSingleton<WindowsLocalAgentCredentialStore>();
+        services.AddSingleton<WindowsLocalAgentHostBootstrapBuilder>();
+        services.AddSingleton<WindowsLocalAgentHostSupervisor>();
+        services.AddSingleton<IWindowsLocalAgentRuntimeConfiguration>(
+            _ => new WindowsLocalAgentRuntimeConfiguration(configuration));
+        services.AddSingleton<IWindowsLocalAgentAccountSession, WindowsLocalAgentAccountSession>();
         services.AddSingleton<IControlledNetworkGuardClient>(provider =>
             new ControlledNetworkGuardClient(provider.GetRequiredService<INetworkGuardTransport>()));
         services.AddSingleton(provider => new NetworkGuardLeaseCoordinator(
