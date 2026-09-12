@@ -15,7 +15,7 @@ use chatos_client_storage::{
 };
 use chatos_local_agent_host::{
     FrozenCapabilityLocalToolRuntime, FrozenMcpExecutor, FrozenMcpExecutorProvider,
-    RegisteredFrozenMcpExecutorProvider,
+    FrozenMcpExecutorRequest,
 };
 use chatos_local_agent_protocol::{
     ContextStrategy, FrozenSnapshot, ModelProtocol, ModelRuntimeDescriptor, ToolEffect,
@@ -94,7 +94,7 @@ struct PinnedExecutorProvider {
 impl FrozenMcpExecutorProvider for PinnedExecutorProvider {
     async fn resolve(
         &self,
-        _plugin_release_snapshot: &Value,
+        _request: &FrozenMcpExecutorRequest,
         cancellation: CancellationToken,
     ) -> Result<FrozenMcpExecutor, String> {
         if cancellation.is_cancelled() {
@@ -434,46 +434,4 @@ async fn cancellation_prevents_dispatch() {
         .unwrap_err();
     assert!(error.contains("cancelled"));
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn production_registry_resolves_only_an_exact_frozen_release_set() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let executor = Arc::new(
-        McpExecutor::builder()
-            .with_builtin_server(McpBuiltinServer {
-                name: "fixture".to_string(),
-                kind: "Fixture".to_string(),
-                workspace_dir: String::new(),
-                user_id: Some("user-1".to_string()),
-                project_id: Some("project-1".to_string()),
-                remote_connection_id: None,
-                contact_agent_id: None,
-                auto_create_task: false,
-                allow_writes: false,
-                max_file_bytes: 1_000,
-                max_write_bytes: 1_000,
-                search_limit: 10,
-            })
-            .with_builtin_provider(FixtureProvider { calls, fail: false })
-            .build_builtin_only()
-            .unwrap(),
-    );
-    let registry = RegisteredFrozenMcpExecutorProvider::new();
-    registry
-        .register(release_snapshot(), executor.clone())
-        .unwrap();
-
-    let resolved = registry
-        .resolve(&release_snapshot(), CancellationToken::new())
-        .await
-        .unwrap();
-    assert!(Arc::ptr_eq(&resolved.executor, &executor));
-    assert!(registry
-        .resolve(
-            &json!({"plugins": [{"plugin_id": "fixture", "release_id": "release-2"}]}),
-            CancellationToken::new()
-        )
-        .await
-        .is_err());
 }

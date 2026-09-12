@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chatos_agent_profiles::{
@@ -28,85 +28,20 @@ pub struct FrozenMcpExecutor {
     pub executor: Arc<McpExecutor>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrozenMcpExecutorRequest {
+    pub owner_user_id: String,
+    pub project_id: String,
+    pub plugin_release_snapshot: Value,
+}
+
 #[async_trait]
 pub trait FrozenMcpExecutorProvider: Send + Sync {
     async fn resolve(
         &self,
-        plugin_release_snapshot: &Value,
+        request: &FrozenMcpExecutorRequest,
         cancellation: CancellationToken,
     ) -> Result<FrozenMcpExecutor, String>;
-}
-
-#[derive(Default)]
-pub struct RegisteredFrozenMcpExecutorProvider {
-    entries: RwLock<Vec<RegisteredFrozenMcpExecutor>>,
-}
-
-struct RegisteredFrozenMcpExecutor {
-    plugin_release_snapshot: Value,
-    executor: Arc<McpExecutor>,
-}
-
-impl RegisteredFrozenMcpExecutorProvider {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Registers an already initialized local executor for one exact release
-    /// set. Re-registering the same immutable snapshot replaces its executor;
-    /// it never aliases or upgrades a different release set.
-    pub fn register(
-        &self,
-        plugin_release_snapshot: Value,
-        executor: Arc<McpExecutor>,
-    ) -> Result<(), String> {
-        if !plugin_release_snapshot.is_object() {
-            return Err("plugin release snapshot must be an object".to_string());
-        }
-        let mut entries = self
-            .entries
-            .write()
-            .map_err(|_| "frozen MCP executor registry lock is poisoned".to_string())?;
-        if let Some(entry) = entries
-            .iter_mut()
-            .find(|entry| entry.plugin_release_snapshot == plugin_release_snapshot)
-        {
-            entry.executor = executor;
-        } else {
-            entries.push(RegisteredFrozenMcpExecutor {
-                plugin_release_snapshot,
-                executor,
-            });
-        }
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl FrozenMcpExecutorProvider for RegisteredFrozenMcpExecutorProvider {
-    async fn resolve(
-        &self,
-        plugin_release_snapshot: &Value,
-        cancellation: CancellationToken,
-    ) -> Result<FrozenMcpExecutor, String> {
-        if cancellation.is_cancelled() {
-            return Err("local MCP executor resolution was cancelled".to_string());
-        }
-        let entries = self
-            .entries
-            .read()
-            .map_err(|_| "frozen MCP executor registry lock is poisoned".to_string())?;
-        let entry = entries
-            .iter()
-            .find(|entry| entry.plugin_release_snapshot == *plugin_release_snapshot)
-            .ok_or_else(|| {
-                "no initialized local MCP executor matches the frozen plugin releases".to_string()
-            })?;
-        Ok(FrozenMcpExecutor {
-            plugin_release_snapshot: entry.plugin_release_snapshot.clone(),
-            executor: entry.executor.clone(),
-        })
-    }
 }
 
 /// Executes Task Runner tools against the locally resolved MCP runtime. Every
@@ -162,14 +97,16 @@ impl LocalToolRuntime for FrozenCapabilityLocalToolRuntime {
             return Err("local MCP invocation was cancelled".to_string());
         }
         let context = self.load_frozen_context(&invocation).await?;
+        let executor_request = FrozenMcpExecutorRequest {
+            owner_user_id: self.scope.owner_user_id.clone(),
+            project_id: context.project_id.clone(),
+            plugin_release_snapshot: context.capability.plugin_release_snapshot.clone(),
+        };
         let resolved = tokio::select! {
             _ = cancellation.cancelled() => {
                 return Err("local MCP invocation was cancelled".to_string());
             }
-            result = self.executors.resolve(
-                &context.capability.plugin_release_snapshot,
-                cancellation.clone(),
-            ) => result?,
+            result = self.executors.resolve(&executor_request, cancellation.clone()) => result?,
         };
         if resolved.plugin_release_snapshot != context.capability.plugin_release_snapshot {
             return Err(
@@ -227,6 +164,7 @@ struct FrozenToolContextState {
 }
 
 struct FrozenToolContext {
+    project_id: String,
     capability: TaskRunnerCapabilitySnapshot,
     tool: TaskRunnerExecutionTool,
 }
@@ -329,7 +267,11 @@ fn frozen_tool_context_from_state(
             invocation.tool_name
         ));
     }
-    Ok(FrozenToolContext { capability, tool })
+    Ok(FrozenToolContext {
+        project_id: project_id.to_string(),
+        capability,
+        tool,
+    })
 }
 
 fn snapshot_from_task(task: &TaskRecord, field: &'static str) -> Result<FrozenSnapshot, String> {
