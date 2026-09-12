@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,7 +11,7 @@ use chatos_client_storage::{
     ClientStorage, ListQuery, PluginStateRecord, ProjectRecord, RecordPage, RecordQuery,
     RecordScope, StorageError, StorageResult, StorageTransaction, TransactionRepositories,
 };
-use chatos_mcp_runtime::{McpExecutor, McpStdioServer};
+use chatos_mcp_client::{LocalMcpExecutor, LocalMcpServerConfig, StdioMcpExecutor};
 use chatos_plugin_management_sdk::{
     plugin_component_descriptors, validate_plugin_manifest, verify_plugin_release_signature,
     PluginAvailabilityStatus, PluginInstallSource, PluginInstallStatus,
@@ -97,7 +97,7 @@ pub trait LocalCapabilityExecutorFactory: Send + Sync {
         &self,
         servers: Vec<ResolvedLocalMcpServer>,
         allowed_tool_names: BTreeSet<String>,
-    ) -> Result<Arc<McpExecutor>, String>;
+    ) -> Result<Arc<dyn LocalMcpExecutor>, String>;
 }
 
 #[derive(Default)]
@@ -109,33 +109,28 @@ impl LocalCapabilityExecutorFactory for StdioLocalCapabilityExecutorFactory {
         &self,
         servers: Vec<ResolvedLocalMcpServer>,
         allowed_tool_names: BTreeSet<String>,
-    ) -> Result<Arc<McpExecutor>, String> {
-        let mut builder = McpExecutor::builder().with_allowed_tool_names(allowed_tool_names);
-        for server in servers {
-            let cwd = server
-                .executable
-                .parent()
-                .ok_or_else(|| "local Plugin executable has no parent directory".to_string())?;
-            let command = path_text(server.executable.as_path())?;
-            let cwd = path_text(cwd)?;
-            let mut stdio = McpStdioServer::new(server.name, command)
-                .with_args(server.arguments)
-                .with_cwd(cwd)
-                .with_user_id(server.owner_user_id);
-            if !server.environment.is_empty() {
-                stdio = stdio.with_env(server.environment.into_iter().collect());
-            }
-            builder = builder.with_stdio_server(stdio);
-        }
-        builder.build_initialized().await.map(Arc::new)
+    ) -> Result<Arc<dyn LocalMcpExecutor>, String> {
+        let servers = servers
+            .into_iter()
+            .map(|server| {
+                let working_directory = server
+                    .executable
+                    .parent()
+                    .ok_or_else(|| "local Plugin executable has no parent directory".to_string())?
+                    .to_path_buf();
+                Ok(LocalMcpServerConfig {
+                    name: server.name,
+                    executable: server.executable,
+                    arguments: server.arguments,
+                    working_directory,
+                    environment: server.environment,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        StdioMcpExecutor::connect(servers, allowed_tool_names)
+            .await
+            .map(|executor| Arc::new(executor) as Arc<dyn LocalMcpExecutor>)
     }
-}
-
-fn path_text(path: &Path) -> Result<String, String> {
-    path.to_str()
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| "local Plugin executable path is not valid UTF-8".to_string())
 }
 
 pub struct StoredLocalCapabilityLoader {

@@ -983,7 +983,7 @@ dependencies = [
  "chatos_client_storage",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
- "chatos_mcp_runtime",
+ "chatos_mcp_client",
  "chatos_memory_client",
  "chatos_plugin_management_sdk",
  "chrono",
@@ -1062,6 +1062,18 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "chatos_mcp_client"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

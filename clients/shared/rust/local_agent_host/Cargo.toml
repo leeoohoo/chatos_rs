@@ -13,9 +13,9 @@ base64 = "0.22"
 chatos_agent_profiles = { path = "../chatos_agent_profiles" }
 chatos_client_storage = { path = "../chatos_client_storage" }
 chatos_memory_client = { path = "../chatos_memory_client" }
+chatos_mcp_client = { path = "../chatos_mcp_client" }
 chatos_local_agent_protocol = { path = "../chatos_local_agent_protocol" }
 chatos_local_agent_runtime = { path = "../chatos_local_agent_runtime" }
-chatos_mcp_runtime = { path = "../../../../crates/chatos_mcp_runtime" }
 chatos_plugin_management_sdk = { path = "../../../../crates/chatos_plugin_management_sdk" }
 parking_lot = "0.12"
 chrono = "0.4"

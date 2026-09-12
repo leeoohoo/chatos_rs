@@ -10,27 +10,22 @@ use chatos_local_agent_host::{
     LocalTaskCapabilityResolver, RegisteredLocalCapabilityBundle, RegisteredLocalCapabilityRuntime,
 };
 use chatos_local_agent_protocol::ToolEffect;
-use chatos_mcp_runtime::{
-    BuiltinToolProvider, McpBuiltinServer, McpExecutor, ToolCallContext, ToolStreamChunkCallback,
-};
+use chatos_mcp_client::{LocalMcpExecutor, LocalMcpToolCall, LocalMcpToolResult};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-struct ToolsProvider {
+struct TestExecutor {
     include_extra: bool,
 }
 
 #[async_trait]
-impl BuiltinToolProvider for ToolsProvider {
-    fn server_name(&self) -> &str {
-        "fixture"
-    }
-
-    fn list_tools(&self) -> Vec<Value> {
+impl LocalMcpExecutor for TestExecutor {
+    fn available_tools(&self) -> Vec<Value> {
         let mut tools = vec![json!({
-            "name": "render",
+            "type": "function",
+            "name": "fixture_render",
             "description": "Render the approved design",
-            "inputSchema": {
+            "parameters": {
                 "type": "object",
                 "properties": {"target": {"type": "string"}},
                 "required": ["target"],
@@ -39,46 +34,31 @@ impl BuiltinToolProvider for ToolsProvider {
         })];
         if self.include_extra {
             tools.push(json!({
-                "name": "unfrozen",
+                "type": "function",
+                "name": "fixture_unfrozen",
                 "description": "Must not leak into a frozen runtime",
-                "inputSchema": {"type": "object"}
+                "parameters": {"type": "object"}
             }));
         }
         tools
     }
 
-    async fn call_tool(
+    async fn execute_tool(
         &self,
-        _name: &str,
-        _args: Value,
-        _context: ToolCallContext,
-        _on_stream_chunk: Option<ToolStreamChunkCallback>,
-    ) -> Result<Value, String> {
-        Ok(json!({"content": [{"type": "text", "text": "ok"}]}))
+        _call: LocalMcpToolCall,
+        _cancellation: CancellationToken,
+    ) -> Result<LocalMcpToolResult, String> {
+        Ok(LocalMcpToolResult {
+            content: "ok".to_string(),
+            structured_result: None,
+            is_error: false,
+            fatal_error: false,
+        })
     }
 }
 
-fn executor(include_extra: bool) -> Arc<McpExecutor> {
-    Arc::new(
-        McpExecutor::builder()
-            .with_builtin_server(McpBuiltinServer {
-                name: "fixture".to_string(),
-                kind: "Fixture".to_string(),
-                workspace_dir: String::new(),
-                user_id: Some("user-1".to_string()),
-                project_id: Some("project-1".to_string()),
-                remote_connection_id: None,
-                contact_agent_id: None,
-                auto_create_task: false,
-                allow_writes: true,
-                max_file_bytes: 1_000,
-                max_write_bytes: 1_000,
-                search_limit: 10,
-            })
-            .with_builtin_provider(ToolsProvider { include_extra })
-            .build_builtin_only()
-            .unwrap(),
-    )
+fn executor(include_extra: bool) -> Arc<dyn LocalMcpExecutor> {
+    Arc::new(TestExecutor { include_extra })
 }
 
 fn release_snapshot() -> Value {
@@ -92,7 +72,7 @@ fn release_snapshot() -> Value {
     })
 }
 
-fn bundle(executor: Arc<McpExecutor>) -> RegisteredLocalCapabilityBundle {
+fn bundle(executor: Arc<dyn LocalMcpExecutor>) -> RegisteredLocalCapabilityBundle {
     let schema = executor.available_tools().remove(0);
     RegisteredLocalCapabilityBundle {
         owner_user_id: "user-1".to_string(),

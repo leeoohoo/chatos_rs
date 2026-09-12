@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chatos_agent_profiles::{TaskRunnerCapabilitySnapshot, TaskRunnerExecutionTool};
-use chatos_mcp_runtime::McpExecutor;
+use chatos_mcp_client::LocalMcpExecutor;
 use parking_lot::RwLock;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -22,7 +22,7 @@ pub struct RegisteredLocalCapabilityBundle {
     pub resolution_revision: String,
     pub plugin_release_snapshot: Value,
     pub execution_tools: Vec<TaskRunnerExecutionTool>,
-    pub executor: Arc<McpExecutor>,
+    pub executor: Arc<dyn LocalMcpExecutor>,
 }
 
 /// A complete Registry image that has already passed every structural and

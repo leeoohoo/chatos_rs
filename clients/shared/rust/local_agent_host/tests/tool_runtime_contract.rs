@@ -25,31 +25,26 @@ use chatos_local_agent_runtime::{
     create_local_agent_task, CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest,
     InitialRunMessage, LocalToolInvocation, LocalToolRuntime,
 };
-use chatos_mcp_runtime::{
-    BuiltinToolProvider, McpBuiltinServer, McpExecutor, ToolCallContext, ToolStreamChunkCallback,
-};
+use chatos_mcp_client::{LocalMcpExecutor, LocalMcpToolCall, LocalMcpToolResult};
 use chrono::Utc;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 const TOOL_NAME: &str = "fixture_execute";
 
-struct FixtureProvider {
+struct FixtureExecutor {
     calls: Arc<AtomicUsize>,
     fail: bool,
 }
 
 #[async_trait]
-impl BuiltinToolProvider for FixtureProvider {
-    fn server_name(&self) -> &str {
-        "fixture"
-    }
-
-    fn list_tools(&self) -> Vec<Value> {
+impl LocalMcpExecutor for FixtureExecutor {
+    fn available_tools(&self) -> Vec<Value> {
         vec![json!({
-            "name": "execute",
+            "type": "function",
+            "name": TOOL_NAME,
             "description": "Execute one frozen local operation",
-            "inputSchema": {
+            "parameters": {
                 "type": "object",
                 "properties": {"value": {"type": "string"}},
                 "required": ["value"],
@@ -58,36 +53,36 @@ impl BuiltinToolProvider for FixtureProvider {
         })]
     }
 
-    async fn call_tool(
+    async fn execute_tool(
         &self,
-        _name: &str,
-        arguments: Value,
-        _context: ToolCallContext,
-        _on_stream_chunk: Option<ToolStreamChunkCallback>,
-    ) -> Result<Value, String> {
+        call: LocalMcpToolCall,
+        cancellation: CancellationToken,
+    ) -> Result<LocalMcpToolResult, String> {
+        if cancellation.is_cancelled() {
+            return Err("cancelled".to_string());
+        }
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.fail {
             return Err("fixture rejected operation".to_string());
         }
-        Ok(json!({
-            "content": [{
-                "type": "text",
-                "text": format!(
-                    "saved {} at /Users/alice/private/result.txt",
-                    arguments["value"].as_str().unwrap_or_default()
-                )
-            }],
-            "_structured_result": {
+        Ok(LocalMcpToolResult {
+            content: format!(
+                "saved {} at /Users/alice/private/result.txt",
+                call.arguments["value"].as_str().unwrap_or_default()
+            ),
+            structured_result: Some(json!({
                 "path": "/Volumes/private/result.txt",
                 "route": "/design-preview"
-            }
-        }))
+            })),
+            is_error: false,
+            fatal_error: false,
+        })
     }
 }
 
 struct PinnedExecutorProvider {
     release_snapshot: Value,
-    executor: Arc<McpExecutor>,
+    executor: Arc<dyn LocalMcpExecutor>,
 }
 
 #[async_trait]
@@ -133,29 +128,10 @@ async fn fixture(
         .unwrap(),
     );
     let calls = Arc::new(AtomicUsize::new(0));
-    let executor = Arc::new(
-        McpExecutor::builder()
-            .with_builtin_server(McpBuiltinServer {
-                name: "fixture".to_string(),
-                kind: "Fixture".to_string(),
-                workspace_dir: String::new(),
-                user_id: Some("user-1".to_string()),
-                project_id: Some("project-1".to_string()),
-                remote_connection_id: None,
-                contact_agent_id: None,
-                auto_create_task: false,
-                allow_writes: true,
-                max_file_bytes: 1_000_000,
-                max_write_bytes: 1_000_000,
-                search_limit: 20,
-            })
-            .with_builtin_provider(FixtureProvider {
-                calls: calls.clone(),
-                fail,
-            })
-            .build_builtin_only()
-            .unwrap(),
-    );
+    let executor: Arc<dyn LocalMcpExecutor> = Arc::new(FixtureExecutor {
+        calls: calls.clone(),
+        fail,
+    });
     let mut schema = executor.available_tools().remove(0);
     assert_eq!(schema["name"], TOOL_NAME);
     if mutate_schema {

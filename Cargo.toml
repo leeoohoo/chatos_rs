@@ -24,6 +24,7 @@ members = [
   "crates/chatos_local_workspace",
   "clients/shared/rust/chatos_client_http",
   "clients/shared/rust/chatos_memory_client",
+  "clients/shared/rust/chatos_mcp_client",
   "clients/shared/rust/chatos_client_storage",
   "clients/shared/rust/chatos_local_agent_protocol",
   "clients/shared/rust/chatos_local_agent_runtime",

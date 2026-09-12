@@ -23,9 +23,7 @@ use chatos_local_agent_protocol::{
     InstallProjectPluginCapabilityCommand, LocalAgentCommand, LocalAgentIpcError,
     LocalAgentIpcResponse, RemoveProjectPluginCapabilityCommand, ToolEffect,
 };
-use chatos_mcp_runtime::{
-    BuiltinToolProvider, McpBuiltinServer, McpExecutor, ToolCallContext, ToolStreamChunkCallback,
-};
+use chatos_mcp_client::{LocalMcpExecutor, LocalMcpToolCall, LocalMcpToolResult};
 use chatos_plugin_management_sdk::{
     normalized_plugin_manifest_sha256, parse_plugin_manifest, plugin_component_descriptors,
     plugin_release_signing_payload, PluginAvailabilityStatus, PluginCatalogRecord,
@@ -77,29 +75,27 @@ impl LocalCapabilityPlatform for Platform {
     }
 }
 
-struct FixtureProvider {
-    server_name: String,
-    schemas: Vec<Value>,
+struct FixtureExecutor {
+    tools: Vec<Value>,
 }
 
 #[async_trait]
-impl BuiltinToolProvider for FixtureProvider {
-    fn server_name(&self) -> &str {
-        self.server_name.as_str()
+impl LocalMcpExecutor for FixtureExecutor {
+    fn available_tools(&self) -> Vec<Value> {
+        self.tools.clone()
     }
 
-    fn list_tools(&self) -> Vec<Value> {
-        self.schemas.clone()
-    }
-
-    async fn call_tool(
+    async fn execute_tool(
         &self,
-        _name: &str,
-        _args: Value,
-        _context: ToolCallContext,
-        _on_stream_chunk: Option<ToolStreamChunkCallback>,
-    ) -> Result<Value, String> {
-        Ok(json!({"content": [{"type": "text", "text": "ok"}]}))
+        _call: LocalMcpToolCall,
+        _cancellation: CancellationToken,
+    ) -> Result<LocalMcpToolResult, String> {
+        Ok(LocalMcpToolResult {
+            content: "ok".to_string(),
+            structured_result: None,
+            is_error: false,
+            fatal_error: false,
+        })
     }
 }
 
@@ -133,50 +129,40 @@ impl LocalCapabilityExecutorFactory for Factory {
         &self,
         servers: Vec<ResolvedLocalMcpServer>,
         allowed_tool_names: BTreeSet<String>,
-    ) -> Result<Arc<McpExecutor>, String> {
-        let server_name = servers
+    ) -> Result<Arc<dyn LocalMcpExecutor>, String> {
+        servers
             .first()
-            .map(|server| server.name.clone())
+            .map(|server| server.name.as_str())
             .ok_or_else(|| "fixture requires one server".to_string())?;
         *self.servers.lock().unwrap() = servers;
-        let mut schemas = vec![json!({
-            "name": "read_demo",
+        let mut tools = vec![json!({
+            "type": "function",
+            "name": PUBLIC_TOOL_NAME,
             "description": "Read demo data",
-            "inputSchema": if self.drift_schema {
+            "parameters": if self.drift_schema {
                 json!({"type": "object", "properties": {"changed": {"type": "boolean"}}})
             } else {
-                json!({"type": "object", "properties": {"query": {"type": "string"}}})
+                json!({
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "additionalProperties": false
+                })
             },
         })];
         if self.add_extra_tool {
-            schemas.push(json!({
-                "name": "undeclared_write",
+            tools.push(json!({
+                "type": "function",
+                "name": "plugin-plugin-demo-demo-mcp_undeclared_write",
                 "description": "Must be hidden",
-                "inputSchema": {"type": "object", "properties": {}},
+                "parameters": {"type": "object", "properties": {}},
             }));
         }
-        let executor = McpExecutor::builder()
-            .with_builtin_provider(FixtureProvider {
-                server_name: server_name.clone(),
-                schemas,
-            })
-            .with_builtin_server(McpBuiltinServer {
-                name: server_name,
-                kind: "fixture".to_string(),
-                workspace_dir: "/workspace".to_string(),
-                user_id: Some("user-1".to_string()),
-                project_id: Some("project-1".to_string()),
-                remote_connection_id: None,
-                contact_agent_id: None,
-                auto_create_task: false,
-                allow_writes: true,
-                max_file_bytes: 1024,
-                max_write_bytes: 1024,
-                search_limit: 10,
-            })
-            .with_allowed_tool_names(allowed_tool_names)
-            .build_builtin_only()?;
-        Ok(Arc::new(executor))
+        tools.retain(|tool| {
+            tool.get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| allowed_tool_names.contains(name))
+        });
+        Ok(Arc::new(FixtureExecutor { tools }))
     }
 }
 

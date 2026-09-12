@@ -15,19 +15,18 @@ use chatos_local_agent_protocol::{FrozenSnapshot, MAX_BOUNDED_JSON_BYTES};
 use chatos_local_agent_runtime::{
     DurableTaskState, LocalToolInvocation, LocalToolOutcome, LocalToolRuntime,
 };
-use chatos_mcp_runtime::{McpExecutor, ToolCallContext, ToolResult};
+use chatos_mcp_client::{LocalMcpExecutor, LocalMcpToolCall, LocalMcpToolResult};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 const TOOL_RESULT_MAX_CHARS: usize = 24_000;
-const REMOTE_EXECUTION_SERVERS: [&str; 2] = ["task_runner_service", "mcp_management"];
 
 /// The exact MCP executor resolved from the plugin releases frozen into a Task.
 /// The provider must fail when those releases are no longer locally available;
 /// silently resolving a newer installed release is forbidden.
 pub struct FrozenMcpExecutor {
     pub plugin_release_snapshot: Value,
-    pub executor: Arc<McpExecutor>,
+    pub executor: Arc<dyn LocalMcpExecutor>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,38 +120,30 @@ impl LocalToolRuntime for FrozenCapabilityLocalToolRuntime {
             invocation.tool_name.as_str(),
         )?;
 
-        let cancelled = cancellation.clone();
-        let abort_checker = Arc::new(move |_conversation_id: &str| cancelled.is_cancelled());
-        let tool_call = json!({
-            "id": invocation.tool_call_id,
-            "function": {
-                "name": invocation.tool_name,
-                "arguments": invocation.arguments,
-            }
-        });
-        let call_context = ToolCallContext::new(
-            Some(invocation.run_id),
-            Some(invocation.source_turn_id),
-            None,
-        )
-        .with_abort_checker(abort_checker)
-        .with_tool_result_max_chars(Some(TOOL_RESULT_MAX_CHARS));
-        let results = tokio::select! {
+        let tool_call = LocalMcpToolCall {
+            tool_call_id: invocation.tool_call_id,
+            tool_name: invocation.tool_name,
+            arguments: invocation.arguments,
+            run_id: invocation.run_id,
+            turn_id: invocation.source_turn_id,
+        };
+        let result = tokio::select! {
             _ = cancellation.cancelled() => {
                 return Err("local MCP invocation was cancelled".to_string());
             }
-            results = resolved.executor.execute_tools_stream(
-                std::slice::from_ref(&tool_call),
-                call_context,
-                None,
-            ) => results,
+            result = resolved.executor.execute_tool(tool_call, cancellation.clone()) => result,
         };
         if cancellation.is_cancelled() {
             return Err("local MCP invocation was cancelled".to_string());
         }
-        let result = exactly_one_result(results)?;
+        let result = result.unwrap_or_else(|error| LocalMcpToolResult {
+            content: error,
+            structured_result: None,
+            is_error: true,
+            fatal_error: false,
+        });
         let bounded_result = bounded_tool_result(&result)?;
-        Ok(if result.success && !result.is_error {
+        Ok(if !result.is_error {
             LocalToolOutcome::succeeded(bounded_result)
         } else {
             LocalToolOutcome::failed(bounded_result)
@@ -289,7 +280,7 @@ fn snapshot_payload<T: serde::de::DeserializeOwned>(
 }
 
 fn validate_executor_tool(
-    executor: &McpExecutor,
+    executor: &dyn LocalMcpExecutor,
     frozen: &TaskRunnerExecutionTool,
     requested_name: &str,
 ) -> Result<(), String> {
@@ -303,35 +294,15 @@ fn validate_executor_tool(
             "local MCP tool {requested_name} schema does not match the frozen schema"
         ));
     }
-    let metadata = executor
-        .tool_metadata()
-        .get(requested_name)
-        .ok_or_else(|| format!("local MCP tool {requested_name} has no execution metadata"))?;
-    if REMOTE_EXECUTION_SERVERS.contains(&metadata.server_name.as_str()) {
-        return Err(format!(
-            "local Agent cannot execute through remote server {}",
-            metadata.server_name
-        ));
-    }
     Ok(())
 }
 
-fn exactly_one_result(mut results: Vec<ToolResult>) -> Result<ToolResult, String> {
-    if results.len() != 1 {
-        return Err(format!(
-            "local MCP invocation returned {} terminal results instead of one",
-            results.len()
-        ));
-    }
-    Ok(results.remove(0))
-}
-
-fn bounded_tool_result(result: &ToolResult) -> Result<Value, String> {
+fn bounded_tool_result(result: &LocalMcpToolResult) -> Result<Value, String> {
     let summary = sanitize_text(&result.content, TOOL_RESULT_MAX_CHARS);
-    let structured_result = result.result.as_ref().map(sanitize_value);
+    let structured_result = result.structured_result.as_ref().map(sanitize_value);
     let mut value = json!({
         "summary": summary,
-        "verification": result.success && !result.is_error,
+        "verification": !result.is_error,
         "fatal_error": result.fatal_error,
         "structured_result": structured_result,
     });
