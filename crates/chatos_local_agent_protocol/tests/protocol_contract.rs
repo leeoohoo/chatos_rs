@@ -56,6 +56,25 @@ fn frozen_snapshot_digest_is_canonical_and_rejects_payload_tampering() {
     ));
 }
 
+#[test]
+fn frozen_snapshot_digest_matches_the_native_client_fixture() {
+    let snapshot = FrozenSnapshot::new(
+        "main-chat-prompt",
+        "main-prompt-1",
+        serde_json::json!({
+            "unicode": "设计/AI",
+            "prompt_revision": "main-prompt-1",
+            "array": [{"z": 2, "a": 1}, true, null]
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(
+        snapshot.digest,
+        "sha256:5fdb7990d695ddaf6dd10c66b4535d905e66344496d1e1673ae9c8148a998455"
+    );
+}
+
 fn model_descriptor() -> ModelRuntimeDescriptor {
     ModelRuntimeDescriptor {
         model_config_id: "model-1".to_string(),
