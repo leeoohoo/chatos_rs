@@ -970,6 +970,7 @@ dependencies = [
  "chatos_client_storage",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
+ "chatos_mcp_runtime",
  "chrono",
  "memory_engine_sdk",
  "serde",

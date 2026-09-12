@@ -8,6 +8,7 @@ mod main_chat_context;
 mod profile_registry;
 mod task_context;
 mod task_planner;
+mod tool_runtime;
 
 pub use context_runtime::*;
 pub use host::*;
@@ -16,3 +17,4 @@ pub use main_chat_context::*;
 pub use profile_registry::*;
 pub use task_context::*;
 pub use task_planner::*;
+pub use tool_runtime::*;
