@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod bootstrap;
 mod capability_runtime;
 mod context_runtime;
 mod host;
@@ -19,6 +20,7 @@ mod task_planner;
 mod tool_runtime;
 mod worker;
 
+pub use bootstrap::*;
 pub use capability_runtime::*;
 pub use context_runtime::*;
 pub use host::*;
