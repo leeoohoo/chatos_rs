@@ -557,6 +557,7 @@ impl StorageTransaction for BeginToolExecutionOperation {
 #[derive(Debug, Clone)]
 pub struct DecideToolApprovalRequest {
     pub scope: RecordScope,
+    pub run_id: String,
     pub invocation_id: String,
     pub decision: ToolApprovalDecision,
     pub reason: Option<String>,
@@ -615,6 +616,9 @@ impl StorageTransaction for DecideToolApprovalOperation {
             .map_err(|error| StorageError::InvalidData {
                 reason: format!("stored tool execution is invalid: {error}"),
             })?;
+        if record.execution.run_id != request.run_id {
+            return invalid_data("tool approval run does not match the durable execution");
+        }
         if !record.execution.effect.requires_approval() {
             return invalid_data("read-only tools do not accept approval decisions");
         }

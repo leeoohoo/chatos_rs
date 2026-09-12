@@ -194,6 +194,7 @@ async fn approve(storage: &SqliteClientStorage, invocation_id: String) {
         storage,
         DecideToolApprovalRequest {
             scope: scope(),
+            run_id: "run-1".to_string(),
             invocation_id,
             decision: ToolApprovalDecision::Approve,
             reason: Some("approved by the local user".to_string()),
@@ -372,6 +373,7 @@ async fn claimed_batch_stays_dormant_until_every_approval_is_durable() {
         storage.as_ref(),
         DecideToolApprovalRequest {
             scope: scope(),
+            run_id: "run-1".to_string(),
             invocation_id: batch.calls[1].invocation_id.clone(),
             decision: ToolApprovalDecision::Approve,
             reason: None,
@@ -391,6 +393,7 @@ async fn claimed_batch_stays_dormant_until_every_approval_is_durable() {
         storage.as_ref(),
         DecideToolApprovalRequest {
             scope: scope(),
+            run_id: "run-1".to_string(),
             invocation_id: batch.calls[2].invocation_id.clone(),
             decision: ToolApprovalDecision::Reject,
             reason: Some("do not create another task".to_string()),
@@ -403,6 +406,57 @@ async fn claimed_batch_stays_dormant_until_every_approval_is_durable() {
         read_event(storage.as_ref()).await.event.available_at,
         resumed_at
     );
+}
+
+#[tokio::test]
+async fn tool_approval_rejects_an_invocation_from_another_run() {
+    let (_directory, storage) = storage("project-1").await;
+    let batch = prepare_tool_batch(storage.as_ref(), prepare_request())
+        .await
+        .unwrap();
+    defer_tool_batch_for_approval(
+        storage.as_ref(),
+        DeferToolBatchForApprovalRequest {
+            scope: scope(),
+            event_id: "event-1".to_string(),
+            claim_token: "claim-1".to_string(),
+            batch: batch.clone(),
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap();
+    let invocation_id = batch.calls[1].invocation_id.clone();
+
+    let mismatch = decide_tool_approval(
+        storage.as_ref(),
+        DecideToolApprovalRequest {
+            scope: scope(),
+            run_id: "another-run".to_string(),
+            invocation_id: invocation_id.clone(),
+            decision: ToolApprovalDecision::Approve,
+            reason: None,
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(mismatch.to_string().contains("run does not match"));
+
+    let approved = decide_tool_approval(
+        storage.as_ref(),
+        DecideToolApprovalRequest {
+            scope: scope(),
+            run_id: "run-1".to_string(),
+            invocation_id,
+            decision: ToolApprovalDecision::Approve,
+            reason: None,
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(approved.execution.status, ToolExecutionStatus::Approved);
 }
 
 #[tokio::test]
@@ -610,6 +664,7 @@ async fn rejected_tool_is_terminal_and_cannot_be_approved_or_started() {
         storage.as_ref(),
         DecideToolApprovalRequest {
             scope: scope(),
+            run_id: "run-1".to_string(),
             invocation_id: invocation_id.clone(),
             decision: ToolApprovalDecision::Reject,
             reason: Some("the requested write was not authorized".to_string()),
@@ -638,6 +693,7 @@ async fn rejected_tool_is_terminal_and_cannot_be_approved_or_started() {
         storage.as_ref(),
         DecideToolApprovalRequest {
             scope: scope(),
+            run_id: "run-1".to_string(),
             invocation_id,
             decision: ToolApprovalDecision::Approve,
             reason: Some("changed my mind".to_string()),

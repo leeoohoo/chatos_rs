@@ -694,6 +694,7 @@ impl LocalAgentHost {
             self.storage.as_ref(),
             DecideToolApprovalRequest {
                 scope: self.scope.clone(),
+                run_id: command.run_id,
                 invocation_id: command.invocation_id,
                 decision: command.decision,
                 reason: command.reason,

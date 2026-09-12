@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 12
+public let localAgentProtocolVersion: UInt32 = 13
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -236,7 +236,12 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case resumeRun(runID: String)
     case cancelRun(runID: String)
     case answerUserQuestion(runID: String, interactionID: String, answer: LocalAgentUserAnswer)
-    case decideToolApproval(invocationID: String, decision: LocalAgentToolApprovalDecision, reason: String?)
+    case decideToolApproval(
+        runID: String,
+        invocationID: String,
+        decision: LocalAgentToolApprovalDecision,
+        reason: String?
+    )
     case getRun(runID: String)
     case getRunDetail(runID: String, eventLimit: UInt32, eventOffset: UInt32)
     case getTask(taskID: String)
@@ -296,6 +301,7 @@ extension LocalAgentCommand: Encodable {
         let answer: LocalAgentUserAnswer
     }
     private struct ApprovalPayload: Encodable {
+        let runID: String
         let invocationID: String
         let decision: LocalAgentToolApprovalDecision
         let reason: String?
@@ -347,9 +353,17 @@ extension LocalAgentCommand: Encodable {
         case let .answerUserQuestion(runID, interactionID, answer):
             try container.encode("answer_user_question", forKey: .type)
             try container.encode(AnswerPayload(runID: runID, interactionID: interactionID, answer: answer), forKey: .payload)
-        case let .decideToolApproval(invocationID, decision, reason):
+        case let .decideToolApproval(runID, invocationID, decision, reason):
             try container.encode("decide_tool_approval", forKey: .type)
-            try container.encode(ApprovalPayload(invocationID: invocationID, decision: decision, reason: reason), forKey: .payload)
+            try container.encode(
+                ApprovalPayload(
+                    runID: runID,
+                    invocationID: invocationID,
+                    decision: decision,
+                    reason: reason
+                ),
+                forKey: .payload
+            )
         case let .getRun(runID):
             try encodeRun("get_run", runID, into: &container)
         case let .getRunDetail(runID, eventLimit, eventOffset):

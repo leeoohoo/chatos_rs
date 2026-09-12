@@ -1,5 +1,5 @@
 {
-  "protocol_version": 12,
+  "protocol_version": 13,
   "request_id": "request-task-snapshot-1",
   "response": {
     "type": "task",

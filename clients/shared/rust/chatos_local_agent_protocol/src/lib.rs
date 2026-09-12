@@ -25,7 +25,7 @@ pub use run::*;
 pub use storage_ipc::*;
 pub use tool::*;
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 12;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 13;
 pub const MAX_BOUNDED_JSON_BYTES: usize = 64 * 1024;
 pub const MAX_PLUGIN_CAPABILITY_JSON_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_ENCRYPTED_CONTEXT_BYTES: usize = 128 * 1024;

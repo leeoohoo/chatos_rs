@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 12;
+    public const uint Version = 13;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -117,10 +117,11 @@ public sealed record LocalAgentCommand
         new("answer_user_question", new AnswerPayload(runId, interactionId, answer));
 
     public static LocalAgentCommand DecideToolApproval(
+        string runId,
         string invocationId,
         LocalAgentToolApprovalDecision decision,
         string? reason = null) =>
-        new("decide_tool_approval", new ApprovalPayload(invocationId, decision, reason));
+        new("decide_tool_approval", new ApprovalPayload(runId, invocationId, decision, reason));
 
     public static LocalAgentCommand ListRuns(string? cursor = null, uint limit = 100) =>
         new("list_runs", new ListPayload(cursor, limit));
@@ -197,6 +198,7 @@ public sealed record LocalAgentCommand
     private sealed record AcknowledgeEventsPayload(ulong ThroughSeq);
     private sealed record AnswerPayload(string RunId, string InteractionId, LocalAgentUserAnswer Answer);
     private sealed record ApprovalPayload(
+        string RunId,
         string InvocationId,
         LocalAgentToolApprovalDecision Decision,
         string? Reason);

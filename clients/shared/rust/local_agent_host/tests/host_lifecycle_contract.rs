@@ -2023,6 +2023,7 @@ async fn main_chat_model_tool_creates_one_frozen_local_task_end_to_end() {
         .clone();
     host.decide_tool_approval(
         ToolApprovalCommand {
+            run_id: created_main.run_record.run.run_id.clone(),
             invocation_id,
             decision: ToolApprovalDecision::Approve,
             reason: Some("create the reviewed local task".to_string()),
@@ -2532,6 +2533,7 @@ async fn indeterminate_irreversible_tool_result_moves_the_run_to_review() {
         .execute_mutation(
             "approval-request-1",
             LocalAgentCommand::DecideToolApproval(ToolApprovalCommand {
+                run_id: "run-1".to_string(),
                 invocation_id: state.tool_executions[0].execution.invocation_id.clone(),
                 decision: ToolApprovalDecision::Approve,
                 reason: Some("exercise unknown outcome recovery".to_string()),

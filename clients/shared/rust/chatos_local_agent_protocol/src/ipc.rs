@@ -480,6 +480,7 @@ pub enum ToolApprovalDecision {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolApprovalCommand {
+    pub run_id: String,
     pub invocation_id: String,
     pub decision: ToolApprovalDecision,
     pub reason: Option<String>,
@@ -783,6 +784,7 @@ impl LocalAgentTaskRunDetail {
 
 impl ToolApprovalCommand {
     pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("run_id", &self.run_id)?;
         require_identifier("invocation_id", &self.invocation_id)?;
         if self
             .reason
@@ -1152,6 +1154,21 @@ mod tests {
         .unwrap();
         assert_eq!(value["type"], "pause_run");
         assert_eq!(value["payload"]["run_id"], "run-1");
+    }
+
+    #[test]
+    fn tool_approval_serialization_binds_run_and_invocation() {
+        let command = LocalAgentCommand::DecideToolApproval(ToolApprovalCommand {
+            run_id: "run-1".to_string(),
+            invocation_id: "invocation-1".to_string(),
+            decision: ToolApprovalDecision::Approve,
+            reason: None,
+        });
+        command.validate().unwrap();
+        let value = serde_json::to_value(command).unwrap();
+        assert_eq!(value["type"], "decide_tool_approval");
+        assert_eq!(value["payload"]["run_id"], "run-1");
+        assert_eq!(value["payload"]["invocation_id"], "invocation-1");
     }
 
     #[test]

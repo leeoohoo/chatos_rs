@@ -34,7 +34,35 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesTheSharedV12RetryTaskAndTaskSnapshotFixtures()
+    public async Task EncodesToolApprovalWithExactRunAndInvocationIdentity()
+    {
+        using var expectedRequest = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("tool_approval_request.json")));
+        var transport = new RecordingTransport(request => Reply(request, """
+            {"type":"accepted","payload":{"operation_id":"invocation-1"}}
+            """));
+        var client = new WindowsLocalAgentIPCClient("user-1", transport);
+
+        await client.AcceptAsync(LocalAgentCommand.DecideToolApproval(
+            "run-1",
+            "invocation-1",
+            LocalAgentToolApprovalDecision.Reject,
+            "Rejected by the local user"));
+
+        using var request = JsonDocument.Parse(transport.Request!);
+        var command = request.RootElement.GetProperty("command");
+        Assert.True(JsonElement.DeepEquals(
+            expectedRequest.RootElement.GetProperty("command"),
+            command));
+        Assert.Equal("decide_tool_approval", command.GetProperty("type").GetString());
+        var payload = command.GetProperty("payload");
+        Assert.Equal("run-1", payload.GetProperty("run_id").GetString());
+        Assert.Equal("invocation-1", payload.GetProperty("invocation_id").GetString());
+        Assert.Equal("reject", payload.GetProperty("decision").GetString());
+    }
+
+    [Fact]
+    public async Task UsesTheSharedV13RetryTaskAndTaskSnapshotFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("retry_task_request.json")));
@@ -49,7 +77,7 @@ public sealed class LocalAgentIPCClientTests
             "Preserve the approved visual hierarchy.")));
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
-        Assert.Equal(12u, LocalAgentProtocol.Version);
+        Assert.Equal(13u, LocalAgentProtocol.Version);
         Assert.True(JsonElement.DeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));
@@ -92,7 +120,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesSharedV12TaskGraphAndRunDetailProjections()
+    public async Task UsesSharedV13TaskGraphAndRunDetailProjections()
     {
         using var graphFixture = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("task_graph_response.json")));
@@ -334,7 +362,7 @@ public sealed class LocalAgentIPCClientTests
             "shared",
             "fixtures",
             "local_agent",
-            "v12",
+            "v13",
             name));
 
     private static MemoryStream FrameHeader(uint length, byte[]? body = null)

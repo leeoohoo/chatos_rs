@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v12 fixtures")
-struct LocalAgentProtocolV12FixtureTests {
+@Suite("Shared Local Agent protocol v13 fixtures")
+struct LocalAgentProtocolV13FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,29 @@ struct LocalAgentProtocolV12FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 12)
+        #expect(localAgentProtocolVersion == 13)
+        #expect(encoded == fixture)
+    }
+
+    @Test("encodes exact Run-bound tool approval from the shared contract")
+    func toolApprovalRequest() throws {
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-tool-approval-1",
+            ownerUserID: "user-1",
+            command: .decideToolApproval(
+                runID: "run-1",
+                invocationID: "invocation-1",
+                decision: .reject,
+                reason: "Rejected by the local user"
+            )
+        )
+        let encoder = LocalAgentProtocolJSON.encoder()
+        let encoded = try JSONSerialization.jsonObject(with: encoder.encode(request)) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("tool_approval_request.json"))
+        ) as? NSDictionary
+
         #expect(encoded == fixture)
     }
 
@@ -100,7 +122,7 @@ struct LocalAgentProtocolV12FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v12")
+            .appendingPathComponent("shared/fixtures/local_agent/v13")
             .appendingPathComponent(name)
     }
 }

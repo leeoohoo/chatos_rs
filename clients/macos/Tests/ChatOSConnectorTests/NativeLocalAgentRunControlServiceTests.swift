@@ -55,6 +55,7 @@ struct NativeLocalAgentRunControlServiceTests {
         let command = try controlCommand(try #require(await fixture.transport.lastRequest()))
         #expect(command["type"] as? String == "decide_tool_approval")
         let payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["run_id"] as? String == "run-1")
         #expect(payload["invocation_id"] as? String == "invocation-1")
         #expect(payload["decision"] as? String == "reject")
         #expect(payload["reason"] as? String == "user rejected")
@@ -119,6 +120,7 @@ struct NativeLocalAgentRunControlServiceTests {
         command = try controlCommand(try #require(await transport.lastRequest()))
         #expect(command["type"] as? String == "decide_tool_approval")
         payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["run_id"] as? String == run.runID)
         #expect(payload["invocation_id"] as? String == "task-invocation-1")
         #expect(payload["decision"] as? String == "approve")
 

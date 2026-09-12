@@ -1,0 +1,14 @@
+{
+  "protocol_version": 13,
+  "request_id": "request-tool-approval-1",
+  "owner_user_id": "user-1",
+  "command": {
+    "type": "decide_tool_approval",
+    "payload": {
+      "run_id": "run-1",
+      "invocation_id": "invocation-1",
+      "decision": "reject",
+      "reason": "Rejected by the local user"
+    }
+  }
+}

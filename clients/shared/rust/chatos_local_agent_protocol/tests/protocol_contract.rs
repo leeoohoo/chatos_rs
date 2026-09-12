@@ -10,25 +10,28 @@ use chatos_local_agent_protocol::{
     ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
     ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
     ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ProtocolError,
-    ProviderContextItem, RemoveProjectPluginCapabilityCommand, RetryTaskCommand, ToolEffect,
-    ToolExecution, ToolExecutionStatus, LOCAL_AGENT_PROTOCOL_VERSION,
+    ProviderContextItem, RemoveProjectPluginCapabilityCommand, RetryTaskCommand,
+    ToolApprovalDecision, ToolEffect, ToolExecution, ToolExecutionStatus,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chrono::Utc;
 
-const RETRY_TASK_REQUEST_V12: &str =
-    include_str!("../../../fixtures/local_agent/v12/retry_task_request.json");
-const TASK_SNAPSHOT_RESPONSE_V12: &str =
-    include_str!("../../../fixtures/local_agent/v12/task_snapshot_response.json");
-const TASK_GRAPH_RESPONSE_V12: &str =
-    include_str!("../../../fixtures/local_agent/v12/task_graph_response.json");
-const TASK_RUN_DETAIL_RESPONSE_V12: &str =
-    include_str!("../../../fixtures/local_agent/v12/task_run_detail_response.json");
-const RUN_DETAIL_RESPONSE_V12: &str =
-    include_str!("../../../fixtures/local_agent/v12/run_detail_response.json");
+const RETRY_TASK_REQUEST_V13: &str =
+    include_str!("../../../fixtures/local_agent/v13/retry_task_request.json");
+const TOOL_APPROVAL_REQUEST_V13: &str =
+    include_str!("../../../fixtures/local_agent/v13/tool_approval_request.json");
+const TASK_SNAPSHOT_RESPONSE_V13: &str =
+    include_str!("../../../fixtures/local_agent/v13/task_snapshot_response.json");
+const TASK_GRAPH_RESPONSE_V13: &str =
+    include_str!("../../../fixtures/local_agent/v13/task_graph_response.json");
+const TASK_RUN_DETAIL_RESPONSE_V13: &str =
+    include_str!("../../../fixtures/local_agent/v13/task_run_detail_response.json");
+const RUN_DETAIL_RESPONSE_V13: &str =
+    include_str!("../../../fixtures/local_agent/v13/run_detail_response.json");
 
 #[test]
-fn shared_v12_retry_task_request_is_the_authoritative_native_contract() {
-    let request: LocalAgentIpcRequest = serde_json::from_str(RETRY_TASK_REQUEST_V12).unwrap();
+fn shared_v13_retry_task_request_is_the_authoritative_native_contract() {
+    let request: LocalAgentIpcRequest = serde_json::from_str(RETRY_TASK_REQUEST_V13).unwrap();
     request.validate().unwrap();
     assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
     let LocalAgentCommand::RetryTask(command) = request.command else {
@@ -39,8 +42,21 @@ fn shared_v12_retry_task_request_is_the_authoritative_native_contract() {
 }
 
 #[test]
-fn shared_v12_task_snapshot_response_preserves_initial_current_and_all_runs() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_SNAPSHOT_RESPONSE_V12).unwrap();
+fn shared_v13_tool_approval_binds_run_and_invocation() {
+    let request: LocalAgentIpcRequest = serde_json::from_str(TOOL_APPROVAL_REQUEST_V13).unwrap();
+    request.validate().unwrap();
+    assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
+    let LocalAgentCommand::DecideToolApproval(command) = request.command else {
+        panic!("fixture must contain decide_tool_approval");
+    };
+    assert_eq!(command.run_id, "run-1");
+    assert_eq!(command.invocation_id, "invocation-1");
+    assert_eq!(command.decision, ToolApprovalDecision::Reject);
+}
+
+#[test]
+fn shared_v13_task_snapshot_response_preserves_initial_current_and_all_runs() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_SNAPSHOT_RESPONSE_V13).unwrap();
     reply.validate().unwrap();
     assert_eq!(reply.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
     let LocalAgentIpcResponse::Task(task) = reply.response else {
@@ -52,8 +68,8 @@ fn shared_v12_task_snapshot_response_preserves_initial_current_and_all_runs() {
 }
 
 #[test]
-fn shared_v12_task_graph_is_a_valid_owner_scoped_projection() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_GRAPH_RESPONSE_V12).unwrap();
+fn shared_v13_task_graph_is_a_valid_owner_scoped_projection() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_GRAPH_RESPONSE_V13).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::TaskGraph(graph) = reply.response else {
         panic!("fixture must contain a Task Graph response");
@@ -64,8 +80,8 @@ fn shared_v12_task_graph_is_a_valid_owner_scoped_projection() {
 }
 
 #[test]
-fn shared_v12_task_run_detail_preserves_result_and_event_page() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_RUN_DETAIL_RESPONSE_V12).unwrap();
+fn shared_v13_task_run_detail_preserves_result_and_event_page() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_RUN_DETAIL_RESPONSE_V13).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::TaskRunDetail(detail) = reply.response else {
         panic!("fixture must contain a Task Run detail response");
@@ -79,8 +95,8 @@ fn shared_v12_task_run_detail_preserves_result_and_event_page() {
 }
 
 #[test]
-fn shared_v12_run_detail_preserves_restart_snapshot_watermark() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(RUN_DETAIL_RESPONSE_V12).unwrap();
+fn shared_v13_run_detail_preserves_restart_snapshot_watermark() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(RUN_DETAIL_RESPONSE_V13).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::RunDetail(detail) = reply.response else {
         panic!("fixture must contain a generic Run detail response");

@@ -75,7 +75,7 @@ public struct NativeLocalAgentRunControlService: LocalAgentRunControlServicing {
         decision: LocalAgentToolApprovalDecision,
         reason: String?
     ) async throws {
-        _ = try await state.requireLocalAgentToolApproval(
+        let approval = try await state.requireLocalAgentToolApproval(
             invocationID: invocationID,
             sessionID: sessionID
         )
@@ -83,6 +83,7 @@ public struct NativeLocalAgentRunControlService: LocalAgentRunControlServicing {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty
         try await send(.decideToolApproval(
+            runID: approval.runID,
             invocationID: invocationID,
             decision: decision,
             reason: normalizedReason
