@@ -13,6 +13,7 @@ using ChatOS.Connector.Git;
 using ChatOS.Connector.Remote;
 using ChatOS.Connector.Plugins;
 using ChatOS.Connector.NetworkGuard;
+using ChatOS.Connector.LocalAgent;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.State;
 using Microsoft.Extensions.DependencyInjection;
@@ -129,6 +130,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConnectorModelSettingsStore, SqliteConnectorModelSettingsStore>();
         services.AddSingleton<IConnectorSandboxSettingsStore, SqliteConnectorSandboxSettingsStore>();
         services.AddSingleton<INetworkGuardTransport, NamedPipeNetworkGuardTransport>();
+        services.AddSingleton<ILocalAgentIPCClientFactory, WindowsLocalAgentIPCClientFactory>();
         services.AddSingleton<IControlledNetworkGuardClient>(provider =>
             new ControlledNetworkGuardClient(provider.GetRequiredService<INetworkGuardTransport>()));
         services.AddSingleton(provider => new NetworkGuardLeaseCoordinator(
