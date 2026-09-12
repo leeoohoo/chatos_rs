@@ -3,6 +3,7 @@ import Foundation
 public struct ConversationSendCommand: Sendable, Equatable {
     public var sessionID: String
     public var turnID: String
+    public var messageID: String
     public var content: String
     public var attachments: [ConversationAttachmentDraft]
     public var reasoningEnabled: Bool?
@@ -10,12 +11,14 @@ public struct ConversationSendCommand: Sendable, Equatable {
     public init(
         sessionID: String,
         turnID: String,
+        messageID: String,
         content: String,
         attachments: [ConversationAttachmentDraft] = [],
         reasoningEnabled: Bool? = nil
     ) {
         self.sessionID = sessionID
         self.turnID = turnID
+        self.messageID = messageID
         self.content = content
         self.attachments = attachments
         self.reasoningEnabled = reasoningEnabled
@@ -23,31 +26,20 @@ public struct ConversationSendCommand: Sendable, Equatable {
 }
 
 public struct ConversationCommandAck: Sendable, Equatable {
-    public var accepted: Bool
+    public var operationID: String
+    public var runID: String
     public var turnID: String
-    public var userMessageID: String?
+    public var userMessageID: String
 
-    public init(accepted: Bool, turnID: String, userMessageID: String?) {
-        self.accepted = accepted
+    public init(operationID: String, runID: String, turnID: String, userMessageID: String) {
+        self.operationID = operationID
+        self.runID = runID
         self.turnID = turnID
         self.userMessageID = userMessageID
     }
 }
 
-public enum ConversationCommandError: Error, Sendable, Equatable {
-    case guidanceTargetInactive
-}
-
-extension ConversationCommandError: LocalizedError {
-    public var errorDescription: String? {
-        switch self {
-        case .guidanceTargetInactive:
-            "当前执行轮次已经结束，将作为一条新消息发送。"
-        }
-    }
-}
-
 public protocol ConversationCommandServicing: Sendable {
     func sendNewTurn(_ command: ConversationSendCommand) async throws -> ConversationCommandAck
-    func sendGuidance(_ command: ConversationSendCommand) async throws -> ConversationCommandAck
+    func cancelRun(runID: String) async throws
 }

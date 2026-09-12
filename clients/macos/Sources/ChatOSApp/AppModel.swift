@@ -99,7 +99,7 @@ final class AppModel: ObservableObject {
     private let conversationService: ChatOSConversationService
     private let apiClient: ChatOSAPIClient
     let realtimeService: ChatOSRealtimeClient
-    private let commandService: ChatOSConversationCommandService
+    private let commandService: NativeLocalAgentConversationCommandService
     private let turnProcessService: ChatOSTurnProcessService
     let messageTaskGraphService: ChatOSMessageTaskGraphService
     private let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
@@ -108,7 +108,7 @@ final class AppModel: ObservableObject {
     private let workspaceService: ChatOSWorkspaceService
     private let localConnectorService: NativeLocalConnectorService
     private let localAgentAccountSession: NativeLocalAgentAccountSession
-    private let localAgentConversationScopes = NativeLocalAgentConversationScopeStore()
+    private let localAgentConversationScopes: NativeLocalAgentConversationScopeStore
     private let projectConversationService: ChatOSProjectConversationService
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionService: NativeRemoteConnectionService
@@ -169,6 +169,20 @@ final class AppModel: ObservableObject {
         } catch {
             preconditionFailure("Local Agent account session configuration is invalid")
         }
+        let localAgentConversationScopes = NativeLocalAgentConversationScopeStore()
+        let localProjectsService = NativeLocalProjectsService(
+            connector: localConnectorService,
+            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                .appendingPathComponent("Projects.sqlite3")
+        )
+        let runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
+        let commandService = NativeLocalAgentConversationCommandService(
+            accountSession: localAgentAccountSession,
+            scopes: localAgentConversationScopes,
+            runtimeSettings: runtimeSettingsService,
+            contactContexts: ChatOSLocalAgentContactRuntimeContextService(client: apiClient),
+            projects: localProjectsService
+        )
 
         self.historyStore = historyStore
         self.apiClient = apiClient
@@ -182,14 +196,11 @@ final class AppModel: ObservableObject {
         )
         self.localConnectorService = localConnectorService
         self.localAgentAccountSession = localAgentAccountSession
+        self.localAgentConversationScopes = localAgentConversationScopes
         self.conversationService = conversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
-        self.localProjectsService = NativeLocalProjectsService(
-            connector: localConnectorService,
-            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
-                .appendingPathComponent("Projects.sqlite3")
-        )
+        self.localProjectsService = localProjectsService
         let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService
         self.remoteFileService = remoteFileService
@@ -208,10 +219,10 @@ final class AppModel: ObservableObject {
                 .deletingLastPathComponent()
                 .appendingPathComponent("ProjectRunSettings.json")
         )
-        self.commandService = ChatOSConversationCommandService(client: apiClient)
+        self.commandService = commandService
         self.turnProcessService = ChatOSTurnProcessService(client: apiClient)
         self.messageTaskGraphService = ChatOSMessageTaskGraphService(client: apiClient)
-        self.runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
+        self.runtimeSettingsService = runtimeSettingsService
         self.askUserPromptService = ChatOSAskUserPromptService(client: apiClient)
         self.petActivityInboxService = ChatOSPetActivityInboxService(client: apiClient)
         self.realtimeService = ChatOSRealtimeClient(
@@ -484,12 +495,9 @@ final class AppModel: ObservableObject {
         }
 
         if activity.source == .chat,
-           let conversationID = activity.route.conversationID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !conversationID.isEmpty,
-           let turnID = activity.route.turnID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !turnID.isEmpty {
-            try await commandService.stopTurn(conversationID: conversationID, turnID: turnID)
+           let runID = activity.route.runID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !runID.isEmpty {
+            try await commandService.cancelRun(runID: runID)
             return
         }
 

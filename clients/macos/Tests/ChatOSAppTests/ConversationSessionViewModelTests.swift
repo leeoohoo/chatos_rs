@@ -120,6 +120,32 @@ final class ConversationSessionViewModelTests: XCTestCase {
         withExtendedLifetime(cancellable) {}
     }
 
+    func testSendingWhileAnotherTurnStreamsCreatesANewLocalRun() async throws {
+        let streaming = ConversationRemoteServiceStub.turn(revision: 1)
+        let commands = ConversationCommandRecorder()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [streaming],
+            historyStore: ConversationHistoryStore(),
+            commandService: commands
+        )
+        try await waitUntil { viewModel.turns == [streaming] }
+
+        viewModel.draft = "Refine the header typography"
+        viewModel.sendDraft()
+
+        try await waitUntil {
+            await commands.sentCommands().count == 1 && !viewModel.isSending
+        }
+        let sentCommands = await commands.sentCommands()
+        let command = try XCTUnwrap(sentCommands.first)
+        XCTAssertEqual(command.sessionID, "session-1")
+        XCTAssertNotEqual(command.turnID, streaming.id)
+        XCTAssertTrue(command.messageID.hasPrefix("optimistic_"))
+        XCTAssertEqual(command.content, "Refine the header typography")
+        XCTAssertEqual(viewModel.turns.count, 2)
+    }
+
     private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
         ConversationRealtimeSignal(
             eventID: id,
@@ -142,6 +168,26 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
         XCTFail("Timed out waiting for asynchronous conversation state")
     }
+}
+
+private actor ConversationCommandRecorder: ConversationCommandServicing {
+    private var commands: [ConversationSendCommand] = []
+
+    func sendNewTurn(_ command: ConversationSendCommand) async throws
+        -> ConversationCommandAck
+    {
+        commands.append(command)
+        return ConversationCommandAck(
+            operationID: "operation-1",
+            runID: "run-1",
+            turnID: command.turnID,
+            userMessageID: command.messageID
+        )
+    }
+
+    func cancelRun(runID: String) async throws {}
+
+    func sentCommands() -> [ConversationSendCommand] { commands }
 }
 
 private actor ConversationRemoteServiceStub: ConversationRemoteServicing {

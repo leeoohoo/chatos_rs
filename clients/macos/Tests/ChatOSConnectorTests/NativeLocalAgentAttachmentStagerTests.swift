@@ -66,6 +66,39 @@ struct NativeLocalAgentAttachmentStagerTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
     }
 
+    @Test("discard removes only valid stager-owned grant payloads")
+    func discardsOwnedGrants() throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let reference = try #require(NativeLocalAgentAttachmentStager().stage([
+            ConversationAttachmentDraft(
+                id: "attachment-1",
+                name: "one.txt",
+                mimeType: "text/plain",
+                kind: .file,
+                origin: .pastedText,
+                data: Data("one".utf8)
+            ),
+        ], in: root).first)
+        let unrelated = root.appendingPathComponent("unrelated.payload")
+        try Data("keep".utf8).write(to: unrelated)
+
+        NativeLocalAgentAttachmentStager().discard([
+            reference,
+            LocalAgentAttachmentReference(
+                attachmentID: "unsafe",
+                mediaType: "text/plain",
+                payloadReference: "attachment-grant:../unrelated",
+                payloadDigest: "sha256:" + String(repeating: "a", count: 64),
+                byteSize: 1
+            ),
+        ], in: root)
+
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == [
+            "unrelated.payload",
+        ])
+    }
+
     private func temporaryRoot() -> URL {
         URL(
             fileURLWithPath: "/tmp/chatos-attachment-\(UUID().uuidString.lowercased())",

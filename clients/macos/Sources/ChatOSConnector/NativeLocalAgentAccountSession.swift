@@ -62,6 +62,19 @@ protocol NativeLocalAgentHostConfigurationBuilding: Sendable {
 
 extension NativeLocalAgentHostBootstrapBuilder: NativeLocalAgentHostConfigurationBuilding {}
 
+public protocol NativeLocalAgentAccountSessionAccess: Sendable {
+    func client(accountID: String) async throws -> NativeLocalAgentIPCClient
+    func activeClient() async throws -> NativeLocalAgentIPCClient
+    func stageAttachments(
+        _ attachments: [ConversationAttachmentDraft],
+        accountID: String
+    ) async throws -> [LocalAgentAttachmentReference]
+    func discardStagedAttachments(
+        _ references: [LocalAgentAttachmentReference],
+        accountID: String
+    ) async
+}
+
 /// Owns the one authenticated macOS Local Agent Host session.
 ///
 /// The controller is the only native boundary allowed to persist account
@@ -244,6 +257,13 @@ public actor NativeLocalAgentAccountSession {
         return try NativeLocalAgentIPCClient(ownerUserID: accountID, transport: transport)
     }
 
+    public func activeClient() async throws -> NativeLocalAgentIPCClient {
+        guard let activeAccountID else {
+            throw NativeLocalAgentAccountSessionError.inactive
+        }
+        return try await client(accountID: activeAccountID)
+    }
+
     public func stageAttachments(
         _ attachments: [ConversationAttachmentDraft],
         accountID: String
@@ -259,6 +279,17 @@ public actor NativeLocalAgentAccountSession {
         }
         return try attachmentStager.stage(
             attachments,
+            in: activeSettings.attachmentGrantDirectory
+        )
+    }
+
+    public func discardStagedAttachments(
+        _ references: [LocalAgentAttachmentReference],
+        accountID: String
+    ) {
+        guard activeAccountID == accountID, let activeSettings else { return }
+        attachmentStager.discard(
+            references,
             in: activeSettings.attachmentGrantDirectory
         )
     }
@@ -373,6 +404,8 @@ public actor NativeLocalAgentAccountSession {
         }
     }
 }
+
+extension NativeLocalAgentAccountSession: NativeLocalAgentAccountSessionAccess {}
 
 private enum SelfSecureRandom {
     static func bytes(count: Int) throws -> Data {

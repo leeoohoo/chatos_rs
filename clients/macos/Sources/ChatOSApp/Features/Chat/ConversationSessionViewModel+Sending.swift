@@ -11,44 +11,7 @@ extension ConversationSessionViewModel {
             return
         }
 
-        if let activeTurn = turns.last(where: { $0.status == .streaming }) {
-            sendGuidance(
-                text,
-                attachments: outgoingAttachments,
-                turnID: activeTurn.id,
-                using: commandService
-            )
-        } else {
-            sendNewTurn(text, attachments: outgoingAttachments, using: commandService)
-        }
-    }
-
-    private func sendGuidance(
-        _ text: String,
-        attachments: [ConversationAttachmentDraft],
-        turnID: String,
-        using service: any ConversationCommandServicing
-    ) {
-        beginSending()
-        Task {
-            do {
-                _ = try await service.sendGuidance(
-                    ConversationSendCommand(
-                        sessionID: sessionID,
-                        turnID: turnID,
-                        content: text,
-                        attachments: attachments
-                    )
-                )
-                refreshLatestSilently()
-            } catch ConversationCommandError.guidanceTargetInactive {
-                sendNewTurn(text, attachments: attachments, using: service)
-                return
-            } catch {
-                restoreDraft(text, attachments: attachments, error: error)
-            }
-            isSending = false
-        }
+        sendNewTurn(text, attachments: outgoingAttachments, using: commandService)
     }
 
     private func sendNewTurn(
@@ -76,12 +39,12 @@ extension ConversationSessionViewModel {
                     ConversationSendCommand(
                         sessionID: sessionID,
                         turnID: turn.id,
+                        messageID: turn.userMessage.id,
                         content: text,
                         attachments: attachments,
                         reasoningEnabled: reasoningEnabled
                     )
                 )
-                refreshLatestSilently()
             } catch {
                 await historyStore.discardOptimisticTurn(sessionID: sessionID, turnID: turn.id)
                 await refreshSnapshot()

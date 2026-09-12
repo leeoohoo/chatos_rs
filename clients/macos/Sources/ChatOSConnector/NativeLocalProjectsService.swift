@@ -19,6 +19,21 @@ public actor NativeLocalProjectsService {
         return opened
     }
 
+    public func localAgentProjectRecord(
+        ownerUserID: String,
+        projectID: String
+    ) async throws -> LocalProjectRecord {
+        guard let record = try await registry().get(ownerUserID: ownerUserID, id: projectID),
+              record.status == .active,
+              record.ownerUserID == ownerUserID,
+              record.id == projectID
+        else {
+            throw ProjectRegistryError.notFound
+        }
+        try record.validate()
+        return record
+    }
+
     public func deviceID(ownerUserID: String) async throws -> String? {
         try await connector.localProjectDeviceID(ownerUserID: ownerUserID)
     }
@@ -139,6 +154,8 @@ public actor NativeLocalProjectsService {
         }
     }
 }
+
+extension NativeLocalProjectsService: NativeLocalAgentProjectRecordLoading {}
 
 public struct AccountLocalProjectCreator: LocalProjectCreating {
     private let ownerUserID: String

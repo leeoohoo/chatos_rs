@@ -105,6 +105,22 @@ public struct NativeLocalAgentAttachmentStager: Sendable {
         }
     }
 
+    /// Removes only grants minted by this stager. This is used when Run
+    /// creation fails before the Host has durably claimed the references.
+    public func discard(
+        _ references: [LocalAgentAttachmentReference],
+        in grantDirectory: URL
+    ) {
+        for reference in references {
+            guard let grantID = grantID(from: reference.payloadReference) else { continue }
+            let destination = grantDirectory.appendingPathComponent(
+                "\(grantID).payload",
+                isDirectory: false
+            )
+            try? FileManager.default.removeItem(at: destination)
+        }
+    }
+
     private func validIdentity(_ value: String) -> Bool {
         !value.isEmpty
             && value.count <= 512
@@ -117,5 +133,15 @@ public struct NativeLocalAgentAttachmentStager: Sendable {
             && value.utf8.count <= 255
             && value.contains("/")
             && !value.contains(where: \.isWhitespace)
+    }
+
+    private func grantID(from reference: String) -> String? {
+        let prefix = "attachment-grant:grant-"
+        guard reference.hasPrefix(prefix) else { return nil }
+        let uuidText = String(reference.dropFirst(prefix.count))
+        guard uuidText == uuidText.lowercased(), UUID(uuidString: uuidText) != nil else {
+            return nil
+        }
+        return "grant-\(uuidText)"
     }
 }
