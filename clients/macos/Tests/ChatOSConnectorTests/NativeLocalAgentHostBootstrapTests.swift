@@ -13,12 +13,16 @@ struct NativeLocalAgentHostBootstrapTests {
         defer { fixture.cleanup() }
         let database = fixture.root.appendingPathComponent("client.sqlite")
 
-        let configuration = try await fixture.builder.makeConfiguration(settings: fixture.settings(
-            storage: .sqlite(
+        let configuration = try await fixture.builder.makeConfiguration(
+            settings: fixture.settings(storage: .sqlite(
                 databaseURL: database,
                 encryptionSecretReference: "sqlite-key"
+            )),
+            credentialValues: fixture.credentialValues(
+                storageReference: "sqlite-key",
+                storageValue: Data(repeating: 8, count: 32)
             )
-        ))
+        )
 
         let request = try #require(
             JSONSerialization.jsonObject(with: configuration.launchMaterial.snapshotForTesting()) as? [String: Any]
@@ -39,6 +43,12 @@ struct NativeLocalAgentHostBootstrapTests {
         )
         #expect(launchText?.contains("model-token") == false)
         #expect(launchText?.contains(Data(repeating: 7, count: 32).base64EncodedString()) == false)
+        let secretFrame = try #require(
+            JSONSerialization.jsonObject(with: configuration.secretMaterial.snapshotForTesting())
+                as? [String: Any]
+        )
+        #expect(secretFrame["launch_id"] as? String == request["launch_id"] as? String)
+        #expect((secretFrame["secrets"] as? [[String: Any]])?.count == 3)
         #expect(configuration.expectedClientEndpoint.hasSuffix(".sock"))
     }
 
@@ -52,9 +62,16 @@ struct NativeLocalAgentHostBootstrapTests {
             username: "chatos-user",
             password: "private-password"
         )
-        let configuration = try await fixture.builder.makeConfiguration(settings: fixture.settings(
-            storage: .postgres(connectionSecretReference: "postgres-1")
-        ))
+        let postgresValue = try JSONEncoder().encode(postgres)
+        let configuration = try await fixture.builder.makeConfiguration(
+            settings: fixture.settings(
+                storage: .postgres(connectionSecretReference: "postgres-1")
+            ),
+            credentialValues: fixture.credentialValues(
+                storageReference: "postgres-1",
+                storageValue: postgresValue
+            )
+        )
 
         let request = try #require(
             JSONSerialization.jsonObject(with: configuration.launchMaterial.snapshotForTesting()) as? [String: Any]
@@ -105,5 +122,15 @@ private struct BootstrapFixture: Sendable {
 
     func cleanup() {
         try? FileManager.default.removeItem(at: root)
+    }
+
+    func credentialValues(storageReference: String, storageValue: Data) -> [String: Data] {
+        [
+            NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference:
+                Data("model-token".utf8),
+            NativeLocalAgentHostBootstrapBuilder.providerContextKeyReference:
+                Data(repeating: 7, count: 32),
+            storageReference: storageValue,
+        ]
     }
 }

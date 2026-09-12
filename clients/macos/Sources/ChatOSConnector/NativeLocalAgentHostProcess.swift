@@ -4,7 +4,7 @@
 import Darwin
 import Foundation
 
-public let localAgentHostLaunchProtocolVersion: UInt32 = 3
+public let localAgentHostLaunchProtocolVersion: UInt32 = 4
 
 public enum NativeLocalAgentHostLaunchError: Error, Equatable, Sendable {
     case invalidConfiguration(String)
@@ -13,6 +13,7 @@ public enum NativeLocalAgentHostLaunchError: Error, Equatable, Sendable {
     case launchFrameWriteFailed
     case readyTimeout
     case readyFrameInvalid
+    case processExitedBeforeReady(status: Int32, detail: String)
     case readyProtocolMismatch(UInt32)
     case readyLaunchMismatch
     case readyProcessMismatch
@@ -28,6 +29,8 @@ extension NativeLocalAgentHostLaunchError: LocalizedError {
         case .launchFrameWriteFailed: "本地 Agent Host 启动配置写入失败"
         case .readyTimeout: "本地 Agent Host 启动握手超时"
         case .readyFrameInvalid: "本地 Agent Host 返回了无效启动握手"
+        case let .processExitedBeforeReady(status, detail):
+            "本地 Agent Host 在启动握手前退出（状态码：\(status)）：\(detail)"
         case let .readyProtocolMismatch(version): "本地 Agent Host 启动协议不匹配（\(version)）"
         case .readyLaunchMismatch: "本地 Agent Host 启动标识不匹配"
         case .readyProcessMismatch: "本地 Agent Host 进程身份不匹配"
@@ -41,6 +44,7 @@ public struct NativeLocalAgentHostLaunchConfiguration: Sendable {
     public let launchID: String
     public let expectedClientEndpoint: String
     public let launchMaterial: NativeLocalAgentHostLaunchMaterial
+    public let secretMaterial: NativeLocalAgentHostLaunchMaterial
     public let readyTimeout: Duration
 
     public init(
@@ -48,6 +52,7 @@ public struct NativeLocalAgentHostLaunchConfiguration: Sendable {
         launchID: String,
         expectedClientEndpoint: String,
         launchRequestJSON: Data,
+        secretFrameJSON: Data,
         readyTimeout: Duration = .seconds(30)
     ) throws {
         guard executableURL.isFileURL,
@@ -58,6 +63,8 @@ public struct NativeLocalAgentHostLaunchConfiguration: Sendable {
               expectedClientEndpoint == expectedClientEndpoint.trimmingCharacters(in: .whitespacesAndNewlines),
               !launchRequestJSON.isEmpty,
               launchRequestJSON.count <= 1024 * 1024,
+              !secretFrameJSON.isEmpty,
+              secretFrameJSON.count <= 512 * 1024,
               readyTimeout > .zero,
               readyTimeout <= .seconds(120)
         else {
@@ -69,6 +76,7 @@ public struct NativeLocalAgentHostLaunchConfiguration: Sendable {
         self.launchID = launchID
         self.expectedClientEndpoint = expectedClientEndpoint
         self.launchMaterial = try NativeLocalAgentHostLaunchMaterial(launchRequestJSON)
+        self.secretMaterial = try NativeLocalAgentHostLaunchMaterial(secretFrameJSON)
         self.readyTimeout = readyTimeout
     }
 }
@@ -139,10 +147,19 @@ public struct NativeLocalAgentHostReady: Decodable, Equatable, Sendable {
 public final class NativeLocalAgentHostProcess: @unchecked Sendable {
     public let ready: NativeLocalAgentHostReady
     private let process: Process
+    private let standardErrorCollector: BoundedStandardErrorCollector
+    private let exitTask: Task<Int32, Never>
 
-    fileprivate init(process: Process, ready: NativeLocalAgentHostReady) {
+    fileprivate init(
+        process: Process,
+        ready: NativeLocalAgentHostReady,
+        standardErrorCollector: BoundedStandardErrorCollector,
+        exitTask: Task<Int32, Never>
+    ) {
         self.process = process
         self.ready = ready
+        self.standardErrorCollector = standardErrorCollector
+        self.exitTask = exitTask
     }
 
     public var isRunning: Bool { process.isRunning }
@@ -152,20 +169,46 @@ public final class NativeLocalAgentHostProcess: @unchecked Sendable {
         process.terminate()
     }
 
+    /// Stops the Host before account credentials are revoked or a replacement
+    /// process is launched. A wedged native dependency cannot keep the old
+    /// account process alive indefinitely after it ignores SIGTERM.
+    public func stop(gracePeriod: Duration = .seconds(2)) async -> Int32 {
+        if process.isRunning {
+            process.terminate()
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: gracePeriod)
+            while process.isRunning, clock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        if process.isRunning {
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+        return await exitTask.value
+    }
+
     public func waitForExit() async -> Int32 {
-        await Task.detached(priority: .utility) { [process] in
-            process.waitUntilExit()
-            return process.terminationStatus
-        }.value
+        await exitTask.value
     }
 }
 
 /// Launches the bundled Rust Host without placing any credential in argv,
-/// environment variables, preferences, a temporary file, or the launch frame.
-/// Only opaque secure-store references cross stdin; stdout is accepted only as
-/// the correlated ready frame.
+/// environment variables, preferences, a temporary file, or the ordinary
+/// launch frame. After validating the executable, the launcher sends a second,
+/// bounded and correlated secret frame over the inherited anonymous stdin
+/// pipe; stdout is accepted only as the correlated ready frame.
 public struct NativeLocalAgentHostProcessLauncher: Sendable {
-    public init() {}
+    private let identityVerifier: @Sendable (URL) throws -> Void
+
+    public init() {
+        identityVerifier = { url in
+            try NativeLocalAgentHostIdentity.validate(executableURL: url)
+        }
+    }
+
+    init(testingIdentityVerifier: @escaping @Sendable (URL) throws -> Void) {
+        identityVerifier = testingIdentityVerifier
+    }
 
     public func launch(
         _ configuration: NativeLocalAgentHostLaunchConfiguration
@@ -174,39 +217,98 @@ public struct NativeLocalAgentHostProcessLauncher: Sendable {
         let process = Process()
         let input = Pipe()
         let output = Pipe()
+        let standardError = Pipe()
         process.executableURL = configuration.executableURL
         process.arguments = []
         process.environment = ["LANG": "en_US.UTF-8"]
         process.currentDirectoryURL = URL(fileURLWithPath: "/", isDirectory: true)
         process.standardInput = input
         process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
+        process.standardError = standardError
         do {
             try process.run()
         } catch {
+            input.fileHandleForReading.closeFile()
+            input.fileHandleForWriting.closeFile()
+            output.fileHandleForReading.closeFile()
+            output.fileHandleForWriting.closeFile()
+            standardError.fileHandleForReading.closeFile()
+            standardError.fileHandleForWriting.closeFile()
             throw NativeLocalAgentHostLaunchError.processLaunchFailed(error.localizedDescription)
         }
+        // `Process.waitUntilExit()` must have exactly one owner. In particular,
+        // the startup error path and the successfully launched Host must never
+        // race by creating independent waiters for the same native process.
+        let exitTask = Task.detached(priority: .utility) { [process] in
+            process.waitUntilExit()
+            return process.terminationStatus
+        }
+        input.fileHandleForReading.closeFile()
+        output.fileHandleForWriting.closeFile()
+        standardError.fileHandleForWriting.closeFile()
+        let standardErrorCollector = BoundedStandardErrorCollector(
+            handle: standardError.fileHandleForReading
+        )
 
         do {
             var launchRequestJSON = try configuration.launchMaterial.consume()
             defer { launchRequestJSON.resetBytes(in: 0..<launchRequestJSON.count) }
+            var secretFrameJSON = try configuration.secretMaterial.consume()
+            defer { secretFrameJSON.resetBytes(in: 0..<secretFrameJSON.count) }
             try writeLaunchFrame(
                 launchRequestJSON,
                 to: input.fileHandleForWriting
             )
+            try writeLaunchFrame(
+                secretFrameJSON,
+                to: input.fileHandleForWriting
+            )
+            do {
+                try input.fileHandleForWriting.close()
+            } catch {
+                throw NativeLocalAgentHostLaunchError.launchFrameWriteFailed
+            }
             let ready = try await readReadyFrame(
                 from: output.fileHandleForReading,
                 timeout: configuration.readyTimeout
             )
             try validateReady(ready, configuration: configuration, process: process)
-            return NativeLocalAgentHostProcess(process: process, ready: ready)
+            return NativeLocalAgentHostProcess(
+                process: process,
+                ready: ready,
+                standardErrorCollector: standardErrorCollector,
+                exitTask: exitTask
+            )
         } catch {
             input.fileHandleForWriting.closeFile()
             output.fileHandleForReading.closeFile()
-            if process.isRunning { process.terminate() }
-            _ = await Task.detached(priority: .utility) {
-                process.waitUntilExit()
-            }.value
+            let exitedBeforeReady: Bool
+            if case NativeLocalAgentHostLaunchError.readyFrameInvalid = error {
+                // EOF can arrive a few scheduler ticks before Process publishes
+                // its terminal state. Give an already-exiting Host a short,
+                // bounded opportunity to expose its real status and stderr;
+                // a Host that merely closed stdout remains a protocol failure.
+                exitedBeforeReady = await waitForNativeProcessExit(
+                    process,
+                    timeout: .milliseconds(250)
+                )
+            } else {
+                exitedBeforeReady = !process.isRunning
+            }
+            let status = await stopNativeProcess(
+                process,
+                exitTask: exitTask,
+                gracePeriod: .milliseconds(500)
+            )
+            let detail = await standardErrorCollector.finish()
+            if case NativeLocalAgentHostLaunchError.readyFrameInvalid = error,
+               exitedBeforeReady
+            {
+                throw NativeLocalAgentHostLaunchError.processExitedBeforeReady(
+                    status: status,
+                    detail: detail
+                )
+            }
             throw error
         }
     }
@@ -221,6 +323,11 @@ public struct NativeLocalAgentHostProcessLauncher: Sendable {
         else {
             throw NativeLocalAgentHostLaunchError.untrustedExecutable
         }
+        do {
+            try identityVerifier(url)
+        } catch {
+            throw NativeLocalAgentHostLaunchError.untrustedExecutable
+        }
     }
 
     private func writeLaunchFrame(_ body: Data, to handle: FileHandle) throws {
@@ -230,7 +337,6 @@ public struct NativeLocalAgentHostProcessLauncher: Sendable {
                 try handle.write(contentsOf: Data(bytes))
             }
             try handle.write(contentsOf: body)
-            try handle.close()
         } catch {
             throw NativeLocalAgentHostLaunchError.launchFrameWriteFailed
         }
@@ -275,6 +381,71 @@ public struct NativeLocalAgentHostProcessLauncher: Sendable {
             throw NativeLocalAgentHostLaunchError.readyEndpointMismatch
         }
     }
+}
+
+private final class BoundedStandardErrorCollector: @unchecked Sendable {
+    private static let byteLimit = 2_048
+    private let reader: Task<Data, Never>
+
+    init(handle: FileHandle) {
+        reader = Task.detached(priority: .utility) {
+            var captured = Data()
+            while true {
+                let chunk: Data?
+                do {
+                    chunk = try handle.read(upToCount: 4_096)
+                } catch {
+                    break
+                }
+                guard let chunk, !chunk.isEmpty else { break }
+                if captured.count < Self.byteLimit {
+                    captured.append(chunk.prefix(Self.byteLimit - captured.count))
+                }
+            }
+            try? handle.close()
+            return captured
+        }
+    }
+
+    func finish() async -> String {
+        let data = await reader.value
+        let decoded = String(decoding: data, as: UTF8.self)
+        let printable = String(decoded.unicodeScalars.filter { scalar in
+            scalar.value >= 0x20 && scalar.value != 0x7F
+        })
+        let normalized = printable
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        return normalized.isEmpty ? "Host 未返回诊断信息" : normalized
+    }
+}
+
+private func waitForNativeProcessExit(_ process: Process, timeout: Duration) async -> Bool {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    while process.isRunning, clock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return !process.isRunning
+}
+
+private func stopNativeProcess(
+    _ process: Process,
+    exitTask: Task<Int32, Never>,
+    gracePeriod: Duration
+) async -> Int32 {
+    if process.isRunning {
+        process.terminate()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: gracePeriod)
+        while process.isRunning, clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+    }
+    if process.isRunning {
+        _ = Darwin.kill(process.processIdentifier, SIGKILL)
+    }
+    return await exitTask.value
 }
 
 private final class BlockingReadyReader: @unchecked Sendable {

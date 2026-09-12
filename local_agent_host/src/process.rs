@@ -30,10 +30,12 @@ pub enum LocalAgentHostProcessError {
 pub enum NativeLocalAgentHostProcessError {
     #[error(transparent)]
     Bootstrap(#[from] LocalAgentHostBootstrapError),
-    #[error("native local Agent credential store is unavailable")]
-    CredentialStore,
-    #[error("native local Agent Host is unsupported on this operating system")]
-    UnsupportedPlatform,
+    #[error("native local Agent {credential} is unavailable: {source}")]
+    CredentialStore {
+        credential: &'static str,
+        #[source]
+        source: crate::LocalAgentPlatformCredentialError,
+    },
     #[error(transparent)]
     StoragePlatform(#[from] NativeLocalAgentStoragePlatformError),
     #[error(transparent)]
@@ -42,11 +44,11 @@ pub enum NativeLocalAgentHostProcessError {
 
 /// Runs the complete one-account Host process boundary.
 ///
-/// The native launcher writes exactly one reference-only length-prefixed
-/// launch frame to `launch_reader`. A ready frame is emitted only
-/// after storage recovery and protected IPC binding have succeeded. From that
-/// point, the process owns exactly one durable Worker and one IPC listener
-/// until the launcher cancels `shutdown` or either runtime fails.
+/// This dependency-injected boundary reads one reference-only launch frame.
+/// A ready frame is emitted only after storage recovery and protected IPC
+/// binding have succeeded. From that point, the process owns exactly one
+/// durable Worker and one IPC listener until the launcher cancels `shutdown`
+/// or either runtime fails.
 pub async fn run_local_agent_host_process<R, W>(
     launch_reader: &mut R,
     ready_writer: &mut W,
@@ -92,10 +94,12 @@ where
 
 /// Production entry point used by the bundled macOS and Windows executable.
 ///
-/// Platform-owned credentials and path grants are resolved inside the Host;
-/// native clients cannot replace the storage control plane with a remote or
-/// legacy executor. Installed Plugin records are signature- and digest-checked
-/// before their project-scoped local MCP tools enter the shared registry.
+/// The native client first sends a reference-only launch frame and then one
+/// correlated, bounded secret frame over the inherited anonymous pipe. The
+/// Host zeroizes the encoded frame and retains only the current launch's
+/// in-memory credential map. Installed Plugin records are signature- and
+/// digest-checked before their project-scoped local MCP tools enter the shared
+/// registry.
 pub async fn run_native_local_agent_host_process<R, W>(
     launch_reader: &mut R,
     ready_writer: &mut W,
@@ -106,8 +110,13 @@ where
     W: AsyncWrite + Unpin,
 {
     let request = read_local_agent_host_launch_request(launch_reader).await?;
+    let provided_credentials =
+        Arc::new(crate::read_local_agent_host_secret_frame(launch_reader, &request).await?);
+    let credential_reader: Arc<dyn crate::LocalAgentPlatformCredentialReader> =
+        provided_credentials.clone();
+    let device_key_reader: Arc<dyn crate::LocalAgentPlatformDeviceKeyReader> = provided_credentials;
     let (storage_platform, capability_platform, credentials) =
-        native_process_dependencies(&request)?;
+        build_native_process_dependencies(&request, credential_reader, device_key_reader)?;
     let dependencies = LocalAgentHostAssemblyDependencies {
         credentials,
         storage_platform,
@@ -136,38 +145,12 @@ impl LocalAgentIpcMutationExecutor for RejectUnknownNativeMutation {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn native_process_dependencies(
-    request: &crate::LocalAgentHostLaunchRequest,
-) -> Result<NativeProcessDependencies, NativeLocalAgentHostProcessError> {
-    let reader = Arc::new(crate::MacOsLocalAgentCredentialReader::production());
-    let credentials: Arc<dyn crate::LocalAgentPlatformCredentialReader> = reader.clone();
-    let device_keys: Arc<dyn crate::LocalAgentPlatformDeviceKeyReader> = reader;
-    build_native_process_dependencies(request, credentials, device_keys)
-}
-
-#[cfg(windows)]
-fn native_process_dependencies(
-    request: &crate::LocalAgentHostLaunchRequest,
-) -> Result<NativeProcessDependencies, NativeLocalAgentHostProcessError> {
-    let credentials: Arc<dyn crate::LocalAgentPlatformCredentialReader> = Arc::new(
-        crate::WindowsLocalAgentCredentialReader::production()
-            .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?,
-    );
-    let device_keys: Arc<dyn crate::LocalAgentPlatformDeviceKeyReader> = Arc::new(
-        crate::WindowsLocalAgentDeviceKeyReader::production()
-            .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?,
-    );
-    build_native_process_dependencies(request, credentials, device_keys)
-}
-
 type NativeProcessDependencies = (
     Arc<dyn crate::LocalAgentStoragePlatform>,
     Arc<dyn crate::LocalCapabilityPlatform>,
     LocalAgentHostResolvedCredentials,
 );
 
-#[cfg(any(target_os = "macos", windows))]
 fn build_native_process_dependencies(
     request: &crate::LocalAgentHostLaunchRequest,
     credential_reader: Arc<dyn crate::LocalAgentPlatformCredentialReader>,
@@ -183,12 +166,22 @@ fn build_native_process_dependencies(
                 .model_access_token_reference
                 .as_str(),
         )
-        .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
+        .map_err(|source| NativeLocalAgentHostProcessError::CredentialStore {
+            credential: "model access token",
+            source,
+        })?;
     if model_access_token.is_empty() || model_access_token.len() > MAXIMUM_NATIVE_SECRET_BYTES {
-        return Err(NativeLocalAgentHostProcessError::CredentialStore);
+        return Err(NativeLocalAgentHostProcessError::CredentialStore {
+            credential: "model access token",
+            source: crate::LocalAgentPlatformCredentialError::Unavailable,
+        });
     }
-    let model_access_token = String::from_utf8(model_access_token.to_vec())
-        .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
+    let model_access_token = String::from_utf8(model_access_token.to_vec()).map_err(|_| {
+        NativeLocalAgentHostProcessError::CredentialStore {
+            credential: "model access token",
+            source: crate::LocalAgentPlatformCredentialError::Unavailable,
+        }
+    })?;
     let provider_context_key = device_key_reader
         .read_device_key(
             request.owner_user_id.as_str(),
@@ -197,9 +190,17 @@ fn build_native_process_dependencies(
                 .provider_context_key_reference
                 .as_str(),
         )
-        .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
-    let provider_context_key = <[u8; 32]>::try_from(provider_context_key.as_slice())
-        .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
+        .map_err(|source| NativeLocalAgentHostProcessError::CredentialStore {
+            credential: "provider context key",
+            source,
+        })?;
+    let provider_context_key =
+        <[u8; 32]>::try_from(provider_context_key.as_slice()).map_err(|_| {
+            NativeLocalAgentHostProcessError::CredentialStore {
+                credential: "provider context key",
+                source: crate::LocalAgentPlatformCredentialError::Unavailable,
+            }
+        })?;
 
     let platform = Arc::new(NativeLocalAgentStoragePlatform::new(
         request.owner_user_id.clone(),
@@ -214,15 +215,11 @@ fn build_native_process_dependencies(
         provider_context_key,
         storage_secrets,
     )
-    .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
+    .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore {
+        credential: "resolved credential set",
+        source: crate::LocalAgentPlatformCredentialError::Unavailable,
+    })?;
     let storage_platform: Arc<dyn crate::LocalAgentStoragePlatform> = platform.clone();
     let capability_platform: Arc<dyn crate::LocalCapabilityPlatform> = platform;
     Ok((storage_platform, capability_platform, resolved))
-}
-
-#[cfg(not(any(target_os = "macos", windows)))]
-fn native_process_dependencies(
-    _request: &crate::LocalAgentHostLaunchRequest,
-) -> Result<NativeProcessDependencies, NativeLocalAgentHostProcessError> {
-    Err(NativeLocalAgentHostProcessError::UnsupportedPlatform)
 }

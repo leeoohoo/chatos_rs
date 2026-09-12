@@ -98,7 +98,7 @@ public actor NativeLocalAgentHostSupervisor {
         guard desiredAccountID == accountID, generation == expectedGeneration else { return }
         let launched = try await launcher.launch(configuration)
         guard desiredAccountID == accountID, generation == expectedGeneration else {
-            launched.terminate()
+            _ = await launched.stop()
             return
         }
         process = launched
@@ -165,7 +165,9 @@ public actor NativeLocalAgentHostSupervisor {
         monitor = nil
         let previous = process
         process = nil
-        previous?.terminate()
+        if let previous {
+            _ = await previous.stop()
+        }
     }
 
     private func sanitizedReason(_ error: Error) -> String {

@@ -67,6 +67,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var workspaceError: String?
     @Published private(set) var preparingProjectConversationIDs: Set<String> = []
     @Published private(set) var projectConversationPreparationErrors: [String: String] = [:]
+    @Published private(set) var localAgentHostState: NativeLocalAgentHostState = .stopped
+    @Published private(set) var localAgentHostError: String?
 
     let historyStore: ConversationHistoryStore
     let authentication: AuthenticationViewModel
@@ -95,6 +97,7 @@ final class AppModel: ObservableObject {
     }
 
     private let conversationService: ChatOSConversationService
+    private let apiClient: ChatOSAPIClient
     let realtimeService: ChatOSRealtimeClient
     private let commandService: ChatOSConversationCommandService
     private let turnProcessService: ChatOSTurnProcessService
@@ -104,6 +107,7 @@ final class AppModel: ObservableObject {
     private let petActivityInboxService: ChatOSPetActivityInboxService
     private let workspaceService: ChatOSWorkspaceService
     private let localConnectorService: NativeLocalConnectorService
+    private let localAgentAccountSession: NativeLocalAgentAccountSession
     private let projectConversationService: ChatOSProjectConversationService
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionService: NativeRemoteConnectionService
@@ -128,6 +132,8 @@ final class AppModel: ObservableObject {
     private var workspaceAccountGeneration: UInt64 = 0
     private var isApplyingLanguagePreferences = false
     private var languagePreferencesSaveTask: Task<Void, Never>?
+    private var localAgentLifecycleTask: Task<Void, Never>?
+    private var requestedLocalAgentIdentity: String?
     var mainWindowPresentationHandler: (() -> Void)?
     var settingsWindowPresentationHandler: (() -> Void)?
 
@@ -156,8 +162,15 @@ final class AppModel: ObservableObject {
             ticketProvider: connectorTicketProvider,
             remoteConnectionRuntime: remoteConnectionService
         )
+        let localAgentAccountSession: NativeLocalAgentAccountSession
+        do {
+            localAgentAccountSession = try NativeLocalAgentAccountSession()
+        } catch {
+            preconditionFailure("Local Agent account session configuration is invalid")
+        }
 
         self.historyStore = historyStore
+        self.apiClient = apiClient
         self.authentication = AuthenticationViewModel(service: authenticationService)
         self.localConnectorControl = LocalConnectorControlCenterViewModel(
             service: localConnectorService
@@ -167,6 +180,7 @@ final class AppModel: ObservableObject {
             storyPlanner: ChatOSStoryPlanningService(client: apiClient)
         )
         self.localConnectorService = localConnectorService
+        self.localAgentAccountSession = localAgentAccountSession
         self.conversationService = conversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
@@ -214,6 +228,12 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.authentication.expireSession()
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .chatOSAccessTokenDidRefresh)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.refreshLocalAgentAccessToken()
             }
             .store(in: &cancellables)
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)
@@ -828,12 +848,24 @@ final class AppModel: ObservableObject {
             mediaStudio.activate(userID: session.user.id)
             loadLanguagePreferences()
             localConnectorControl.activate(pairIfNeeded: true)
+            startLocalAgentHostIfReady()
             refreshWorkspace()
             refreshRemoteConnections()
             refreshPluginApplications()
         case .signedOut:
             workspaceAccountGeneration += 1
+            let localAgentGeneration = workspaceAccountGeneration
             authenticatedUserID = nil
+            requestedLocalAgentIdentity = nil
+            localAgentHostError = nil
+            let previousLifecycleTask = localAgentLifecycleTask
+            let accountSession = localAgentAccountSession
+            localAgentLifecycleTask = Task { [weak self] in
+                _ = await previousLifecycleTask?.result
+                await accountSession.logout()
+                guard let self, workspaceAccountGeneration == localAgentGeneration else { return }
+                localAgentHostState = .stopped
+            }
             languagePreferencesSaveTask?.cancel()
             isLanguagePreferencesLoading = false
             isLanguagePreferencesSaving = false
@@ -860,6 +892,101 @@ final class AppModel: ObservableObject {
         case .restoring, .authenticating:
             break
         }
+    }
+
+    private func startLocalAgentHostIfReady() {
+        guard let accountID = authenticatedUserID else { return }
+        let identity = accountID
+        guard requestedLocalAgentIdentity != identity else { return }
+        requestedLocalAgentIdentity = identity
+        localAgentHostError = nil
+        localAgentHostState = .starting(accountID: accountID)
+
+        let generation = workspaceAccountGeneration
+        let previousLifecycleTask = localAgentLifecycleTask
+        let accountSession = localAgentAccountSession
+        let apiClient = apiClient
+        localAgentLifecycleTask = Task { [weak self] in
+            _ = await previousLifecycleTask?.result
+            guard let self,
+                  authenticatedUserID == accountID,
+                  workspaceAccountGeneration == generation
+            else { return }
+            do {
+                guard let accessToken = await apiClient.currentAccessToken() else {
+                    throw NativeLocalAgentAccountSessionError.invalidAccessToken
+                }
+                try await accountSession.login(
+                    accountID: accountID,
+                    accessToken: accessToken,
+                    settingsProvider: { deviceID in
+                        RuntimeConfiguration.localAgentBootstrapSettings(
+                            accountID: accountID,
+                            deviceID: deviceID
+                        )
+                    }
+                )
+                let state = await accountSession.state()
+                guard authenticatedUserID == accountID,
+                      workspaceAccountGeneration == generation
+                else { return }
+                localAgentHostState = state
+            } catch {
+                guard authenticatedUserID == accountID,
+                      workspaceAccountGeneration == generation
+                else { return }
+                requestedLocalAgentIdentity = nil
+                localAgentHostError = error.localizedDescription
+                localAgentHostState = .failed(
+                    accountID: accountID,
+                    reason: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func refreshLocalAgentAccessToken() {
+        guard let accountID = authenticatedUserID,
+              requestedLocalAgentIdentity != nil
+        else { return }
+        let generation = workspaceAccountGeneration
+        let previousLifecycleTask = localAgentLifecycleTask
+        let accountSession = localAgentAccountSession
+        let client = apiClient
+        localAgentLifecycleTask = Task { [weak self] in
+            _ = await previousLifecycleTask?.result
+            guard let self,
+                  authenticatedUserID == accountID,
+                  workspaceAccountGeneration == generation,
+                  let token = await client.currentAccessToken()
+            else { return }
+            do {
+                try await accountSession.updateAccessToken(
+                    accountID: accountID,
+                    accessToken: token
+                )
+                guard authenticatedUserID == accountID,
+                      workspaceAccountGeneration == generation else { return }
+                localAgentHostState = await accountSession.state()
+                localAgentHostError = nil
+            } catch {
+                guard authenticatedUserID == accountID,
+                      workspaceAccountGeneration == generation else { return }
+                requestedLocalAgentIdentity = nil
+                localAgentHostState = .failed(
+                    accountID: accountID,
+                    reason: error.localizedDescription
+                )
+                localAgentHostError = error.localizedDescription
+            }
+        }
+    }
+
+    func localAgentClient() async throws -> NativeLocalAgentIPCClient {
+        guard let authenticatedUserID else {
+            throw NativeLocalAgentAccountSessionError.inactive
+        }
+        return try await localAgentAccountSession.client(accountID: authenticatedUserID)
     }
 
     private func loadLanguagePreferences() {

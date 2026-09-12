@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import ChatOSConnector
+@testable import ChatOSConnector
 import Foundation
 import Testing
 
@@ -10,7 +10,10 @@ struct NativeLocalAgentHostSupervisorTests {
     @Test("restarts a crashed Host with a freshly produced launch frame")
     func restartsAfterCrash() async throws {
         let fixture = try RestartingHostFixture()
-        let supervisor = try NativeLocalAgentHostSupervisor(restartDelays: [.milliseconds(10)])
+        let supervisor = try NativeLocalAgentHostSupervisor(
+            launcher: NativeLocalAgentHostProcessLauncher(testingIdentityVerifier: { _ in }),
+            restartDelays: [.milliseconds(10)]
+        )
         let launches = LaunchCounter()
 
         try await supervisor.start(accountID: "user-1") {
@@ -32,7 +35,10 @@ struct NativeLocalAgentHostSupervisorTests {
     @Test("logout prevents an intentional termination from restarting")
     func logoutStopsWithoutRestart() async throws {
         let fixture = try RestartingHostFixture(alwaysWait: true)
-        let supervisor = try NativeLocalAgentHostSupervisor(restartDelays: [.zero])
+        let supervisor = try NativeLocalAgentHostSupervisor(
+            launcher: NativeLocalAgentHostProcessLauncher(testingIdentityVerifier: { _ in }),
+            restartDelays: [.zero]
+        )
         let launches = LaunchCounter()
         try await supervisor.start(accountID: "user-1") {
             await launches.increment()
@@ -79,8 +85,10 @@ private struct RestartingHostFixture: Sendable {
         open(counter_path, 'w').write(str(count + 1))
         length = struct.unpack('>I', sys.stdin.buffer.read(4))[0]
         request = json.loads(sys.stdin.buffer.read(length))
+        secret_length = struct.unpack('>I', sys.stdin.buffer.read(4))[0]
+        json.loads(sys.stdin.buffer.read(secret_length))
         ready = {
-            'protocol_version': 3,
+            'protocol_version': 4,
             'launch_id': request['launch_id'],
             'process_id': os.getpid(),
             'client_endpoint': request['ipc_endpoint']['path'],
@@ -101,7 +109,7 @@ private struct RestartingHostFixture: Sendable {
 
     func configuration() throws -> NativeLocalAgentHostLaunchConfiguration {
         let request = try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 3,
+            "protocol_version": 4,
             "launch_id": "launch-1",
             "ipc_endpoint": ["transport": "unix_socket", "path": socketPath],
             "credential_references": [
@@ -109,11 +117,17 @@ private struct RestartingHostFixture: Sendable {
                 "provider_context_key_reference": "provider-context-key",
             ],
         ])
+        let secrets = try JSONSerialization.data(withJSONObject: [
+            "protocol_version": 4,
+            "launch_id": "launch-1",
+            "secrets": [],
+        ])
         return try NativeLocalAgentHostLaunchConfiguration(
             executableURL: executable,
             launchID: "launch-1",
             expectedClientEndpoint: socketPath,
             launchRequestJSON: request,
+            secretFrameJSON: secrets,
             readyTimeout: .seconds(15)
         )
     }

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chatos_local_agent_host::{
-    read_local_agent_host_launch_request, write_local_agent_host_ready,
-    LocalAgentHostBootstrapError, LocalAgentHostReady, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
-    MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES,
+    read_local_agent_host_launch_request, read_local_agent_host_secret_frame,
+    write_local_agent_host_ready, LocalAgentHostBootstrapError, LocalAgentHostReady,
+    LocalAgentPlatformCredentialReader, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
+    MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES, MAXIMUM_LOCAL_AGENT_SECRET_FRAME_BYTES,
 };
 use serde_json::{json, Value};
 use std::io::Cursor;
@@ -49,6 +51,17 @@ fn framed(value: &Value) -> Cursor<Vec<u8>> {
     Cursor::new(bytes)
 }
 
+fn secret_frame(launch_id: &str, values: &[(&str, &[u8])]) -> Cursor<Vec<u8>> {
+    framed(&json!({
+        "protocol_version": LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
+        "launch_id": launch_id,
+        "secrets": values.iter().map(|(reference, value)| json!({
+            "reference": reference,
+            "value_base64": STANDARD.encode(value),
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 #[tokio::test]
 async fn reads_one_strict_length_prefixed_launch_request() {
     let directory = tempfile::tempdir().unwrap();
@@ -77,6 +90,92 @@ async fn reads_one_strict_length_prefixed_launch_request() {
     assert_eq!(
         request.credential_references.provider_context_key_reference,
         "provider-context-key"
+    );
+}
+
+#[tokio::test]
+async fn reads_only_the_exact_correlated_one_launch_secret_set() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("agent.sock");
+    let grants = private_grant_directory(directory.path());
+    let state = private_state_directory(directory.path());
+    let request = read_local_agent_host_launch_request(&mut framed(&sqlite_launch(
+        socket.to_str().unwrap(),
+        grants.to_str().unwrap(),
+        state.to_str().unwrap(),
+    )))
+    .await
+    .unwrap();
+    let values: [(&str, &[u8]); 3] = [
+        ("model-access-token", b"private-token"),
+        ("provider-context-key", &[7_u8; 32]),
+        ("sqlite-secret-1", &[8_u8; 32]),
+    ];
+
+    let provided =
+        read_local_agent_host_secret_frame(&mut secret_frame("launch-1", &values), &request)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        provided
+            .read("user-1", "model-access-token")
+            .unwrap()
+            .as_slice(),
+        b"private-token"
+    );
+    let rendered = format!("{provided:?}");
+    assert!(!rendered.contains("private-token"));
+    assert!(rendered.contains("value_count"));
+}
+
+#[tokio::test]
+async fn rejects_unbounded_unmatched_or_wrong_launch_secret_frames() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("agent.sock");
+    let grants = private_grant_directory(directory.path());
+    let state = private_state_directory(directory.path());
+    let request = read_local_agent_host_launch_request(&mut framed(&sqlite_launch(
+        socket.to_str().unwrap(),
+        grants.to_str().unwrap(),
+        state.to_str().unwrap(),
+    )))
+    .await
+    .unwrap();
+    let missing: [(&str, &[u8]); 2] = [
+        ("model-access-token", b"private-token"),
+        ("provider-context-key", &[7_u8; 32]),
+    ];
+    assert_eq!(
+        read_local_agent_host_secret_frame(&mut secret_frame("launch-1", &missing), &request)
+            .await
+            .unwrap_err(),
+        LocalAgentHostBootstrapError::InvalidSecretFrame
+    );
+    let complete: [(&str, &[u8]); 3] = [
+        ("model-access-token", b"private-token"),
+        ("provider-context-key", &[7_u8; 32]),
+        ("sqlite-secret-1", &[8_u8; 32]),
+    ];
+    assert_eq!(
+        read_local_agent_host_secret_frame(
+            &mut secret_frame("another-launch", &complete),
+            &request,
+        )
+        .await
+        .unwrap_err(),
+        LocalAgentHostBootstrapError::SecretLaunchMismatch
+    );
+    let mut oversized = Cursor::new(
+        ((MAXIMUM_LOCAL_AGENT_SECRET_FRAME_BYTES + 1) as u32)
+            .to_be_bytes()
+            .to_vec(),
+    );
+    assert_eq!(
+        read_local_agent_host_secret_frame(&mut oversized, &request)
+            .await
+            .unwrap_err(),
+        LocalAgentHostBootstrapError::InvalidSecretFrameSize
     );
 }
 

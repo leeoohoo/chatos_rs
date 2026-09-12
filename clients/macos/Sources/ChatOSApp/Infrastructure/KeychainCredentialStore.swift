@@ -4,7 +4,8 @@ import LocalAuthentication
 import Security
 
 actor KeychainCredentialStore: CredentialStoring {
-    private let credentialURL: URL
+    private let service: String
+    private let account: String
     private var cachedAccessToken: String?
     private var hasLoadedAccessToken = false
 
@@ -12,27 +13,28 @@ actor KeychainCredentialStore: CredentialStoring {
         service: String = "com.chatos.swift-client.authentication",
         account: String = "access-token"
     ) {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser
-        self.credentialURL = support
-            .appendingPathComponent("ChatOSSwift", isDirectory: true)
-            .appendingPathComponent("Credentials", isDirectory: true)
-            .appendingPathComponent(account, isDirectory: false)
+        precondition(!service.isEmpty && !account.isEmpty)
+        self.service = service
+        self.account = account
     }
 
     func loadAccessToken() async throws -> String? {
         if hasLoadedAccessToken { return cachedAccessToken }
+        try ensureDefaultKeychainUnlocked()
 
-        if !FileManager.default.fileExists(atPath: credentialURL.path),
-           let legacy = loadLegacyKeychainWithoutUI() {
-            try persist(legacy)
-        }
-        guard FileManager.default.fileExists(atPath: credentialURL.path) else {
+        var query = nonInteractiveQuery
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
             cachedAccessToken = nil
             hasLoadedAccessToken = true
             return nil
         }
-        let data = try Data(contentsOf: credentialURL)
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw keychainError(status)
+        }
 
         let token = String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -48,44 +50,76 @@ actor KeychainCredentialStore: CredentialStoring {
             return
         }
         if hasLoadedAccessToken, cachedAccessToken == normalized { return }
+        try ensureDefaultKeychainUnlocked()
 
-        try persist(Data(normalized.utf8))
+        let data = Data(normalized.utf8)
+        let updateStatus = SecItemUpdate(
+            nonInteractiveQuery as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
+        if updateStatus == errSecItemNotFound {
+            var addition = nonInteractiveQuery
+            addition[kSecValueData as String] = data
+            addition[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            addition[kSecAttrSynchronizable as String] = false
+            let addStatus = SecItemAdd(addition as CFDictionary, nil)
+            guard addStatus == errSecSuccess else { throw keychainError(addStatus) }
+        } else if updateStatus != errSecSuccess {
+            throw keychainError(updateStatus)
+        }
         cachedAccessToken = normalized
         hasLoadedAccessToken = true
     }
 
-    private func persist(_ data: Data) throws {
-        try FileManager.default.createDirectory(
-            at: credentialURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try data.write(to: credentialURL, options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: credentialURL.path)
-    }
-
     func deleteAccessToken() async throws {
         if hasLoadedAccessToken, cachedAccessToken == nil { return }
-        if FileManager.default.fileExists(atPath: credentialURL.path) {
-            try FileManager.default.removeItem(at: credentialURL)
+        try ensureDefaultKeychainUnlocked()
+        let status = SecItemDelete(nonInteractiveQuery as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw keychainError(status)
         }
         cachedAccessToken = nil
         hasLoadedAccessToken = true
     }
 
-    private func loadLegacyKeychainWithoutUI() -> Data? {
+    private var baseQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: false,
+        ]
+    }
+
+    private var nonInteractiveQuery: [String: Any] {
         let context = LAContext()
         context.interactionNotAllowed = true
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.chatos.swift-client.authentication",
-            kSecAttrAccount as String: "access-token",
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: context,
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+        var query = baseQuery
+        query[kSecUseAuthenticationContext as String] = context
+        return query
+    }
+
+    static func defaultKeychainIsUnlocked() -> Bool {
+        var keychain: SecKeychain?
+        guard SecKeychainCopyDefault(&keychain) == errSecSuccess, let keychain else {
+            return false
+        }
+        var status: SecKeychainStatus = 0
+        return SecKeychainGetStatus(keychain, &status) == errSecSuccess
+            && status & UInt32(kSecUnlockStateStatus) != 0
+    }
+
+    private func ensureDefaultKeychainUnlocked() throws {
+        guard Self.defaultKeychainIsUnlocked() else {
+            throw keychainError(errSecInteractionNotAllowed)
+        }
+    }
+
+    private func keychainError(_ status: OSStatus) -> NSError {
+        NSError(
+            domain: NSOSStatusErrorDomain,
+            code: Int(status),
+            userInfo: [NSLocalizedDescriptionKey: "macOS Keychain access failed (\(status))"]
+        )
     }
 }

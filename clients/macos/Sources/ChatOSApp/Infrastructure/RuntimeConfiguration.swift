@@ -1,4 +1,6 @@
 import ChatOSAPI
+import ChatOSConnector
+import CryptoKit
 import Foundation
 
 enum RuntimeConfiguration {
@@ -30,6 +32,32 @@ enum RuntimeConfiguration {
             .appendingPathComponent("state.json", isDirectory: false)
     }
 
+    static func localAgentBootstrapSettings(
+        accountID: String,
+        deviceID: String
+    ) -> NativeLocalAgentHostBootstrapSettings {
+        let accountDirectory = localAgentRootURL
+            .appendingPathComponent(accountDirectoryName(accountID), isDirectory: true)
+        return NativeLocalAgentHostBootstrapSettings(
+            executableURL: localAgentHostExecutableURL,
+            accountID: accountID,
+            deviceID: deviceID,
+            runtimeDirectory: accountDirectory
+                .appendingPathComponent("Runtime", isDirectory: true),
+            attachmentGrantDirectory: accountDirectory
+                .appendingPathComponent("AttachmentGrants", isDirectory: true),
+            platformStateDirectory: accountDirectory
+                .appendingPathComponent("PlatformState", isDirectory: true),
+            modelGatewayBaseURL: modelGatewayBaseURL,
+            memoryEngineBaseURL: memoryEngineBaseURL,
+            storage: .sqlite(
+                databaseURL: accountDirectory.appendingPathComponent("Client.sqlite3"),
+                encryptionSecretReference: NativeLocalAgentAccountSession
+                    .sqliteEncryptionKeyReference
+            )
+        )
+    }
+
     static var contactConversationID: String {
         nonEmptyEnvironmentValue("CHATOS_CONTACT_CONVERSATION_ID")
             ?? "conversation-contact"
@@ -54,6 +82,55 @@ enum RuntimeConfiguration {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nonEmpty
             .flatMap(URL.init(string:))
+    }
+
+    private static var localAgentRootURL: URL {
+        let support = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+        return support
+            .appendingPathComponent("ChatOSSwift", isDirectory: true)
+            .appendingPathComponent("LocalAgent", isDirectory: true)
+    }
+
+    static var localAgentHostExecutableURL: URL {
+        if let configured = nonEmptyEnvironmentValue("CHATOS_LOCAL_AGENT_HOST_EXECUTABLE") {
+            return URL(fileURLWithPath: configured)
+        }
+        return Bundle.main.bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("MacOS", isDirectory: true)
+            .appendingPathComponent("chatos_local_agent_host", isDirectory: false)
+    }
+
+    private static var modelGatewayBaseURL: URL {
+        environmentURL("CHATOS_MODEL_GATEWAY_BASE_URL")
+            ?? bundleURL("ChatOSModelGatewayBaseURL")
+            ?? serviceRootURL
+    }
+
+    private static var memoryEngineBaseURL: URL {
+        environmentURL("CHATOS_MEMORY_ENGINE_BASE_URL")
+            ?? bundleURL("ChatOSMemoryEngineBaseURL")
+            ?? serviceRootURL
+    }
+
+    private static var serviceRootURL: URL {
+        guard var components = URLComponents(
+            url: apiBaseURL,
+            resolvingAgainstBaseURL: false
+        ) else { return apiBaseURL }
+        let suffix = "/api/chatos"
+        if components.path.hasSuffix(suffix) {
+            components.path.removeLast(suffix.count)
+        }
+        return components.url ?? apiBaseURL
+    }
+
+    private static func accountDirectoryName(_ accountID: String) -> String {
+        let digest = SHA256.hash(data: Data(accountID.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
 

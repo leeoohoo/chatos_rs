@@ -92,6 +92,42 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
         XCTAssertNil(currentToken)
         XCTAssertTrue(credentialWasDeleted)
     }
+
+    func testRotatedAccessTokenIsPersistedAndPublishesRefresh() async throws {
+        let store = APIErrorCredentialStore(token: "old-token")
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            accessToken: "old-token",
+            credentialStore: store,
+            transport: APIErrorTransport(
+                response: HTTPResponse(
+                    statusCode: 200,
+                    headers: [
+                        "content-type": "application/json",
+                        "x-access-token": "new-token",
+                    ],
+                    body: Data("{}".utf8)
+                )
+            )
+        )
+        let refresh = expectation(description: "access-token refresh is published")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .chatOSAccessTokenDidRefresh,
+            object: nil,
+            queue: nil
+        ) { _ in
+            refresh.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let _: ErrorResponseDTO = try await client.request("/auth/me")
+
+        await fulfillment(of: [refresh], timeout: 1)
+        let currentToken = await client.currentAccessToken()
+        let storedToken = await store.currentToken()
+        XCTAssertEqual(currentToken, "new-token")
+        XCTAssertEqual(storedToken, "new-token")
+    }
 }
 
 private struct ErrorResponseDTO: Decodable, Sendable {}
@@ -125,4 +161,5 @@ private actor APIErrorCredentialStore: CredentialStoring {
     }
 
     func wasDeleted() -> Bool { deleted }
+    func currentToken() -> String? { token }
 }

@@ -7,14 +7,16 @@ import Security
 
 public enum NativeLocalAgentCredentialStoreError: Error, Equatable, Sendable {
     case invalidReference
-    case keychain(OSStatus)
+    case keychain(operation: String, status: OSStatus)
 }
 
-/// Account-scoped secure storage shared by the native bootstrap builder and
-/// the Rust Host's macOS Keychain adapter. Local Agent credentials are never
-/// mirrored into preferences, SQLite, JSON files, or diagnostic payloads.
+/// Account-scoped secure storage used by the signed Host bootstrap channel.
+/// Local Agent credentials are never mirrored into preferences, SQLite, JSON
+/// files, environment variables, or diagnostic payloads. Every operation uses
+/// a non-interactive authentication context so a background lifecycle task
+/// fails instead of opening a password or biometric prompt.
 public actor NativeLocalAgentCredentialStore {
-    public static let productionService = "com.chatos.local-agent.credentials.v1"
+    public static let productionService = "com.chatos.local-agent.credentials.v2"
 
     private let service: String
 
@@ -27,17 +29,17 @@ public actor NativeLocalAgentCredentialStore {
 
     public func load(accountID: String, reference: String) throws -> Data? {
         let account = try accountKey(accountID: accountID, reference: reference)
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        var query = baseQuery(account: account)
+        var query = nonInteractiveQuery(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        query[kSecUseAuthenticationContext as String] = context
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data else {
-            throw NativeLocalAgentCredentialStoreError.keychain(status)
+            throw NativeLocalAgentCredentialStoreError.keychain(
+                operation: "load",
+                status: status
+            )
         }
         return data
     }
@@ -47,12 +49,15 @@ public actor NativeLocalAgentCredentialStore {
             throw NativeLocalAgentCredentialStoreError.invalidReference
         }
         let account = try accountKey(accountID: accountID, reference: reference)
-        let query = baseQuery(account: account)
+        let query = nonInteractiveQuery(account: account)
         let update: [String: Any] = [kSecValueData as String: secret]
         let updateStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if updateStatus == errSecSuccess { return }
         guard updateStatus == errSecItemNotFound else {
-            throw NativeLocalAgentCredentialStoreError.keychain(updateStatus)
+            throw NativeLocalAgentCredentialStoreError.keychain(
+                operation: "update",
+                status: updateStatus
+            )
         }
         var addition = query
         addition[kSecValueData as String] = secret
@@ -60,32 +65,50 @@ public actor NativeLocalAgentCredentialStore {
         addition[kSecAttrSynchronizable as String] = false
         let addStatus = SecItemAdd(addition as CFDictionary, nil)
         guard addStatus == errSecSuccess else {
-            throw NativeLocalAgentCredentialStoreError.keychain(addStatus)
+            throw NativeLocalAgentCredentialStoreError.keychain(
+                operation: "add",
+                status: addStatus
+            )
         }
     }
 
     public func delete(accountID: String, reference: String) throws {
         let account = try accountKey(accountID: accountID, reference: reference)
-        let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
+        let status = SecItemDelete(nonInteractiveQuery(account: account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw NativeLocalAgentCredentialStoreError.keychain(status)
+            throw NativeLocalAgentCredentialStoreError.keychain(
+                operation: "delete",
+                status: status
+            )
         }
     }
 
-    private func baseQuery(account: String) -> [String: Any] {
-        [
+    func isUnlocked() -> Bool {
+        var keychain: SecKeychain?
+        guard SecKeychainCopyDefault(&keychain) == errSecSuccess, let keychain else {
+            return false
+        }
+        var status: SecKeychainStatus = 0
+        return SecKeychainGetStatus(keychain, &status) == errSecSuccess
+            && status & UInt32(kSecUnlockStateStatus) != 0
+    }
+
+    private func nonInteractiveQuery(account: String) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
+        return query
     }
 
     private func accountKey(accountID: String, reference: String) throws -> String {
         guard Self.valid(accountID), Self.valid(reference) else {
             throw NativeLocalAgentCredentialStoreError.invalidReference
         }
-        // Length-prefixing prevents account/reference boundary collisions
-        // without exposing secret material. Rust uses the same v1 key function.
         return "v1:\(accountID.utf8.count):\(accountID)\(reference)"
     }
 

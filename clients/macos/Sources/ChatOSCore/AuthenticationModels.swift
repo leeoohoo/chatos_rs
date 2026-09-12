@@ -6,6 +6,12 @@ public extension Notification.Name {
     static let chatOSAuthenticationDidExpire = Notification.Name(
         "com.chatos.swift.authentication-did-expire"
     )
+
+    /// Posted without the credential payload after an authenticated response
+    /// rotates the current access token.
+    static let chatOSAccessTokenDidRefresh = Notification.Name(
+        "com.chatos.swift.authentication-token-did-refresh"
+    )
 }
 
 public struct AuthUser: Codable, Sendable, Equatable {

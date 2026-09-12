@@ -102,7 +102,8 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
     public init() {}
 
     public func makeConfiguration(
-        settings: NativeLocalAgentHostBootstrapSettings
+        settings: NativeLocalAgentHostBootstrapSettings,
+        credentialValues: [String: Data]
     ) async throws -> NativeLocalAgentHostLaunchConfiguration {
         try validate(settings)
         try ensurePrivateDirectory(settings.runtimeDirectory)
@@ -163,9 +164,36 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
                 "provider_context_key_reference": Self.providerContextKeyReference,
             ],
         ]
+        let requiredReferences = Set([
+            Self.modelAccessTokenReference,
+            Self.providerContextKeyReference,
+            storageSecretReference(settings.storage),
+        ])
+        guard Set(credentialValues.keys) == requiredReferences,
+              credentialValues.values.allSatisfy({ !$0.isEmpty && $0.count <= 64 * 1_024 })
+        else {
+            throw NativeLocalAgentHostBootstrapError.invalidConfiguration(
+                "Host credential values are invalid"
+            )
+        }
+        let secretFrame: [String: Any] = [
+            "protocol_version": localAgentHostLaunchProtocolVersion,
+            "launch_id": launchID,
+            "secrets": credentialValues.keys.sorted().map { reference in
+                [
+                    "reference": reference,
+                    "value_base64": credentialValues[reference]!.base64EncodedString(),
+                ]
+            },
+        ]
         let data: Data
+        let secretData: Data
         do {
             data = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys])
+            secretData = try JSONSerialization.data(
+                withJSONObject: secretFrame,
+                options: [.sortedKeys]
+            )
         } catch {
             throw NativeLocalAgentHostBootstrapError.encodingFailed
         }
@@ -173,8 +201,16 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
             executableURL: settings.executableURL,
             launchID: launchID,
             expectedClientEndpoint: socketURL.path,
-            launchRequestJSON: data
+            launchRequestJSON: data,
+            secretFrameJSON: secretData
         )
+    }
+
+    private func storageSecretReference(_ storage: NativeLocalAgentStorageBootstrap) -> String {
+        switch storage {
+        case let .sqlite(_, encryptionSecretReference): encryptionSecretReference
+        case let .postgres(connectionSecretReference): connectionSecretReference
+        }
     }
 
     private func validate(_ settings: NativeLocalAgentHostBootstrapSettings) throws {

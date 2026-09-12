@@ -104,9 +104,15 @@ public actor ChatOSAPIClient {
         if let expectedAuthenticationSessionID, expectedAuthenticationSessionID != authenticationSessionID {
             throw ChatOSAPIError.unauthorized
         }
-        if let refreshedToken = response.headers["x-access-token"]?.trimmedNonEmpty, accessToken == requestAccessToken {
+        if let refreshedToken = response.headers["x-access-token"]?.trimmedNonEmpty,
+           refreshedToken != requestAccessToken,
+           accessToken == requestAccessToken {
             accessToken = refreshedToken
             try await credentialStore?.saveAccessToken(refreshedToken)
+            NotificationCenter.default.post(
+                name: .chatOSAccessTokenDidRefresh,
+                object: nil
+            )
         }
         if response.statusCode == 401 {
             if let requestAccessToken, accessToken == requestAccessToken {

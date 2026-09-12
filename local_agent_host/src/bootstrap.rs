@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::fmt;
 use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chatos_client_storage::BootstrapStorageProfile;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use url::Url;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
-pub const LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION: u32 = 3;
+use crate::ProvidedLocalAgentCredentials;
+
+pub const LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION: u32 = 4;
 pub const MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES: usize = 1024 * 1024;
+pub const MAXIMUM_LOCAL_AGENT_SECRET_FRAME_BYTES: usize = 512 * 1024;
+const MAXIMUM_LOCAL_AGENT_SECRET_BYTES: usize = 64 * 1024;
 
 const WINDOWS_PIPE_PREFIX: &str = r"\\.\pipe\chatos-local-agent-";
 const MINIMUM_OPAQUE_ENDPOINT_ID_BYTES: usize = 8;
@@ -25,6 +33,12 @@ pub enum LocalAgentHostBootstrapError {
     TruncatedFrame,
     #[error("local Agent Host launch frame is not valid protocol JSON")]
     InvalidJson,
+    #[error("local Agent Host secret frame is empty or exceeds its size boundary")]
+    InvalidSecretFrameSize,
+    #[error("local Agent Host secret frame is invalid")]
+    InvalidSecretFrame,
+    #[error("local Agent Host secret frame belongs to another launch")]
+    SecretLaunchMismatch,
     #[error("unsupported local Agent Host launch protocol version")]
     UnsupportedProtocol,
     #[error("local Agent Host launch identity is invalid: {0}")]
@@ -39,9 +53,9 @@ pub enum LocalAgentHostBootstrapError {
     Io,
 }
 
-/// Opaque secure-store references are the only credential material accepted
-/// over the native launch pipe. The referenced values are resolved by the
-/// Rust Host through Keychain or Credential Manager/DPAPI.
+/// The ordinary launch frame contains only opaque secure-store references.
+/// Values arrive in a separately bounded, correlated one-launch secret frame
+/// after the native client has validated the bundled Host identity.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LocalAgentHostCredentialReferences {
@@ -181,6 +195,47 @@ impl LocalAgentHostLaunchRequest {
             .map_err(|_| LocalAgentHostBootstrapError::InvalidIdentity("storage_profile"))?;
         self.credential_references.validate()
     }
+
+    fn required_credential_references(&self) -> HashSet<&str> {
+        let mut references = HashSet::from([
+            self.credential_references
+                .model_access_token_reference
+                .as_str(),
+            self.credential_references
+                .provider_context_key_reference
+                .as_str(),
+        ]);
+        match &self.storage_profile {
+            BootstrapStorageProfile::Sqlite(profile) => {
+                references.insert(profile.encryption_secret.as_str());
+            }
+            BootstrapStorageProfile::Postgres(profile) => {
+                references.insert(profile.connection_secret.as_str());
+            }
+        }
+        references
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EncodedLocalAgentHostSecretFrame {
+    protocol_version: u32,
+    launch_id: String,
+    secrets: Vec<EncodedLocalAgentHostSecret>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EncodedLocalAgentHostSecret {
+    reference: String,
+    value_base64: String,
+}
+
+impl Drop for EncodedLocalAgentHostSecret {
+    fn drop(&mut self) {
+        self.value_base64.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -213,6 +268,61 @@ where
     let request = decoded?;
     request.validate()?;
     Ok(request)
+}
+
+pub async fn read_local_agent_host_secret_frame<R>(
+    reader: &mut R,
+    request: &LocalAgentHostLaunchRequest,
+) -> Result<ProvidedLocalAgentCredentials, LocalAgentHostBootstrapError>
+where
+    R: AsyncRead + Unpin,
+{
+    let length = reader.read_u32().await.map_err(map_read_error)? as usize;
+    if length == 0 || length > MAXIMUM_LOCAL_AGENT_SECRET_FRAME_BYTES {
+        return Err(LocalAgentHostBootstrapError::InvalidSecretFrameSize);
+    }
+    let mut frame = vec![0_u8; length];
+    if let Err(error) = reader.read_exact(frame.as_mut_slice()).await {
+        frame.zeroize();
+        return Err(map_read_error(error));
+    }
+    let decoded = serde_json::from_slice::<EncodedLocalAgentHostSecretFrame>(frame.as_slice())
+        .map_err(|_| LocalAgentHostBootstrapError::InvalidSecretFrame);
+    frame.zeroize();
+    let secret_frame = decoded?;
+    if secret_frame.protocol_version != LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION {
+        return Err(LocalAgentHostBootstrapError::UnsupportedProtocol);
+    }
+    if secret_frame.launch_id != request.launch_id {
+        return Err(LocalAgentHostBootstrapError::SecretLaunchMismatch);
+    }
+
+    let required = request.required_credential_references();
+    if secret_frame.secrets.len() != required.len() {
+        return Err(LocalAgentHostBootstrapError::InvalidSecretFrame);
+    }
+    let mut values = HashMap::with_capacity(required.len());
+    for secret in secret_frame.secrets {
+        if !required.contains(secret.reference.as_str())
+            || values.contains_key(secret.reference.as_str())
+        {
+            return Err(LocalAgentHostBootstrapError::InvalidSecretFrame);
+        }
+        let decoded = Zeroizing::new(
+            STANDARD
+                .decode(secret.value_base64.as_bytes())
+                .map_err(|_| LocalAgentHostBootstrapError::InvalidSecretFrame)?,
+        );
+        if decoded.is_empty() || decoded.len() > MAXIMUM_LOCAL_AGENT_SECRET_BYTES {
+            return Err(LocalAgentHostBootstrapError::InvalidSecretFrame);
+        }
+        values.insert(secret.reference.clone(), decoded);
+    }
+    if values.len() != required.len() {
+        return Err(LocalAgentHostBootstrapError::InvalidSecretFrame);
+    }
+    ProvidedLocalAgentCredentials::new(request.owner_user_id.clone(), values)
+        .map_err(|_| LocalAgentHostBootstrapError::InvalidSecretFrame)
 }
 
 pub async fn write_local_agent_host_ready<W>(
