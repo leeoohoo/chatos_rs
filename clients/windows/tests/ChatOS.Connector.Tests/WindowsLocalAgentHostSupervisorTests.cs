@@ -69,6 +69,7 @@ public sealed class WindowsLocalAgentHostSupervisorTests
         LaunchId = $"launch-{revision}",
         ExpectedClientEndpoint = $@"\\.\pipe\chatos-local-agent-{revision:D16}",
         LaunchMaterial = new WindowsLocalAgentHostLaunchMaterial([1, 2, 3]),
+        SecretMaterial = new WindowsLocalAgentHostLaunchMaterial([4, 5, 6]),
     };
 
     private static async Task WaitUntilAsync(Func<Task<bool>> predicate)
@@ -90,6 +91,7 @@ public sealed class WindowsLocalAgentHostSupervisorTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             configuration.LaunchMaterial.Dispose();
+            configuration.SecretMaterial.Dispose();
             var process = new FakeProcess(new WindowsLocalAgentHostReady(
                 1,
                 configuration.LaunchId,

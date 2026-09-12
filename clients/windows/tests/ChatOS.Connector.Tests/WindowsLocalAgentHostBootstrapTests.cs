@@ -16,7 +16,7 @@ public sealed class WindowsLocalAgentHostBootstrapTests
                 root,
                 new WindowsLocalAgentSqliteBootstrap(
                     Path.Combine(root, "client.sqlite"),
-                    "sqlite-key")));
+                    "sqlite-key")), CredentialValues("sqlite-key", new byte[32]));
             using var document = JsonDocument.Parse(configuration.LaunchMaterial.RequestJson);
             var request = document.RootElement;
 
@@ -34,7 +34,14 @@ public sealed class WindowsLocalAgentHostBootstrapTests
                 request.GetProperty("credential_references")
                     .GetProperty("provider_context_key_reference").GetString());
             Assert.False(request.TryGetProperty("credentials", out _));
+            using var secrets = JsonDocument.Parse(configuration.SecretMaterial.RequestJson);
+            Assert.Equal(
+                request.GetProperty("launch_id").GetString(),
+                secrets.RootElement.GetProperty("launch_id").GetString());
+            Assert.Equal(4u, secrets.RootElement.GetProperty("protocol_version").GetUInt32());
+            Assert.Equal(3, secrets.RootElement.GetProperty("secrets").GetArrayLength());
             configuration.LaunchMaterial.Dispose();
+            configuration.SecretMaterial.Dispose();
         }
         finally
         {
@@ -59,7 +66,11 @@ public sealed class WindowsLocalAgentHostBootstrapTests
                 "chatos-user",
                 "private-password");
             var configuration = await new WindowsLocalAgentHostBootstrapBuilder()
-                .BuildAsync(Settings(root, new WindowsLocalAgentPostgresBootstrap("postgres-1")));
+                .BuildAsync(
+                    Settings(root, new WindowsLocalAgentPostgresBootstrap("postgres-1")),
+                    CredentialValues(
+                        "postgres-1",
+                        JsonSerializer.SerializeToUtf8Bytes(postgres)));
             using var document = JsonDocument.Parse(configuration.LaunchMaterial.RequestJson);
             var storage = document.RootElement.GetProperty("storage_profile");
 
@@ -71,6 +82,7 @@ public sealed class WindowsLocalAgentHostBootstrapTests
             Assert.DoesNotContain("private-password", postgres.ToString(), StringComparison.Ordinal);
             Assert.DoesNotContain("database.example.com", postgres.ToString(), StringComparison.Ordinal);
             configuration.LaunchMaterial.Dispose();
+            configuration.SecretMaterial.Dispose();
         }
         finally
         {
@@ -94,5 +106,15 @@ public sealed class WindowsLocalAgentHostBootstrapTests
         ModelGatewayBaseUri = new Uri("https://api.example.com"),
         MemoryEngineBaseUri = new Uri("https://memory.example.com"),
         Storage = storage,
+    };
+
+    private static IReadOnlyDictionary<string, ReadOnlyMemory<byte>> CredentialValues(
+        string storageReference,
+        byte[] storageValue) => new Dictionary<string, ReadOnlyMemory<byte>>
+    {
+        [WindowsLocalAgentHostBootstrapBuilder.ModelAccessTokenReference] =
+            System.Text.Encoding.UTF8.GetBytes("model-token"),
+        [WindowsLocalAgentHostBootstrapBuilder.ProviderContextKeyReference] = new byte[32],
+        [storageReference] = storageValue,
     };
 }

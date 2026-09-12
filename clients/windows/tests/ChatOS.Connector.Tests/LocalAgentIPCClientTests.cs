@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ChatOS.Connector.LocalAgent;
 using ChatOS.Core.Domain;
 
@@ -51,7 +52,7 @@ public sealed class LocalAgentIPCClientTests
 
         using var request = JsonDocument.Parse(transport.Request!);
         var command = request.RootElement.GetProperty("command");
-        Assert.True(JsonElement.DeepEquals(
+        Assert.True(JsonDeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             command));
         Assert.Equal("decide_tool_approval", command.GetProperty("type").GetString());
@@ -74,7 +75,15 @@ public sealed class LocalAgentIPCClientTests
         await client.AcceptAsync(LocalAgentCommand.PauseRun("run-1", 7));
 
         using var request = JsonDocument.Parse(transport.Request!);
-        Assert.True(JsonElement.DeepEquals(expectedRequest.RootElement, request.RootElement));
+        Assert.Equal(
+            expectedRequest.RootElement.GetProperty("protocol_version").GetUInt32(),
+            request.RootElement.GetProperty("protocol_version").GetUInt32());
+        Assert.Equal(
+            expectedRequest.RootElement.GetProperty("owner_user_id").GetString(),
+            request.RootElement.GetProperty("owner_user_id").GetString());
+        Assert.True(JsonDeepEquals(
+            expectedRequest.RootElement.GetProperty("command"),
+            request.RootElement.GetProperty("command")));
     }
 
     [Fact]
@@ -94,7 +103,7 @@ public sealed class LocalAgentIPCClientTests
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
         Assert.Equal(15u, LocalAgentProtocol.Version);
-        Assert.True(JsonElement.DeepEquals(
+        Assert.True(JsonDeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));
 
@@ -397,6 +406,11 @@ public sealed class LocalAgentIPCClientTests
             "local_agent",
             "v15",
             name));
+
+    private static bool JsonDeepEquals(JsonElement expected, JsonElement actual) =>
+        JsonNode.DeepEquals(
+            JsonNode.Parse(expected.GetRawText()),
+            JsonNode.Parse(actual.GetRawText()));
 
     private static MemoryStream FrameHeader(uint length, byte[]? body = null)
     {

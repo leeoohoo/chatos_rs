@@ -434,7 +434,7 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
         .ToArray();
 
     private static IReadOnlyList<string> ParseTags(string value) => value
-        .Split([',', '，', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Split(new[] { ',', '，', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Distinct(StringComparer.CurrentCultureIgnoreCase)
         .ToArray();
 

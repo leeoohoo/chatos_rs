@@ -46,7 +46,7 @@ internal static class ProjectGitParser
     public static IReadOnlyList<ProjectGitBranch> ParseBranches(string value)
     {
         var branches = new List<ProjectGitBranch>();
-        foreach (var line in value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        foreach (var line in value.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
             var fields = line.Split('\0');
             if (fields.Length == 0 || string.IsNullOrWhiteSpace(fields[0]))

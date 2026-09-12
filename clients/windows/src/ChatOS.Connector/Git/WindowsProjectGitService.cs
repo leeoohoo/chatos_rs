@@ -73,7 +73,7 @@ public sealed class WindowsProjectGitService : IProjectGitService
 
         var remotes = new List<ProjectGitRemote>();
         foreach (var name in remoteNamesTask.Result.StandardOutput.Split(
-                     ['\r', '\n'],
+                     new[] { '\r', '\n' },
                      StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var remoteUrl = await RunAsync(
@@ -103,7 +103,7 @@ public sealed class WindowsProjectGitService : IProjectGitService
                     ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
                     repository.Root,
                     cancellationToken: cancellationToken).ConfigureAwait(false)).StandardOutput
-                    .Split(['\t', ' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                    .Split(new[] { '\t', ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                     .Select(static value => int.TryParse(value, out var count) ? count : -1)
                     .ToArray();
                 if (counts.Length == 2 && counts.All(static count => count >= 0))

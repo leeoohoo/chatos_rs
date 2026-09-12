@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -45,9 +47,11 @@ public sealed class WindowsLocalAgentHostBootstrapBuilder
 
     public Task<WindowsLocalAgentHostLaunchConfiguration> BuildAsync(
         WindowsLocalAgentHostBootstrapSettings settings,
+        IReadOnlyDictionary<string, ReadOnlyMemory<byte>> credentialValues,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(credentialValues);
         cancellationToken.ThrowIfCancellationRequested();
         Validate(settings);
         EnsurePrivateDirectory(settings.AttachmentGrantDirectory);
@@ -108,7 +112,26 @@ public sealed class WindowsLocalAgentHostBootstrapBuilder
                 ["provider_context_key_reference"] = ProviderContextKeyReference,
             },
         };
+        var storageSecretReference = settings.Storage switch
+        {
+            WindowsLocalAgentSqliteBootstrap sqlite => sqlite.EncryptionSecretReference,
+            WindowsLocalAgentPostgresBootstrap postgres => postgres.ConnectionSecretReference,
+            _ => throw new ArgumentException("Local Agent storage profile is invalid."),
+        };
+        var requiredReferences = new HashSet<string>(StringComparer.Ordinal)
+        {
+            ModelAccessTokenReference,
+            ProviderContextKeyReference,
+            storageSecretReference,
+        };
+        if (!requiredReferences.SetEquals(credentialValues.Keys)
+            || credentialValues.Values.Any(value => value.IsEmpty || value.Length > 64 * 1024))
+        {
+            throw new ArgumentException("Local Agent Host credential values are invalid.");
+        }
+
         var requestJson = JsonSerializer.SerializeToUtf8Bytes(request);
+        var secretJson = EncodeSecretFrame(launchId, credentialValues);
         var configuration = new WindowsLocalAgentHostLaunchConfiguration
         {
             ExecutablePath = settings.ExecutablePath,
@@ -116,9 +139,37 @@ public sealed class WindowsLocalAgentHostBootstrapBuilder
             LaunchId = launchId,
             ExpectedClientEndpoint = pipeName,
             LaunchMaterial = new WindowsLocalAgentHostLaunchMaterial(requestJson),
+            SecretMaterial = new WindowsLocalAgentHostLaunchMaterial(secretJson),
         };
-        Array.Clear(requestJson);
+        CryptographicOperations.ZeroMemory(requestJson);
+        CryptographicOperations.ZeroMemory(secretJson);
         return Task.FromResult(configuration);
+    }
+
+    private static byte[] EncodeSecretFrame(
+        string launchId,
+        IReadOnlyDictionary<string, ReadOnlyMemory<byte>> credentialValues)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("protocol_version", LocalAgentHostLaunchProtocol.Version);
+            writer.WriteString("launch_id", launchId);
+            writer.WriteStartArray("secrets");
+            foreach (var reference in credentialValues.Keys.OrderBy(
+                         reference => reference,
+                         StringComparer.Ordinal))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("reference", reference);
+                writer.WriteBase64String("value_base64", credentialValues[reference].Span);
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+        return buffer.WrittenSpan.ToArray();
     }
 
     private static void Validate(WindowsLocalAgentHostBootstrapSettings settings)

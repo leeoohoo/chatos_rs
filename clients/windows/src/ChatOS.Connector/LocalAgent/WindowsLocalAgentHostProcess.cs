@@ -75,6 +75,8 @@ public sealed record WindowsLocalAgentHostLaunchConfiguration
 
     public required WindowsLocalAgentHostLaunchMaterial LaunchMaterial { get; init; }
 
+    public required WindowsLocalAgentHostLaunchMaterial SecretMaterial { get; init; }
+
     public TimeSpan ReadyTimeout { get; init; } = TimeSpan.FromSeconds(30);
 }
 
@@ -86,8 +88,9 @@ public sealed record WindowsLocalAgentHostReady(
 
 internal static class LocalAgentHostLaunchProtocol
 {
-    public const uint Version = 3;
+    public const uint Version = 4;
     public const int MaximumFrameBytes = 1024 * 1024;
+    public const int MaximumSecretFrameBytes = 512 * 1024;
 }
 
 internal interface IWindowsLocalAgentHostProcess : IAsyncDisposable
@@ -114,6 +117,7 @@ internal sealed class WindowsLocalAgentHostProcessLauncher : IWindowsLocalAgentH
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(configuration.LaunchMaterial);
+        ArgumentNullException.ThrowIfNull(configuration.SecretMaterial);
         try
         {
             ValidateConfiguration(configuration);
@@ -151,6 +155,10 @@ internal sealed class WindowsLocalAgentHostProcessLauncher : IWindowsLocalAgentH
                     process.StandardInput.BaseStream,
                     configuration.LaunchMaterial.RequestJson,
                     cancellationToken).ConfigureAwait(false);
+                await WriteFrameAsync(
+                    process.StandardInput.BaseStream,
+                    configuration.SecretMaterial.RequestJson,
+                    cancellationToken).ConfigureAwait(false);
                 process.StandardInput.Close();
                 var ready = await ReadReadyAsync(
                     process.StandardOutput.BaseStream,
@@ -168,6 +176,7 @@ internal sealed class WindowsLocalAgentHostProcessLauncher : IWindowsLocalAgentH
         finally
         {
             configuration.LaunchMaterial.Dispose();
+            configuration.SecretMaterial.Dispose();
         }
     }
 
@@ -181,6 +190,7 @@ internal sealed class WindowsLocalAgentHostProcessLauncher : IWindowsLocalAgentH
             || configuration.ExpectedClientEndpoint != configuration.ExpectedClientEndpoint.Trim()
             || configuration.ReadyTimeout <= TimeSpan.Zero
             || configuration.ReadyTimeout > TimeSpan.FromSeconds(120)
+            || configuration.SecretMaterial.RequestJson.Length > LocalAgentHostLaunchProtocol.MaximumSecretFrameBytes
             || !TryDecodeDigest(configuration.ExpectedExecutableSha256, out _))
         {
             throw LaunchError(

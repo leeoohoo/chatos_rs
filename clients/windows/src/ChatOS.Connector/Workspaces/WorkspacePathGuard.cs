@@ -113,7 +113,7 @@ public sealed class WorkspacePathGuard
         }
 
         var components = value
-            .Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries)
+            .Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries)
             .Where(component => component != ".")
             .ToArray();
         if (components.Any(component =>

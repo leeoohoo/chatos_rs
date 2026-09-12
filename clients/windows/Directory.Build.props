@@ -10,5 +10,6 @@
     <Company>ChatOS</Company>
     <Product>ChatOS</Product>
     <RepositoryUrl>https://github.com/leeoohoo/chatos_win</RepositoryUrl>
+    <WindowsSdkPackageVersion>10.0.19041.53</WindowsSdkPackageVersion>
   </PropertyGroup>
 </Project>
