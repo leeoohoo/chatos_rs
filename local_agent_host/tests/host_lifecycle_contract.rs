@@ -4,7 +4,11 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use chatos_agent_profiles::{MainChatAgentProfile, MainChatContextProvider, MainChatStepContext};
+use chatos_agent_profiles::{
+    MainChatAgentProfile, MainChatContextProvider, MainChatStepContext,
+    TaskRunnerCapabilitySnapshot, TaskRunnerContextProvider, TaskRunnerExecutionTool,
+    TaskRunnerProjectSnapshot, TaskRunnerPromptSnapshot,
+};
 use chatos_client_storage::{
     AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery, PutRecord,
     RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
@@ -17,15 +21,16 @@ use chatos_local_agent_host::{
     LocalAgentHostPolicy, LocalAgentHostRunRequest, LocalAgentIpcMutationExecutor,
     LocalAgentIpcServer, LocalAgentProfileRegistry, LocalTaskCreationPlan,
     LocalTaskCreationPlanner, LocalTaskPlanningRequest, ProcessedClaimedEvent,
+    StoredTaskRunnerContextProvider,
 };
 use chatos_local_agent_protocol::{
     AnswerUserQuestionCommand, ContextStrategy, CreateMainChatTurnCommand, CreateTaskCommand,
-    FrozenSnapshotReference, LocalAgentCommand, LocalAgentEvent, LocalAgentEventStatus,
-    LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcRequest, LocalAgentIpcResponse,
-    LocalAgentRun, LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTerminal,
-    ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
-    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ToolEffect, ToolExecutionStatus,
-    UserInteractionAnswer, LOCAL_AGENT_PROTOCOL_VERSION,
+    FrozenSnapshot, LocalAgentCommand, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType,
+    LocalAgentIpcError, LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun,
+    LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTerminal, ModelGatewayTerminalSource,
+    ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol, ModelRuntimeDescriptor,
+    ModelStepCompletion, ModelStepResult, ToolEffect, ToolExecutionStatus, UserInteractionAnswer,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{
     CompletedAssistantMessage, DurableProviderContextCommit, LocalAgentProfile,
@@ -649,12 +654,65 @@ impl StorageTransaction for ReadCreationState {
     }
 }
 
-fn snapshot(id: &str, revision: &str, fill: char) -> FrozenSnapshotReference {
-    FrozenSnapshotReference {
-        snapshot_id: id.to_string(),
-        revision: revision.to_string(),
-        digest: format!("sha256:{}", fill.to_string().repeat(64)),
-    }
+fn snapshot(id: &str, revision: &str, fill: char) -> FrozenSnapshot {
+    FrozenSnapshot::new(
+        id,
+        revision,
+        serde_json::json!({"fixture": fill.to_string()}),
+    )
+    .unwrap()
+}
+
+fn task_runner_snapshots() -> (FrozenSnapshot, FrozenSnapshot, FrozenSnapshot) {
+    let prompt = FrozenSnapshot::new(
+        "task-prompt-1",
+        "task-prompt-revision-1",
+        serde_json::to_value(TaskRunnerPromptSnapshot {
+            prompt_revision: "task-prompt-revision-1".to_string(),
+            base_system_prompt: "Execute the local task safely.".to_string(),
+            task_prompt: "Preserve the approved visual design.".to_string(),
+            skill_snapshot: serde_json::json!({"skills": []}),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let project = FrozenSnapshot::new(
+        "project-snapshot-1",
+        "project-revision-1",
+        serde_json::to_value(TaskRunnerProjectSnapshot {
+            project_id: "project-visual-1".to_string(),
+            snapshot_revision: "project-revision-1".to_string(),
+            working_directory_ref: "workspace-grant-1".to_string(),
+            authority_snapshot: serde_json::json!({"device_id": "device-1"}),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let capability = FrozenSnapshot::new(
+        "task-capabilities-1",
+        "task-capabilities-revision-1",
+        serde_json::to_value(TaskRunnerCapabilitySnapshot {
+            snapshot_ref: "task-capabilities-1".to_string(),
+            plugin_release_snapshot: serde_json::json!({"plugins": []}),
+            execution_tools: vec![TaskRunnerExecutionTool {
+                name: "read_file".to_string(),
+                effect: ToolEffect::Read,
+                schema: serde_json::json!({
+                    "type": "function",
+                    "name": "read_file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"],
+                        "additionalProperties": false
+                    }
+                }),
+            }],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    (prompt, project, capability)
 }
 
 struct SeedMemory {
@@ -1555,7 +1613,7 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
         protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
         request_id: "ipc-task-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        command: LocalAgentCommand::CreateTask(CreateTaskCommand {
+        command: LocalAgentCommand::CreateTask(Box::new(CreateTaskCommand {
             task_id: "task-created-1".to_string(),
             source_thread_id: "thread-created-1".to_string(),
             source_turn_id: "turn-created-1".to_string(),
@@ -1569,7 +1627,7 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
             prompt_snapshot: snapshot("task-prompt-1", "task-prompt-revision-1", 'a'),
             project_snapshot: snapshot("project-snapshot-1", "project-revision-1", 'b'),
             capability_snapshot: snapshot("task-capabilities-1", "capability-revision-1", 'c'),
-        }),
+        })),
     };
     let first_task = server.handle_request(task_request.clone()).await.response;
     let repeated_task = server.handle_request(task_request).await.response;
@@ -1627,18 +1685,15 @@ async fn main_chat_model_tool_creates_one_frozen_local_task_end_to_end() {
         descriptor_calls: Mutex::new(Vec::new()),
         model_requests: Mutex::new(Vec::new()),
     });
+    let (prompt_snapshot, project_snapshot, capability_snapshot) = task_runner_snapshots();
     let planner = Arc::new(RecordingTaskPlanner {
         requests: Mutex::new(Vec::new()),
         plan: LocalTaskCreationPlan {
             project_id: "project-visual-1".to_string(),
             model_config_id: "model-task-1".to_string(),
-            prompt_snapshot: snapshot("task-prompt-1", "task-prompt-revision-1", 'a'),
-            project_snapshot: snapshot("project-snapshot-1", "project-revision-1", 'b'),
-            capability_snapshot: snapshot(
-                "task-capabilities-1",
-                "task-capabilities-revision-1",
-                'c',
-            ),
+            prompt_snapshot,
+            project_snapshot,
+            capability_snapshot,
         },
     });
     let profiles = LocalAgentProfileRegistry::new([
@@ -1768,6 +1823,23 @@ async fn main_chat_model_tool_creates_one_frozen_local_task_end_to_end() {
     );
     assert_eq!(gateway.model_requests.lock().unwrap().len(), 1);
     assert_eq!(gateway.descriptor_calls.lock().unwrap().len(), 2);
+
+    let task_run = state
+        .runs
+        .iter()
+        .find(|run| run.profile_key == "task_runner")
+        .unwrap()
+        .clone();
+    let task_context = StoredTaskRunnerContextProvider::new(storage, scope())
+        .load_step_context(&task_run)
+        .await
+        .unwrap();
+    assert_eq!(task_context.project_snapshot.project_id, "project-visual-1");
+    assert_eq!(
+        task_context.prompt_snapshot.base_system_prompt,
+        "Execute the local task safely."
+    );
+    assert_eq!(task_context.capability_snapshot.execution_tools.len(), 1);
 }
 
 #[tokio::test]

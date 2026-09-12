@@ -972,6 +972,7 @@ dependencies = [
  "chatos_local_agent_runtime",
  "chrono",
  "memory_engine_sdk",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
@@ -988,6 +989,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
 ]
 

@@ -9,7 +9,7 @@ use chatos_client_storage::{
     StorageError, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    CreateMainChatTurnCommand, CreateTaskCommand, FrozenSnapshotReference, LocalAgentCommand,
+    CreateMainChatTurnCommand, CreateTaskCommand, FrozenSnapshot, LocalAgentCommand,
     LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse, ModelRuntimeDescriptor,
     ModelStepCompletion, ModelStepResult, ProtocolError, ToolEffect,
 };
@@ -104,9 +104,9 @@ pub struct LocalTaskPlanningRequest {
 pub struct LocalTaskCreationPlan {
     pub project_id: String,
     pub model_config_id: String,
-    pub prompt_snapshot: FrozenSnapshotReference,
-    pub project_snapshot: FrozenSnapshotReference,
-    pub capability_snapshot: FrozenSnapshotReference,
+    pub prompt_snapshot: FrozenSnapshot,
+    pub project_snapshot: FrozenSnapshot,
+    pub capability_snapshot: FrozenSnapshot,
 }
 
 #[async_trait]
@@ -1314,7 +1314,7 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostCreationExecutor {
                 .map(|created| created.start_event),
             LocalAgentCommand::CreateTask(command) => self
                 .host
-                .create_task(request_id, command, &self.session, Utc::now())
+                .create_task(request_id, *command, &self.session, Utc::now())
                 .await
                 .map(|created| created.run.start_event),
             other => return self.next.execute_mutation(request_id, other).await,

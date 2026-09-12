@@ -9,7 +9,7 @@ use chatos_client_storage::{
     StorageResult, StorageTransaction, ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshotReference, LocalAgentEvent,
+    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, LocalAgentEvent,
     LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun, LocalAgentRunStatus,
     LocalAgentUiEvent, LocalAgentUiEventPayload, ModelProtocol, ModelRuntimeDescriptor,
     ModelStepCompletion, ModelStepResult, ProviderContextItem, ToolEffect, ToolExecution,
@@ -187,12 +187,13 @@ fn create_run_request(now: chrono::DateTime<Utc>) -> CreateLocalAgentRunRequest 
     }
 }
 
-fn frozen_snapshot(id: &str, revision: &str, fill: char) -> FrozenSnapshotReference {
-    FrozenSnapshotReference {
-        snapshot_id: id.to_string(),
-        revision: revision.to_string(),
-        digest: format!("sha256:{}", fill.to_string().repeat(64)),
-    }
+fn frozen_snapshot(id: &str, revision: &str, fill: char) -> FrozenSnapshot {
+    FrozenSnapshot::new(
+        id,
+        revision,
+        serde_json::json!({"fixture": fill.to_string()}),
+    )
+    .unwrap()
 }
 
 fn create_task_request(now: chrono::DateTime<Utc>) -> CreateLocalAgentTaskRequest {
@@ -576,6 +577,14 @@ async fn task_record_run_message_outbox_and_start_event_are_one_idempotent_trans
     );
     assert_eq!(first.task_record.state["project_id"], "project-1");
     assert_eq!(
+        first.task_record.state["project_snapshot"]["payload"]["fixture"],
+        "b"
+    );
+    assert_eq!(
+        first.task_record.state["capability_snapshot"]["payload"]["fixture"],
+        "c"
+    );
+    assert_eq!(
         first.run.run_record.run.project_id.as_deref(),
         Some("project-1")
     );
@@ -642,6 +651,30 @@ async fn task_record_run_message_outbox_and_start_event_are_one_idempotent_trans
     assert_eq!(task.status, "running");
     assert_eq!(task.state["run_status"], "model_ready");
     assert_eq!(task.state["run_version"], 2);
+}
+
+#[tokio::test]
+async fn task_creation_rejects_a_tampered_frozen_snapshot_before_writing() {
+    let (_directory, storage) = empty_storage().await;
+    let mut request = create_task_request(Utc::now());
+    request.project_snapshot.payload["fixture"] = serde_json::json!("tampered");
+
+    let error = create_local_agent_task(&storage, request)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("SHA-256 digest"));
+    let mut counts = CountCreatedRecords {
+        runs: 0,
+        events: 0,
+        messages: 0,
+        outbox: 0,
+        provider_context: 0,
+    };
+    storage.transaction(&mut counts).await.unwrap();
+    assert_eq!(counts.runs, 0);
+    assert_eq!(counts.events, 0);
+    assert_eq!(counts.messages, 0);
+    assert_eq!(counts.outbox, 0);
 }
 
 #[tokio::test]

@@ -2,9 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentCommand, LocalAgentEvent,
-    LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcRequest, LocalAgentRun,
-    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelGatewayParameters,
+    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, LocalAgentCommand,
+    LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcRequest,
+    LocalAgentRun, LocalAgentRunStatus, MemorySyncStatus, MessageMode, ModelGatewayParameters,
     ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
     ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
     ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ProtocolError,
@@ -27,6 +27,32 @@ fn tool_effects_define_the_exact_durable_replay_boundary() {
         assert!(effect.requires_durable_start());
         assert!(!effect.can_replay_after_started());
     }
+}
+
+#[test]
+fn frozen_snapshot_digest_is_canonical_and_rejects_payload_tampering() {
+    let first = FrozenSnapshot::new(
+        "snapshot-1",
+        "revision-1",
+        serde_json::json!({"b": 2, "nested": {"z": true, "a": 1}}),
+    )
+    .unwrap();
+    let second = FrozenSnapshot::new(
+        "snapshot-1",
+        "revision-1",
+        serde_json::json!({"nested": {"a": 1, "z": true}, "b": 2}),
+    )
+    .unwrap();
+    assert_eq!(first.digest, second.digest);
+
+    let mut tampered = first;
+    tampered.payload["b"] = serde_json::json!(3);
+    assert!(matches!(
+        tampered.validate("project_snapshot"),
+        Err(ProtocolError::InvalidDigest {
+            field: "snapshot_digest"
+        })
+    ));
 }
 
 fn model_descriptor() -> ModelRuntimeDescriptor {

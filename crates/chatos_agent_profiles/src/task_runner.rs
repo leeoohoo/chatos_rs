@@ -31,6 +31,7 @@ pub struct TaskRunnerProjectSnapshot {
 #[serde(deny_unknown_fields)]
 pub struct TaskRunnerPromptSnapshot {
     pub prompt_revision: String,
+    pub base_system_prompt: String,
     pub task_prompt: String,
     pub skill_snapshot: Value,
 }
@@ -72,7 +73,6 @@ pub struct TaskRunnerToolReceipt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskRunnerStepContext {
-    pub base_system_prompt: String,
     pub project_snapshot: TaskRunnerProjectSnapshot,
     pub objective: String,
     pub acceptance_criteria: Vec<String>,
@@ -164,7 +164,10 @@ fn validate_task_runner_context(
             context.project_snapshot.working_directory_ref.as_str(),
         ),
         ("task objective", context.objective.as_str()),
-        ("base system prompt", context.base_system_prompt.as_str()),
+        (
+            "base system prompt",
+            context.prompt_snapshot.base_system_prompt.as_str(),
+        ),
         ("task prompt", context.prompt_snapshot.task_prompt.as_str()),
     ] {
         if value.trim().is_empty() {
@@ -286,7 +289,11 @@ fn validate_receipts(
 
 fn build_task_runner_instructions(context: &TaskRunnerStepContext) -> Result<String, String> {
     let frozen_context = serde_json::to_string(&json!({
-        "project": context.project_snapshot,
+        "project": {
+            "project_id": context.project_snapshot.project_id,
+            "snapshot_revision": context.project_snapshot.snapshot_revision,
+            "working_directory_ref": context.project_snapshot.working_directory_ref,
+        },
         "objective": context.objective,
         "acceptance_criteria": context.acceptance_criteria,
         "prompt_snapshot": context.prompt_snapshot,
@@ -296,7 +303,7 @@ fn build_task_runner_instructions(context: &TaskRunnerStepContext) -> Result<Str
     }))
     .map_err(|error| format!("failed to serialize Task Runner context: {error}"))?;
     Ok([
-        context.base_system_prompt.as_str(),
+        context.prompt_snapshot.base_system_prompt.as_str(),
         "You are the local Task Runner. Work only inside the frozen project and capability snapshot below. The runtime injects project_id into execution scope; never include or choose project_id in tool arguments. Use only the supplied execution tools. Use task_runner_ask_user alone only when a missing user decision materially changes the result. Use task_runner_report_outcome alone only after the acceptance criteria are deterministically supported by committed verification receipts. Plain text is progress, not completion. Never claim success from intended work, uncommitted output, or your own description.",
         context.prompt_snapshot.task_prompt.as_str(),
         frozen_context.as_str(),
@@ -644,6 +651,11 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("\"project_id\":\"project-1\""));
+        assert!(!step
+            .instructions
+            .as_deref()
+            .unwrap()
+            .contains("/workspace/project"));
     }
 
     #[test]
@@ -839,7 +851,6 @@ mod tests {
 
     fn context() -> TaskRunnerStepContext {
         TaskRunnerStepContext {
-            base_system_prompt: "Perform the task safely.".to_string(),
             project_snapshot: TaskRunnerProjectSnapshot {
                 project_id: "project-1".to_string(),
                 snapshot_revision: "project-snapshot-1".to_string(),
@@ -850,6 +861,7 @@ mod tests {
             acceptance_criteria: vec!["tests pass".to_string()],
             prompt_snapshot: TaskRunnerPromptSnapshot {
                 prompt_revision: "prompt-1".to_string(),
+                base_system_prompt: "Perform the task safely.".to_string(),
                 task_prompt: "Use the repository conventions.".to_string(),
                 skill_snapshot: json!({"skills": []}),
             },

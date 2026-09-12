@@ -5,8 +5,10 @@ mod context_runtime;
 mod host;
 mod ipc_server;
 mod profile_registry;
+mod task_context;
 
 pub use context_runtime::*;
 pub use host::*;
 pub use ipc_server::*;
 pub use profile_registry::*;
+pub use task_context::*;

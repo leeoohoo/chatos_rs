@@ -436,6 +436,7 @@ Agent Runtime 至少使用以下逻辑表；SQLite 与 PostgreSQL 使用同一�
 
 - 创建并管理本地 Task、Run、计划步骤和进度。
 - 冻结 `project_id`、客户端权威项目快照、工作目录、模型配置修订、插件发布物和能力策略。
+- 冻结快照必须同时保存稳定 ID、revision、完整有界 payload 和 canonical JSON SHA-256；Task 创建事务会校验摘要并保存完整 payload，后续 Step 不从可变 UI 选择或最新目录重新拼装。
 - 解析任务需要的 Skill 与 Plugin，并生成固定工具快照。
 - 执行项目读取、写入、终端、浏览器、Computer Use 和插件 MCP。
 - 对任务完成条件、交付物、验证命令和副作用回执进行确定性校验。

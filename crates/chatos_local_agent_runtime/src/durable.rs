@@ -9,7 +9,7 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshotReference, LocalAgentEvent,
+    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, LocalAgentEvent,
     LocalAgentEventStatus, LocalAgentEventType, LocalAgentRunStatus, MemorySyncStatus, MessageMode,
     ModelRuntimeDescriptor, ModelStepCompletion, ProviderContextItem, ToolExecutionStatus,
 };
@@ -72,9 +72,9 @@ pub struct CreateLocalAgentTaskRequest {
     pub project_id: String,
     pub objective: String,
     pub acceptance_criteria: Vec<String>,
-    pub prompt_snapshot: FrozenSnapshotReference,
-    pub project_snapshot: FrozenSnapshotReference,
-    pub capability_snapshot: FrozenSnapshotReference,
+    pub prompt_snapshot: FrozenSnapshot,
+    pub project_snapshot: FrozenSnapshot,
+    pub capability_snapshot: FrozenSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -330,6 +330,17 @@ async fn create_run_in_transaction(
 
 fn validate_create_task_request(request: &CreateLocalAgentTaskRequest) -> StorageResult<()> {
     validate_create_run_request(&request.run)?;
+    for (field, snapshot) in [
+        ("prompt_snapshot", &request.prompt_snapshot),
+        ("project_snapshot", &request.project_snapshot),
+        ("capability_snapshot", &request.capability_snapshot),
+    ] {
+        snapshot
+            .validate(field)
+            .map_err(|error| StorageError::InvalidData {
+                reason: format!("invalid local Agent Task {field}: {error}"),
+            })?;
+    }
     for value in [
         request.task_id.as_str(),
         request.source_thread_id.as_str(),

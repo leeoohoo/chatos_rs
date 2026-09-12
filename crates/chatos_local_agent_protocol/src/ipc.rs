@@ -2,8 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chrono::{DateTime, Utc};
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::{
     require_bounded_json, require_digest, require_identifier, LocalAgentRun, ProtocolError,
@@ -58,7 +61,7 @@ fn validate_protocol_version(protocol_version: u32) -> Result<(), ProtocolError>
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum LocalAgentCommand {
     CreateMainChatTurn(CreateMainChatTurnCommand),
-    CreateTask(CreateTaskCommand),
+    CreateTask(Box<CreateTaskCommand>),
     PauseRun { run_id: String },
     ResumeRun { run_id: String },
     CancelRun { run_id: String },
@@ -187,9 +190,9 @@ pub struct CreateTaskCommand {
     pub objective: String,
     pub acceptance_criteria: Vec<String>,
     pub model_config_id: String,
-    pub prompt_snapshot: FrozenSnapshotReference,
-    pub project_snapshot: FrozenSnapshotReference,
-    pub capability_snapshot: FrozenSnapshotReference,
+    pub prompt_snapshot: FrozenSnapshot,
+    pub project_snapshot: FrozenSnapshot,
+    pub capability_snapshot: FrozenSnapshot,
 }
 
 impl CreateTaskCommand {
@@ -226,17 +229,68 @@ impl CreateTaskCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct FrozenSnapshotReference {
+pub struct FrozenSnapshot {
     pub snapshot_id: String,
     pub revision: String,
     pub digest: String,
+    pub payload: Value,
 }
 
-impl FrozenSnapshotReference {
-    fn validate(&self, field: &'static str) -> Result<(), ProtocolError> {
+impl FrozenSnapshot {
+    pub fn new(
+        snapshot_id: impl Into<String>,
+        revision: impl Into<String>,
+        payload: Value,
+    ) -> Result<Self, ProtocolError> {
+        let snapshot = Self {
+            snapshot_id: snapshot_id.into(),
+            revision: revision.into(),
+            digest: snapshot_payload_digest(&payload),
+            payload,
+        };
+        snapshot.validate("frozen_snapshot")?;
+        Ok(snapshot)
+    }
+
+    pub fn validate(&self, field: &'static str) -> Result<(), ProtocolError> {
         require_identifier(field, &self.snapshot_id)?;
         require_identifier("snapshot_revision", &self.revision)?;
-        require_digest("snapshot_digest", &self.digest)
+        require_digest("snapshot_digest", &self.digest)?;
+        require_bounded_json("snapshot_payload", &self.payload)?;
+        if !self.payload.is_object() {
+            return Err(ProtocolError::InvalidState {
+                reason: "frozen snapshot payload must be an object",
+            });
+        }
+        if self.digest != snapshot_payload_digest(&self.payload) {
+            return Err(ProtocolError::InvalidDigest {
+                field: "snapshot_digest",
+            });
+        }
+        Ok(())
+    }
+}
+
+fn snapshot_payload_digest(payload: &Value) -> String {
+    let bytes = serde_json::to_vec(&canonicalize_snapshot_payload(payload))
+        .expect("serde_json::Value is always serializable");
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn canonicalize_snapshot_payload(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => {
+            Value::Array(values.iter().map(canonicalize_snapshot_payload).collect())
+        }
+        Value::Object(values) => Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), canonicalize_snapshot_payload(value)))
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .collect(),
+        ),
+        value => value.clone(),
     }
 }
 
