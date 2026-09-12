@@ -38,7 +38,7 @@ use chatos_local_agent_runtime::{
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
@@ -209,6 +209,7 @@ pub struct LocalAgentHost {
     device_id: String,
     policy: LocalAgentHostPolicy,
     scheduler: Mutex<DurableScheduler>,
+    scheduler_wake: Notify,
     profiles: LocalAgentProfileRegistry,
     gateway: Arc<dyn ModelGatewayClient>,
     model_steps: SingleModelStepExecutor,
@@ -265,6 +266,7 @@ impl LocalAgentHost {
                 device_id,
                 policy,
                 scheduler: Mutex::new(DurableScheduler::from_recovery(scope, &plan)),
+                scheduler_wake: Notify::new(),
                 profiles,
                 gateway: gateway.clone(),
                 model_steps: SingleModelStepExecutor::new(gateway),
@@ -334,6 +336,7 @@ impl LocalAgentHost {
         )
         .await?;
         self.scheduler.lock().await.schedule(&created.start_event);
+        self.scheduler_wake.notify_one();
         Ok(created)
     }
 
@@ -568,6 +571,7 @@ impl LocalAgentHost {
         )
         .await?;
         self.scheduler.lock().await.schedule(&event);
+        self.scheduler_wake.notify_one();
         Ok(event)
     }
 
@@ -591,6 +595,7 @@ impl LocalAgentHost {
         )
         .await?;
         self.scheduler.lock().await.schedule(&answered.resume_event);
+        self.scheduler_wake.notify_one();
         Ok(answered.resume_event)
     }
 
@@ -623,6 +628,9 @@ impl LocalAgentHost {
             .lock()
             .await
             .schedule_all(committed.emitted_events.iter());
+        if !committed.emitted_events.is_empty() {
+            self.scheduler_wake.notify_one();
+        }
         Ok(committed)
     }
 
@@ -688,6 +696,7 @@ impl LocalAgentHost {
         )
         .await?;
         self.scheduler.lock().await.schedule(&event);
+        self.scheduler_wake.notify_one();
         Ok(event)
     }
 
@@ -1269,12 +1278,19 @@ impl LocalAgentHost {
     ) -> Result<LocalAgentHostStartupReport, LocalAgentHostError> {
         let plan = scan_recoverable_work(self.storage.as_ref(), self.scope.clone(), now).await?;
         self.scheduler.lock().await.merge_recovery(&plan);
+        if !plan.ready_events.is_empty() || plan.next_wake_at.is_some() {
+            self.scheduler_wake.notify_one();
+        }
         Ok(LocalAgentHostStartupReport {
             active_run_count: plan.active_runs.len(),
             ready_event_count: plan.ready_events.len(),
             next_wake_at: plan.next_wake_at,
             recovery_issues: plan.issues,
         })
+    }
+
+    pub(crate) async fn wait_for_scheduler_wake(&self) {
+        self.scheduler_wake.notified().await;
     }
 }
 

@@ -13,6 +13,7 @@ mod storage_ipc;
 mod task_context;
 mod task_planner;
 mod tool_runtime;
+mod worker;
 
 pub use capability_runtime::*;
 pub use context_runtime::*;
@@ -26,3 +27,4 @@ pub use storage_ipc::*;
 pub use task_context::*;
 pub use task_planner::*;
 pub use tool_runtime::*;
+pub use worker::*;

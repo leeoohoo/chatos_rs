@@ -19,10 +19,11 @@ use chatos_client_storage::{
 use chatos_local_agent_host::{
     LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentExecutionSession,
     LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostCreationExecutor,
-    LocalAgentHostPolicy, LocalAgentHostRunRequest, LocalAgentIpcMutationExecutor,
-    LocalAgentIpcServer, LocalAgentProfileRegistry, LocalAttachmentLocator,
-    LocalAttachmentResolver, LocalTaskCreationPlan, LocalTaskCreationPlanner,
-    LocalTaskPlanningRequest, ProcessedClaimedEvent, StoredTaskRunnerContextProvider,
+    LocalAgentHostPolicy, LocalAgentHostRunRequest, LocalAgentHostWorker,
+    LocalAgentIpcMutationExecutor, LocalAgentIpcServer, LocalAgentProfileRegistry,
+    LocalAttachmentLocator, LocalAttachmentResolver, LocalTaskCreationPlan,
+    LocalTaskCreationPlanner, LocalTaskPlanningRequest, ProcessedClaimedEvent,
+    StoredTaskRunnerContextProvider,
 };
 use chatos_local_agent_protocol::{
     AnswerUserQuestionCommand, ContextStrategy, CreateMainChatTurnCommand, CreateTaskCommand,
@@ -2034,6 +2035,102 @@ async fn host_creates_and_schedules_a_durable_run_start() {
     };
     assert_eq!(claimed.event.run_id, "created-run-1");
     assert_eq!(claimed.event.event_type, LocalAgentEventType::RunStarted);
+}
+
+#[tokio::test]
+async fn one_background_worker_wakes_for_new_work_and_completes_the_run() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:worker-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([19; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    let profiles =
+        LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
+    let gateway = Arc::new(ExecutingGateway {
+        requests: Mutex::new(Vec::new()),
+        delay: std::time::Duration::ZERO,
+        terminal_status: ModelGatewayTerminalStatus::Completed,
+    });
+    let (host, _) = LocalAgentHost::start(
+        storage.clone(),
+        gateway.clone(),
+        Arc::new(TestContextRuntime),
+        Arc::new(Tools),
+        Arc::new(UnusedTaskPlanner),
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+    let host = Arc::new(host);
+    let worker =
+        Arc::new(LocalAgentHostWorker::new(host.clone(), execution_session(), "worker-1").unwrap());
+    let shutdown = CancellationToken::new();
+    let worker_task = {
+        let worker = worker.clone();
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move { worker.run(shutdown).await })
+    };
+    // The worker is already idle here. Creating a Run must wake it without a
+    // polling timer or a second Profile-specific loop.
+    host.create_run(
+        LocalAgentHostRunRequest {
+            run_id: "worker-run-1".to_string(),
+            profile_key: "main_chat".to_string(),
+            owner_entity_type: "conversation".to_string(),
+            owner_entity_id: "worker-thread-1".to_string(),
+            project_id: None,
+            model_runtime_snapshot: run(now).model_runtime_snapshot,
+            prompt_revision: "prompt-1".to_string(),
+            capability_snapshot_ref: "capabilities-1".to_string(),
+            causation_id: "worker-turn-1".to_string(),
+            deadline_at: None,
+            initial_message: None,
+            initial_attachments: Vec::new(),
+        },
+        now,
+    )
+    .await
+    .unwrap();
+    let ipc = LocalAgentIpcServer::new(storage, scope(), Arc::new(UnusedMutationExecutor)).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let reply = ipc
+                .handle_request(LocalAgentIpcRequest {
+                    protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                    request_id: "observe-worker-run".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    command: LocalAgentCommand::GetRun {
+                        run_id: "worker-run-1".to_string(),
+                    },
+                })
+                .await;
+            if matches!(
+                reply.response,
+                LocalAgentIpcResponse::Run(run) if run.status == LocalAgentRunStatus::Succeeded
+            ) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("background worker did not complete the Run");
+    shutdown.cancel();
+    let report = worker_task.await.unwrap().unwrap();
+    assert!(report.processed_event_count >= 4);
+    assert_eq!(gateway.requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
