@@ -972,6 +972,7 @@ dependencies = [
  "chatos_local_agent_runtime",
  "chatos_mcp_runtime",
  "chrono",
+ "libc",
  "memory_engine_sdk",
  "serde",
  "serde_json",
