@@ -152,7 +152,8 @@
 - 2026-09-13：原生客户端协议先升级到 v14；暂停、继续和取消命令必须携带 `run_id + expected_version`，Rust Runtime 在写入控制事件前于同一事务内执行 Run version CAS，拒绝陈旧 UI 对后续版本 Run 的控制。Main Chat、Task Runner 和 Ask User 取消入口都先读取权威 Run Snapshot；Task 同时核对 owner identity，Ask User 同时核对当前 `interaction_id`。Rust、Swift、C# 共同消费 Run Control 黄金夹具；v13 夹具已删除，不保留旧协议兼容。
 - 2026-09-13：修复 macOS Host 子进程退出观察竞态：启动前注册唯一 `terminationHandler`，由线程安全 continuation 分发退出状态，不再对已退出进程调用可能永久阻塞的 `waitUntilExit()`；Host Process 定向测试连续执行 10 次通过。
 - 2026-09-13：唯一原生客户端协议继续升级到 v15；Memory Sync UI 事件的 `run_id` 改为必填，Rust 在同一批次一次扫描权威 `AgentMessage.memory_sync_status`，按受影响 Run 分别聚合 pending/failed 并产生独立事件，不再发送账户级无 Run 事件。Main Chat 与 Task Sink 只按事件携带的确切 Run 路由，跨 Run 聚合测试锁定计数隔离；Task 卡片明确展示待同步和失败数量及错误码，全部同步后隐藏状态。Rust、Swift、C# 共同消费唯一 v15 黄金夹具，v14 不保留。
-- 验证记录：`cargo test -p chatos_local_agent_protocol -p chatos_local_agent_runtime -p chatos_local_agent_host` 全部通过；`swift test --no-parallel --filter LocalAgent` 通过 83 项测试；`swift test --no-parallel --skip NativePluginRuntimeTests` 通过全部选中回归（Swift Testing 185 项 / 56 suites）。旧协议/可选 Memory Sync Run 静态搜索无残留；当前 macOS 主机未安装 .NET SDK，Windows v15 编码和共享夹具测试尚未在 Windows/.NET 环境执行，不能记为通过。
-- 当前在制：阶段 3，完成 macOS Host 与全部原生交互。
-- 下一切片：按阶段 3 完成门槛审计人工复核与存储不可用状态的权威投影和原生 UI，补齐缺口后结束阶段 3。
-- 完成状态：阶段 1、阶段 2 已达到完成门槛；阶段 3—8 尚未达到完整门槛。
+- 2026-09-13：完成阶段 3 收口审计。人工复核由权威 Run `needs_review` 状态、持久原因和版本绑定 Resume 命令驱动，Main Chat 与 Task UI 均明确显示；Storage Provider 致命不可用由公共 Rust Host 使用稳定进程退出码 `75` 对外表达，macOS Supervisor 不解析 stderr 文案即可在重启期间发布强类型 `.storageUnavailable`，全局状态条明确显示存储不可用与重连次数。共享 Host 测试覆盖 Worker 与 Memory Sync Worker 两条存储失败路径，macOS 真实子进程测试覆盖一般崩溃与存储不可用的不同状态。
+- 验证记录：`cargo test -p chatos_local_agent_protocol -p chatos_local_agent_runtime -p chatos_local_agent_host` 全部通过；`swift test --no-parallel --filter LocalAgent` 通过 84 项测试；`swift test --no-parallel --skip NativePluginRuntimeTests` 通过全部选中回归（Swift Testing 186 项 / 56 suites）。旧协议/可选 Memory Sync Run 静态搜索无残留；当前 macOS 主机未安装 .NET SDK，Windows v15 编码和共享夹具测试尚未在 Windows/.NET 环境执行，不能记为通过。
+- 当前在制：阶段 4，完成 Windows 与 macOS 等价接入。
+- 下一切片：建立 Windows Main Chat/Task Runner 生产接入审计清单，从最早缺失的 Host 生命周期、投影或原生交互闭环开始实现，并使用同一 v15 协议和公共 Rust Host，不在 C# 中建立第二套 Loop。
+- 完成状态：阶段 1、阶段 2、阶段 3 已达到完成门槛；阶段 4—8 尚未达到完整门槛。

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_local_agent_host::run_native_local_agent_host_process;
+use chatos_local_agent_host::{
+    native_local_agent_host_exit_code, run_native_local_agent_host_process,
+};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main(flavor = "current_thread")]
@@ -21,7 +23,7 @@ async fn main() {
     signal_task.abort();
     if let Err(error) = result {
         eprintln!("local Agent Host terminated: {error}");
-        std::process::exit(1);
+        std::process::exit(native_local_agent_host_exit_code(&error));
     }
 }
 

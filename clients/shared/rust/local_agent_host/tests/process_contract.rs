@@ -12,9 +12,13 @@ use chatos_client_storage::{
     StorageSecretResolver,
 };
 use chatos_local_agent_host::{
-    run_local_agent_host_process, LocalAgentHostAssemblyDependencies, LocalAgentHostReady,
-    LocalAgentHostResolvedCredentials, LocalAgentIpcMutationExecutor, LocalAgentStoragePlatform,
-    LocalCapabilityPlatform, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
+    native_local_agent_host_exit_code, run_local_agent_host_process,
+    LocalAgentHostAssemblyDependencies, LocalAgentHostError, LocalAgentHostProcessError,
+    LocalAgentHostReady, LocalAgentHostResolvedCredentials, LocalAgentHostServiceError,
+    LocalAgentIpcMutationExecutor, LocalAgentMemorySyncWorkerError, LocalAgentStoragePlatform,
+    LocalCapabilityPlatform, NativeLocalAgentHostProcessError,
+    LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION, NATIVE_LOCAL_AGENT_HOST_GENERAL_FAILURE_EXIT_CODE,
+    NATIVE_LOCAL_AGENT_HOST_STORAGE_UNAVAILABLE_EXIT_CODE,
 };
 use chatos_local_agent_protocol::{
     ClientStorageProfileDescriptor, ClientStorageProfileSelection, LocalAgentCommand,
@@ -92,6 +96,40 @@ impl LocalAgentIpcMutationExecutor for Terminal {
 }
 
 struct Secrets;
+
+#[test]
+fn exposes_storage_unavailability_as_a_stable_native_exit_code() {
+    let worker = NativeLocalAgentHostProcessError::Process(LocalAgentHostProcessError::Service(
+        LocalAgentHostServiceError::Worker(LocalAgentHostError::Storage(
+            StorageError::Unavailable {
+                reason: "database offline".to_string(),
+            },
+        )),
+    ));
+    let memory_sync = NativeLocalAgentHostProcessError::Process(
+        LocalAgentHostProcessError::Service(LocalAgentHostServiceError::MemorySync(
+            LocalAgentMemorySyncWorkerError::Storage(StorageError::Unavailable {
+                reason: "database offline".to_string(),
+            }),
+        )),
+    );
+    let general = NativeLocalAgentHostProcessError::Process(LocalAgentHostProcessError::Service(
+        LocalAgentHostServiceError::UnexpectedWorkerExit,
+    ));
+
+    assert_eq!(
+        native_local_agent_host_exit_code(&worker),
+        NATIVE_LOCAL_AGENT_HOST_STORAGE_UNAVAILABLE_EXIT_CODE
+    );
+    assert_eq!(
+        native_local_agent_host_exit_code(&memory_sync),
+        NATIVE_LOCAL_AGENT_HOST_STORAGE_UNAVAILABLE_EXIT_CODE
+    );
+    assert_eq!(
+        native_local_agent_host_exit_code(&general),
+        NATIVE_LOCAL_AGENT_HOST_GENERAL_FAILURE_EXIT_CODE
+    );
+}
 
 #[async_trait]
 impl StorageSecretResolver for Secrets {

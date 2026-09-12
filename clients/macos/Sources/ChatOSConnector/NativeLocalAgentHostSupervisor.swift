@@ -7,7 +7,7 @@ public enum NativeLocalAgentHostState: Equatable, Sendable {
     case stopped
     case starting(accountID: String)
     case running(accountID: String, processID: UInt32, clientEndpoint: String, restartCount: Int)
-    case restarting(accountID: String, attempt: Int)
+    case restarting(accountID: String, attempt: Int, cause: NativeLocalAgentHostExitCause)
     case failed(accountID: String, reason: String)
 }
 
@@ -122,11 +122,11 @@ public actor NativeLocalAgentHostSupervisor {
         ))
         monitor?.cancel()
         monitor = Task { [weak self, launched] in
-            let status = await launched.waitForExit()
+            let exit = await launched.waitForExit()
             guard !Task.isCancelled else { return }
             await self?.processExited(
                 launched,
-                status: status,
+                exit: exit,
                 accountID: accountID,
                 restartCount: restartCount,
                 generation: expectedGeneration
@@ -136,7 +136,7 @@ public actor NativeLocalAgentHostSupervisor {
 
     private func processExited(
         _ exitedProcess: NativeLocalAgentHostProcess,
-        status: Int32,
+        exit: NativeLocalAgentHostExit,
         accountID: String,
         restartCount: Int,
         generation expectedGeneration: UInt64
@@ -147,10 +147,14 @@ public actor NativeLocalAgentHostSupervisor {
         else { return }
         process = nil
         monitor = nil
-        var lastReason = "Host 意外退出（状态码 \(status)）"
+        var lastReason = failureReason(exit.cause)
         for (offset, delay) in restartDelays.enumerated() {
             let attempt = restartCount + offset + 1
-            publishState(.restarting(accountID: accountID, attempt: attempt))
+            publishState(.restarting(
+                accountID: accountID,
+                attempt: attempt,
+                cause: exit.cause
+            ))
             do {
                 try await Task.sleep(for: delay)
                 guard desiredAccountID == accountID, generation == expectedGeneration else { return }
@@ -187,6 +191,15 @@ public actor NativeLocalAgentHostSupervisor {
             return error.errorDescription ?? "本地 Agent Host 启动失败"
         }
         return "本地 Agent Host 启动失败"
+    }
+
+    private func failureReason(_ cause: NativeLocalAgentHostExitCause) -> String {
+        switch cause {
+        case .storageUnavailable:
+            "本地 Agent 存储不可用"
+        case let .unexpected(status):
+            "Host 意外退出（状态码 \(status)）"
+        }
     }
 
     private func publishState(_ state: NativeLocalAgentHostState) {

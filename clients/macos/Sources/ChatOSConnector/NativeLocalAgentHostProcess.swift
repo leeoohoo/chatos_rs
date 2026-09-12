@@ -5,6 +5,17 @@ import Darwin
 import Foundation
 
 public let localAgentHostLaunchProtocolVersion: UInt32 = 4
+private let localAgentHostStorageUnavailableExitStatus: Int32 = 75
+
+public enum NativeLocalAgentHostExitCause: Equatable, Sendable {
+    case storageUnavailable
+    case unexpected(status: Int32)
+}
+
+public struct NativeLocalAgentHostExit: Equatable, Sendable {
+    public let status: Int32
+    public let cause: NativeLocalAgentHostExitCause
+}
 
 public enum NativeLocalAgentHostLaunchError: Error, Equatable, Sendable {
     case invalidConfiguration(String)
@@ -187,8 +198,14 @@ public final class NativeLocalAgentHostProcess: @unchecked Sendable {
         return await exitTask.value
     }
 
-    public func waitForExit() async -> Int32 {
-        await exitTask.value
+    public func waitForExit() async -> NativeLocalAgentHostExit {
+        let status = await exitTask.value
+        return NativeLocalAgentHostExit(
+            status: status,
+            cause: status == localAgentHostStorageUnavailableExitStatus
+                ? .storageUnavailable
+                : .unexpected(status: status)
+        )
     }
 }
 

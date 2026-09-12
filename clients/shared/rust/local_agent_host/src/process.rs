@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chatos_client_storage::StorageError;
 use chatos_local_agent_protocol::{LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcResponse};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
@@ -11,10 +12,14 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     assemble_local_agent_host, read_local_agent_host_launch_request, write_local_agent_host_ready,
     LocalAgentHostAssemblyDependencies, LocalAgentHostAssemblyError, LocalAgentHostBootstrapError,
-    LocalAgentHostReady, LocalAgentHostResolvedCredentials, LocalAgentHostServiceError,
-    LocalAgentHostServiceExit, LocalAgentIpcMutationExecutor, NativeLocalAgentStoragePlatform,
+    LocalAgentHostError, LocalAgentHostReady, LocalAgentHostResolvedCredentials,
+    LocalAgentHostServiceError, LocalAgentHostServiceExit, LocalAgentIpcMutationExecutor,
+    LocalAgentMemorySyncWorkerError, NativeLocalAgentStoragePlatform,
     NativeLocalAgentStoragePlatformError, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
 };
+
+pub const NATIVE_LOCAL_AGENT_HOST_GENERAL_FAILURE_EXIT_CODE: i32 = 1;
+pub const NATIVE_LOCAL_AGENT_HOST_STORAGE_UNAVAILABLE_EXIT_CODE: i32 = 75;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LocalAgentHostProcessError {
@@ -40,6 +45,30 @@ pub enum NativeLocalAgentHostProcessError {
     StoragePlatform(#[from] NativeLocalAgentStoragePlatformError),
     #[error(transparent)]
     Process(#[from] LocalAgentHostProcessError),
+}
+
+/// Maps a fatal Host failure to the stable native process contract consumed by
+/// both desktop supervisors. Exit code 75 is reserved for a temporarily
+/// unavailable selected Storage Provider; clients must never infer this state
+/// by parsing localized stderr text.
+pub fn native_local_agent_host_exit_code(error: &NativeLocalAgentHostProcessError) -> i32 {
+    let storage_unavailable = matches!(
+        error,
+        NativeLocalAgentHostProcessError::Process(LocalAgentHostProcessError::Service(
+            LocalAgentHostServiceError::Worker(LocalAgentHostError::Storage(
+                StorageError::Unavailable { .. }
+            ))
+        )) | NativeLocalAgentHostProcessError::Process(LocalAgentHostProcessError::Service(
+            LocalAgentHostServiceError::MemorySync(LocalAgentMemorySyncWorkerError::Storage(
+                StorageError::Unavailable { .. }
+            ))
+        ))
+    );
+    if storage_unavailable {
+        NATIVE_LOCAL_AGENT_HOST_STORAGE_UNAVAILABLE_EXIT_CODE
+    } else {
+        NATIVE_LOCAL_AGENT_HOST_GENERAL_FAILURE_EXIT_CODE
+    }
 }
 
 /// Runs the complete one-account Host process boundary.

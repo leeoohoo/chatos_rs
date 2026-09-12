@@ -41,7 +41,11 @@ struct NativeLocalAgentHostSupervisorTests {
         #expect(await launches.value == 2)
         let states = await observedStates.value
         #expect(states.contains(.starting(accountID: "user-1")))
-        #expect(states.contains(.restarting(accountID: "user-1", attempt: 1)))
+        #expect(states.contains(.restarting(
+            accountID: "user-1",
+            attempt: 1,
+            cause: .unexpected(status: 17)
+        )))
         #expect(states.contains(where: {
             if case let .running(accountID, _, _, restartCount) = $0 {
                 return accountID == "user-1" && restartCount == 1
@@ -71,6 +75,28 @@ struct NativeLocalAgentHostSupervisorTests {
         #expect(await supervisor.state() == .stopped)
         #expect(await launches.value == 1)
     }
+
+    @Test("publishes storage unavailability while the Host is restarting")
+    func exposesStorageUnavailableDuringRestart() async throws {
+        let fixture = try RestartingHostFixture(firstExitStatus: 75)
+        let supervisor = try NativeLocalAgentHostSupervisor(
+            launcher: NativeLocalAgentHostProcessLauncher(testingIdentityVerifier: { _ in }),
+            restartDelays: [.milliseconds(250)]
+        )
+
+        try await supervisor.start(accountID: "user-1") {
+            try fixture.configuration()
+        }
+        try await waitUntil {
+            await supervisor.state() == .restarting(
+                accountID: "user-1",
+                attempt: 1,
+                cause: .storageUnavailable
+            )
+        }
+
+        await supervisor.logout()
+    }
 }
 
 private actor LaunchCounter {
@@ -83,7 +109,7 @@ private struct RestartingHostFixture: Sendable {
     let executable: URL
     let socketPath: String
 
-    init(alwaysWait: Bool = false) throws {
+    init(alwaysWait: Bool = false, firstExitStatus: Int32 = 17) throws {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(
@@ -117,7 +143,7 @@ private struct RestartingHostFixture: Sendable {
         sys.stdout.buffer.write(struct.pack('>I', len(body)) + body)
         sys.stdout.buffer.flush()
         if not always_wait and count == 0:
-            sys.exit(17)
+            sys.exit(\(firstExitStatus))
         signal.pause()
         """
         try script.write(to: executable, atomically: true, encoding: .utf8)

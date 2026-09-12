@@ -119,12 +119,9 @@ private struct LocalAgentHostStatusView: View {
                 color: .secondary,
                 showsProgress: true
             )
-        case let .restarting(_, attempt):
+        case let .restarting(_, attempt, cause):
             status(
-                model.localized(
-                    "本地 Agent 正在恢复（第 \(attempt) 次）…",
-                    english: "Recovering Local Agent (attempt \(attempt))…"
-                ),
+                restartingTitle(attempt: attempt, cause: cause),
                 systemImage: "exclamationmark.arrow.triangle.2.circlepath",
                 color: .orange,
                 showsProgress: true
@@ -145,6 +142,24 @@ private struct LocalAgentHostStatusView: View {
                     showsProgress: false
                 )
             }
+        }
+    }
+
+    private func restartingTitle(
+        attempt: Int,
+        cause: NativeLocalAgentHostExitCause
+    ) -> String {
+        switch cause {
+        case .storageUnavailable:
+            model.localized(
+                "本地 Agent 存储不可用，正在重连（第 \(attempt) 次）…",
+                english: "Local Agent storage is unavailable. Reconnecting (attempt \(attempt))…"
+            )
+        case .unexpected:
+            model.localized(
+                "本地 Agent 正在恢复（第 \(attempt) 次）…",
+                english: "Recovering Local Agent (attempt \(attempt))…"
+            )
         }
     }
 
