@@ -5,21 +5,24 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, PutRecord, RecordMetadata,
-    RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
+    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery, PutRecord,
+    RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
+    StorageEncryptionKey, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
 };
 use chatos_local_agent_host::{
     LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentExecutionSession,
-    LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostPolicy, LocalAgentHostRunRequest,
-    LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry, ProcessedClaimedEvent,
+    LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostCreationExecutor,
+    LocalAgentHostPolicy, LocalAgentHostRunRequest, LocalAgentIpcMutationExecutor,
+    LocalAgentIpcServer, LocalAgentProfileRegistry, ProcessedClaimedEvent,
 };
 use chatos_local_agent_protocol::{
-    AnswerUserQuestionCommand, ContextStrategy, LocalAgentCommand, LocalAgentEvent,
-    LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
+    AnswerUserQuestionCommand, ContextStrategy, CreateMainChatTurnCommand, CreateTaskCommand,
+    FrozenSnapshotReference, LocalAgentCommand, LocalAgentEvent, LocalAgentEventStatus,
+    LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcRequest, LocalAgentIpcResponse,
     LocalAgentRun, LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTerminal,
     ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
     ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, UserInteractionAnswer,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{
     CompletedAssistantMessage, DurableProviderContextCommit, LocalAgentProfile,
@@ -32,6 +35,8 @@ use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
 struct Profile;
+
+struct TaskProfile;
 
 #[async_trait]
 impl LocalAgentProfile for Profile {
@@ -77,7 +82,35 @@ impl LocalAgentProfile for Profile {
     }
 }
 
+#[async_trait]
+impl LocalAgentProfile for TaskProfile {
+    fn profile_key(&self) -> &'static str {
+        "task_runner"
+    }
+
+    async fn prepare_model_step(
+        &self,
+        run: &LocalAgentRun,
+    ) -> Result<LocalAgentProfileStep, String> {
+        Profile.prepare_model_step(run).await
+    }
+
+    async fn interpret_completed_output(
+        &self,
+        _run: &LocalAgentRun,
+        output: &ModelGatewayOutput,
+    ) -> Result<ModelStepResult, String> {
+        Ok(ModelStepResult::Final(
+            serde_json::json!({"text": output.content}),
+        ))
+    }
+}
+
 struct Gateway;
+
+struct DescriptorGateway {
+    calls: Mutex<Vec<(String, String)>>,
+}
 
 struct Tools;
 
@@ -392,8 +425,94 @@ impl ModelGatewayClient for Gateway {
     }
 }
 
+#[async_trait]
+impl ModelGatewayClient for DescriptorGateway {
+    async fn descriptor(
+        &self,
+        access_token: &str,
+        model_config_id: &str,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelRuntimeDescriptor, ModelGatewayClientError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((access_token.to_string(), model_config_id.to_string()));
+        let mut descriptor = run(Utc::now()).model_runtime_snapshot;
+        descriptor.model_config_id = model_config_id.to_string();
+        Ok(descriptor)
+    }
+
+    async fn stream(
+        &self,
+        _access_token: &str,
+        _descriptor: &ModelRuntimeDescriptor,
+        _request: ModelGatewayRequest,
+        _callbacks: ModelGatewayCallbacks,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelGatewayOutput, ModelGatewayClientError> {
+        unreachable!("creation contract does not execute a model step")
+    }
+
+    async fn count_input_tokens(
+        &self,
+        _access_token: &str,
+        _descriptor: &ModelRuntimeDescriptor,
+        _request: &ModelGatewayRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelGatewayTokenCount, ModelGatewayClientError> {
+        unreachable!("creation contract does not count model input")
+    }
+}
+
 struct Seed {
     now: chrono::DateTime<Utc>,
+}
+
+#[derive(Default)]
+struct ReadCreationState {
+    runs: Vec<LocalAgentRun>,
+    tasks: Vec<TaskRecord>,
+    message_count: usize,
+    outbox_count: usize,
+}
+
+#[async_trait]
+impl StorageTransaction for ReadCreationState {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let query = ListQuery {
+            scope: scope(),
+            cursor: None,
+            limit: 100,
+        };
+        self.runs = repositories
+            .agent_runs()
+            .list(&query)
+            .await?
+            .records
+            .into_iter()
+            .map(|record| record.run)
+            .collect();
+        self.tasks = repositories.tasks().list(&query).await?.records;
+        self.message_count = repositories
+            .agent_messages()
+            .list(&query)
+            .await?
+            .records
+            .len();
+        self.outbox_count = repositories.sync_outbox().list(&query).await?.records.len();
+        Ok(())
+    }
+}
+
+fn snapshot(id: &str, revision: &str, fill: char) -> FrozenSnapshotReference {
+    FrozenSnapshotReference {
+        snapshot_id: id.to_string(),
+        revision: revision.to_string(),
+        digest: format!("sha256:{}", fill.to_string().repeat(64)),
+    }
 }
 
 struct SeedMemory {
@@ -1198,6 +1317,133 @@ async fn claim_model_request(
         panic!("model request was not claimed");
     };
     *requested
+}
+
+#[tokio::test]
+async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:create-ipc-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([19; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    let gateway = Arc::new(DescriptorGateway {
+        calls: Mutex::new(Vec::new()),
+    });
+    let profiles = LocalAgentProfileRegistry::new([
+        Arc::new(Profile) as Arc<dyn LocalAgentProfile>,
+        Arc::new(TaskProfile) as Arc<dyn LocalAgentProfile>,
+    ])
+    .unwrap();
+    let (host, _) = LocalAgentHost::start(
+        storage.clone(),
+        gateway.clone(),
+        Arc::new(TestContextRuntime),
+        Arc::new(Tools),
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+    let host = Arc::new(host);
+    let session = LocalAgentExecutionSession::new(
+        "private-access-token",
+        ModelGatewayCallbacks::default(),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    let executor = Arc::new(LocalAgentHostCreationExecutor::new(
+        host,
+        session,
+        Arc::new(UnusedMutationExecutor),
+    ));
+    let server = LocalAgentIpcServer::new(storage.clone(), scope(), executor).unwrap();
+
+    let main_request = LocalAgentIpcRequest {
+        protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+        request_id: "ipc-main-1".to_string(),
+        owner_user_id: "user-1".to_string(),
+        command: LocalAgentCommand::CreateMainChatTurn(CreateMainChatTurnCommand {
+            thread_id: "thread-created-1".to_string(),
+            turn_id: "turn-created-1".to_string(),
+            message_id: "message-created-1".to_string(),
+            project_id: Some("project-1".to_string()),
+            model_config_id: "model-main".to_string(),
+            prompt_revision: "main-prompt-1".to_string(),
+            capability_snapshot_ref: "main-capabilities-1".to_string(),
+            content: Some("Review this visual and improve the page hierarchy".to_string()),
+            attachments: Vec::new(),
+        }),
+    };
+    let first_main = server.handle_request(main_request.clone()).await.response;
+    let repeated_main = server.handle_request(main_request).await.response;
+    assert_eq!(first_main, repeated_main);
+
+    let task_request = LocalAgentIpcRequest {
+        protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+        request_id: "ipc-task-1".to_string(),
+        owner_user_id: "user-1".to_string(),
+        command: LocalAgentCommand::CreateTask(CreateTaskCommand {
+            task_id: "task-created-1".to_string(),
+            source_thread_id: "thread-created-1".to_string(),
+            source_turn_id: "turn-created-1".to_string(),
+            project_id: "project-1".to_string(),
+            objective: "Implement the approved visual design".to_string(),
+            acceptance_criteria: vec![
+                "The rendered UI matches the approved reference".to_string(),
+                "Relevant verification succeeds".to_string(),
+            ],
+            model_config_id: "model-task".to_string(),
+            prompt_snapshot: snapshot("task-prompt-1", "task-prompt-revision-1", 'a'),
+            project_snapshot: snapshot("project-snapshot-1", "project-revision-1", 'b'),
+            capability_snapshot: snapshot("task-capabilities-1", "capability-revision-1", 'c'),
+        }),
+    };
+    let first_task = server.handle_request(task_request.clone()).await.response;
+    let repeated_task = server.handle_request(task_request).await.response;
+    assert_eq!(first_task, repeated_task);
+    assert!(matches!(first_main, LocalAgentIpcResponse::Accepted { .. }));
+    assert!(matches!(first_task, LocalAgentIpcResponse::Accepted { .. }));
+
+    {
+        let descriptor_calls = gateway.calls.lock().unwrap();
+        assert_eq!(descriptor_calls.len(), 2);
+        assert!(descriptor_calls
+            .iter()
+            .all(|(token, _)| token == "private-access-token"));
+    }
+
+    let mut state = ReadCreationState::default();
+    storage.transaction(&mut state).await.unwrap();
+    assert_eq!(state.runs.len(), 2);
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.message_count, 2);
+    assert_eq!(state.outbox_count, 2);
+    let main = state
+        .runs
+        .iter()
+        .find(|run| run.profile_key == "main_chat")
+        .unwrap();
+    assert_eq!(main.project_id.as_deref(), Some("project-1"));
+    assert_eq!(main.model_config_id, "model-main");
+    let task = state
+        .runs
+        .iter()
+        .find(|run| run.profile_key == "task_runner")
+        .unwrap();
+    assert_eq!(task.owner_entity_id, "task-created-1");
+    assert_eq!(task.project_id.as_deref(), Some("project-1"));
+    assert_eq!(state.tasks[0].state["run_id"], task.run_id);
 }
 
 #[tokio::test]

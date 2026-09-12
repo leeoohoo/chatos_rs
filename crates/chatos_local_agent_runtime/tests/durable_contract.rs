@@ -9,19 +9,20 @@ use chatos_client_storage::{
     StorageResult, StorageTransaction, ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentEvent, LocalAgentEventStatus,
-    LocalAgentEventType, LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEvent,
-    LocalAgentUiEventPayload, ModelProtocol, ModelRuntimeDescriptor, ModelStepCompletion,
-    ModelStepResult, ProviderContextItem, ToolEffect, ToolExecution, ToolExecutionStatus,
+    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshotReference, LocalAgentEvent,
+    LocalAgentEventStatus, LocalAgentEventType, LocalAgentRun, LocalAgentRunStatus,
+    LocalAgentUiEvent, LocalAgentUiEventPayload, ModelProtocol, ModelRuntimeDescriptor,
+    ModelStepCompletion, ModelStepResult, ProviderContextItem, ToolEffect, ToolExecution,
+    ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
     begin_model_step_execution, claim_event, claim_memory_sync_batch, create_local_agent_run,
-    record_model_step_completion, reduce_and_commit, AttemptLimitDisposition,
-    BeginModelStepExecutionRequest, ClaimMemorySyncBatchRequest, CompletedAssistantMessage,
-    CreateLocalAgentRunRequest, DurableModelStepCompletionPayload, DurableProviderContextCommit,
-    DurableProviderContextItem, EventClaimRequest, EventClaimResult, InitialRunMessage,
-    MemorySyncPolicy, RecordModelStepCompletionRequest, ReduceAndCommitRequest, ReducerPolicy,
-    StepEvidence,
+    create_local_agent_task, record_model_step_completion, reduce_and_commit,
+    AttemptLimitDisposition, BeginModelStepExecutionRequest, ClaimMemorySyncBatchRequest,
+    CompletedAssistantMessage, CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest,
+    DurableModelStepCompletionPayload, DurableProviderContextCommit, DurableProviderContextItem,
+    EventClaimRequest, EventClaimResult, InitialRunMessage, MemorySyncPolicy,
+    RecordModelStepCompletionRequest, ReduceAndCommitRequest, ReducerPolicy, StepEvidence,
 };
 use chrono::{Duration, Utc};
 
@@ -186,6 +187,63 @@ fn create_run_request(now: chrono::DateTime<Utc>) -> CreateLocalAgentRunRequest 
     }
 }
 
+fn frozen_snapshot(id: &str, revision: &str, fill: char) -> FrozenSnapshotReference {
+    FrozenSnapshotReference {
+        snapshot_id: id.to_string(),
+        revision: revision.to_string(),
+        digest: format!("sha256:{}", fill.to_string().repeat(64)),
+    }
+}
+
+fn create_task_request(now: chrono::DateTime<Utc>) -> CreateLocalAgentTaskRequest {
+    let prompt_snapshot = frozen_snapshot("prompt-snapshot-1", "prompt-revision-1", 'a');
+    let project_snapshot = frozen_snapshot("project-snapshot-1", "project-revision-1", 'b');
+    let capability_snapshot =
+        frozen_snapshot("capability-snapshot-1", "capability-revision-1", 'c');
+    let objective = "Implement the reviewed website design".to_string();
+    let acceptance_criteria = vec![
+        "The design matches the approved visual reference".to_string(),
+        "Verification receipts are committed".to_string(),
+    ];
+    CreateLocalAgentTaskRequest {
+        run: CreateLocalAgentRunRequest {
+            scope: scope(),
+            run_id: "task-run-1".to_string(),
+            profile_key: "task_runner".to_string(),
+            owner_entity_type: "task".to_string(),
+            owner_entity_id: "task-1".to_string(),
+            project_id: Some("project-1".to_string()),
+            model_runtime_snapshot: model_descriptor(),
+            prompt_revision: prompt_snapshot.revision.clone(),
+            capability_snapshot_ref: capability_snapshot.snapshot_id.clone(),
+            origin_device_id: "device-1".to_string(),
+            causation_id: "ipc-create-task-1".to_string(),
+            deadline_at: None,
+            initial_message: Some(InitialRunMessage {
+                record_id: "task-message-1".to_string(),
+                turn_id: "source-turn-1".to_string(),
+                content: Some(objective.clone()),
+                structured_payload: Some(serde_json::json!({
+                    "type": "task_objective",
+                    "objective": objective,
+                    "acceptance_criteria": acceptance_criteria,
+                })),
+                message_source: "task_creation".to_string(),
+            }),
+            now,
+        },
+        task_id: "task-1".to_string(),
+        source_thread_id: "source-thread-1".to_string(),
+        source_turn_id: "source-turn-1".to_string(),
+        project_id: "project-1".to_string(),
+        objective,
+        acceptance_criteria,
+        prompt_snapshot,
+        project_snapshot,
+        capability_snapshot,
+    }
+}
+
 struct CountCreatedRecords {
     runs: usize,
     events: usize,
@@ -195,6 +253,25 @@ struct CountCreatedRecords {
 }
 
 struct ReadMessages(Vec<AgentMessage>);
+
+struct ReadTask(Option<chatos_client_storage::TaskRecord>);
+
+#[async_trait]
+impl StorageTransaction for ReadTask {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.0 = repositories
+            .tasks()
+            .get(&RecordQuery {
+                scope: scope(),
+                id: "task-1".to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+}
 
 #[async_trait]
 impl StorageTransaction for ReadMessages {
@@ -475,6 +552,72 @@ async fn initial_user_message_and_memory_outbox_share_the_run_creation_transacti
     assert_eq!(counts.events, 1);
     assert_eq!(counts.messages, 1);
     assert_eq!(counts.outbox, 1);
+}
+
+#[tokio::test]
+async fn task_record_run_message_outbox_and_start_event_are_one_idempotent_transaction() {
+    let (_directory, storage) = empty_storage().await;
+    let now = Utc::now();
+    let request = create_task_request(now);
+    let first = create_local_agent_task(&storage, request.clone())
+        .await
+        .unwrap();
+    let mut repeated_request = request;
+    repeated_request.run.now = now + Duration::seconds(5);
+    let repeated = create_local_agent_task(&storage, repeated_request)
+        .await
+        .unwrap();
+
+    assert_eq!(first, repeated);
+    assert_eq!(first.task_record.metadata.id, "task-1");
+    assert_eq!(
+        first.task_record.conversation_id.as_deref(),
+        Some("source-thread-1")
+    );
+    assert_eq!(first.task_record.state["project_id"], "project-1");
+    assert_eq!(
+        first.run.run_record.run.project_id.as_deref(),
+        Some("project-1")
+    );
+    assert_eq!(
+        first.run.initial_message.unwrap().outbox.item.record_id,
+        "task-message-1"
+    );
+
+    let mut counts = CountCreatedRecords {
+        runs: 0,
+        events: 0,
+        messages: 0,
+        outbox: 0,
+        provider_context: 0,
+    };
+    storage.transaction(&mut counts).await.unwrap();
+    assert_eq!(counts.runs, 1);
+    assert_eq!(counts.events, 1);
+    assert_eq!(counts.messages, 1);
+    assert_eq!(counts.outbox, 1);
+}
+
+#[tokio::test]
+async fn task_creation_rolls_back_task_when_its_run_identity_conflicts() {
+    let (_directory, storage) = empty_storage().await;
+    let now = Utc::now();
+    let mut conflicting_run = create_run_request(now);
+    conflicting_run.run_id = "task-run-1".to_string();
+    create_local_agent_run(&storage, conflicting_run)
+        .await
+        .unwrap();
+
+    let error = create_local_agent_task(&storage, create_task_request(now))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        chatos_client_storage::StorageError::Conflict { .. }
+    ));
+    let mut task = ReadTask(None);
+    storage.transaction(&mut task).await.unwrap();
+    assert!(task.0.is_none());
 }
 
 #[tokio::test]

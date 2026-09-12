@@ -5,11 +5,12 @@ use async_trait::async_trait;
 use chatos_client_storage::{
     AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery,
     ProviderContextStateRecord, PutRecord, RecordMetadata, RecordQuery, RecordScope, StorageError,
-    StorageResult, StorageTransaction, ToolExecutionStateRecord, TransactionRepositories,
+    StorageResult, StorageTransaction, TaskRecord, ToolExecutionStateRecord,
+    TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentEvent, LocalAgentEventStatus,
-    LocalAgentEventType, LocalAgentRunStatus, MemorySyncStatus, MessageMode,
+    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshotReference, LocalAgentEvent,
+    LocalAgentEventStatus, LocalAgentEventType, LocalAgentRunStatus, MemorySyncStatus, MessageMode,
     ModelRuntimeDescriptor, ModelStepCompletion, ProviderContextItem, ToolExecutionStatus,
 };
 use chrono::{DateTime, Utc};
@@ -61,6 +62,26 @@ pub struct CreatedLocalAgentRun {
     pub initial_message: Option<RecordedSemanticMessage>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateLocalAgentTaskRequest {
+    pub run: CreateLocalAgentRunRequest,
+    pub task_id: String,
+    pub source_thread_id: String,
+    pub source_turn_id: String,
+    pub project_id: String,
+    pub objective: String,
+    pub acceptance_criteria: Vec<String>,
+    pub prompt_snapshot: FrozenSnapshotReference,
+    pub project_snapshot: FrozenSnapshotReference,
+    pub capability_snapshot: FrozenSnapshotReference,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreatedLocalAgentTask {
+    pub task_record: TaskRecord,
+    pub run: CreatedLocalAgentRun,
+}
+
 pub async fn create_local_agent_run(
     storage: &dyn ClientStorage,
     request: CreateLocalAgentRunRequest,
@@ -90,150 +111,320 @@ impl StorageTransaction for CreateLocalAgentRunOperation {
         let request = self.request.take().ok_or(StorageError::Transaction {
             reason: "local Agent Run creation request was already consumed".to_string(),
         })?;
-        let start_event_id = stable_event_id(
-            request.run_id.as_str(),
-            1,
-            LocalAgentEventType::RunStarted,
-            0,
-        );
-        let run_query = RecordQuery {
-            scope: request.scope.clone(),
-            id: request.run_id.clone(),
+        self.result = Some(create_run_in_transaction(repositories, request).await?);
+        Ok(())
+    }
+}
+
+pub async fn create_local_agent_task(
+    storage: &dyn ClientStorage,
+    request: CreateLocalAgentTaskRequest,
+) -> StorageResult<CreatedLocalAgentTask> {
+    validate_create_task_request(&request)?;
+    let mut operation = CreateLocalAgentTaskOperation {
+        request: Some(request),
+        result: None,
+    };
+    storage.transaction(&mut operation).await?;
+    operation.result.ok_or(StorageError::Transaction {
+        reason: "local Agent Task creation returned no result".to_string(),
+    })
+}
+
+struct CreateLocalAgentTaskOperation {
+    request: Option<CreateLocalAgentTaskRequest>,
+    result: Option<CreatedLocalAgentTask>,
+}
+
+#[async_trait]
+impl StorageTransaction for CreateLocalAgentTaskOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let request = self.request.take().ok_or(StorageError::Transaction {
+            reason: "local Agent Task creation request was already consumed".to_string(),
+        })?;
+        let task = requested_task_record(&request);
+        let query = RecordQuery {
+            scope: task.metadata.scope.clone(),
+            id: task.metadata.id.clone(),
         };
-        let existing_run = {
-            let mut runs = repositories.agent_runs();
-            runs.get(&run_query).await?
-        };
-        if let Some(existing_run) = existing_run {
-            validate_existing_created_run(&existing_run, &request)?;
-            let start_event = repositories
-                .agent_events()
-                .get(&RecordQuery {
-                    scope: request.scope,
-                    id: start_event_id,
-                })
-                .await?
-                .ok_or_else(|| StorageError::InvalidData {
-                    reason: "existing local Agent Run has no durable start event".to_string(),
-                })?;
-            if start_event.event.run_id != existing_run.run.run_id
-                || start_event.event.event_type != LocalAgentEventType::RunStarted
-                || start_event.event.expected_version != 1
-                || start_event.event.causation_id != request.causation_id
-            {
+        let existing = repositories.tasks().get(&query).await?;
+        let task_record = match existing {
+            Some(existing) if task_identity_matches(&existing, &task) => existing,
+            Some(existing) => {
                 return Err(StorageError::Conflict {
-                    actual_revision: start_event.metadata.revision,
+                    actual_revision: existing.metadata.revision,
                 });
             }
-            let initial_message = persist_initial_run_message(
-                repositories,
-                &existing_run,
-                request.initial_message,
-                &request.origin_device_id,
-                request.now,
-            )
-            .await?;
-            self.result = Some(CreatedLocalAgentRun {
-                run_record: existing_run,
-                start_event,
-                initial_message,
-            });
-            return Ok(());
-        }
-
-        let run = chatos_local_agent_protocol::LocalAgentRun {
-            run_id: request.run_id.clone(),
-            profile_key: request.profile_key,
-            owner_user_id: request.scope.owner_user_id.clone(),
-            owner_entity_type: request.owner_entity_type,
-            owner_entity_id: request.owner_entity_id.clone(),
-            project_id: request.project_id,
-            status: LocalAgentRunStatus::Queued,
-            version: 1,
-            step_seq: 0,
-            iteration: 0,
-            retry_count: 0,
-            model_config_id: request.model_runtime_snapshot.model_config_id.clone(),
-            model_config_revision: request.model_runtime_snapshot.revision,
-            context_strategy: request.model_runtime_snapshot.context_strategy,
-            model_runtime_snapshot: request.model_runtime_snapshot,
-            prompt_revision: request.prompt_revision,
-            capability_snapshot_ref: request.capability_snapshot_ref,
-            pending_batch_id: None,
-            pending_interaction: None,
-            terminal_outcome: None,
-            deadline_at: request.deadline_at,
-            created_at: request.now,
-            updated_at: request.now,
+            None => {
+                repositories
+                    .tasks()
+                    .put(PutRecord {
+                        record: task,
+                        expected_revision: None,
+                    })
+                    .await?
+            }
         };
-        run.validate().map_err(|error| StorageError::InvalidData {
-            reason: format!("new local Agent Run is invalid: {error}"),
-        })?;
-        let run_record = repositories
-            .agent_runs()
-            .put(PutRecord {
-                record: AgentRunStateRecord {
-                    metadata: RecordMetadata {
-                        id: request.run_id.clone(),
-                        scope: request.scope.clone(),
-                        origin_device_id: request.origin_device_id.clone(),
-                        revision: 0,
-                        created_at: request.now,
-                        updated_at: request.now,
-                    },
-                    run,
-                },
-                expected_revision: None,
-            })
-            .await?;
+        let run = create_run_in_transaction(repositories, request.run).await?;
+        self.result = Some(CreatedLocalAgentTask { task_record, run });
+        Ok(())
+    }
+}
+
+async fn create_run_in_transaction(
+    repositories: &mut dyn TransactionRepositories,
+    request: CreateLocalAgentRunRequest,
+) -> StorageResult<CreatedLocalAgentRun> {
+    let start_event_id = stable_event_id(
+        request.run_id.as_str(),
+        1,
+        LocalAgentEventType::RunStarted,
+        0,
+    );
+    let run_query = RecordQuery {
+        scope: request.scope.clone(),
+        id: request.run_id.clone(),
+    };
+    let existing_run = {
+        let mut runs = repositories.agent_runs();
+        runs.get(&run_query).await?
+    };
+    if let Some(existing_run) = existing_run {
+        validate_existing_created_run(&existing_run, &request)?;
         let start_event = repositories
             .agent_events()
-            .put(PutRecord {
-                record: AgentEventStateRecord {
-                    metadata: RecordMetadata {
-                        id: start_event_id.clone(),
-                        scope: request.scope.clone(),
-                        origin_device_id: request.origin_device_id,
-                        revision: 0,
-                        created_at: request.now,
-                        updated_at: request.now,
-                    },
-                    event: LocalAgentEvent {
-                        event_id: start_event_id,
-                        run_id: request.run_id,
-                        event_type: LocalAgentEventType::RunStarted,
-                        expected_version: 1,
-                        available_at: request.now,
-                        status: LocalAgentEventStatus::Pending,
-                        attempt_count: 0,
-                        claimed_by_device_id: None,
-                        claim_token: None,
-                        claim_until: None,
-                        causation_id: request.causation_id,
-                        correlation_id: request.owner_entity_id,
-                        bounded_payload: serde_json::Value::Null,
-                        last_error: None,
-                    },
-                },
-                expected_revision: None,
+            .get(&RecordQuery {
+                scope: request.scope,
+                id: start_event_id,
             })
-            .await?;
+            .await?
+            .ok_or_else(|| StorageError::InvalidData {
+                reason: "existing local Agent Run has no durable start event".to_string(),
+            })?;
+        if start_event.event.run_id != existing_run.run.run_id
+            || start_event.event.event_type != LocalAgentEventType::RunStarted
+            || start_event.event.expected_version != 1
+            || start_event.event.causation_id != request.causation_id
+        {
+            return Err(StorageError::Conflict {
+                actual_revision: start_event.metadata.revision,
+            });
+        }
         let initial_message = persist_initial_run_message(
             repositories,
-            &run_record,
+            &existing_run,
             request.initial_message,
-            &run_record.metadata.origin_device_id,
+            &request.origin_device_id,
             request.now,
         )
         .await?;
-        append_run_snapshot(repositories, &run_record).await?;
-        self.result = Some(CreatedLocalAgentRun {
-            run_record,
+        return Ok(CreatedLocalAgentRun {
+            run_record: existing_run,
             start_event,
             initial_message,
         });
-        Ok(())
     }
+
+    let run = chatos_local_agent_protocol::LocalAgentRun {
+        run_id: request.run_id.clone(),
+        profile_key: request.profile_key,
+        owner_user_id: request.scope.owner_user_id.clone(),
+        owner_entity_type: request.owner_entity_type,
+        owner_entity_id: request.owner_entity_id.clone(),
+        project_id: request.project_id,
+        status: LocalAgentRunStatus::Queued,
+        version: 1,
+        step_seq: 0,
+        iteration: 0,
+        retry_count: 0,
+        model_config_id: request.model_runtime_snapshot.model_config_id.clone(),
+        model_config_revision: request.model_runtime_snapshot.revision,
+        context_strategy: request.model_runtime_snapshot.context_strategy,
+        model_runtime_snapshot: request.model_runtime_snapshot,
+        prompt_revision: request.prompt_revision,
+        capability_snapshot_ref: request.capability_snapshot_ref,
+        pending_batch_id: None,
+        pending_interaction: None,
+        terminal_outcome: None,
+        deadline_at: request.deadline_at,
+        created_at: request.now,
+        updated_at: request.now,
+    };
+    run.validate().map_err(|error| StorageError::InvalidData {
+        reason: format!("new local Agent Run is invalid: {error}"),
+    })?;
+    let run_record = repositories
+        .agent_runs()
+        .put(PutRecord {
+            record: AgentRunStateRecord {
+                metadata: RecordMetadata {
+                    id: request.run_id.clone(),
+                    scope: request.scope.clone(),
+                    origin_device_id: request.origin_device_id.clone(),
+                    revision: 0,
+                    created_at: request.now,
+                    updated_at: request.now,
+                },
+                run,
+            },
+            expected_revision: None,
+        })
+        .await?;
+    let start_event = repositories
+        .agent_events()
+        .put(PutRecord {
+            record: AgentEventStateRecord {
+                metadata: RecordMetadata {
+                    id: start_event_id.clone(),
+                    scope: request.scope.clone(),
+                    origin_device_id: request.origin_device_id,
+                    revision: 0,
+                    created_at: request.now,
+                    updated_at: request.now,
+                },
+                event: LocalAgentEvent {
+                    event_id: start_event_id,
+                    run_id: request.run_id,
+                    event_type: LocalAgentEventType::RunStarted,
+                    expected_version: 1,
+                    available_at: request.now,
+                    status: LocalAgentEventStatus::Pending,
+                    attempt_count: 0,
+                    claimed_by_device_id: None,
+                    claim_token: None,
+                    claim_until: None,
+                    causation_id: request.causation_id,
+                    correlation_id: request.owner_entity_id,
+                    bounded_payload: serde_json::Value::Null,
+                    last_error: None,
+                },
+            },
+            expected_revision: None,
+        })
+        .await?;
+    let initial_message = persist_initial_run_message(
+        repositories,
+        &run_record,
+        request.initial_message,
+        &run_record.metadata.origin_device_id,
+        request.now,
+    )
+    .await?;
+    append_run_snapshot(repositories, &run_record).await?;
+    Ok(CreatedLocalAgentRun {
+        run_record,
+        start_event,
+        initial_message,
+    })
+}
+
+fn validate_create_task_request(request: &CreateLocalAgentTaskRequest) -> StorageResult<()> {
+    validate_create_run_request(&request.run)?;
+    for value in [
+        request.task_id.as_str(),
+        request.source_thread_id.as_str(),
+        request.source_turn_id.as_str(),
+        request.project_id.as_str(),
+        request.objective.as_str(),
+    ] {
+        if value.trim().is_empty() {
+            return Err(StorageError::InvalidData {
+                reason: "local Agent Task creation fields must not be empty".to_string(),
+            });
+        }
+    }
+    if request.acceptance_criteria.is_empty()
+        || request
+            .acceptance_criteria
+            .iter()
+            .any(|criterion| criterion.trim().is_empty())
+    {
+        return Err(StorageError::InvalidData {
+            reason: "local Agent Task acceptance criteria must not be empty".to_string(),
+        });
+    }
+    if request.run.profile_key != "task_runner"
+        || request.run.owner_entity_type != "task"
+        || request.run.owner_entity_id != request.task_id
+        || request.run.project_id.as_deref() != Some(request.project_id.as_str())
+        || request.run.prompt_revision != request.prompt_snapshot.revision
+        || request.run.capability_snapshot_ref != request.capability_snapshot.snapshot_id
+    {
+        return Err(StorageError::InvalidData {
+            reason: "local Agent Task does not match its frozen Run identity".to_string(),
+        });
+    }
+    let Some(initial_message) = request.run.initial_message.as_ref() else {
+        return Err(StorageError::InvalidData {
+            reason: "local Agent Task requires an initial semantic message".to_string(),
+        });
+    };
+    if initial_message.turn_id != request.source_turn_id
+        || initial_message.content.as_deref() != Some(request.objective.as_str())
+        || initial_message.structured_payload.is_none()
+    {
+        return Err(StorageError::InvalidData {
+            reason: "local Agent Task initial message does not match the frozen task input"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn requested_task_record(request: &CreateLocalAgentTaskRequest) -> TaskRecord {
+    TaskRecord {
+        metadata: RecordMetadata {
+            id: request.task_id.clone(),
+            scope: request.run.scope.clone(),
+            origin_device_id: request.run.origin_device_id.clone(),
+            revision: 0,
+            created_at: request.run.now,
+            updated_at: request.run.now,
+        },
+        conversation_id: Some(request.source_thread_id.clone()),
+        status: "queued".to_string(),
+        state: json!({
+            "schema_version": 1,
+            "run_id": request.run.run_id,
+            "source_thread_id": request.source_thread_id,
+            "source_turn_id": request.source_turn_id,
+            "project_id": request.project_id,
+            "objective": request.objective,
+            "acceptance_criteria": request.acceptance_criteria,
+            "model_config_id": request.run.model_runtime_snapshot.model_config_id,
+            "model_config_revision": request.run.model_runtime_snapshot.revision,
+            "prompt_snapshot": request.prompt_snapshot,
+            "project_snapshot": request.project_snapshot,
+            "capability_snapshot": request.capability_snapshot,
+        }),
+    }
+}
+
+fn task_identity_matches(existing: &TaskRecord, requested: &TaskRecord) -> bool {
+    const IMMUTABLE_TASK_FIELDS: &[&str] = &[
+        "schema_version",
+        "run_id",
+        "source_thread_id",
+        "source_turn_id",
+        "project_id",
+        "objective",
+        "acceptance_criteria",
+        "model_config_id",
+        "model_config_revision",
+        "prompt_snapshot",
+        "project_snapshot",
+        "capability_snapshot",
+    ];
+    existing.metadata.id == requested.metadata.id
+        && existing.metadata.scope == requested.metadata.scope
+        && existing.conversation_id == requested.conversation_id
+        && IMMUTABLE_TASK_FIELDS.iter().all(|field| {
+            existing.state.get(*field).is_some()
+                && existing.state.get(*field) == requested.state.get(*field)
+        })
 }
 
 fn validate_create_run_request(request: &CreateLocalAgentRunRequest) -> StorageResult<()> {

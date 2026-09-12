@@ -4,30 +4,37 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chatos_client_storage::{AgentEventStateRecord, ClientStorage, RecordScope, StorageError};
+use chatos_client_storage::{
+    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, RecordQuery, RecordScope,
+    StorageError, StorageResult, StorageTransaction, TransactionRepositories,
+};
 use chatos_local_agent_protocol::{
-    LocalAgentCommand, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
-    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult,
+    CreateMainChatTurnCommand, CreateTaskCommand, LocalAgentCommand, LocalAgentEventType,
+    LocalAgentIpcError, LocalAgentIpcResponse, ModelRuntimeDescriptor, ModelStepCompletion,
+    ModelStepResult,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, begin_model_step_execution, begin_tool_execution,
     build_local_tool_invocation, complete_tool_execution, create_local_agent_run,
-    inspect_tool_batch, mark_tool_outcome_unknown, prepare_model_step_persistence,
-    prepare_tool_batch, record_model_step_completion, reduce_and_commit, renew_event_claim,
-    request_run_control, scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
-    BeganModelStepExecution, BeginModelStepExecutionRequest, BeginToolExecutionRequest,
-    BeginToolExecutionResult, CommittedReduction, CompleteToolExecutionRequest,
-    CompletedAssistantMessage, CreateLocalAgentRunRequest, CreatedLocalAgentRun,
-    DurableModelStepCompletionPayload, DurableProviderContextCommit, DurableScheduler,
-    ExecutedModelStep, InitialRunMessage, LocalToolRuntime, MarkToolOutcomeUnknownRequest,
-    ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError, ModelGatewayStreamError,
-    ModelInputTokenGuardError, ModelStepExecutorError, ModelStepPersistenceError,
-    PrepareToolBatchRequest, RecordModelStepCompletionRequest, RecoveryIssue,
-    ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest, RequestRunControl,
-    RunControlAction, SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor,
-    StepEvidence,
+    create_local_agent_task, inspect_tool_batch, mark_tool_outcome_unknown,
+    prepare_model_step_persistence, prepare_tool_batch, record_model_step_completion,
+    reduce_and_commit, renew_event_claim, request_run_control, scan_recoverable_work,
+    validate_local_tool_outcome, AnswerRunInteraction, BeganModelStepExecution,
+    BeginModelStepExecutionRequest, BeginToolExecutionRequest, BeginToolExecutionResult,
+    CommittedReduction, CompleteToolExecutionRequest, CompletedAssistantMessage,
+    CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest, CreatedLocalAgentRun,
+    CreatedLocalAgentTask, DurableModelStepCompletionPayload, DurableProviderContextCommit,
+    DurableScheduler, ExecutedModelStep, InitialRunMessage, LocalToolRuntime,
+    MarkToolOutcomeUnknownRequest, ModelGatewayCallbacks, ModelGatewayClient,
+    ModelGatewayClientError, ModelGatewayStreamError, ModelInputTokenGuardError,
+    ModelStepExecutorError, ModelStepPersistenceError, PrepareToolBatchRequest,
+    RecordModelStepCompletionRequest, RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy,
+    RenewEventClaimRequest, RequestRunControl, RunControlAction, SchedulerTickRequest,
+    SchedulerTickResult, SingleModelStepExecutor, StepEvidence,
 };
 use chrono::{DateTime, Duration, Utc};
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
@@ -142,6 +149,10 @@ pub enum LocalAgentHostError {
     InvalidEventPayload(String),
     #[error("model access token must not be empty")]
     InvalidModelAccessToken,
+    #[error("local Agent creation identity conflicts with existing run {0}")]
+    CreationConflict(String),
+    #[error(transparent)]
+    ModelGateway(#[from] ModelGatewayClientError),
     #[error(transparent)]
     ContextRuntime(#[from] LocalAgentContextRuntimeError),
     #[error(transparent)]
@@ -161,6 +172,7 @@ pub struct LocalAgentHost {
     policy: LocalAgentHostPolicy,
     scheduler: Mutex<DurableScheduler>,
     profiles: LocalAgentProfileRegistry,
+    gateway: Arc<dyn ModelGatewayClient>,
     model_steps: SingleModelStepExecutor,
     context_runtime: Arc<dyn LocalAgentContextRuntime>,
     tool_runtime: Arc<dyn LocalToolRuntime>,
@@ -214,6 +226,7 @@ impl LocalAgentHost {
                 policy,
                 scheduler: Mutex::new(DurableScheduler::from_recovery(scope, &plan)),
                 profiles,
+                gateway: gateway.clone(),
                 model_steps: SingleModelStepExecutor::new(gateway),
                 context_runtime,
                 tool_runtime,
@@ -280,6 +293,167 @@ impl LocalAgentHost {
         .await?;
         self.scheduler.lock().await.schedule(&created.start_event);
         Ok(created)
+    }
+
+    pub async fn create_main_chat_turn(
+        &self,
+        request_id: &str,
+        command: CreateMainChatTurnCommand,
+        session: &LocalAgentExecutionSession,
+        now: DateTime<Utc>,
+    ) -> Result<CreatedLocalAgentRun, LocalAgentHostError> {
+        const PROFILE_KEY: &str = "main_chat";
+        self.profiles.require(PROFILE_KEY)?;
+        let run_id = stable_host_id(
+            "main-chat-run",
+            &[
+                self.scope.owner_user_id.as_str(),
+                command.thread_id.as_str(),
+                command.turn_id.as_str(),
+            ],
+        );
+        let descriptor = self
+            .descriptor_for_creation(&run_id, &command.model_config_id, session)
+            .await?;
+        let structured_payload = (!command.attachments.is_empty()).then(|| {
+            json!({
+                "type": "main_chat_turn",
+                "attachments": &command.attachments,
+            })
+        });
+        self.create_run(
+            LocalAgentHostRunRequest {
+                run_id,
+                profile_key: PROFILE_KEY.to_string(),
+                owner_entity_type: "conversation".to_string(),
+                owner_entity_id: command.thread_id,
+                project_id: command.project_id,
+                model_runtime_snapshot: descriptor,
+                prompt_revision: command.prompt_revision,
+                capability_snapshot_ref: command.capability_snapshot_ref,
+                causation_id: request_id.to_string(),
+                deadline_at: None,
+                initial_message: Some(InitialRunMessage {
+                    record_id: command.message_id,
+                    turn_id: command.turn_id,
+                    content: command.content,
+                    structured_payload,
+                    message_source: "main_chat".to_string(),
+                }),
+            },
+            now,
+        )
+        .await
+    }
+
+    pub async fn create_task(
+        &self,
+        request_id: &str,
+        command: CreateTaskCommand,
+        session: &LocalAgentExecutionSession,
+        now: DateTime<Utc>,
+    ) -> Result<CreatedLocalAgentTask, LocalAgentHostError> {
+        const PROFILE_KEY: &str = "task_runner";
+        self.profiles.require(PROFILE_KEY)?;
+        let run_id = stable_host_id(
+            "task-run",
+            &[self.scope.owner_user_id.as_str(), command.task_id.as_str()],
+        );
+        let descriptor = self
+            .descriptor_for_creation(&run_id, &command.model_config_id, session)
+            .await?;
+        let initial_message_id = stable_host_id(
+            "task-message",
+            &[self.scope.owner_user_id.as_str(), command.task_id.as_str()],
+        );
+        let initial_payload = json!({
+            "type": "task_objective",
+            "task_id": &command.task_id,
+            "source_thread_id": &command.source_thread_id,
+            "source_turn_id": &command.source_turn_id,
+            "project_id": &command.project_id,
+            "objective": &command.objective,
+            "acceptance_criteria": &command.acceptance_criteria,
+            "prompt_snapshot": &command.prompt_snapshot,
+            "project_snapshot": &command.project_snapshot,
+            "capability_snapshot": &command.capability_snapshot,
+        });
+        let created = create_local_agent_task(
+            self.storage.as_ref(),
+            CreateLocalAgentTaskRequest {
+                run: CreateLocalAgentRunRequest {
+                    scope: self.scope.clone(),
+                    run_id,
+                    profile_key: PROFILE_KEY.to_string(),
+                    owner_entity_type: "task".to_string(),
+                    owner_entity_id: command.task_id.clone(),
+                    project_id: Some(command.project_id.clone()),
+                    model_runtime_snapshot: descriptor,
+                    prompt_revision: command.prompt_snapshot.revision.clone(),
+                    capability_snapshot_ref: command.capability_snapshot.snapshot_id.clone(),
+                    origin_device_id: self.device_id.clone(),
+                    causation_id: request_id.to_string(),
+                    deadline_at: None,
+                    initial_message: Some(InitialRunMessage {
+                        record_id: initial_message_id,
+                        turn_id: command.source_turn_id.clone(),
+                        content: Some(command.objective.clone()),
+                        structured_payload: Some(initial_payload),
+                        message_source: "task_creation".to_string(),
+                    }),
+                    now,
+                },
+                task_id: command.task_id,
+                source_thread_id: command.source_thread_id,
+                source_turn_id: command.source_turn_id,
+                project_id: command.project_id,
+                objective: command.objective,
+                acceptance_criteria: command.acceptance_criteria,
+                prompt_snapshot: command.prompt_snapshot,
+                project_snapshot: command.project_snapshot,
+                capability_snapshot: command.capability_snapshot,
+            },
+        )
+        .await?;
+        self.scheduler
+            .lock()
+            .await
+            .schedule(&created.run.start_event);
+        Ok(created)
+    }
+
+    async fn descriptor_for_creation(
+        &self,
+        run_id: &str,
+        model_config_id: &str,
+        session: &LocalAgentExecutionSession,
+    ) -> Result<ModelRuntimeDescriptor, LocalAgentHostError> {
+        if let Some(existing) = self.load_run_record(run_id).await? {
+            if existing.run.model_config_id != model_config_id {
+                return Err(LocalAgentHostError::CreationConflict(run_id.to_string()));
+            }
+            return Ok(existing.run.model_runtime_snapshot);
+        }
+        Ok(self
+            .gateway
+            .descriptor(
+                session.access_token.as_str(),
+                model_config_id,
+                session.cancellation.clone(),
+            )
+            .await?)
+    }
+
+    async fn load_run_record(&self, run_id: &str) -> StorageResult<Option<AgentRunStateRecord>> {
+        let mut operation = LoadRunRecord {
+            query: RecordQuery {
+                scope: self.scope.clone(),
+                id: run_id.to_string(),
+            },
+            result: None,
+        };
+        self.storage.transaction(&mut operation).await?;
+        Ok(operation.result)
     }
 
     pub async fn request_control(
@@ -834,6 +1008,81 @@ impl LocalAgentHost {
     }
 }
 
+struct LoadRunRecord {
+    query: RecordQuery,
+    result: Option<AgentRunStateRecord>,
+}
+
+#[async_trait]
+impl StorageTransaction for LoadRunRecord {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.result = repositories.agent_runs().get(&self.query).await?;
+        Ok(())
+    }
+}
+
+fn stable_host_id(prefix: &str, values: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    for value in values {
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    format!("{prefix}:{:x}", hasher.finalize())
+}
+
+/// Handles the only two commands allowed to create durable Agent work. The
+/// authenticated execution session is supplied by the native Host process and
+/// is never serialized into the command or persisted with the resulting Run.
+pub struct LocalAgentHostCreationExecutor {
+    host: Arc<LocalAgentHost>,
+    session: LocalAgentExecutionSession,
+    next: Arc<dyn LocalAgentIpcMutationExecutor>,
+}
+
+impl LocalAgentHostCreationExecutor {
+    pub fn new(
+        host: Arc<LocalAgentHost>,
+        session: LocalAgentExecutionSession,
+        next: Arc<dyn LocalAgentIpcMutationExecutor>,
+    ) -> Self {
+        Self {
+            host,
+            session,
+            next,
+        }
+    }
+}
+
+#[async_trait]
+impl LocalAgentIpcMutationExecutor for LocalAgentHostCreationExecutor {
+    async fn execute_mutation(
+        &self,
+        request_id: &str,
+        command: LocalAgentCommand,
+    ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError> {
+        let event = match command {
+            LocalAgentCommand::CreateMainChatTurn(command) => self
+                .host
+                .create_main_chat_turn(request_id, command, &self.session, Utc::now())
+                .await
+                .map(|created| created.start_event),
+            LocalAgentCommand::CreateTask(command) => self
+                .host
+                .create_task(request_id, command, &self.session, Utc::now())
+                .await
+                .map(|created| created.run.start_event),
+            other => return self.next.execute_mutation(request_id, other).await,
+        }
+        .map_err(run_creation_ipc_error)?;
+        Ok(LocalAgentIpcResponse::Accepted {
+            operation_id: event.event.event_id,
+        })
+    }
+}
+
 /// Adds durable Run lifecycle commands to an IPC executor chain. Commands
 /// owned by model/run creation, approval, or platform storage are delegated to
 /// the next typed executor instead of being reimplemented here.
@@ -889,6 +1138,22 @@ fn run_control_ipc_error(error: LocalAgentHostError) -> LocalAgentIpcError {
             error,
             LocalAgentHostError::Storage(StorageError::Unavailable { .. })
         ),
+    }
+}
+
+fn run_creation_ipc_error(error: LocalAgentHostError) -> LocalAgentIpcError {
+    let retryable = match &error {
+        LocalAgentHostError::Storage(StorageError::Unavailable { .. }) => true,
+        LocalAgentHostError::ModelGateway(ModelGatewayClientError::Transport { .. }) => true,
+        LocalAgentHostError::ModelGateway(ModelGatewayClientError::HttpStatus {
+            status, ..
+        }) => matches!(*status, 408 | 429 | 500..=599),
+        _ => false,
+    };
+    LocalAgentIpcError {
+        code: "run_creation_rejected".to_string(),
+        message: error.to_string(),
+        retryable,
     }
 }
 
