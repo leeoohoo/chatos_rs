@@ -13,7 +13,7 @@ struct NativeLocalAgentTaskEventSinkTests {
         let run = runSnapshot(id: "run-1", taskID: "task-1")
         let client = TaskStateClient(tasks: [task], runs: [run])
         let store = LocalAgentTaskStateStore()
-        let sink = NativeLocalAgentTaskEventSink(client: client, store: store)
+        let sink = NativeLocalAgentTaskEventSink(clientProvider: { client }, store: store)
 
         try await sink.restore()
 
@@ -27,12 +27,17 @@ struct NativeLocalAgentTaskEventSinkTests {
     func discoversNewTask() async throws {
         let task = taskSnapshot(id: "task-2", runID: "run-2")
         let run = runSnapshot(id: "run-2", taskID: "task-2")
-        let client = TaskStateClient(tasks: [], runs: [])
-        await client.install(task: task, run: run)
+        let initialClient = TaskStateClient(tasks: [], runs: [])
+        let replacementClient = TaskStateClient(tasks: [task], runs: [run])
+        let provider = TaskStateClientProvider(client: initialClient)
         let store = LocalAgentTaskStateStore()
-        let sink = NativeLocalAgentTaskEventSink(client: client, store: store)
+        let sink = NativeLocalAgentTaskEventSink(
+            clientProvider: { await provider.client() },
+            store: store
+        )
 
         try await sink.restore()
+        await provider.install(replacementClient)
         try await sink.applyLocalAgentUIEvent(
             LocalAgentUIEvent(
                 eventSeq: 7,
@@ -45,6 +50,7 @@ struct NativeLocalAgentTaskEventSinkTests {
         let restored = try #require(await store.localAgentTask(taskID: "task-2"))
         #expect(restored.lastAppliedEventSequence == 7)
         #expect(restored.run.runID == "run-2")
+        #expect(await provider.requestCount() == 2)
     }
 
     @Test("switches an existing Task to the new current Run after retry")
@@ -54,7 +60,7 @@ struct NativeLocalAgentTaskEventSinkTests {
         oldRun.status = .failed
         let client = TaskStateClient(tasks: [task], runs: [oldRun])
         let store = LocalAgentTaskStateStore()
-        let sink = NativeLocalAgentTaskEventSink(client: client, store: store)
+        let sink = NativeLocalAgentTaskEventSink(clientProvider: { client }, store: store)
         try await sink.restore()
 
         let retryRun = runSnapshot(id: "run-2", taskID: "task-1")
@@ -78,6 +84,26 @@ struct NativeLocalAgentTaskEventSinkTests {
         #expect(restored.run.runID == "run-2")
         #expect(restored.lastAppliedEventSequence == 8)
     }
+}
+
+private actor TaskStateClientProvider {
+    private var current: TaskStateClient
+    private var requests = 0
+
+    init(client: TaskStateClient) {
+        current = client
+    }
+
+    func client() -> any NativeLocalAgentTaskStateClient {
+        requests += 1
+        return current
+    }
+
+    func install(_ client: TaskStateClient) {
+        current = client
+    }
+
+    func requestCount() -> Int { requests }
 }
 
 private actor TaskStateClient: NativeLocalAgentTaskStateClient {

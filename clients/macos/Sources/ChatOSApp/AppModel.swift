@@ -927,18 +927,13 @@ final class AppModel: ObservableObject {
                         )
                     }
                 )
-                let client = try await accountSession.client(accountID: accountID)
-                let mainChatRestorer = NativeLocalAgentMainChatRestorer(
-                    client: client,
-                    store: historyStore
+                let startupRecovery = NativeLocalAgentStartupRecovery(
+                    clientProvider: { try await accountSession.activeClient() },
+                    stateProvider: { await accountSession.state() },
+                    mainChatStore: historyStore,
+                    taskStore: localAgentTaskStateStore
                 )
-                let taskEventSink = NativeLocalAgentTaskEventSink(
-                    client: client,
-                    store: localAgentTaskStateStore
-                )
-                async let restoredMainChat: Void = mainChatRestorer.restore()
-                async let restoredTasks: Void = taskEventSink.restore()
-                _ = try await (restoredMainChat, restoredTasks)
+                let taskEventSink = try await startupRecovery.restore()
                 let compositeSink = NativeLocalAgentCompositeEventSink(
                     sinks: [historyStore, taskEventSink]
                 )

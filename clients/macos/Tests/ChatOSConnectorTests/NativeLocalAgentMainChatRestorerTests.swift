@@ -30,7 +30,10 @@ struct NativeLocalAgentMainChatRestorerTests {
             ),
             sessionID: "thread-1"
         )
-        let restorer = NativeLocalAgentMainChatRestorer(client: client, store: store)
+        let restorer = NativeLocalAgentMainChatRestorer(
+            clientProvider: { client },
+            store: store
+        )
 
         try await restorer.restore()
         try await restorer.restore()

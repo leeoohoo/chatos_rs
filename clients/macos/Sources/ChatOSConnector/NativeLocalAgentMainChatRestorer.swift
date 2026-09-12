@@ -41,21 +41,31 @@ extension NativeLocalAgentMainChatRestoreError: LocalizedError {
 /// account-level incremental cursor starts. It never replays model or tool
 /// side effects and does not read remote compact conversation history.
 public actor NativeLocalAgentMainChatRestorer {
+    public typealias ClientProvider = @Sendable () async throws
+        -> any NativeLocalAgentMainChatRestoreClient
+
     private static let pageLimit: UInt32 = 500
 
-    private let client: any NativeLocalAgentMainChatRestoreClient
+    private let clientProvider: ClientProvider
     private let store: any LocalAgentMainChatStateRestoring
 
     public init(
-        client: any NativeLocalAgentMainChatRestoreClient,
+        clientProvider: @escaping ClientProvider,
         store: any LocalAgentMainChatStateRestoring
     ) {
-        self.client = client
+        self.clientProvider = clientProvider
         self.store = store
     }
 
     public func restore() async throws {
-        let allRuns = try await allRuns()
+        // One restore attempt stays on one Host endpoint so paginated Run
+        // details cannot splice snapshots from different Host lifetimes.
+        let client = try await clientProvider()
+        try await restore(using: client)
+    }
+
+    func restore(using client: any NativeLocalAgentMainChatRestoreClient) async throws {
+        let allRuns = try await allRuns(client: client)
         let mainChatRuns = try allRuns.filter { run in
             guard run.profileKey == "main_chat" else { return false }
             guard run.ownerEntityType == "conversation" else {
@@ -68,7 +78,7 @@ public actor NativeLocalAgentMainChatRestorer {
 
         for listedRun in mainChatRuns {
             async let binding = client.mainChatRunBinding(runID: listedRun.runID)
-            async let detail = completeDetail(runID: listedRun.runID)
+            async let detail = completeDetail(runID: listedRun.runID, client: client)
             let recovery = try await LocalAgentMainChatRunRecovery(
                 binding: binding,
                 detail: detail
@@ -83,7 +93,9 @@ public actor NativeLocalAgentMainChatRestorer {
         try await store.restoreLocalAgentMainChatRuns(recoveries)
     }
 
-    private func allRuns() async throws -> [LocalAgentRunSnapshot] {
+    private func allRuns(
+        client: any NativeLocalAgentMainChatRestoreClient
+    ) async throws -> [LocalAgentRunSnapshot] {
         var cursor: String?
         var values: [LocalAgentRunSnapshot] = []
         var runIDs = Set<String>()
@@ -103,7 +115,10 @@ public actor NativeLocalAgentMainChatRestorer {
         return values
     }
 
-    private func completeDetail(runID: String) async throws -> LocalAgentRunDetail {
+    private func completeDetail(
+        runID: String,
+        client: any NativeLocalAgentMainChatRestoreClient
+    ) async throws -> LocalAgentRunDetail {
         var offset: UInt32 = 0
         var latest: LocalAgentRunDetail?
         var events: [LocalAgentRunTimelineEvent] = []

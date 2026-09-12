@@ -14,11 +14,11 @@ struct NativeLocalAgentRestartConsistencyTests {
         let taskStore = LocalAgentTaskStateStore()
 
         async let restoredConversation: Void = NativeLocalAgentMainChatRestorer(
-            client: client,
+            clientProvider: { client },
             store: conversationStore
         ).restore()
         async let restoredTasks: Void = NativeLocalAgentTaskEventSink(
-            client: client,
+            clientProvider: { client },
             store: taskStore
         ).restore()
         _ = try await (restoredConversation, restoredTasks)

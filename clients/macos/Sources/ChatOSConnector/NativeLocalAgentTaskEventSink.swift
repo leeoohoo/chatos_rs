@@ -37,24 +37,33 @@ extension NativeLocalAgentTaskEventSinkError: LocalizedError {
 /// It never calls the remote Task Runner API and never treats event replay as
 /// the authority after a Host or app restart.
 public actor NativeLocalAgentTaskEventSink: LocalAgentUIEventApplying {
+    public typealias ClientProvider = @Sendable () async throws
+        -> any NativeLocalAgentTaskStateClient
+
     private static let pageLimit: UInt32 = 500
 
-    private let client: any NativeLocalAgentTaskStateClient
+    private let clientProvider: ClientProvider
     private let store: any LocalAgentTaskStateStoring
     private var taskRunIDs = Set<String>()
     private var ignoredRunIDs = Set<String>()
 
     public init(
-        client: any NativeLocalAgentTaskStateClient,
+        clientProvider: @escaping ClientProvider,
         store: any LocalAgentTaskStateStoring
     ) {
-        self.client = client
+        self.clientProvider = clientProvider
         self.store = store
     }
 
     public func restore() async throws {
-        async let tasks = allTasks()
-        async let runs = allRuns()
+        // Keep one authoritative endpoint for the complete Task/Run snapshot.
+        let client = try await clientProvider()
+        try await restore(using: client)
+    }
+
+    func restore(using client: any NativeLocalAgentTaskStateClient) async throws {
+        async let tasks = allTasks(client: client)
+        async let runs = allRuns(client: client)
         let (taskSnapshots, runSnapshots) = try await (tasks, runs)
         try await store.restoreLocalAgentTasks(taskSnapshots, runs: runSnapshots)
         taskRunIDs = Set(taskSnapshots.flatMap(\.runIDs))
@@ -71,6 +80,9 @@ public actor NativeLocalAgentTaskEventSink: LocalAgentUIEventApplying {
         guard let runID = event.event.runID else { return }
         if ignoredRunIDs.contains(runID) { return }
         if !taskRunIDs.contains(runID) {
+            // A supervised Host may have replaced its IPC endpoint since the
+            // initial restore. Resolve the current client for new identities.
+            let client = try await clientProvider()
             let run: LocalAgentRunSnapshot
             if case let .runSnapshot(snapshot) = event.event {
                 run = snapshot
@@ -91,7 +103,9 @@ public actor NativeLocalAgentTaskEventSink: LocalAgentUIEventApplying {
         try await store.applyLocalAgentTaskEvent(event)
     }
 
-    private func allRuns() async throws -> [LocalAgentRunSnapshot] {
+    private func allRuns(
+        client: any NativeLocalAgentTaskStateClient
+    ) async throws -> [LocalAgentRunSnapshot] {
         var cursor: String?
         var values: [LocalAgentRunSnapshot] = []
         repeat {
@@ -103,7 +117,9 @@ public actor NativeLocalAgentTaskEventSink: LocalAgentUIEventApplying {
         return values
     }
 
-    private func allTasks() async throws -> [LocalAgentTaskSnapshot] {
+    private func allTasks(
+        client: any NativeLocalAgentTaskStateClient
+    ) async throws -> [LocalAgentTaskSnapshot] {
         var cursor: String?
         var values: [LocalAgentTaskSnapshot] = []
         repeat {
