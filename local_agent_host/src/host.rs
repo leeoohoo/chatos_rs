@@ -4,6 +4,9 @@
 use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
+use chatos_agent_profiles::{
+    MainChatCapabilitySnapshot, MainChatProjectSnapshot, MainChatPromptSnapshot,
+};
 use chatos_client_storage::{
     AgentEventStateRecord, AgentRunStateRecord, ClientStorage, RecordQuery, RecordScope,
     StorageError, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
@@ -86,6 +89,7 @@ pub struct LocalAgentHostRunRequest {
     pub causation_id: String,
     pub deadline_at: Option<DateTime<Utc>>,
     pub initial_message: Option<InitialRunMessage>,
+    pub initial_attachments: Vec<chatos_local_agent_protocol::LocalAttachmentReference>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +161,8 @@ pub enum ProcessedClaimedEvent {
 pub enum LocalAgentHostError {
     #[error("invalid local Agent Host configuration: {0}")]
     InvalidConfiguration(&'static str),
+    #[error("invalid Main Chat frozen context: {0}")]
+    InvalidMainChatContext(String),
     #[error(transparent)]
     Storage(#[from] StorageError),
     #[error(transparent)]
@@ -322,6 +328,7 @@ impl LocalAgentHost {
                 causation_id: request.causation_id,
                 deadline_at: request.deadline_at,
                 initial_message: request.initial_message,
+                initial_attachments: request.initial_attachments,
                 now,
             },
         )
@@ -351,12 +358,46 @@ impl LocalAgentHost {
         let descriptor = self
             .descriptor_for_creation(&run_id, &command.model_config_id, session)
             .await?;
-        let structured_payload = (!command.attachments.is_empty()).then(|| {
-            json!({
-                "type": "main_chat_turn",
-                "attachments": &command.attachments,
+        MainChatPromptSnapshot::from_frozen(&command.prompt_snapshot)
+            .map_err(LocalAgentHostError::InvalidMainChatContext)?;
+        MainChatCapabilitySnapshot::from_frozen(&command.capability_snapshot)
+            .map_err(LocalAgentHostError::InvalidMainChatContext)?;
+        command
+            .project_snapshot
+            .as_ref()
+            .map(|snapshot| {
+                let project = MainChatProjectSnapshot::from_frozen(snapshot)
+                    .map_err(LocalAgentHostError::InvalidMainChatContext)?;
+                if Some(project.project_id.as_str()) != command.project_id.as_deref() {
+                    return Err(LocalAgentHostError::InvalidMainChatContext(
+                        "project snapshot does not match the frozen project_id".to_string(),
+                    ));
+                }
+                Ok(project)
             })
-        });
+            .transpose()?;
+        let attachment_manifest = command
+            .attachments
+            .iter()
+            .map(|attachment| {
+                json!({
+                    "attachment_id": attachment.attachment_id,
+                    "media_type": attachment.media_type,
+                    "payload_digest": attachment.payload_digest,
+                    "byte_size": attachment.byte_size,
+                })
+            })
+            .collect::<Vec<_>>();
+        let structured_payload = Some(json!({
+            "type": "main_chat_turn",
+            "prompt_snapshot": &command.prompt_snapshot,
+            "capability_snapshot": &command.capability_snapshot,
+            "project_snapshot": &command.project_snapshot,
+            "attachments": attachment_manifest,
+        }));
+        let prompt_revision = command.prompt_snapshot.revision.clone();
+        let capability_snapshot_ref = command.capability_snapshot.snapshot_id.clone();
+        let initial_attachments = command.attachments.clone();
         self.create_run(
             LocalAgentHostRunRequest {
                 run_id,
@@ -365,8 +406,8 @@ impl LocalAgentHost {
                 owner_entity_id: command.thread_id,
                 project_id: command.project_id,
                 model_runtime_snapshot: descriptor,
-                prompt_revision: command.prompt_revision,
-                capability_snapshot_ref: command.capability_snapshot_ref,
+                prompt_revision,
+                capability_snapshot_ref,
                 causation_id: request_id.to_string(),
                 deadline_at: None,
                 initial_message: Some(InitialRunMessage {
@@ -376,6 +417,7 @@ impl LocalAgentHost {
                     structured_payload,
                     message_source: "main_chat".to_string(),
                 }),
+                initial_attachments,
             },
             now,
         )
@@ -438,6 +480,7 @@ impl LocalAgentHost {
                         structured_payload: Some(initial_payload),
                         message_source: "task_creation".to_string(),
                     }),
+                    initial_attachments: Vec::new(),
                     now,
                 },
                 task_id: command.task_id,
@@ -1309,7 +1352,7 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostCreationExecutor {
         let event = match command {
             LocalAgentCommand::CreateMainChatTurn(command) => self
                 .host
-                .create_main_chat_turn(request_id, command, &self.session, Utc::now())
+                .create_main_chat_turn(request_id, *command, &self.session, Utc::now())
                 .await
                 .map(|created| created.start_event),
             LocalAgentCommand::CreateTask(command) => self

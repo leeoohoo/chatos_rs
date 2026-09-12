@@ -3,15 +3,16 @@
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery,
+    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery, MediaStateRecord,
     ProviderContextStateRecord, PutRecord, RecordMetadata, RecordQuery, RecordScope, StorageError,
     StorageResult, StorageTransaction, TaskRecord, ToolExecutionStateRecord,
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
     AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, LocalAgentEvent,
-    LocalAgentEventStatus, LocalAgentEventType, LocalAgentRunStatus, MemorySyncStatus, MessageMode,
-    ModelRuntimeDescriptor, ModelStepCompletion, ProviderContextItem, ToolExecutionStatus,
+    LocalAgentEventStatus, LocalAgentEventType, LocalAgentRunStatus, LocalAttachmentReference,
+    MemorySyncStatus, MessageMode, ModelRuntimeDescriptor, ModelStepCompletion,
+    ProviderContextItem, ToolExecutionStatus,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,7 @@ pub struct CreateLocalAgentRunRequest {
     pub causation_id: String,
     pub deadline_at: Option<DateTime<Utc>>,
     pub initial_message: Option<InitialRunMessage>,
+    pub initial_attachments: Vec<LocalAttachmentReference>,
     pub now: DateTime<Utc>,
 }
 
@@ -228,6 +230,14 @@ async fn create_run_in_transaction(
             request.now,
         )
         .await?;
+        persist_initial_run_attachments(
+            repositories,
+            &existing_run,
+            &request.initial_attachments,
+            &request.origin_device_id,
+            request.now,
+        )
+        .await?;
         return Ok(CreatedLocalAgentRun {
             run_record: existing_run,
             start_event,
@@ -316,6 +326,14 @@ async fn create_run_in_transaction(
         repositories,
         &run_record,
         request.initial_message,
+        &run_record.metadata.origin_device_id,
+        request.now,
+    )
+    .await?;
+    persist_initial_run_attachments(
+        repositories,
+        &run_record,
+        &request.initial_attachments,
         &run_record.metadata.origin_device_id,
         request.now,
     )
@@ -491,6 +509,86 @@ fn validate_create_run_request(request: &CreateLocalAgentRunRequest) -> StorageR
                 reason: "initial Run message must contain content or structured payload"
                     .to_string(),
             });
+        }
+    }
+    if !request.initial_attachments.is_empty() && request.initial_message.is_none() {
+        return Err(StorageError::InvalidData {
+            reason: "initial Run attachments require an initial semantic message".to_string(),
+        });
+    }
+    for attachment in &request.initial_attachments {
+        attachment
+            .validate()
+            .map_err(|error| StorageError::InvalidData {
+                reason: format!("initial Run attachment is invalid: {error}"),
+            })?;
+    }
+    Ok(())
+}
+
+async fn persist_initial_run_attachments(
+    repositories: &mut dyn TransactionRepositories,
+    run_record: &AgentRunStateRecord,
+    attachments: &[LocalAttachmentReference],
+    origin_device_id: &str,
+    now: DateTime<Utc>,
+) -> StorageResult<()> {
+    for attachment in attachments {
+        let record_id = stable_digest_id(
+            "run-attachment",
+            &[
+                run_record.run.run_id.as_str(),
+                attachment.attachment_id.as_str(),
+            ],
+        );
+        let requested = MediaStateRecord {
+            metadata: RecordMetadata {
+                id: record_id.clone(),
+                scope: run_record.metadata.scope.clone(),
+                origin_device_id: origin_device_id.to_string(),
+                revision: 0,
+                created_at: now,
+                updated_at: now,
+            },
+            project_id: run_record.run.project_id.clone(),
+            media_kind: "local_agent_attachment".to_string(),
+            state: json!({
+                "schema_version": 1,
+                "run_id": run_record.run.run_id,
+                "thread_id": run_record.run.owner_entity_id,
+                "attachment_id": attachment.attachment_id,
+                "media_type": attachment.media_type,
+                "payload_reference": attachment.payload_reference,
+                "payload_digest": attachment.payload_digest,
+                "byte_size": attachment.byte_size,
+            }),
+        };
+        let existing = repositories
+            .media()
+            .get(&RecordQuery {
+                scope: run_record.metadata.scope.clone(),
+                id: record_id,
+            })
+            .await?;
+        match existing {
+            Some(existing)
+                if existing.project_id == requested.project_id
+                    && existing.media_kind == requested.media_kind
+                    && existing.state == requested.state => {}
+            Some(existing) => {
+                return Err(StorageError::Conflict {
+                    actual_revision: existing.metadata.revision,
+                });
+            }
+            None => {
+                repositories
+                    .media()
+                    .put(PutRecord {
+                        record: requested,
+                        expected_revision: None,
+                    })
+                    .await?;
+            }
         }
     }
     Ok(())

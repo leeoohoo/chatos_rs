@@ -183,6 +183,7 @@ fn create_run_request(now: chrono::DateTime<Utc>) -> CreateLocalAgentRunRequest 
         causation_id: "turn-created-1".to_string(),
         deadline_at: None,
         initial_message: None,
+        initial_attachments: Vec::new(),
         now,
     }
 }
@@ -231,6 +232,7 @@ fn create_task_request(now: chrono::DateTime<Utc>) -> CreateLocalAgentTaskReques
                 })),
                 message_source: "task_creation".to_string(),
             }),
+            initial_attachments: Vec::new(),
             now,
         },
         task_id: "task-1".to_string(),

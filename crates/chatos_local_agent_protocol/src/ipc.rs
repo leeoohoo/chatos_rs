@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chrono::{DateTime, Utc};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -60,7 +60,7 @@ fn validate_protocol_version(protocol_version: u32) -> Result<(), ProtocolError>
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum LocalAgentCommand {
-    CreateMainChatTurn(CreateMainChatTurnCommand),
+    CreateMainChatTurn(Box<CreateMainChatTurnCommand>),
     CreateTask(Box<CreateTaskCommand>),
     PauseRun { run_id: String },
     ResumeRun { run_id: String },
@@ -119,8 +119,9 @@ pub struct CreateMainChatTurnCommand {
     pub message_id: String,
     pub project_id: Option<String>,
     pub model_config_id: String,
-    pub prompt_revision: String,
-    pub capability_snapshot_ref: String,
+    pub prompt_snapshot: FrozenSnapshot,
+    pub capability_snapshot: FrozenSnapshot,
+    pub project_snapshot: Option<FrozenSnapshot>,
     pub content: Option<String>,
     pub attachments: Vec<LocalAttachmentReference>,
 }
@@ -132,11 +133,6 @@ impl CreateMainChatTurnCommand {
             ("turn_id", self.turn_id.as_str()),
             ("message_id", self.message_id.as_str()),
             ("model_config_id", self.model_config_id.as_str()),
-            ("prompt_revision", self.prompt_revision.as_str()),
-            (
-                "capability_snapshot_ref",
-                self.capability_snapshot_ref.as_str(),
-            ),
         ] {
             require_identifier(field, value)?;
         }
@@ -148,8 +144,25 @@ impl CreateMainChatTurnCommand {
                 reason: "main chat turn requires content or an attachment",
             });
         }
+        let mut attachment_ids = BTreeSet::new();
         for attachment in &self.attachments {
             attachment.validate()?;
+            if !attachment_ids.insert(attachment.attachment_id.as_str()) {
+                return Err(ProtocolError::InvalidState {
+                    reason: "main chat attachment IDs must be unique",
+                });
+            }
+        }
+        self.prompt_snapshot.validate("prompt_snapshot")?;
+        self.capability_snapshot.validate("capability_snapshot")?;
+        match (&self.project_id, &self.project_snapshot) {
+            (Some(_), Some(snapshot)) => snapshot.validate("project_snapshot")?,
+            (None, None) => {}
+            _ => {
+                return Err(ProtocolError::InvalidState {
+                    reason: "main chat project_id and project_snapshot must be supplied together",
+                });
+            }
         }
         Ok(())
     }
@@ -166,11 +179,22 @@ pub struct LocalAttachmentReference {
 }
 
 impl LocalAttachmentReference {
-    fn validate(&self) -> Result<(), ProtocolError> {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
         require_identifier("attachment_id", &self.attachment_id)?;
         require_identifier("media_type", &self.media_type)?;
         require_identifier("payload_reference", &self.payload_reference)?;
         require_digest("payload_digest", &self.payload_digest)?;
+        if self.payload_reference.starts_with('/')
+            || self.payload_reference.starts_with("file://")
+            || (self.payload_reference.len() >= 3
+                && self.payload_reference.as_bytes()[0].is_ascii_alphabetic()
+                && self.payload_reference.as_bytes()[1] == b':'
+                && matches!(self.payload_reference.as_bytes()[2], b'\\' | b'/'))
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "attachment payload_reference must be an opaque local grant",
+            });
+        }
         if self.byte_size == 0 {
             return Err(ProtocolError::InvalidState {
                 reason: "attachment byte size must be positive",

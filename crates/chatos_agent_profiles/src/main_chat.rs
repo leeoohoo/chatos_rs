@@ -4,8 +4,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chatos_local_agent_protocol::{LocalAgentRun, ModelStepResult};
+use chatos_local_agent_protocol::{FrozenSnapshot, LocalAgentRun, ModelStepResult};
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileStep, ModelGatewayOutput};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::shared::{
@@ -16,13 +17,151 @@ pub const MAIN_CHAT_PROFILE_KEY: &str = "main_chat";
 pub const MAIN_CHAT_ASK_USER_TOOL: &str = "ask_user";
 pub const MAIN_CHAT_CREATE_TASK_TOOL: &str = "create_local_task";
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct MainChatStepContext {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MainChatPromptSnapshot {
+    pub prompt_revision: String,
     pub base_system_prompt: String,
     pub contact_system_prompt: Option<String>,
     pub skill_catalog_prompt: Option<String>,
-    pub project_context_prompt: Option<String>,
-    pub current_goal_prompt: String,
+}
+
+impl MainChatPromptSnapshot {
+    pub fn from_frozen(snapshot: &FrozenSnapshot) -> Result<Self, String> {
+        let decoded: Self = decode_frozen_snapshot(snapshot, "Main Chat prompt snapshot")?;
+        decoded.validate()?;
+        if decoded.prompt_revision != snapshot.revision {
+            return Err(
+                "Main Chat prompt snapshot identity does not match its envelope".to_string(),
+            );
+        }
+        Ok(decoded)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.prompt_revision.trim().is_empty() {
+            return Err("Main Chat prompt revision must not be empty".to_string());
+        }
+        if self.base_system_prompt.trim().is_empty() {
+            return Err("Main Chat base system prompt must not be empty".to_string());
+        }
+        if contains_local_path(&self.base_system_prompt) {
+            return Err("Main Chat base system prompt contains a local path".to_string());
+        }
+        for (field, value) in [
+            (
+                "contact system prompt",
+                self.contact_system_prompt.as_deref(),
+            ),
+            ("skill catalog prompt", self.skill_catalog_prompt.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                return Err(format!("Main Chat {field} must not be empty when supplied"));
+            }
+            if value.is_some_and(contains_local_path) {
+                return Err(format!("Main Chat {field} contains a local path"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MainChatProjectSnapshot {
+    pub project_id: String,
+    pub snapshot_revision: String,
+    pub project_name: String,
+    pub design_context: Value,
+}
+
+impl MainChatProjectSnapshot {
+    pub fn from_frozen(snapshot: &FrozenSnapshot) -> Result<Self, String> {
+        let decoded: Self = decode_frozen_snapshot(snapshot, "Main Chat project snapshot")?;
+        decoded.validate()?;
+        if decoded.snapshot_revision != snapshot.revision {
+            return Err(
+                "Main Chat project snapshot identity does not match its envelope".to_string(),
+            );
+        }
+        Ok(decoded)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, value) in [
+            ("project ID", self.project_id.as_str()),
+            ("project snapshot revision", self.snapshot_revision.as_str()),
+            ("project name", self.project_name.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("Main Chat {field} must not be empty"));
+            }
+        }
+        if !self.design_context.is_object() {
+            return Err("Main Chat design context must be an object".to_string());
+        }
+        validate_safe_project_context(&self.design_context)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MainChatCapabilitySnapshot {
+    pub snapshot_ref: String,
+    pub allowed_tools: Vec<String>,
+}
+
+impl MainChatCapabilitySnapshot {
+    pub fn from_frozen(snapshot: &FrozenSnapshot) -> Result<Self, String> {
+        let decoded: Self = decode_frozen_snapshot(snapshot, "Main Chat capability snapshot")?;
+        decoded.validate()?;
+        if decoded.snapshot_ref != snapshot.snapshot_id {
+            return Err(
+                "Main Chat capability snapshot identity does not match its envelope".to_string(),
+            );
+        }
+        Ok(decoded)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.snapshot_ref.trim().is_empty() {
+            return Err("Main Chat capability snapshot reference must not be empty".to_string());
+        }
+        let mut tools = self
+            .allowed_tools
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        tools.sort_unstable();
+        tools.dedup();
+        let mut expected = vec![MAIN_CHAT_ASK_USER_TOOL, MAIN_CHAT_CREATE_TASK_TOOL];
+        expected.sort_unstable();
+        if tools != expected || self.allowed_tools.len() != expected.len() {
+            return Err(
+                "Main Chat capabilities must contain only ask_user and create_local_task"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
+fn decode_frozen_snapshot<T: serde::de::DeserializeOwned>(
+    snapshot: &FrozenSnapshot,
+    label: &str,
+) -> Result<T, String> {
+    snapshot
+        .validate("main_chat_snapshot")
+        .map_err(|error| format!("{label} failed integrity validation: {error}"))?;
+    serde_json::from_value(snapshot.payload.clone())
+        .map_err(|error| format!("{label} payload is invalid: {error}"))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MainChatStepContext {
+    pub prompt_snapshot: MainChatPromptSnapshot,
+    pub capability_snapshot: MainChatCapabilitySnapshot,
+    pub project_snapshot: Option<MainChatProjectSnapshot>,
     pub model_input_items: Vec<Value>,
     pub maximum_output_tokens: u32,
     pub native_compaction_threshold: Option<u64>,
@@ -62,16 +201,20 @@ impl LocalAgentProfile for MainChatAgentProfile {
             context.memory_engine_active_threshold,
             context.maximum_summary_attempts,
         )?;
-        let mut sections = vec![context.base_system_prompt, main_chat_boundary_prompt()];
+        validate_main_chat_context(run, &context)?;
+        let mut sections = vec![
+            context.prompt_snapshot.base_system_prompt,
+            main_chat_boundary_prompt(),
+        ];
         sections.extend(
             [
-                context.contact_system_prompt,
-                context.skill_catalog_prompt,
-                context.project_context_prompt,
-                Some(format!(
-                    "Current user goal:\n{}",
-                    context.current_goal_prompt
-                )),
+                context.prompt_snapshot.contact_system_prompt,
+                context.prompt_snapshot.skill_catalog_prompt,
+                context
+                    .project_snapshot
+                    .as_ref()
+                    .map(project_context_prompt)
+                    .transpose()?,
             ]
             .into_iter()
             .flatten()
@@ -101,6 +244,86 @@ impl LocalAgentProfile for MainChatAgentProfile {
             output,
         )
     }
+}
+
+fn validate_main_chat_context(
+    run: &LocalAgentRun,
+    context: &MainChatStepContext,
+) -> Result<(), String> {
+    context.prompt_snapshot.validate()?;
+    context.capability_snapshot.validate()?;
+    if context.prompt_snapshot.prompt_revision != run.prompt_revision {
+        return Err("Main Chat prompt snapshot does not match the frozen Run".to_string());
+    }
+    if context.capability_snapshot.snapshot_ref != run.capability_snapshot_ref {
+        return Err("Main Chat capability snapshot does not match the frozen Run".to_string());
+    }
+    match (run.project_id.as_deref(), context.project_snapshot.as_ref()) {
+        (None, None) => Ok(()),
+        (Some(project_id), Some(snapshot)) if snapshot.project_id == project_id => {
+            snapshot.validate()
+        }
+        _ => Err("Main Chat project snapshot does not match the frozen Run".to_string()),
+    }
+}
+
+fn project_context_prompt(snapshot: &MainChatProjectSnapshot) -> Result<String, String> {
+    serde_json::to_string(&json!({
+        "project_id": snapshot.project_id,
+        "snapshot_revision": snapshot.snapshot_revision,
+        "project_name": snapshot.project_name,
+        "design_context": snapshot.design_context,
+    }))
+    .map(|context| format!("Frozen project design context:\n{context}"))
+    .map_err(|error| format!("failed to serialize Main Chat project context: {error}"))
+}
+
+fn validate_safe_project_context(value: &Value) -> Result<(), String> {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                validate_safe_project_context(value)?;
+            }
+        }
+        Value::Object(values) => {
+            for (key, value) in values {
+                let normalized = key.to_ascii_lowercase();
+                if normalized.contains("authority")
+                    || normalized.contains("payload_reference")
+                    || normalized.contains("working_directory")
+                    || normalized.contains("root_reference")
+                    || normalized == "path"
+                {
+                    return Err(format!(
+                        "Main Chat project design context contains forbidden field {key}"
+                    ));
+                }
+                validate_safe_project_context(value)?;
+            }
+        }
+        Value::String(value) if looks_like_local_path(value) => {
+            return Err("Main Chat project design context contains a local path".to_string());
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn looks_like_local_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    contains_local_path(trimmed)
+}
+
+fn contains_local_path(value: &str) -> bool {
+    value.contains("file://")
+        || value.contains("/Users/")
+        || value.contains("/Volumes/")
+        || value.contains("/home/")
+        || value.as_bytes().windows(3).any(|window| {
+            window[0].is_ascii_alphabetic()
+                && window[1] == b':'
+                && matches!(window[2], b'\\' | b'/')
+        })
 }
 
 fn interpret_main_chat_output(

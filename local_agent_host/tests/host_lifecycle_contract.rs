@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chatos_agent_profiles::{
-    MainChatAgentProfile, MainChatContextProvider, MainChatStepContext,
+    MainChatAgentProfile, MainChatCapabilitySnapshot, MainChatContextProvider,
+    MainChatProjectSnapshot, MainChatPromptSnapshot, MainChatStepContext,
     TaskRunnerCapabilitySnapshot, TaskRunnerContextProvider, TaskRunnerExecutionTool,
     TaskRunnerProjectSnapshot, TaskRunnerPromptSnapshot,
 };
@@ -170,13 +171,27 @@ impl LocalTaskCreationPlanner for RecordingTaskPlanner {
 
 #[async_trait]
 impl MainChatContextProvider for MainChatTestContext {
-    async fn load_step_context(&self, _run: &LocalAgentRun) -> Result<MainChatStepContext, String> {
+    async fn load_step_context(&self, run: &LocalAgentRun) -> Result<MainChatStepContext, String> {
         Ok(MainChatStepContext {
-            base_system_prompt: "Design collaboratively.".to_string(),
-            contact_system_prompt: None,
-            skill_catalog_prompt: None,
-            project_context_prompt: None,
-            current_goal_prompt: "Implement the approved visual direction.".to_string(),
+            prompt_snapshot: MainChatPromptSnapshot {
+                prompt_revision: run.prompt_revision.clone(),
+                base_system_prompt: "Design collaboratively.".to_string(),
+                contact_system_prompt: None,
+                skill_catalog_prompt: None,
+            },
+            capability_snapshot: MainChatCapabilitySnapshot {
+                snapshot_ref: run.capability_snapshot_ref.clone(),
+                allowed_tools: vec!["ask_user".to_string(), "create_local_task".to_string()],
+            },
+            project_snapshot: run
+                .project_id
+                .as_ref()
+                .map(|project_id| MainChatProjectSnapshot {
+                    project_id: project_id.clone(),
+                    snapshot_revision: "project-revision-1".to_string(),
+                    project_name: "Visual Project".to_string(),
+                    design_context: serde_json::json!({"surface": "website"}),
+                }),
             model_input_items: Vec::new(),
             maximum_output_tokens: 32_000,
             native_compaction_threshold: Some(300_000),
@@ -661,6 +676,44 @@ fn snapshot(id: &str, revision: &str, fill: char) -> FrozenSnapshot {
         serde_json::json!({"fixture": fill.to_string()}),
     )
     .unwrap()
+}
+
+fn main_chat_snapshots(project_id: &str) -> (FrozenSnapshot, FrozenSnapshot, FrozenSnapshot) {
+    let prompt = FrozenSnapshot::new(
+        "main-prompt-snapshot-1",
+        "main-prompt-1",
+        serde_json::to_value(MainChatPromptSnapshot {
+            prompt_revision: "main-prompt-1".to_string(),
+            base_system_prompt: "Design collaboratively.".to_string(),
+            contact_system_prompt: None,
+            skill_catalog_prompt: Some("Use visual design skills step by step.".to_string()),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let capability = FrozenSnapshot::new(
+        "main-capabilities-1",
+        "main-capabilities-revision-1",
+        serde_json::to_value(MainChatCapabilitySnapshot {
+            snapshot_ref: "main-capabilities-1".to_string(),
+            allowed_tools: vec!["ask_user".to_string(), "create_local_task".to_string()],
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let project = FrozenSnapshot::new(
+        "main-project-snapshot-1",
+        "project-revision-1",
+        serde_json::to_value(MainChatProjectSnapshot {
+            project_id: project_id.to_string(),
+            snapshot_revision: "project-revision-1".to_string(),
+            project_name: "Visual Project".to_string(),
+            design_context: serde_json::json!({"surface": "website"}),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    (prompt, capability, project)
 }
 
 fn task_runner_snapshots() -> (FrozenSnapshot, FrozenSnapshot, FrozenSnapshot) {
@@ -1589,21 +1642,24 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
     ));
     let server = LocalAgentIpcServer::new(storage.clone(), scope(), executor).unwrap();
 
+    let (main_prompt_snapshot, main_capability_snapshot, main_project_snapshot) =
+        main_chat_snapshots("project-1");
     let main_request = LocalAgentIpcRequest {
         protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
         request_id: "ipc-main-1".to_string(),
         owner_user_id: "user-1".to_string(),
-        command: LocalAgentCommand::CreateMainChatTurn(CreateMainChatTurnCommand {
+        command: LocalAgentCommand::CreateMainChatTurn(Box::new(CreateMainChatTurnCommand {
             thread_id: "thread-created-1".to_string(),
             turn_id: "turn-created-1".to_string(),
             message_id: "message-created-1".to_string(),
             project_id: Some("project-1".to_string()),
             model_config_id: "model-main".to_string(),
-            prompt_revision: "main-prompt-1".to_string(),
-            capability_snapshot_ref: "main-capabilities-1".to_string(),
+            prompt_snapshot: main_prompt_snapshot,
+            capability_snapshot: main_capability_snapshot,
+            project_snapshot: Some(main_project_snapshot),
             content: Some("Review this visual and improve the page hierarchy".to_string()),
             attachments: Vec::new(),
-        }),
+        })),
     };
     let first_main = server.handle_request(main_request.clone()).await.response;
     let repeated_main = server.handle_request(main_request).await.response;
@@ -1717,6 +1773,8 @@ async fn main_chat_model_tool_creates_one_frozen_local_task_end_to_end() {
     .await
     .unwrap();
     let session = execution_session();
+    let (main_prompt_snapshot, main_capability_snapshot, main_project_snapshot) =
+        main_chat_snapshots("project-visual-1");
     let created_main = host
         .create_main_chat_turn(
             "create-main-request-1",
@@ -1726,8 +1784,9 @@ async fn main_chat_model_tool_creates_one_frozen_local_task_end_to_end() {
                 message_id: "message-ai-task-1".to_string(),
                 project_id: Some("project-visual-1".to_string()),
                 model_config_id: "model-main-1".to_string(),
-                prompt_revision: "main-prompt-1".to_string(),
-                capability_snapshot_ref: "main-capabilities-1".to_string(),
+                prompt_snapshot: main_prompt_snapshot,
+                capability_snapshot: main_capability_snapshot,
+                project_snapshot: Some(main_project_snapshot),
                 content: Some("Implement the approved visual direction".to_string()),
                 attachments: Vec::new(),
             },
@@ -1948,6 +2007,7 @@ async fn host_creates_and_schedules_a_durable_run_start() {
         causation_id: "created-turn-1".to_string(),
         deadline_at: None,
         initial_message: None,
+        initial_attachments: Vec::new(),
     };
     let created = host.create_run(request.clone(), now).await.unwrap();
     let repeated = host

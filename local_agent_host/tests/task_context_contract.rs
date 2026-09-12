@@ -212,6 +212,7 @@ async fn provider_rebuilds_task_runner_context_only_from_frozen_task_state_and_r
                     structured_payload: Some(serde_json::json!({"type": "task_objective"})),
                     message_source: "task_creation".to_string(),
                 }),
+                initial_attachments: Vec::new(),
                 now,
             },
             task_id: "task-1".to_string(),
