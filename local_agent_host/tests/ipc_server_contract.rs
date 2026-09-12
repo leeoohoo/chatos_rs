@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use chatos_client_storage::{
     AgentMessageStateRecord, AgentRunStateRecord, AppendAgentUiEvent, ClientStorage, PutRecord,
     RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
+    StorageEncryptionKey, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
 };
 use chatos_local_agent_host::{
     LocalAgentIpcMutationExecutor, LocalAgentIpcServer, LocalAgentIpcServerError,
@@ -77,20 +77,76 @@ impl StorageTransaction for Seed {
         &mut self,
         repositories: &mut dyn TransactionRepositories,
     ) -> StorageResult<()> {
-        let run = run();
+        let main_run = run();
         repositories
             .agent_runs()
             .put(PutRecord {
                 record: AgentRunStateRecord {
                     metadata: RecordMetadata {
-                        id: run.run_id.clone(),
+                        id: main_run.run_id.clone(),
                         scope: scope(),
                         origin_device_id: "device-1".to_string(),
                         revision: 0,
-                        created_at: run.created_at,
-                        updated_at: run.updated_at,
+                        created_at: main_run.created_at,
+                        updated_at: main_run.updated_at,
                     },
-                    run,
+                    run: main_run,
+                },
+                expected_revision: None,
+            })
+            .await?;
+        let mut task_run = run();
+        task_run.run_id = "task-run-1".to_string();
+        task_run.profile_key = "task_runner".to_string();
+        task_run.owner_entity_type = "task".to_string();
+        task_run.owner_entity_id = "task-1".to_string();
+        task_run.project_id = Some("project-1".to_string());
+        task_run.model_config_id = "task-model-1".to_string();
+        task_run.model_runtime_snapshot.model_config_id = "task-model-1".to_string();
+        repositories
+            .agent_runs()
+            .put(PutRecord {
+                record: AgentRunStateRecord {
+                    metadata: RecordMetadata {
+                        id: task_run.run_id.clone(),
+                        scope: scope(),
+                        origin_device_id: "device-1".to_string(),
+                        revision: 0,
+                        created_at: task_run.created_at,
+                        updated_at: task_run.updated_at,
+                    },
+                    run: task_run.clone(),
+                },
+                expected_revision: None,
+            })
+            .await?;
+        repositories
+            .tasks()
+            .put(PutRecord {
+                record: TaskRecord {
+                    metadata: RecordMetadata {
+                        id: "task-1".to_string(),
+                        scope: scope(),
+                        origin_device_id: "device-1".to_string(),
+                        revision: 3,
+                        created_at: task_run.created_at,
+                        updated_at: task_run.updated_at,
+                    },
+                    conversation_id: Some("thread-1".to_string()),
+                    status: "queued".to_string(),
+                    state: serde_json::json!({
+                        "source_thread_id": "thread-1",
+                        "source_turn_id": "turn-1",
+                        "project_id": "project-1",
+                        "run_id": "task-run-1",
+                        "objective": "Implement the approved visual design",
+                        "acceptance_criteria": [
+                            "The rendered UI matches the approved reference",
+                            "The visual verification succeeds"
+                        ],
+                        "model_config_id": "task-model-1",
+                        "model_config_revision": 1
+                    }),
                 },
                 expected_revision: None,
             })
@@ -292,6 +348,45 @@ async fn main_chat_binding_and_ui_cursor_are_storage_backed() {
         impossible.response,
         LocalAgentIpcResponse::Error(_)
     ));
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn task_queries_restore_the_frozen_owner_scoped_task_identity() {
+    let (_directory, _storage, executor, server) = server().await;
+    let reply = server
+        .handle_request(request(
+            "request-task",
+            LocalAgentCommand::GetTask {
+                task_id: "task-1".to_string(),
+            },
+        ))
+        .await;
+    let LocalAgentIpcResponse::Task(task) = reply.response else {
+        panic!("GetTask must return the owner-scoped Task");
+    };
+    assert_eq!(task.task_id, "task-1");
+    assert_eq!(task.revision, 1);
+    assert_eq!(task.run_id, "task-run-1");
+    assert_eq!(task.source_thread_id, "thread-1");
+    assert_eq!(task.source_turn_id, "turn-1");
+    assert_eq!(task.project_id, "project-1");
+    assert_eq!(task.acceptance_criteria.len(), 2);
+
+    let reply = server
+        .handle_request(request(
+            "request-tasks",
+            LocalAgentCommand::ListTasks {
+                cursor: None,
+                limit: 10,
+            },
+        ))
+        .await;
+    let LocalAgentIpcResponse::Tasks { tasks, next_cursor } = reply.response else {
+        panic!("ListTasks must return durable Task snapshots");
+    };
+    assert_eq!(tasks.as_slice(), [task.as_ref().clone()]);
+    assert!(next_cursor.is_none());
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 

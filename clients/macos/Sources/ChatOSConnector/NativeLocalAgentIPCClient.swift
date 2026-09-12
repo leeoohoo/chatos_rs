@@ -313,6 +313,12 @@ public actor NativeLocalAgentIPCClient {
         return run
     }
 
+    public func task(id: String) async throws -> LocalAgentTaskSnapshot {
+        let response = try await send(.getTask(taskID: id))
+        guard case let .task(task) = response else { throw unexpected("task", response) }
+        return task
+    }
+
     public func mainChatRunBinding(
         runID: String
     ) async throws -> LocalAgentMainChatRunBinding {
@@ -331,6 +337,16 @@ public actor NativeLocalAgentIPCClient {
             throw unexpected("runs", response)
         }
         return (runs, nextCursor)
+    }
+
+    public func tasks(cursor: String? = nil, limit: UInt32 = 100) async throws -> (
+        tasks: [LocalAgentTaskSnapshot], nextCursor: String?
+    ) {
+        let response = try await send(.listTasks(cursor: cursor, limit: limit))
+        guard case let .tasks(tasks, nextCursor) = response else {
+            throw unexpected("tasks", response)
+        }
+        return (tasks, nextCursor)
     }
 
     public func events(after sequence: UInt64, limit: UInt32 = 200) async throws -> (
@@ -374,8 +390,10 @@ private extension LocalAgentResponse {
         case .accepted: "accepted"
         case .runCreated: "run_created"
         case .run: "run"
+        case .task: "task"
         case .mainChatRunBinding: "main_chat_run_binding"
         case .runs: "runs"
+        case .tasks: "tasks"
         case .events: "events"
         case .uiEventCursor: "ui_event_cursor"
         case .storageProfile: "storage_profile"

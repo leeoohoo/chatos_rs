@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 9
+public let localAgentProtocolVersion: UInt32 = 10
 
 public enum LocalAgentJSONValue: Codable, Equatable, Sendable {
     case null
@@ -188,8 +188,10 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case answerUserQuestion(runID: String, interactionID: String, answer: LocalAgentUserAnswer)
     case decideToolApproval(invocationID: String, decision: LocalAgentToolApprovalDecision, reason: String?)
     case getRun(runID: String)
+    case getTask(taskID: String)
     case getMainChatRunBinding(runID: String)
     case listRuns(cursor: String?, limit: UInt32)
+    case listTasks(cursor: String?, limit: UInt32)
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -210,6 +212,7 @@ public enum LocalAgentCommand: Equatable, Sendable {
 extension LocalAgentCommand: Encodable {
     private enum CodingKeys: String, CodingKey { case type, payload }
     private struct RunPayload: Encodable { let runID: String }
+    private struct TaskPayload: Encodable { let taskID: String }
     private struct ListPayload: Encodable {
         let cursor: String?
         let limit: UInt32
@@ -278,10 +281,16 @@ extension LocalAgentCommand: Encodable {
             try container.encode(ApprovalPayload(invocationID: invocationID, decision: decision, reason: reason), forKey: .payload)
         case let .getRun(runID):
             try encodeRun("get_run", runID, into: &container)
+        case let .getTask(taskID):
+            try container.encode("get_task", forKey: .type)
+            try container.encode(TaskPayload(taskID: taskID), forKey: .payload)
         case let .getMainChatRunBinding(runID):
             try encodeRun("get_main_chat_run_binding", runID, into: &container)
         case let .listRuns(cursor, limit):
             try container.encode("list_runs", forKey: .type)
+            try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
+        case let .listTasks(cursor, limit):
+            try container.encode("list_tasks", forKey: .type)
             try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
         case let .subscribeRunEvents(afterSequence, limit):
             try container.encode("subscribe_run_events", forKey: .type)
@@ -449,6 +458,52 @@ public struct LocalAgentRunSnapshot: Codable, Equatable, Sendable {
         self.pendingInteraction = pendingInteraction
         self.terminalOutcome = terminalOutcome
         self.deadlineAt = deadlineAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct LocalAgentTaskSnapshot: Codable, Equatable, Sendable {
+    public var taskID: String
+    public var revision: UInt64
+    public var sourceThreadID: String
+    public var sourceTurnID: String
+    public var projectID: String
+    public var runID: String
+    public var objective: String
+    public var acceptanceCriteria: [String]
+    public var status: String
+    public var modelConfigID: String
+    public var modelConfigRevision: UInt64
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        taskID: String,
+        revision: UInt64,
+        sourceThreadID: String,
+        sourceTurnID: String,
+        projectID: String,
+        runID: String,
+        objective: String,
+        acceptanceCriteria: [String],
+        status: String,
+        modelConfigID: String,
+        modelConfigRevision: UInt64,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.taskID = taskID
+        self.revision = revision
+        self.sourceThreadID = sourceThreadID
+        self.sourceTurnID = sourceTurnID
+        self.projectID = projectID
+        self.runID = runID
+        self.objective = objective
+        self.acceptanceCriteria = acceptanceCriteria
+        self.status = status
+        self.modelConfigID = modelConfigID
+        self.modelConfigRevision = modelConfigRevision
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -783,8 +838,10 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case accepted(operationID: String)
     case runCreated(operationID: String, run: LocalAgentRunSnapshot)
     case run(LocalAgentRunSnapshot)
+    case task(LocalAgentTaskSnapshot)
     case mainChatRunBinding(LocalAgentMainChatRunBinding)
     case runs([LocalAgentRunSnapshot], nextCursor: String?)
+    case tasks([LocalAgentTaskSnapshot], nextCursor: String?)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -805,6 +862,10 @@ extension LocalAgentResponse: Decodable {
         let runs: [LocalAgentRunSnapshot]
         let nextCursor: String?
     }
+    private struct Tasks: Decodable {
+        let tasks: [LocalAgentTaskSnapshot]
+        let nextCursor: String?
+    }
     private struct Events: Decodable {
         let events: [LocalAgentUIEvent]
         let nextSeq: UInt64
@@ -821,6 +882,7 @@ extension LocalAgentResponse: Decodable {
             let value = try container.decode(RunCreated.self, forKey: .payload)
             self = .runCreated(operationID: value.operationID, run: value.run)
         case "run": self = .run(try container.decode(LocalAgentRunSnapshot.self, forKey: .payload))
+        case "task": self = .task(try container.decode(LocalAgentTaskSnapshot.self, forKey: .payload))
         case "main_chat_run_binding":
             self = .mainChatRunBinding(
                 try container.decode(LocalAgentMainChatRunBinding.self, forKey: .payload)
@@ -828,6 +890,9 @@ extension LocalAgentResponse: Decodable {
         case "runs":
             let value = try container.decode(Runs.self, forKey: .payload)
             self = .runs(value.runs, nextCursor: value.nextCursor)
+        case "tasks":
+            let value = try container.decode(Tasks.self, forKey: .payload)
+            self = .tasks(value.tasks, nextCursor: value.nextCursor)
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)

@@ -71,6 +71,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var localAgentHostError: String?
 
     let historyStore: ConversationHistoryStore
+    let localAgentTaskStateStore: LocalAgentTaskStateStore
     let authentication: AuthenticationViewModel
     let localConnectorControl: LocalConnectorControlCenterViewModel
     let mediaStudio: MediaStudioViewModel
@@ -152,6 +153,7 @@ final class AppModel: ObservableObject {
         )
         let conversationService = ChatOSConversationService(client: apiClient)
         let historyStore = ConversationHistoryStore()
+        let localAgentTaskStateStore = LocalAgentTaskStateStore()
         let connectorTicketProvider = ChatOSLocalConnectorPairingTicketProvider(client: apiClient)
         let remoteConnectionService = NativeRemoteConnectionService(
             upstream: ChatOSRemoteConnectionService(client: apiClient),
@@ -195,6 +197,7 @@ final class AppModel: ObservableObject {
         )
 
         self.historyStore = historyStore
+        self.localAgentTaskStateStore = localAgentTaskStateStore
         self.apiClient = apiClient
         self.authentication = AuthenticationViewModel(service: authenticationService)
         self.localConnectorControl = LocalConnectorControlCenterViewModel(
@@ -900,6 +903,7 @@ final class AppModel: ObservableObject {
                     await hub.stop()
                 }
                 await accountSession.logout()
+                try? await self?.localAgentTaskStateStore.restoreLocalAgentTasks([], runs: [])
                 guard let self, workspaceAccountGeneration == localAgentGeneration else { return }
                 localAgentHostState = .stopped
             }
@@ -965,7 +969,15 @@ final class AppModel: ObservableObject {
                     }
                 )
                 let client = try await accountSession.client(accountID: accountID)
-                let eventHub = NativeLocalAgentEventHub(client: client, sink: historyStore)
+                let taskEventSink = NativeLocalAgentTaskEventSink(
+                    client: client,
+                    store: localAgentTaskStateStore
+                )
+                try await taskEventSink.restore()
+                let compositeSink = NativeLocalAgentCompositeEventSink(
+                    sinks: [historyStore, taskEventSink]
+                )
+                let eventHub = NativeLocalAgentEventHub(client: client, sink: compositeSink)
                 await eventHub.start()
                 let state = await accountSession.state()
                 guard authenticatedUserID == accountID,
@@ -1406,7 +1418,8 @@ final class AppModel: ObservableObject {
             messageTaskGraphService: messageTaskGraphService,
             runtimeSettingsService: runtimeSettingsService,
             askUserPromptService: askUserPromptService,
-            localAgentRunControlService: localAgentRunControlService
+            localAgentRunControlService: localAgentRunControlService,
+            localAgentTaskStateStore: localAgentTaskStateStore
         )
         conversationCache[sessionID] = created
         return created

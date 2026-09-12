@@ -7,11 +7,12 @@ use async_trait::async_trait;
 use chatos_client_storage::{
     AgentUiEventCursorQuery, ClientSettingRecord, ClientStorage, ListQuery, PutRecord,
     RecordMetadata, RecordQuery, RecordScope, StorageError, StorageResult, StorageTransaction,
-    TransactionRepositories,
+    TaskRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
     AgentMessageRole, LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply,
-    LocalAgentIpcRequest, LocalAgentIpcResponse, MainChatRunBinding, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentTaskSnapshot, MainChatRunBinding,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chrono::Utc;
 use serde::Deserialize;
@@ -178,6 +179,40 @@ impl LocalAgentIpcServer {
                         })
                     })
             }
+            LocalAgentCommand::GetTask { task_id } => {
+                let mut operation = GetTaskOperation {
+                    scope: self.scope.clone(),
+                    task_id,
+                    response: None,
+                };
+                self.storage.transaction(&mut operation).await.map(|()| {
+                    operation
+                        .response
+                        .unwrap_or(LocalAgentIpcResponse::Error(LocalAgentIpcError {
+                            code: "task_not_found".to_string(),
+                            message: "Local Agent Task was not found".to_string(),
+                            retryable: false,
+                        }))
+                })
+            }
+            LocalAgentCommand::ListTasks { cursor, limit } => {
+                let mut operation = ListTasksOperation {
+                    query: ListQuery {
+                        scope: self.scope.clone(),
+                        cursor,
+                        limit,
+                    },
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| {
+                        operation.response.ok_or(StorageError::Transaction {
+                            reason: "Task list transaction returned no page".to_string(),
+                        })
+                    })
+            }
             LocalAgentCommand::GetMainChatRunBinding { run_id } => {
                 let mut operation = GetMainChatRunBindingOperation {
                     scope: self.scope.clone(),
@@ -271,6 +306,130 @@ impl StorageTransaction for GetRunOperation {
 struct ListRunsOperation {
     query: ListQuery,
     response: Option<LocalAgentIpcResponse>,
+}
+
+struct GetTaskOperation {
+    scope: RecordScope,
+    task_id: String,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetTaskOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.response = repositories
+            .tasks()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: self.task_id.clone(),
+            })
+            .await?
+            .map(task_snapshot)
+            .transpose()?
+            .map(|task| LocalAgentIpcResponse::Task(Box::new(task)));
+        Ok(())
+    }
+}
+
+struct ListTasksOperation {
+    query: ListQuery,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for ListTasksOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let page = repositories.tasks().list(&self.query).await?;
+        let tasks = page
+            .records
+            .into_iter()
+            .map(task_snapshot)
+            .collect::<StorageResult<Vec<_>>>()?;
+        self.response = Some(LocalAgentIpcResponse::Tasks {
+            tasks,
+            next_cursor: page.next_cursor,
+        });
+        Ok(())
+    }
+}
+
+fn task_snapshot(record: TaskRecord) -> StorageResult<LocalAgentTaskSnapshot> {
+    let task_id = record.metadata.id.clone();
+    let string = |field: &'static str| {
+        record
+            .state
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| StorageError::InvalidData {
+                reason: format!("Task {task_id} has no valid {field}"),
+            })
+    };
+    let source_thread_id = string("source_thread_id")?;
+    if record.conversation_id.as_deref() != Some(source_thread_id.as_str()) {
+        return Err(StorageError::InvalidData {
+            reason: format!(
+                "Task {} conversation identity does not match source_thread_id",
+                task_id
+            ),
+        });
+    }
+    let acceptance_criteria = record
+        .state
+        .get("acceptance_criteria")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| StorageError::InvalidData {
+            reason: format!("Task {} has no valid acceptance_criteria", task_id),
+        })?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| StorageError::InvalidData {
+                    reason: format!("Task {} has an invalid acceptance criterion", task_id),
+                })
+        })
+        .collect::<StorageResult<Vec<_>>>()?;
+    let model_config_revision = record
+        .state
+        .get("model_config_revision")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| StorageError::InvalidData {
+            reason: format!("Task {} has no valid model_config_revision", task_id),
+        })?;
+    let source_turn_id = string("source_turn_id")?;
+    let project_id = string("project_id")?;
+    let run_id = string("run_id")?;
+    let objective = string("objective")?;
+    let model_config_id = string("model_config_id")?;
+    let task = LocalAgentTaskSnapshot {
+        task_id,
+        revision: record.metadata.revision,
+        source_thread_id,
+        source_turn_id,
+        project_id,
+        run_id,
+        objective,
+        acceptance_criteria,
+        status: record.status,
+        model_config_id,
+        model_config_revision,
+        created_at: record.metadata.created_at,
+        updated_at: record.metadata.updated_at,
+    };
+    task.validate().map_err(|error| StorageError::InvalidData {
+        reason: format!("Task snapshot is invalid: {error}"),
+    })?;
+    Ok(task)
 }
 
 #[async_trait]

@@ -118,6 +118,30 @@ struct NativeLocalAgentIPCClientTests {
         #expect(created.run.ownerEntityID == "thread-1")
     }
 
+    @Test("restores Task identity and frozen planning input from the Host")
+    func restoresTaskSnapshots() async throws {
+        let transport = RecordingLocalAgentTransport(responseType: "tasks")
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+
+        let page = try await client.tasks(limit: 20)
+
+        let task = try #require(page.tasks.first)
+        #expect(task.taskID == "task-1")
+        #expect(task.runID == "task-run-1")
+        #expect(task.sourceThreadID == "thread-1")
+        #expect(task.sourceTurnID == "turn-1")
+        #expect(task.projectID == "project-1")
+        #expect(task.acceptanceCriteria == ["Match the approved visual", "Pass visual QA"])
+        #expect(page.nextCursor == nil)
+
+        let request = try #require(await transport.lastRequest())
+        let object = try #require(JSONSerialization.jsonObject(with: request) as? [String: Any])
+        let command = try #require(object["command"] as? [String: Any])
+        #expect(command["type"] as? String == "list_tasks")
+        let payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["limit"] as? Int == 20)
+    }
+
     @Test("encodes one project Plugin capability for Host validation")
     func encodesPluginCapabilityMutation() async throws {
         let transport = RecordingLocalAgentTransport(responseType: "success")
@@ -226,6 +250,31 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
             ]
         case "success":
             response = ["type": "success"]
+        case "tasks":
+            response = [
+                "type": "tasks",
+                "payload": [
+                    "tasks": [[
+                        "task_id": "task-1",
+                        "revision": 2,
+                        "source_thread_id": "thread-1",
+                        "source_turn_id": "turn-1",
+                        "project_id": "project-1",
+                        "run_id": "task-run-1",
+                        "objective": "Implement the approved visual design",
+                        "acceptance_criteria": [
+                            "Match the approved visual",
+                            "Pass visual QA",
+                        ],
+                        "status": "running",
+                        "model_config_id": "model-task-1",
+                        "model_config_revision": 4,
+                        "created_at": "2026-09-12T03:00:00Z",
+                        "updated_at": "2026-09-12T03:01:00Z",
+                    ]],
+                    "next_cursor": NSNull(),
+                ],
+            ]
         case "run_created":
             response = [
                 "type": "run_created",

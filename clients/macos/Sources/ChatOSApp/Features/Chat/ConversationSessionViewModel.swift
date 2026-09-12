@@ -42,6 +42,7 @@ final class ConversationSessionViewModel: ObservableObject {
     @Published var askUserPromptErrors: [String: String] = [:]
     @Published var localAgentRunControls: [LocalAgentRunControlState] = []
     @Published var localAgentToolApprovals: [LocalAgentToolApprovalRequest] = []
+    @Published private(set) var localAgentTasks: [LocalAgentTaskState] = []
     @Published var localAgentControlOperationIDs: Set<String> = []
     @Published var localAgentControlErrors: [String: String] = [:]
     @Published private(set) var focusRequest: ConversationFocusRequest?
@@ -55,11 +56,13 @@ final class ConversationSessionViewModel: ObservableObject {
     private let runtimeSettingsService: (any ConversationRuntimeSettingsServicing)?
     let askUserPromptService: (any AskUserPromptServicing)?
     let localAgentRunControlService: (any LocalAgentRunControlServicing)?
+    private let localAgentTaskStateStore: (any LocalAgentTaskStateStoring)?
     private var olderCursor: String?
     private var requestGeneration: Int64 = 0
     private var inFlightOlderCursor: String?
     private var realtimeTask: Task<Void, Never>?
     private var localAgentUpdateTask: Task<Void, Never>?
+    private var localAgentTaskUpdateTask: Task<Void, Never>?
     private var historyRetryTask: Task<Void, Never>?
     private var latestRefreshDebounceTask: Task<Void, Never>?
     private var latestRefreshDebouncePresentation: LatestRefreshPresentation?
@@ -82,7 +85,8 @@ final class ConversationSessionViewModel: ObservableObject {
         messageTaskGraphService: (any MessageTaskGraphServicing)? = nil,
         runtimeSettingsService: (any ConversationRuntimeSettingsServicing)? = nil,
         askUserPromptService: (any AskUserPromptServicing)? = nil,
-        localAgentRunControlService: (any LocalAgentRunControlServicing)? = nil
+        localAgentRunControlService: (any LocalAgentRunControlServicing)? = nil,
+        localAgentTaskStateStore: (any LocalAgentTaskStateStoring)? = nil
     ) {
         self.sessionID = sessionID
         self.turns = initialTurns
@@ -96,6 +100,7 @@ final class ConversationSessionViewModel: ObservableObject {
         self.runtimeSettingsService = runtimeSettingsService
         self.askUserPromptService = askUserPromptService
         self.localAgentRunControlService = localAgentRunControlService
+        self.localAgentTaskStateStore = localAgentTaskStateStore
 
         Task { await bootstrap(initialTurns: initialTurns) }
     }
@@ -103,6 +108,7 @@ final class ConversationSessionViewModel: ObservableObject {
     deinit {
         realtimeTask?.cancel()
         localAgentUpdateTask?.cancel()
+        localAgentTaskUpdateTask?.cancel()
         historyRetryTask?.cancel()
         latestRefreshDebounceTask?.cancel()
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
@@ -118,6 +124,7 @@ final class ConversationSessionViewModel: ObservableObject {
     func activate() {
         refreshLatestSilently()
         startLocalAgentUpdates()
+        startLocalAgentTaskUpdates()
         startRealtime()
     }
 
@@ -135,6 +142,31 @@ final class ConversationSessionViewModel: ObservableObject {
                 await self.refreshLocalAgentControls()
             }
         }
+    }
+
+    private func startLocalAgentTaskUpdates() {
+        guard localAgentTaskUpdateTask == nil, let localAgentTaskStateStore else { return }
+        let sessionID = sessionID
+        localAgentTaskUpdateTask = Task { [weak self] in
+            guard let self else { return }
+            await refreshLocalAgentTasks()
+            let stream = await localAgentTaskStateStore.localAgentTaskUpdates(
+                sessionID: sessionID
+            )
+            for await _ in stream {
+                guard !Task.isCancelled else { return }
+                await self.refreshLocalAgentTasks()
+            }
+        }
+    }
+
+    func tasks(for turnID: String) -> [LocalAgentTaskState] {
+        localAgentTasks.filter { $0.task.sourceTurnID == turnID }
+    }
+
+    private func refreshLocalAgentTasks() async {
+        guard let localAgentTaskStateStore else { return }
+        localAgentTasks = await localAgentTaskStateStore.localAgentTasks(sessionID: sessionID)
     }
 
     func refreshLatestSilently() {

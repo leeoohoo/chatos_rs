@@ -4,6 +4,7 @@ import CoreGraphics
 enum ConversationTimelineItem: Identifiable {
     case user(turn: ConversationTurn, isFirst: Bool)
     case reply(turn: ConversationTurn, reply: ConversationAssistantReply)
+    case task(LocalAgentTaskState)
     case prompt(AskUserPrompt)
     case toolApproval(LocalAgentToolApprovalRequest)
     case runControl(LocalAgentRunControlState)
@@ -20,6 +21,8 @@ enum ConversationTimelineItem: Identifiable {
             "local-agent-tool-approval-\(approval.invocationID)"
         case let .runControl(control):
             "local-agent-run-control-\(control.runID)"
+        case let .task(task):
+            "local-agent-task-\(task.id)"
         }
     }
 
@@ -27,7 +30,7 @@ enum ConversationTimelineItem: Identifiable {
         switch self {
         case let .user(_, isFirst):
             isFirst ? 0 : 22
-        case .reply, .prompt, .toolApproval, .runControl:
+        case .reply, .task, .prompt, .toolApproval, .runControl:
             14
         }
     }
@@ -37,6 +40,7 @@ enum ConversationTimelineItem: Identifiable {
         promptsByTurnID: [String: [AskUserPrompt]],
         toolApprovalsByTurnID: [String: [LocalAgentToolApprovalRequest]],
         runControlsByTurnID: [String: [LocalAgentRunControlState]],
+        tasksByTurnID: [String: [LocalAgentTaskState]],
         unattachedPrompts: [AskUserPrompt]
     ) -> [ConversationTimelineItem] {
         var items: [ConversationTimelineItem] = []
@@ -50,6 +54,9 @@ enum ConversationTimelineItem: Identifiable {
             items.append(.user(turn: turn, isFirst: index == 0))
             for reply in replies(for: turn) {
                 items.append(.reply(turn: turn, reply: reply))
+            }
+            for task in tasksByTurnID[turn.id] ?? [] {
+                items.append(.task(task))
             }
             for prompt in promptsByTurnID[turn.id] ?? [] {
                 items.append(.prompt(prompt))

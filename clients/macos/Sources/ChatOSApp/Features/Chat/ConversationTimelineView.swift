@@ -200,7 +200,10 @@ struct ConversationTimelineView: View {
         let replyID = turn.assistantReplies.last?.id
             ?? turn.finalAssistantMessage?.id
             ?? "none"
-        return "\(turn.id)|\(turn.revision)|\(turn.assistantReplies.count)|\(replyID)"
+        let taskToken = conversation.localAgentTasks.map {
+            "\($0.id):\($0.run.version):\($0.lastAppliedEventSequence)"
+        }.joined(separator: ",")
+        return "\(turn.id)|\(turn.revision)|\(turn.assistantReplies.count)|\(replyID)|\(taskToken)"
     }
 
     private var timelineItems: [ConversationTimelineItem] {
@@ -213,11 +216,15 @@ struct ConversationTimelineView: View {
         let runControlsByTurnID = Dictionary(uniqueKeysWithValues: conversation.turns.map {
             ($0.id, conversation.runControls(for: $0.id))
         })
+        let tasksByTurnID = Dictionary(uniqueKeysWithValues: conversation.turns.map {
+            ($0.id, conversation.tasks(for: $0.id))
+        })
         return ConversationTimelineItem.build(
             turns: conversation.turns,
             promptsByTurnID: promptsByTurnID,
             toolApprovalsByTurnID: toolApprovalsByTurnID,
             runControlsByTurnID: runControlsByTurnID,
+            tasksByTurnID: tasksByTurnID,
             unattachedPrompts: conversation.unattachedPendingPrompts
         )
     }
@@ -281,6 +288,10 @@ struct ConversationTimelineView: View {
                 control: control
             )
             .padding(.leading, 30)
+
+        case let .task(task):
+            LocalAgentTaskCardView(state: task)
+                .padding(.leading, 30)
         }
     }
 

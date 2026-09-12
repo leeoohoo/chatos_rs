@@ -71,8 +71,10 @@ pub enum LocalAgentCommand {
     AnswerUserQuestion(AnswerUserQuestionCommand),
     DecideToolApproval(ToolApprovalCommand),
     GetRun { run_id: String },
+    GetTask { task_id: String },
     GetMainChatRunBinding { run_id: String },
     ListRuns { cursor: Option<String>, limit: u32 },
+    ListTasks { cursor: Option<String>, limit: u32 },
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -95,9 +97,12 @@ impl LocalAgentCommand {
             | Self::CancelRun { run_id }
             | Self::GetRun { run_id }
             | Self::GetMainChatRunBinding { run_id } => require_identifier("run_id", run_id),
+            Self::GetTask { task_id } => require_identifier("task_id", task_id),
             Self::AnswerUserQuestion(command) => command.validate(),
             Self::DecideToolApproval(command) => command.validate(),
-            Self::ListRuns { cursor, limit } => validate_page(cursor.as_deref(), *limit),
+            Self::ListRuns { cursor, limit } | Self::ListTasks { cursor, limit } => {
+                validate_page(cursor.as_deref(), *limit)
+            }
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -401,6 +406,61 @@ pub struct ToolApprovalCommand {
     pub reason: Option<String>,
 }
 
+/// Owner-scoped, user-facing Task aggregate restored by native clients.
+///
+/// The execution state remains authoritative in `LocalAgentRun`; this snapshot
+/// exposes only stable Task identity and frozen planning input. Native clients
+/// join it to its Run by `run_id` and never reconstruct Task identity from UI
+/// events or a remote Task Runner service.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentTaskSnapshot {
+    pub task_id: String,
+    pub revision: u64,
+    pub source_thread_id: String,
+    pub source_turn_id: String,
+    pub project_id: String,
+    pub run_id: String,
+    pub objective: String,
+    pub acceptance_criteria: Vec<String>,
+    pub status: String,
+    pub model_config_id: String,
+    pub model_config_revision: u64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl LocalAgentTaskSnapshot {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        for (field, value) in [
+            ("task_id", self.task_id.as_str()),
+            ("source_thread_id", self.source_thread_id.as_str()),
+            ("source_turn_id", self.source_turn_id.as_str()),
+            ("project_id", self.project_id.as_str()),
+            ("run_id", self.run_id.as_str()),
+            ("model_config_id", self.model_config_id.as_str()),
+        ] {
+            require_identifier(field, value)?;
+        }
+        if self.objective.trim().is_empty() {
+            return Err(ProtocolError::EmptyPayload {
+                field: "task_objective",
+            });
+        }
+        if self.acceptance_criteria.is_empty()
+            || self
+                .acceptance_criteria
+                .iter()
+                .any(|criterion| criterion.trim().is_empty())
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "task acceptance criteria must be non-empty",
+            });
+        }
+        require_identifier("task_status", &self.status)
+    }
+}
+
 impl ToolApprovalCommand {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         require_identifier("invocation_id", &self.invocation_id)?;
@@ -428,9 +488,14 @@ pub enum LocalAgentIpcResponse {
         run: Box<LocalAgentRun>,
     },
     Run(Box<LocalAgentRun>),
+    Task(Box<LocalAgentTaskSnapshot>),
     MainChatRunBinding(MainChatRunBinding),
     Runs {
         runs: Vec<LocalAgentRun>,
+        next_cursor: Option<String>,
+    },
+    Tasks {
+        tasks: Vec<LocalAgentTaskSnapshot>,
         next_cursor: Option<String>,
     },
     Events {
@@ -457,10 +522,20 @@ impl LocalAgentIpcResponse {
                 run.validate()
             }
             Self::Run(run) => run.validate(),
+            Self::Task(task) => task.validate(),
             Self::MainChatRunBinding(binding) => binding.validate(),
             Self::Runs { runs, next_cursor } => {
                 for run in runs {
                     run.validate()?;
+                }
+                if let Some(cursor) = next_cursor {
+                    require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
+            Self::Tasks { tasks, next_cursor } => {
+                for task in tasks {
+                    task.validate()?;
                 }
                 if let Some(cursor) = next_cursor {
                     require_identifier("next_cursor", cursor)?;
