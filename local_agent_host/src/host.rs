@@ -15,33 +15,34 @@ use chatos_client_storage::{
 use chatos_local_agent_protocol::{
     CreateMainChatTurnCommand, CreateTaskCommand, FrozenSnapshot, LocalAgentCommand,
     LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse, ModelRuntimeDescriptor,
-    ModelStepCompletion, ModelStepResult, ProtocolError, ToolApprovalCommand, ToolEffect,
+    ModelStepCompletion, ModelStepResult, ModelStreamDeltaKind, ModelStreamUiEvent, ProtocolError,
+    ToolApprovalCommand, ToolEffect,
 };
 use chatos_local_agent_runtime::{
-    answer_run_interaction, begin_model_step_execution, begin_tool_execution,
-    build_local_tool_invocation, complete_tool_execution, create_local_agent_run,
-    create_local_agent_task, decide_tool_approval, defer_tool_batch_for_approval,
-    inspect_tool_batch, mark_tool_outcome_unknown, prepare_model_step_persistence,
-    prepare_tool_batch, record_model_step_completion, reduce_and_commit, renew_event_claim,
-    request_run_control, scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
-    BeganModelStepExecution, BeginModelStepExecutionRequest, BeginToolExecutionRequest,
-    BeginToolExecutionResult, CommittedReduction, CompleteToolExecutionRequest,
-    CompletedAssistantMessage, CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest,
-    CreatedLocalAgentRun, CreatedLocalAgentTask, DecideToolApprovalRequest,
-    DeferToolBatchForApprovalRequest, DurableModelStepCompletionPayload,
-    DurableProviderContextCommit, DurableScheduler, ExecutedModelStep, InitialRunMessage,
-    LocalToolInvocation, LocalToolOutcome, LocalToolRuntime, MarkToolOutcomeUnknownRequest,
-    ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError, ModelGatewayStreamError,
-    ModelInputTokenGuardError, ModelStepExecutorError, ModelStepPersistenceError,
-    PrepareToolBatchRequest, RecordModelStepCompletionRequest, RecoveryIssue,
-    ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest, RequestRunControl,
-    RunControlAction, SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor,
-    StepEvidence, ToolApprovalDeferralResult,
+    answer_run_interaction, append_model_stream_event, begin_model_step_execution,
+    begin_tool_execution, build_local_tool_invocation, complete_tool_execution,
+    create_local_agent_run, create_local_agent_task, decide_tool_approval,
+    defer_tool_batch_for_approval, inspect_tool_batch, mark_tool_outcome_unknown,
+    prepare_model_step_persistence, prepare_tool_batch, record_model_step_completion,
+    reduce_and_commit, renew_event_claim, request_run_control, scan_recoverable_work,
+    validate_local_tool_outcome, AnswerRunInteraction, BeganModelStepExecution,
+    BeginModelStepExecutionRequest, BeginToolExecutionRequest, BeginToolExecutionResult,
+    CommittedReduction, CompleteToolExecutionRequest, CompletedAssistantMessage,
+    CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest, CreatedLocalAgentRun,
+    CreatedLocalAgentTask, DecideToolApprovalRequest, DeferToolBatchForApprovalRequest,
+    DurableModelStepCompletionPayload, DurableProviderContextCommit, DurableScheduler,
+    ExecutedModelStep, InitialRunMessage, LocalToolInvocation, LocalToolOutcome, LocalToolRuntime,
+    MarkToolOutcomeUnknownRequest, ModelGatewayCallbacks, ModelGatewayClient,
+    ModelGatewayClientError, ModelGatewayStreamError, ModelInputTokenGuardError,
+    ModelStepExecutorError, ModelStepPersistenceError, PrepareToolBatchRequest,
+    RecordModelStepCompletionRequest, RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy,
+    RenewEventClaimRequest, RequestRunControl, RunControlAction, SchedulerTickRequest,
+    SchedulerTickResult, SingleModelStepExecutor, StepEvidence, ToolApprovalDeferralResult,
 };
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{mpsc, Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
@@ -152,6 +153,42 @@ impl LocalAgentExecutionSession {
     pub fn cancel(&self) {
         self.cancellation.cancel();
     }
+}
+
+fn model_stream_callbacks(
+    callbacks: ModelGatewayCallbacks,
+) -> (
+    ModelGatewayCallbacks,
+    mpsc::UnboundedReceiver<(ModelStreamDeltaKind, String)>,
+) {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let content_sender = sender.clone();
+    let reasoning_sender = sender;
+    let upstream_content = callbacks.on_content;
+    let upstream_reasoning = callbacks.on_reasoning;
+    let on_content: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |delta| {
+        if !delta.is_empty() {
+            let _ = content_sender.send((ModelStreamDeltaKind::Content, delta.clone()));
+        }
+        if let Some(callback) = upstream_content.as_ref() {
+            callback(delta);
+        }
+    });
+    let on_reasoning: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |delta| {
+        if !delta.is_empty() {
+            let _ = reasoning_sender.send((ModelStreamDeltaKind::Reasoning, delta.clone()));
+        }
+        if let Some(callback) = upstream_reasoning.as_ref() {
+            callback(delta);
+        }
+    });
+    (
+        ModelGatewayCallbacks {
+            on_content: Some(on_content),
+            on_reasoning: Some(on_reasoning),
+        },
+        receiver,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -749,11 +786,20 @@ impl LocalAgentHost {
         let request_id = request_event.event.event_id.clone();
         let turn_id = request_event.event.correlation_id.clone();
         let claim_token = request_event.event.claim_token.clone().unwrap_or_default();
+        let (callbacks, mut stream_events) = model_stream_callbacks(callbacks);
+        let model_cancellation = cancellation.child_token();
+        let execution_cancellation = model_cancellation.clone();
+        let persistence_cancellation = model_cancellation.clone();
 
         let execution = async {
             let context = self
                 .context_runtime
-                .prepare_model_step_context(self.storage.as_ref(), &self.scope, &run, &cancellation)
+                .prepare_model_step_context(
+                    self.storage.as_ref(),
+                    &self.scope,
+                    &run,
+                    &execution_cancellation,
+                )
                 .await;
             let context = match context {
                 Ok(context) => context,
@@ -775,18 +821,41 @@ impl LocalAgentHost {
                     profile.as_ref(),
                     context,
                     callbacks,
-                    cancellation,
+                    execution_cancellation,
                 )
                 .await
                 .map_err(LocalAgentHostError::ModelStepExecutor)
         };
-        let executed = self
-            .await_model_execution_with_claim_renewal(
+        let persist_stream = async {
+            while let Some((delta_kind, delta)) = stream_events.recv().await {
+                let result = append_model_stream_event(
+                    self.storage.as_ref(),
+                    &self.scope,
+                    &self.device_id,
+                    ModelStreamUiEvent {
+                        run_id: run.run_id.clone(),
+                        step_seq: run.step_seq,
+                        delta_kind,
+                        delta,
+                    },
+                )
+                .await;
+                if let Err(error) = result {
+                    persistence_cancellation.cancel();
+                    return Err(LocalAgentHostError::Storage(error));
+                }
+            }
+            Ok(())
+        };
+        let (executed, stream_result) = tokio::join!(
+            self.await_model_execution_with_claim_renewal(
                 request_event.event.event_id.as_str(),
                 claim_token.as_str(),
                 execution,
-            )
-            .await;
+            ),
+            persist_stream
+        );
+        stream_result?;
         let executed = match executed {
             Ok(executed) => executed,
             Err(error) => match memory_context_block(&run, &error) {

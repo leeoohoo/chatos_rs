@@ -35,3 +35,4 @@ pub use reducer::*;
 pub use run_control::*;
 pub use scheduler::*;
 pub use tool_runtime::*;
+pub use ui_events::append_model_stream_event;

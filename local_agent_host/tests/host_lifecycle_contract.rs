@@ -11,10 +11,10 @@ use chatos_agent_profiles::{
     TaskRunnerProjectSnapshot, TaskRunnerPromptSnapshot,
 };
 use chatos_client_storage::{
-    AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery, PutRecord,
-    RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageEncryptionKey, StorageResult, StorageTransaction, TaskRecord, ToolExecutionStateRecord,
-    TransactionRepositories,
+    AgentEventStateRecord, AgentRunStateRecord, AgentUiEventCursorQuery, ClientStorage, ListQuery,
+    PutRecord, RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile,
+    SqliteClientStorage, StorageEncryptionKey, StorageResult, StorageTransaction, TaskRecord,
+    ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_host::{
     LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentExecutionSession,
@@ -29,9 +29,10 @@ use chatos_local_agent_protocol::{
     AnswerUserQuestionCommand, ContextStrategy, CreateMainChatTurnCommand, CreateTaskCommand,
     FrozenSnapshot, LocalAgentCommand, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType,
     LocalAgentIpcError, LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun,
-    LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTerminal, ModelGatewayTerminalSource,
-    ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol, ModelRuntimeDescriptor,
-    ModelStepCompletion, ModelStepResult, ToolApprovalCommand, ToolApprovalDecision, ToolEffect,
+    LocalAgentRunStatus, LocalAgentUiEvent, LocalAgentUiEventPayload, ModelGatewayRequest,
+    ModelGatewayTerminal, ModelGatewayTerminalSource, ModelGatewayTerminalStatus,
+    ModelGatewayTokenCount, ModelProtocol, ModelRuntimeDescriptor, ModelStepCompletion,
+    ModelStepResult, ModelStreamDeltaKind, ToolApprovalCommand, ToolApprovalDecision, ToolEffect,
     ToolExecutionStatus, UserInteractionAnswer, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{
@@ -353,11 +354,17 @@ impl ModelGatewayClient for ExecutingGateway {
         _access_token: &str,
         _descriptor: &ModelRuntimeDescriptor,
         request: ModelGatewayRequest,
-        _callbacks: ModelGatewayCallbacks,
+        callbacks: ModelGatewayCallbacks,
         _cancellation: CancellationToken,
     ) -> Result<ModelGatewayOutput, ModelGatewayClientError> {
         self.requests.lock().unwrap().push(request);
         tokio::time::sleep(self.delay).await;
+        if let Some(callback) = callbacks.on_reasoning {
+            callback("Checked the frozen design context.".to_string());
+        }
+        if let Some(callback) = callbacks.on_content {
+            callback("Finished".to_string());
+        }
         let output_items = vec![serde_json::json!({
             "type": "message",
             "id": "provider-message-1",
@@ -411,6 +418,30 @@ impl ModelGatewayClient for ExecutingGateway {
             model_config_revision: request.model_config_revision,
             input_tokens: 100,
         })
+    }
+}
+
+struct ReadUiEvents(Vec<LocalAgentUiEvent>);
+
+#[async_trait]
+impl StorageTransaction for ReadUiEvents {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.0 = repositories
+            .agent_ui_events()
+            .list_after(&AgentUiEventCursorQuery {
+                scope: scope(),
+                after_seq: 0,
+                limit: 100,
+            })
+            .await?
+            .records
+            .into_iter()
+            .map(|record| record.event)
+            .collect();
+        Ok(())
     }
 }
 
@@ -1179,7 +1210,7 @@ async fn host_executes_and_persists_one_claimed_model_step_end_to_end() {
     let profiles =
         LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
     let (host, _) = LocalAgentHost::start(
-        storage,
+        storage.clone(),
         gateway.clone(),
         Arc::new(TestContextRuntime),
         Arc::new(Tools),
@@ -1227,6 +1258,25 @@ async fn host_executes_and_persists_one_claimed_model_step_end_to_end() {
         completion.event.event_type,
         LocalAgentEventType::ModelStepCompleted
     );
+    let mut ui_events = ReadUiEvents(Vec::new());
+    storage.transaction(&mut ui_events).await.unwrap();
+    let model_events = ui_events
+        .0
+        .iter()
+        .filter_map(|event| match &event.event {
+            LocalAgentUiEventPayload::ModelStream(event) => Some(event),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(model_events.len(), 2);
+    assert_eq!(model_events[0].run_id, "run-1");
+    assert_eq!(model_events[0].step_seq, 1);
+    assert_eq!(model_events[0].delta_kind, ModelStreamDeltaKind::Reasoning);
+    assert_eq!(model_events[0].delta, "Checked the frozen design context.");
+    assert_eq!(model_events[1].run_id, "run-1");
+    assert_eq!(model_events[1].step_seq, 1);
+    assert_eq!(model_events[1].delta_kind, ModelStreamDeltaKind::Content);
+    assert_eq!(model_events[1].delta, "Finished");
     {
         let requests = gateway.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);

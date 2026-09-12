@@ -2,16 +2,66 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use chatos_client_storage::{
-    AgentRunStateRecord, AppendAgentUiEvent, ListQuery, RecordScope, StorageError, StorageResult,
-    ToolExecutionStateRecord, TransactionRepositories,
+    AgentRunStateRecord, AppendAgentUiEvent, ClientStorage, ListQuery, RecordScope, StorageError,
+    StorageResult, StorageTransaction, ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    LocalAgentUiEventPayload, MemorySyncUiStatus, SyncOutboxStatus, UserInteractionQuestion,
-    UserInteractionRequest,
+    LocalAgentUiEventPayload, MemorySyncUiStatus, ModelStreamUiEvent, SyncOutboxStatus,
+    UserInteractionQuestion, UserInteractionRequest,
 };
 use serde::Deserialize;
 
 use crate::pagination::advance_cursor;
+
+struct AppendModelStreamEvent {
+    scope: RecordScope,
+    origin_device_id: String,
+    event: ModelStreamUiEvent,
+}
+
+#[async_trait::async_trait]
+impl StorageTransaction for AppendModelStreamEvent {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        repositories
+            .agent_ui_events()
+            .append(AppendAgentUiEvent {
+                scope: self.scope.clone(),
+                origin_device_id: self.origin_device_id.clone(),
+                payload: LocalAgentUiEventPayload::ModelStream(self.event.clone()),
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+/// Persists one accepted gateway delta in the same authoritative client
+/// storage used by the Run. These events are replayable UI state, not semantic
+/// conversation messages and therefore never enter the Memory outbox.
+pub async fn append_model_stream_event(
+    storage: &dyn ClientStorage,
+    scope: &RecordScope,
+    origin_device_id: &str,
+    event: ModelStreamUiEvent,
+) -> StorageResult<()> {
+    if event.run_id.trim().is_empty()
+        || event.step_seq == 0
+        || event.delta.is_empty()
+        || origin_device_id.trim().is_empty()
+    {
+        return Err(StorageError::InvalidData {
+            reason: "model stream UI event is invalid".to_string(),
+        });
+    }
+    let mut operation = AppendModelStreamEvent {
+        scope: scope.clone(),
+        origin_device_id: origin_device_id.to_string(),
+        event,
+    };
+    storage.transaction(&mut operation).await
+}
 
 pub(crate) async fn append_run_snapshot(
     repositories: &mut dyn TransactionRepositories,
