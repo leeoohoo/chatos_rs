@@ -6,6 +6,8 @@ use std::fmt;
 use zeroize::Zeroizing;
 
 pub const LOCAL_AGENT_CREDENTIAL_SERVICE: &str = "com.chatos.local-agent.credentials.v1";
+pub const WINDOWS_LOCAL_AGENT_CREDENTIAL_RESOURCE: &str =
+    "ChatOS.Windows.LocalAgent.Credentials.v1";
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum LocalAgentPlatformCredentialError {
@@ -95,6 +97,81 @@ impl LocalAgentPlatformCredentialReader for MacOsLocalAgentCredentialReader {
         let account = platform_credential_account_key(owner_user_id, reference)?;
         let secret = security_framework::passwords::get_generic_password(&self.service, &account)
             .map_err(|_| LocalAgentPlatformCredentialError::Unavailable)?;
+        if secret.is_empty() {
+            Err(LocalAgentPlatformCredentialError::Unavailable)
+        } else {
+            Ok(Zeroizing::new(secret))
+        }
+    }
+}
+
+#[cfg(windows)]
+pub struct WindowsLocalAgentCredentialReader {
+    resource: String,
+    mta_cookie: usize,
+}
+
+#[cfg(windows)]
+impl WindowsLocalAgentCredentialReader {
+    pub fn production() -> Result<Self, LocalAgentPlatformCredentialError> {
+        use windows::Win32::System::Com::CoIncrementMTAUsage;
+
+        // SAFETY: CoIncrementMTAUsage has no pointer inputs and returns an
+        // opaque process-wide cookie released by this reader's Drop.
+        let cookie = unsafe { CoIncrementMTAUsage() }
+            .map_err(|_| LocalAgentPlatformCredentialError::Unavailable)?;
+        Ok(Self {
+            resource: WINDOWS_LOCAL_AGENT_CREDENTIAL_RESOURCE.to_string(),
+            mta_cookie: cookie.0 as usize,
+        })
+    }
+}
+
+#[cfg(windows)]
+impl fmt::Debug for WindowsLocalAgentCredentialReader {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WindowsLocalAgentCredentialReader")
+            .field("resource", &"[CREDENTIAL MANAGER RESOURCE]")
+            .finish()
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsLocalAgentCredentialReader {
+    fn drop(&mut self) {
+        use windows::Win32::System::Com::{CoDecrementMTAUsage, CO_MTA_USAGE_COOKIE};
+
+        // SAFETY: this is the exact opaque cookie returned once by
+        // CoIncrementMTAUsage and the reader is not Clone.
+        let _ = unsafe { CoDecrementMTAUsage(CO_MTA_USAGE_COOKIE(self.mta_cookie as *mut _)) };
+    }
+}
+
+#[cfg(windows)]
+impl LocalAgentPlatformCredentialReader for WindowsLocalAgentCredentialReader {
+    fn read(
+        &self,
+        owner_user_id: &str,
+        reference: &str,
+    ) -> Result<Zeroizing<Vec<u8>>, LocalAgentPlatformCredentialError> {
+        use windows::core::HSTRING;
+        use windows::Security::Credentials::PasswordVault;
+
+        let account = platform_credential_account_key(owner_user_id, reference)?;
+        let vault =
+            PasswordVault::new().map_err(|_| LocalAgentPlatformCredentialError::Unavailable)?;
+        let credential = vault
+            .Retrieve(&HSTRING::from(&self.resource), &HSTRING::from(account))
+            .map_err(|_| LocalAgentPlatformCredentialError::Unavailable)?;
+        credential
+            .RetrievePassword()
+            .map_err(|_| LocalAgentPlatformCredentialError::Unavailable)?;
+        let secret = credential
+            .Password()
+            .map_err(|_| LocalAgentPlatformCredentialError::Unavailable)?
+            .to_string()
+            .into_bytes();
         if secret.is_empty() {
             Err(LocalAgentPlatformCredentialError::Unavailable)
         } else {
