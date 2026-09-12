@@ -39,7 +39,7 @@ pub use factory::{
     ClientStorageFactory, NativeStorageBackendConnector, StorageBackendConnector,
     StorageSecretResolver,
 };
-pub use postgres::PostgresClientStorage;
+pub use postgres::{probe_postgres_connection, PostgresClientStorage, PostgresConnectionProbe};
 pub use repositories::*;
 pub use sqlite::SqliteClientStorage;
 pub use transaction::{ClientStorage, StorageTransaction, TransactionRepositories};

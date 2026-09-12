@@ -22,6 +22,15 @@ use crate::{
 
 const MINIMUM_POSTGRES_MAJOR_VERSION: u32 = 15;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostgresConnectionProbe {
+    pub server_version: String,
+    pub tls_active: bool,
+    pub authentication_ok: bool,
+    pub transaction_ok: bool,
+    pub migration_permission_ok: bool,
+}
+
 #[derive(Clone)]
 pub struct PostgresClientStorage {
     pool: PgPool,
@@ -34,18 +43,8 @@ impl PostgresClientStorage {
             .map_err(|error| StorageError::InvalidData {
                 reason: error.to_string(),
             })?;
-        let ssl_mode = match settings.endpoint.tls_mode {
-            PostgresTlsMode::Disabled => PgSslMode::Disable,
-            PostgresTlsMode::VerifyFull => PgSslMode::VerifyFull,
-        };
-        let options = PgConnectOptions::new()
-            .host(&settings.endpoint.host)
-            .port(settings.endpoint.port)
-            .database(&settings.endpoint.database)
-            .username(settings.credentials.username())
-            .password(settings.credentials.expose_password())
-            .ssl_mode(ssl_mode)
-            .application_name("chatos-client-storage");
+        let ssl_mode = postgres_ssl_mode(settings.endpoint.tls_mode);
+        let options = postgres_connect_options(settings, ssl_mode, "chatos-client-storage");
         let pool = PgPoolOptions::new()
             .max_connections(8)
             .acquire_timeout(Duration::from_secs(15))
@@ -60,6 +59,86 @@ impl PostgresClientStorage {
     pub async fn close(self) {
         self.pool.close().await;
     }
+}
+
+/// Verifies a PostgreSQL profile without running storage migrations.
+///
+/// The probe uses the same validated connection settings as the production
+/// provider. Migration permission is checked through PostgreSQL's privilege
+/// catalog so testing a profile never creates or drops a user-visible object.
+pub async fn probe_postgres_connection(
+    settings: &PostgresConnectionSettings,
+) -> StorageResult<PostgresConnectionProbe> {
+    settings
+        .validate()
+        .map_err(|error| StorageError::InvalidData {
+            reason: error.to_string(),
+        })?;
+    let ssl_mode = postgres_ssl_mode(settings.endpoint.tls_mode);
+    let options = postgres_connect_options(settings, ssl_mode, "chatos-storage-probe");
+    let mut connection = PgConnection::connect_with(&options)
+        .await
+        .map_err(unavailable)?;
+
+    let server_version: String = sqlx::query_scalar("SHOW server_version")
+        .fetch_one(&mut connection)
+        .await
+        .map_err(unavailable)?;
+    let version_number: i32 =
+        sqlx::query_scalar("SELECT current_setting('server_version_num')::INTEGER")
+            .fetch_one(&mut connection)
+            .await
+            .map_err(unavailable)?;
+    validate_version_number(version_number)?;
+    let tls_active: bool = sqlx::query_scalar(
+        "SELECT COALESCE((SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()), FALSE)",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .map_err(unavailable)?;
+    let migration_permission_ok: bool =
+        sqlx::query_scalar("SELECT has_schema_privilege(current_user, current_schema(), 'CREATE')")
+            .fetch_one(&mut connection)
+            .await
+            .map_err(unavailable)?;
+
+    let mut transaction = connection.begin().await.map_err(transaction_error)?;
+    let transaction_ok = sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&mut *transaction)
+        .await
+        .map(|value| value == 1)
+        .map_err(transaction_error)?;
+    transaction.rollback().await.map_err(transaction_error)?;
+
+    Ok(PostgresConnectionProbe {
+        server_version,
+        tls_active,
+        authentication_ok: true,
+        transaction_ok,
+        migration_permission_ok,
+    })
+}
+
+fn postgres_ssl_mode(mode: PostgresTlsMode) -> PgSslMode {
+    match mode {
+        PostgresTlsMode::Disabled => PgSslMode::Disable,
+        PostgresTlsMode::VerifyFull => PgSslMode::VerifyFull,
+    }
+}
+
+fn postgres_connect_options(
+    settings: &PostgresConnectionSettings,
+    ssl_mode: PgSslMode,
+    application_name: &str,
+) -> PgConnectOptions {
+    PgConnectOptions::new()
+        .host(&settings.endpoint.host)
+        .port(settings.endpoint.port)
+        .database(&settings.endpoint.database)
+        .username(settings.credentials.username())
+        .password(settings.credentials.expose_password())
+        .ssl_mode(ssl_mode)
+        .application_name(application_name)
 }
 
 impl fmt::Debug for PostgresClientStorage {
@@ -319,6 +398,10 @@ async fn validate_server_version(pool: &PgPool) -> StorageResult<()> {
             .fetch_one(pool)
             .await
             .map_err(unavailable)?;
+    validate_version_number(version_number)
+}
+
+fn validate_version_number(version_number: i32) -> StorageResult<()> {
     let major = u32::try_from(version_number).map_err(|_| StorageError::Unavailable {
         reason: "PostgreSQL returned an invalid server version".to_string(),
     })? / 10_000;
