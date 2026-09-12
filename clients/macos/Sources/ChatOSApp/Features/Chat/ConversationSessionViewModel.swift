@@ -54,6 +54,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private var requestGeneration: Int64 = 0
     private var inFlightOlderCursor: String?
     private var realtimeTask: Task<Void, Never>?
+    private var localAgentUpdateTask: Task<Void, Never>?
     private var historyRetryTask: Task<Void, Never>?
     private var latestRefreshDebounceTask: Task<Void, Never>?
     private var latestRefreshDebouncePresentation: LatestRefreshPresentation?
@@ -93,6 +94,7 @@ final class ConversationSessionViewModel: ObservableObject {
 
     deinit {
         realtimeTask?.cancel()
+        localAgentUpdateTask?.cancel()
         historyRetryTask?.cancel()
         latestRefreshDebounceTask?.cancel()
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
@@ -107,7 +109,22 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func activate() {
         refreshLatestSilently()
+        startLocalAgentUpdates()
         startRealtime()
+    }
+
+    private func startLocalAgentUpdates() {
+        guard localAgentUpdateTask == nil,
+              let updates = historyStore as? any LocalAgentConversationUpdateStreaming
+        else { return }
+        let sessionID = sessionID
+        localAgentUpdateTask = Task { [weak self] in
+            let stream = await updates.localAgentUpdates(sessionID: sessionID)
+            for await _ in stream {
+                guard !Task.isCancelled, let self else { return }
+                await self.refreshSnapshot()
+            }
+        }
     }
 
     func refreshLatestSilently() {

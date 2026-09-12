@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 8
+public let localAgentProtocolVersion: UInt32 = 9
 
 public enum LocalAgentJSONValue: Codable, Equatable, Sendable {
     case null
@@ -402,6 +402,56 @@ public struct LocalAgentRunSnapshot: Codable, Equatable, Sendable {
     public var deadlineAt: String?
     public var createdAt: String
     public var updatedAt: String
+
+    public init(
+        runID: String,
+        profileKey: String,
+        ownerUserID: String,
+        ownerEntityType: String,
+        ownerEntityID: String,
+        projectID: String?,
+        status: LocalAgentRunStatus,
+        version: UInt64,
+        stepSeq: UInt64,
+        iteration: UInt32,
+        retryCount: UInt32,
+        modelConfigID: String,
+        modelConfigRevision: UInt64,
+        modelRuntimeSnapshot: LocalAgentJSONValue,
+        contextStrategy: String,
+        promptRevision: String,
+        capabilitySnapshotRef: String,
+        pendingBatchID: String? = nil,
+        pendingInteraction: LocalAgentJSONValue? = nil,
+        terminalOutcome: LocalAgentJSONValue? = nil,
+        deadlineAt: String? = nil,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.runID = runID
+        self.profileKey = profileKey
+        self.ownerUserID = ownerUserID
+        self.ownerEntityType = ownerEntityType
+        self.ownerEntityID = ownerEntityID
+        self.projectID = projectID
+        self.status = status
+        self.version = version
+        self.stepSeq = stepSeq
+        self.iteration = iteration
+        self.retryCount = retryCount
+        self.modelConfigID = modelConfigID
+        self.modelConfigRevision = modelConfigRevision
+        self.modelRuntimeSnapshot = modelRuntimeSnapshot
+        self.contextStrategy = contextStrategy
+        self.promptRevision = promptRevision
+        self.capabilitySnapshotRef = capabilitySnapshotRef
+        self.pendingBatchID = pendingBatchID
+        self.pendingInteraction = pendingInteraction
+        self.terminalOutcome = terminalOutcome
+        self.deadlineAt = deadlineAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
 }
 
 public struct LocalAgentUIEvent: Decodable, Equatable, Sendable {
@@ -421,12 +471,85 @@ public struct LocalAgentMainChatRunBinding: Codable, Equatable, Sendable {
     public var threadID: String
     public var turnID: String
     public var messageID: String
+    public var userMessage: LocalAgentStoredMessage
 
-    public init(runID: String, threadID: String, turnID: String, messageID: String) {
+    public init(
+        runID: String,
+        threadID: String,
+        turnID: String,
+        messageID: String,
+        userMessage: LocalAgentStoredMessage
+    ) {
         self.runID = runID
         self.threadID = threadID
         self.turnID = turnID
         self.messageID = messageID
+        self.userMessage = userMessage
+    }
+}
+
+public enum LocalAgentStoredMessageRole: String, Codable, Equatable, Sendable {
+    case system, user, assistant, tool
+}
+
+public enum LocalAgentStoredMessageMode: String, Codable, Equatable, Sendable {
+    case semantic
+    case providerContext = "provider_context"
+}
+
+public enum LocalAgentStoredMemorySyncStatus: String, Codable, Equatable, Sendable {
+    case pending, synced, failed
+}
+
+public struct LocalAgentStoredMessage: Codable, Equatable, Sendable {
+    public var recordID: String
+    public var runID: String
+    public var threadID: String
+    public var turnID: String
+    public var sequence: UInt64
+    public var role: LocalAgentStoredMessageRole
+    public var content: String?
+    public var reasoning: String?
+    public var structuredPayload: LocalAgentJSONValue?
+    public var toolCallID: String?
+    public var responseID: String?
+    public var messageMode: LocalAgentStoredMessageMode
+    public var messageSource: String
+    public var memorySyncStatus: LocalAgentStoredMemorySyncStatus
+    public var createdAt: String
+
+    public init(
+        recordID: String,
+        runID: String,
+        threadID: String,
+        turnID: String,
+        sequence: UInt64,
+        role: LocalAgentStoredMessageRole,
+        content: String? = nil,
+        reasoning: String? = nil,
+        structuredPayload: LocalAgentJSONValue? = nil,
+        toolCallID: String? = nil,
+        responseID: String? = nil,
+        messageMode: LocalAgentStoredMessageMode,
+        messageSource: String,
+        memorySyncStatus: LocalAgentStoredMemorySyncStatus,
+        createdAt: String
+    ) {
+        self.recordID = recordID
+        self.runID = runID
+        self.threadID = threadID
+        self.turnID = turnID
+        self.sequence = sequence
+        self.role = role
+        self.content = content
+        self.reasoning = reasoning
+        self.structuredPayload = structuredPayload
+        self.toolCallID = toolCallID
+        self.responseID = responseID
+        self.messageMode = messageMode
+        self.messageSource = messageSource
+        self.memorySyncStatus = memorySyncStatus
+        self.createdAt = createdAt
     }
 }
 

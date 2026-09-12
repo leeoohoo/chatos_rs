@@ -134,6 +134,7 @@ final class AppModel: ObservableObject {
     private var isApplyingLanguagePreferences = false
     private var languagePreferencesSaveTask: Task<Void, Never>?
     private var localAgentLifecycleTask: Task<Void, Never>?
+    private var localAgentEventHub: NativeLocalAgentEventHub?
     private var requestedLocalAgentIdentity: String?
     var mainWindowPresentationHandler: (() -> Void)?
     var settingsWindowPresentationHandler: (() -> Void)?
@@ -884,6 +885,10 @@ final class AppModel: ObservableObject {
             let accountSession = localAgentAccountSession
             localAgentLifecycleTask = Task { [weak self] in
                 _ = await previousLifecycleTask?.result
+                if let hub = self?.localAgentEventHub {
+                    self?.localAgentEventHub = nil
+                    await hub.stop()
+                }
                 await accountSession.logout()
                 guard let self, workspaceAccountGeneration == localAgentGeneration else { return }
                 localAgentHostState = .stopped
@@ -928,6 +933,7 @@ final class AppModel: ObservableObject {
         let previousLifecycleTask = localAgentLifecycleTask
         let accountSession = localAgentAccountSession
         let apiClient = apiClient
+        let historyStore = historyStore
         localAgentLifecycleTask = Task { [weak self] in
             _ = await previousLifecycleTask?.result
             guard let self,
@@ -948,10 +954,20 @@ final class AppModel: ObservableObject {
                         )
                     }
                 )
+                let client = try await accountSession.client(accountID: accountID)
+                let eventHub = NativeLocalAgentEventHub(client: client, sink: historyStore)
+                await eventHub.start()
                 let state = await accountSession.state()
                 guard authenticatedUserID == accountID,
                       workspaceAccountGeneration == generation
-                else { return }
+                else {
+                    await eventHub.stop()
+                    return
+                }
+                if let previousHub = localAgentEventHub {
+                    await previousHub.stop()
+                }
+                localAgentEventHub = eventHub
                 localAgentHostState = state
             } catch {
                 guard authenticatedUserID == accountID,

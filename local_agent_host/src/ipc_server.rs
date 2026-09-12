@@ -350,9 +350,10 @@ impl StorageTransaction for GetMainChatRunBindingOperation {
                 }
                 binding = Some(MainChatRunBinding {
                     run_id: self.run_id.clone(),
-                    thread_id: record.message.thread_id,
-                    turn_id: record.message.turn_id,
-                    message_id: record.message.record_id,
+                    thread_id: record.message.thread_id.clone(),
+                    turn_id: record.message.turn_id.clone(),
+                    message_id: record.message.record_id.clone(),
+                    user_message: Box::new(record.message),
                 });
             }
             match page.next_cursor {

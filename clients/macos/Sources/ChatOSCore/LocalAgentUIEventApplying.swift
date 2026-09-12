@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+/// Account-level native UI boundary for durable Local Agent events.
+///
+/// Implementations must be idempotent by `eventSeq`: the Host deliberately
+/// replays a whole unacknowledged page when applying any event or persisting
+/// its cursor fails.
+public protocol LocalAgentUIEventApplying: Sendable {
+    func applyLocalAgentUIEvent(
+        _ event: LocalAgentUIEvent,
+        mainChatBinding: LocalAgentMainChatRunBinding?
+    ) async throws
+}
+
+public protocol LocalAgentConversationUpdateStreaming: Sendable {
+    func localAgentUpdates(sessionID: String) async -> AsyncStream<Void>
+}

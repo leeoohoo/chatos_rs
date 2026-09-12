@@ -9,10 +9,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    require_bounded_json, require_digest, require_identifier, ApplyStorageProfileCommand,
-    ClientDataTransferResult, ClientStorageProfileDescriptor, ExportClientDataCommand,
-    ImportClientDataCommand, InstallProjectPluginCapabilityCommand, LocalAgentRun,
-    PostgresConnectionTestCommand, PostgresConnectionTestResult, ProtocolError,
+    require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
+    ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
+    ExportClientDataCommand, ImportClientDataCommand, InstallProjectPluginCapabilityCommand,
+    LocalAgentRun, PostgresConnectionTestCommand, PostgresConnectionTestResult, ProtocolError,
     RemoveProjectPluginCapabilityCommand, ToolExecution, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
@@ -490,13 +490,14 @@ impl LocalAgentIpcResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MainChatRunBinding {
     pub run_id: String,
     pub thread_id: String,
     pub turn_id: String,
     pub message_id: String,
+    pub user_message: Box<AgentMessage>,
 }
 
 impl MainChatRunBinding {
@@ -508,6 +509,18 @@ impl MainChatRunBinding {
             ("message_id", self.message_id.as_str()),
         ] {
             require_identifier(field, value)?;
+        }
+        self.user_message.validate()?;
+        if self.user_message.run_id != self.run_id
+            || self.user_message.thread_id != self.thread_id
+            || self.user_message.turn_id != self.turn_id
+            || self.user_message.record_id != self.message_id
+            || self.user_message.role != AgentMessageRole::User
+            || self.user_message.message_source != "main_chat"
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "Main Chat binding does not match its initial user message",
+            });
         }
         Ok(())
     }

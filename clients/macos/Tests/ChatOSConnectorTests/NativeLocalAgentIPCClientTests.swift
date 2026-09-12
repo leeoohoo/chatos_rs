@@ -84,6 +84,8 @@ struct NativeLocalAgentIPCClientTests {
         #expect(binding.threadID == "thread-1")
         #expect(binding.turnID == "turn-1")
         #expect(binding.messageID == "message-1")
+        #expect(binding.userMessage.content == "Design it")
+        #expect(binding.userMessage.sequence == 1)
     }
 
     @Test("creates a Run and returns its authoritative local identity")
@@ -207,6 +209,19 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
                     "thread_id": "thread-1",
                     "turn_id": "turn-1",
                     "message_id": "message-1",
+                    "user_message": [
+                        "record_id": "message-1",
+                        "run_id": "run-1",
+                        "thread_id": "thread-1",
+                        "turn_id": "turn-1",
+                        "sequence": 1,
+                        "role": "user",
+                        "content": "Design it",
+                        "message_mode": "semantic",
+                        "message_source": "main_chat",
+                        "memory_sync_status": "pending",
+                        "created_at": "2026-09-12T03:00:00Z",
+                    ],
                 ],
             ]
         case "success":

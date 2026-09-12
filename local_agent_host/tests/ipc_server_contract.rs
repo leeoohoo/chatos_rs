@@ -249,6 +249,8 @@ async fn main_chat_binding_and_ui_cursor_are_storage_backed() {
     assert_eq!(binding.thread_id, "thread-1");
     assert_eq!(binding.turn_id, "turn-1");
     assert_eq!(binding.message_id, "message-1");
+    assert_eq!(binding.user_message.content.as_deref(), Some("Design it"));
+    assert_eq!(binding.user_message.sequence, 1);
 
     let initial = server
         .handle_request(request(

@@ -11,11 +11,15 @@ public actor ConversationHistoryStore {
         var hasLoadedOlderPage = false
         var lastAppliedEventSequence: Int64 = 0
         var appliedEventIDs: Set<String> = []
+        var lastAppliedLocalAgentEventSequence: UInt64 = 0
         var viewportAnchor: ViewportAnchor?
         var unreadNewerCount = 0
     }
 
     private var sessions: [String: SessionState] = [:]
+    private var localUpdateContinuations: [
+        String: [UUID: AsyncStream<Void>.Continuation]
+    ] = [:]
 
     public init() {}
 
@@ -132,6 +136,46 @@ public actor ConversationHistoryStore {
         )
     }
 
+    public func localAgentUpdates(sessionID: String) -> AsyncStream<Void> {
+        let subscriptionID = UUID()
+        return AsyncStream { continuation in
+            localUpdateContinuations[sessionID, default: [:]][subscriptionID] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task {
+                    await self?.removeLocalUpdateContinuation(
+                        subscriptionID,
+                        sessionID: sessionID
+                    )
+                }
+            }
+        }
+    }
+
+    public func applyLocalAgentUIEvent(
+        _ event: LocalAgentUIEvent,
+        mainChatBinding binding: LocalAgentMainChatRunBinding?
+    ) throws {
+        guard let binding else { return }
+        guard event.event.runID == binding.runID else {
+            throw LocalAgentConversationHistoryError.runBindingMismatch
+        }
+
+        var state = sessions[binding.threadID] ?? SessionState()
+        guard event.eventSeq > state.lastAppliedLocalAgentEventSequence else { return }
+        var turn = try localAgentTurn(binding: binding, existing: state.turnsByID[binding.turnID])
+        let didChange = try apply(event, to: &turn)
+        state.lastAppliedLocalAgentEventSequence = event.eventSeq
+        if didChange {
+            turn.revision = max(turn.revision, Int64(clamping: event.eventSeq))
+            state.turnsByID[turn.id] = turn
+            if state.viewportAnchor?.isPinnedToBottom == false {
+                state.unreadNewerCount += 1
+            }
+        }
+        sessions[binding.threadID] = state
+        localUpdateContinuations[binding.threadID]?.values.forEach { $0.yield(()) }
+    }
+
     @discardableResult
     private func merge(
         _ incomingTurns: [ConversationTurn],
@@ -164,6 +208,408 @@ public actor ConversationHistoryStore {
         }
 
         return didChange
+    }
+
+    private func removeLocalUpdateContinuation(_ id: UUID, sessionID: String) {
+        localUpdateContinuations[sessionID]?[id] = nil
+        if localUpdateContinuations[sessionID]?.isEmpty == true {
+            localUpdateContinuations[sessionID] = nil
+        }
+    }
+
+    private func localAgentTurn(
+        binding: LocalAgentMainChatRunBinding,
+        existing: ConversationTurn?
+    ) throws -> ConversationTurn {
+        if let existing {
+            guard existing.id == binding.turnID,
+                  existing.sessionID == binding.threadID,
+                  existing.userMessage.id == binding.messageID
+            else {
+                throw LocalAgentConversationHistoryError.userMessageBindingMismatch
+            }
+            return existing
+        }
+
+        let message = binding.userMessage
+        guard message.recordID == binding.messageID,
+              message.runID == binding.runID,
+              message.threadID == binding.threadID,
+              message.turnID == binding.turnID,
+              message.role == .user,
+              message.messageMode == .semantic,
+              message.messageSource == "main_chat"
+        else {
+            throw LocalAgentConversationHistoryError.userMessageBindingMismatch
+        }
+        let createdAt = Self.localAgentDate(message.createdAt) ?? .distantPast
+        return ConversationTurn(
+            id: binding.turnID,
+            sessionID: binding.threadID,
+            sequence: Int64(clamping: message.sequence),
+            revision: 0,
+            userMessage: ChatMessage(
+                id: message.recordID,
+                role: .user,
+                text: message.content ?? "",
+                createdAt: createdAt,
+                attachments: Self.localAgentAttachments(message.structuredPayload)
+            ),
+            isTaskGraphAvailable: false,
+            status: .queued,
+            startedAt: createdAt
+        )
+    }
+
+    @discardableResult
+    private func apply(_ event: LocalAgentUIEvent, to turn: inout ConversationTurn) throws -> Bool {
+        switch event.event {
+        case let .runSnapshot(run):
+            let status = Self.turnStatus(run.status)
+            let detail = Self.runDetail(run)
+            upsertProcessEvent(
+                TurnProcessEvent(
+                    id: "local-agent-run-\(run.runID)",
+                    title: Self.runTitle(run.status),
+                    detail: detail,
+                    status: status
+                ),
+                in: &turn
+            )
+            turn.status = status
+            if let startedAt = Self.localAgentDate(run.createdAt), turn.startedAt == .distantPast {
+                turn.startedAt = startedAt
+            }
+            if run.status == .succeeded {
+                guard let text = run.terminalOutcome?.stringValue(forKey: "text")?.nonEmpty else {
+                    throw LocalAgentConversationHistoryError.missingSuccessfulOutcome
+                }
+                setAssistantText(text, runID: run.runID, createdAt: event.emittedAt, in: &turn)
+            }
+            if status == .completed || status == .failed || status == .cancelled {
+                turn.completedAt = Self.localAgentDate(run.updatedAt)
+                    ?? Self.localAgentDate(event.emittedAt)
+            }
+            return true
+
+        case let .modelStream(stream):
+            switch stream.deltaKind {
+            case .content:
+                appendAssistantText(
+                    stream.delta,
+                    runID: stream.runID,
+                    createdAt: event.emittedAt,
+                    in: &turn
+                )
+            case .reasoning:
+                appendProcessDetail(
+                    stream.delta,
+                    id: "local-agent-reasoning-\(stream.runID)-\(stream.stepSeq)",
+                    title: "思考过程",
+                    in: &turn
+                )
+            case .status:
+                appendProcessDetail(
+                    stream.delta,
+                    id: "local-agent-model-status-\(stream.runID)-\(stream.stepSeq)",
+                    title: "模型状态",
+                    in: &turn
+                )
+            }
+            turn.status = .streaming
+            return true
+
+        case let .toolSnapshot(tool):
+            upsertProcessEvent(
+                TurnProcessEvent(
+                    id: "local-agent-tool-\(tool.invocationID)",
+                    title: tool.toolName,
+                    detail: Self.toolDetail(tool),
+                    status: Self.toolStatus(tool.status)
+                ),
+                in: &turn
+            )
+            if !turn.status.isTerminal { turn.status = .streaming }
+            return true
+
+        case let .userInteraction(interaction):
+            let options = interaction.options.map(\.label).joined(separator: " / ")
+            upsertProcessEvent(
+                TurnProcessEvent(
+                    id: "local-agent-interaction-\(interaction.interactionID)",
+                    title: "等待你的选择",
+                    detail: [interaction.prompt, options.nonEmpty].compactMap { $0 }.joined(separator: "\n"),
+                    status: .queued
+                ),
+                in: &turn
+            )
+            turn.status = .streaming
+            return true
+
+        case let .memorySync(status):
+            let processStatus: TurnStatus = status.failedCount > 0
+                ? .failed
+                : (status.pendingCount > 0 ? .queued : .completed)
+            upsertProcessEvent(
+                TurnProcessEvent(
+                    id: "local-agent-memory-\(status.runID ?? "account")",
+                    title: "记忆同步",
+                    detail: Self.memoryDetail(status),
+                    status: processStatus
+                ),
+                in: &turn
+            )
+            return true
+
+        case .hostStatus:
+            return false
+        }
+    }
+
+    private func appendAssistantText(
+        _ delta: String,
+        runID: String,
+        createdAt: String,
+        in turn: inout ConversationTurn
+    ) {
+        let messageID = "local-agent-assistant-\(runID)"
+        if turn.finalAssistantMessage?.id != messageID {
+            turn.finalAssistantMessage = ChatMessage(
+                id: messageID,
+                role: .assistant,
+                text: "",
+                createdAt: Self.localAgentDate(createdAt) ?? Date()
+            )
+        }
+        turn.finalAssistantMessage?.text += delta
+    }
+
+    private func setAssistantText(
+        _ text: String,
+        runID: String,
+        createdAt: String,
+        in turn: inout ConversationTurn
+    ) {
+        let messageID = "local-agent-assistant-\(runID)"
+        if turn.finalAssistantMessage?.id == messageID {
+            turn.finalAssistantMessage?.text = text
+        } else {
+            turn.finalAssistantMessage = ChatMessage(
+                id: messageID,
+                role: .assistant,
+                text: text,
+                createdAt: Self.localAgentDate(createdAt) ?? Date()
+            )
+        }
+    }
+
+    private func appendProcessDetail(
+        _ delta: String,
+        id: String,
+        title: String,
+        in turn: inout ConversationTurn
+    ) {
+        if let index = turn.processEvents.firstIndex(where: { $0.id == id }) {
+            turn.processEvents[index].detail = (turn.processEvents[index].detail ?? "") + delta
+            turn.processEvents[index].status = .streaming
+        } else {
+            turn.processEvents.append(TurnProcessEvent(
+                id: id,
+                title: title,
+                detail: delta,
+                status: .streaming
+            ))
+        }
+    }
+
+    private func upsertProcessEvent(_ event: TurnProcessEvent, in turn: inout ConversationTurn) {
+        if let index = turn.processEvents.firstIndex(where: { $0.id == event.id }) {
+            turn.processEvents[index] = event
+        } else {
+            turn.processEvents.append(event)
+        }
+    }
+
+    private static func localAgentDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+
+    private static func localAgentAttachments(
+        _ payload: LocalAgentJSONValue?
+    ) -> [ConversationAttachmentReference] {
+        guard let attachments = payload?
+            .objectValue?["attachments"]?
+            .arrayValue
+        else { return [] }
+        return attachments.enumerated().compactMap { index, value in
+            guard let object = value.objectValue,
+                  let id = object["attachment_id"]?.plainString,
+                  let mediaType = object["media_type"]?.plainString,
+                  let byteSize = object["byte_size"]?.integerValue
+            else { return nil }
+            let kind: ConversationAttachmentKind
+            if mediaType.hasPrefix("image/") { kind = .image }
+            else if mediaType.hasPrefix("audio/") { kind = .audio }
+            else { kind = .file }
+            return ConversationAttachmentReference(
+                id: id,
+                name: "附件 \(index + 1)",
+                mimeType: mediaType,
+                size: Int(clamping: byteSize),
+                kind: kind
+            )
+        }
+    }
+
+    private static func turnStatus(_ status: LocalAgentRunStatus) -> TurnStatus {
+        switch status {
+        case .queued: .queued
+        case .modelReady, .modelRunning, .waitingToolResult, .continuationReady,
+             .retryScheduled, .paused, .needsReview: .streaming
+        case .succeeded: .completed
+        case .failed: .failed
+        case .cancelled: .cancelled
+        }
+    }
+
+    private static func runTitle(_ status: LocalAgentRunStatus) -> String {
+        switch status {
+        case .queued: "等待本地 Agent"
+        case .modelReady: "准备调用模型"
+        case .modelRunning: "模型正在生成"
+        case .waitingToolResult: "等待工具结果"
+        case .continuationReady: "准备继续"
+        case .retryScheduled: "等待重试"
+        case .paused: "运行已暂停"
+        case .needsReview: "需要人工复核"
+        case .succeeded: "本地 Agent 已完成"
+        case .failed: "本地 Agent 失败"
+        case .cancelled: "本地 Agent 已取消"
+        }
+    }
+
+    private static func runDetail(_ run: LocalAgentRunSnapshot) -> String? {
+        var values = ["第 \(run.stepSeq) 步"]
+        if run.retryCount > 0 { values.append("已重试 \(run.retryCount) 次") }
+        if let reason = run.terminalOutcome?.stringValue(forKey: "reason")?.nonEmpty {
+            values.append(reason)
+        }
+        return values.joined(separator: " · ")
+    }
+
+    private static func toolStatus(_ status: LocalAgentToolExecutionStatus) -> TurnStatus {
+        switch status {
+        case .requested, .awaitingApproval, .approved: .queued
+        case .started: .streaming
+        case .succeeded: .completed
+        case .failed, .rejected, .outcomeUnknown: .failed
+        }
+    }
+
+    private static func toolDetail(_ tool: LocalAgentToolSnapshot) -> String? {
+        var values: [String] = []
+        switch tool.status {
+        case .requested: values.append("已请求")
+        case .awaitingApproval: values.append("等待授权")
+        case .approved: values.append("已授权")
+        case .started: values.append("执行中")
+        case .succeeded: values.append("执行成功")
+        case .failed: values.append("执行失败")
+        case .rejected: values.append("已拒绝")
+        case .outcomeUnknown: values.append("结果未知，需要复核")
+        }
+        if let reason = tool.approvalReason?.nonEmpty { values.append(reason) }
+        if let result = tool.boundedResult,
+           let data = try? JSONEncoder().encode(result),
+           let rendered = String(data: data, encoding: .utf8)?.nonEmpty {
+            values.append(rendered)
+        }
+        return values.joined(separator: "\n")
+    }
+
+    private static func memoryDetail(_ status: LocalAgentMemorySyncStatus) -> String {
+        var values = ["待同步 \(status.pendingCount) 条"]
+        if status.failedCount > 0 { values.append("失败 \(status.failedCount) 条") }
+        if let code = status.lastErrorCode?.nonEmpty { values.append(code) }
+        return values.joined(separator: " · ")
+    }
+}
+
+extension ConversationHistoryStore: LocalAgentUIEventApplying {}
+extension ConversationHistoryStore: LocalAgentConversationUpdateStreaming {}
+
+public enum LocalAgentConversationHistoryError: Error, Equatable, Sendable {
+    case runBindingMismatch
+    case userMessageBindingMismatch
+    case missingSuccessfulOutcome
+}
+
+extension LocalAgentConversationHistoryError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .runBindingMismatch: "本地 Agent 事件与 Run 绑定不一致"
+        case .userMessageBindingMismatch: "本地 Agent 用户消息身份不一致"
+        case .missingSuccessfulOutcome: "本地 Agent 成功结果缺少最终文本"
+        }
+    }
+}
+
+private extension TurnStatus {
+    var isTerminal: Bool {
+        self == .completed || self == .failed || self == .cancelled
+    }
+}
+
+private extension LocalAgentUIEventPayload {
+    var runID: String? {
+        switch self {
+        case let .runSnapshot(run): run.runID
+        case let .modelStream(stream): stream.runID
+        case let .toolSnapshot(tool): tool.runID
+        case let .userInteraction(interaction): interaction.runID
+        case let .memorySync(status): status.runID
+        case .hostStatus: nil
+        }
+    }
+}
+
+private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+private extension LocalAgentJSONValue {
+    func stringValue(forKey key: String) -> String? {
+        guard case let .object(object) = self,
+              case let .string(value)? = object[key]
+        else { return nil }
+        return value
+    }
+
+    var objectValue: [String: LocalAgentJSONValue]? {
+        guard case let .object(value) = self else { return nil }
+        return value
+    }
+
+    var arrayValue: [LocalAgentJSONValue]? {
+        guard case let .array(value) = self else { return nil }
+        return value
+    }
+
+    var plainString: String? {
+        guard case let .string(value) = self else { return nil }
+        return value
+    }
+
+    var integerValue: UInt64? {
+        switch self {
+        case let .unsigned(value): value
+        case let .signed(value) where value >= 0: UInt64(value)
+        default: nil
+        }
     }
 }
 
