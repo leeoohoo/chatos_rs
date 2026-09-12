@@ -141,7 +141,7 @@ public sealed class LocalAgentIPCClientTests
             {"type":"success"}
             """));
         var client = new WindowsLocalAgentIPCClient("user-1", transport);
-        using var capability = JsonDocument.Parse("""{"schema_version":1,"project_id":"project-1"}""");
+        using var capability = JsonDocument.Parse("""{"schema_version":2,"project_id":"project-1"}""");
 
         await client.SendAsync(LocalAgentCommand.InstallProjectPluginCapability(
             "project-1",
@@ -155,7 +155,7 @@ public sealed class LocalAgentIPCClientTests
         var payload = command.GetProperty("payload");
         Assert.Equal("project-1", payload.GetProperty("project_id").GetString());
         Assert.Equal("plugin-1", payload.GetProperty("plugin_id").GetString());
-        Assert.Equal(1, payload.GetProperty("capability_record").GetProperty("schema_version").GetInt32());
+        Assert.Equal(2, payload.GetProperty("capability_record").GetProperty("schema_version").GetInt32());
     }
 
     [Fact]

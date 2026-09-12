@@ -8,12 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 SHARED_RUST = ROOT / "clients/shared/rust"
 
-# This inventory must only shrink. It makes the remaining architectural debt
-# explicit and prevents a client crate from silently acquiring another legacy
-# top-level crate dependency while the old implementation is being removed.
-EXPECTED_LEGACY_EDGES = {
-    ("chatos_local_agent_host", "chatos_plugin_management_sdk"),
-}
+EXPECTED_LEGACY_EDGES: set[tuple[str, str]] = set()
 
 
 def legacy_dependency_edges() -> set[tuple[str, str]]:
@@ -55,6 +50,13 @@ class ClientSharedBoundaryTests(unittest.TestCase):
         )
         self.assertNotIn("chatos_mcp_runtime", manifest["dependencies"])
         self.assertIn("chatos_mcp_client", manifest["dependencies"])
+
+    def test_local_host_uses_client_owned_plugin_capability_boundary(self) -> None:
+        manifest = tomllib.loads(
+            (SHARED_RUST / "local_agent_host/Cargo.toml").read_text()
+        )
+        self.assertNotIn("chatos_plugin_management_sdk", manifest["dependencies"])
+        self.assertIn("chatos_plugin_capability", manifest["dependencies"])
 
 
 if __name__ == "__main__":

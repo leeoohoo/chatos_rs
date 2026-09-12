@@ -12,11 +12,9 @@ use chatos_client_storage::{
     RecordScope, StorageError, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_mcp_client::{LocalMcpExecutor, LocalMcpServerConfig, StdioMcpExecutor};
-use chatos_plugin_management_sdk::{
-    plugin_component_descriptors, validate_plugin_manifest, verify_plugin_release_signature,
-    PluginAvailabilityStatus, PluginInstallSource, PluginInstallStatus,
-    PluginReleaseVerificationContext, PluginRequirementStatus, RunPluginSnapshot,
-    PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY, PLUGIN_MARKETPLACE_SOURCE_OFFICIAL_REGISTRY,
+use chatos_plugin_capability::{
+    verify_signed_plugin_manifest, PluginReleaseSignature, PluginReleaseVerificationContext,
+    SignedPluginManifest, TrustedPluginSigningKey,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -32,7 +30,7 @@ use crate::{
     ValidatedLocalCapabilityReplacement,
 };
 
-pub const STORED_LOCAL_CAPABILITY_SCHEMA_VERSION: u32 = 1;
+pub const STORED_LOCAL_CAPABILITY_SCHEMA_VERSION: u32 = 2;
 
 /// Final project-scoped representation written by native Plugin installation.
 /// It contains immutable release and authorization evidence but never an
@@ -45,10 +43,41 @@ pub struct StoredLocalCapabilityRecord {
     pub device_id: String,
     pub project_id: String,
     pub policy_revision: String,
-    pub install_source: PluginInstallSource,
-    pub installation: chatos_plugin_management_sdk::PluginInstallationRecord,
+    pub marketplace_id: String,
+    pub marketplace_source_kind: String,
+    pub plugin_id: String,
+    pub publisher_id: String,
+    pub publisher_verified: bool,
+    pub release: StoredSignedPluginRelease,
+    pub authorization: StoredLocalPluginAuthorization,
     pub mcp_components: Vec<StoredLocalMcpComponent>,
     pub auth_connection_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoredSignedPluginRelease {
+    pub release_id: String,
+    pub version: String,
+    pub artifact_sha256: String,
+    pub manifest_payload_base64: String,
+    pub signature: PluginReleaseSignature,
+    pub signing_key: TrustedPluginSigningKey,
+    #[serde(default)]
+    pub supported_platforms: Vec<String>,
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoredLocalPluginAuthorization {
+    pub platform: String,
+    pub active: bool,
+    #[serde(default)]
+    pub granted_permissions: Vec<String>,
+    #[serde(default)]
+    pub ready_component_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -256,11 +285,11 @@ impl StoredLocalCapabilityLoader {
             })?;
         self.verify_identity(&record, &stored)?;
         self.verify_project(&stored).await?;
-        self.verify_install_source(&stored)?;
+        let manifest = self.verify_release(&stored)?;
         let mut servers = Vec::with_capacity(stored.mcp_components.len());
         let mut tools = Vec::new();
         for component in &stored.mcp_components {
-            let manifest_server = selected_stdio_server(&stored, component)?;
+            let manifest_server = selected_stdio_server(&manifest, component)?;
             verify_runtime_declaration(component, manifest_server)?;
             let executable = self
                 .platform
@@ -328,22 +357,13 @@ impl StoredLocalCapabilityLoader {
                 );
             }
         }
-        let source = &stored.install_source;
-        let release = &source.release;
-        let installation = &stored.installation;
         if stored.schema_version != STORED_LOCAL_CAPABILITY_SCHEMA_VERSION
             || stored.owner_user_id != self.scope.owner_user_id
             || stored.device_id != self.device_id
-            || installation.owner_user_id != self.scope.owner_user_id
-            || installation.device_id != self.device_id
-            || record.plugin_id != source.catalog.id
-            || record.plugin_id != release.plugin_id
-            || record.plugin_id != installation.plugin_id
-            || record.release != release.id
-            || release.id != installation.release_id
-            || release.version != installation.version
-            || release.artifact_sha256 != installation.artifact_sha256
-            || source.catalog.marketplace_id != source.marketplace.id
+            || record.plugin_id != stored.plugin_id
+            || record.release != stored.release.release_id
+            || stored.release.signature.marketplace_id != stored.marketplace_id
+            || stored.release.signature.publisher_id != stored.publisher_id
         {
             return Err(format!(
                 "Plugin state record {} has inconsistent owner, device, Release, or artifact identity",
@@ -353,125 +373,60 @@ impl StoredLocalCapabilityLoader {
         Ok(())
     }
 
-    fn verify_install_source(&self, stored: &StoredLocalCapabilityRecord) -> Result<(), String> {
-        let source = &stored.install_source;
-        let release = &source.release;
-        let installation = &stored.installation;
-        if !source.marketplace.enabled
-            || source.marketplace.trust_level != "trusted"
-            || !matches!(
-                source.marketplace.source_kind.as_str(),
-                PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY
-                    | PLUGIN_MARKETPLACE_SOURCE_OFFICIAL_REGISTRY
-            )
-            || source
-                .marketplace
-                .owner_user_id
-                .as_deref()
-                .is_some_and(|owner| owner != self.scope.owner_user_id)
-            || !source.catalog.enabled
-            || source
-                .catalog
-                .owner_user_id
-                .as_deref()
-                .is_some_and(|owner| owner != self.scope.owner_user_id)
-            || !source.catalog.publisher.verified
+    fn verify_release(
+        &self,
+        stored: &StoredLocalCapabilityRecord,
+    ) -> Result<SignedPluginManifest, String> {
+        let release = &stored.release;
+        let authorization = &stored.authorization;
+        if !matches!(
+            stored.marketplace_source_kind.as_str(),
+            "admin_registry" | "official_registry"
+        ) || !stored.publisher_verified
             || release.revoked_at.is_some()
+            || !authorization.active
         {
             return Err(
-                "Plugin Release source is disabled, untrusted, unverified, or revoked".to_string(),
+                "Plugin Release is not trusted, active, publisher-verified, and non-revoked"
+                    .to_string(),
             );
         }
-        if installation.install_status != PluginInstallStatus::Installed
-            || installation.availability_status != PluginAvailabilityStatus::Ready
-            || installation.dependency_status != PluginRequirementStatus::Satisfied
-            || installation.permission_status != PluginRequirementStatus::Satisfied
-            || installation.auth_status != PluginRequirementStatus::Satisfied
-            || !installation.active
-        {
-            return Err(
-                "Plugin installation is not installed, active, authorized, and ready".to_string(),
-            );
-        }
-        if installation.platform != current_platform()
+        if authorization.platform != current_platform()
             || (!release.supported_platforms.is_empty()
                 && !release
                     .supported_platforms
                     .iter()
                     .any(|platform| platform == current_platform()))
-            || (!release
-                .normalized_manifest
-                .dependencies
-                .supported_platforms
-                .is_empty()
-                && !release
-                    .normalized_manifest
-                    .dependencies
-                    .supported_platforms
-                    .iter()
-                    .any(|platform| platform == current_platform()))
         {
-            return Err("Plugin installation is not valid for this Host platform".to_string());
+            return Err("Plugin Release is not valid for this Host platform".to_string());
         }
-        if let Some(preference) = &source.preference {
-            if preference.owner_user_id != self.scope.owner_user_id
-                || preference.plugin_id != source.catalog.id
-                || !preference.enabled
-                || (!preference.enabled_components.is_empty()
-                    && stored.mcp_components.iter().any(|component| {
-                        !preference
-                            .enabled_components
-                            .contains(&component.component_key)
-                    }))
-            {
-                return Err(
-                    "Plugin preference does not enable the selected MCP component".to_string(),
-                );
-            }
-        }
-        validate_plugin_manifest(&release.normalized_manifest)
-            .map_err(|error| format!("installed Plugin manifest is invalid: {error}"))?;
-        if release.manifest_schema_version != release.normalized_manifest.schema_version
-            || release.version != release.normalized_manifest.version
-            || release.npm_package.name != release.normalized_manifest.name
-            || release.npm_package.version != release.version
-            || release.components != plugin_component_descriptors(&release.normalized_manifest)
-            || release.dependencies != release.normalized_manifest.dependencies
-            || release.permissions != release.normalized_manifest.permissions
-        {
-            return Err(
-                "Plugin Release metadata differs from its signed normalized manifest".to_string(),
-            );
-        }
-        let key = source
-            .marketplace
-            .trusted_signing_keys
-            .iter()
-            .find(|key| {
-                key.key_id == release.signature.key_id
-                    && key.publisher_id == release.signature.publisher_id
-            })
-            .ok_or_else(|| {
-                "Plugin Release signing key is not trusted by its Marketplace".to_string()
-            })?;
-        verify_plugin_release_signature(
+        let manifest = verify_signed_plugin_manifest(
             PluginReleaseVerificationContext {
-                plugin_id: release.plugin_id.as_str(),
+                plugin_id: stored.plugin_id.as_str(),
                 version: release.version.as_str(),
-                marketplace_id: source.marketplace.id.as_str(),
-                publisher_id: source.catalog.publisher.id.as_str(),
+                marketplace_id: stored.marketplace_id.as_str(),
+                publisher_id: stored.publisher_id.as_str(),
                 artifact_sha256: release.artifact_sha256.as_str(),
             },
-            &release.normalized_manifest,
+            release.manifest_payload_base64.as_str(),
             &release.signature,
-            key,
+            &release.signing_key,
         )
         .map_err(|error| format!("installed Plugin Release signature is invalid: {error}"))?;
+        if !manifest.dependencies.supported_platforms.is_empty()
+            && !manifest
+                .dependencies
+                .supported_platforms
+                .iter()
+                .any(|platform| platform == current_platform())
+        {
+            return Err("signed Plugin manifest does not support this Host platform".to_string());
+        }
         for component in &stored.mcp_components {
-            verify_permissions(stored, component)?;
+            verify_permissions(stored, &manifest, component)?;
             verify_component_status(stored, component)?;
         }
-        Ok(())
+        Ok(manifest)
     }
 
     async fn verify_project(&self, stored: &StoredLocalCapabilityRecord) -> Result<(), String> {
@@ -570,7 +525,7 @@ struct VerifiedLocalCapability {
     owner_user_id: String,
     project_id: String,
     policy_revision: String,
-    plugin_snapshot: RunPluginSnapshot,
+    plugin_snapshot: Value,
     servers: Vec<ResolvedLocalMcpServer>,
     tools: Vec<TaskRunnerExecutionTool>,
 }
@@ -579,7 +534,7 @@ struct ProjectCapabilities {
     owner_user_id: String,
     project_id: String,
     policy_revision: String,
-    plugins: Vec<RunPluginSnapshot>,
+    plugins: Vec<Value>,
     servers: Vec<ResolvedLocalMcpServer>,
     tools: Vec<TaskRunnerExecutionTool>,
     plugin_ids: BTreeSet<String>,
@@ -614,13 +569,22 @@ impl ProjectCapabilities {
                     .to_string(),
             );
         }
-        if !self
-            .plugin_ids
-            .insert(capability.plugin_snapshot.plugin_id.clone())
-        {
+        if !self.plugin_ids.insert(
+            capability
+                .plugin_snapshot
+                .get("plugin_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Plugin snapshot has no plugin_id".to_string())?
+                .to_string(),
+        ) {
             return Err(format!(
                 "project {} contains duplicate Plugin {} capability records",
-                self.project_id, capability.plugin_snapshot.plugin_id
+                self.project_id,
+                capability
+                    .plugin_snapshot
+                    .get("plugin_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
             ));
         }
         for tool in &capability.tools {
@@ -641,8 +605,11 @@ impl ProjectCapabilities {
         mut self,
         executor_factory: &dyn LocalCapabilityExecutorFactory,
     ) -> Result<RegisteredLocalCapabilityBundle, String> {
-        self.plugins
-            .sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
+        self.plugins.sort_by(|left, right| {
+            left.get("plugin_id")
+                .and_then(Value::as_str)
+                .cmp(&right.get("plugin_id").and_then(Value::as_str))
+        });
         self.tools.sort_by(|left, right| left.name.cmp(&right.name));
         self.servers
             .sort_by(|left, right| left.name.cmp(&right.name));

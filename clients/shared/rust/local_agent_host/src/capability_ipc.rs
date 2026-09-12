@@ -244,11 +244,8 @@ fn require_command_identity(
     if stored.owner_user_id != scope.owner_user_id
         || stored.device_id != device_id
         || stored.project_id != project_id
-        || stored.install_source.catalog.id != plugin_id
-        || stored.install_source.release.plugin_id != plugin_id
-        || stored.install_source.release.id != release_id
-        || stored.installation.plugin_id != plugin_id
-        || stored.installation.release_id != release_id
+        || stored.plugin_id != plugin_id
+        || stored.release.release_id != release_id
     {
         return Err(capability_error(
             "plugin_capability_identity_mismatch",

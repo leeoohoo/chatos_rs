@@ -5,10 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use chatos_agent_profiles::TaskRunnerExecutionTool;
-use chatos_plugin_management_sdk::{
-    PluginAvailabilityStatus, PluginComponentKind, PluginMcpServer, RunPluginComponentSnapshot,
-    RunPluginSnapshot,
-};
+use chatos_plugin_capability::{SignedPluginManifest, SignedPluginMcpServer};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -20,34 +17,22 @@ pub(crate) const MAXIMUM_RUNTIME_ENVIRONMENT: usize = 128;
 pub(crate) const MAXIMUM_RUNTIME_ENVIRONMENT_VALUE_BYTES: usize = 64 * 1024;
 
 pub(crate) fn selected_stdio_server<'a>(
-    stored: &'a StoredLocalCapabilityRecord,
+    manifest: &'a SignedPluginManifest,
     component: &StoredLocalMcpComponent,
-) -> Result<&'a PluginMcpServer, String> {
-    let release = &stored.install_source.release;
-    let descriptor = release
-        .components
-        .iter()
-        .find(|descriptor| descriptor.component_key == component.component_key)
-        .ok_or_else(|| "selected MCP component has no immutable Release descriptor".to_string())?;
-    if descriptor.kind != PluginComponentKind::McpServer || descriptor.runtime_kind != "npm_stdio" {
-        return Err(
-            "selected Plugin component is not an immutable stdio MCP component".to_string(),
-        );
-    }
-    release
-        .normalized_manifest
+) -> Result<&'a SignedPluginMcpServer, String> {
+    manifest
         .mcp_servers
         .iter()
         .find(|server| server.component_key() == component.component_key)
-        .filter(|server| matches!(server, PluginMcpServer::Stdio { .. }))
+        .filter(|server| matches!(server, SignedPluginMcpServer::Stdio { .. }))
         .ok_or_else(|| "selected MCP component is absent from the signed manifest".to_string())
 }
 
 pub(crate) fn verify_runtime_declaration(
     stored: &StoredLocalMcpComponent,
-    manifest_server: &PluginMcpServer,
+    manifest_server: &SignedPluginMcpServer,
 ) -> Result<(), String> {
-    let PluginMcpServer::Stdio {
+    let SignedPluginMcpServer::Stdio {
         args,
         env,
         component_key,
@@ -100,9 +85,9 @@ pub(crate) fn verify_runtime_declaration(
 
 pub(crate) fn verify_resolved_executable_name(
     executable: &Path,
-    manifest_server: &PluginMcpServer,
+    manifest_server: &SignedPluginMcpServer,
 ) -> Result<(), String> {
-    let PluginMcpServer::Stdio { bin, .. } = manifest_server else {
+    let SignedPluginMcpServer::Stdio { bin, .. } = manifest_server else {
         return Err("HTTP Plugin components cannot execute in the local stdio runtime".to_string());
     };
     let file_name = executable
@@ -146,28 +131,19 @@ pub(crate) const fn current_platform() -> &'static str {
 
 pub(crate) fn verify_permissions(
     stored: &StoredLocalCapabilityRecord,
+    manifest: &SignedPluginManifest,
     selected: &StoredLocalMcpComponent,
 ) -> Result<(), String> {
     let granted = stored
-        .installation
+        .authorization
         .granted_permissions
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     let component = selected.component_key.as_str();
-    let missing = stored
-        .install_source
-        .release
+    let missing = manifest
         .permissions
         .iter()
-        .chain(
-            stored
-                .install_source
-                .release
-                .normalized_manifest
-                .permissions
-                .iter(),
-        )
         .filter(|permission| {
             permission.required
                 && (permission.components.is_empty()
@@ -188,51 +164,43 @@ pub(crate) fn verify_component_status(
     stored: &StoredLocalCapabilityRecord,
     selected: &StoredLocalMcpComponent,
 ) -> Result<(), String> {
-    let mut statuses = stored
-        .installation
-        .component_statuses
+    let statuses = stored
+        .authorization
+        .ready_component_keys
         .iter()
-        .filter(|status| status.component_key == selected.component_key);
-    let status = statuses
-        .next()
-        .ok_or_else(|| "selected local MCP component has no installation status".to_string())?;
-    if statuses.next().is_some() {
-        return Err("selected local MCP component has duplicate installation statuses".to_string());
-    }
-    if status.kind != PluginComponentKind::McpServer
-        || status.availability_status != PluginAvailabilityStatus::Ready
-    {
+        .filter(|key| key.as_str() == selected.component_key)
+        .count();
+    if statuses != 1 {
         return Err("selected local MCP component is not ready".to_string());
     }
     Ok(())
 }
 
-pub(crate) fn run_plugin_snapshot(stored: &StoredLocalCapabilityRecord) -> RunPluginSnapshot {
-    let release = &stored.install_source.release;
-    RunPluginSnapshot {
-        plugin_id: release.plugin_id.clone(),
-        release_id: release.id.clone(),
-        version: release.version.clone(),
-        artifact_sha256: release.artifact_sha256.clone(),
-        device_id: Some(stored.device_id.clone()),
-        workspace_id: Some(stored.project_id.clone()),
-        component_snapshots: stored
+pub(crate) fn run_plugin_snapshot(stored: &StoredLocalCapabilityRecord) -> Value {
+    json!({
+        "plugin_id": stored.plugin_id,
+        "release_id": stored.release.release_id,
+        "version": stored.release.version,
+        "artifact_sha256": stored.release.artifact_sha256,
+        "device_id": stored.device_id,
+        "workspace_id": stored.project_id,
+        "component_snapshots": stored
             .mcp_components
             .iter()
             .map(|component| {
                 let mut runtime = BTreeMap::new();
                 runtime.insert("transport".to_string(), Value::String("stdio".to_string()));
-                RunPluginComponentSnapshot {
-                    component_key: component.component_key.clone(),
-                    kind: PluginComponentKind::McpServer,
-                    content_sha256: component.executable_sha256.clone(),
-                    runtime,
-                }
+                json!({
+                    "component_key": component.component_key,
+                    "kind": "mcp_server",
+                    "content_sha256": component.executable_sha256,
+                    "runtime": runtime,
+                })
             })
-            .collect(),
-        permission_snapshot: stored.installation.granted_permissions.clone(),
-        auth_connection_ids: stored.auth_connection_ids.clone(),
-    }
+            .collect::<Vec<_>>(),
+        "permission_snapshot": stored.authorization.granted_permissions,
+        "auth_connection_ids": stored.auth_connection_ids,
+    })
 }
 
 pub(crate) fn local_server_name(plugin_id: &str, component_key: &str) -> String {

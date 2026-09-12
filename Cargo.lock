@@ -985,7 +985,7 @@ dependencies = [
  "chatos_local_agent_runtime",
  "chatos_mcp_client",
  "chatos_memory_client",
- "chatos_plugin_management_sdk",
+ "chatos_plugin_capability",
  "chrono",
  "libc",
  "parking_lot",
@@ -1140,6 +1140,20 @@ dependencies = [
  "serde_json",
  "tokio",
  "urlencoding",
+]
+
+[[package]]
+name = "chatos_plugin_capability"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "hex",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

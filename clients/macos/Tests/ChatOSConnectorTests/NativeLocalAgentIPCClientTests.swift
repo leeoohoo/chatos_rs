@@ -222,7 +222,7 @@ struct NativeLocalAgentIPCClientTests {
             pluginID: "plugin-1",
             releaseID: "release-1",
             capabilityRecord: .object([
-                "schema_version": .signed(1),
+                "schema_version": .signed(2),
                 "project_id": .string("project-1"),
             ])
         ))
@@ -236,7 +236,7 @@ struct NativeLocalAgentIPCClientTests {
         #expect(payload["project_id"] as? String == "project-1")
         #expect(payload["plugin_id"] as? String == "plugin-1")
         let capability = try #require(payload["capability_record"] as? [String: Any])
-        #expect(capability["schema_version"] as? Int == 1)
+        #expect(capability["schema_version"] as? Int == 2)
     }
 
     @Test("rejects a response correlated to another request")
