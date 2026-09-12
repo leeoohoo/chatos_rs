@@ -199,14 +199,6 @@ final class RealtimeDTOTests: XCTestCase {
         XCTAssertEqual(signal.eventName, "conversation.reconcile")
     }
 
-    func testTaskRunnerEventDoesNotBypassPetInbox() throws {
-        let envelope = try JSONDecoder().decode(
-            PetRealtimeEnvelopeDTO.self,
-            from: Data(taskRunnerFixtureJSON.utf8)
-        )
-        XCTAssertNil(envelope.petActivityEvent())
-    }
-
     func testTaskBoardEventDoesNotBypassPetInbox() throws {
         let envelope = try JSONDecoder().decode(
             PetRealtimeEnvelopeDTO.self,
@@ -297,40 +289,6 @@ final class RealtimeDTOTests: XCTestCase {
         }
       },
       "ts": "2026-08-25T08:02:00Z"
-    }
-    """#
-
-    private let taskRunnerFixtureJSON = #"""
-    {
-      "type": "event",
-      "event": "chat.task_runner.updated",
-      "event_id": "event-5",
-      "event_sequence": 105,
-      "conversation_id": "conversation-1",
-      "project_id": "project-1",
-      "payload": {
-        "kind": "chat_stream",
-        "conversation_id": "conversation-1",
-        "conversation_turn_id": "turn-1",
-        "project_id": "project-1",
-        "stream_type": "task_runner_callback",
-        "raw": {
-          "type": "task_runner_callback",
-          "event": "task.completed",
-          "result": {
-            "persisted_user_message": {
-              "metadata": {
-                "task_runner_async": {
-                  "last_task_id": "task-1",
-                  "last_run_id": "run-1"
-                }
-              }
-            },
-            "persisted_assistant_message": {"content": "任务结果已保存"}
-          }
-        }
-      },
-      "ts": "2026-08-28T08:00:00Z"
     }
     """#
 

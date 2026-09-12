@@ -16,7 +16,7 @@ public struct ChatOSTurnProcessService: TurnProcessServicing {
             "/conversations/\(sessionID.urlPathEncoded)/turns/by-turn/\(turnID.urlPathEncoded)/messages"
         )
         return messages
-            .filter { $0.isTurnProcessMessage && !$0.isTaskRunnerCallback }
+            .filter(\.isTurnProcessMessage)
             .map(\.processNode)
             .sorted { left, right in
                 (left.timestamp ?? .distantPast) < (right.timestamp ?? .distantPast)
@@ -30,11 +30,8 @@ private extension SessionMessageDTO {
         if role == "tool" || !toolCalls.isEmpty { return true }
         if metadata["historyProcessLoaded"]?.boolValue == true { return true }
         if metadata["historyProcessUserMessageId"]?.stringValue != nil { return true }
-        if metadata["task_runner_async"] != nil || metadata["task_runner_callback"] != nil {
-            return true
-        }
         let mode = (messageMode ?? messageSource ?? "").lowercased()
-        return mode.contains("tool") || mode.contains("task") || mode.contains("reason")
+        return mode.contains("tool") || mode.contains("reason")
     }
 
     var processNode: TurnProcessNode {
@@ -55,9 +52,6 @@ private extension SessionMessageDTO {
         } else if let mappedContent {
             kind = mappedContent.kind
             title = mappedContent.title
-        } else if metadata["task_runner_async"] != nil || metadata["task_runner_callback"] != nil {
-            kind = .task
-            title = firstContentLine ?? "任务状态更新"
         } else if (messageMode ?? messageSource ?? "").lowercased().contains("reason") {
             kind = .reasoning
             title = "推理"

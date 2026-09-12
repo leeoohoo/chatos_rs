@@ -34,7 +34,6 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     private let activityInteractionState = PetOverlayInteractionState()
     private let runningActivityInteractionState = PetOverlayInteractionState()
     private let onOpen: (PetActivity) -> Void
-    private var taskInspectorPanel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
     private var isProgrammaticMove = false
     private var isDraggingPet = false
@@ -96,12 +95,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         let messageHostingView = NSHostingView(
             rootView: PetLocalizedRoot(
                 model: model,
-                content: PetQuickChatView(
-                    interactionState: interactionState,
-                    onInspectTaskReply: { [weak self] selection, service in
-                        self?.presentTaskInspector(selection: selection, service: service)
-                    }
-                )
+                content: PetQuickChatView(interactionState: interactionState)
             )
         )
         messageHostingView.sizingOptions = []
@@ -191,7 +185,6 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             updateRunningActivityVisibility()
             updateActivityVisibility()
         } else {
-            dismissTaskInspector()
             window.orderOut(nil)
             messagePanel.orderOut(nil)
             fileWorkbenchPanel.orderOut(nil)
@@ -202,7 +195,6 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
 
     func openFile(_ request: PetFileOpenRequest) {
         interactionState.isQuickChatPresented = false
-        dismissTaskInspector()
         fileWorkbenchStore.open(request)
         updateMessageVisibility()
         updateFileWorkbenchVisibility()
@@ -346,8 +338,6 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
                 guard let self else { return }
                 if presented {
                     self.applyQuickChatSize(self.preferredQuickChatMessageSize())
-                } else {
-                    self.dismissTaskInspector()
                 }
                 self.updateMessageVisibility()
                 self.updateRunningActivityVisibility()
@@ -371,7 +361,6 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self, self.interactionState.isQuickChatPresented else { return }
-                self.dismissTaskInspector()
                 self.applyQuickChatSize(self.preferredQuickChatMessageSize())
                 self.updateRunningActivityVisibility()
                 self.updateActivityVisibility()
@@ -565,65 +554,6 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
 
     private static func isRunningActivity(_ activity: PetActivity) -> Bool {
         activity.kind == .working || activity.kind == .reviewing
-    }
-
-    private func presentTaskInspector(
-        selection: TaskReplySelection,
-        service: any MessageTaskGraphServicing
-    ) {
-        guard let model, let petWindow = window else { return }
-        dismissTaskInspector()
-
-        let size = NSSize(width: 720, height: 620)
-        let panel = PetTaskInspectorPanel(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.isReleasedWhenClosed = false
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = messagePanel.collectionBehavior
-        panel.level = NSWindow.Level(rawValue: activityPanel.level.rawValue + 1)
-        panel.onCancel = { [weak self] in self?.dismissTaskInspector() }
-        panel.contentView = NSHostingView(
-            rootView: PetQuickChatTaskInspectorView(
-                selection: selection,
-                service: service,
-                onClose: { [weak self] in self?.dismissTaskInspector() }
-            )
-            .environmentObject(model)
-        )
-
-        let layout = PetTaskInspectorPlacement.layout(
-            size: size,
-            conversationFrame: messagePanel.frame,
-            visibleFrame: (messagePanel.screen ?? petWindow.screen ?? NSScreen.main)?.visibleFrame ?? .zero
-        )
-        messagePanel.setFrameOrigin(layout.conversationOrigin)
-        panel.setFrameOrigin(layout.inspectorOrigin)
-        positionRunningActivityPanel()
-        positionActivityPanel()
-        messagePanel.addChildWindow(panel, ordered: .above)
-        panel.makeKeyAndOrderFront(nil)
-        taskInspectorPanel = panel
-    }
-
-    private func dismissTaskInspector() {
-        guard let panel = taskInspectorPanel else { return }
-        if panel.parent === messagePanel {
-            messagePanel.removeChildWindow(panel)
-        }
-        panel.orderOut(nil)
-        taskInspectorPanel = nil
-        if messagePanel.isVisible {
-            positionMessagePanel()
-            positionRunningActivityPanel()
-            positionActivityPanel()
-        }
     }
 
     private func applyQuickChatSize(_ size: NSSize) {
@@ -922,44 +852,6 @@ struct PetStackedPanelPlacement {
     }
 }
 
-struct PetTaskInspectorPlacement {
-    struct Layout: Equatable {
-        let conversationOrigin: NSPoint
-        let inspectorOrigin: NSPoint
-    }
-
-    static func layout(
-        size: NSSize,
-        conversationFrame: NSRect,
-        visibleFrame: NSRect
-    ) -> Layout {
-        let screenInset: CGFloat = 8
-        let gap: CGFloat = 12
-        let minimumX = visibleFrame.minX + screenInset
-        let maximumConversationX = visibleFrame.maxX
-            - conversationFrame.width
-            - screenInset
-        let requiredConversationX = minimumX + size.width + gap
-        let conversationX = min(
-            max(conversationFrame.minX, requiredConversationX),
-            maximumConversationX
-        )
-        let inspectorX = max(minimumX, conversationX - size.width - gap)
-        let preferredInspectorY = conversationFrame.maxY - size.height
-        let inspectorY = min(
-            max(preferredInspectorY, visibleFrame.minY + screenInset),
-            visibleFrame.maxY - size.height - screenInset
-        )
-        return Layout(
-            conversationOrigin: NSPoint(
-                x: conversationX,
-                y: conversationFrame.minY
-            ),
-            inspectorOrigin: NSPoint(x: inspectorX, y: inspectorY)
-        )
-    }
-}
-
 private final class PetMessagePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -969,17 +861,6 @@ private final class PetMessagePanel: NSPanel {
             makeKey()
         }
         super.sendEvent(event)
-    }
-}
-
-private final class PetTaskInspectorPanel: NSPanel {
-    var onCancel: (() -> Void)?
-
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-
-    override func cancelOperation(_ sender: Any?) {
-        onCancel?()
     }
 }
 

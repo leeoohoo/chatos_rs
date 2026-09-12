@@ -317,46 +317,6 @@ final class ConversationHistoryStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.turns.first?.finalAssistantMessage?.text, "accepted")
     }
 
-    func testLatestPageCanAddTaskCallbackWithoutHigherTurnRevision() async {
-        let store = ConversationHistoryStore()
-        let original = turn(id: "1", sequence: 1, revision: 5)
-        await store.mergeCachedTurns([original], sessionID: "session-a")
-
-        var completed = original
-        completed.assistantReplies.append(
-            ConversationAssistantReply(
-                message: ChatMessage(
-                    id: "task-callback-1",
-                    role: .assistant,
-                    text: "任务已完成",
-                    createdAt: Date(timeIntervalSince1970: 2)
-                ),
-                taskCallback: TaskRunnerCallbackReference(
-                    taskID: "task-1",
-                    runID: "run-1",
-                    event: "task.completed",
-                    status: "succeeded"
-                )
-            )
-        )
-        await store.mergePage(
-            HistoryPage(
-                turns: [completed],
-                olderCursor: nil,
-                hasOlder: false,
-                snapshotRevision: 5,
-                requestGeneration: 1
-            ),
-            sessionID: "session-a",
-            origin: .latest
-        )
-
-        let snapshot = await store.snapshot(sessionID: "session-a")
-        XCTAssertEqual(snapshot.turns.first?.revision, 5)
-        XCTAssertEqual(snapshot.turns.first?.assistantReplies.count, 1)
-        XCTAssertEqual(snapshot.turns.first?.assistantReplies.first?.taskCallback?.taskID, "task-1")
-    }
-
     func testStaleLatestPageCannotReplaceEqualRevisionSnapshot() async {
         let store = ConversationHistoryStore()
         await store.mergePage(

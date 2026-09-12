@@ -58,8 +58,7 @@ enum ConversationHistoryMapper {
             finalAssistantMessage: assistant?.domainMessage(role: .assistant, fallbackDate: completedAt ?? startedAt),
             assistantReplies: assistantReplies.map {
                 ConversationAssistantReply(
-                    message: $0.domainMessage(role: .assistant, fallbackDate: completedAt ?? startedAt),
-                    taskCallback: $0.taskRunnerCallbackReference
+                    message: $0.domainMessage(role: .assistant, fallbackDate: completedAt ?? startedAt)
                 )
             },
             status: status,
@@ -88,14 +87,7 @@ enum ConversationHistoryMapper {
         user: SessionMessageDTO,
         assistant: SessionMessageDTO?
     ) -> TurnStatus {
-        let taskRunnerStatus = user.metadata.value(
-            at: "task_runner_async",
-            "overall_status"
-        )?.stringValue ?? user.metadata.value(
-            at: "task_runner_async",
-            "confirmation_status"
-        )?.stringValue
-        let status = (assistant?.status ?? user.status ?? taskRunnerStatus ?? "").lowercased()
+        let status = (assistant?.status ?? user.status ?? "").lowercased()
         if status == "failed" || status == "error" { return .failed }
         if status == "cancelled" || status == "canceled" { return .cancelled }
         if status == "completed" || status == "succeeded" || status == "success" {
@@ -106,71 +98,31 @@ enum ConversationHistoryMapper {
 }
 
 private struct AssistantLookup {
-    private struct IndexedMessage: Sendable {
-        var index: Int
-        var message: SessionMessageDTO
-    }
-
-    private var byID: [String: IndexedMessage] = [:]
-    private var finalsByUserMessageID: [String: IndexedMessage] = [:]
-    private var finalsByTurnID: [String: IndexedMessage] = [:]
-    private var callbacksByUserMessageID: [String: [IndexedMessage]] = [:]
-    private var callbacksByTurnID: [String: [IndexedMessage]] = [:]
+    private var byID: [String: SessionMessageDTO] = [:]
+    private var finalsByUserMessageID: [String: SessionMessageDTO] = [:]
+    private var finalsByTurnID: [String: SessionMessageDTO] = [:]
 
     init(messages: [SessionMessageDTO]) {
-        for (index, message) in messages.enumerated()
-        where message.role == "assistant" && !message.isCancelledTaskCallback {
-            let indexed = IndexedMessage(index: index, message: message)
-            byID[message.id] = indexed
-            if message.isTaskRunnerCallback {
-                if let sourceUserID = message.taskRunnerCallbackReference?.sourceUserMessageID {
-                    callbacksByUserMessageID[sourceUserID, default: []].append(indexed)
-                }
-                if let sourceTurnID = message.taskRunnerCallbackReference?.sourceTurnID {
-                    callbacksByTurnID[sourceTurnID, default: []].append(indexed)
-                }
-                continue
-            }
+        for message in messages where message.role == "assistant" {
+            byID[message.id] = message
             if let userID = message.metadata.value(at: "historyFinalForUserMessageId")?.stringValue {
-                finalsByUserMessageID[userID] = indexed
+                finalsByUserMessageID[userID] = message
             }
-            if let turnID = message.finalTurnID {
-                finalsByTurnID[turnID] = indexed
+            if let turnID = message.metadata.value(at: "historyFinalForTurnId")?.stringValue {
+                finalsByTurnID[turnID] = message
             }
         }
     }
 
     func finalAssistant(for user: SessionMessageDTO, turnID: String) -> SessionMessageDTO? {
         if let assistantID = user.metadata.value(at: "historyProcess", "finalAssistantMessageId")?.stringValue,
-           let assistant = byID[assistantID]?.message,
-           !assistant.isTaskRunnerCallback {
+           let assistant = byID[assistantID] {
             return assistant
         }
-        return finalsByUserMessageID[user.id]?.message ?? finalsByTurnID[turnID]?.message
+        return finalsByUserMessageID[user.id] ?? finalsByTurnID[turnID]
     }
 
     func replies(for user: SessionMessageDTO, turnID: String) -> [SessionMessageDTO] {
-        var indexed: [IndexedMessage] = []
-        if let final = finalAssistant(for: user, turnID: turnID),
-           let finalIndexed = byID[final.id] {
-            indexed.append(finalIndexed)
-        }
-        indexed.append(contentsOf: callbacksByUserMessageID[user.id] ?? [])
-        indexed.append(contentsOf: callbacksByTurnID[turnID] ?? [])
-
-        var seen = Set<String>()
-        return indexed
-            .sorted { lhs, rhs in
-                let lhsIsCallback = lhs.message.isTaskRunnerCallback
-                let rhsIsCallback = rhs.message.isTaskRunnerCallback
-                if lhsIsCallback != rhsIsCallback {
-                    return !lhsIsCallback
-                }
-                return lhs.index < rhs.index
-            }
-            .compactMap { item in
-                guard seen.insert(item.message.id).inserted else { return nil }
-                return item.message
-            }
+        finalAssistant(for: user, turnID: turnID).map { [$0] } ?? []
     }
 }

@@ -4,7 +4,6 @@ import SwiftUI
 struct PetQuickChatView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var interactionState: PetOverlayInteractionState
-    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     var body: some View {
         Group {
@@ -13,8 +12,7 @@ struct PetQuickChatView: View {
                     resource: selectedResource,
                     conversation: model.petConversation(for: selectedResource),
                     onBack: { interactionState.selectedQuickChatResourceID = nil },
-                    onClose: close,
-                    onInspectTaskReply: onInspectTaskReply
+                    onClose: close
                 )
             } else {
                 resourceList
@@ -153,17 +151,13 @@ private struct PetQuickChatConversationView: View {
     let conversation: ConversationSessionViewModel?
     let onBack: () -> Void
     let onClose: () -> Void
-    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
             if let conversation {
-                PetQuickChatTimeline(
-                    conversation: conversation,
-                    onInspectTaskReply: onInspectTaskReply
-                )
+                PetQuickChatTimeline(conversation: conversation)
                 Divider()
                 PetQuickChatComposer(conversation: conversation)
             } else {
@@ -217,7 +211,6 @@ private struct PetQuickChatConversationView: View {
 private struct PetQuickChatTimeline: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var conversation: ConversationSessionViewModel
-    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -232,17 +225,7 @@ private struct PetQuickChatTimeline: View {
                     ForEach(Array(conversation.turns.suffix(6))) { turn in
                         messageBubble(turn.userMessage, isUser: true)
                         if let assistantReply = turn.assistantReplies.last {
-                            messageBubble(
-                                assistantReply.message,
-                                isUser: false,
-                                taskSelection: assistantReply.taskCallback == nil
-                                    ? nil
-                                    : TaskReplySelection(
-                                        turn: turn,
-                                        reply: assistantReply,
-                                        initialSection: .detail
-                                    )
-                            )
+                            messageBubble(assistantReply.message, isUser: false)
                         } else if let finalAssistantMessage = turn.finalAssistantMessage {
                             messageBubble(finalAssistantMessage, isUser: false)
                         } else if turn.status == .streaming {
@@ -277,8 +260,7 @@ private struct PetQuickChatTimeline: View {
 
     private func messageBubble(
         _ message: ChatMessage,
-        isUser: Bool,
-        taskSelection: TaskReplySelection? = nil
+        isUser: Bool
     ) -> some View {
         HStack {
             if isUser { Spacer(minLength: 54) }
@@ -287,26 +269,6 @@ private struct PetQuickChatTimeline: View {
                     .font(.system(size: 12))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-
-                if let taskSelection {
-                    Divider()
-                    Button {
-                        guard let service = conversation.messageTaskGraphService else { return }
-                        onInspectTaskReply(taskSelection, service)
-                    } label: {
-                        Label(
-                            model.localized("查看详情与执行过程", english: "View Details and Execution"),
-                            systemImage: "doc.text.magnifyingglass"
-                        )
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                    .help(model.localized(
-                        "直接在宠物窗口中查看任务详情和执行过程",
-                        english: "View task details and execution without leaving the pet window"
-                    ))
-                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -331,109 +293,6 @@ private struct PetQuickChatTimeline: View {
                 proxy.scrollTo("pet-chat-bottom", anchor: .bottom)
             }
         }
-    }
-}
-
-struct PetQuickChatTaskInspectorView: View {
-    @EnvironmentObject private var model: AppModel
-    @StateObject private var viewModel: TaskReplyInspectorViewModel
-    private let selection: TaskReplySelection
-    private let onClose: () -> Void
-
-    init(
-        selection: TaskReplySelection,
-        service: any MessageTaskGraphServicing,
-        onClose: @escaping () -> Void
-    ) {
-        self.selection = selection
-        self.onClose = onClose
-        _viewModel = StateObject(
-            wrappedValue: TaskReplyInspectorViewModel(
-                selection: selection,
-                service: service
-            )
-        )
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ScrollView {
-                TaskReplyInspectorContent(viewModel: viewModel)
-                    .padding(20)
-            }
-        }
-        .frame(width: 720, height: 620)
-        .background(
-            Color(nsColor: .windowBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 16)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        }
-        .task {
-            viewModel.update(selection: selection)
-            viewModel.load()
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(AppPalette.ai)
-                    .frame(width: 32, height: 32)
-                    .background(AppPalette.ai.opacity(0.1), in: Circle())
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.localized("任务详情与执行过程", english: "Task Details and Execution"))
-                        .font(.system(size: 15, weight: .semibold))
-                    Text(viewModel.task?.title ?? model.localized(
-                        "正在读取任务信息…",
-                        english: "Loading task information…"
-                    ))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                }
-                Spacer()
-                if viewModel.isLoading || viewModel.isLoadingModelOutput {
-                    ProgressView().controlSize(.small)
-                }
-                Button {
-                    viewModel.refresh()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .help(model.localized("刷新", english: "Refresh"))
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 26, height: 26)
-                        .background(Color(nsColor: .controlBackgroundColor), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help(model.localized("关闭", english: "Close"))
-            }
-
-            Picker(
-                model.localized("查看内容", english: "View"),
-                selection: Binding(
-                    get: { viewModel.section },
-                    set: { viewModel.selectSection($0) }
-                )
-            ) {
-                ForEach(TaskReplyInspectorSection.allCases, id: \.self) { section in
-                    Text(section.title(language: model.interfaceLanguage)).tag(section)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-        }
-        .padding(16)
     }
 }
 

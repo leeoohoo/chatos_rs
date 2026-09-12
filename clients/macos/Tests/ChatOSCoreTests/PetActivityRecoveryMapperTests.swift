@@ -4,78 +4,7 @@ import Testing
 
 struct PetActivityRecoveryMapperTests {
     @Test
-    func restoresLatestRunningTaskWithRunRoute() throws {
-        let now = Date()
-        var turn = makeTurn(status: .completed, startedAt: now.addingTimeInterval(-60))
-        turn.assistantReplies = [
-            ConversationAssistantReply(
-                message: ChatMessage(
-                    id: "reply-1",
-                    role: .assistant,
-                    text: "任务开始",
-                    createdAt: now.addingTimeInterval(-10)
-                ),
-                taskCallback: TaskRunnerCallbackReference(
-                    taskID: "task-1",
-                    runID: "run-1",
-                    event: "task.run.started",
-                    status: "running",
-                    sourceTurnID: "turn-1"
-                )
-            ),
-        ]
-
-        let activities = PetActivityRecoveryMapper.activities(
-            conversationID: "conversation-1",
-            projectID: nil,
-            turns: [turn],
-            now: now
-        )
-
-        let activity = try #require(activities.first)
-        #expect(activity.kind == .working)
-        #expect(activity.route.messageID == "reply-1")
-        #expect(activity.route.taskID == "task-1")
-        #expect(activity.route.runID == "run-1")
-        #expect(activity.expiresAt == nil)
-    }
-
-    @Test
-    func longRunningTaskRemainsVisibleUntilARealTerminalEventArrives() throws {
-        let now = Date()
-        var turn = makeTurn(status: .completed, startedAt: now.addingTimeInterval(-3_600))
-        turn.assistantReplies = [
-            ConversationAssistantReply(
-                message: ChatMessage(
-                    id: "reply-long-running",
-                    role: .assistant,
-                    text: "任务仍在执行",
-                    createdAt: now.addingTimeInterval(-3_500)
-                ),
-                taskCallback: TaskRunnerCallbackReference(
-                    taskID: "task-long-running",
-                    runID: "run-long-running",
-                    event: "task.run.started",
-                    status: "running",
-                    sourceTurnID: "turn-1"
-                )
-            ),
-        ]
-
-        let activities = PetActivityRecoveryMapper.activities(
-            conversationID: "conversation-1",
-            projectID: nil,
-            turns: [turn],
-            now: now
-        )
-
-        let activity = try #require(activities.first)
-        #expect(activity.kind == .working)
-        #expect(activity.expiresAt == nil)
-    }
-
-    @Test
-    func authoritativeCancelledTaskRemovesStaleRunningCallback() {
+    func authoritativeCancelledTaskRemovesStaleRunningActivity() {
         let now = Date()
         let staleActivity = PetActivity(
             id: "task-runner:task-1",
@@ -133,7 +62,7 @@ struct PetActivityRecoveryMapperTests {
     }
 
     @Test
-    func recentLegacyCompletionBridgesInboxDeliveryWithoutBecomingPermanent() throws {
+    func recentCompletionBridgesInboxDeliveryWithoutBecomingPermanent() throws {
         let now = Date()
         let runningActivity = PetActivity(
             id: "task-runner:task-1",
@@ -163,7 +92,7 @@ struct PetActivityRecoveryMapperTests {
     }
 
     @Test
-    func oldLegacyCompletionIsNotResurrectedAsUnreadPetWork() {
+    func oldCompletionIsNotResurrectedAsUnreadPetWork() {
         let now = Date()
         let runningActivity = PetActivity(
             id: "task-runner:task-old",
@@ -189,44 +118,4 @@ struct PetActivityRecoveryMapperTests {
         #expect(recovered == nil)
     }
 
-    @Test
-    func expiredCompletionDoesNotReturnAfterReconnect() {
-        let now = Date()
-        let turn = makeTurn(
-            status: .completed,
-            startedAt: now.addingTimeInterval(-120),
-            completedAt: now.addingTimeInterval(-90)
-        )
-
-        let activities = PetActivityRecoveryMapper.activities(
-            conversationID: "conversation-1",
-            projectID: nil,
-            turns: [turn],
-            now: now
-        )
-
-        #expect(activities.isEmpty)
-    }
-
-    private func makeTurn(
-        status: TurnStatus,
-        startedAt: Date,
-        completedAt: Date? = nil
-    ) -> ConversationTurn {
-        ConversationTurn(
-            id: "turn-1",
-            sessionID: "conversation-1",
-            sequence: 1,
-            revision: 1,
-            userMessage: ChatMessage(
-                id: "user-1",
-                role: .user,
-                text: "执行任务",
-                createdAt: startedAt
-            ),
-            status: status,
-            startedAt: startedAt,
-            completedAt: completedAt
-        )
-    }
 }

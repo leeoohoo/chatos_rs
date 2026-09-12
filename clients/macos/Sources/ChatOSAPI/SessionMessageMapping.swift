@@ -6,14 +6,12 @@ extension SessionMessageDTO {
         turnID?.nonEmpty
             ?? metadata.value(at: "historyProcess", "turnId")?.stringValue
             ?? metadata.value(at: "conversation_turn_id")?.stringValue
-            ?? metadata.value(at: "task_runner_async", "source_turn_id")?.stringValue
             ?? id
     }
 
     var finalTurnID: String? {
         metadata.value(at: "historyFinalForTurnId")?.stringValue
             ?? metadata.value(at: "conversation_turn_id")?.stringValue
-            ?? metadata.value(at: "task_runner_async", "source_turn_id")?.stringValue
             ?? turnID?.nonEmpty
     }
 

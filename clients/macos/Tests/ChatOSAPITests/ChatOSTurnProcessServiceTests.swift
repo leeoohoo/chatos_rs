@@ -40,7 +40,6 @@ private actor TurnProcessTransport: HTTPTransport {
           {"id":"user-1","role":"user","content":"do it","turn_id":"turn-1","metadata":{},"created_at":"2026-08-24T05:00:00Z"},
           {"id":"assistant-tool","role":"assistant","content":"准备执行","turn_id":"turn-1","status":"streaming","tool_calls":[{"function":{"name":"shell"}}],"metadata":{"historyProcessLoaded":true},"created_at":"2026-08-24T05:00:01Z"},
           {"id":"tool-1","role":"tool","content":"{\"_structured_result\":{\"title\":\"Task A\",\"status\":\"queued\",\"description\":\"Read files\"}}","turn_id":"turn-1","status":"completed","metadata":{"tool_name":"shell","historyProcessLoaded":true},"created_at":"2026-08-24T05:00:02Z"},
-          {"id":"callback-1","role":"assistant","content":"task done","message_mode":"task_runner_callback","metadata":{"task_runner_async":{"message_kind":"task_terminal_update","event":"task.completed","task_id":"task-1","run_id":"run-1","source_turn_id":"turn-1","source_user_message_id":"user-1","status":"succeeded"}},"created_at":"2026-08-24T05:00:02Z"},
           {"id":"assistant-final","role":"assistant","content":"done","turn_id":"turn-1","status":"completed","metadata":{"historyFinalForUserMessageId":"user-1"},"created_at":"2026-08-24T05:00:03Z"}
         ]
         """#

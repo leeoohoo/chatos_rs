@@ -11,7 +11,6 @@ struct ConversationTimelineView: View {
     var projectRootPath: String? = nil
     @State private var selectedProcessTurn: ConversationTurn?
     @State private var selectedTaskTurn: ConversationTurn?
-    @State private var selectedTaskReply: TaskReplySelection?
     @State private var requestedTaskID: String?
     @State private var requestedRunID: String?
     @State private var hasPositionedInitialTimeline = false
@@ -141,27 +140,6 @@ struct ConversationTimelineView: View {
                         .padding(.bottom, 10)
                     }
 
-                    if selectedTaskReply != nil {
-                        HStack {
-                            Spacer()
-                            Button(
-                                model.localized("收起详情", english: "Collapse Details"),
-                                systemImage: "chevron.up"
-                            ) {
-                                withAnimation(.easeInOut(duration: 0.18)) {
-                                    selectedTaskReply = nil
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(AppPalette.ai)
-                            .help(model.localized(
-                                "收起当前任务详情或执行过程",
-                                english: "Collapse the current task details or execution process"
-                            ))
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 10)
-                    }
                 }
                 .onAppear {
                     positionInitialTimeline(using: proxy)
@@ -245,32 +223,8 @@ struct ConversationTimelineView: View {
                 }
             )
 
-        case let .reply(turn, reply):
-            if reply.taskCallback != nil {
-                VStack(alignment: .leading, spacing: 14) {
-                    TaskAgentReplyView(
-                        reply: reply,
-                        expandedSection: expandedSection(for: reply),
-                        projectRootPath: projectRootPath,
-                        onToggleInspector: { section in
-                            toggleTaskReply(turn, reply, section)
-                        }
-                    )
-                    if let selection = expandedSelection(for: turn, reply: reply),
-                       let taskGraphService = conversation.messageTaskGraphService {
-                        TaskReplyInlineInspectorView(
-                            selection: selection,
-                            requestedSection: selection.initialSection,
-                            service: taskGraphService
-                        )
-                        .padding(.leading, 30)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                AssistantReplyView(reply: reply, projectRootPath: projectRootPath)
-            }
+        case let .reply(_, reply):
+            AssistantReplyView(reply: reply, projectRootPath: projectRootPath)
 
         case let .prompt(prompt):
             AskUserPromptCardView(conversation: conversation, prompt: prompt)
@@ -294,44 +248,6 @@ struct ConversationTimelineView: View {
             LocalAgentTaskCardView(state: task)
                 .padding(.leading, 30)
         }
-    }
-
-    private func toggleTaskReply(
-        _ turn: ConversationTurn,
-        _ reply: ConversationAssistantReply,
-        _ section: TaskReplyInspectorSection
-    ) {
-        withAnimation(.easeInOut(duration: 0.18)) {
-            if selectedTaskReply?.reply.id == reply.id,
-               selectedTaskReply?.initialSection == section {
-                selectedTaskReply = nil
-            } else {
-                selectedTaskReply = TaskReplySelection(
-                    turn: turn,
-                    reply: reply,
-                    initialSection: section
-                )
-            }
-        }
-    }
-
-    private func expandedSelection(
-        for turn: ConversationTurn,
-        reply: ConversationAssistantReply
-    ) -> TaskReplySelection? {
-        guard selectedTaskReply?.reply.id == reply.id else { return nil }
-        return TaskReplySelection(
-            turn: turn,
-            reply: reply,
-            initialSection: selectedTaskReply?.initialSection ?? .detail
-        )
-    }
-
-    private func expandedSection(
-        for reply: ConversationAssistantReply
-    ) -> TaskReplyInspectorSection? {
-        guard selectedTaskReply?.reply.id == reply.id else { return nil }
-        return selectedTaskReply?.initialSection
     }
 
     private func positionInitialTimeline(using proxy: ScrollViewProxy) {

@@ -50,45 +50,12 @@ public struct TurnProcessEvent: Identifiable, Codable, Sendable, Equatable {
     }
 }
 
-public struct TaskRunnerCallbackReference: Codable, Sendable, Equatable {
-    public var taskID: String
-    public var runID: String?
-    public var event: String?
-    public var status: String?
-    public var sourceSessionID: String?
-    public var sourceTurnID: String?
-    public var sourceUserMessageID: String?
-
-    public init(
-        taskID: String,
-        runID: String? = nil,
-        event: String? = nil,
-        status: String? = nil,
-        sourceSessionID: String? = nil,
-        sourceTurnID: String? = nil,
-        sourceUserMessageID: String? = nil
-    ) {
-        self.taskID = taskID
-        self.runID = runID
-        self.event = event
-        self.status = status
-        self.sourceSessionID = sourceSessionID
-        self.sourceTurnID = sourceTurnID
-        self.sourceUserMessageID = sourceUserMessageID
-    }
-}
-
 public struct ConversationAssistantReply: Identifiable, Codable, Sendable, Equatable {
     public var id: String { message.id }
     public var message: ChatMessage
-    public var taskCallback: TaskRunnerCallbackReference?
 
-    public init(
-        message: ChatMessage,
-        taskCallback: TaskRunnerCallbackReference? = nil
-    ) {
+    public init(message: ChatMessage) {
         self.message = message
-        self.taskCallback = taskCallback
     }
 }
 

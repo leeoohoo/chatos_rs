@@ -138,7 +138,8 @@
 - 2026-09-13：新增客户端专用 `chatos_mcp_client` 与项目级 stdio 会话执行器，使用冻结工具白名单完成 initialize、tools/list、tools/call、取消、进程树回收和有界 I/O；删除 Local Host 对旧 `chatos_mcp_runtime` 的依赖，远程 HTTP、队列、内置服务目录和服务端工具路由不进入客户端边界。当前 `clients/shared` 对顶层旧 `crates` 只剩 `chatos_plugin_management_sdk` 一条直接依赖。
 - 2026-09-13：新增客户端专用 `chatos_plugin_capability`，Local Host 只消费并验证 exact manifest bytes、Release/Artifact 身份、Ed25519 签名、发布者/Marketplace 身份、平台、权限和就绪组件；目录、偏好、安装工作流、服务 Client 与缓存 DTO 不进入 Host。删除 Local Host 对旧 `chatos_plugin_management_sdk` 的依赖，存储能力契约直接升级到 schema v2，不提供 schema v1 fallback；`clients/shared` 对顶层旧 `crates` 的直接依赖已清零。
 - 2026-09-13：macOS Task 入口改为直接使用 Local Host 恢复的 `source_thread_id + source_turn_id + task_id + run_id` 关联；删除 `MessageTaskLookup`、历史消息元数据映射和逐 turn 的远程任务图存在性探测。会话时间线、聚焦路由与任务画布只根据本地 Task 投影决定关联，不再从 `source_user_message_id` 或当前 UI 状态猜测。
+- 2026-09-13：删除 macOS 对 `task_runner_callback` / `task_runner_async` 历史消息的解析、模型、排序、状态推断和专用 Reply Inspector；会话历史只映射正式 user/final assistant 消息。Task 进度、终态、结果、重试与详情统一由 Local Host 的 Task/Run 权威投影提供，Pet Quick Chat 不再从历史 callback 恢复任务状态或打开第二套 inspector。
 - 验证记录：`cargo test -p chatos_local_agent_protocol -p chatos_local_agent_host`、`swift test --skip NativePluginRuntimeTests`、客户端存储边界审计、Cargo metadata 与静态远程路径搜索全部通过。macOS 全量回归期间发现并修复终端退出状态早于尾部 stdout 落库的竞态，定向连续执行 10 次及全量回归均通过。当前 macOS 主机未安装 .NET SDK，Windows v12 代码和共享夹具测试尚未在 Windows/.NET 环境执行，不能记为通过。
 - 当前在制：阶段 2，完成 Main Chat 与 Task 的本地结果闭环。
-- 下一切片：以本地稳定 ID 关联来源 turn、Task 与全部 Run，并整体删除 `MessageTaskLookup`、远程任务回调解析和服务端 Agent 状态订阅语义。
+- 下一切片：删除 macOS Task Realtime / Agent Inbox 的远程状态源，让 Pet 恢复、Main Chat 任务状态和最终结果只订阅 Local Host Task/Run 事件；补齐 Main Chat turn → Task → 全部 Run → 最终结果的重启恢复测试。
 - 完成状态：阶段 1 已达到完成门槛；阶段 2—8 尚未达到完整门槛。
