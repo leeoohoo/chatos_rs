@@ -138,6 +138,13 @@ fn interpret_main_chat_output(
                 if ask_question.is_some() {
                     return Err("task creation cannot be mixed with ask_user".to_string());
                 }
+                if project_id.is_none() {
+                    return Err(
+                        "create_local_task requires the Main Chat run to have a frozen project_id"
+                            .to_string(),
+                    );
+                }
+                let arguments = validate_create_task_arguments(arguments)?;
                 task_calls.push(json!({
                     "call_id": call.get("call_id"),
                     "name": name,
@@ -159,8 +166,51 @@ fn interpret_main_chat_output(
     }
 }
 
+fn validate_create_task_arguments(arguments: Value) -> Result<Value, String> {
+    let object = arguments
+        .as_object()
+        .ok_or_else(|| "create_local_task arguments must be an object".to_string())?;
+    if object
+        .keys()
+        .any(|key| key == "project_id" || key == "projectId")
+    {
+        return Err(
+            "create_local_task must not choose project_id; the runtime injects it".to_string(),
+        );
+    }
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "objective" | "acceptance_criteria"))
+    {
+        return Err("create_local_task contains unsupported arguments".to_string());
+    }
+    let objective = object
+        .get("objective")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "create_local_task objective must not be empty".to_string())?;
+    let acceptance_criteria = object
+        .get("acceptance_criteria")
+        .and_then(Value::as_array)
+        .filter(|criteria| {
+            !criteria.is_empty()
+                && criteria.iter().all(|criterion| {
+                    criterion
+                        .as_str()
+                        .is_some_and(|value| !value.trim().is_empty())
+                })
+        })
+        .ok_or_else(|| {
+            "create_local_task acceptance_criteria must contain non-empty strings".to_string()
+        })?;
+    Ok(json!({
+        "objective": objective,
+        "acceptance_criteria": acceptance_criteria,
+    }))
+}
+
 fn main_chat_boundary_prompt() -> String {
-    "You are the Main Chat collaboration agent. Answer and review directly. You have no terminal, file-write, project-mutation, marketplace-plugin, or arbitrary MCP capability. Never claim that code, files, deployments, or external systems changed unless a completed local Task result in the supplied context proves it. When real project execution is required, call create_local_task exactly once with a bounded objective. Ask the user only when a missing decision materially changes the requested outcome.".to_string()
+    "You are the Main Chat collaboration agent. Answer and review directly. You have no terminal, file-write, project-mutation, marketplace-plugin, or arbitrary MCP capability. Never claim that code, files, deployments, or external systems changed unless a completed local Task result in the supplied context proves it. When real project execution is required, call create_local_task exactly once with a bounded objective and deterministic acceptance criteria. The runtime owns project scope; never choose or emit a project ID. Ask the user only when a missing decision materially changes the requested outcome.".to_string()
 }
 
 fn main_chat_tools() -> Vec<Value> {
@@ -172,14 +222,18 @@ fn main_chat_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": MAIN_CHAT_CREATE_TASK_TOOL,
-            "description": "Create one local Task for real project or computer execution.",
+            "description": "Create one local Task inside the project already frozen by the runtime. Provide a bounded objective and deterministic acceptance criteria; never choose a project ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "objective": {"type": "string"},
-                    "project_id": {"type": ["string", "null"]}
+                    "acceptance_criteria": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1
+                    }
                 },
-                "required": ["objective", "project_id"],
+                "required": ["objective", "acceptance_criteria"],
                 "additionalProperties": false
             }
         }),
@@ -212,13 +266,50 @@ mod tests {
             "type": "function_call",
             "call_id": "call-1",
             "name": MAIN_CHAT_CREATE_TASK_TOOL,
-            "arguments": "{\"objective\":\"implement it\",\"project_id\":\"project-1\"}"
+            "arguments": "{\"objective\":\"implement it\",\"acceptance_criteria\":[\"the approved UI is implemented\"]}"
         })]);
-        let result = interpret_main_chat_output(None, "capabilities-1", &gateway_output).unwrap();
+        let result =
+            interpret_main_chat_output(Some("project-1"), "capabilities-1", &gateway_output)
+                .unwrap();
         let ModelStepResult::ToolCommand(payload) = result else {
             panic!("expected task command");
         };
+        assert_eq!(payload["project_id"], "project-1");
         assert_eq!(payload["calls"][0]["name"], MAIN_CHAT_CREATE_TASK_TOOL);
+        assert!(payload["calls"][0]["arguments"].get("project_id").is_none());
+    }
+
+    #[test]
+    fn task_creation_cannot_choose_or_invent_project_scope() {
+        let model_chosen_project = output(vec![json!({
+            "type": "function_call",
+            "call_id": "call-project",
+            "name": MAIN_CHAT_CREATE_TASK_TOOL,
+            "arguments": {
+                "objective": "implement it",
+                "acceptance_criteria": ["tests pass"],
+                "project_id": "project-model-selected"
+            }
+        })]);
+        let error = interpret_main_chat_output(
+            Some("project-frozen"),
+            "capabilities-1",
+            &model_chosen_project,
+        )
+        .unwrap_err();
+        assert!(error.contains("runtime injects"));
+
+        let projectless = output(vec![json!({
+            "type": "function_call",
+            "call_id": "call-projectless",
+            "name": MAIN_CHAT_CREATE_TASK_TOOL,
+            "arguments": {
+                "objective": "implement it",
+                "acceptance_criteria": ["tests pass"]
+            }
+        })]);
+        let error = interpret_main_chat_output(None, "capabilities-1", &projectless).unwrap_err();
+        assert!(error.contains("frozen project_id"));
     }
 
     #[test]
