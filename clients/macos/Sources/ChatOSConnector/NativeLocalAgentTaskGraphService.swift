@@ -165,7 +165,7 @@ public struct NativeLocalAgentTaskGraphService: MessageTaskGraphServicing {
         )
     }
 
-    private func map(_ event: LocalAgentTaskRunEvent) -> MessageTaskRunEvent {
+    private func map(_ event: LocalAgentRunTimelineEvent) -> MessageTaskRunEvent {
         MessageTaskRunEvent(
             id: event.eventID,
             eventType: event.eventType,

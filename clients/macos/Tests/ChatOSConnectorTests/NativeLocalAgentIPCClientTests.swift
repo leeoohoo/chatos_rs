@@ -118,6 +118,26 @@ struct NativeLocalAgentIPCClientTests {
         #expect(created.run.ownerEntityID == "thread-1")
     }
 
+    @Test("queries a bounded generic Run detail for restart recovery")
+    func queriesRunDetail() async throws {
+        let transport = RecordingLocalAgentTransport(responseType: "run_detail")
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+
+        let detail = try await client.runDetail(id: "run-1", eventLimit: 50, eventOffset: 10)
+
+        #expect(detail.run.runID == "run-1")
+        #expect(detail.events.map(\.eventType) == ["message_assistant_reasoning"])
+        #expect(detail.tools.isEmpty)
+        let request = try #require(await transport.lastRequest())
+        let object = try #require(JSONSerialization.jsonObject(with: request) as? [String: Any])
+        let command = try #require(object["command"] as? [String: Any])
+        #expect(command["type"] as? String == "get_run_detail")
+        let payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["run_id"] as? String == "run-1")
+        #expect(payload["event_limit"] as? Int == 50)
+        #expect(payload["event_offset"] as? Int == 10)
+    }
+
     @Test("retries a Task as a new Run with the expected current Run identity")
     func retriesTask() async throws {
         let transport = RecordingLocalAgentTransport(responseType: "run_created")
@@ -147,6 +167,7 @@ struct NativeLocalAgentIPCClientTests {
 
         let task = try #require(page.tasks.first)
         #expect(task.taskID == "task-1")
+        #expect(task.initialRunID == "task-run-1")
         #expect(task.currentRunID == "task-run-2")
         #expect(task.runIDs == ["task-run-1", "task-run-2"])
         #expect(task.sourceThreadID == "thread-1")
@@ -365,6 +386,7 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
                         "source_thread_id": "thread-1",
                         "source_turn_id": "turn-1",
                         "project_id": "project-1",
+                        "initial_run_id": "task-run-1",
                         "current_run_id": "task-run-2",
                         "run_ids": ["task-run-1", "task-run-2"],
                         "objective": "Implement the approved visual design",
@@ -406,6 +428,42 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
                         "created_at": "2026-09-12T03:00:00Z",
                         "updated_at": "2026-09-12T03:00:00Z",
                     ],
+                ],
+            ]
+        case "run_detail":
+            response = [
+                "type": "run_detail",
+                "payload": [
+                    "run": [
+                        "run_id": "run-1",
+                        "profile_key": "main_chat",
+                        "owner_user_id": "user-1",
+                        "owner_entity_type": "conversation",
+                        "owner_entity_id": "thread-1",
+                        "status": "model_running",
+                        "version": 2,
+                        "step_seq": 1,
+                        "iteration": 0,
+                        "retry_count": 0,
+                        "model_config_id": "model-1",
+                        "model_config_revision": 1,
+                        "model_runtime_snapshot": [:],
+                        "context_strategy": "provider_native",
+                        "prompt_revision": "prompt-1",
+                        "capability_snapshot_ref": "capabilities-1",
+                        "created_at": "2026-09-12T03:00:00Z",
+                        "updated_at": "2026-09-12T03:01:00Z",
+                    ],
+                    "events": [[
+                        "event_id": "message:assistant-1:reasoning",
+                        "event_type": "message_assistant_reasoning",
+                        "message": "Inspecting the hierarchy",
+                        "created_at": "2026-09-12T03:00:30Z",
+                    ]],
+                    "tools": [],
+                    "events_total": 1,
+                    "events_has_more": false,
+                    "snapshot_event_sequence": 42,
                 ],
             ]
         default:

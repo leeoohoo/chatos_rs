@@ -105,7 +105,12 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
         runs: [LocalAgentRunSnapshot]
     ) throws {
         let taskRuns = runs.filter { $0.profileKey == "task_runner" }
-        let runsByID = Dictionary(uniqueKeysWithValues: taskRuns.map { ($0.runID, $0) })
+        var runsByID: [String: LocalAgentRunSnapshot] = [:]
+        for run in taskRuns {
+            guard runsByID.updateValue(run, forKey: run.runID) == nil else {
+                throw LocalAgentTaskStateError.identityMismatch("Task Runner 返回了重复 Run ID")
+            }
+        }
         var restored: [String: LocalAgentTaskState] = [:]
         var restoredTaskIDByRunID: [String: String] = [:]
 
@@ -487,10 +492,11 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
         let runIDs = Set(task.runIDs)
         guard !task.runIDs.isEmpty,
               runIDs.count == task.runIDs.count,
+              task.runIDs.first == task.initialRunID,
               runIDs.contains(task.currentRunID)
         else {
             throw LocalAgentTaskStateError.identityMismatch(
-                "当前 Run 必须唯一地包含在 Task Run 历史中"
+                "初始/当前 Run 必须与有序 Task Run 历史一致"
             )
         }
     }

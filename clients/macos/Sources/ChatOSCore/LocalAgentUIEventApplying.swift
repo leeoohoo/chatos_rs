@@ -17,6 +17,24 @@ public protocol LocalAgentConversationUpdateStreaming: Sendable {
     func localAgentUpdates(sessionID: String) async -> AsyncStream<Void>
 }
 
+public struct LocalAgentMainChatRunRecovery: Equatable, Sendable {
+    public var binding: LocalAgentMainChatRunBinding
+    public var detail: LocalAgentRunDetail
+
+    public init(binding: LocalAgentMainChatRunBinding, detail: LocalAgentRunDetail) {
+        self.binding = binding
+        self.detail = detail
+    }
+}
+
+/// Replaces the in-memory Main Chat projection from authoritative Host data
+/// before incremental UI-event delivery resumes after an app or Host restart.
+public protocol LocalAgentMainChatStateRestoring: Sendable {
+    func restoreLocalAgentMainChatRuns(
+        _ recoveries: [LocalAgentMainChatRunRecovery]
+    ) async throws
+}
+
 public struct LocalAgentAskUserRoute: Equatable, Sendable {
     public var runID: String
     public var interactionID: String

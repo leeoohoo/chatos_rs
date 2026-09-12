@@ -323,6 +323,24 @@ public actor NativeLocalAgentIPCClient {
         return run
     }
 
+    public func runDetail(
+        id: String,
+        eventLimit: UInt32,
+        eventOffset: UInt32
+    ) async throws -> LocalAgentRunDetail {
+        let response = try await send(
+            .getRunDetail(
+                runID: id,
+                eventLimit: eventLimit,
+                eventOffset: eventOffset
+            )
+        )
+        guard case let .runDetail(detail) = response else {
+            throw unexpected("run_detail", response)
+        }
+        return detail
+    }
+
     public func task(id: String) async throws -> LocalAgentTaskSnapshot {
         let response = try await send(.getTask(taskID: id))
         guard case let .task(task) = response else { throw unexpected("task", response) }
@@ -433,6 +451,7 @@ private extension LocalAgentResponse {
         case .accepted: "accepted"
         case .runCreated: "run_created"
         case .run: "run"
+        case .runDetail: "run_detail"
         case .task: "task"
         case .taskGraph: "task_graph"
         case .taskRunDetail: "task_run_detail"

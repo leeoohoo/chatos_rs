@@ -76,6 +76,7 @@ struct PetActivityRecoveryMapperTests {
             sourceThreadID: "session-1",
             sourceTurnID: "turn-1",
             projectID: "project-1",
+            initialRunID: "run-1",
             currentRunID: "run-1",
             runIDs: ["run-1"],
             objective: "完成网站视觉设计",

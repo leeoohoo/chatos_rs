@@ -238,6 +238,7 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case answerUserQuestion(runID: String, interactionID: String, answer: LocalAgentUserAnswer)
     case decideToolApproval(invocationID: String, decision: LocalAgentToolApprovalDecision, reason: String?)
     case getRun(runID: String)
+    case getRunDetail(runID: String, eventLimit: UInt32, eventOffset: UInt32)
     case getTask(taskID: String)
     case getTaskGraph(sourceThreadID: String, sourceTurnID: String)
     case getTaskRunDetail(taskID: String, runID: String, eventLimit: UInt32, eventOffset: UInt32)
@@ -264,6 +265,11 @@ public enum LocalAgentCommand: Equatable, Sendable {
 extension LocalAgentCommand: Encodable {
     private enum CodingKeys: String, CodingKey { case type, payload }
     private struct RunPayload: Encodable { let runID: String }
+    private struct RunDetailPayload: Encodable {
+        let runID: String
+        let eventLimit: UInt32
+        let eventOffset: UInt32
+    }
     private struct TaskPayload: Encodable { let taskID: String }
     private struct TaskGraphPayload: Encodable {
         let sourceThreadID: String
@@ -346,6 +352,16 @@ extension LocalAgentCommand: Encodable {
             try container.encode(ApprovalPayload(invocationID: invocationID, decision: decision, reason: reason), forKey: .payload)
         case let .getRun(runID):
             try encodeRun("get_run", runID, into: &container)
+        case let .getRunDetail(runID, eventLimit, eventOffset):
+            try container.encode("get_run_detail", forKey: .type)
+            try container.encode(
+                RunDetailPayload(
+                    runID: runID,
+                    eventLimit: eventLimit,
+                    eventOffset: eventOffset
+                ),
+                forKey: .payload
+            )
         case let .getTask(taskID):
             try container.encode("get_task", forKey: .type)
             try container.encode(TaskPayload(taskID: taskID), forKey: .payload)
@@ -554,6 +570,7 @@ public struct LocalAgentTaskSnapshot: Codable, Equatable, Sendable {
     public var sourceThreadID: String
     public var sourceTurnID: String
     public var projectID: String
+    public var initialRunID: String
     public var currentRunID: String
     public var runIDs: [String]
     public var objective: String
@@ -570,6 +587,7 @@ public struct LocalAgentTaskSnapshot: Codable, Equatable, Sendable {
         sourceThreadID: String,
         sourceTurnID: String,
         projectID: String,
+        initialRunID: String,
         currentRunID: String,
         runIDs: [String],
         objective: String,
@@ -585,6 +603,7 @@ public struct LocalAgentTaskSnapshot: Codable, Equatable, Sendable {
         self.sourceThreadID = sourceThreadID
         self.sourceTurnID = sourceTurnID
         self.projectID = projectID
+        self.initialRunID = initialRunID
         self.currentRunID = currentRunID
         self.runIDs = runIDs
         self.objective = objective
@@ -674,7 +693,7 @@ public struct LocalAgentTaskGraphSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-public struct LocalAgentTaskRunEvent: Codable, Equatable, Sendable {
+public struct LocalAgentRunTimelineEvent: Codable, Equatable, Sendable {
     public var eventID: String
     public var eventType: String
     public var message: String?
@@ -691,14 +710,14 @@ public struct LocalAgentTaskRunEvent: Codable, Equatable, Sendable {
 public struct LocalAgentTaskRunDetail: Codable, Equatable, Sendable {
     public var task: LocalAgentTaskSnapshot
     public var run: LocalAgentTaskRunSummary
-    public var events: [LocalAgentTaskRunEvent]
+    public var events: [LocalAgentRunTimelineEvent]
     public var eventsTotal: UInt32
     public var eventsHasMore: Bool
 
     public init(
         task: LocalAgentTaskSnapshot,
         run: LocalAgentTaskRunSummary,
-        events: [LocalAgentTaskRunEvent],
+        events: [LocalAgentRunTimelineEvent],
         eventsTotal: UInt32,
         eventsHasMore: Bool
     ) {
@@ -707,6 +726,31 @@ public struct LocalAgentTaskRunDetail: Codable, Equatable, Sendable {
         self.events = events
         self.eventsTotal = eventsTotal
         self.eventsHasMore = eventsHasMore
+    }
+}
+
+public struct LocalAgentRunDetail: Decodable, Equatable, Sendable {
+    public var run: LocalAgentRunSnapshot
+    public var events: [LocalAgentRunTimelineEvent]
+    public var tools: [LocalAgentToolSnapshot]
+    public var eventsTotal: UInt32
+    public var eventsHasMore: Bool
+    public var snapshotEventSequence: UInt64
+
+    public init(
+        run: LocalAgentRunSnapshot,
+        events: [LocalAgentRunTimelineEvent],
+        tools: [LocalAgentToolSnapshot],
+        eventsTotal: UInt32,
+        eventsHasMore: Bool,
+        snapshotEventSequence: UInt64
+    ) {
+        self.run = run
+        self.events = events
+        self.tools = tools
+        self.eventsTotal = eventsTotal
+        self.eventsHasMore = eventsHasMore
+        self.snapshotEventSequence = snapshotEventSequence
     }
 }
 
@@ -1039,6 +1083,7 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case accepted(operationID: String)
     case runCreated(operationID: String, run: LocalAgentRunSnapshot)
     case run(LocalAgentRunSnapshot)
+    case runDetail(LocalAgentRunDetail)
     case task(LocalAgentTaskSnapshot)
     case taskGraph(LocalAgentTaskGraphSnapshot)
     case taskRunDetail(LocalAgentTaskRunDetail)
@@ -1085,6 +1130,8 @@ extension LocalAgentResponse: Decodable {
             let value = try container.decode(RunCreated.self, forKey: .payload)
             self = .runCreated(operationID: value.operationID, run: value.run)
         case "run": self = .run(try container.decode(LocalAgentRunSnapshot.self, forKey: .payload))
+        case "run_detail":
+            self = .runDetail(try container.decode(LocalAgentRunDetail.self, forKey: .payload))
         case "task": self = .task(try container.decode(LocalAgentTaskSnapshot.self, forKey: .payload))
         case "task_graph":
             self = .taskGraph(

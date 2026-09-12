@@ -33,6 +33,12 @@ public interface ILocalAgentIPCClient
         string runId,
         CancellationToken cancellationToken = default);
 
+    Task<LocalAgentRunDetail> GetRunDetailAsync(
+        string runId,
+        uint eventLimit = 40,
+        uint eventOffset = 0,
+        CancellationToken cancellationToken = default);
+
     Task<LocalAgentTaskSnapshot> GetTaskAsync(
         string taskId,
         CancellationToken cancellationToken = default);

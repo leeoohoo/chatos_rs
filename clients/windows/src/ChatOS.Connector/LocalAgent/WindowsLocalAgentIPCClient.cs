@@ -128,6 +128,20 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
             : throw Unexpected("run", response.Type);
     }
 
+    public async Task<LocalAgentRunDetail> GetRunDetailAsync(
+        string runId,
+        uint eventLimit = 40,
+        uint eventOffset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            LocalAgentCommand.GetRunDetail(runId, eventLimit, eventOffset),
+            cancellationToken).ConfigureAwait(false);
+        return response is LocalAgentRunDetailResponse detail
+            ? detail.Detail
+            : throw Unexpected("run_detail", response.Type);
+    }
+
     public async Task<LocalAgentTaskSnapshot> GetTaskAsync(
         string taskId,
         CancellationToken cancellationToken = default)
@@ -273,6 +287,8 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
                     RequirePayload<AcceptedPayload>(hasPayload, payload).OperationId),
                 "run_created" => RunCreated(RequirePayload<RunCreatedPayload>(hasPayload, payload)),
                 "run" => new LocalAgentRunResponse(RequirePayload<LocalAgentRunSnapshot>(hasPayload, payload)),
+                "run_detail" => new LocalAgentRunDetailResponse(
+                    RequirePayload<LocalAgentRunDetail>(hasPayload, payload)),
                 "task" => new LocalAgentTaskResponse(RequirePayload<LocalAgentTaskSnapshot>(hasPayload, payload)),
                 "task_graph" => new LocalAgentTaskGraphResponse(
                     RequirePayload<LocalAgentTaskGraphSnapshot>(hasPayload, payload)),

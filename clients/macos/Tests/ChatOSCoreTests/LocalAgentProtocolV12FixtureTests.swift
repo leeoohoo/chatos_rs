@@ -76,9 +76,22 @@ struct LocalAgentProtocolV12FixtureTests {
             Issue.record("Expected a Task Run detail response")
             return
         }
+        #expect(detail.task.initialRunID == "task-run-1")
         #expect(detail.run.run.runID == "task-run-2")
         #expect(detail.run.resultSummary == "Design implemented")
         #expect(detail.eventsTotal == 1)
+
+        let runDetailReply = try decoder.decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("run_detail_response.json"))
+        )
+        guard case let .runDetail(runDetail) = runDetailReply.response else {
+            Issue.record("Expected a generic Run detail response")
+            return
+        }
+        #expect(runDetail.run.runID == "run-1")
+        #expect(runDetail.events.first?.eventType == "message_assistant_reasoning")
+        #expect(runDetail.snapshotEventSequence == 42)
     }
 
     private func fixtureURL(_ name: String) -> URL {

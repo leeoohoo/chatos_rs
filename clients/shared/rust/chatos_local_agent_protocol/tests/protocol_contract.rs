@@ -23,6 +23,8 @@ const TASK_GRAPH_RESPONSE_V12: &str =
     include_str!("../../../fixtures/local_agent/v12/task_graph_response.json");
 const TASK_RUN_DETAIL_RESPONSE_V12: &str =
     include_str!("../../../fixtures/local_agent/v12/task_run_detail_response.json");
+const RUN_DETAIL_RESPONSE_V12: &str =
+    include_str!("../../../fixtures/local_agent/v12/run_detail_response.json");
 
 #[test]
 fn shared_v12_retry_task_request_is_the_authoritative_native_contract() {
@@ -37,13 +39,14 @@ fn shared_v12_retry_task_request_is_the_authoritative_native_contract() {
 }
 
 #[test]
-fn shared_v12_task_snapshot_response_preserves_all_runs_and_current_run() {
+fn shared_v12_task_snapshot_response_preserves_initial_current_and_all_runs() {
     let reply: LocalAgentIpcReply = serde_json::from_str(TASK_SNAPSHOT_RESPONSE_V12).unwrap();
     reply.validate().unwrap();
     assert_eq!(reply.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
     let LocalAgentIpcResponse::Task(task) = reply.response else {
         panic!("fixture must contain a task response");
     };
+    assert_eq!(task.initial_run_id, "task-run-1");
     assert_eq!(task.current_run_id, "task-run-2");
     assert_eq!(task.run_ids, ["task-run-1", "task-run-2"]);
 }
@@ -73,6 +76,18 @@ fn shared_v12_task_run_detail_preserves_result_and_event_page() {
         Some("Design implemented")
     );
     assert_eq!(detail.events_total, 1);
+}
+
+#[test]
+fn shared_v12_run_detail_preserves_restart_snapshot_watermark() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(RUN_DETAIL_RESPONSE_V12).unwrap();
+    reply.validate().unwrap();
+    let LocalAgentIpcResponse::RunDetail(detail) = reply.response else {
+        panic!("fixture must contain a generic Run detail response");
+    };
+    assert_eq!(detail.run.run_id, "run-1");
+    assert_eq!(detail.events[0].event_type, "message_assistant_reasoning");
+    assert_eq!(detail.snapshot_event_sequence, 42);
 }
 
 #[test]
@@ -151,6 +166,7 @@ fn task_snapshot_requires_unique_history_containing_the_current_run() {
         source_thread_id: "thread-1".to_string(),
         source_turn_id: "turn-1".to_string(),
         project_id: "project-1".to_string(),
+        initial_run_id: "task-run-1".to_string(),
         current_run_id: "task-run-2".to_string(),
         run_ids: vec!["task-run-1".to_string(), "task-run-2".to_string()],
         objective: "Implement the approved design".to_string(),

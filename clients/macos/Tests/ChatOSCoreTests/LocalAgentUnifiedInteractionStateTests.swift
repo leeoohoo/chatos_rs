@@ -175,6 +175,7 @@ private func unifiedTaskSnapshot() -> LocalAgentTaskSnapshot {
         sourceThreadID: "thread-1",
         sourceTurnID: "task-turn",
         projectID: "project-1",
+        initialRunID: "task-run",
         currentRunID: "task-run",
         runIDs: ["task-run"],
         objective: "Complete the approved visual direction",

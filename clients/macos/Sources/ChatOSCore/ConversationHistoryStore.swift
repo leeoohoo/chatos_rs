@@ -16,6 +16,8 @@ public actor ConversationHistoryStore {
         var localAgentPromptRoutes: [String: LocalAgentAskUserRoute] = [:]
         var localAgentRunControlsByID: [String: LocalAgentRunControlState] = [:]
         var localAgentToolApprovalsByID: [String: LocalAgentToolApprovalRequest] = [:]
+        var localAgentTurnIDs: Set<String> = []
+        var localAgentSnapshotEventSequenceByRunID: [String: UInt64] = [:]
         var viewportAnchor: ViewportAnchor?
         var unreadNewerCount = 0
     }
@@ -253,6 +255,13 @@ public actor ConversationHistoryStore {
 
         var state = sessions[binding.threadID] ?? SessionState()
         guard event.eventSeq > state.lastAppliedLocalAgentEventSequence else { return }
+        if let snapshotSequence = state.localAgentSnapshotEventSequenceByRunID[binding.runID],
+           event.eventSeq <= snapshotSequence {
+            state.lastAppliedLocalAgentEventSequence = event.eventSeq
+            sessions[binding.threadID] = state
+            return
+        }
+        state.localAgentSnapshotEventSequenceByRunID[binding.runID] = nil
         var turn = try localAgentTurn(binding: binding, existing: state.turnsByID[binding.turnID])
         let didChange = try apply(event, to: &turn)
         switch event.event {
@@ -312,12 +321,124 @@ public actor ConversationHistoryStore {
         if didChange {
             turn.revision = max(turn.revision, Int64(clamping: event.eventSeq))
             state.turnsByID[turn.id] = turn
+            state.localAgentTurnIDs.insert(turn.id)
             if state.viewportAnchor?.isPinnedToBottom == false {
                 state.unreadNewerCount += 1
             }
         }
         sessions[binding.threadID] = state
         localUpdateContinuations[binding.threadID]?.values.forEach { $0.yield(()) }
+    }
+
+    public func restoreLocalAgentMainChatRuns(
+        _ recoveries: [LocalAgentMainChatRunRecovery]
+    ) throws {
+        var seenRunIDs = Set<String>()
+        var seenTurns = Set<String>()
+        for recovery in recoveries {
+            let binding = recovery.binding
+            let run = recovery.detail.run
+            guard seenRunIDs.insert(run.runID).inserted,
+                  seenTurns.insert("\(binding.threadID):\(binding.turnID)").inserted,
+                  binding.runID == run.runID,
+                  run.profileKey == "main_chat",
+                  run.ownerEntityType == "conversation",
+                  run.ownerEntityID == binding.threadID,
+                  recovery.detail.tools.allSatisfy({ $0.runID == run.runID })
+            else {
+                throw LocalAgentConversationHistoryError.runBindingMismatch
+            }
+        }
+
+        var changedSessions = Set<String>()
+        for sessionID in sessions.keys {
+            guard var state = sessions[sessionID] else { continue }
+            for turnID in state.localAgentTurnIDs {
+                state.turnsByID[turnID] = nil
+            }
+            if !state.localAgentTurnIDs.isEmpty
+                || !state.localAgentPromptsByID.isEmpty
+                || !state.localAgentRunControlsByID.isEmpty
+                || !state.localAgentToolApprovalsByID.isEmpty
+            {
+                changedSessions.insert(sessionID)
+            }
+            state.localAgentTurnIDs.removeAll(keepingCapacity: false)
+            state.localAgentPromptsByID.removeAll(keepingCapacity: false)
+            state.localAgentPromptRoutes.removeAll(keepingCapacity: false)
+            state.localAgentRunControlsByID.removeAll(keepingCapacity: false)
+            state.localAgentToolApprovalsByID.removeAll(keepingCapacity: false)
+            state.localAgentSnapshotEventSequenceByRunID.removeAll(keepingCapacity: false)
+            state.lastAppliedLocalAgentEventSequence = 0
+            sessions[sessionID] = state
+        }
+
+        for recovery in recoveries.sorted(by: Self.localAgentRecoveryOrder) {
+            let binding = recovery.binding
+            let detail = recovery.detail
+            var state = sessions[binding.threadID] ?? SessionState()
+            var turn = try localAgentTurn(binding: binding, existing: nil)
+
+            for event in detail.events.sorted(by: Self.localAgentTimelineOrder) {
+                applyRecoveredTimelineEvent(event, runID: detail.run.runID, to: &turn)
+            }
+            for tool in detail.tools {
+                _ = try apply(
+                    LocalAgentUIEvent(
+                        eventSeq: 0,
+                        emittedAt: tool.completedAt ?? tool.startedAt ?? detail.run.updatedAt,
+                        event: .toolSnapshot(tool)
+                    ),
+                    to: &turn
+                )
+                if tool.status == .awaitingApproval {
+                    state.localAgentToolApprovalsByID[tool.invocationID] =
+                        LocalAgentUIPresentation.toolApproval(
+                            tool,
+                            sessionID: binding.threadID,
+                            turnID: binding.turnID
+                        )
+                }
+            }
+            _ = try apply(
+                LocalAgentUIEvent(
+                    eventSeq: 0,
+                    emittedAt: detail.run.updatedAt,
+                    event: .runSnapshot(detail.run)
+                ),
+                to: &turn
+            )
+            turn.revision = Int64(clamping: detail.run.version)
+            state.turnsByID[turn.id] = turn
+            state.localAgentTurnIDs.insert(turn.id)
+            state.localAgentSnapshotEventSequenceByRunID[detail.run.runID] =
+                detail.snapshotEventSequence
+            state.localAgentRunControlsByID[detail.run.runID] =
+                LocalAgentUIPresentation.runControl(
+                    detail.run,
+                    sessionID: binding.threadID,
+                    turnID: binding.turnID
+                )
+            if let interaction = LocalAgentUIPresentation.pendingUserInteraction(detail.run) {
+                let prompt = LocalAgentUIPresentation.askUserPrompt(
+                    interaction,
+                    sessionID: binding.threadID,
+                    turnID: binding.turnID,
+                    emittedAt: detail.run.updatedAt
+                )
+                state.localAgentPromptsByID[prompt.id] = prompt
+                state.localAgentPromptRoutes[prompt.id] = LocalAgentAskUserRoute(
+                    runID: detail.run.runID,
+                    interactionID: interaction.interactionID
+                )
+            }
+            sessions[binding.threadID] = state
+            changedSessions.insert(binding.threadID)
+        }
+
+        changedSessions.forEach { sessionID in
+            localUpdateContinuations[sessionID]?.values.forEach { $0.yield(()) }
+        }
     }
 
     @discardableResult
@@ -331,6 +452,7 @@ public actor ConversationHistoryStore {
 
         for turn in incomingTurns {
             guard turn.sessionID == sessionID else { continue }
+            guard !state.localAgentTurnIDs.contains(turn.id) else { continue }
 
             guard let existing = state.turnsByID[turn.id] else {
                 state.turnsByID[turn.id] = turn
@@ -348,6 +470,93 @@ public actor ConversationHistoryStore {
         }
 
         return didChange
+    }
+
+    private func applyRecoveredTimelineEvent(
+        _ event: LocalAgentRunTimelineEvent,
+        runID: String,
+        to turn: inout ConversationTurn
+    ) {
+        switch event.eventType {
+        case "message_assistant_content":
+            if let content = event.message {
+                appendAssistantText(content, runID: runID, createdAt: event.createdAt, in: &turn)
+            }
+        case "message_assistant_reasoning":
+            if let reasoning = event.message {
+                upsertProcessEvent(
+                    TurnProcessEvent(
+                        id: "local-agent-recovered-\(event.eventID)",
+                        title: "思考过程",
+                        detail: reasoning,
+                        status: .completed
+                    ),
+                    in: &turn
+                )
+            }
+        default:
+            guard !event.eventType.hasPrefix("message_"),
+                  !event.eventType.hasPrefix("tool_")
+            else { return }
+            upsertProcessEvent(
+                TurnProcessEvent(
+                    id: "local-agent-recovered-\(event.eventID)",
+                    title: Self.timelineTitle(event.eventType),
+                    detail: event.message,
+                    status: Self.timelineStatus(event.eventType)
+                ),
+                in: &turn
+            )
+        }
+    }
+
+    private static func localAgentRecoveryOrder(
+        _ lhs: LocalAgentMainChatRunRecovery,
+        _ rhs: LocalAgentMainChatRunRecovery
+    ) -> Bool {
+        if lhs.binding.threadID != rhs.binding.threadID {
+            return lhs.binding.threadID < rhs.binding.threadID
+        }
+        if lhs.binding.userMessage.sequence != rhs.binding.userMessage.sequence {
+            return lhs.binding.userMessage.sequence < rhs.binding.userMessage.sequence
+        }
+        return lhs.binding.turnID < rhs.binding.turnID
+    }
+
+    private static func localAgentTimelineOrder(
+        _ lhs: LocalAgentRunTimelineEvent,
+        _ rhs: LocalAgentRunTimelineEvent
+    ) -> Bool {
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        return lhs.eventID < rhs.eventID
+    }
+
+    private static func timelineTitle(_ eventType: String) -> String {
+        switch eventType {
+        case "run_started": "本地 Agent 已开始"
+        case "model_step_requested": "请求模型"
+        case "model_step_completed": "模型步骤完成"
+        case "tool_batch_requested": "请求工具批次"
+        case "tool_batch_completed": "工具批次完成"
+        case "continuation_requested": "继续执行"
+        case "retry_due": "准备重试"
+        case "pause_requested": "暂停运行"
+        case "resume_requested": "恢复运行"
+        case "cancel_requested": "取消运行"
+        case "memory_sync_due": "同步记忆"
+        case "run_terminal": "运行结束"
+        default: eventType.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
+    private static func timelineStatus(_ eventType: String) -> TurnStatus {
+        if eventType.contains("failed")
+            || eventType.contains("rejected")
+            || eventType.contains("outcome_unknown")
+        {
+            return .failed
+        }
+        return .completed
     }
 
     private func removeLocalUpdateContinuation(_ id: UUID, sessionID: String) {
@@ -692,6 +901,7 @@ public actor ConversationHistoryStore {
 }
 
 extension ConversationHistoryStore: LocalAgentUIEventApplying {}
+extension ConversationHistoryStore: LocalAgentMainChatStateRestoring {}
 extension ConversationHistoryStore: LocalAgentConversationUpdateStreaming {}
 extension ConversationHistoryStore: LocalAgentAskUserStateStoring {}
 extension ConversationHistoryStore: LocalAgentRunControlStateStoring {}

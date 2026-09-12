@@ -14,11 +14,12 @@ use chatos_local_agent_host::{
     LocalAgentIpcMutationExecutor, LocalAgentIpcServer, LocalAgentIpcServerError,
 };
 use chatos_local_agent_protocol::{
-    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, GetTaskGraphCommand,
-    GetTaskRunDetailCommand, LocalAgentCommand, LocalAgentHostState, LocalAgentHostUiStatus,
-    LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse,
-    LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEventPayload, MemorySyncStatus, MessageMode,
-    ModelProtocol, ModelRuntimeDescriptor, LOCAL_AGENT_PROTOCOL_VERSION,
+    AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, GetRunDetailCommand,
+    GetTaskGraphCommand, GetTaskRunDetailCommand, LocalAgentCommand, LocalAgentHostState,
+    LocalAgentHostUiStatus, LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest,
+    LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEventPayload,
+    MemorySyncStatus, MessageMode, ModelProtocol, ModelRuntimeDescriptor,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
 use chrono::Utc;
@@ -330,6 +331,25 @@ async fn main_chat_binding_and_ui_cursor_are_storage_backed() {
     assert_eq!(binding.user_message.content.as_deref(), Some("Design it"));
     assert_eq!(binding.user_message.sequence, 1);
 
+    let detail_reply = server
+        .handle_request(request(
+            "request-main-chat-detail",
+            LocalAgentCommand::GetRunDetail(GetRunDetailCommand {
+                run_id: "run-1".to_string(),
+                event_limit: 40,
+                event_offset: 0,
+            }),
+        ))
+        .await;
+    let LocalAgentIpcResponse::RunDetail(detail) = detail_reply.response else {
+        panic!("Main Chat Run detail must come from durable records");
+    };
+    assert_eq!(detail.run.run_id, "run-1");
+    assert_eq!(detail.events_total, 1);
+    assert_eq!(detail.events[0].event_type, "message_user_content");
+    assert_eq!(detail.events[0].message.as_deref(), Some("Design it"));
+    assert_eq!(detail.snapshot_event_sequence, 1);
+
     let initial = server
         .handle_request(request(
             "request-cursor-initial",
@@ -389,6 +409,7 @@ async fn task_queries_restore_the_frozen_owner_scoped_task_identity() {
     };
     assert_eq!(task.task_id, "task-1");
     assert_eq!(task.revision, 1);
+    assert_eq!(task.initial_run_id, "task-run-1");
     assert_eq!(task.current_run_id, "task-run-1");
     assert_eq!(task.run_ids, ["task-run-1"]);
     assert_eq!(task.source_thread_id, "thread-1");

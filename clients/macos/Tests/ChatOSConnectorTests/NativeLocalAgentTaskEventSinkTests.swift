@@ -73,6 +73,7 @@ struct NativeLocalAgentTaskEventSinkTests {
         )
 
         let restored = try #require(await store.localAgentTask(taskID: task.taskID))
+        #expect(restored.task.initialRunID == "run-1")
         #expect(restored.task.runIDs == ["run-1", "run-2"])
         #expect(restored.run.runID == "run-2")
         #expect(restored.lastAppliedEventSequence == 8)
@@ -121,6 +122,7 @@ private func taskSnapshot(id: String, runID: String) -> LocalAgentTaskSnapshot {
         sourceThreadID: "thread-1",
         sourceTurnID: "turn-1",
         projectID: "project-1",
+        initialRunID: runID,
         currentRunID: runID,
         runIDs: [runID],
         objective: "Design \(id)",

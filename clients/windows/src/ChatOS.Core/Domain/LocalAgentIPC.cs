@@ -88,6 +88,11 @@ public sealed record LocalAgentCommand
     public static LocalAgentCommand ResumeRun(string runId) => RunCommand("resume_run", runId);
     public static LocalAgentCommand CancelRun(string runId) => RunCommand("cancel_run", runId);
     public static LocalAgentCommand GetRun(string runId) => RunCommand("get_run", runId);
+    public static LocalAgentCommand GetRunDetail(
+        string runId,
+        uint eventLimit,
+        uint eventOffset) =>
+        new("get_run_detail", new RunDetailPayload(runId, eventLimit, eventOffset));
     public static LocalAgentCommand GetTask(string taskId) =>
         new("get_task", new TaskPayload(taskId));
     public static LocalAgentCommand GetTaskGraph(string sourceThreadId, string sourceTurnId) =>
@@ -179,6 +184,7 @@ public sealed record LocalAgentCommand
         new(type, new RunPayload(runId));
 
     private sealed record RunPayload(string RunId);
+    private sealed record RunDetailPayload(string RunId, uint EventLimit, uint EventOffset);
     private sealed record TaskPayload(string TaskId);
     private sealed record TaskGraphPayload(string SourceThreadId, string SourceTurnId);
     private sealed record TaskRunDetailPayload(
@@ -296,6 +302,7 @@ public sealed record LocalAgentTaskSnapshot(
     string SourceThreadId,
     string SourceTurnId,
     string ProjectId,
+    string InitialRunId,
     string CurrentRunId,
     IReadOnlyList<string> RunIds,
     string Objective,
@@ -334,16 +341,60 @@ public sealed record LocalAgentTaskGraphSnapshot(
     IReadOnlyList<LocalAgentTaskGraphNode> Nodes,
     IReadOnlyList<LocalAgentTaskGraphEdge> Edges);
 
-public sealed record LocalAgentTaskRunEvent(
+public sealed record LocalAgentRunTimelineEvent(
     string EventId,
     string EventType,
     string? Message,
     DateTimeOffset CreatedAt);
 
+public enum LocalAgentToolEffect
+{
+    Read,
+    IdempotentWrite,
+    Write,
+    Billable,
+    Terminal,
+}
+
+public enum LocalAgentToolExecutionStatus
+{
+    Requested,
+    AwaitingApproval,
+    Approved,
+    Started,
+    Succeeded,
+    Failed,
+    Rejected,
+    OutcomeUnknown,
+}
+
+public sealed record LocalAgentToolSnapshot(
+    string InvocationId,
+    string RunId,
+    string BatchId,
+    string ToolCallId,
+    string ToolName,
+    LocalAgentToolEffect Effect,
+    string ArgumentsDigest,
+    LocalAgentToolExecutionStatus Status,
+    JsonElement? BoundedResult,
+    DateTimeOffset? ApprovalDecidedAt,
+    string? ApprovalReason,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? CompletedAt);
+
+public sealed record LocalAgentRunDetail(
+    LocalAgentRunSnapshot Run,
+    IReadOnlyList<LocalAgentRunTimelineEvent> Events,
+    IReadOnlyList<LocalAgentToolSnapshot> Tools,
+    uint EventsTotal,
+    bool EventsHasMore,
+    ulong SnapshotEventSequence);
+
 public sealed record LocalAgentTaskRunDetail(
     LocalAgentTaskSnapshot Task,
     LocalAgentTaskRunSummary Run,
-    IReadOnlyList<LocalAgentTaskRunEvent> Events,
+    IReadOnlyList<LocalAgentRunTimelineEvent> Events,
     uint EventsTotal,
     bool EventsHasMore);
 
@@ -430,6 +481,8 @@ public sealed record LocalAgentRunCreatedResponse(
     string OperationId,
     LocalAgentRunSnapshot Run) : LocalAgentResponse("run_created");
 public sealed record LocalAgentRunResponse(LocalAgentRunSnapshot Run) : LocalAgentResponse("run");
+public sealed record LocalAgentRunDetailResponse(
+    LocalAgentRunDetail Detail) : LocalAgentResponse("run_detail");
 public sealed record LocalAgentTaskResponse(LocalAgentTaskSnapshot Task) : LocalAgentResponse("task");
 public sealed record LocalAgentTaskGraphResponse(
     LocalAgentTaskGraphSnapshot Graph) : LocalAgentResponse("task_graph");

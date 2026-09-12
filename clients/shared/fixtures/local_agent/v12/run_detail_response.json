@@ -1,0 +1,58 @@
+{
+  "protocol_version": 12,
+  "request_id": "request-run-detail-1",
+  "response": {
+    "type": "run_detail",
+    "payload": {
+      "run": {
+        "run_id": "run-1",
+        "profile_key": "main_chat",
+        "owner_user_id": "user-1",
+        "owner_entity_type": "conversation",
+        "owner_entity_id": "thread-1",
+        "project_id": null,
+        "status": "model_running",
+        "version": 2,
+        "step_seq": 1,
+        "iteration": 0,
+        "retry_count": 0,
+        "model_config_id": "model-1",
+        "model_config_revision": 1,
+        "model_runtime_snapshot": {
+          "model_config_id": "model-1",
+          "revision": 1,
+          "provider": "openai",
+          "model": "gpt-5",
+          "protocol": "responses",
+          "context_window_tokens": 400000,
+          "maximum_output_tokens": 32000,
+          "context_strategy": "provider_native",
+          "supports_streaming": true,
+          "supports_native_compaction": true,
+          "supports_input_token_count": true
+        },
+        "context_strategy": "provider_native",
+        "prompt_revision": "prompt-1",
+        "capability_snapshot_ref": "capability-1",
+        "pending_batch_id": null,
+        "pending_interaction": null,
+        "terminal_outcome": null,
+        "deadline_at": null,
+        "created_at": "2026-09-13T01:00:00Z",
+        "updated_at": "2026-09-13T01:00:01Z"
+      },
+      "events": [
+        {
+          "event_id": "message:assistant-1:reasoning",
+          "event_type": "message_assistant_reasoning",
+          "message": "Inspecting the visual hierarchy",
+          "created_at": "2026-09-13T01:00:01Z"
+        }
+      ],
+      "tools": [],
+      "events_total": 1,
+      "events_has_more": false,
+      "snapshot_event_sequence": 42
+    }
+  }
+}

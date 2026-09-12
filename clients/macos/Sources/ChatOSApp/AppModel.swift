@@ -922,11 +922,17 @@ final class AppModel: ObservableObject {
                     }
                 )
                 let client = try await accountSession.client(accountID: accountID)
+                let mainChatRestorer = NativeLocalAgentMainChatRestorer(
+                    client: client,
+                    store: historyStore
+                )
                 let taskEventSink = NativeLocalAgentTaskEventSink(
                     client: client,
                     store: localAgentTaskStateStore
                 )
-                try await taskEventSink.restore()
+                async let restoredMainChat: Void = mainChatRestorer.restore()
+                async let restoredTasks: Void = taskEventSink.restore()
+                _ = try await (restoredMainChat, restoredTasks)
                 let compositeSink = NativeLocalAgentCompositeEventSink(
                     sinks: [historyStore, taskEventSink]
                 )

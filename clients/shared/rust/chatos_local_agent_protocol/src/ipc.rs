@@ -72,6 +72,7 @@ pub enum LocalAgentCommand {
     AnswerUserQuestion(AnswerUserQuestionCommand),
     DecideToolApproval(ToolApprovalCommand),
     GetRun { run_id: String },
+    GetRunDetail(GetRunDetailCommand),
     GetTask { task_id: String },
     GetTaskGraph(GetTaskGraphCommand),
     GetTaskRunDetail(GetTaskRunDetailCommand),
@@ -102,6 +103,7 @@ impl LocalAgentCommand {
             | Self::GetRun { run_id }
             | Self::GetMainChatRunBinding { run_id } => require_identifier("run_id", run_id),
             Self::GetTask { task_id } => require_identifier("task_id", task_id),
+            Self::GetRunDetail(command) => command.validate(),
             Self::GetTaskGraph(command) => command.validate(),
             Self::GetTaskRunDetail(command) => command.validate(),
             Self::AnswerUserQuestion(command) => command.validate(),
@@ -128,6 +130,21 @@ impl LocalAgentCommand {
             Self::InstallProjectPluginCapability(command) => command.validate(),
             Self::RemoveProjectPluginCapability(command) => command.validate(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GetRunDetailCommand {
+    pub run_id: String,
+    pub event_limit: u32,
+    pub event_offset: u32,
+}
+
+impl GetRunDetailCommand {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("run_id", &self.run_id)?;
+        validate_page(None, self.event_limit)
     }
 }
 
@@ -483,6 +500,7 @@ pub struct LocalAgentTaskSnapshot {
     pub source_thread_id: String,
     pub source_turn_id: String,
     pub project_id: String,
+    pub initial_run_id: String,
     pub current_run_id: String,
     pub run_ids: Vec<String>,
     pub objective: String,
@@ -530,9 +548,12 @@ impl LocalAgentTaskSnapshot {
                 });
             }
         }
-        if !run_ids.contains(self.current_run_id.as_str()) {
+        require_identifier("initial_run_id", &self.initial_run_id)?;
+        if self.run_ids.first() != Some(&self.initial_run_id)
+            || !run_ids.contains(self.current_run_id.as_str())
+        {
             return Err(ProtocolError::InvalidState {
-                reason: "task current_run_id must appear in run_ids",
+                reason: "task initial/current Run IDs must match ordered run_ids",
             });
         }
         require_identifier("task_status", &self.status)
@@ -671,14 +692,14 @@ impl LocalAgentTaskGraphSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct LocalAgentTaskRunEvent {
+pub struct LocalAgentRunTimelineEvent {
     pub event_id: String,
     pub event_type: String,
     pub message: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
-impl LocalAgentTaskRunEvent {
+impl LocalAgentRunTimelineEvent {
     fn validate(&self) -> Result<(), ProtocolError> {
         require_identifier("event_id", &self.event_id)?;
         require_identifier("event_type", &self.event_type)?;
@@ -688,7 +709,7 @@ impl LocalAgentTaskRunEvent {
             .is_some_and(|value| value.trim().is_empty())
         {
             return Err(ProtocolError::InvalidState {
-                reason: "Task Run event message must be non-empty when present",
+                reason: "Run timeline event message must be non-empty when present",
             });
         }
         Ok(())
@@ -700,9 +721,43 @@ impl LocalAgentTaskRunEvent {
 pub struct LocalAgentTaskRunDetail {
     pub task: LocalAgentTaskSnapshot,
     pub run: LocalAgentTaskRunSummary,
-    pub events: Vec<LocalAgentTaskRunEvent>,
+    pub events: Vec<LocalAgentRunTimelineEvent>,
     pub events_total: u32,
     pub events_has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentRunDetail {
+    pub run: LocalAgentRun,
+    pub events: Vec<LocalAgentRunTimelineEvent>,
+    pub tools: Vec<crate::ToolExecution>,
+    pub events_total: u32,
+    pub events_has_more: bool,
+    pub snapshot_event_sequence: u64,
+}
+
+impl LocalAgentRunDetail {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        self.run.validate()?;
+        if self.events_total < self.events.len() as u32 {
+            return Err(ProtocolError::InvalidState {
+                reason: "Run detail event count is invalid",
+            });
+        }
+        for event in &self.events {
+            event.validate()?;
+        }
+        for tool in &self.tools {
+            tool.validate()?;
+            if tool.run_id != self.run.run_id {
+                return Err(ProtocolError::InvalidState {
+                    reason: "Run detail tool identity is invalid",
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 impl LocalAgentTaskRunDetail {
@@ -753,6 +808,7 @@ pub enum LocalAgentIpcResponse {
         run: Box<LocalAgentRun>,
     },
     Run(Box<LocalAgentRun>),
+    RunDetail(Box<LocalAgentRunDetail>),
     Task(Box<LocalAgentTaskSnapshot>),
     TaskGraph(Box<LocalAgentTaskGraphSnapshot>),
     TaskRunDetail(Box<LocalAgentTaskRunDetail>),
@@ -789,6 +845,7 @@ impl LocalAgentIpcResponse {
                 run.validate()
             }
             Self::Run(run) => run.validate(),
+            Self::RunDetail(detail) => detail.validate(),
             Self::Task(task) => task.validate(),
             Self::TaskGraph(graph) => graph.validate(),
             Self::TaskRunDetail(detail) => detail.validate(),

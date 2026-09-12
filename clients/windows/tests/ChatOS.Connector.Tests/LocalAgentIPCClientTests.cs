@@ -62,9 +62,33 @@ public sealed class LocalAgentIPCClientTests
 
         var task = await responseClient.GetTaskAsync("task-1");
 
+        Assert.Equal("task-run-1", task.InitialRunId);
         Assert.Equal("task-run-2", task.CurrentRunId);
         Assert.Equal(["task-run-1", "task-run-2"], task.RunIds);
         Assert.Equal("project-1", task.ProjectId);
+    }
+
+    [Fact]
+    public async Task QueriesGenericRunDetailForRestartRecovery()
+    {
+        using var fixture = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("run_detail_response.json")));
+        var transport = new RecordingTransport(request => Reply(
+            request,
+            fixture.RootElement.GetProperty("response").GetRawText()));
+        var client = new WindowsLocalAgentIPCClient("user-1", transport);
+
+        var detail = await client.GetRunDetailAsync("run-1", eventLimit: 50, eventOffset: 10);
+
+        Assert.Equal("run-1", detail.Run.RunId);
+        Assert.Equal(42ul, detail.SnapshotEventSequence);
+        using var request = JsonDocument.Parse(transport.Request!);
+        var command = request.RootElement.GetProperty("command");
+        Assert.Equal("get_run_detail", command.GetProperty("type").GetString());
+        var payload = command.GetProperty("payload");
+        Assert.Equal("run-1", payload.GetProperty("run_id").GetString());
+        Assert.Equal(50u, payload.GetProperty("event_limit").GetUInt32());
+        Assert.Equal(10u, payload.GetProperty("event_offset").GetUInt32());
     }
 
     [Fact]

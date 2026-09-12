@@ -82,6 +82,7 @@ final class ConversationSessionViewModelTests: XCTestCase {
             sourceThreadID: "session-1",
             sourceTurnID: "turn-1",
             projectID: "project-1",
+            initialRunID: "task-run-1",
             currentRunID: "task-run-1",
             runIDs: ["task-run-1"],
             objective: "Refine the visual design",

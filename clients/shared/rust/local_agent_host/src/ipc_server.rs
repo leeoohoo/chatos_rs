@@ -11,11 +11,12 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessageRole, GetTaskGraphCommand, GetTaskRunDetailCommand, LocalAgentCommand,
-    LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse,
-    LocalAgentRun, LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection,
-    LocalAgentTaskRunDetail, LocalAgentTaskRunEvent, LocalAgentTaskRunSummary,
-    LocalAgentTaskSnapshot, MainChatRunBinding, LOCAL_AGENT_PROTOCOL_VERSION,
+    AgentMessageRole, GetRunDetailCommand, GetTaskGraphCommand, GetTaskRunDetailCommand,
+    LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest,
+    LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail, LocalAgentRunTimelineEvent,
+    LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection,
+    LocalAgentTaskRunDetail, LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
 use chrono::Utc;
@@ -164,6 +165,17 @@ impl LocalAgentIpcServer {
                             retryable: false,
                         }))
                 })
+            }
+            LocalAgentCommand::GetRunDetail(command) => {
+                let mut operation = GetRunDetailOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| operation.response.ok_or(StorageError::NotFound))
             }
             LocalAgentCommand::ListRuns { cursor, limit } => {
                 let mut operation = ListRunsOperation {
@@ -334,6 +346,49 @@ struct ListRunsOperation {
     response: Option<LocalAgentIpcResponse>,
 }
 
+struct GetRunDetailOperation {
+    scope: RecordScope,
+    command: GetRunDetailCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetRunDetailOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let run = repositories
+            .agent_runs()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: self.command.run_id.clone(),
+            })
+            .await?
+            .ok_or(StorageError::NotFound)?
+            .run;
+        let (events, total, has_more) = paged_run_timeline(
+            repositories,
+            &self.scope,
+            &run.run_id,
+            self.command.event_offset,
+            self.command.event_limit,
+        )
+        .await?;
+        let detail = LocalAgentRunDetail {
+            tools: run_tools(repositories, &self.scope, &run.run_id).await?,
+            snapshot_event_sequence: latest_ui_event_sequence(repositories, &self.scope).await?,
+            run,
+            events,
+            events_total: total,
+            events_has_more: has_more,
+        };
+        detail.validate().map_err(protocol_projection_error)?;
+        self.response = Some(LocalAgentIpcResponse::RunDetail(Box::new(detail)));
+        Ok(())
+    }
+}
+
 struct GetTaskOperation {
     scope: RecordScope,
     task_id: String,
@@ -394,6 +449,7 @@ fn task_snapshot(record: TaskRecord) -> StorageResult<LocalAgentTaskSnapshot> {
         source_thread_id: state.source_thread_id,
         source_turn_id: state.source_turn_id,
         project_id: state.project_id,
+        initial_run_id: state.initial_run_id,
         current_run_id: state.current_run_id,
         run_ids: state.run_ids,
         objective: state.objective,
@@ -535,28 +591,20 @@ impl StorageTransaction for GetTaskRunDetailOperation {
             return Err(StorageError::NotFound);
         }
 
-        let mut events = task_run_events(repositories, &self.scope, &run.run_id).await?;
-        events.sort_by(|left, right| {
-            left.created_at
-                .cmp(&right.created_at)
-                .then_with(|| left.event_id.cmp(&right.event_id))
-        });
-        let total = u32::try_from(events.len()).map_err(|_| StorageError::InvalidData {
-            reason: "Task Run event count exceeds the protocol limit".to_string(),
-        })?;
-        let offset = self.command.event_offset as usize;
-        let limit = self.command.event_limit as usize;
-        let page = events
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect::<Vec<_>>();
+        let (events, total, has_more) = paged_run_timeline(
+            repositories,
+            &self.scope,
+            &run.run_id,
+            self.command.event_offset,
+            self.command.event_limit,
+        )
+        .await?;
         let detail = LocalAgentTaskRunDetail {
             task,
             run: task_run_summary(run),
-            events: page,
+            events,
             events_total: total,
-            events_has_more: offset.saturating_add(limit) < total as usize,
+            events_has_more: has_more,
         };
         detail.validate().map_err(protocol_projection_error)?;
         self.response = Some(LocalAgentIpcResponse::TaskRunDetail(Box::new(detail)));
@@ -564,11 +612,33 @@ impl StorageTransaction for GetTaskRunDetailOperation {
     }
 }
 
-async fn task_run_events(
+async fn paged_run_timeline(
     repositories: &mut dyn TransactionRepositories,
     scope: &RecordScope,
     run_id: &str,
-) -> StorageResult<Vec<LocalAgentTaskRunEvent>> {
+    event_offset: u32,
+    event_limit: u32,
+) -> StorageResult<(Vec<LocalAgentRunTimelineEvent>, u32, bool)> {
+    let mut events = run_timeline_events(repositories, scope, run_id).await?;
+    events.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.event_id.cmp(&right.event_id))
+    });
+    let total = u32::try_from(events.len()).map_err(|_| StorageError::InvalidData {
+        reason: "Run timeline event count exceeds the protocol limit".to_string(),
+    })?;
+    let offset = event_offset as usize;
+    let limit = event_limit as usize;
+    let page = events.into_iter().skip(offset).take(limit).collect();
+    Ok((page, total, offset.saturating_add(limit) < total as usize))
+}
+
+async fn run_timeline_events(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+    run_id: &str,
+) -> StorageResult<Vec<LocalAgentRunTimelineEvent>> {
     let mut projected = Vec::new();
 
     let mut cursor = None;
@@ -606,7 +676,7 @@ async fn task_run_events(
             page.records
                 .into_iter()
                 .filter(|record| record.message.run_id == run_id)
-                .map(project_agent_message),
+                .flat_map(project_agent_message),
         );
         let Some(next) = page.next_cursor else { break };
         ensure_cursor_advanced(cursor.as_deref(), &next, "Agent message")?;
@@ -636,14 +706,74 @@ async fn task_run_events(
     Ok(projected)
 }
 
-fn project_agent_event(record: AgentEventStateRecord) -> LocalAgentTaskRunEvent {
+async fn run_tools(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+    run_id: &str,
+) -> StorageResult<Vec<chatos_local_agent_protocol::ToolExecution>> {
+    let mut values = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = repositories
+            .tool_executions()
+            .list(&ListQuery {
+                scope: scope.clone(),
+                cursor: cursor.clone(),
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        values.extend(
+            page.records
+                .into_iter()
+                .filter(|record| record.execution.run_id == run_id)
+                .map(|record| record.execution),
+        );
+        let Some(next) = page.next_cursor else { break };
+        ensure_cursor_advanced(cursor.as_deref(), &next, "Tool execution")?;
+        cursor = Some(next);
+    }
+    values.sort_by(|left, right| left.invocation_id.cmp(&right.invocation_id));
+    Ok(values)
+}
+
+async fn latest_ui_event_sequence(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+) -> StorageResult<u64> {
+    // The durable native cursor already covers all older events. Starting at
+    // that watermark keeps restart snapshots proportional to the unconsumed
+    // tail instead of rescanning the account's full UI-event history once per
+    // Run detail page.
+    let mut sequence = read_native_ui_cursor(repositories, scope).await?;
+    loop {
+        let page = repositories
+            .agent_ui_events()
+            .list_after(&AgentUiEventCursorQuery {
+                scope: scope.clone(),
+                after_seq: sequence,
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        if page.next_seq < sequence || (page.has_more && page.next_seq == sequence) {
+            return Err(StorageError::InvalidData {
+                reason: "UI event snapshot pagination did not advance".to_string(),
+            });
+        }
+        sequence = page.next_seq;
+        if !page.has_more {
+            return Ok(sequence);
+        }
+    }
+}
+
+fn project_agent_event(record: AgentEventStateRecord) -> LocalAgentRunTimelineEvent {
     let event_type = enum_wire_name(&record.event.event_type);
     let message = record
         .event
         .last_error
         .clone()
         .or_else(|| bounded_value_text(&record.event.bounded_payload));
-    LocalAgentTaskRunEvent {
+    LocalAgentRunTimelineEvent {
         event_id: format!("run_event:{}", record.event.event_id),
         event_type,
         message,
@@ -651,29 +781,44 @@ fn project_agent_event(record: AgentEventStateRecord) -> LocalAgentTaskRunEvent 
     }
 }
 
-fn project_agent_message(record: AgentMessageStateRecord) -> LocalAgentTaskRunEvent {
+fn project_agent_message(record: AgentMessageStateRecord) -> Vec<LocalAgentRunTimelineEvent> {
     let role = enum_wire_name(&record.message.role);
-    let message = record
-        .message
-        .content
-        .clone()
-        .or(record.message.reasoning.clone())
-        .or_else(|| {
-            record
-                .message
-                .structured_payload
-                .as_ref()
-                .and_then(bounded_value_text)
+    let mut events = Vec::new();
+    if let Some(content) = record.message.content.filter(|value| !value.is_empty()) {
+        events.push(LocalAgentRunTimelineEvent {
+            event_id: format!("message:{}:content", record.message.record_id),
+            event_type: format!("message_{role}_content"),
+            message: Some(content),
+            created_at: record.message.created_at,
         });
-    LocalAgentTaskRunEvent {
-        event_id: format!("message:{}", record.message.record_id),
-        event_type: format!("message_{role}"),
-        message,
-        created_at: record.message.created_at,
     }
+    if let Some(reasoning) = record.message.reasoning.filter(|value| !value.is_empty()) {
+        events.push(LocalAgentRunTimelineEvent {
+            event_id: format!("message:{}:reasoning", record.message.record_id),
+            event_type: format!("message_{role}_reasoning"),
+            message: Some(reasoning),
+            created_at: record.message.created_at,
+        });
+    }
+    if events.is_empty() {
+        if let Some(message) = record
+            .message
+            .structured_payload
+            .as_ref()
+            .and_then(bounded_value_text)
+        {
+            events.push(LocalAgentRunTimelineEvent {
+                event_id: format!("message:{}:structured", record.message.record_id),
+                event_type: format!("message_{role}_structured"),
+                message: Some(message),
+                created_at: record.message.created_at,
+            });
+        }
+    }
+    events
 }
 
-fn project_tool_execution(record: ToolExecutionStateRecord) -> LocalAgentTaskRunEvent {
+fn project_tool_execution(record: ToolExecutionStateRecord) -> LocalAgentRunTimelineEvent {
     let status = enum_wire_name(&record.execution.status);
     let result = record
         .execution
@@ -684,7 +829,7 @@ fn project_tool_execution(record: ToolExecutionStateRecord) -> LocalAgentTaskRun
         Some(result) => format!("{}: {result}", record.execution.tool_name),
         None => record.execution.tool_name.clone(),
     });
-    LocalAgentTaskRunEvent {
+    LocalAgentRunTimelineEvent {
         event_id: format!("tool:{}", record.execution.invocation_id),
         event_type: format!("tool_{status}"),
         message,
@@ -965,6 +1110,23 @@ impl StorageTransaction for NativeUiCursorOperation {
         self.result = through_seq;
         Ok(())
     }
+}
+
+async fn read_native_ui_cursor(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+) -> StorageResult<u64> {
+    repositories
+        .settings()
+        .get(&RecordQuery {
+            scope: scope.clone(),
+            id: NATIVE_UI_CURSOR_SETTING_ID.to_string(),
+        })
+        .await?
+        .as_ref()
+        .map(native_ui_cursor)
+        .transpose()
+        .map(|value| value.unwrap_or(0))
 }
 
 fn native_ui_cursor(record: &ClientSettingRecord) -> StorageResult<u64> {

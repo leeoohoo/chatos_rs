@@ -15,6 +15,7 @@
             "source_thread_id": "thread-1",
             "source_turn_id": "turn-1",
             "project_id": "project-1",
+            "initial_run_id": "task-run-1",
             "current_run_id": "task-run-2",
             "run_ids": ["task-run-1", "task-run-2"],
             "objective": "Implement the approved visual design",
