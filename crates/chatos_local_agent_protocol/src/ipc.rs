@@ -123,7 +123,7 @@ pub struct CreateMainChatTurnCommand {
 }
 
 impl CreateMainChatTurnCommand {
-    fn validate(&self) -> Result<(), ProtocolError> {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
         for (field, value) in [
             ("thread_id", self.thread_id.as_str()),
             ("turn_id", self.turn_id.as_str()),
@@ -193,7 +193,7 @@ pub struct CreateTaskCommand {
 }
 
 impl CreateTaskCommand {
-    fn validate(&self) -> Result<(), ProtocolError> {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
         for (field, value) in [
             ("task_id", self.task_id.as_str()),
             ("source_thread_id", self.source_thread_id.as_str()),

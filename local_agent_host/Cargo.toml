@@ -23,6 +23,7 @@ zeroize = "1"
 
 [dev-dependencies]
 async-trait = "0.1"
+chatos_agent_profiles = { path = "../crates/chatos_agent_profiles" }
 memory_engine_sdk = { path = "../crates/memory_engine_sdk" }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

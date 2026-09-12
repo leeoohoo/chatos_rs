@@ -966,6 +966,7 @@ dependencies = [
  "aes-gcm 0.10.3",
  "async-trait",
  "base64 0.22.1",
+ "chatos_agent_profiles",
  "chatos_client_storage",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",

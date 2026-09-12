@@ -400,7 +400,7 @@ Agent Runtime 至少使用以下逻辑表；SQLite 与 PostgreSQL 使用同一�
 - `started_at`
 - `completed_at`
 
-`write`、`billable` 和 `terminal` 工具执行前必须写入 `started`。进程中断且没有确定结果时进入 `needs_review`。
+`idempotent_write`、`write`、`billable` 和 `terminal` 工具执行前必须写入 `started`。其中只有以稳定业务 ID 和唯一约束实现的 `idempotent_write` 可在进程中断后重放；`write`、`billable` 和 `terminal` 没有确定结果时必须进入 `needs_review`。
 
 #### `sync_outbox`
 

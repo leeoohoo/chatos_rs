@@ -13,6 +13,22 @@ use chatos_local_agent_protocol::{
 };
 use chrono::Utc;
 
+#[test]
+fn tool_effects_define_the_exact_durable_replay_boundary() {
+    assert!(!ToolEffect::Read.requires_durable_start());
+    assert!(ToolEffect::Read.can_replay_after_started());
+    assert!(ToolEffect::IdempotentWrite.requires_durable_start());
+    assert!(ToolEffect::IdempotentWrite.can_replay_after_started());
+    for effect in [
+        ToolEffect::Write,
+        ToolEffect::Billable,
+        ToolEffect::Terminal,
+    ] {
+        assert!(effect.requires_durable_start());
+        assert!(!effect.can_replay_after_started());
+    }
+}
+
 fn model_descriptor() -> ModelRuntimeDescriptor {
     ModelRuntimeDescriptor {
         model_config_id: "model-1".to_string(),

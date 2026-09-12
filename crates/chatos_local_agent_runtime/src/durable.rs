@@ -179,6 +179,11 @@ async fn create_run_in_transaction(
     repositories: &mut dyn TransactionRepositories,
     request: CreateLocalAgentRunRequest,
 ) -> StorageResult<CreatedLocalAgentRun> {
+    let correlation_id = request
+        .initial_message
+        .as_ref()
+        .map(|message| message.turn_id.clone())
+        .unwrap_or_else(|| request.owner_entity_id.clone());
     let start_event_id = stable_event_id(
         request.run_id.as_str(),
         1,
@@ -209,6 +214,7 @@ async fn create_run_in_transaction(
             || start_event.event.event_type != LocalAgentEventType::RunStarted
             || start_event.event.expected_version != 1
             || start_event.event.causation_id != request.causation_id
+            || start_event.event.correlation_id != correlation_id
         {
             return Err(StorageError::Conflict {
                 actual_revision: start_event.metadata.revision,
@@ -298,7 +304,7 @@ async fn create_run_in_transaction(
                     claim_token: None,
                     claim_until: None,
                     causation_id: request.causation_id,
-                    correlation_id: request.owner_entity_id,
+                    correlation_id,
                     bounded_payload: serde_json::Value::Null,
                     last_error: None,
                 },
@@ -932,6 +938,7 @@ async fn mark_unknown_irreversible_tools(
         for mut record in page.records {
             if record.execution.run_id != run_id
                 || !record.execution.effect.requires_durable_start()
+                || record.execution.effect.can_replay_after_started()
                 || !matches!(
                     record.execution.status,
                     ToolExecutionStatus::Started | ToolExecutionStatus::OutcomeUnknown

@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
 use chatos_client_storage::{
     AgentEventStateRecord, AgentRunStateRecord, ClientStorage, RecordQuery, RecordScope,
-    StorageError, StorageResult, StorageTransaction, TransactionRepositories,
+    StorageError, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    CreateMainChatTurnCommand, CreateTaskCommand, LocalAgentCommand, LocalAgentEventType,
-    LocalAgentIpcError, LocalAgentIpcResponse, ModelRuntimeDescriptor, ModelStepCompletion,
-    ModelStepResult,
+    CreateMainChatTurnCommand, CreateTaskCommand, FrozenSnapshotReference, LocalAgentCommand,
+    LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse, ModelRuntimeDescriptor,
+    ModelStepCompletion, ModelStepResult, ProtocolError, ToolEffect,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, begin_model_step_execution, begin_tool_execution,
@@ -24,8 +24,8 @@ use chatos_local_agent_runtime::{
     CommittedReduction, CompleteToolExecutionRequest, CompletedAssistantMessage,
     CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest, CreatedLocalAgentRun,
     CreatedLocalAgentTask, DurableModelStepCompletionPayload, DurableProviderContextCommit,
-    DurableScheduler, ExecutedModelStep, InitialRunMessage, LocalToolRuntime,
-    MarkToolOutcomeUnknownRequest, ModelGatewayCallbacks, ModelGatewayClient,
+    DurableScheduler, ExecutedModelStep, InitialRunMessage, LocalToolInvocation, LocalToolOutcome,
+    LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayCallbacks, ModelGatewayClient,
     ModelGatewayClientError, ModelGatewayStreamError, ModelInputTokenGuardError,
     ModelStepExecutorError, ModelStepPersistenceError, PrepareToolBatchRequest,
     RecordModelStepCompletionRequest, RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy,
@@ -86,6 +86,36 @@ pub struct LocalAgentHostRunRequest {
     pub causation_id: String,
     pub deadline_at: Option<DateTime<Utc>>,
     pub initial_message: Option<InitialRunMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalTaskPlanningRequest {
+    pub task_id: String,
+    pub parent_run_id: String,
+    pub source_thread_id: String,
+    pub source_turn_id: String,
+    pub project_id: String,
+    pub objective: String,
+    pub acceptance_criteria: Vec<String>,
+    pub parent_capability_snapshot_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalTaskCreationPlan {
+    pub project_id: String,
+    pub model_config_id: String,
+    pub prompt_snapshot: FrozenSnapshotReference,
+    pub project_snapshot: FrozenSnapshotReference,
+    pub capability_snapshot: FrozenSnapshotReference,
+}
+
+#[async_trait]
+pub trait LocalTaskCreationPlanner: Send + Sync {
+    async fn plan_task(
+        &self,
+        request: &LocalTaskPlanningRequest,
+        cancellation: CancellationToken,
+    ) -> Result<LocalTaskCreationPlan, String>;
 }
 
 #[derive(Clone)]
@@ -154,6 +184,8 @@ pub enum LocalAgentHostError {
     #[error(transparent)]
     ModelGateway(#[from] ModelGatewayClientError),
     #[error(transparent)]
+    Protocol(#[from] ProtocolError),
+    #[error(transparent)]
     ContextRuntime(#[from] LocalAgentContextRuntimeError),
     #[error(transparent)]
     ModelStepExecutor(#[from] ModelStepExecutorError),
@@ -176,6 +208,7 @@ pub struct LocalAgentHost {
     model_steps: SingleModelStepExecutor,
     context_runtime: Arc<dyn LocalAgentContextRuntime>,
     tool_runtime: Arc<dyn LocalToolRuntime>,
+    task_planner: Arc<dyn LocalTaskCreationPlanner>,
 }
 
 impl LocalAgentHost {
@@ -185,6 +218,7 @@ impl LocalAgentHost {
         gateway: Arc<dyn ModelGatewayClient>,
         context_runtime: Arc<dyn LocalAgentContextRuntime>,
         tool_runtime: Arc<dyn LocalToolRuntime>,
+        task_planner: Arc<dyn LocalTaskCreationPlanner>,
         profiles: LocalAgentProfileRegistry,
         scope: RecordScope,
         device_id: impl Into<String>,
@@ -230,6 +264,7 @@ impl LocalAgentHost {
                 model_steps: SingleModelStepExecutor::new(gateway),
                 context_runtime,
                 tool_runtime,
+                task_planner,
             },
             report,
         ))
@@ -302,6 +337,7 @@ impl LocalAgentHost {
         session: &LocalAgentExecutionSession,
         now: DateTime<Utc>,
     ) -> Result<CreatedLocalAgentRun, LocalAgentHostError> {
+        command.validate()?;
         const PROFILE_KEY: &str = "main_chat";
         self.profiles.require(PROFILE_KEY)?;
         let run_id = stable_host_id(
@@ -353,6 +389,7 @@ impl LocalAgentHost {
         session: &LocalAgentExecutionSession,
         now: DateTime<Utc>,
     ) -> Result<CreatedLocalAgentTask, LocalAgentHostError> {
+        command.validate()?;
         const PROFILE_KEY: &str = "task_runner";
         self.profiles.require(PROFILE_KEY)?;
         let run_id = stable_host_id(
@@ -449,6 +486,18 @@ impl LocalAgentHost {
             query: RecordQuery {
                 scope: self.scope.clone(),
                 id: run_id.to_string(),
+            },
+            result: None,
+        };
+        self.storage.transaction(&mut operation).await?;
+        Ok(operation.result)
+    }
+
+    async fn load_task_record(&self, task_id: &str) -> StorageResult<Option<TaskRecord>> {
+        let mut operation = LoadTaskRecord {
+            query: RecordQuery {
+                scope: self.scope.clone(),
+                id: task_id.to_string(),
             },
             result: None,
         };
@@ -830,7 +879,7 @@ impl LocalAgentHost {
                 .map(Box::new)
                 .map(ProcessedClaimedEvent::ModelCompletionScheduled),
             LocalAgentEventType::ToolBatchRequested => self
-                .execute_claimed_tool_batch(claimed, session.cancellation.clone(), now)
+                .execute_claimed_tool_batch(claimed, session, now)
                 .await
                 .map(Box::new)
                 .map(ProcessedClaimedEvent::ReductionCommitted),
@@ -848,7 +897,7 @@ impl LocalAgentHost {
     pub async fn execute_claimed_tool_batch(
         &self,
         claimed: &AgentEventStateRecord,
-        cancellation: CancellationToken,
+        session: &LocalAgentExecutionSession,
         now: DateTime<Utc>,
     ) -> Result<CommittedReduction, LocalAgentHostError> {
         if claimed.metadata.id != claimed.event.event_id {
@@ -887,12 +936,21 @@ impl LocalAgentHost {
             {
                 BeginToolExecutionResult::Execute(_) => {
                     let invocation = build_local_tool_invocation(&batch, call);
+                    let execution = async {
+                        if invocation.tool_name == "create_local_task" {
+                            self.execute_local_task_creation_tool(&invocation, session)
+                                .await
+                        } else {
+                            self.tool_runtime
+                                .execute(invocation, session.cancellation.clone())
+                                .await
+                        }
+                    };
                     match self
-                        .execute_tool_with_claim_renewal(
+                        .execute_with_claim_renewal(
                             claimed.event.event_id.as_str(),
                             claim_token.as_str(),
-                            invocation,
-                            cancellation.clone(),
+                            execution,
                         )
                         .await
                     {
@@ -911,7 +969,10 @@ impl LocalAgentHost {
                             )
                             .await?;
                         }
-                        Err(_error) if call.effect.requires_durable_start() => {
+                        Err(_error)
+                            if call.effect.requires_durable_start()
+                                && !call.effect.can_replay_after_started() =>
+                        {
                             mark_tool_outcome_unknown(
                                 self.storage.as_ref(),
                                 MarkToolOutcomeUnknownRequest {
@@ -947,13 +1008,12 @@ impl LocalAgentHost {
         .await
     }
 
-    async fn execute_tool_with_claim_renewal(
+    async fn execute_with_claim_renewal<T>(
         &self,
         event_id: &str,
         claim_token: &str,
-        invocation: chatos_local_agent_runtime::LocalToolInvocation,
-        cancellation: CancellationToken,
-    ) -> Result<chatos_local_agent_runtime::LocalToolOutcome, String> {
+        execution: impl Future<Output = Result<T, String>>,
+    ) -> Result<T, String> {
         let renewal_period = self
             .policy
             .claim_ttl
@@ -965,7 +1025,6 @@ impl LocalAgentHost {
         }
         let first_tick = tokio::time::Instant::now() + renewal_period;
         let mut interval = tokio::time::interval_at(first_tick, renewal_period);
-        let execution = self.tool_runtime.execute(invocation, cancellation);
         tokio::pin!(execution);
         loop {
             tokio::select! {
@@ -993,6 +1052,174 @@ impl LocalAgentHost {
         }
     }
 
+    async fn execute_local_task_creation_tool(
+        &self,
+        invocation: &LocalToolInvocation,
+        session: &LocalAgentExecutionSession,
+    ) -> Result<LocalToolOutcome, String> {
+        if invocation.effect != ToolEffect::IdempotentWrite {
+            return Err("create_local_task must be an idempotent_write tool".to_string());
+        }
+        let parent = self
+            .load_run_record(&invocation.run_id)
+            .await
+            .map_err(|error| format!("failed to load Main Chat run: {error}"))?
+            .ok_or_else(|| "Main Chat run was not found".to_string())?;
+        if parent.run.profile_key != "main_chat"
+            || parent.run.owner_entity_type != "conversation"
+            || parent.run.project_id != invocation.project_id
+            || parent.run.capability_snapshot_ref != invocation.capability_snapshot_ref
+        {
+            return Err(
+                "create_local_task invocation does not match its frozen Main Chat run".to_string(),
+            );
+        }
+        let project_id = invocation
+            .project_id
+            .clone()
+            .ok_or_else(|| "create_local_task requires a frozen project_id".to_string())?;
+        let arguments = invocation
+            .arguments
+            .as_object()
+            .ok_or_else(|| "create_local_task arguments must be a JSON object".to_string())?;
+        if arguments
+            .keys()
+            .any(|key| !matches!(key.as_str(), "objective" | "acceptance_criteria"))
+        {
+            return Err("create_local_task contains unsupported arguments".to_string());
+        }
+        let objective = arguments
+            .get("objective")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "create_local_task objective must not be empty".to_string())?
+            .to_string();
+        let acceptance_criteria = arguments
+            .get("acceptance_criteria")
+            .and_then(serde_json::Value::as_array)
+            .filter(|criteria| !criteria.is_empty())
+            .ok_or_else(|| "create_local_task acceptance_criteria must not be empty".to_string())?
+            .iter()
+            .map(|criterion| {
+                criterion
+                    .as_str()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(ToOwned::to_owned)
+                    .ok_or_else(|| {
+                        "create_local_task acceptance criteria must be non-empty strings"
+                            .to_string()
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let task_id = stable_host_id(
+            "local-task",
+            &[
+                self.scope.owner_user_id.as_str(),
+                invocation.invocation_id.as_str(),
+            ],
+        );
+        let planning_request = LocalTaskPlanningRequest {
+            task_id: task_id.clone(),
+            parent_run_id: parent.run.run_id,
+            source_thread_id: parent.run.owner_entity_id,
+            source_turn_id: invocation.source_turn_id.clone(),
+            project_id: project_id.clone(),
+            objective: objective.clone(),
+            acceptance_criteria: acceptance_criteria.clone(),
+            parent_capability_snapshot_ref: invocation.capability_snapshot_ref.clone(),
+        };
+        if let Some(outcome) = self
+            .existing_local_task_creation_outcome(&planning_request)
+            .await?
+        {
+            return Ok(outcome);
+        }
+        let plan = self
+            .task_planner
+            .plan_task(&planning_request, session.cancellation.clone())
+            .await?;
+        if plan.project_id != project_id {
+            return Err(
+                "local Task plan does not match the project frozen by the Main Chat run"
+                    .to_string(),
+            );
+        }
+        let created = self
+            .create_task(
+                invocation.invocation_id.as_str(),
+                CreateTaskCommand {
+                    task_id: task_id.clone(),
+                    source_thread_id: planning_request.source_thread_id,
+                    source_turn_id: planning_request.source_turn_id,
+                    project_id,
+                    objective,
+                    acceptance_criteria,
+                    model_config_id: plan.model_config_id,
+                    prompt_snapshot: plan.prompt_snapshot,
+                    project_snapshot: plan.project_snapshot,
+                    capability_snapshot: plan.capability_snapshot,
+                },
+                session,
+                Utc::now(),
+            )
+            .await
+            .map_err(|error| format!("failed to create local Task: {error}"))?;
+        Ok(LocalToolOutcome::succeeded(json!({
+            "task_id": task_id,
+            "run_id": created.run.run_record.run.run_id,
+            "project_id": created.run.run_record.run.project_id,
+        })))
+    }
+
+    async fn existing_local_task_creation_outcome(
+        &self,
+        request: &LocalTaskPlanningRequest,
+    ) -> Result<Option<LocalToolOutcome>, String> {
+        let Some(task) = self
+            .load_task_record(&request.task_id)
+            .await
+            .map_err(|error| format!("failed to load an existing local Task: {error}"))?
+        else {
+            return Ok(None);
+        };
+        let expected_criteria = json!(request.acceptance_criteria);
+        if task.conversation_id.as_deref() != Some(request.source_thread_id.as_str())
+            || task.state.get("source_thread_id") != Some(&json!(request.source_thread_id))
+            || task.state.get("source_turn_id") != Some(&json!(request.source_turn_id))
+            || task.state.get("project_id") != Some(&json!(request.project_id))
+            || task.state.get("objective") != Some(&json!(request.objective))
+            || task.state.get("acceptance_criteria") != Some(&expected_criteria)
+        {
+            return Err(
+                "existing local Task does not match the replayed create_local_task invocation"
+                    .to_string(),
+            );
+        }
+        let run_id = task
+            .state
+            .get("run_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "existing local Task has no frozen run_id".to_string())?;
+        let run = self
+            .load_run_record(run_id)
+            .await
+            .map_err(|error| format!("failed to load the existing Task Runner run: {error}"))?
+            .ok_or_else(|| "existing local Task has no durable Task Runner run".to_string())?;
+        if run.run.profile_key != "task_runner"
+            || run.run.owner_entity_type != "task"
+            || run.run.owner_entity_id != request.task_id
+            || run.run.project_id.as_deref() != Some(request.project_id.as_str())
+        {
+            return Err("existing Task Runner run does not match its local Task".to_string());
+        }
+        Ok(Some(LocalToolOutcome::succeeded(json!({
+            "task_id": task.metadata.id,
+            "run_id": run.run.run_id,
+            "project_id": run.run.project_id,
+        }))))
+    }
+
     pub async fn refresh_recovery(
         &self,
         now: DateTime<Utc>,
@@ -1013,6 +1240,11 @@ struct LoadRunRecord {
     result: Option<AgentRunStateRecord>,
 }
 
+struct LoadTaskRecord {
+    query: RecordQuery,
+    result: Option<TaskRecord>,
+}
+
 #[async_trait]
 impl StorageTransaction for LoadRunRecord {
     async fn execute(
@@ -1020,6 +1252,17 @@ impl StorageTransaction for LoadRunRecord {
         repositories: &mut dyn TransactionRepositories,
     ) -> StorageResult<()> {
         self.result = repositories.agent_runs().get(&self.query).await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl StorageTransaction for LoadTaskRecord {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.result = repositories.tasks().get(&self.query).await?;
         Ok(())
     }
 }

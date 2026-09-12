@@ -148,7 +148,7 @@ fn interpret_main_chat_output(
                 task_calls.push(json!({
                     "call_id": call.get("call_id"),
                     "name": name,
-                    "effect": "write",
+                    "effect": "idempotent_write",
                     "arguments": arguments,
                 }));
             }
@@ -276,6 +276,7 @@ mod tests {
         };
         assert_eq!(payload["project_id"], "project-1");
         assert_eq!(payload["calls"][0]["name"], MAIN_CHAT_CREATE_TASK_TOOL);
+        assert_eq!(payload["calls"][0]["effect"], "idempotent_write");
         assert!(payload["calls"][0]["arguments"].get("project_id").is_none());
     }
 

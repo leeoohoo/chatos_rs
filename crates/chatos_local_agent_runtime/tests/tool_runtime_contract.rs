@@ -133,6 +133,15 @@ impl StorageTransaction for Seed {
                                     "name": "write_file",
                                     "effect": "write",
                                     "arguments": {"path": "src/lib.rs", "content": "updated"}
+                                },
+                                {
+                                    "call_id": "call-idempotent-write",
+                                    "name": "create_local_task",
+                                    "effect": "idempotent_write",
+                                    "arguments": {
+                                        "objective": "Implement the reviewed design",
+                                        "acceptance_criteria": ["The visual contract is verified"]
+                                    }
                                 }
                             ]
                         }),
@@ -267,13 +276,13 @@ async fn batch_and_arguments_are_frozen_idempotently_before_execution() {
 
     assert_eq!(first, repeated);
     assert_eq!(first.project_id.as_deref(), Some("project-1"));
-    assert_eq!(first.calls.len(), 2);
+    assert_eq!(first.calls.len(), 3);
     assert_eq!(first.calls[0].tool_name, "read_file");
     assert!(first.calls[0].invocation_id.starts_with("tool:"));
     let events = read_ui_events(storage.as_ref()).await;
     assert_eq!(
         events.len(),
-        2,
+        3,
         "idempotent preparation emits no duplicates"
     );
     assert!(events.iter().all(|event| matches!(
@@ -336,7 +345,7 @@ async fn read_execution_can_resume_and_completion_is_idempotent() {
         .collect::<Vec<_>>();
     assert_eq!(
         tool_events.len(),
-        4,
+        5,
         "only real tool transitions are published"
     );
     let snapshot = tool_events.last().unwrap();
@@ -387,6 +396,43 @@ async fn irreversible_started_execution_is_never_replayed_after_reentry() {
         semantic.messages[0].structured_payload.as_ref().unwrap()["status"],
         "outcome_unknown"
     );
+}
+
+#[tokio::test]
+async fn idempotent_write_started_execution_is_replayed_after_reentry() {
+    let (_directory, storage) = storage("project-1").await;
+    let batch = prepare_tool_batch(storage.as_ref(), prepare_request())
+        .await
+        .unwrap();
+    let invocation_id = batch.calls[2].invocation_id.clone();
+    let begin = BeginToolExecutionRequest {
+        scope: scope(),
+        invocation_id,
+        now: Utc::now(),
+    };
+    assert!(matches!(
+        begin_tool_execution(storage.as_ref(), begin.clone())
+            .await
+            .unwrap(),
+        BeginToolExecutionResult::Execute(_)
+    ));
+    let repeated = begin_tool_execution(storage.as_ref(), begin).await.unwrap();
+    let BeginToolExecutionResult::Execute(record) = repeated else {
+        panic!("idempotent write must be safe to replay after a crash");
+    };
+    assert_eq!(record.execution.status, ToolExecutionStatus::Started);
+
+    let error = mark_tool_outcome_unknown(
+        storage.as_ref(),
+        MarkToolOutcomeUnknownRequest {
+            scope: scope(),
+            invocation_id: record.execution.invocation_id,
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("irreversible"));
 }
 
 #[tokio::test]

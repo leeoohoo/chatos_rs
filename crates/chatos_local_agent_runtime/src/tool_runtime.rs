@@ -39,6 +39,7 @@ pub struct PreparedToolBatch {
     pub event_id: String,
     pub run_id: String,
     pub batch_id: String,
+    pub source_turn_id: String,
     pub project_id: Option<String>,
     pub capability_snapshot_ref: String,
     pub calls: Vec<PreparedToolCall>,
@@ -182,6 +183,7 @@ impl StorageTransaction for PrepareToolBatchOperation {
             event_id: event.event.event_id,
             run_id: run.run.run_id,
             batch_id: batch_id.to_string(),
+            source_turn_id: event.event.correlation_id,
             project_id: envelope.project_id,
             capability_snapshot_ref: envelope.capability_snapshot_ref,
             calls,
@@ -406,7 +408,7 @@ impl StorageTransaction for BeginToolExecutionOperation {
                 append_tool_snapshot(repositories, &record).await?;
                 BeginToolExecutionResult::Execute(record)
             }
-            ToolExecutionStatus::Started if record.execution.effect == ToolEffect::Read => {
+            ToolExecutionStatus::Started if record.execution.effect.can_replay_after_started() => {
                 BeginToolExecutionResult::Execute(record)
             }
             ToolExecutionStatus::Started => {
@@ -513,7 +515,7 @@ impl StorageTransaction for MarkToolOutcomeUnknownOperation {
             return Ok(());
         }
         if record.execution.status != ToolExecutionStatus::Started
-            || !record.execution.effect.requires_durable_start()
+            || record.execution.effect.can_replay_after_started()
         {
             return invalid_data("only a started irreversible tool can have an unknown outcome");
         }
@@ -766,6 +768,7 @@ pub struct LocalToolInvocation {
     pub invocation_id: String,
     pub run_id: String,
     pub batch_id: String,
+    pub source_turn_id: String,
     pub project_id: Option<String>,
     pub capability_snapshot_ref: String,
     pub tool_call_id: String,
@@ -826,6 +829,7 @@ pub fn build_local_tool_invocation(
         invocation_id: call.invocation_id.clone(),
         run_id: batch.run_id.clone(),
         batch_id: batch.batch_id.clone(),
+        source_turn_id: batch.source_turn_id.clone(),
         project_id: batch.project_id.clone(),
         capability_snapshot_ref: batch.capability_snapshot_ref.clone(),
         tool_call_id: call.tool_call_id.clone(),

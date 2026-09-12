@@ -4,16 +4,19 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use chatos_agent_profiles::{MainChatAgentProfile, MainChatContextProvider, MainChatStepContext};
 use chatos_client_storage::{
     AgentEventStateRecord, AgentRunStateRecord, ClientStorage, ListQuery, PutRecord,
     RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageEncryptionKey, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
+    StorageEncryptionKey, StorageResult, StorageTransaction, TaskRecord, ToolExecutionStateRecord,
+    TransactionRepositories,
 };
 use chatos_local_agent_host::{
     LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentExecutionSession,
     LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostCreationExecutor,
     LocalAgentHostPolicy, LocalAgentHostRunRequest, LocalAgentIpcMutationExecutor,
-    LocalAgentIpcServer, LocalAgentProfileRegistry, ProcessedClaimedEvent,
+    LocalAgentIpcServer, LocalAgentProfileRegistry, LocalTaskCreationPlan,
+    LocalTaskCreationPlanner, LocalTaskPlanningRequest, ProcessedClaimedEvent,
 };
 use chatos_local_agent_protocol::{
     AnswerUserQuestionCommand, ContextStrategy, CreateMainChatTurnCommand, CreateTaskCommand,
@@ -21,8 +24,8 @@ use chatos_local_agent_protocol::{
     LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcRequest, LocalAgentIpcResponse,
     LocalAgentRun, LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTerminal,
     ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
-    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, UserInteractionAnswer,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ToolEffect, ToolExecutionStatus,
+    UserInteractionAnswer, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{
     CompletedAssistantMessage, DurableProviderContextCommit, LocalAgentProfile,
@@ -112,7 +115,71 @@ struct DescriptorGateway {
     calls: Mutex<Vec<(String, String)>>,
 }
 
+struct TaskCreatingGateway {
+    descriptor_calls: Mutex<Vec<(String, String)>>,
+    model_requests: Mutex<Vec<ModelGatewayRequest>>,
+}
+
 struct Tools;
+
+struct UnusedTaskPlanner;
+
+struct RecordingTaskPlanner {
+    requests: Mutex<Vec<LocalTaskPlanningRequest>>,
+    plan: LocalTaskCreationPlan,
+}
+
+struct MainChatTestContext;
+
+fn execution_session() -> LocalAgentExecutionSession {
+    LocalAgentExecutionSession::new(
+        "test-access-token",
+        ModelGatewayCallbacks::default(),
+        CancellationToken::new(),
+    )
+    .unwrap()
+}
+
+#[async_trait]
+impl LocalTaskCreationPlanner for UnusedTaskPlanner {
+    async fn plan_task(
+        &self,
+        _request: &LocalTaskPlanningRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<LocalTaskCreationPlan, String> {
+        unreachable!("test does not create a Task from a Main Chat tool")
+    }
+}
+
+#[async_trait]
+impl LocalTaskCreationPlanner for RecordingTaskPlanner {
+    async fn plan_task(
+        &self,
+        request: &LocalTaskPlanningRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<LocalTaskCreationPlan, String> {
+        self.requests.lock().unwrap().push(request.clone());
+        Ok(self.plan.clone())
+    }
+}
+
+#[async_trait]
+impl MainChatContextProvider for MainChatTestContext {
+    async fn load_step_context(&self, _run: &LocalAgentRun) -> Result<MainChatStepContext, String> {
+        Ok(MainChatStepContext {
+            base_system_prompt: "Design collaboratively.".to_string(),
+            contact_system_prompt: None,
+            skill_catalog_prompt: None,
+            project_context_prompt: None,
+            current_goal_prompt: "Implement the approved visual direction.".to_string(),
+            model_input_items: Vec::new(),
+            maximum_output_tokens: 32_000,
+            native_compaction_threshold: Some(300_000),
+            memory_engine_active_threshold: None,
+            maximum_summary_attempts: 0,
+        })
+    }
+}
 
 struct TestContextRuntime;
 
@@ -464,6 +531,79 @@ impl ModelGatewayClient for DescriptorGateway {
     }
 }
 
+#[async_trait]
+impl ModelGatewayClient for TaskCreatingGateway {
+    async fn descriptor(
+        &self,
+        access_token: &str,
+        model_config_id: &str,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelRuntimeDescriptor, ModelGatewayClientError> {
+        self.descriptor_calls
+            .lock()
+            .unwrap()
+            .push((access_token.to_string(), model_config_id.to_string()));
+        let mut descriptor = run(Utc::now()).model_runtime_snapshot;
+        descriptor.model_config_id = model_config_id.to_string();
+        Ok(descriptor)
+    }
+
+    async fn stream(
+        &self,
+        _access_token: &str,
+        _descriptor: &ModelRuntimeDescriptor,
+        request: ModelGatewayRequest,
+        _callbacks: ModelGatewayCallbacks,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelGatewayOutput, ModelGatewayClientError> {
+        self.model_requests.lock().unwrap().push(request);
+        let output_items = vec![serde_json::json!({
+            "type": "function_call",
+            "call_id": "create-task-call-1",
+            "name": "create_local_task",
+            "arguments": serde_json::json!({
+                "objective": "Implement the approved visual hierarchy",
+                "acceptance_criteria": [
+                    "The rendered page matches the approved visual reference",
+                    "The focused verification suite passes"
+                ]
+            }).to_string()
+        })];
+        Ok(ModelGatewayOutput {
+            content: String::new(),
+            reasoning: String::new(),
+            output_items: output_items.clone(),
+            terminal: ModelGatewayTerminal {
+                status: ModelGatewayTerminalStatus::Completed,
+                source: ModelGatewayTerminalSource::Provider,
+                response_id: Some("task-creation-response-1".to_string()),
+                provider_request_id: Some("task-creation-provider-request-1".to_string()),
+                terminal_event: "response.completed".to_string(),
+                provider_http_status: Some(200),
+                usage: None,
+                output_items,
+                incomplete_details: None,
+                provider_error: None,
+            },
+        })
+    }
+
+    async fn count_input_tokens(
+        &self,
+        _access_token: &str,
+        _descriptor: &ModelRuntimeDescriptor,
+        request: &ModelGatewayRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<ModelGatewayTokenCount, ModelGatewayClientError> {
+        Ok(ModelGatewayTokenCount {
+            request_id: request.request_id.clone(),
+            model_config_id: request.model_config_id.clone(),
+            model_config_revision: request.model_config_revision,
+            input_tokens: 100,
+        })
+    }
+}
+
 struct Seed {
     now: chrono::DateTime<Utc>,
 }
@@ -472,6 +612,7 @@ struct Seed {
 struct ReadCreationState {
     runs: Vec<LocalAgentRun>,
     tasks: Vec<TaskRecord>,
+    tool_executions: Vec<ToolExecutionStateRecord>,
     message_count: usize,
     outbox_count: usize,
 }
@@ -496,6 +637,7 @@ impl StorageTransaction for ReadCreationState {
             .map(|record| record.run)
             .collect();
         self.tasks = repositories.tasks().list(&query).await?.records;
+        self.tool_executions = repositories.tool_executions().list(&query).await?.records;
         self.message_count = repositories
             .agent_messages()
             .list(&query)
@@ -810,6 +952,7 @@ async fn host_recovers_claims_commits_and_schedules_the_next_event() {
         Arc::new(Gateway),
         Arc::new(TestContextRuntime),
         Arc::new(Tools),
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -919,6 +1062,7 @@ async fn host_executes_and_persists_one_claimed_model_step_end_to_end() {
         gateway.clone(),
         Arc::new(TestContextRuntime),
         Arc::new(Tools),
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -1106,6 +1250,7 @@ async fn unavailable_memory_context_pauses_the_run_for_an_explicit_resume() {
         Arc::new(Gateway),
         Arc::new(FailingMemoryContextRuntime),
         Arc::new(Tools),
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -1303,6 +1448,7 @@ async fn model_test_host(
         gateway,
         Arc::new(TestContextRuntime),
         Arc::new(Tools),
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -1362,6 +1508,7 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
         gateway.clone(),
         Arc::new(TestContextRuntime),
         Arc::new(Tools),
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -1462,6 +1609,168 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
 }
 
 #[tokio::test]
+async fn main_chat_model_tool_creates_one_frozen_local_task_end_to_end() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:main-chat-task-tool-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([52; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    let gateway = Arc::new(TaskCreatingGateway {
+        descriptor_calls: Mutex::new(Vec::new()),
+        model_requests: Mutex::new(Vec::new()),
+    });
+    let planner = Arc::new(RecordingTaskPlanner {
+        requests: Mutex::new(Vec::new()),
+        plan: LocalTaskCreationPlan {
+            project_id: "project-visual-1".to_string(),
+            model_config_id: "model-task-1".to_string(),
+            prompt_snapshot: snapshot("task-prompt-1", "task-prompt-revision-1", 'a'),
+            project_snapshot: snapshot("project-snapshot-1", "project-revision-1", 'b'),
+            capability_snapshot: snapshot(
+                "task-capabilities-1",
+                "task-capabilities-revision-1",
+                'c',
+            ),
+        },
+    });
+    let profiles = LocalAgentProfileRegistry::new([
+        Arc::new(MainChatAgentProfile::new(Arc::new(MainChatTestContext)))
+            as Arc<dyn LocalAgentProfile>,
+        Arc::new(TaskProfile) as Arc<dyn LocalAgentProfile>,
+    ])
+    .unwrap();
+    let (host, _) = LocalAgentHost::start(
+        storage.clone(),
+        gateway.clone(),
+        Arc::new(TestContextRuntime),
+        Arc::new(Tools),
+        planner.clone(),
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+    let session = execution_session();
+    let created_main = host
+        .create_main_chat_turn(
+            "create-main-request-1",
+            CreateMainChatTurnCommand {
+                thread_id: "thread-ai-task-1".to_string(),
+                turn_id: "turn-ai-task-1".to_string(),
+                message_id: "message-ai-task-1".to_string(),
+                project_id: Some("project-visual-1".to_string()),
+                model_config_id: "model-main-1".to_string(),
+                prompt_revision: "main-prompt-1".to_string(),
+                capability_snapshot_ref: "main-capabilities-1".to_string(),
+                content: Some("Implement the approved visual direction".to_string()),
+                attachments: Vec::new(),
+            },
+            &session,
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        created_main.start_event.event.correlation_id,
+        "turn-ai-task-1"
+    );
+
+    let SchedulerTickResult::Claimed(started) =
+        host.claim_next("claim-main-start", now).await.unwrap()
+    else {
+        panic!("Main Chat start event was not scheduled");
+    };
+    host.process_claimed_event(&started, &session, now)
+        .await
+        .unwrap();
+    let SchedulerTickResult::Claimed(model_requested) =
+        host.claim_next("claim-main-model", now).await.unwrap()
+    else {
+        panic!("Main Chat model step was not scheduled");
+    };
+    host.process_claimed_event(&model_requested, &session, now)
+        .await
+        .unwrap();
+    let SchedulerTickResult::Claimed(model_completed) = host
+        .claim_next("claim-main-completion", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("Main Chat model completion was not scheduled");
+    };
+    let committed_model = host
+        .process_claimed_event(&model_completed, &session, Utc::now())
+        .await
+        .unwrap();
+    let ProcessedClaimedEvent::ReductionCommitted(committed_model) = committed_model else {
+        panic!("model completion did not use the reducer path");
+    };
+    assert_eq!(
+        committed_model.run_record.run.status,
+        LocalAgentRunStatus::WaitingToolResult
+    );
+
+    let SchedulerTickResult::Claimed(tool_requested) = host
+        .claim_next("claim-create-task-tool", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("create_local_task tool batch was not scheduled");
+    };
+    assert_eq!(
+        tool_requested.event.event_type,
+        LocalAgentEventType::ToolBatchRequested
+    );
+    host.process_claimed_event(&tool_requested, &session, Utc::now())
+        .await
+        .unwrap_or_else(|error| panic!("create_local_task failed: {error}"));
+
+    {
+        let requests = planner.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].source_thread_id, "thread-ai-task-1");
+        assert_eq!(requests[0].source_turn_id, "turn-ai-task-1");
+        assert_eq!(requests[0].project_id, "project-visual-1");
+        assert_eq!(
+            requests[0].parent_capability_snapshot_ref,
+            "main-capabilities-1"
+        );
+    }
+
+    let mut state = ReadCreationState::default();
+    storage.transaction(&mut state).await.unwrap();
+    assert_eq!(state.runs.len(), 2);
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.tool_executions.len(), 1);
+    assert_eq!(state.message_count, 4);
+    assert_eq!(state.outbox_count, 4);
+    let task = &state.tasks[0];
+    assert_eq!(task.conversation_id.as_deref(), Some("thread-ai-task-1"));
+    assert_eq!(task.state["source_turn_id"], "turn-ai-task-1");
+    assert_eq!(task.state["project_id"], "project-visual-1");
+    let execution = &state.tool_executions[0].execution;
+    assert_eq!(execution.effect, ToolEffect::IdempotentWrite);
+    assert_eq!(execution.status, ToolExecutionStatus::Succeeded);
+    assert_eq!(
+        execution.bounded_result.as_ref().unwrap()["task_id"],
+        task.metadata.id
+    );
+    assert_eq!(gateway.model_requests.lock().unwrap().len(), 1);
+    assert_eq!(gateway.descriptor_calls.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn host_schedules_a_durable_control_request_immediately() {
     let now = Utc::now();
     let directory = tempfile::tempdir().unwrap();
@@ -1484,6 +1793,7 @@ async fn host_schedules_a_durable_control_request_immediately() {
         Arc::new(Gateway),
         Arc::new(TestContextRuntime),
         Arc::new(Tools),
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -1545,6 +1855,7 @@ async fn host_creates_and_schedules_a_durable_run_start() {
         Arc::new(Gateway),
         Arc::new(TestContextRuntime),
         Arc::new(Tools),
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -1609,6 +1920,7 @@ async fn host_persists_an_answer_and_schedules_resume_through_ipc() {
         Arc::new(Gateway),
         Arc::new(TestContextRuntime),
         Arc::new(Tools),
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -1690,6 +2002,7 @@ async fn host_renews_the_claim_and_commits_a_successful_local_tool_batch() {
         Arc::new(Gateway),
         Arc::new(TestContextRuntime),
         tools.clone(),
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -1707,7 +2020,7 @@ async fn host_renews_the_claim_and_commits_a_successful_local_tool_batch() {
         panic!("tool batch was not claimed");
     };
     let committed = host
-        .execute_claimed_tool_batch(&claimed, CancellationToken::new(), execution_now)
+        .execute_claimed_tool_batch(&claimed, &execution_session(), execution_now)
         .await
         .unwrap();
     assert_eq!(tools.invocations.lock().unwrap().len(), 1);
@@ -1768,6 +2081,7 @@ async fn indeterminate_irreversible_tool_result_moves_the_run_to_review() {
         Arc::new(Gateway),
         Arc::new(TestContextRuntime),
         tools,
+        Arc::new(UnusedTaskPlanner),
         profiles,
         scope(),
         "device-1",
@@ -1780,7 +2094,7 @@ async fn indeterminate_irreversible_tool_result_moves_the_run_to_review() {
     else {
         panic!("tool batch was not claimed");
     };
-    host.execute_claimed_tool_batch(&claimed, CancellationToken::new(), now)
+    host.execute_claimed_tool_batch(&claimed, &execution_session(), now)
         .await
         .unwrap();
     let SchedulerTickResult::Claimed(completed) = host
