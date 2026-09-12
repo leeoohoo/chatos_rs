@@ -13,16 +13,37 @@ use chatos_client_storage::{
     SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey, StorageResult,
     StorageTransaction, ToolExecutionStateRecord, TransactionRepositories,
 };
-use chatos_local_agent_host::StoredTaskRunnerContextProvider;
+use chatos_local_agent_host::{
+    LocalAttachmentLocator, LocalAttachmentResolver, StoredTaskRunnerContextProvider,
+};
 use chatos_local_agent_protocol::{
-    ContextStrategy, FrozenSnapshot, ModelProtocol, ModelRuntimeDescriptor, ToolEffect,
-    ToolExecution, ToolExecutionStatus,
+    ContextStrategy, FrozenSnapshot, LocalAgentRunStatus, LocalAttachmentReference, ModelProtocol,
+    ModelRuntimeDescriptor, ToolEffect, ToolExecution, ToolExecutionStatus, UserInteractionAnswer,
 };
 use chatos_local_agent_runtime::{
-    create_local_agent_task, CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest,
-    InitialRunMessage, LocalAgentProfile,
+    answer_run_interaction, create_local_agent_task, AnswerRunInteraction,
+    CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest, InitialRunMessage, LocalAgentProfile,
 };
 use chrono::{Duration, Utc};
+use sha2::{Digest, Sha256};
+
+struct NoAttachments;
+
+#[async_trait]
+impl LocalAttachmentResolver for NoAttachments {
+    async fn resolve(&self, _attachment: &LocalAttachmentLocator) -> Result<Vec<u8>, String> {
+        Err("test has no attachments".to_string())
+    }
+}
+
+struct BytesResolver(Vec<u8>);
+
+#[async_trait]
+impl LocalAttachmentResolver for BytesResolver {
+    async fn resolve(&self, _attachment: &LocalAttachmentLocator) -> Result<Vec<u8>, String> {
+        Ok(self.0.clone())
+    }
+}
 
 fn scope() -> RecordScope {
     RecordScope {
@@ -171,6 +192,43 @@ impl StorageTransaction for TamperProjectSnapshot {
     }
 }
 
+struct PauseTaskForAnswer;
+
+#[async_trait]
+impl StorageTransaction for PauseTaskForAnswer {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let query = RecordQuery {
+            scope: scope(),
+            id: "task-run-visual".to_string(),
+        };
+        let mut record = repositories.agent_runs().get(&query).await?.unwrap();
+        let revision = record.metadata.revision;
+        record.run.status = LocalAgentRunStatus::Paused;
+        record.run.version += 1;
+        record.run.pending_interaction = Some(serde_json::json!({
+            "type": "ask_user",
+            "interaction_id": "task-interaction-1",
+            "question": {
+                "prompt": "Annotate the implementation reference",
+                "options": [],
+                "image_references": [],
+                "details": null
+            }
+        }));
+        repositories
+            .agent_runs()
+            .put(PutRecord {
+                record,
+                expected_revision: Some(revision),
+            })
+            .await?;
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn provider_rebuilds_task_runner_context_only_from_frozen_task_state_and_receipts() {
     let now = Utc::now();
@@ -233,6 +291,7 @@ async fn provider_rebuilds_task_runner_context_only_from_frozen_task_state_and_r
     let provider = Arc::new(StoredTaskRunnerContextProvider::new(
         storage.clone(),
         scope(),
+        Arc::new(NoAttachments),
     ));
     let context = provider
         .load_step_context(&created.run.run_record.run)
@@ -268,4 +327,97 @@ async fn provider_rebuilds_task_runner_context_only_from_frozen_task_state_and_r
         .await
         .unwrap_err();
     assert!(error.contains("integrity validation"));
+}
+
+#[tokio::test]
+async fn task_runner_resume_rebuilds_a_visual_user_answer_from_durable_storage() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:task-visual-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([64; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    let (prompt_snapshot, project_snapshot, capability_snapshot) = snapshots();
+    let created = create_local_agent_task(
+        storage.as_ref(),
+        CreateLocalAgentTaskRequest {
+            run: CreateLocalAgentRunRequest {
+                scope: scope(),
+                run_id: "task-run-visual".to_string(),
+                profile_key: "task_runner".to_string(),
+                owner_entity_type: "task".to_string(),
+                owner_entity_id: "task-visual".to_string(),
+                project_id: Some("project-1".to_string()),
+                model_runtime_snapshot: descriptor(),
+                prompt_revision: prompt_snapshot.revision.clone(),
+                capability_snapshot_ref: capability_snapshot.snapshot_id.clone(),
+                origin_device_id: "device-1".to_string(),
+                causation_id: "create-task-visual".to_string(),
+                deadline_at: None,
+                initial_message: Some(InitialRunMessage {
+                    record_id: "task-message-visual".to_string(),
+                    turn_id: "turn-visual".to_string(),
+                    content: Some("Implement the approved visual".to_string()),
+                    structured_payload: Some(serde_json::json!({"type": "task_objective"})),
+                    message_source: "task_creation".to_string(),
+                }),
+                initial_attachments: Vec::new(),
+                now,
+            },
+            task_id: "task-visual".to_string(),
+            source_thread_id: "thread-visual".to_string(),
+            source_turn_id: "turn-visual".to_string(),
+            project_id: "project-1".to_string(),
+            objective: "Implement the approved visual".to_string(),
+            acceptance_criteria: vec!["The visual matches the reference".to_string()],
+            prompt_snapshot,
+            project_snapshot,
+            capability_snapshot,
+        },
+    )
+    .await
+    .unwrap();
+    storage.transaction(&mut PauseTaskForAnswer).await.unwrap();
+    let bytes = b"task-answer-image".to_vec();
+    answer_run_interaction(
+        storage.as_ref(),
+        AnswerRunInteraction {
+            scope: scope(),
+            run_id: "task-run-visual".to_string(),
+            interaction_id: "task-interaction-1".to_string(),
+            answer: UserInteractionAnswer {
+                text: Some("Use this spacing annotation.".to_string()),
+                selected_option_ids: Vec::new(),
+                attachments: vec![LocalAttachmentReference {
+                    attachment_id: "task-answer-visual".to_string(),
+                    media_type: "image/png".to_string(),
+                    payload_reference: "attachment-grant:task-answer-visual".to_string(),
+                    payload_digest: format!("sha256:{:x}", Sha256::digest(&bytes)),
+                    byte_size: u64::try_from(bytes.len()).unwrap(),
+                }],
+            },
+            origin_device_id: "device-1".to_string(),
+            causation_id: "answer-task-visual".to_string(),
+            now,
+        },
+    )
+    .await
+    .unwrap();
+    let mut run = created.run.run_record.run;
+    run.iteration = 1;
+    let provider =
+        StoredTaskRunnerContextProvider::new(storage, scope(), Arc::new(BytesResolver(bytes)));
+    let context = provider.load_step_context(&run).await.unwrap();
+    assert_eq!(context.model_input_items.len(), 1);
+    let input = context.model_input_items[0].to_string();
+    assert!(input.contains("spacing annotation"));
+    assert!(input.contains("input_image"));
+    assert!(!input.contains("attachment-grant"));
 }

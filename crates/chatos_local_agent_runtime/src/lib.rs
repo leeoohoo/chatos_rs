@@ -5,6 +5,7 @@
 //! it advances one claimed event and never calls a model, tool, queue, or
 //! database by itself.
 
+mod attachments;
 mod context;
 mod digest;
 mod durable;

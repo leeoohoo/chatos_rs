@@ -176,13 +176,30 @@ struct StoredMainChatTurnPayload {
     attachments: Vec<AttachmentManifest>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AttachmentManifest {
+    pub(crate) attachment_id: String,
+    pub(crate) media_type: String,
+    pub(crate) payload_digest: String,
+    pub(crate) byte_size: u64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AttachmentManifest {
-    attachment_id: String,
-    media_type: String,
-    payload_digest: String,
-    byte_size: u64,
+pub(crate) struct StoredUserInteractionAnswerPayload {
+    #[serde(rename = "type")]
+    pub(crate) payload_type: String,
+    pub(crate) interaction_id: String,
+    pub(crate) selected_option_ids: Vec<String>,
+    pub(crate) attachments: Vec<AttachmentManifest>,
+}
+
+struct UserInputTurn {
+    record_id: String,
+    sequence: u64,
+    text: Option<String>,
+    attachments: Vec<AttachmentManifest>,
 }
 
 async fn main_chat_context_from_state(
@@ -192,7 +209,7 @@ async fn main_chat_context_from_state(
 ) -> Result<MainChatStepContext, String> {
     let mut initial = state
         .messages
-        .into_iter()
+        .iter()
         .filter(|record| {
             record.message.role == AgentMessageRole::User
                 && record.message.message_source == "main_chat"
@@ -201,7 +218,7 @@ async fn main_chat_context_from_state(
     if initial.len() != 1 {
         return Err("Main Chat Run must have exactly one frozen initial user message".to_string());
     }
-    let initial = initial.pop().expect("length checked").message;
+    let initial = &initial.pop().expect("length checked").message;
     if initial.thread_id != run.owner_entity_id {
         return Err("Main Chat initial message does not match the frozen conversation".to_string());
     }
@@ -231,20 +248,96 @@ async fn main_chat_context_from_state(
         project_snapshot.as_ref(),
     )?;
 
-    let locators = attachment_locators(run, &payload.attachments, state.media)?;
-    let resolved = resolve_attachments(resolver, &locators).await?;
+    let mut user_turns = vec![UserInputTurn {
+        record_id: initial.record_id.clone(),
+        sequence: initial.sequence,
+        text: initial.content.clone(),
+        attachments: payload.attachments.clone(),
+    }];
+    for record in state.messages.iter().filter(|record| {
+        record.message.role == AgentMessageRole::User
+            && record.message.message_source == "user_interaction"
+    }) {
+        let answer: StoredUserInteractionAnswerPayload =
+            serde_json::from_value(
+                record.message.structured_payload.clone().ok_or_else(|| {
+                    "user interaction answer has no structured payload".to_string()
+                })?,
+            )
+            .map_err(|error| format!("user interaction answer is invalid: {error}"))?;
+        if answer.payload_type != "user_interaction_answer"
+            || answer.interaction_id.trim().is_empty()
+        {
+            return Err("user interaction answer identity is invalid".to_string());
+        }
+        let text = interaction_answer_text(
+            record.message.content.as_deref(),
+            &answer.selected_option_ids,
+        );
+        user_turns.push(UserInputTurn {
+            record_id: record.message.record_id.clone(),
+            sequence: record.message.sequence,
+            text,
+            attachments: answer.attachments,
+        });
+    }
+    let mut located_turns = Vec::with_capacity(user_turns.len());
+    for turn in user_turns {
+        let locators = attachment_locators(
+            run,
+            &turn.record_id,
+            &turn.attachments,
+            state.media.as_slice(),
+        )?;
+        located_turns.push((turn, locators));
+    }
+    let manifest_count = located_turns
+        .iter()
+        .map(|(_, locators)| locators.len())
+        .sum::<usize>();
+    if manifest_count != state.media.len() {
+        return Err("Local Agent attachment manifest does not match durable media".to_string());
+    }
+    let latest_assistant_sequence = state
+        .messages
+        .iter()
+        .filter(|record| record.message.role == AgentMessageRole::Assistant)
+        .map(|record| record.message.sequence)
+        .max()
+        .unwrap_or(0);
     let model_input_items = match run.context_strategy {
         ContextStrategy::ProviderNative if run.iteration == 0 => {
-            vec![user_message_item(
-                initial.content.as_deref(),
-                &resolved,
-                true,
-            )?]
+            let (turn, locators) = located_turns
+                .first()
+                .ok_or_else(|| "Main Chat initial input is missing".to_string())?;
+            let resolved = resolve_attachments(resolver, locators).await?;
+            vec![user_message_item(turn.text.as_deref(), &resolved, true)?]
         }
-        ContextStrategy::ProviderNative => Vec::new(),
-        ContextStrategy::MemoryEngine if resolved.is_empty() => Vec::new(),
+        ContextStrategy::ProviderNative => {
+            let pending = located_turns
+                .iter()
+                .skip(1)
+                .filter(|(turn, _)| turn.sequence > latest_assistant_sequence)
+                .max_by_key(|(turn, _)| turn.sequence);
+            match pending {
+                Some((turn, locators)) => {
+                    let resolved = resolve_attachments(resolver, locators).await?;
+                    vec![user_message_item(turn.text.as_deref(), &resolved, true)?]
+                }
+                None => Vec::new(),
+            }
+        }
         ContextStrategy::MemoryEngine => {
-            vec![user_message_item(None, &resolved, false)?]
+            let locators = located_turns
+                .iter()
+                .flat_map(|(_, locators)| locators.iter().cloned())
+                .collect::<Vec<_>>();
+            if locators.is_empty() {
+                Vec::new()
+            } else {
+                let resolved = resolve_attachments(resolver, &locators).await?;
+                vec![user_message_item(None, &resolved, false)?]
+            }
         }
     };
     let threshold = input_reduction_threshold(run)?;
@@ -298,11 +391,22 @@ fn validate_snapshot_identity(
     }
 }
 
-fn attachment_locators(
+pub(crate) fn attachment_locators(
     run: &LocalAgentRun,
+    message_record_id: &str,
     manifests: &[AttachmentManifest],
-    media: Vec<MediaStateRecord>,
+    media: &[MediaStateRecord],
 ) -> Result<Vec<LocalAttachmentLocator>, String> {
+    let media = media
+        .iter()
+        .filter(|record| {
+            record
+                .state
+                .get("message_record_id")
+                .and_then(Value::as_str)
+                == Some(message_record_id)
+        })
+        .collect::<Vec<_>>();
     if manifests.len() != media.len() {
         return Err("Main Chat attachment manifest does not match durable media".to_string());
     }
@@ -310,7 +414,7 @@ fn attachment_locators(
     let mut attachment_ids = HashSet::new();
     for manifest in manifests {
         if !attachment_ids.insert(manifest.attachment_id.as_str()) {
-            return Err("Main Chat attachment manifest contains duplicate IDs".to_string());
+            return Err("Local Agent attachment manifest contains duplicate IDs".to_string());
         }
         let record = media
             .iter()
@@ -318,9 +422,14 @@ fn attachment_locators(
                 record.state.get("attachment_id").and_then(Value::as_str)
                     == Some(manifest.attachment_id.as_str())
             })
-            .ok_or_else(|| format!("Main Chat attachment {} is missing", manifest.attachment_id))?;
+            .ok_or_else(|| {
+                format!(
+                    "Local Agent attachment {} is missing",
+                    manifest.attachment_id
+                )
+            })?;
         if record.project_id != run.project_id {
-            return Err("Main Chat attachment project scope changed".to_string());
+            return Err("Local Agent attachment project scope changed".to_string());
         }
         let locator = LocalAttachmentLocator {
             attachment_id: required_state_string(record, "attachment_id")?,
@@ -331,19 +440,38 @@ fn attachment_locators(
                 .state
                 .get("byte_size")
                 .and_then(Value::as_u64)
-                .ok_or_else(|| "Main Chat attachment byte size is invalid".to_string())?,
+                .ok_or_else(|| "Local Agent attachment byte size is invalid".to_string())?,
         };
         if locator.attachment_id != manifest.attachment_id
             || locator.media_type != manifest.media_type
             || locator.payload_digest != manifest.payload_digest
             || locator.byte_size != manifest.byte_size
         {
-            return Err("Main Chat attachment metadata failed integrity validation".to_string());
+            return Err("Local Agent attachment metadata failed integrity validation".to_string());
         }
         validate_locator(&locator)?;
         locators.push(locator);
     }
     Ok(locators)
+}
+
+pub(crate) fn interaction_answer_text(
+    content: Option<&str>,
+    selected_option_ids: &[String],
+) -> Option<String> {
+    let content = content.filter(|value| !value.trim().is_empty());
+    match (content, selected_option_ids.is_empty()) {
+        (Some(content), true) => Some(content.to_string()),
+        (Some(content), false) => Some(format!(
+            "{content}\n\nSelected option IDs: {}",
+            selected_option_ids.join(", ")
+        )),
+        (None, false) => Some(format!(
+            "Selected option IDs: {}",
+            selected_option_ids.join(", ")
+        )),
+        (None, true) => None,
+    }
 }
 
 fn required_state_string(record: &MediaStateRecord, field: &str) -> Result<String, String> {
@@ -353,7 +481,7 @@ fn required_state_string(record: &MediaStateRecord, field: &str) -> Result<Strin
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
-        .ok_or_else(|| format!("Main Chat attachment {field} is invalid"))
+        .ok_or_else(|| format!("Local Agent attachment {field} is invalid"))
 }
 
 fn validate_locator(locator: &LocalAttachmentLocator) -> Result<(), String> {
@@ -362,18 +490,18 @@ fn validate_locator(locator: &LocalAttachmentLocator) -> Result<(), String> {
         "image/png" | "image/jpeg" | "image/webp" | "image/gif"
     ) {
         return Err(format!(
-            "Main Chat attachment {} has unsupported media type {}",
+            "Local Agent attachment {} has unsupported media type {}",
             locator.attachment_id, locator.media_type
         ));
     }
     if locator.byte_size == 0 || locator.byte_size > MAX_RESOLVED_ATTACHMENT_BYTES {
         return Err(format!(
-            "Main Chat attachment {} exceeds the visual input size limit",
+            "Local Agent attachment {} exceeds the visual input size limit",
             locator.attachment_id
         ));
     }
     if looks_like_path(&locator.payload_reference) {
-        return Err("Main Chat attachments require opaque payload references".to_string());
+        return Err("Local Agent attachments require opaque payload references".to_string());
     }
     Ok(())
 }
@@ -387,7 +515,7 @@ fn looks_like_path(value: &str) -> bool {
             && matches!(value.as_bytes()[2], b'\\' | b'/'))
 }
 
-async fn resolve_attachments(
+pub(crate) async fn resolve_attachments(
     resolver: &dyn LocalAttachmentResolver,
     locators: &[LocalAttachmentLocator],
 ) -> Result<Vec<(String, Vec<u8>)>, String> {
@@ -406,22 +534,22 @@ async fn resolve_attachments(
             || format!("sha256:{:x}", Sha256::digest(&bytes)) != locator.payload_digest
         {
             return Err(format!(
-                "Main Chat attachment {} content failed integrity validation",
+                "Local Agent attachment {} content failed integrity validation",
                 locator.attachment_id
             ));
         }
         total = total
             .checked_add(byte_size)
-            .ok_or_else(|| "Main Chat attachment size overflowed".to_string())?;
+            .ok_or_else(|| "Local Agent attachment size overflowed".to_string())?;
         if total > MAX_TOTAL_RESOLVED_ATTACHMENT_BYTES {
-            return Err("Main Chat visual attachments exceed the request size limit".to_string());
+            return Err("Local Agent visual attachments exceed the request size limit".to_string());
         }
         resolved.push((locator.media_type.clone(), bytes));
     }
     Ok(resolved)
 }
 
-fn user_message_item(
+pub(crate) fn user_message_item(
     text: Option<&str>,
     attachments: &[(String, Vec<u8>)],
     require_content: bool,
@@ -438,7 +566,7 @@ fn user_message_item(
         }));
     }
     if content.is_empty() && require_content {
-        return Err("Main Chat initial user message has no model input".to_string());
+        return Err("Local Agent user message has no model input".to_string());
     }
     Ok(json!({"type": "message", "role": "user", "content": content}))
 }

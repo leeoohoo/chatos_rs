@@ -17,11 +17,12 @@ use chatos_local_agent_host::{
     LocalAttachmentLocator, LocalAttachmentResolver, StoredMainChatContextProvider,
 };
 use chatos_local_agent_protocol::{
-    ContextStrategy, FrozenSnapshot, LocalAttachmentReference, ModelProtocol,
-    ModelRuntimeDescriptor,
+    ContextStrategy, FrozenSnapshot, LocalAgentRunStatus, LocalAttachmentReference, ModelProtocol,
+    ModelRuntimeDescriptor, UserInteractionAnswer,
 };
 use chatos_local_agent_runtime::{
-    create_local_agent_run, CreateLocalAgentRunRequest, InitialRunMessage, LocalAgentProfile,
+    answer_run_interaction, create_local_agent_run, AnswerRunInteraction,
+    CreateLocalAgentRunRequest, InitialRunMessage, LocalAgentProfile,
 };
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -268,6 +269,43 @@ struct TamperInitialPayload {
     value: serde_json::Value,
 }
 
+struct PauseForVisualAnswer;
+
+#[async_trait]
+impl StorageTransaction for PauseForVisualAnswer {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let query = RecordQuery {
+            scope: scope(),
+            id: "main-run-1".to_string(),
+        };
+        let mut record = repositories.agent_runs().get(&query).await?.unwrap();
+        let revision = record.metadata.revision;
+        record.run.status = LocalAgentRunStatus::Paused;
+        record.run.version += 1;
+        record.run.pending_interaction = Some(serde_json::json!({
+            "type": "ask_user",
+            "interaction_id": "interaction-visual-1",
+            "question": {
+                "prompt": "Annotate the visual direction",
+                "options": [],
+                "image_references": ["visual-1"],
+                "details": null
+            }
+        }));
+        repositories
+            .agent_runs()
+            .put(PutRecord {
+                record,
+                expected_revision: Some(revision),
+            })
+            .await?;
+        Ok(())
+    }
+}
+
 struct TamperAttachmentReference;
 
 #[async_trait]
@@ -407,6 +445,61 @@ async fn project_snapshot_cannot_change_the_frozen_project_scope() {
         .unwrap();
     let error = provider.load_step_context(&run).await.unwrap_err();
     assert!(error.contains("project snapshot does not match"));
+}
+
+#[tokio::test]
+async fn provider_resume_injects_the_visual_answer_instead_of_repeating_the_initial_turn() {
+    let (_directory, storage) = storage().await;
+    let bytes = b"small-png-fixture".to_vec();
+    let mut run = create_run(
+        storage.as_ref(),
+        ContextStrategy::ProviderNative,
+        &bytes,
+        "attachment-grant:visual-1",
+    )
+    .await;
+    storage
+        .transaction(&mut PauseForVisualAnswer)
+        .await
+        .unwrap();
+    answer_run_interaction(
+        storage.as_ref(),
+        AnswerRunInteraction {
+            scope: scope(),
+            run_id: run.run_id.clone(),
+            interaction_id: "interaction-visual-1".to_string(),
+            answer: UserInteractionAnswer {
+                text: Some("Use the quieter version in my annotation.".to_string()),
+                selected_option_ids: Vec::new(),
+                attachments: vec![LocalAttachmentReference {
+                    attachment_id: "answer-visual-1".to_string(),
+                    media_type: "image/png".to_string(),
+                    payload_reference: "attachment-grant:answer-visual-1".to_string(),
+                    payload_digest: format!("sha256:{:x}", Sha256::digest(&bytes)),
+                    byte_size: u64::try_from(bytes.len()).unwrap(),
+                }],
+            },
+            origin_device_id: "device-1".to_string(),
+            causation_id: "answer-visual-1".to_string(),
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap();
+    run.iteration = 1;
+    let resolver = Arc::new(BytesResolver {
+        bytes,
+        ..BytesResolver::default()
+    });
+    let provider = StoredMainChatContextProvider::new(storage, scope(), resolver.clone());
+    let context = provider.load_step_context(&run).await.unwrap();
+    let input = context.model_input_items[0].to_string();
+    assert!(input.contains("quieter version"));
+    assert!(input.contains("input_image"));
+    assert!(!input.contains("Refine this reference"));
+    let received = resolver.received.lock().unwrap();
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].attachment_id, "answer-visual-1");
 }
 
 #[tokio::test]

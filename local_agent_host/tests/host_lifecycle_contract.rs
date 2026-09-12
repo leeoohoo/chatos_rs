@@ -20,9 +20,9 @@ use chatos_local_agent_host::{
     LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentExecutionSession,
     LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostCreationExecutor,
     LocalAgentHostPolicy, LocalAgentHostRunRequest, LocalAgentIpcMutationExecutor,
-    LocalAgentIpcServer, LocalAgentProfileRegistry, LocalTaskCreationPlan,
-    LocalTaskCreationPlanner, LocalTaskPlanningRequest, ProcessedClaimedEvent,
-    StoredTaskRunnerContextProvider,
+    LocalAgentIpcServer, LocalAgentProfileRegistry, LocalAttachmentLocator,
+    LocalAttachmentResolver, LocalTaskCreationPlan, LocalTaskCreationPlanner,
+    LocalTaskPlanningRequest, ProcessedClaimedEvent, StoredTaskRunnerContextProvider,
 };
 use chatos_local_agent_protocol::{
     AnswerUserQuestionCommand, ContextStrategy, CreateMainChatTurnCommand, CreateTaskCommand,
@@ -129,6 +129,15 @@ struct TaskCreatingGateway {
 struct Tools;
 
 struct UnusedTaskPlanner;
+
+struct NoAttachments;
+
+#[async_trait]
+impl LocalAttachmentResolver for NoAttachments {
+    async fn resolve(&self, _attachment: &LocalAttachmentLocator) -> Result<Vec<u8>, String> {
+        Err("test has no attachments".to_string())
+    }
+}
 
 struct RecordingTaskPlanner {
     requests: Mutex<Vec<LocalTaskPlanningRequest>>,
@@ -1889,10 +1898,11 @@ async fn main_chat_model_tool_creates_one_frozen_local_task_end_to_end() {
         .find(|run| run.profile_key == "task_runner")
         .unwrap()
         .clone();
-    let task_context = StoredTaskRunnerContextProvider::new(storage, scope())
-        .load_step_context(&task_run)
-        .await
-        .unwrap();
+    let task_context =
+        StoredTaskRunnerContextProvider::new(storage, scope(), Arc::new(NoAttachments))
+            .load_step_context(&task_run)
+            .await
+            .unwrap();
     assert_eq!(task_context.project_snapshot.project_id, "project-visual-1");
     assert_eq!(
         task_context.prompt_snapshot.base_system_prompt,

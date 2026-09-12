@@ -8,8 +8,8 @@ use chatos_client_storage::{
     StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    ContextStrategy, LocalAgentRun, LocalAgentRunStatus, ModelProtocol, ModelRuntimeDescriptor,
-    UserInteractionAnswer,
+    ContextStrategy, LocalAgentRun, LocalAgentRunStatus, LocalAttachmentReference, ModelProtocol,
+    ModelRuntimeDescriptor, UserInteractionAnswer,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, claim_event, reduce_and_commit, request_run_control,
@@ -237,6 +237,7 @@ struct CountAnswerRecords {
     messages: usize,
     outbox: usize,
     events: usize,
+    media: usize,
 }
 
 #[async_trait]
@@ -263,6 +264,7 @@ impl StorageTransaction for CountAnswerRecords {
             .await?
             .records
             .len();
+        self.media = repositories.media().list(&query).await?.records.len();
         Ok(())
     }
 }
@@ -282,11 +284,13 @@ async fn answer_and_resume_event_commit_atomically_and_idempotently() {
         messages: 0,
         outbox: 0,
         events: 0,
+        media: 0,
     };
     storage.transaction(&mut counts).await.unwrap();
     assert_eq!(counts.messages, 1);
     assert_eq!(counts.outbox, 1);
     assert_eq!(counts.events, 1);
+    assert_eq!(counts.media, 0);
 
     let now = Utc::now() + Duration::seconds(1);
     let claimed = claim_event(
@@ -338,6 +342,7 @@ async fn mismatched_interaction_is_rejected_without_writes() {
         messages: 0,
         outbox: 0,
         events: 0,
+        media: 0,
     };
     storage.transaction(&mut counts).await.unwrap();
     assert_eq!(counts.messages, 0);
@@ -359,9 +364,78 @@ async fn unknown_selected_option_is_rejected_without_writes() {
         messages: 0,
         outbox: 0,
         events: 0,
+        media: 0,
     };
     storage.transaction(&mut counts).await.unwrap();
     assert_eq!(counts.messages, 0);
     assert_eq!(counts.outbox, 0);
     assert_eq!(counts.events, 0);
+}
+
+struct ReadVisualAnswer {
+    message_payload: Option<serde_json::Value>,
+    media_state: Option<serde_json::Value>,
+}
+
+#[async_trait]
+impl StorageTransaction for ReadVisualAnswer {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let query = ListQuery {
+            scope: scope(),
+            cursor: None,
+            limit: 100,
+        };
+        self.message_payload = repositories
+            .agent_messages()
+            .list(&query)
+            .await?
+            .records
+            .pop()
+            .and_then(|record| record.message.structured_payload);
+        self.media_state = repositories
+            .media()
+            .list(&query)
+            .await?
+            .records
+            .pop()
+            .map(|record| record.state);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn visual_answer_stores_only_a_safe_manifest_in_memory_and_the_grant_locally() {
+    let (_directory, storage) = storage(LocalAgentRunStatus::Paused).await;
+    let mut request = answer("interaction-1");
+    request.answer.attachments = vec![LocalAttachmentReference {
+        attachment_id: "answer-visual-1".to_string(),
+        media_type: "image/png".to_string(),
+        payload_reference: "attachment-grant:answer-visual-1".to_string(),
+        payload_digest: format!("sha256:{}", "a".repeat(64)),
+        byte_size: 512,
+    }];
+    let first = answer_run_interaction(&storage, request.clone())
+        .await
+        .unwrap();
+    let repeated = answer_run_interaction(&storage, request).await.unwrap();
+    assert_eq!(first, repeated);
+
+    let mut state = ReadVisualAnswer {
+        message_payload: None,
+        media_state: None,
+    };
+    storage.transaction(&mut state).await.unwrap();
+    let message = state.message_payload.unwrap().to_string();
+    assert!(message.contains("answer-visual-1"));
+    assert!(!message.contains("payload_reference"));
+    assert!(!message.contains("attachment-grant"));
+    let media = state.media_state.unwrap();
+    assert_eq!(
+        media["payload_reference"],
+        "attachment-grant:answer-visual-1"
+    );
+    assert_eq!(media["message_record_id"], first.message_record_id);
 }

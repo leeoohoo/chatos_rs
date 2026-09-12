@@ -15,6 +15,7 @@ use chatos_local_agent_protocol::{
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
+use crate::attachments::{persist_message_attachments, safe_attachment_manifest};
 use crate::digest::stable_digest_id;
 use crate::memory_sync::{
     next_semantic_message_sequence, persist_semantic_message, RecordSemanticMessageRequest,
@@ -191,11 +192,12 @@ impl StorageTransaction for AnswerRunInteractionOperation {
                 request.now,
             ),
         };
+        let attachment_manifest = safe_attachment_manifest(&request.answer.attachments)?;
         let structured_payload = json!({
             "type": "user_interaction_answer",
             "interaction_id": request.interaction_id.clone(),
-            "selected_option_ids": request.answer.selected_option_ids,
-            "attachments": request.answer.attachments,
+            "selected_option_ids": &request.answer.selected_option_ids,
+            "attachments": attachment_manifest,
         });
         let recorded = persist_semantic_message(
             repositories,
@@ -208,7 +210,7 @@ impl StorageTransaction for AnswerRunInteractionOperation {
                     turn_id: request.interaction_id.clone(),
                     sequence,
                     role: AgentMessageRole::User,
-                    content: request.answer.text,
+                    content: request.answer.text.clone(),
                     reasoning: None,
                     structured_payload: Some(structured_payload),
                     tool_call_id: None,
@@ -221,6 +223,18 @@ impl StorageTransaction for AnswerRunInteractionOperation {
                 origin_device_id: request.origin_device_id.clone(),
                 now: request.now,
             },
+        )
+        .await?;
+        persist_message_attachments(
+            repositories,
+            &request.scope,
+            &run.run.run_id,
+            &run.run.owner_entity_id,
+            run.run.project_id.as_deref(),
+            &message_record_id,
+            &request.answer.attachments,
+            &request.origin_device_id,
+            request.now,
         )
         .await?;
         let resume_event = put_run_event(

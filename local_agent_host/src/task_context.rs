@@ -8,11 +8,17 @@ use chatos_agent_profiles::{
     TaskRunnerToolReceiptStatus,
 };
 use chatos_client_storage::{
-    ClientStorage, ListQuery, RecordQuery, RecordScope, StorageError, StorageResult,
-    StorageTransaction, TaskRecord, ToolExecutionStateRecord, TransactionRepositories,
+    AgentMessageStateRecord, ClientStorage, ListQuery, MediaStateRecord, RecordQuery, RecordScope,
+    StorageError, StorageResult, StorageTransaction, TaskRecord, ToolExecutionStateRecord,
+    TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    ContextStrategy, FrozenSnapshot, LocalAgentRun, ToolExecutionStatus,
+    AgentMessageRole, ContextStrategy, FrozenSnapshot, LocalAgentRun, ToolExecutionStatus,
+};
+
+use crate::{
+    attachment_locators, interaction_answer_text, resolve_attachments, user_message_item,
+    LocalAttachmentResolver, StoredUserInteractionAnswerPayload,
 };
 
 const MAXIMUM_SUMMARY_ATTEMPTS: u8 = 8;
@@ -20,11 +26,20 @@ const MAXIMUM_SUMMARY_ATTEMPTS: u8 = 8;
 pub struct StoredTaskRunnerContextProvider {
     storage: std::sync::Arc<dyn ClientStorage>,
     scope: RecordScope,
+    attachments: std::sync::Arc<dyn LocalAttachmentResolver>,
 }
 
 impl StoredTaskRunnerContextProvider {
-    pub fn new(storage: std::sync::Arc<dyn ClientStorage>, scope: RecordScope) -> Self {
-        Self { storage, scope }
+    pub fn new(
+        storage: std::sync::Arc<dyn ClientStorage>,
+        scope: RecordScope,
+        attachments: std::sync::Arc<dyn LocalAttachmentResolver>,
+    ) -> Self {
+        Self {
+            storage,
+            scope,
+            attachments,
+        }
     }
 
     async fn load_state(&self, run: &LocalAgentRun) -> StorageResult<StoredTaskContextState> {
@@ -57,13 +72,15 @@ impl TaskRunnerContextProvider for StoredTaskRunnerContextProvider {
             .load_state(run)
             .await
             .map_err(|error| format!("failed to load durable Task Runner context: {error}"))?;
-        task_runner_context_from_state(run, state)
+        task_runner_context_from_state(run, state, self.attachments.as_ref()).await
     }
 }
 
 struct StoredTaskContextState {
     task: TaskRecord,
     tool_executions: Vec<ToolExecutionStateRecord>,
+    messages: Vec<AgentMessageStateRecord>,
+    media: Vec<MediaStateRecord>,
 }
 
 struct LoadStoredTaskContext {
@@ -88,6 +105,8 @@ impl StorageTransaction for LoadStoredTaskContext {
             .await?
             .ok_or(StorageError::NotFound)?;
         let mut tool_executions = Vec::new();
+        let mut messages = Vec::new();
+        let mut media = Vec::new();
         let mut cursor = None;
         loop {
             let page = repositories
@@ -113,17 +132,73 @@ impl StorageTransaction for LoadStoredTaskContext {
             }
             cursor = Some(next);
         }
+        let mut cursor = None;
+        loop {
+            let page = repositories
+                .agent_messages()
+                .list(&ListQuery {
+                    scope: self.scope.clone(),
+                    cursor: cursor.clone(),
+                    limit: ListQuery::MAX_LIMIT,
+                })
+                .await?;
+            messages.extend(
+                page.records
+                    .into_iter()
+                    .filter(|record| record.message.run_id == self.run_id),
+            );
+            let Some(next) = page.next_cursor else {
+                break;
+            };
+            if cursor.as_deref() == Some(next.as_str()) {
+                return Err(StorageError::InvalidData {
+                    reason: "message pagination cursor did not advance".to_string(),
+                });
+            }
+            cursor = Some(next);
+        }
+        let mut cursor = None;
+        loop {
+            let page = repositories
+                .media()
+                .list(&ListQuery {
+                    scope: self.scope.clone(),
+                    cursor: cursor.clone(),
+                    limit: ListQuery::MAX_LIMIT,
+                })
+                .await?;
+            media.extend(page.records.into_iter().filter(|record| {
+                record.media_kind == "local_agent_attachment"
+                    && record
+                        .state
+                        .get("run_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(self.run_id.as_str())
+            }));
+            let Some(next) = page.next_cursor else {
+                break;
+            };
+            if cursor.as_deref() == Some(next.as_str()) {
+                return Err(StorageError::InvalidData {
+                    reason: "media pagination cursor did not advance".to_string(),
+                });
+            }
+            cursor = Some(next);
+        }
         self.result = Some(StoredTaskContextState {
             task,
             tool_executions,
+            messages,
+            media,
         });
         Ok(())
     }
 }
 
-fn task_runner_context_from_state(
+async fn task_runner_context_from_state(
     run: &LocalAgentRun,
     state: StoredTaskContextState,
+    resolver: &dyn LocalAttachmentResolver,
 ) -> Result<TaskRunnerStepContext, String> {
     let task = state.task;
     if task.metadata.id != run.owner_entity_id
@@ -185,6 +260,13 @@ fn task_runner_context_from_state(
                 .ok_or_else(|| "durable Task acceptance criteria are invalid".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let model_input_items = interaction_model_input_items(
+        run,
+        state.messages.as_slice(),
+        state.media.as_slice(),
+        resolver,
+    )
+    .await?;
     let mut receipts = state
         .tool_executions
         .into_iter()
@@ -198,7 +280,7 @@ fn task_runner_context_from_state(
         acceptance_criteria,
         prompt_snapshot: prompt,
         capability_snapshot: capability,
-        model_input_items: Vec::new(),
+        model_input_items,
         tool_receipts: receipts,
         maximum_output_tokens: run.model_runtime_snapshot.maximum_output_tokens,
         native_compaction_threshold: (run.context_strategy == ContextStrategy::ProviderNative)
@@ -211,6 +293,81 @@ fn task_runner_context_from_state(
             0
         },
     })
+}
+
+async fn interaction_model_input_items(
+    run: &LocalAgentRun,
+    messages: &[AgentMessageStateRecord],
+    media: &[MediaStateRecord],
+    resolver: &dyn LocalAttachmentResolver,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut turns = Vec::new();
+    for record in messages.iter().filter(|record| {
+        record.message.role == AgentMessageRole::User
+            && record.message.message_source == "user_interaction"
+    }) {
+        let answer: StoredUserInteractionAnswerPayload = serde_json::from_value(
+            record
+                .message
+                .structured_payload
+                .clone()
+                .ok_or_else(|| "Task Runner interaction answer has no payload".to_string())?,
+        )
+        .map_err(|error| format!("Task Runner interaction answer is invalid: {error}"))?;
+        if answer.payload_type != "user_interaction_answer"
+            || answer.interaction_id.trim().is_empty()
+        {
+            return Err("Task Runner interaction answer identity is invalid".to_string());
+        }
+        let text = interaction_answer_text(
+            record.message.content.as_deref(),
+            &answer.selected_option_ids,
+        );
+        let locators =
+            attachment_locators(run, &record.message.record_id, &answer.attachments, media)?;
+        turns.push((record.message.sequence, text, locators));
+    }
+    if turns
+        .iter()
+        .map(|(_, _, locators)| locators.len())
+        .sum::<usize>()
+        != media.len()
+    {
+        return Err("Task Runner attachment manifest does not match durable media".to_string());
+    }
+    match run.context_strategy {
+        ContextStrategy::ProviderNative => {
+            let latest_assistant = messages
+                .iter()
+                .filter(|record| record.message.role == AgentMessageRole::Assistant)
+                .map(|record| record.message.sequence)
+                .max()
+                .unwrap_or(0);
+            let pending = turns
+                .iter()
+                .filter(|(sequence, _, _)| *sequence > latest_assistant)
+                .max_by_key(|(sequence, _, _)| *sequence);
+            match pending {
+                Some((_, text, locators)) => {
+                    let resolved = resolve_attachments(resolver, locators).await?;
+                    Ok(vec![user_message_item(text.as_deref(), &resolved, true)?])
+                }
+                None => Ok(Vec::new()),
+            }
+        }
+        ContextStrategy::MemoryEngine => {
+            let locators = turns
+                .into_iter()
+                .flat_map(|(_, _, locators)| locators)
+                .collect::<Vec<_>>();
+            if locators.is_empty() {
+                Ok(Vec::new())
+            } else {
+                let resolved = resolve_attachments(resolver, &locators).await?;
+                Ok(vec![user_message_item(None, &resolved, false)?])
+            }
+        }
+    }
 }
 
 fn snapshot_from_task(task: &TaskRecord, field: &'static str) -> Result<FrozenSnapshot, String> {
