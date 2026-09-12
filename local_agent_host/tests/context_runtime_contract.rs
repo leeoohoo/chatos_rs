@@ -290,6 +290,33 @@ async fn memory_strategy_flushes_local_semantic_messages_before_returning_contex
     )
     .await
     .unwrap();
+    record_semantic_message(
+        &storage,
+        RecordSemanticMessageRequest {
+            scope: scope(),
+            message: AgentMessage {
+                record_id: "unrelated-message-1".to_string(),
+                run_id: "unrelated-run-1".to_string(),
+                thread_id: "unrelated-thread-1".to_string(),
+                turn_id: "unrelated-turn-1".to_string(),
+                sequence: 1,
+                role: AgentMessageRole::User,
+                content: Some("This thread must not block the current Run.".to_string()),
+                reasoning: None,
+                structured_payload: None,
+                tool_call_id: None,
+                response_id: None,
+                message_mode: MessageMode::Semantic,
+                message_source: "main_chat_user".to_string(),
+                memory_sync_status: MemorySyncStatus::Pending,
+                created_at: now,
+            },
+            origin_device_id: "device-1".to_string(),
+            now,
+        },
+    )
+    .await
+    .unwrap();
     let memory = Arc::new(RecordingMemoryEngine {
         requests: Mutex::new(Vec::new()),
     });

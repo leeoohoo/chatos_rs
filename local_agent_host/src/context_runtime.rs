@@ -275,7 +275,13 @@ impl LocalAgentContextRuntime for StandardLocalAgentContextRuntime {
                     }
                     let report = self
                         .memory_synchronizer
-                        .sync_once(storage, scope.clone(), Utc::now(), cancellation.clone())
+                        .sync_thread_once(
+                            storage,
+                            scope.clone(),
+                            run.owner_entity_id.clone(),
+                            Utc::now(),
+                            cancellation.clone(),
+                        )
                         .await?;
                     if cancellation.is_cancelled() {
                         return Err(LocalAgentContextRuntimeError::Cancelled);
@@ -306,6 +312,7 @@ impl LocalAgentContextRuntime for StandardLocalAgentContextRuntime {
                 }
                 let mut inspection = InspectUnsyncedMemoryOperation {
                     scope: scope.clone(),
+                    thread_id: run.owner_entity_id.clone(),
                     unsynced_count: 0,
                 };
                 storage.transaction(&mut inspection).await?;
@@ -380,6 +387,7 @@ struct LoadProviderContextOperation {
 
 struct InspectUnsyncedMemoryOperation {
     scope: RecordScope,
+    thread_id: String,
     unsynced_count: usize,
 }
 
@@ -399,11 +407,23 @@ impl StorageTransaction for InspectUnsyncedMemoryOperation {
                     limit: ListQuery::MAX_LIMIT,
                 })
                 .await?;
-            self.unsynced_count += page
+            for record in page
                 .records
                 .into_iter()
                 .filter(|record| record.item.status != SyncOutboxStatus::Succeeded)
-                .count();
+            {
+                let message = repositories
+                    .agent_messages()
+                    .get(&chatos_client_storage::RecordQuery {
+                        scope: self.scope.clone(),
+                        id: record.item.record_id,
+                    })
+                    .await?
+                    .ok_or(StorageError::NotFound)?;
+                if message.message.thread_id == self.thread_id {
+                    self.unsynced_count += 1;
+                }
+            }
             match page.next_cursor {
                 Some(next) if Some(next.as_str()) != cursor.as_deref() => cursor = Some(next),
                 Some(_) => {

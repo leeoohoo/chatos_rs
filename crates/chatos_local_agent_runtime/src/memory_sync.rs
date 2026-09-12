@@ -304,6 +304,7 @@ pub async fn claim_memory_sync_batch(
     request.policy.validate()?;
     let mut operation = ClaimMemorySyncBatchOperation {
         request: Some(request),
+        thread_id: None,
         result: None,
     };
     storage.transaction(&mut operation).await?;
@@ -312,8 +313,40 @@ pub async fn claim_memory_sync_batch(
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct ClaimThreadMemorySyncBatchRequest {
+    pub scope: RecordScope,
+    pub thread_id: String,
+    pub now: DateTime<Utc>,
+    pub policy: MemorySyncPolicy,
+}
+
+pub async fn claim_thread_memory_sync_batch(
+    storage: &dyn ClientStorage,
+    request: ClaimThreadMemorySyncBatchRequest,
+) -> StorageResult<ClaimedMemorySyncBatch> {
+    if request.thread_id.trim().is_empty() || request.thread_id.trim() != request.thread_id {
+        return invalid_data("Memory Sync thread identifier is invalid");
+    }
+    request.policy.validate()?;
+    let mut operation = ClaimMemorySyncBatchOperation {
+        request: Some(ClaimMemorySyncBatchRequest {
+            scope: request.scope,
+            now: request.now,
+            policy: request.policy,
+        }),
+        thread_id: Some(request.thread_id),
+        result: None,
+    };
+    storage.transaction(&mut operation).await?;
+    operation.result.ok_or(StorageError::Transaction {
+        reason: "thread Memory Sync claim returned no batch".to_string(),
+    })
+}
+
 struct ClaimMemorySyncBatchOperation {
     request: Option<ClaimMemorySyncBatchRequest>,
+    thread_id: Option<String>,
     result: Option<ClaimedMemorySyncBatch>,
 }
 
@@ -338,7 +371,13 @@ impl StorageTransaction for ClaimMemorySyncBatchOperation {
             .ok_or_else(|| StorageError::InvalidData {
                 reason: "Memory Sync lease deadline overflow".to_string(),
             })?;
-        let mut candidates = list_due_outbox(repositories, &request.scope, request.now).await?;
+        let mut candidates = list_due_outbox(
+            repositories,
+            &request.scope,
+            request.now,
+            self.thread_id.as_deref(),
+        )
+        .await?;
         candidates.sort_by(|left, right| {
             left.item
                 .available_at
@@ -431,6 +470,7 @@ async fn list_due_outbox(
     repositories: &mut dyn TransactionRepositories,
     scope: &RecordScope,
     now: DateTime<Utc>,
+    thread_id: Option<&str>,
 ) -> StorageResult<Vec<SyncOutboxStateRecord>> {
     let mut cursor = None;
     let mut records = Vec::new();
@@ -443,12 +483,27 @@ async fn list_due_outbox(
                 limit: ListQuery::MAX_LIMIT,
             })
             .await?;
-        records.extend(page.records.into_iter().filter(|record| {
+        for record in page.records.into_iter().filter(|record| {
             matches!(
                 record.item.status,
                 SyncOutboxStatus::Pending | SyncOutboxStatus::InFlight
             ) && record.item.available_at <= now
-        }));
+        }) {
+            if let Some(thread_id) = thread_id {
+                let message = repositories
+                    .agent_messages()
+                    .get(&RecordQuery {
+                        scope: scope.clone(),
+                        id: record.item.record_id.clone(),
+                    })
+                    .await?
+                    .ok_or(StorageError::NotFound)?;
+                if message.message.thread_id != thread_id {
+                    continue;
+                }
+            }
+            records.push(record);
+        }
         if !advance_cursor(&mut cursor, page.next_cursor)? {
             break;
         }
@@ -812,6 +867,42 @@ impl MemorySynchronizer {
             },
         )
         .await?;
+        self.complete_claimed(storage, scope, now, cancellation, claimed)
+            .await
+    }
+
+    /// Flushes one bounded batch for the exact frozen Run thread. Other
+    /// conversations cannot delay or fail this model context boundary.
+    pub async fn sync_thread_once(
+        &self,
+        storage: &dyn ClientStorage,
+        scope: RecordScope,
+        thread_id: impl Into<String>,
+        now: DateTime<Utc>,
+        cancellation: CancellationToken,
+    ) -> StorageResult<MemorySyncRunReport> {
+        let claimed = claim_thread_memory_sync_batch(
+            storage,
+            ClaimThreadMemorySyncBatchRequest {
+                scope: scope.clone(),
+                thread_id: thread_id.into(),
+                now,
+                policy: self.policy,
+            },
+        )
+        .await?;
+        self.complete_claimed(storage, scope, now, cancellation, claimed)
+            .await
+    }
+
+    async fn complete_claimed(
+        &self,
+        storage: &dyn ClientStorage,
+        scope: RecordScope,
+        now: DateTime<Utc>,
+        cancellation: CancellationToken,
+        claimed: ClaimedMemorySyncBatch,
+    ) -> StorageResult<MemorySyncRunReport> {
         let mut report = MemorySyncRunReport {
             claimed: claimed.records.len(),
             exhausted_before_send: claimed.exhausted_outbox_ids.len(),
