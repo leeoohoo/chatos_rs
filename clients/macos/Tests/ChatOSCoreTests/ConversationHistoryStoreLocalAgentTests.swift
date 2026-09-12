@@ -91,6 +91,70 @@ struct ConversationHistoryStoreLocalAgentTests {
 
         #expect(await store.snapshot(sessionID: "thread-1").turns.isEmpty)
     }
+
+    @Test("tracks only actionable Run controls and tool approvals")
+    func tracksRunControlsAndApprovals() async throws {
+        let store = ConversationHistoryStore()
+        let binding = mainChatBinding()
+        try await store.applyLocalAgentUIEvent(
+            uiEvent(1, .runSnapshot(run(
+                status: .paused,
+                pendingInteraction: .object(["type": .string("ask_user")])
+            ))),
+            mainChatBinding: binding
+        )
+        var control = try #require(await store.localAgentRunControls(
+            sessionID: "thread-1"
+        ).first)
+        #expect(control.requiresUserAnswer)
+        #expect(!control.canResume)
+        #expect(control.canCancel)
+
+        let pendingTool = LocalAgentToolSnapshot(
+            invocationID: "invocation-write-1",
+            runID: "run-1",
+            batchID: "batch-1",
+            toolCallID: "call-1",
+            toolName: "save_design",
+            effect: .write,
+            argumentsDigest: "sha256:write-args",
+            status: .awaitingApproval
+        )
+        try await store.applyLocalAgentUIEvent(
+            uiEvent(2, .toolSnapshot(pendingTool)),
+            mainChatBinding: binding
+        )
+        #expect(await store.localAgentPendingToolApprovals(
+            sessionID: "thread-1"
+        ).map(\.invocationID) == ["invocation-write-1"])
+
+        var approvedTool = pendingTool
+        approvedTool.status = .approved
+        try await store.applyLocalAgentUIEvent(
+            uiEvent(3, .toolSnapshot(approvedTool)),
+            mainChatBinding: binding
+        )
+        #expect(await store.localAgentPendingToolApprovals(
+            sessionID: "thread-1"
+        ).isEmpty)
+
+        try await store.applyLocalAgentUIEvent(
+            uiEvent(4, .runSnapshot(run(
+                status: .needsReview,
+                pendingInteraction: .object([
+                    "type": .string("review_unknown_tool_outcome"),
+                    "batch_id": .string("batch-1"),
+                ])
+            ))),
+            mainChatBinding: binding
+        )
+        control = try #require(await store.localAgentRunControls(
+            sessionID: "thread-1"
+        ).first)
+        #expect(control.canResume)
+        #expect(!control.canPause)
+        #expect(control.reviewReason?.contains("batch-1") == true)
+    }
 }
 
 private let localTimestamp = "2026-09-12T05:00:00Z"
@@ -138,6 +202,7 @@ private func stream(
 
 private func run(
     status: LocalAgentRunStatus,
+    pendingInteraction: LocalAgentJSONValue? = nil,
     terminalOutcome: LocalAgentJSONValue? = nil
 ) -> LocalAgentRunSnapshot {
     LocalAgentRunSnapshot(
@@ -158,9 +223,9 @@ private func run(
         contextStrategy: "provider_native",
         promptRevision: "prompt-1",
         capabilitySnapshotRef: "capabilities-1",
+        pendingInteraction: pendingInteraction,
         terminalOutcome: terminalOutcome,
         createdAt: localTimestamp,
         updatedAt: localTimestamp
     )
 }
-

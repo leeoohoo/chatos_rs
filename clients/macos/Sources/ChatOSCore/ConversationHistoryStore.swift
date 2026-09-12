@@ -14,6 +14,8 @@ public actor ConversationHistoryStore {
         var lastAppliedLocalAgentEventSequence: UInt64 = 0
         var localAgentPromptsByID: [String: AskUserPrompt] = [:]
         var localAgentPromptRoutes: [String: LocalAgentAskUserRoute] = [:]
+        var localAgentRunControlsByID: [String: LocalAgentRunControlState] = [:]
+        var localAgentToolApprovalsByID: [String: LocalAgentToolApprovalRequest] = [:]
         var viewportAnchor: ViewportAnchor?
         var unreadNewerCount = 0
     }
@@ -196,6 +198,50 @@ public actor ConversationHistoryStore {
         return prompt
     }
 
+    public func localAgentRunControls(sessionID: String) -> [LocalAgentRunControlState] {
+        guard let controls = sessions[sessionID]?.localAgentRunControlsByID.values else {
+            return []
+        }
+        return controls
+            .filter { !$0.isTerminal }
+            .sorted(by: Self.localAgentRunControlOrder)
+    }
+
+    public func localAgentPendingToolApprovals(
+        sessionID: String
+    ) -> [LocalAgentToolApprovalRequest] {
+        guard let approvals = sessions[sessionID]?.localAgentToolApprovalsByID.values else {
+            return []
+        }
+        return approvals.sorted { lhs, rhs in
+            if lhs.turnID != rhs.turnID { return lhs.turnID < rhs.turnID }
+            return lhs.invocationID < rhs.invocationID
+        }
+    }
+
+    public func requireLocalAgentRunControl(
+        runID: String,
+        sessionID: String
+    ) throws -> LocalAgentRunControlState {
+        guard let control = sessions[sessionID]?.localAgentRunControlsByID[runID],
+              !control.isTerminal
+        else {
+            throw LocalAgentConversationHistoryError.runUnavailable
+        }
+        return control
+    }
+
+    public func requireLocalAgentToolApproval(
+        invocationID: String,
+        sessionID: String
+    ) throws -> LocalAgentToolApprovalRequest {
+        guard let approval = sessions[sessionID]?.localAgentToolApprovalsByID[invocationID]
+        else {
+            throw LocalAgentConversationHistoryError.toolApprovalUnavailable
+        }
+        return approval
+    }
+
     public func applyLocalAgentUIEvent(
         _ event: LocalAgentUIEvent,
         mainChatBinding binding: LocalAgentMainChatRunBinding?
@@ -210,6 +256,44 @@ public actor ConversationHistoryStore {
         var turn = try localAgentTurn(binding: binding, existing: state.turnsByID[binding.turnID])
         let didChange = try apply(event, to: &turn)
         switch event.event {
+        case let .runSnapshot(run):
+            state.localAgentRunControlsByID[run.runID] = Self.runControlState(
+                run,
+                binding: binding
+            )
+            if run.status == .failed || run.status == .cancelled || run.status == .succeeded {
+                state.localAgentToolApprovalsByID = state.localAgentToolApprovalsByID.filter {
+                    $0.value.runID != run.runID
+                }
+            }
+            if run.status == .failed || run.status == .cancelled {
+                let resolvedStatus: AskUserPromptStatus = run.status == .cancelled
+                    ? .canceled
+                    : .failed
+                let promptIDs = state.localAgentPromptRoutes.compactMap { id, route in
+                    route.runID == run.runID ? id : nil
+                }
+                for id in promptIDs {
+                    state.localAgentPromptsByID[id]?.status = resolvedStatus
+                    state.localAgentPromptsByID[id]?.updatedAt = Self.localAgentDate(event.emittedAt)
+                    state.localAgentPromptRoutes[id] = nil
+                }
+            }
+        case let .toolSnapshot(tool):
+            if tool.status == .awaitingApproval {
+                state.localAgentToolApprovalsByID[tool.invocationID] =
+                    LocalAgentToolApprovalRequest(
+                        invocationID: tool.invocationID,
+                        runID: tool.runID,
+                        sessionID: binding.threadID,
+                        turnID: binding.turnID,
+                        toolName: tool.toolName,
+                        effect: tool.effect,
+                        argumentsDigest: tool.argumentsDigest
+                    )
+            } else {
+                state.localAgentToolApprovalsByID[tool.invocationID] = nil
+            }
         case let .userInteraction(interaction):
             let prompt = Self.askUserPrompt(
                 interaction,
@@ -221,16 +305,6 @@ public actor ConversationHistoryStore {
                 runID: interaction.runID,
                 interactionID: interaction.interactionID
             )
-        case let .runSnapshot(run) where run.status == .failed || run.status == .cancelled:
-            let resolvedStatus: AskUserPromptStatus = run.status == .cancelled ? .canceled : .failed
-            let promptIDs = state.localAgentPromptRoutes.compactMap { id, route in
-                route.runID == run.runID ? id : nil
-            }
-            for id in promptIDs {
-                state.localAgentPromptsByID[id]?.status = resolvedStatus
-                state.localAgentPromptsByID[id]?.updatedAt = Self.localAgentDate(event.emittedAt)
-                state.localAgentPromptRoutes[id] = nil
-            }
         default:
             break
         }
@@ -583,6 +657,49 @@ public actor ConversationHistoryStore {
         )
     }
 
+    private static func runControlState(
+        _ run: LocalAgentRunSnapshot,
+        binding: LocalAgentMainChatRunBinding
+    ) -> LocalAgentRunControlState {
+        LocalAgentRunControlState(
+            runID: run.runID,
+            sessionID: binding.threadID,
+            turnID: binding.turnID,
+            status: run.status,
+            iteration: run.iteration,
+            retryCount: run.retryCount,
+            interactionKind: localAgentInteractionKind(run.pendingInteraction),
+            reviewReason: localAgentReviewReason(run.pendingInteraction),
+            updatedAt: localAgentDate(run.updatedAt)
+        )
+    }
+
+    private static func localAgentReviewReason(
+        _ interaction: LocalAgentJSONValue?
+    ) -> String? {
+        guard case let .object(value) = interaction,
+              let type = value["type"]?.plainString
+        else { return nil }
+        switch type {
+        case "review_unknown_tool_outcome":
+            let batchID = value["batch_id"]?.plainString
+            return batchID.map {
+                "工具批次 \($0) 的执行结果无法确认。继续前请核对外部结果，避免重复执行。"
+            } ?? "工具执行结果无法确认。继续前请核对外部结果，避免重复执行。"
+        case "runtime_blocked":
+            return "本地 Agent 已阻塞，需要检查执行过程后再继续。"
+        default:
+            return nil
+        }
+    }
+
+    private static func localAgentInteractionKind(
+        _ interaction: LocalAgentJSONValue?
+    ) -> String? {
+        guard case let .object(value) = interaction else { return nil }
+        return value["type"]?.plainString
+    }
+
     private static func localAgentPromptOrder(
         _ lhs: AskUserPrompt,
         _ rhs: AskUserPrompt
@@ -591,6 +708,16 @@ public actor ConversationHistoryStore {
         let right = rhs.createdAt ?? rhs.updatedAt ?? .distantPast
         if left != right { return left < right }
         return lhs.id < rhs.id
+    }
+
+    private static func localAgentRunControlOrder(
+        _ lhs: LocalAgentRunControlState,
+        _ rhs: LocalAgentRunControlState
+    ) -> Bool {
+        let left = lhs.updatedAt ?? .distantPast
+        let right = rhs.updatedAt ?? .distantPast
+        if left != right { return left < right }
+        return lhs.runID < rhs.runID
     }
 
     private static func turnStatus(_ status: LocalAgentRunStatus) -> TurnStatus {
@@ -670,12 +797,15 @@ public actor ConversationHistoryStore {
 extension ConversationHistoryStore: LocalAgentUIEventApplying {}
 extension ConversationHistoryStore: LocalAgentConversationUpdateStreaming {}
 extension ConversationHistoryStore: LocalAgentAskUserStateStoring {}
+extension ConversationHistoryStore: LocalAgentRunControlStateStoring {}
 
 public enum LocalAgentConversationHistoryError: Error, Equatable, Sendable {
     case runBindingMismatch
     case userMessageBindingMismatch
     case missingSuccessfulOutcome
     case promptUnavailable
+    case runUnavailable
+    case toolApprovalUnavailable
 }
 
 extension LocalAgentConversationHistoryError: LocalizedError {
@@ -685,6 +815,8 @@ extension LocalAgentConversationHistoryError: LocalizedError {
         case .userMessageBindingMismatch: "本地 Agent 用户消息身份不一致"
         case .missingSuccessfulOutcome: "本地 Agent 成功结果缺少最终文本"
         case .promptUnavailable: "这个本地 Agent 提问已经处理或不存在"
+        case .runUnavailable: "这个本地 Agent Run 已结束或不存在"
+        case .toolApprovalUnavailable: "这个工具授权请求已经处理或不存在"
         }
     }
 }

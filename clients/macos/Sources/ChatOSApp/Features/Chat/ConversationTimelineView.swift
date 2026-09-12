@@ -207,9 +207,17 @@ struct ConversationTimelineView: View {
         let promptsByTurnID = Dictionary(uniqueKeysWithValues: conversation.turns.map {
             ($0.id, conversation.prompts(for: $0.id))
         })
+        let toolApprovalsByTurnID = Dictionary(uniqueKeysWithValues: conversation.turns.map {
+            ($0.id, conversation.toolApprovals(for: $0.id))
+        })
+        let runControlsByTurnID = Dictionary(uniqueKeysWithValues: conversation.turns.map {
+            ($0.id, conversation.runControls(for: $0.id))
+        })
         return ConversationTimelineItem.build(
             turns: conversation.turns,
             promptsByTurnID: promptsByTurnID,
+            toolApprovalsByTurnID: toolApprovalsByTurnID,
+            runControlsByTurnID: runControlsByTurnID,
             unattachedPrompts: conversation.unattachedPendingPrompts
         )
     }
@@ -259,6 +267,20 @@ struct ConversationTimelineView: View {
         case let .prompt(prompt):
             AskUserPromptCardView(conversation: conversation, prompt: prompt)
                 .padding(.leading, 30)
+
+        case let .toolApproval(approval):
+            LocalAgentToolApprovalCardView(
+                conversation: conversation,
+                approval: approval
+            )
+            .padding(.leading, 30)
+
+        case let .runControl(control):
+            LocalAgentRunControlCardView(
+                conversation: conversation,
+                control: control
+            )
+            .padding(.leading, 30)
         }
     }
 

@@ -40,6 +40,10 @@ final class ConversationSessionViewModel: ObservableObject {
     @Published var askUserPrompts: [AskUserPrompt] = []
     @Published var submittingAskUserPromptIDs: Set<String> = []
     @Published var askUserPromptErrors: [String: String] = [:]
+    @Published var localAgentRunControls: [LocalAgentRunControlState] = []
+    @Published var localAgentToolApprovals: [LocalAgentToolApprovalRequest] = []
+    @Published var localAgentControlOperationIDs: Set<String> = []
+    @Published var localAgentControlErrors: [String: String] = [:]
     @Published private(set) var focusRequest: ConversationFocusRequest?
 
     let historyStore: any ConversationHistoryStoring
@@ -50,6 +54,7 @@ final class ConversationSessionViewModel: ObservableObject {
     let realtimeService: (any ConversationRealtimeStreaming)?
     private let runtimeSettingsService: (any ConversationRuntimeSettingsServicing)?
     let askUserPromptService: (any AskUserPromptServicing)?
+    let localAgentRunControlService: (any LocalAgentRunControlServicing)?
     private var olderCursor: String?
     private var requestGeneration: Int64 = 0
     private var inFlightOlderCursor: String?
@@ -64,6 +69,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private var viewportUpdateGeneration: Int64 = 0
     private var taskGraphAvailabilityTasks: [String: Task<Void, Never>] = [:]
     private var taskGraphAvailabilityRevisions: [String: Int64] = [:]
+    var pendingLocalAgentRunStatuses: [String: LocalAgentRunStatus] = [:]
 
     init(
         sessionID: String,
@@ -75,7 +81,8 @@ final class ConversationSessionViewModel: ObservableObject {
         turnProcessService: (any TurnProcessServicing)? = nil,
         messageTaskGraphService: (any MessageTaskGraphServicing)? = nil,
         runtimeSettingsService: (any ConversationRuntimeSettingsServicing)? = nil,
-        askUserPromptService: (any AskUserPromptServicing)? = nil
+        askUserPromptService: (any AskUserPromptServicing)? = nil,
+        localAgentRunControlService: (any LocalAgentRunControlServicing)? = nil
     ) {
         self.sessionID = sessionID
         self.turns = initialTurns
@@ -88,6 +95,7 @@ final class ConversationSessionViewModel: ObservableObject {
         self.messageTaskGraphService = messageTaskGraphService
         self.runtimeSettingsService = runtimeSettingsService
         self.askUserPromptService = askUserPromptService
+        self.localAgentRunControlService = localAgentRunControlService
 
         Task { await bootstrap(initialTurns: initialTurns) }
     }
@@ -124,6 +132,7 @@ final class ConversationSessionViewModel: ObservableObject {
                 guard !Task.isCancelled, let self else { return }
                 await self.refreshSnapshot()
                 await self.refreshAskUserPrompts()
+                await self.refreshLocalAgentControls()
             }
         }
     }
@@ -367,7 +376,8 @@ final class ConversationSessionViewModel: ObservableObject {
     private func bootstrap(initialTurns: [ConversationTurn]) async {
         async let runtimeSettings: Void = loadRuntimeSettings()
         async let prompts: Void = refreshAskUserPrompts()
-        _ = await (runtimeSettings, prompts)
+        async let controls: Void = refreshLocalAgentControls()
+        _ = await (runtimeSettings, prompts, controls)
         await historyStore.mergeCachedTurns(initialTurns, sessionID: sessionID)
         await refreshSnapshot()
         refreshLatest()

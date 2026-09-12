@@ -104,6 +104,7 @@ final class AppModel: ObservableObject {
     let messageTaskGraphService: ChatOSMessageTaskGraphService
     private let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
     private let askUserPromptService: NativeLocalAgentAskUserPromptService
+    private let localAgentRunControlService: NativeLocalAgentRunControlService
     private let petActivityInboxService: ChatOSPetActivityInboxService
     private let workspaceService: ChatOSWorkspaceService
     private let localConnectorService: NativeLocalConnectorService
@@ -188,6 +189,10 @@ final class AppModel: ObservableObject {
             accountSession: localAgentAccountSession,
             state: historyStore
         )
+        let localAgentRunControlService = NativeLocalAgentRunControlService(
+            accountSession: localAgentAccountSession,
+            state: historyStore
+        )
 
         self.historyStore = historyStore
         self.apiClient = apiClient
@@ -229,6 +234,7 @@ final class AppModel: ObservableObject {
         self.messageTaskGraphService = ChatOSMessageTaskGraphService(client: apiClient)
         self.runtimeSettingsService = runtimeSettingsService
         self.askUserPromptService = askUserPromptService
+        self.localAgentRunControlService = localAgentRunControlService
         self.petActivityInboxService = ChatOSPetActivityInboxService(client: apiClient)
         self.realtimeService = ChatOSRealtimeClient(
             apiClient: apiClient,
@@ -1399,7 +1405,8 @@ final class AppModel: ObservableObject {
             turnProcessService: turnProcessService,
             messageTaskGraphService: messageTaskGraphService,
             runtimeSettingsService: runtimeSettingsService,
-            askUserPromptService: askUserPromptService
+            askUserPromptService: askUserPromptService,
+            localAgentRunControlService: localAgentRunControlService
         )
         conversationCache[sessionID] = created
         return created
