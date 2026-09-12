@@ -154,6 +154,8 @@ impl StorageTransaction for SeedReceipt {
                             "verification": true,
                             "summary": "The requested file was read from the frozen workspace."
                         })),
+                        approval_decided_at: None,
+                        approval_reason: None,
                         started_at: Some(self.now - Duration::seconds(1)),
                         completed_at: Some(self.now),
                     },

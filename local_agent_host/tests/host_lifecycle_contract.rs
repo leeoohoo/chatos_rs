@@ -31,8 +31,8 @@ use chatos_local_agent_protocol::{
     LocalAgentIpcError, LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun,
     LocalAgentRunStatus, ModelGatewayRequest, ModelGatewayTerminal, ModelGatewayTerminalSource,
     ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol, ModelRuntimeDescriptor,
-    ModelStepCompletion, ModelStepResult, ToolEffect, ToolExecutionStatus, UserInteractionAnswer,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    ModelStepCompletion, ModelStepResult, ToolApprovalCommand, ToolApprovalDecision, ToolEffect,
+    ToolExecutionStatus, UserInteractionAnswer, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{
     CompletedAssistantMessage, DurableProviderContextCommit, LocalAgentProfile,
@@ -1856,9 +1856,41 @@ async fn main_chat_model_tool_creates_one_frozen_local_task_end_to_end() {
         tool_requested.event.event_type,
         LocalAgentEventType::ToolBatchRequested
     );
-    host.process_claimed_event(&tool_requested, &session, Utc::now())
+    let pending = host
+        .process_claimed_event(&tool_requested, &session, Utc::now())
         .await
         .unwrap_or_else(|error| panic!("create_local_task failed: {error}"));
+    assert!(matches!(
+        pending,
+        ProcessedClaimedEvent::ToolApprovalPending { .. }
+    ));
+    assert!(planner.requests.lock().unwrap().is_empty());
+    let mut approval_state = ReadCreationState::default();
+    storage.transaction(&mut approval_state).await.unwrap();
+    let invocation_id = approval_state.tool_executions[0]
+        .execution
+        .invocation_id
+        .clone();
+    host.decide_tool_approval(
+        ToolApprovalCommand {
+            invocation_id,
+            decision: ToolApprovalDecision::Approve,
+            reason: Some("create the reviewed local task".to_string()),
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    let SchedulerTickResult::Claimed(approved_tool) = host
+        .claim_next("claim-approved-create-task-tool", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("approved create_local_task batch was not resumed");
+    };
+    host.process_claimed_event(&approved_tool, &session, Utc::now())
+        .await
+        .unwrap_or_else(|error| panic!("approved create_local_task failed: {error}"));
 
     {
         let requests = planner.requests.lock().unwrap();
@@ -2316,7 +2348,7 @@ async fn indeterminate_irreversible_tool_result_moves_the_run_to_review() {
     let profiles =
         LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
     let (host, _) = LocalAgentHost::start(
-        storage,
+        storage.clone(),
         Arc::new(Gateway),
         Arc::new(TestContextRuntime),
         tools,
@@ -2329,11 +2361,43 @@ async fn indeterminate_irreversible_tool_result_moves_the_run_to_review() {
     )
     .await
     .unwrap();
+    let host = Arc::new(host);
     let SchedulerTickResult::Claimed(claimed) = host.claim_next("tool-claim-1", now).await.unwrap()
     else {
         panic!("tool batch was not claimed");
     };
-    host.execute_claimed_tool_batch(&claimed, &execution_session(), now)
+    let pending = host
+        .process_claimed_event(&claimed, &execution_session(), now)
+        .await
+        .unwrap();
+    assert!(matches!(
+        pending,
+        ProcessedClaimedEvent::ToolApprovalPending { .. }
+    ));
+    let mut state = ReadCreationState::default();
+    storage.transaction(&mut state).await.unwrap();
+    let control =
+        LocalAgentHostControlExecutor::new(host.clone(), Arc::new(UnusedMutationExecutor));
+    let approval = control
+        .execute_mutation(
+            "approval-request-1",
+            LocalAgentCommand::DecideToolApproval(ToolApprovalCommand {
+                invocation_id: state.tool_executions[0].execution.invocation_id.clone(),
+                decision: ToolApprovalDecision::Approve,
+                reason: Some("exercise unknown outcome recovery".to_string()),
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(approval, LocalAgentIpcResponse::Accepted { .. }));
+    let SchedulerTickResult::Claimed(approved) = host
+        .claim_next("tool-approved-claim-1", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("approved tool batch was not resumed");
+    };
+    host.execute_claimed_tool_batch(&approved, &execution_session(), Utc::now())
         .await
         .unwrap();
     let SchedulerTickResult::Claimed(completed) = host

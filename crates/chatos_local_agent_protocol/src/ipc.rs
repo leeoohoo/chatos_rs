@@ -381,7 +381,7 @@ pub struct ToolApprovalCommand {
 }
 
 impl ToolApprovalCommand {
-    fn validate(&self) -> Result<(), ProtocolError> {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
         require_identifier("invocation_id", &self.invocation_id)?;
         if self
             .reason

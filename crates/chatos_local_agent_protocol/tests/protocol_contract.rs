@@ -380,6 +380,8 @@ fn tool_results_preserve_unknown_outcomes_without_marking_completion() {
             .to_string(),
         status: ToolExecutionStatus::OutcomeUnknown,
         bounded_result: None,
+        approval_decided_at: Some(Utc::now()),
+        approval_reason: Some("approved before execution".to_string()),
         started_at: Some(Utc::now()),
         completed_at: None,
     };

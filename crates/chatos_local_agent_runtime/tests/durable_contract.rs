@@ -1437,6 +1437,8 @@ impl StorageTransaction for SeedUnknownIrreversibleTool {
                         arguments_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000".to_string(),
                         status: ToolExecutionStatus::Started,
                         bounded_result: None,
+                        approval_decided_at: Some(self.now - Duration::seconds(11)),
+                        approval_reason: Some("approved for contract test".to_string()),
                         started_at: Some(self.now - Duration::seconds(10)),
                         completed_at: None,
                     },

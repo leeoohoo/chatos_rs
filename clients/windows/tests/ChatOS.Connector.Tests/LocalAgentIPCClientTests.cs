@@ -23,7 +23,7 @@ public sealed class LocalAgentIPCClientTests
         Assert.Equal("operation-1", operationId);
         using var request = JsonDocument.Parse(transport.Request!);
         var root = request.RootElement;
-        Assert.Equal(1u, root.GetProperty("protocol_version").GetUInt32());
+        Assert.Equal(5u, root.GetProperty("protocol_version").GetUInt32());
         Assert.Equal("user-1", root.GetProperty("owner_user_id").GetString());
         var command = root.GetProperty("command");
         Assert.Equal("answer_user_question", command.GetProperty("type").GetString());
@@ -97,7 +97,7 @@ public sealed class LocalAgentIPCClientTests
     {
         var wrongRequest = new RecordingTransport(_ => JsonSerializer.SerializeToUtf8Bytes(new
         {
-            protocol_version = 1,
+            protocol_version = 5,
             request_id = "another-request",
             response = new { type = "success" },
         }));
@@ -185,7 +185,7 @@ public sealed class LocalAgentIPCClientTests
         bool trusted) =>
         Assert.Equal(trusted, WindowsLocalAgentServerIdentityVerifier.IsExpectedUserSid(actual, expected));
 
-    private static byte[] Reply(byte[] request, string responseJson, uint protocolVersion = 1)
+    private static byte[] Reply(byte[] request, string responseJson, uint protocolVersion = 5)
     {
         using var requestDocument = JsonDocument.Parse(request);
         var requestId = requestDocument.RootElement.GetProperty("request_id").GetString();

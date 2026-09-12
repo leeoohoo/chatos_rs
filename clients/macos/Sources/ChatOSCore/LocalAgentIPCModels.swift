@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 1
+public let localAgentProtocolVersion: UInt32 = 5
 
 public enum LocalAgentJSONValue: Codable, Equatable, Sendable {
     case null

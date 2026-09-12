@@ -273,6 +273,8 @@ impl StorageTransaction for SeedAuxiliaryRuntimeRecords {
                         arguments_digest: digest.to_string(),
                         status: ToolExecutionStatus::Requested,
                         bounded_result: None,
+                        approval_decided_at: None,
+                        approval_reason: None,
                         started_at: None,
                         completed_at: None,
                     },

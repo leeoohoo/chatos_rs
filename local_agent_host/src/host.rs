@@ -9,31 +9,34 @@ use chatos_agent_profiles::{
 };
 use chatos_client_storage::{
     AgentEventStateRecord, AgentRunStateRecord, ClientStorage, RecordQuery, RecordScope,
-    StorageError, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
+    StorageError, StorageResult, StorageTransaction, TaskRecord, ToolExecutionStateRecord,
+    TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
     CreateMainChatTurnCommand, CreateTaskCommand, FrozenSnapshot, LocalAgentCommand,
     LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse, ModelRuntimeDescriptor,
-    ModelStepCompletion, ModelStepResult, ProtocolError, ToolEffect,
+    ModelStepCompletion, ModelStepResult, ProtocolError, ToolApprovalCommand, ToolEffect,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, begin_model_step_execution, begin_tool_execution,
     build_local_tool_invocation, complete_tool_execution, create_local_agent_run,
-    create_local_agent_task, inspect_tool_batch, mark_tool_outcome_unknown,
-    prepare_model_step_persistence, prepare_tool_batch, record_model_step_completion,
-    reduce_and_commit, renew_event_claim, request_run_control, scan_recoverable_work,
-    validate_local_tool_outcome, AnswerRunInteraction, BeganModelStepExecution,
-    BeginModelStepExecutionRequest, BeginToolExecutionRequest, BeginToolExecutionResult,
-    CommittedReduction, CompleteToolExecutionRequest, CompletedAssistantMessage,
-    CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest, CreatedLocalAgentRun,
-    CreatedLocalAgentTask, DurableModelStepCompletionPayload, DurableProviderContextCommit,
-    DurableScheduler, ExecutedModelStep, InitialRunMessage, LocalToolInvocation, LocalToolOutcome,
-    LocalToolRuntime, MarkToolOutcomeUnknownRequest, ModelGatewayCallbacks, ModelGatewayClient,
-    ModelGatewayClientError, ModelGatewayStreamError, ModelInputTokenGuardError,
-    ModelStepExecutorError, ModelStepPersistenceError, PrepareToolBatchRequest,
-    RecordModelStepCompletionRequest, RecoveryIssue, ReduceAndCommitRequest, ReducerPolicy,
-    RenewEventClaimRequest, RequestRunControl, RunControlAction, SchedulerTickRequest,
-    SchedulerTickResult, SingleModelStepExecutor, StepEvidence,
+    create_local_agent_task, decide_tool_approval, defer_tool_batch_for_approval,
+    inspect_tool_batch, mark_tool_outcome_unknown, prepare_model_step_persistence,
+    prepare_tool_batch, record_model_step_completion, reduce_and_commit, renew_event_claim,
+    request_run_control, scan_recoverable_work, validate_local_tool_outcome, AnswerRunInteraction,
+    BeganModelStepExecution, BeginModelStepExecutionRequest, BeginToolExecutionRequest,
+    BeginToolExecutionResult, CommittedReduction, CompleteToolExecutionRequest,
+    CompletedAssistantMessage, CreateLocalAgentRunRequest, CreateLocalAgentTaskRequest,
+    CreatedLocalAgentRun, CreatedLocalAgentTask, DecideToolApprovalRequest,
+    DeferToolBatchForApprovalRequest, DurableModelStepCompletionPayload,
+    DurableProviderContextCommit, DurableScheduler, ExecutedModelStep, InitialRunMessage,
+    LocalToolInvocation, LocalToolOutcome, LocalToolRuntime, MarkToolOutcomeUnknownRequest,
+    ModelGatewayCallbacks, ModelGatewayClient, ModelGatewayClientError, ModelGatewayStreamError,
+    ModelInputTokenGuardError, ModelStepExecutorError, ModelStepPersistenceError,
+    PrepareToolBatchRequest, RecordModelStepCompletionRequest, RecoveryIssue,
+    ReduceAndCommitRequest, ReducerPolicy, RenewEventClaimRequest, RequestRunControl,
+    RunControlAction, SchedulerTickRequest, SchedulerTickResult, SingleModelStepExecutor,
+    StepEvidence, ToolApprovalDeferralResult,
 };
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
@@ -155,6 +158,7 @@ impl LocalAgentExecutionSession {
 pub enum ProcessedClaimedEvent {
     ModelCompletionScheduled(Box<AgentEventStateRecord>),
     ReductionCommitted(Box<CommittedReduction>),
+    ToolApprovalPending { event_id: String, run_id: String },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -171,6 +175,8 @@ pub enum LocalAgentHostError {
     ClaimedEventMismatch { expected: String, actual: String },
     #[error("event {0} is not a claimed local tool batch")]
     NotToolBatch(String),
+    #[error("tool batch event {0} is waiting for durable approval")]
+    ToolApprovalPending(String),
     #[error("event {0} requires the dedicated model step executor")]
     ModelStepExecutorRequired(String),
     #[error("event {0} is not a claimed model step request")]
@@ -599,6 +605,27 @@ impl LocalAgentHost {
         Ok(answered.resume_event)
     }
 
+    pub async fn decide_tool_approval(
+        &self,
+        command: ToolApprovalCommand,
+        now: DateTime<Utc>,
+    ) -> Result<ToolExecutionStateRecord, LocalAgentHostError> {
+        command.validate()?;
+        let execution = decide_tool_approval(
+            self.storage.as_ref(),
+            DecideToolApprovalRequest {
+                scope: self.scope.clone(),
+                invocation_id: command.invocation_id,
+                decision: command.decision,
+                reason: command.reason,
+                now,
+            },
+        )
+        .await?;
+        self.refresh_recovery(now).await?;
+        Ok(execution)
+    }
+
     pub async fn commit_claimed(
         &self,
         claimed: &AgentEventStateRecord,
@@ -930,11 +957,20 @@ impl LocalAgentHost {
                 .await
                 .map(Box::new)
                 .map(ProcessedClaimedEvent::ModelCompletionScheduled),
-            LocalAgentEventType::ToolBatchRequested => self
-                .execute_claimed_tool_batch(claimed, session, now)
-                .await
-                .map(Box::new)
-                .map(ProcessedClaimedEvent::ReductionCommitted),
+            LocalAgentEventType::ToolBatchRequested => {
+                match self.execute_claimed_tool_batch(claimed, session, now).await {
+                    Ok(committed) => Ok(ProcessedClaimedEvent::ReductionCommitted(Box::new(
+                        committed,
+                    ))),
+                    Err(LocalAgentHostError::ToolApprovalPending(event_id)) => {
+                        Ok(ProcessedClaimedEvent::ToolApprovalPending {
+                            event_id,
+                            run_id: claimed.event.run_id.clone(),
+                        })
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             _ => self
                 .commit_claimed_protocol_event(claimed, now)
                 .await
@@ -974,6 +1010,27 @@ impl LocalAgentHost {
             },
         )
         .await?;
+
+        let prepared =
+            inspect_tool_batch(self.storage.as_ref(), self.scope.clone(), &batch).await?;
+        if prepared.awaiting_approval {
+            let deferral = defer_tool_batch_for_approval(
+                self.storage.as_ref(),
+                DeferToolBatchForApprovalRequest {
+                    scope: self.scope.clone(),
+                    event_id: claimed.event.event_id.clone(),
+                    claim_token: claim_token.clone(),
+                    batch: batch.clone(),
+                    now: Utc::now(),
+                },
+            )
+            .await?;
+            if matches!(deferral, ToolApprovalDeferralResult::Deferred(_)) {
+                return Err(LocalAgentHostError::ToolApprovalPending(
+                    claimed.event.event_id.clone(),
+                ));
+            }
+        }
 
         'calls: for call in &batch.calls {
             match begin_tool_execution(
@@ -1042,6 +1099,11 @@ impl LocalAgentHost {
                     }
                 }
                 BeginToolExecutionResult::AlreadyCompleted(_) => {}
+                BeginToolExecutionResult::AwaitingApproval(_) => {
+                    return Err(LocalAgentHostError::ToolApprovalPending(
+                        claimed.event.event_id.clone(),
+                    ));
+                }
                 BeginToolExecutionResult::NeedsReview(_) => break 'calls,
             }
         }
@@ -1417,6 +1479,16 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostControlExecutor {
                     .await
                     .map(|event| LocalAgentIpcResponse::Accepted {
                         operation_id: event.event.event_id,
+                    })
+                    .map_err(run_control_ipc_error);
+            }
+            LocalAgentCommand::DecideToolApproval(command) => {
+                return self
+                    .host
+                    .decide_tool_approval(command, Utc::now())
+                    .await
+                    .map(|execution| LocalAgentIpcResponse::Accepted {
+                        operation_id: execution.execution.invocation_id,
                     })
                     .map_err(run_control_ipc_error);
             }

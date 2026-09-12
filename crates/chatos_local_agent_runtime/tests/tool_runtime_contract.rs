@@ -14,12 +14,14 @@ use chatos_local_agent_protocol::{
     AgentMessage, AgentMessageRole, ContextStrategy, LocalAgentEvent, LocalAgentEventStatus,
     LocalAgentEventType, LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEvent,
     LocalAgentUiEventPayload, MemorySyncStatus, MessageMode, ModelProtocol, ModelRuntimeDescriptor,
-    ToolExecutionStatus,
+    ToolApprovalDecision, ToolExecutionStatus,
 };
 use chatos_local_agent_runtime::{
-    begin_tool_execution, complete_tool_execution, inspect_tool_batch, mark_tool_outcome_unknown,
+    begin_tool_execution, complete_tool_execution, decide_tool_approval,
+    defer_tool_batch_for_approval, inspect_tool_batch, mark_tool_outcome_unknown,
     prepare_tool_batch, BeginToolExecutionRequest, BeginToolExecutionResult,
-    CompleteToolExecutionRequest, MarkToolOutcomeUnknownRequest, PrepareToolBatchRequest,
+    CompleteToolExecutionRequest, DecideToolApprovalRequest, DeferToolBatchForApprovalRequest,
+    MarkToolOutcomeUnknownRequest, PrepareToolBatchRequest,
 };
 use chrono::{Duration, Utc};
 use serde_json::json;
@@ -187,6 +189,21 @@ fn prepare_request() -> PrepareToolBatchRequest {
     }
 }
 
+async fn approve(storage: &SqliteClientStorage, invocation_id: String) {
+    decide_tool_approval(
+        storage,
+        DecideToolApprovalRequest {
+            scope: scope(),
+            invocation_id,
+            decision: ToolApprovalDecision::Approve,
+            reason: Some("approved by the local user".to_string()),
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap();
+}
+
 struct ReadUiEvents(Vec<LocalAgentUiEvent>);
 
 #[async_trait]
@@ -215,6 +232,31 @@ async fn read_ui_events(storage: &SqliteClientStorage) -> Vec<LocalAgentUiEvent>
     let mut operation = ReadUiEvents(Vec::new());
     storage.transaction(&mut operation).await.unwrap();
     operation.0
+}
+
+struct ReadEvent(Option<AgentEventStateRecord>);
+
+#[async_trait]
+impl StorageTransaction for ReadEvent {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.0 = repositories
+            .agent_events()
+            .get(&chatos_client_storage::RecordQuery {
+                scope: scope(),
+                id: "event-1".to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+async fn read_event(storage: &SqliteClientStorage) -> AgentEventStateRecord {
+    let mut operation = ReadEvent(None);
+    storage.transaction(&mut operation).await.unwrap();
+    operation.0.unwrap()
 }
 
 struct ReadSemanticState {
@@ -285,11 +327,82 @@ async fn batch_and_arguments_are_frozen_idempotently_before_execution() {
         3,
         "idempotent preparation emits no duplicates"
     );
-    assert!(events.iter().all(|event| matches!(
-        &event.event,
-        LocalAgentUiEventPayload::ToolSnapshot(snapshot)
-            if snapshot.status == ToolExecutionStatus::Requested
-    )));
+    let statuses = events
+        .iter()
+        .filter_map(|event| match &event.event {
+            LocalAgentUiEventPayload::ToolSnapshot(snapshot) => Some(snapshot.status),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        statuses,
+        vec![
+            ToolExecutionStatus::Requested,
+            ToolExecutionStatus::AwaitingApproval,
+            ToolExecutionStatus::AwaitingApproval,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn claimed_batch_stays_dormant_until_every_approval_is_durable() {
+    let (_directory, storage) = storage("project-1").await;
+    let batch = prepare_tool_batch(storage.as_ref(), prepare_request())
+        .await
+        .unwrap();
+    let deferred_at = Utc::now();
+    defer_tool_batch_for_approval(
+        storage.as_ref(),
+        DeferToolBatchForApprovalRequest {
+            scope: scope(),
+            event_id: "event-1".to_string(),
+            claim_token: "claim-1".to_string(),
+            batch: batch.clone(),
+            now: deferred_at,
+        },
+    )
+    .await
+    .unwrap();
+    let deferred = read_event(storage.as_ref()).await;
+    assert_eq!(deferred.event.status, LocalAgentEventStatus::Pending);
+    assert!(deferred.event.claim_token.is_none());
+    assert!(deferred.event.available_at > deferred_at + Duration::days(3_000));
+
+    decide_tool_approval(
+        storage.as_ref(),
+        DecideToolApprovalRequest {
+            scope: scope(),
+            invocation_id: batch.calls[1].invocation_id.clone(),
+            decision: ToolApprovalDecision::Approve,
+            reason: None,
+            now: deferred_at + Duration::seconds(1),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read_event(storage.as_ref()).await.event.available_at,
+        deferred.event.available_at,
+        "one unresolved approval must keep the batch dormant"
+    );
+
+    let resumed_at = deferred_at + Duration::seconds(2);
+    decide_tool_approval(
+        storage.as_ref(),
+        DecideToolApprovalRequest {
+            scope: scope(),
+            invocation_id: batch.calls[2].invocation_id.clone(),
+            decision: ToolApprovalDecision::Reject,
+            reason: Some("do not create another task".to_string()),
+            now: resumed_at,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read_event(storage.as_ref()).await.event.available_at,
+        resumed_at
+    );
 }
 
 #[tokio::test]
@@ -372,6 +485,20 @@ async fn irreversible_started_execution_is_never_replayed_after_reentry() {
         .await
         .unwrap();
     let invocation_id = batch.calls[1].invocation_id.clone();
+    assert!(matches!(
+        begin_tool_execution(
+            storage.as_ref(),
+            BeginToolExecutionRequest {
+                scope: scope(),
+                invocation_id: invocation_id.clone(),
+                now: Utc::now(),
+            },
+        )
+        .await
+        .unwrap(),
+        BeginToolExecutionResult::AwaitingApproval(_)
+    ));
+    approve(storage.as_ref(), invocation_id.clone()).await;
     let begin = BeginToolExecutionRequest {
         scope: scope(),
         invocation_id,
@@ -405,6 +532,7 @@ async fn idempotent_write_started_execution_is_replayed_after_reentry() {
         .await
         .unwrap();
     let invocation_id = batch.calls[2].invocation_id.clone();
+    approve(storage.as_ref(), invocation_id.clone()).await;
     let begin = BeginToolExecutionRequest {
         scope: scope(),
         invocation_id,
@@ -442,6 +570,7 @@ async fn explicit_unknown_outcome_is_recorded_idempotently() {
         .await
         .unwrap();
     let invocation_id = batch.calls[1].invocation_id.clone();
+    approve(storage.as_ref(), invocation_id.clone()).await;
     begin_tool_execution(
         storage.as_ref(),
         BeginToolExecutionRequest {
@@ -468,6 +597,62 @@ async fn explicit_unknown_outcome_is_recorded_idempotently() {
     let semantic = read_semantic_state(storage.as_ref()).await;
     assert_eq!(semantic.messages.len(), 1);
     assert_eq!(semantic.outbox_count, 1);
+}
+
+#[tokio::test]
+async fn rejected_tool_is_terminal_and_cannot_be_approved_or_started() {
+    let (_directory, storage) = storage("project-1").await;
+    let batch = prepare_tool_batch(storage.as_ref(), prepare_request())
+        .await
+        .unwrap();
+    let invocation_id = batch.calls[1].invocation_id.clone();
+    let rejected = decide_tool_approval(
+        storage.as_ref(),
+        DecideToolApprovalRequest {
+            scope: scope(),
+            invocation_id: invocation_id.clone(),
+            decision: ToolApprovalDecision::Reject,
+            reason: Some("the requested write was not authorized".to_string()),
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(rejected.execution.status, ToolExecutionStatus::Rejected);
+    assert!(rejected.execution.started_at.is_none());
+    assert!(rejected.execution.completed_at.is_some());
+    assert!(matches!(
+        begin_tool_execution(
+            storage.as_ref(),
+            BeginToolExecutionRequest {
+                scope: scope(),
+                invocation_id: invocation_id.clone(),
+                now: Utc::now(),
+            },
+        )
+        .await
+        .unwrap(),
+        BeginToolExecutionResult::AlreadyCompleted(_)
+    ));
+    let conflict = decide_tool_approval(
+        storage.as_ref(),
+        DecideToolApprovalRequest {
+            scope: scope(),
+            invocation_id,
+            decision: ToolApprovalDecision::Approve,
+            reason: Some("changed my mind".to_string()),
+            now: Utc::now(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(conflict.to_string().contains("conflicts"));
+    let semantic = read_semantic_state(storage.as_ref()).await;
+    assert_eq!(semantic.messages.len(), 1);
+    assert_eq!(
+        semantic.messages[0].structured_payload.as_ref().unwrap()["status"],
+        "rejected"
+    );
 }
 
 struct SeedConflictingToolMessage {

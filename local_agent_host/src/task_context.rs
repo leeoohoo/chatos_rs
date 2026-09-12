@@ -406,9 +406,14 @@ fn tool_receipt(record: ToolExecutionStateRecord) -> Option<TaskRunnerToolReceip
     let execution = record.execution;
     let status = match execution.status {
         ToolExecutionStatus::Succeeded => TaskRunnerToolReceiptStatus::Succeeded,
-        ToolExecutionStatus::Failed => TaskRunnerToolReceiptStatus::Failed,
+        ToolExecutionStatus::Failed | ToolExecutionStatus::Rejected => {
+            TaskRunnerToolReceiptStatus::Failed
+        }
         ToolExecutionStatus::OutcomeUnknown => TaskRunnerToolReceiptStatus::OutcomeUnknown,
-        ToolExecutionStatus::Requested | ToolExecutionStatus::Started => return None,
+        ToolExecutionStatus::Requested
+        | ToolExecutionStatus::AwaitingApproval
+        | ToolExecutionStatus::Approved
+        | ToolExecutionStatus::Started => return None,
     };
     let verification = status == TaskRunnerToolReceiptStatus::Succeeded
         && execution

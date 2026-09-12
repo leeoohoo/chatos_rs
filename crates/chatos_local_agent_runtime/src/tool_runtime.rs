@@ -5,14 +5,14 @@ use std::collections::HashSet;
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    AgentEventStateRecord, ClientStorage, PutRecord, RecordMetadata, RecordQuery, RecordScope,
-    StorageError, StorageResult, StorageTransaction, ToolExecutionStateRecord,
+    AgentEventStateRecord, ClientStorage, ListQuery, PutRecord, RecordMetadata, RecordQuery,
+    RecordScope, StorageError, StorageResult, StorageTransaction, ToolExecutionStateRecord,
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
     AgentMessage, AgentMessageRole, LocalAgentEventStatus, LocalAgentEventType,
-    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ToolEffect, ToolExecution,
-    ToolExecutionStatus,
+    LocalAgentRunStatus, MemorySyncStatus, MessageMode, ToolApprovalDecision, ToolEffect,
+    ToolExecution, ToolExecutionStatus,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -51,6 +51,115 @@ pub struct PrepareToolBatchRequest {
     pub event_id: String,
     pub claim_token: String,
     pub now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeferToolBatchForApprovalRequest {
+    pub scope: RecordScope,
+    pub event_id: String,
+    pub claim_token: String,
+    pub batch: PreparedToolBatch,
+    pub now: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolApprovalDeferralResult {
+    Deferred(AgentEventStateRecord),
+    Ready(AgentEventStateRecord),
+}
+
+/// Releases a claimed tool event into a durable, non-runnable wait state.
+/// The approval transaction makes it runnable again only after every
+/// side-effecting invocation in the frozen batch has a decision.
+pub async fn defer_tool_batch_for_approval(
+    storage: &dyn ClientStorage,
+    request: DeferToolBatchForApprovalRequest,
+) -> StorageResult<ToolApprovalDeferralResult> {
+    let mut operation = DeferToolBatchForApprovalOperation {
+        request: Some(request),
+        result: None,
+    };
+    storage.transaction(&mut operation).await?;
+    operation.result.ok_or(StorageError::Transaction {
+        reason: "tool approval deferral returned no result".to_string(),
+    })
+}
+
+struct DeferToolBatchForApprovalOperation {
+    request: Option<DeferToolBatchForApprovalRequest>,
+    result: Option<ToolApprovalDeferralResult>,
+}
+
+#[async_trait]
+impl StorageTransaction for DeferToolBatchForApprovalOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let request = self.request.take().ok_or(StorageError::Transaction {
+            reason: "tool approval deferral request was already consumed".to_string(),
+        })?;
+        if request.batch.event_id != request.event_id {
+            return invalid_data("tool approval deferral batch does not match its event");
+        }
+        let mut event = repositories
+            .agent_events()
+            .get(&RecordQuery {
+                scope: request.scope.clone(),
+                id: request.event_id,
+            })
+            .await?
+            .ok_or(StorageError::NotFound)?;
+        if event.event.event_type != LocalAgentEventType::ToolBatchRequested
+            || event.event.status != LocalAgentEventStatus::Claimed
+            || event.event.claim_token.as_deref() != Some(request.claim_token.as_str())
+            || event.event.run_id != request.batch.run_id
+        {
+            return invalid_data("tool approval deferral does not own the claimed batch event");
+        }
+        let mut awaiting = false;
+        for call in &request.batch.calls {
+            let execution = repositories
+                .tool_executions()
+                .get(&RecordQuery {
+                    scope: request.scope.clone(),
+                    id: call.invocation_id.clone(),
+                })
+                .await?
+                .ok_or(StorageError::NotFound)?;
+            if execution.execution.run_id != request.batch.run_id
+                || execution.execution.batch_id != request.batch.batch_id
+            {
+                return invalid_data("tool approval execution is outside the frozen batch");
+            }
+            awaiting |= execution.execution.status == ToolExecutionStatus::AwaitingApproval;
+        }
+        if !awaiting {
+            self.result = Some(ToolApprovalDeferralResult::Ready(event));
+            return Ok(());
+        }
+
+        let revision = event.metadata.revision;
+        event.event.status = LocalAgentEventStatus::Pending;
+        event.event.claimed_by_device_id = None;
+        event.event.claim_token = None;
+        event.event.claim_until = None;
+        event.event.available_at = request
+            .now
+            .checked_add_signed(chrono::Duration::days(3_650))
+            .ok_or_else(|| StorageError::InvalidData {
+                reason: "tool approval wait deadline overflowed".to_string(),
+            })?;
+        let event = repositories
+            .agent_events()
+            .put(PutRecord {
+                record: event,
+                expected_revision: Some(revision),
+            })
+            .await?;
+        self.result = Some(ToolApprovalDeferralResult::Deferred(event));
+        Ok(())
+    }
 }
 
 /// Freezes every invocation before any local implementation is called. A
@@ -131,8 +240,14 @@ impl StorageTransaction for PrepareToolBatchOperation {
                 tool_name: call.tool_name.clone(),
                 effect: call.effect,
                 arguments_digest,
-                status: ToolExecutionStatus::Requested,
+                status: if call.effect.requires_approval() {
+                    ToolExecutionStatus::AwaitingApproval
+                } else {
+                    ToolExecutionStatus::Requested
+                },
                 bounded_result: None,
+                approval_decided_at: None,
+                approval_reason: None,
                 started_at: None,
                 completed_at: None,
             };
@@ -344,6 +459,7 @@ pub struct BeginToolExecutionRequest {
 pub enum BeginToolExecutionResult {
     Execute(ToolExecutionStateRecord),
     AlreadyCompleted(ToolExecutionStateRecord),
+    AwaitingApproval(ToolExecutionStateRecord),
     NeedsReview(ToolExecutionStateRecord),
 }
 
@@ -394,7 +510,7 @@ impl StorageTransaction for BeginToolExecutionOperation {
                 reason: format!("stored tool execution is invalid: {error}"),
             })?;
         self.result = Some(match record.execution.status {
-            ToolExecutionStatus::Requested => {
+            ToolExecutionStatus::Requested | ToolExecutionStatus::Approved => {
                 let revision = record.metadata.revision;
                 record.execution.status = ToolExecutionStatus::Started;
                 record.execution.started_at = Some(request.now);
@@ -428,9 +544,232 @@ impl StorageTransaction for BeginToolExecutionOperation {
             ToolExecutionStatus::Succeeded | ToolExecutionStatus::Failed => {
                 BeginToolExecutionResult::AlreadyCompleted(record)
             }
+            ToolExecutionStatus::Rejected => BeginToolExecutionResult::AlreadyCompleted(record),
+            ToolExecutionStatus::AwaitingApproval => {
+                BeginToolExecutionResult::AwaitingApproval(record)
+            }
             ToolExecutionStatus::OutcomeUnknown => BeginToolExecutionResult::NeedsReview(record),
         });
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DecideToolApprovalRequest {
+    pub scope: RecordScope,
+    pub invocation_id: String,
+    pub decision: ToolApprovalDecision,
+    pub reason: Option<String>,
+    pub now: DateTime<Utc>,
+}
+
+/// Commits a per-invocation approval decision before any tool I/O can begin.
+/// Repeating the exact decision is idempotent; a conflicting decision is
+/// rejected and can never overwrite a started or terminal execution.
+pub async fn decide_tool_approval(
+    storage: &dyn ClientStorage,
+    request: DecideToolApprovalRequest,
+) -> StorageResult<ToolExecutionStateRecord> {
+    let mut operation = DecideToolApprovalOperation {
+        request: Some(request),
+        result: None,
+    };
+    storage.transaction(&mut operation).await?;
+    operation.result.ok_or(StorageError::Transaction {
+        reason: "tool approval decision returned no result".to_string(),
+    })
+}
+
+struct DecideToolApprovalOperation {
+    request: Option<DecideToolApprovalRequest>,
+    result: Option<ToolExecutionStateRecord>,
+}
+
+#[async_trait]
+impl StorageTransaction for DecideToolApprovalOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let request = self.request.take().ok_or(StorageError::Transaction {
+            reason: "tool approval request was already consumed".to_string(),
+        })?;
+        if request
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.trim().is_empty())
+        {
+            return invalid_data("tool approval reason must not be blank");
+        }
+        let mut record = repositories
+            .tool_executions()
+            .get(&RecordQuery {
+                scope: request.scope.clone(),
+                id: request.invocation_id,
+            })
+            .await?
+            .ok_or(StorageError::NotFound)?;
+        record
+            .execution
+            .validate()
+            .map_err(|error| StorageError::InvalidData {
+                reason: format!("stored tool execution is invalid: {error}"),
+            })?;
+        if !record.execution.effect.requires_approval() {
+            return invalid_data("read-only tools do not accept approval decisions");
+        }
+        let target = match request.decision {
+            ToolApprovalDecision::Approve => ToolExecutionStatus::Approved,
+            ToolApprovalDecision::Reject => ToolExecutionStatus::Rejected,
+        };
+        if record.execution.status != ToolExecutionStatus::AwaitingApproval {
+            let same_decision = match request.decision {
+                ToolApprovalDecision::Approve => matches!(
+                    record.execution.status,
+                    ToolExecutionStatus::Approved
+                        | ToolExecutionStatus::Started
+                        | ToolExecutionStatus::Succeeded
+                        | ToolExecutionStatus::Failed
+                        | ToolExecutionStatus::OutcomeUnknown
+                ),
+                ToolApprovalDecision::Reject => {
+                    record.execution.status == ToolExecutionStatus::Rejected
+                }
+            };
+            if same_decision && record.execution.approval_reason == request.reason {
+                self.result = Some(record);
+                return Ok(());
+            }
+            return invalid_data("tool approval decision conflicts with durable execution state");
+        }
+
+        let revision = record.metadata.revision;
+        record.execution.status = target;
+        record.execution.approval_decided_at = Some(request.now);
+        record.execution.approval_reason = request.reason.clone();
+        if request.decision == ToolApprovalDecision::Reject {
+            record.execution.bounded_result = Some(json!({
+                "type": "tool_rejected",
+                "reason": request.reason,
+            }));
+            record.execution.completed_at = Some(request.now);
+        }
+        record
+            .execution
+            .validate()
+            .map_err(|error| StorageError::InvalidData {
+                reason: format!("tool approval decision is invalid: {error}"),
+            })?;
+        let record = repositories
+            .tool_executions()
+            .put(PutRecord {
+                record,
+                expected_revision: Some(revision),
+            })
+            .await?;
+        append_tool_snapshot(repositories, &record).await?;
+        if request.decision == ToolApprovalDecision::Reject {
+            persist_tool_semantic_message(repositories, &record, request.now).await?;
+        }
+        wake_tool_batch_after_approvals(
+            repositories,
+            &request.scope,
+            &record.execution.run_id,
+            &record.execution.batch_id,
+            request.now,
+        )
+        .await?;
+        self.result = Some(record);
+        Ok(())
+    }
+}
+
+async fn wake_tool_batch_after_approvals(
+    repositories: &mut dyn TransactionRepositories,
+    scope: &RecordScope,
+    run_id: &str,
+    batch_id: &str,
+    now: DateTime<Utc>,
+) -> StorageResult<()> {
+    let mut cursor = None;
+    loop {
+        let page = repositories
+            .tool_executions()
+            .list(&ListQuery {
+                scope: scope.clone(),
+                cursor: cursor.clone(),
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        if page.records.iter().any(|record| {
+            record.execution.run_id == run_id
+                && record.execution.batch_id == batch_id
+                && record.execution.status == ToolExecutionStatus::AwaitingApproval
+        }) {
+            return Ok(());
+        }
+        let Some(next) = page.next_cursor else {
+            break;
+        };
+        if cursor.as_deref() == Some(next.as_str()) {
+            return invalid_data("tool execution pagination cursor did not advance");
+        }
+        cursor = Some(next);
+    }
+
+    let run = repositories
+        .agent_runs()
+        .get(&RecordQuery {
+            scope: scope.clone(),
+            id: run_id.to_string(),
+        })
+        .await?
+        .ok_or(StorageError::NotFound)?;
+    if run.run.status != LocalAgentRunStatus::WaitingToolResult
+        || run.run.pending_batch_id.as_deref() != Some(batch_id)
+    {
+        return invalid_data("approved tool batch no longer matches the active Run");
+    }
+
+    let mut cursor = None;
+    loop {
+        let page = repositories
+            .agent_events()
+            .list(&ListQuery {
+                scope: scope.clone(),
+                cursor: cursor.clone(),
+                limit: ListQuery::MAX_LIMIT,
+            })
+            .await?;
+        if let Some(mut event) = page.records.into_iter().find(|event| {
+            event.event.run_id == run_id
+                && event.event.event_type == LocalAgentEventType::ToolBatchRequested
+                && event.event.expected_version == run.run.version
+                && matches!(
+                    event.event.status,
+                    LocalAgentEventStatus::Pending | LocalAgentEventStatus::Claimed
+                )
+        }) {
+            if event.event.status == LocalAgentEventStatus::Pending {
+                let revision = event.metadata.revision;
+                event.event.available_at = now;
+                repositories
+                    .agent_events()
+                    .put(PutRecord {
+                        record: event,
+                        expected_revision: Some(revision),
+                    })
+                    .await?;
+            }
+            return Ok(());
+        }
+        let Some(next) = page.next_cursor else {
+            return invalid_data("approved tool batch has no resumable event");
+        };
+        if cursor.as_deref() == Some(next.as_str()) {
+            return invalid_data("tool event pagination cursor did not advance");
+        }
+        cursor = Some(next);
     }
 }
 
@@ -608,6 +947,7 @@ async fn persist_tool_semantic_message(
         execution.status,
         ToolExecutionStatus::Succeeded
             | ToolExecutionStatus::Failed
+            | ToolExecutionStatus::Rejected
             | ToolExecutionStatus::OutcomeUnknown
     ) {
         return invalid_data("only a terminal tool outcome can become a semantic message");
@@ -648,7 +988,9 @@ async fn persist_tool_semantic_message(
         ),
     };
     let content = match execution.status {
-        ToolExecutionStatus::Succeeded | ToolExecutionStatus::Failed => execution
+        ToolExecutionStatus::Succeeded
+        | ToolExecutionStatus::Failed
+        | ToolExecutionStatus::Rejected => execution
             .bounded_result
             .as_ref()
             .map(Value::to_string)
@@ -700,6 +1042,7 @@ async fn persist_tool_semantic_message(
 pub struct ToolBatchExecutionState {
     pub records: Vec<ToolExecutionStateRecord>,
     pub all_completed: bool,
+    pub awaiting_approval: bool,
     pub outcome_unknown: bool,
 }
 
@@ -751,9 +1094,14 @@ impl StorageTransaction for InspectToolBatchOperation {
             all_completed: records.iter().all(|record| {
                 matches!(
                     record.execution.status,
-                    ToolExecutionStatus::Succeeded | ToolExecutionStatus::Failed
+                    ToolExecutionStatus::Succeeded
+                        | ToolExecutionStatus::Failed
+                        | ToolExecutionStatus::Rejected
                 )
             }),
+            awaiting_approval: records
+                .iter()
+                .any(|record| record.execution.status == ToolExecutionStatus::AwaitingApproval),
             outcome_unknown: records
                 .iter()
                 .any(|record| record.execution.status == ToolExecutionStatus::OutcomeUnknown),

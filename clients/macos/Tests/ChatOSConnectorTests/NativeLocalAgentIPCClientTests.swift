@@ -28,7 +28,7 @@ struct NativeLocalAgentIPCClientTests {
         let object = try #require(
             JSONSerialization.jsonObject(with: request) as? [String: Any]
         )
-        #expect(object["protocol_version"] as? Int == 1)
+        #expect(object["protocol_version"] as? Int == 5)
         #expect(object["owner_user_id"] as? String == "user-1")
         let command = try #require(object["command"] as? [String: Any])
         #expect(command["type"] as? String == "answer_user_question")
@@ -109,7 +109,7 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
             ]
         }
         return try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 1,
+            "protocol_version": 5,
             "request_id": requestID,
             "response": response,
         ])
