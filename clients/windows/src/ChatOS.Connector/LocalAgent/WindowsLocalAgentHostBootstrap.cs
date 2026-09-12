@@ -32,6 +32,7 @@ public sealed record WindowsLocalAgentHostBootstrapSettings
     public required string AccountId { get; init; }
     public required string DeviceId { get; init; }
     public required string AttachmentGrantDirectory { get; init; }
+    public required string PlatformStateDirectory { get; init; }
     public required Uri ModelGatewayBaseUri { get; init; }
     public required Uri MemoryEngineBaseUri { get; init; }
     public string MemorySourceId { get; init; } = "local-agent";
@@ -62,6 +63,7 @@ public sealed class WindowsLocalAgentHostBootstrapBuilder
         ArgumentNullException.ThrowIfNull(settings);
         Validate(settings);
         EnsurePrivateDirectory(settings.AttachmentGrantDirectory);
+        EnsurePrivateDirectory(settings.PlatformStateDirectory);
         var launchId = $"launch-{Guid.NewGuid():N}";
         var workerId = $"worker-{Guid.NewGuid():N}";
         var pipeName = $"chatos-local-agent-{Guid.NewGuid():N}";
@@ -164,6 +166,7 @@ public sealed class WindowsLocalAgentHostBootstrapBuilder
                     ["pipe_name"] = $@"\\.\pipe\{pipeName}",
                 },
                 ["attachment_grant_directory"] = Path.GetFullPath(settings.AttachmentGrantDirectory),
+                ["platform_state_directory"] = Path.GetFullPath(settings.PlatformStateDirectory),
                 ["model_gateway_base_url"] = settings.ModelGatewayBaseUri.AbsoluteUri.TrimEnd('/'),
                 ["memory_engine_base_url"] = settings.MemoryEngineBaseUri.AbsoluteUri.TrimEnd('/'),
                 ["memory_source_id"] = settings.MemorySourceId,

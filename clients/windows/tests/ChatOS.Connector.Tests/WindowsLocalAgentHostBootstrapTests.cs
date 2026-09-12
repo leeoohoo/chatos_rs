@@ -88,6 +88,7 @@ public sealed class WindowsLocalAgentHostBootstrapTests
         AccountId = "user-1",
         DeviceId = "device-1",
         AttachmentGrantDirectory = Path.Combine(root, "grants"),
+        PlatformStateDirectory = Path.Combine(root, "state"),
         ModelGatewayBaseUri = new Uri("https://api.example.com"),
         MemoryEngineBaseUri = new Uri("https://memory.example.com"),
         Storage = storage,

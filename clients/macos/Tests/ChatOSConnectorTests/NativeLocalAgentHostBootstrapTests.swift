@@ -25,6 +25,7 @@ struct NativeLocalAgentHostBootstrapTests {
         )
         #expect(request["owner_user_id"] as? String == "user-1")
         #expect(request["attachment_grant_directory"] as? String == fixture.grants.path)
+        #expect(request["platform_state_directory"] as? String == fixture.state.path)
         let profile = try #require(request["storage_profile"] as? [String: Any])
         #expect(profile["backend"] as? String == "sqlite")
         #expect(profile["database_path"] as? String == database.path)
@@ -73,6 +74,7 @@ private struct BootstrapFixture: Sendable {
     let root: URL
     let runtime: URL
     let grants: URL
+    let state: URL
     let service: String
     let store: NativeLocalAgentCredentialStore
     let builder: NativeLocalAgentHostBootstrapBuilder
@@ -84,6 +86,7 @@ private struct BootstrapFixture: Sendable {
         )
         runtime = root.appendingPathComponent("runtime", isDirectory: true)
         grants = root.appendingPathComponent("grants", isDirectory: true)
+        state = root.appendingPathComponent("state", isDirectory: true)
         service = "com.chatos.tests.local-agent.bootstrap.\(UUID().uuidString)"
         store = try NativeLocalAgentCredentialStore(service: service)
         builder = NativeLocalAgentHostBootstrapBuilder(credentials: store)
@@ -111,6 +114,7 @@ private struct BootstrapFixture: Sendable {
             deviceID: "device-1",
             runtimeDirectory: runtime,
             attachmentGrantDirectory: grants,
+            platformStateDirectory: state,
             modelGatewayBaseURL: URL(string: "https://api.example.com")!,
             memoryEngineBaseURL: URL(string: "https://memory.example.com")!,
             storage: storage

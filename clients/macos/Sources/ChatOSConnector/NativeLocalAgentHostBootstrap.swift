@@ -66,6 +66,7 @@ public struct NativeLocalAgentHostBootstrapSettings: Sendable {
     public let deviceID: String
     public let runtimeDirectory: URL
     public let attachmentGrantDirectory: URL
+    public let platformStateDirectory: URL
     public let modelGatewayBaseURL: URL
     public let memoryEngineBaseURL: URL
     public let memorySourceID: String
@@ -77,6 +78,7 @@ public struct NativeLocalAgentHostBootstrapSettings: Sendable {
         deviceID: String,
         runtimeDirectory: URL = defaultRuntimeDirectory,
         attachmentGrantDirectory: URL,
+        platformStateDirectory: URL,
         modelGatewayBaseURL: URL,
         memoryEngineBaseURL: URL,
         memorySourceID: String = "local-agent",
@@ -87,6 +89,7 @@ public struct NativeLocalAgentHostBootstrapSettings: Sendable {
         self.deviceID = deviceID
         self.runtimeDirectory = runtimeDirectory
         self.attachmentGrantDirectory = attachmentGrantDirectory
+        self.platformStateDirectory = platformStateDirectory
         self.modelGatewayBaseURL = modelGatewayBaseURL
         self.memoryEngineBaseURL = memoryEngineBaseURL
         self.memorySourceID = memorySourceID
@@ -110,6 +113,7 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
         try validate(settings)
         try ensurePrivateDirectory(settings.runtimeDirectory)
         try ensurePrivateDirectory(settings.attachmentGrantDirectory)
+        try ensurePrivateDirectory(settings.platformStateDirectory)
         let launchID = "launch-\(UUID().uuidString.lowercased())"
         let workerID = "worker-\(UUID().uuidString.lowercased())"
         let socketURL = settings.runtimeDirectory
@@ -200,6 +204,7 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
             "worker_id": workerID,
             "ipc_endpoint": ["transport": "unix_socket", "path": socketURL.path],
             "attachment_grant_directory": settings.attachmentGrantDirectory.path,
+            "platform_state_directory": settings.platformStateDirectory.path,
             "model_gateway_base_url": settings.modelGatewayBaseURL.absoluteString,
             "memory_engine_base_url": settings.memoryEngineBaseURL.absoluteString,
             "memory_source_id": settings.memorySourceID,

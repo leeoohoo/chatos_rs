@@ -86,7 +86,7 @@ public sealed record WindowsLocalAgentHostReady(
 
 internal static class LocalAgentHostLaunchProtocol
 {
-    public const uint Version = 1;
+    public const uint Version = 2;
     public const int MaximumFrameBytes = 1024 * 1024;
 }
 

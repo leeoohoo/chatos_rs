@@ -4,7 +4,7 @@
 import Darwin
 import Foundation
 
-public let localAgentHostLaunchProtocolVersion: UInt32 = 1
+public let localAgentHostLaunchProtocolVersion: UInt32 = 2
 
 public enum NativeLocalAgentHostLaunchError: Error, Equatable, Sendable {
     case invalidConfiguration(String)

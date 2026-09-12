@@ -17,7 +17,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use url::Url;
 use zeroize::{Zeroize, Zeroizing};
 
-pub const LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION: u32 = 1;
+pub const LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION: u32 = 2;
 pub const MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES: usize = 1024 * 1024;
 
 const WINDOWS_PIPE_PREFIX: &str = r"\\.\pipe\chatos-local-agent-";
@@ -281,6 +281,7 @@ pub struct LocalAgentHostLaunchRequest {
     pub worker_id: String,
     pub ipc_endpoint: LocalAgentHostIpcEndpoint,
     pub attachment_grant_directory: String,
+    pub platform_state_directory: String,
     pub model_gateway_base_url: String,
     pub memory_engine_base_url: String,
     pub memory_source_id: String,
@@ -299,6 +300,7 @@ impl fmt::Debug for LocalAgentHostLaunchRequest {
             .field("worker_id", &self.worker_id)
             .field("ipc_endpoint", &self.ipc_endpoint)
             .field("attachment_grant_directory", &"[PRIVATE DIRECTORY]")
+            .field("platform_state_directory", &"[PRIVATE DIRECTORY]")
             .field("model_gateway_base_url", &self.model_gateway_base_url)
             .field("memory_engine_base_url", &self.memory_engine_base_url)
             .field("memory_source_id", &self.memory_source_id)
@@ -325,11 +327,20 @@ impl LocalAgentHostLaunchRequest {
         validate_service_url("model_gateway_base_url", &self.model_gateway_base_url)?;
         validate_service_url("memory_engine_base_url", &self.memory_engine_base_url)?;
         self.ipc_endpoint.validate()?;
-        let grant_directory = Path::new(&self.attachment_grant_directory);
-        if !grant_directory.is_absolute() || self.attachment_grant_directory.trim().is_empty() {
-            return Err(LocalAgentHostBootstrapError::InvalidIdentity(
+        for (field, value) in [
+            (
                 "attachment_grant_directory",
-            ));
+                self.attachment_grant_directory.as_str(),
+            ),
+            (
+                "platform_state_directory",
+                self.platform_state_directory.as_str(),
+            ),
+        ] {
+            let directory = Path::new(value);
+            if !directory.is_absolute() || value.trim().is_empty() {
+                return Err(LocalAgentHostBootstrapError::InvalidIdentity(field));
+            }
         }
         self.storage_profile
             .validate()

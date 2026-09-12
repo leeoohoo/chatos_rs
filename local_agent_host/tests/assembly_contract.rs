@@ -82,11 +82,18 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
     let socket_path = directory.path().join("local-agent.sock");
     let database_path = directory.path().join("client.sqlite");
     let grant_directory = directory.path().join("attachment-grants");
+    let platform_state_directory = directory.path().join("platform-state");
     std::fs::create_dir(&grant_directory).unwrap();
+    std::fs::create_dir(&platform_state_directory).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&grant_directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(
+            &platform_state_directory,
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
     }
     let launch = json!({
         "protocol_version": LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
@@ -99,6 +106,7 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
             "path": socket_path,
         },
         "attachment_grant_directory": grant_directory,
+        "platform_state_directory": platform_state_directory,
         "model_gateway_base_url": "https://api.example.com",
         "memory_engine_base_url": "https://memory.example.com",
         "memory_source_id": "local-agent",

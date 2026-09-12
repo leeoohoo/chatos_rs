@@ -80,7 +80,7 @@ private struct RestartingHostFixture: Sendable {
         length = struct.unpack('>I', sys.stdin.buffer.read(4))[0]
         request = json.loads(sys.stdin.buffer.read(length))
         ready = {
-            'protocol_version': 1,
+            'protocol_version': 2,
             'launch_id': request['launch_id'],
             'process_id': os.getpid(),
             'client_endpoint': request['ipc_endpoint']['path'],
@@ -101,7 +101,7 @@ private struct RestartingHostFixture: Sendable {
 
     func configuration() throws -> NativeLocalAgentHostLaunchConfiguration {
         let request = try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 1,
+            "protocol_version": 2,
             "launch_id": "launch-1",
             "ipc_endpoint": ["transport": "unix_socket", "path": socketPath],
             "credentials": ["model_access_token": UUID().uuidString],
