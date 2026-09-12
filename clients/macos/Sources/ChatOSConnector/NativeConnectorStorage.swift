@@ -1,8 +1,6 @@
 import ChatOSCore
 import CryptoKit
 import Foundation
-import LocalAuthentication
-import Security
 
 struct NativeConnectorPersistentState: Codable, Sendable {
     var user: LocalConnectorUser?
@@ -81,10 +79,6 @@ struct NativeConnectorSecretStore: Sendable {
 
     func load(account: String) throws -> Data? {
         let url = secretURL(account: account)
-        if !FileManager.default.fileExists(atPath: url.path),
-           let legacy = loadLegacyKeychainWithoutUI(account: account) {
-            try save(legacy, account: account)
-        }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try Data(contentsOf: url)
     }
@@ -112,22 +106,6 @@ struct NativeConnectorSecretStore: Sendable {
             CharacterSet.alphanumerics.contains(scalar) || scalar == "-" ? String(scalar) : "_"
         }.joined()
         return rootURL.appendingPathComponent(safeName, isDirectory: false)
-    }
-
-    private func loadLegacyKeychainWithoutUI(account: String) -> Data? {
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.chatos.swift.native-connector",
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: context,
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
     }
 }
 
