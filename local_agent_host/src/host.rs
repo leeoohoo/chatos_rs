@@ -480,7 +480,19 @@ impl LocalAgentHost {
                 claim_token.as_str(),
                 execution,
             )
-            .await?;
+            .await;
+        let executed = match executed {
+            Ok(executed) => executed,
+            Err(error) => match memory_context_block(&run, &error) {
+                Some(details) => ExecutedModelStep {
+                    result: ModelStepResult::Blocked(details),
+                    output: None,
+                    token_assessments: Vec::new(),
+                    provider_context_commit: None,
+                },
+                None => return Err(error),
+            },
+        };
         let completion_now = Utc::now();
         let retry_at = if matches!(&executed.result, ModelStepResult::Retry(_)) {
             Some(
@@ -865,4 +877,44 @@ fn run_control_ipc_error(error: LocalAgentHostError) -> LocalAgentIpcError {
             LocalAgentHostError::Storage(StorageError::Unavailable { .. })
         ),
     }
+}
+
+fn memory_context_block(
+    run: &chatos_local_agent_protocol::LocalAgentRun,
+    error: &LocalAgentHostError,
+) -> Option<serde_json::Value> {
+    if run.context_strategy != chatos_local_agent_protocol::ContextStrategy::MemoryEngine {
+        return None;
+    }
+    let (reason, detail) = match error {
+        LocalAgentHostError::ContextRuntime(LocalAgentContextRuntimeError::Runtime(detail)) => {
+            ("memory_sync_unavailable", detail.clone())
+        }
+        LocalAgentHostError::ModelStepExecutor(ModelStepExecutorError::MemoryContext(error)) => {
+            ("memory_context_unavailable", error.to_string())
+        }
+        LocalAgentHostError::ModelStepExecutor(
+            ModelStepExecutorError::ContextReductionNoImprovement { .. },
+        ) => ("memory_summary_no_improvement", error.to_string()),
+        LocalAgentHostError::ModelStepExecutor(
+            ModelStepExecutorError::ContextReductionAttemptsExhausted { .. },
+        ) => ("memory_summary_attempts_exhausted", error.to_string()),
+        _ => return None,
+    };
+    Some(serde_json::json!({
+        "reason": reason,
+        "detail": bounded_runtime_error(detail.as_str()),
+    }))
+}
+
+fn bounded_runtime_error(error: &str) -> &str {
+    const MAX_ERROR_BYTES: usize = 2_048;
+    if error.len() <= MAX_ERROR_BYTES {
+        return error;
+    }
+    let mut end = MAX_ERROR_BYTES;
+    while !error.is_char_boundary(end) {
+        end -= 1;
+    }
+    &error[..end]
 }

@@ -221,6 +221,38 @@ fn retries_are_bounded_and_then_fail_terminally() {
 }
 
 #[test]
+fn blocked_model_context_pauses_without_consuming_retry_budget() {
+    let mut run = run(LocalAgentRunStatus::ModelRunning);
+    run.retry_count = 2;
+    let details = serde_json::json!({
+        "reason": "memory_context_unavailable",
+        "detail": "active summary is unavailable"
+    });
+    let reduction = reduce_claimed_event(
+        &run,
+        &event(&run, LocalAgentEventType::ModelStepCompleted),
+        StepEvidence::Model {
+            result: ModelStepResult::Blocked(details.clone()),
+            pending_batch_id: None,
+            retry_at: None,
+        },
+        Utc::now(),
+        ReducerPolicy::default(),
+    )
+    .unwrap();
+    assert_eq!(reduction.run.status, LocalAgentRunStatus::Paused);
+    assert_eq!(reduction.run.retry_count, 2);
+    assert!(reduction.emitted_events.is_empty());
+    assert_eq!(
+        reduction.run.pending_interaction,
+        Some(serde_json::json!({
+            "type": "runtime_blocked",
+            "details": details,
+        }))
+    );
+}
+
+#[test]
 fn stale_events_cannot_advance_a_run() {
     let run = run(LocalAgentRunStatus::Queued);
     let mut stale = event(&run, LocalAgentEventType::RunStarted);

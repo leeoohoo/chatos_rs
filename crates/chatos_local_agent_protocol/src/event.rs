@@ -96,6 +96,7 @@ pub enum ModelStepResult {
     ToolCommand(Value),
     Continue(Value),
     Retry(Value),
+    Blocked(Value),
     AskUser(Value),
     Final(Value),
     Failed(Value),

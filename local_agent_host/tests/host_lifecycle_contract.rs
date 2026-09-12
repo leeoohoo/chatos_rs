@@ -83,6 +83,8 @@ struct Tools;
 
 struct TestContextRuntime;
 
+struct FailingMemoryContextRuntime;
+
 #[async_trait]
 impl LocalAgentContextRuntime for TestContextRuntime {
     async fn prepare_model_step_context(
@@ -127,6 +129,30 @@ impl LocalAgentContextRuntime for TestContextRuntime {
                 )
                 .collect(),
         })
+    }
+}
+
+#[async_trait]
+impl LocalAgentContextRuntime for FailingMemoryContextRuntime {
+    async fn prepare_model_step_context(
+        &self,
+        _storage: &dyn ClientStorage,
+        _scope: &RecordScope,
+        _run: &LocalAgentRun,
+        _cancellation: &CancellationToken,
+    ) -> Result<ModelStepContext, LocalAgentContextRuntimeError> {
+        Err(LocalAgentContextRuntimeError::Runtime(
+            "Memory Engine active summary is unavailable".to_string(),
+        ))
+    }
+
+    async fn seal_provider_context_commit(
+        &self,
+        _run: &LocalAgentRun,
+        _commit: ProviderNativeContextCommit,
+        _now: chrono::DateTime<Utc>,
+    ) -> Result<DurableProviderContextCommit, LocalAgentContextRuntimeError> {
+        unreachable!("Memory Engine strategy has no provider context commit")
     }
 }
 
@@ -323,6 +349,61 @@ impl ModelGatewayClient for Gateway {
 
 struct Seed {
     now: chrono::DateTime<Utc>,
+}
+
+struct SeedMemory {
+    now: chrono::DateTime<Utc>,
+}
+
+#[async_trait]
+impl StorageTransaction for SeedMemory {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        Seed { now: self.now }.execute(repositories).await?;
+        let query = chatos_client_storage::RecordQuery {
+            scope: scope(),
+            id: "run-1".to_string(),
+        };
+        let mut record = repositories
+            .agent_runs()
+            .get(&query)
+            .await?
+            .expect("seeded Run");
+        let revision = record.metadata.revision;
+        record.run.version = revision + 1;
+        record.run.context_strategy = ContextStrategy::MemoryEngine;
+        record.run.model_runtime_snapshot.context_strategy = ContextStrategy::MemoryEngine;
+        record.run.model_runtime_snapshot.supports_native_compaction = false;
+        record.run.model_runtime_snapshot.provider = "deepseek".to_string();
+        repositories
+            .agent_runs()
+            .put(PutRecord {
+                record,
+                expected_revision: Some(revision),
+            })
+            .await?;
+        let event_query = chatos_client_storage::RecordQuery {
+            scope: scope(),
+            id: "event-1".to_string(),
+        };
+        let mut event = repositories
+            .agent_events()
+            .get(&event_query)
+            .await?
+            .expect("seeded event");
+        let event_revision = event.metadata.revision;
+        event.event.expected_version = revision + 1;
+        repositories
+            .agent_events()
+            .put(PutRecord {
+                record: event,
+                expected_revision: Some(event_revision),
+            })
+            .await?;
+        Ok(())
+    }
 }
 
 struct SeedRunOnly {
@@ -819,6 +900,73 @@ async fn incomplete_provider_terminal_fails_the_run_instead_of_becoming_an_empty
             "response_id": "response-1",
             "provider_request_id": "provider-request-1",
             "provider_http_status": 200
+        }))
+    );
+}
+
+#[tokio::test]
+async fn unavailable_memory_context_pauses_the_run_for_an_explicit_resume() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:memory-block-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([47; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    storage.transaction(&mut SeedMemory { now }).await.unwrap();
+    let profiles =
+        LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
+    let (host, _) = LocalAgentHost::start(
+        storage,
+        Arc::new(Gateway),
+        Arc::new(FailingMemoryContextRuntime),
+        Arc::new(Tools),
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+    let requested = claim_model_request(&host, now).await;
+
+    host.execute_claimed_model_step(
+        &requested,
+        "access-token",
+        ModelGatewayCallbacks::default(),
+        CancellationToken::new(),
+        now,
+    )
+    .await
+    .unwrap();
+    let SchedulerTickResult::Claimed(completed) = host
+        .claim_next("claim-memory-blocked", Utc::now())
+        .await
+        .unwrap()
+    else {
+        panic!("blocked completion was not scheduled");
+    };
+    let committed = host
+        .commit_claimed_protocol_event(&completed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(committed.run_record.run.status, LocalAgentRunStatus::Paused);
+    assert_eq!(committed.run_record.run.retry_count, 0);
+    assert_eq!(
+        committed.run_record.run.pending_interaction,
+        Some(serde_json::json!({
+            "type": "runtime_blocked",
+            "details": {
+                "reason": "memory_sync_unavailable",
+                "detail": "Memory Engine active summary is unavailable"
+            }
         }))
     );
 }

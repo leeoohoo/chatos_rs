@@ -357,6 +357,13 @@ fn reduce_model_result(
                 );
             }
         }
+        ModelStepResult::Blocked(details) => {
+            next.status = LocalAgentRunStatus::Paused;
+            next.pending_interaction = Some(json!({
+                "type": "runtime_blocked",
+                "details": details,
+            }));
+        }
         ModelStepResult::AskUser(question) => {
             next.status = LocalAgentRunStatus::Paused;
             let version = next.version.to_string();
