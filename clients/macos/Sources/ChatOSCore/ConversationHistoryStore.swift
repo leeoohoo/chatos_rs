@@ -12,6 +12,8 @@ public actor ConversationHistoryStore {
         var lastAppliedEventSequence: Int64 = 0
         var appliedEventIDs: Set<String> = []
         var lastAppliedLocalAgentEventSequence: UInt64 = 0
+        var localAgentPromptsByID: [String: AskUserPrompt] = [:]
+        var localAgentPromptRoutes: [String: LocalAgentAskUserRoute] = [:]
         var viewportAnchor: ViewportAnchor?
         var unreadNewerCount = 0
     }
@@ -151,6 +153,49 @@ public actor ConversationHistoryStore {
         }
     }
 
+    public func localAgentPrompts(
+        sessionID: String,
+        limit: Int
+    ) throws -> [AskUserPrompt] {
+        guard limit > 0 else { return [] }
+        guard let prompts = sessions[sessionID]?.localAgentPromptsByID.values else { return [] }
+        return Array(prompts
+            .sorted(by: Self.localAgentPromptOrder)
+            .suffix(limit))
+    }
+
+    public func localAgentPromptRoute(
+        promptID: String,
+        sessionID: String
+    ) throws -> LocalAgentAskUserRoute {
+        guard let state = sessions[sessionID],
+              state.localAgentPromptsByID[promptID]?.status.isPending == true,
+              let route = state.localAgentPromptRoutes[promptID]
+        else {
+            throw LocalAgentConversationHistoryError.promptUnavailable
+        }
+        return route
+    }
+
+    public func updateLocalAgentPromptStatus(
+        promptID: String,
+        sessionID: String,
+        status: AskUserPromptStatus
+    ) throws -> AskUserPrompt {
+        guard var state = sessions[sessionID],
+              var prompt = state.localAgentPromptsByID[promptID]
+        else {
+            throw LocalAgentConversationHistoryError.promptUnavailable
+        }
+        prompt.status = status
+        prompt.updatedAt = Date()
+        state.localAgentPromptsByID[promptID] = prompt
+        if !status.isPending { state.localAgentPromptRoutes[promptID] = nil }
+        sessions[sessionID] = state
+        localUpdateContinuations[sessionID]?.values.forEach { $0.yield(()) }
+        return prompt
+    }
+
     public func applyLocalAgentUIEvent(
         _ event: LocalAgentUIEvent,
         mainChatBinding binding: LocalAgentMainChatRunBinding?
@@ -164,6 +209,31 @@ public actor ConversationHistoryStore {
         guard event.eventSeq > state.lastAppliedLocalAgentEventSequence else { return }
         var turn = try localAgentTurn(binding: binding, existing: state.turnsByID[binding.turnID])
         let didChange = try apply(event, to: &turn)
+        switch event.event {
+        case let .userInteraction(interaction):
+            let prompt = Self.askUserPrompt(
+                interaction,
+                binding: binding,
+                emittedAt: event.emittedAt
+            )
+            state.localAgentPromptsByID[prompt.id] = prompt
+            state.localAgentPromptRoutes[prompt.id] = LocalAgentAskUserRoute(
+                runID: interaction.runID,
+                interactionID: interaction.interactionID
+            )
+        case let .runSnapshot(run) where run.status == .failed || run.status == .cancelled:
+            let resolvedStatus: AskUserPromptStatus = run.status == .cancelled ? .canceled : .failed
+            let promptIDs = state.localAgentPromptRoutes.compactMap { id, route in
+                route.runID == run.runID ? id : nil
+            }
+            for id in promptIDs {
+                state.localAgentPromptsByID[id]?.status = resolvedStatus
+                state.localAgentPromptsByID[id]?.updatedAt = Self.localAgentDate(event.emittedAt)
+                state.localAgentPromptRoutes[id] = nil
+            }
+        default:
+            break
+        }
         state.lastAppliedLocalAgentEventSequence = event.eventSeq
         if didChange {
             turn.revision = max(turn.revision, Int64(clamping: event.eventSeq))
@@ -465,6 +535,64 @@ public actor ConversationHistoryStore {
         }
     }
 
+    private static func askUserPrompt(
+        _ event: LocalAgentUserInteractionEvent,
+        binding: LocalAgentMainChatRunBinding,
+        emittedAt: String
+    ) -> AskUserPrompt {
+        let details = event.details?.objectValue
+        let title = details?["title"]?.plainString?.nonEmpty ?? "需要你的确认"
+        let kind = details?["kind"]?.plainString?.nonEmpty ?? "local_agent"
+        let allowsCancel = details?["allows_cancel"]?.boolValue ?? true
+        let allowsMultiple = details?["allows_multiple"]?.boolValue ?? false
+        let options = event.options.map {
+            AskUserChoiceOption(
+                value: $0.optionID,
+                label: $0.label,
+                description: $0.description
+            )
+        }
+        let choice = options.isEmpty ? nil : AskUserChoice(
+            allowsMultiple: allowsMultiple,
+            options: options,
+            minimumSelectionCount: 1,
+            maximumSelectionCount: allowsMultiple ? options.count : 1
+        )
+        let fields = options.isEmpty
+            ? [AskUserField(
+                key: "answer",
+                label: "回复",
+                placeholder: "告诉 AI 你的决定或补充信息",
+                isRequired: true,
+                isMultiline: true
+            )]
+            : []
+        return AskUserPrompt(
+            id: event.interactionID,
+            sessionID: binding.threadID,
+            turnID: binding.turnID,
+            kind: kind,
+            status: .pending,
+            title: title,
+            message: event.prompt,
+            allowsCancel: allowsCancel,
+            fields: fields,
+            choice: choice,
+            createdAt: localAgentDate(emittedAt),
+            updatedAt: localAgentDate(emittedAt)
+        )
+    }
+
+    private static func localAgentPromptOrder(
+        _ lhs: AskUserPrompt,
+        _ rhs: AskUserPrompt
+    ) -> Bool {
+        let left = lhs.createdAt ?? lhs.updatedAt ?? .distantPast
+        let right = rhs.createdAt ?? rhs.updatedAt ?? .distantPast
+        if left != right { return left < right }
+        return lhs.id < rhs.id
+    }
+
     private static func turnStatus(_ status: LocalAgentRunStatus) -> TurnStatus {
         switch status {
         case .queued: .queued
@@ -541,11 +669,13 @@ public actor ConversationHistoryStore {
 
 extension ConversationHistoryStore: LocalAgentUIEventApplying {}
 extension ConversationHistoryStore: LocalAgentConversationUpdateStreaming {}
+extension ConversationHistoryStore: LocalAgentAskUserStateStoring {}
 
 public enum LocalAgentConversationHistoryError: Error, Equatable, Sendable {
     case runBindingMismatch
     case userMessageBindingMismatch
     case missingSuccessfulOutcome
+    case promptUnavailable
 }
 
 extension LocalAgentConversationHistoryError: LocalizedError {
@@ -554,6 +684,7 @@ extension LocalAgentConversationHistoryError: LocalizedError {
         case .runBindingMismatch: "本地 Agent 事件与 Run 绑定不一致"
         case .userMessageBindingMismatch: "本地 Agent 用户消息身份不一致"
         case .missingSuccessfulOutcome: "本地 Agent 成功结果缺少最终文本"
+        case .promptUnavailable: "这个本地 Agent 提问已经处理或不存在"
         }
     }
 }
@@ -586,6 +717,11 @@ private extension LocalAgentJSONValue {
         guard case let .object(object) = self,
               case let .string(value)? = object[key]
         else { return nil }
+        return value
+    }
+
+    var boolValue: Bool? {
+        guard case let .bool(value) = self else { return nil }
         return value
     }
 

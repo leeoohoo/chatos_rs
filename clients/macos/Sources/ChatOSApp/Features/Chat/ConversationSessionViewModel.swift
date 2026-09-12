@@ -123,6 +123,7 @@ final class ConversationSessionViewModel: ObservableObject {
             for await _ in stream {
                 guard !Task.isCancelled, let self else { return }
                 await self.refreshSnapshot()
+                await self.refreshAskUserPrompts()
             }
         }
     }

@@ -103,7 +103,7 @@ final class AppModel: ObservableObject {
     private let turnProcessService: ChatOSTurnProcessService
     let messageTaskGraphService: ChatOSMessageTaskGraphService
     private let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
-    private let askUserPromptService: ChatOSAskUserPromptService
+    private let askUserPromptService: NativeLocalAgentAskUserPromptService
     private let petActivityInboxService: ChatOSPetActivityInboxService
     private let workspaceService: ChatOSWorkspaceService
     private let localConnectorService: NativeLocalConnectorService
@@ -184,6 +184,10 @@ final class AppModel: ObservableObject {
             contactContexts: ChatOSLocalAgentContactRuntimeContextService(client: apiClient),
             projects: localProjectsService
         )
+        let askUserPromptService = NativeLocalAgentAskUserPromptService(
+            accountSession: localAgentAccountSession,
+            state: historyStore
+        )
 
         self.historyStore = historyStore
         self.apiClient = apiClient
@@ -224,7 +228,7 @@ final class AppModel: ObservableObject {
         self.turnProcessService = ChatOSTurnProcessService(client: apiClient)
         self.messageTaskGraphService = ChatOSMessageTaskGraphService(client: apiClient)
         self.runtimeSettingsService = runtimeSettingsService
-        self.askUserPromptService = ChatOSAskUserPromptService(client: apiClient)
+        self.askUserPromptService = askUserPromptService
         self.petActivityInboxService = ChatOSPetActivityInboxService(client: apiClient)
         self.realtimeService = ChatOSRealtimeClient(
             apiClient: apiClient,
@@ -1390,7 +1394,7 @@ final class AppModel: ObservableObject {
             initialTurns: [],
             historyStore: historyStore,
             remoteService: conversationService,
-            realtimeService: realtimeService,
+            realtimeService: nil,
             commandService: commandService,
             turnProcessService: turnProcessService,
             messageTaskGraphService: messageTaskGraphService,

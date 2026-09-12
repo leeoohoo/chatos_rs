@@ -16,3 +16,26 @@ public protocol LocalAgentUIEventApplying: Sendable {
 public protocol LocalAgentConversationUpdateStreaming: Sendable {
     func localAgentUpdates(sessionID: String) async -> AsyncStream<Void>
 }
+
+public struct LocalAgentAskUserRoute: Equatable, Sendable {
+    public var runID: String
+    public var interactionID: String
+
+    public init(runID: String, interactionID: String) {
+        self.runID = runID
+        self.interactionID = interactionID
+    }
+}
+
+public protocol LocalAgentAskUserStateStoring: Sendable {
+    func localAgentPrompts(sessionID: String, limit: Int) async throws -> [AskUserPrompt]
+    func localAgentPromptRoute(
+        promptID: String,
+        sessionID: String
+    ) async throws -> LocalAgentAskUserRoute
+    func updateLocalAgentPromptStatus(
+        promptID: String,
+        sessionID: String,
+        status: AskUserPromptStatus
+    ) async throws -> AskUserPrompt
+}
