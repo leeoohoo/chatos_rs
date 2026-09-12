@@ -14,7 +14,7 @@ use chatos_client_storage::{
 use chatos_local_agent_host::{
     assemble_local_agent_host, read_local_agent_host_launch_request,
     LocalAgentHostAssemblyDependencies, LocalAgentHostResolvedCredentials,
-    LocalAgentIpcMutationExecutor, LocalAgentStoragePlatform, RegisteredLocalCapabilityRuntime,
+    LocalAgentIpcMutationExecutor, LocalAgentStoragePlatform, LocalCapabilityPlatform,
     LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
 };
 use chatos_local_agent_protocol::{
@@ -58,6 +58,21 @@ impl LocalAgentStoragePlatform for Platform {
     }
 
     async fn read_archive(&self, _source_reference: &str) -> Result<Vec<u8>, String> {
+        Err("not invoked by assembly test".to_string())
+    }
+}
+
+#[async_trait]
+impl LocalCapabilityPlatform for Platform {
+    async fn resolve_plugin_executable(
+        &self,
+        _reference: &str,
+        _expected_sha256: &str,
+    ) -> Result<std::path::PathBuf, String> {
+        Err("not invoked by assembly test".to_string())
+    }
+
+    async fn resolve_plugin_environment_secret(&self, _reference: &str) -> Result<String, String> {
         Err("not invoked by assembly test".to_string())
     }
 }
@@ -151,8 +166,6 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
     let request = read_local_agent_host_launch_request(&mut Cursor::new(frame))
         .await
         .unwrap();
-    let capability_runtime = Arc::new(RegisteredLocalCapabilityRuntime::new());
-
     let assembly = assemble_local_agent_host(
         &request,
         LocalAgentHostAssemblyDependencies {
@@ -163,8 +176,8 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
             )
             .unwrap(),
             storage_platform: Arc::new(Platform),
+            capability_platform: Arc::new(Platform),
             terminal_mutation_executor: Arc::new(Terminal),
-            capability_runtime: capability_runtime.clone(),
         },
     )
     .await
@@ -172,10 +185,7 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
 
     assert_eq!(assembly.startup_report.active_run_count, 0);
     assert_eq!(assembly.startup_report.ready_event_count, 0);
-    assert!(Arc::ptr_eq(
-        &assembly.capability_runtime,
-        &capability_runtime
-    ));
+    assert!(assembly.capability_runtime.is_empty().unwrap());
     assert_eq!(assembly.client_endpoint, socket_path.to_str().unwrap());
     assert!(socket_path.exists());
 

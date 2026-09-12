@@ -13,8 +13,7 @@ use crate::{
     LocalAgentHostAssemblyDependencies, LocalAgentHostAssemblyError, LocalAgentHostBootstrapError,
     LocalAgentHostReady, LocalAgentHostResolvedCredentials, LocalAgentHostServiceError,
     LocalAgentHostServiceExit, LocalAgentIpcMutationExecutor, NativeLocalAgentStoragePlatform,
-    NativeLocalAgentStoragePlatformError, RegisteredLocalCapabilityRuntime,
-    LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
+    NativeLocalAgentStoragePlatformError, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -95,9 +94,8 @@ where
 ///
 /// Platform-owned credentials and path grants are resolved inside the Host;
 /// native clients cannot replace the storage control plane with a remote or
-/// legacy executor. The empty capability registry fails closed until verified
-/// installed plugin bundles are registered by the production capability
-/// loader.
+/// legacy executor. Installed Plugin records are signature- and digest-checked
+/// before their project-scoped local MCP tools enter the shared registry.
 pub async fn run_native_local_agent_host_process<R, W>(
     launch_reader: &mut R,
     ready_writer: &mut W,
@@ -108,12 +106,13 @@ where
     W: AsyncWrite + Unpin,
 {
     let request = read_local_agent_host_launch_request(launch_reader).await?;
-    let (storage_platform, credentials) = native_process_dependencies(&request)?;
+    let (storage_platform, capability_platform, credentials) =
+        native_process_dependencies(&request)?;
     let dependencies = LocalAgentHostAssemblyDependencies {
         credentials,
         storage_platform,
+        capability_platform,
         terminal_mutation_executor: Arc::new(RejectUnknownNativeMutation),
-        capability_runtime: Arc::new(RegisteredLocalCapabilityRuntime::new()),
     };
     run_local_agent_host_request(&request, ready_writer, dependencies, shutdown)
         .await
@@ -164,6 +163,7 @@ fn native_process_dependencies(
 
 type NativeProcessDependencies = (
     Arc<dyn crate::LocalAgentStoragePlatform>,
+    Arc<dyn crate::LocalCapabilityPlatform>,
     LocalAgentHostResolvedCredentials,
 );
 
@@ -215,10 +215,9 @@ fn build_native_process_dependencies(
         storage_secrets,
     )
     .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
-    Ok((
-        platform as Arc<dyn crate::LocalAgentStoragePlatform>,
-        resolved,
-    ))
+    let storage_platform: Arc<dyn crate::LocalAgentStoragePlatform> = platform.clone();
+    let capability_platform: Arc<dyn crate::LocalCapabilityPlatform> = platform;
+    Ok((storage_platform, capability_platform, resolved))
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]

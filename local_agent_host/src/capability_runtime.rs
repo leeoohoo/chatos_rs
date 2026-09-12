@@ -55,6 +55,24 @@ impl RegisteredLocalCapabilityRuntime {
         Ok(())
     }
 
+    pub fn replace_all(&self, bundles: Vec<RegisteredLocalCapabilityBundle>) -> Result<(), String> {
+        let mut identities = HashSet::new();
+        for bundle in &bundles {
+            validate_bundle(bundle)?;
+            if !identities.insert((bundle.owner_user_id.as_str(), bundle.project_id.as_str())) {
+                return Err(format!(
+                    "local capability registry contains duplicate project {}",
+                    bundle.project_id
+                ));
+            }
+        }
+        *self
+            .bundles
+            .write()
+            .map_err(|_| "local capability registry lock is poisoned".to_string())? = bundles;
+        Ok(())
+    }
+
     pub fn remove_project(&self, owner_user_id: &str, project_id: &str) -> Result<(), String> {
         let mut bundles = self
             .bundles
@@ -64,6 +82,13 @@ impl RegisteredLocalCapabilityRuntime {
             bundle.owner_user_id != owner_user_id || bundle.project_id != project_id
         });
         Ok(())
+    }
+
+    pub fn is_empty(&self) -> Result<bool, String> {
+        self.bundles
+            .read()
+            .map(|bundles| bundles.is_empty())
+            .map_err(|_| "local capability registry lock is poisoned".to_string())
     }
 }
 

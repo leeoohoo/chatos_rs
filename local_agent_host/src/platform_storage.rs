@@ -24,7 +24,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     LocalAgentPlatformCredentialReader, LocalAgentPlatformDeviceKeyReader,
-    LocalAgentStoragePlatform,
+    LocalAgentStoragePlatform, LocalCapabilityPlatform,
 };
 
 const PLATFORM_STATE_VERSION: u32 = 1;
@@ -32,6 +32,7 @@ const STAGED_PROFILE_FILE: &str = "staged-storage-profile.json";
 const PATH_GRANT_DIRECTORY: &str = "path-grants";
 const MAXIMUM_GRANT_BYTES: u64 = 16 * 1024;
 const MAXIMUM_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
+const MAXIMUM_PLUGIN_EXECUTABLE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum NativeLocalAgentStoragePlatformError {
@@ -57,6 +58,7 @@ pub enum LocalAgentPathGrantKind {
     SqliteDatabase,
     ArchiveRead,
     ArchiveWrite,
+    PluginExecutable,
 }
 
 /// Private, native-created path authority consumed by the Rust Host. The
@@ -238,6 +240,11 @@ impl NativeLocalAgentStoragePlatform {
         validate_private_state_directory(grant_directory.as_path())?;
         let path = grant_directory.join(path_grant_file_name(reference));
         let mut file = open_regular_bounded_file(path.as_path(), MAXIMUM_GRANT_BYTES)?;
+        validate_private_grant_file_metadata(
+            &file
+                .metadata()
+                .map_err(|_| NativeLocalAgentStoragePlatformError::GrantUnavailable)?,
+        )?;
         let mut encoded = Vec::with_capacity(
             file.metadata()
                 .map_err(|_| NativeLocalAgentStoragePlatformError::GrantUnavailable)?
@@ -449,6 +456,37 @@ impl LocalAgentStoragePlatform for NativeLocalAgentStoragePlatform {
     }
 }
 
+#[async_trait]
+impl LocalCapabilityPlatform for NativeLocalAgentStoragePlatform {
+    async fn resolve_plugin_executable(
+        &self,
+        reference: &str,
+        expected_sha256: &str,
+    ) -> Result<PathBuf, String> {
+        let path = self
+            .resolve_path_grant(reference, LocalAgentPathGrantKind::PluginExecutable)
+            .map_err(|error| error.to_string())?;
+        validate_plugin_executable(path.as_path(), expected_sha256)
+            .map_err(|error| error.to_string())?;
+        Ok(path)
+    }
+
+    async fn resolve_plugin_environment_secret(&self, reference: &str) -> Result<String, String> {
+        if !valid_opaque_identity(reference) {
+            return Err(NativeLocalAgentStoragePlatformError::CredentialUnavailable.to_string());
+        }
+        let value = self
+            .credentials
+            .read(self.owner_user_id.as_str(), reference)
+            .map_err(|_| NativeLocalAgentStoragePlatformError::CredentialUnavailable.to_string())?;
+        if value.is_empty() || value.len() > MAXIMUM_GRANT_BYTES as usize || value.contains(&0) {
+            return Err(NativeLocalAgentStoragePlatformError::CredentialUnavailable.to_string());
+        }
+        String::from_utf8(value.to_vec())
+            .map_err(|_| NativeLocalAgentStoragePlatformError::CredentialUnavailable.to_string())
+    }
+}
+
 pub fn path_grant_file_name(reference: &str) -> String {
     format!("{:x}.json", Sha256::digest(reference.as_bytes()))
 }
@@ -504,6 +542,72 @@ fn open_regular_bounded_file(
         return Err(NativeLocalAgentStoragePlatformError::GrantUnavailable);
     }
     Ok(file)
+}
+
+fn validate_plugin_executable(
+    path: &Path,
+    expected_sha256: &str,
+) -> Result<(), NativeLocalAgentStoragePlatformError> {
+    if expected_sha256.len() != 64
+        || !expected_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(NativeLocalAgentStoragePlatformError::GrantUnavailable);
+    }
+    let mut file = open_regular_bounded_file(path, MAXIMUM_PLUGIN_EXECUTABLE_BYTES)?;
+    validate_platform_executable(
+        path,
+        &file
+            .metadata()
+            .map_err(|_| NativeLocalAgentStoragePlatformError::GrantUnavailable)?,
+    )?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|_| NativeLocalAgentStoragePlatformError::GrantUnavailable)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    if format!("{:x}", digest.finalize()) != expected_sha256 {
+        return Err(NativeLocalAgentStoragePlatformError::GrantUnavailable);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_platform_executable(
+    _path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), NativeLocalAgentStoragePlatformError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if metadata.permissions().mode() & 0o111 == 0 {
+        Err(NativeLocalAgentStoragePlatformError::GrantUnavailable)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn validate_platform_executable(
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), NativeLocalAgentStoragePlatformError> {
+    reject_windows_reparse_metadata(metadata)?;
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase);
+    if matches!(extension.as_deref(), Some("exe" | "com" | "cmd" | "bat")) {
+        Ok(())
+    } else {
+        Err(NativeLocalAgentStoragePlatformError::GrantUnavailable)
+    }
 }
 
 fn reject_existing_reparse_or_non_file(
@@ -635,6 +739,26 @@ fn validate_private_state_directory(
         return Err(NativeLocalAgentStoragePlatformError::StateDirectoryNotPrivate);
     }
     validate_platform_private_directory_metadata(&metadata)
+}
+
+#[cfg(unix)]
+fn validate_private_grant_file_metadata(
+    metadata: &fs::Metadata,
+) -> Result<(), NativeLocalAgentStoragePlatformError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if metadata.uid() != unsafe { libc::geteuid() } || metadata.permissions().mode() & 0o077 != 0 {
+        Err(NativeLocalAgentStoragePlatformError::GrantUnavailable)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn validate_private_grant_file_metadata(
+    metadata: &fs::Metadata,
+) -> Result<(), NativeLocalAgentStoragePlatformError> {
+    reject_windows_reparse_metadata(metadata)
 }
 
 #[cfg(unix)]

@@ -14,7 +14,7 @@ use chatos_client_storage::{
 use chatos_local_agent_host::{
     run_local_agent_host_process, LocalAgentHostAssemblyDependencies, LocalAgentHostReady,
     LocalAgentHostResolvedCredentials, LocalAgentIpcMutationExecutor, LocalAgentStoragePlatform,
-    RegisteredLocalCapabilityRuntime, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
+    LocalCapabilityPlatform, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
 };
 use chatos_local_agent_protocol::{
     ClientStorageProfileDescriptor, ClientStorageProfileSelection, LocalAgentCommand,
@@ -55,6 +55,21 @@ impl LocalAgentStoragePlatform for Platform {
     }
 
     async fn read_archive(&self, _source_reference: &str) -> Result<Vec<u8>, String> {
+        Err("not invoked by process test".to_string())
+    }
+}
+
+#[async_trait]
+impl LocalCapabilityPlatform for Platform {
+    async fn resolve_plugin_executable(
+        &self,
+        _reference: &str,
+        _expected_sha256: &str,
+    ) -> Result<std::path::PathBuf, String> {
+        Err("not invoked by process test".to_string())
+    }
+
+    async fn resolve_plugin_environment_secret(&self, _reference: &str) -> Result<String, String> {
         Err("not invoked by process test".to_string())
     }
 }
@@ -154,8 +169,8 @@ async fn announces_ready_only_after_assembly_and_stops_cleanly() {
                 )
                 .unwrap(),
                 storage_platform: Arc::new(Platform),
+                capability_platform: Arc::new(Platform),
                 terminal_mutation_executor: Arc::new(Terminal),
-                capability_runtime: Arc::new(RegisteredLocalCapabilityRuntime::new()),
             },
             process_shutdown,
         )

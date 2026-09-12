@@ -23,9 +23,10 @@ use crate::{
     LocalAgentHostIpcEndpoint, LocalAgentHostPolicy, LocalAgentHostService,
     LocalAgentHostStartupReport, LocalAgentHostWorker, LocalAgentIpcMutationExecutor,
     LocalAgentIpcServerError, LocalAgentProfileRegistry, LocalAgentStoragePlatform,
-    LocalAttachmentGrantResolver, ProviderContextEncryptionKey, RegisteredLocalCapabilityRuntime,
-    StandardLocalAgentContextRuntime, StoredLocalTaskCreationPlanner,
-    StoredMainChatContextProvider, StoredTaskRunnerContextProvider,
+    LocalAttachmentGrantResolver, LocalCapabilityPlatform, ProviderContextEncryptionKey,
+    RegisteredLocalCapabilityRuntime, StandardLocalAgentContextRuntime,
+    StoredLocalCapabilityLoader, StoredLocalTaskCreationPlanner, StoredMainChatContextProvider,
+    StoredTaskRunnerContextProvider,
 };
 
 const MEMORY_ENGINE_TIMEOUT: Duration = Duration::from_secs(180);
@@ -33,8 +34,8 @@ const MEMORY_ENGINE_TIMEOUT: Duration = Duration::from_secs(180);
 pub struct LocalAgentHostAssemblyDependencies {
     pub credentials: LocalAgentHostResolvedCredentials,
     pub storage_platform: Arc<dyn LocalAgentStoragePlatform>,
+    pub capability_platform: Arc<dyn LocalCapabilityPlatform>,
     pub terminal_mutation_executor: Arc<dyn LocalAgentIpcMutationExecutor>,
-    pub capability_runtime: Arc<RegisteredLocalCapabilityRuntime>,
 }
 
 /// Secrets resolved inside the Rust Host from opaque launch references.
@@ -84,6 +85,8 @@ pub enum LocalAgentHostAssemblyError {
     Context(#[from] LocalAgentContextRuntimeError),
     #[error("local Agent profiles could not be registered: {0}")]
     Profiles(String),
+    #[error("installed local Plugin capabilities could not be loaded: {0}")]
+    Capabilities(String),
     #[error("local Agent Host could not start: {0}")]
     Host(String),
     #[error(transparent)]
@@ -94,9 +97,8 @@ pub enum LocalAgentHostAssemblyError {
     IpcTransport(String),
 }
 
-/// Fully assembled production Host resources. The native launcher may register
-/// verified local capability bundles before running `service`; planning and
-/// execution share this exact registry instance.
+/// Fully assembled production Host resources. Planning and execution share
+/// the exact verified project capability registry loaded during assembly.
 pub struct AssembledLocalAgentHost {
     pub service: LocalAgentHostService,
     pub session: LocalAgentExecutionSession,
@@ -113,8 +115,8 @@ pub async fn assemble_local_agent_host(
     let LocalAgentHostAssemblyDependencies {
         credentials,
         storage_platform,
+        capability_platform,
         terminal_mutation_executor,
-        capability_runtime,
     } = dependencies;
     let storage: Arc<dyn ClientStorage> = Arc::from(
         ClientStorageFactory::open(&request.storage_profile, credentials.storage.as_ref()).await?,
@@ -122,6 +124,17 @@ pub async fn assemble_local_agent_host(
     let scope = RecordScope {
         owner_user_id: request.owner_user_id.clone(),
     };
+    let capability_runtime = Arc::new(RegisteredLocalCapabilityRuntime::new());
+    StoredLocalCapabilityLoader::new(
+        storage.clone(),
+        scope.clone(),
+        request.device_id.clone(),
+        capability_platform,
+    )
+    .map_err(LocalAgentHostAssemblyError::Capabilities)?
+    .load(capability_runtime.as_ref())
+    .await
+    .map_err(LocalAgentHostAssemblyError::Capabilities)?;
     let attachment_resolver = Arc::new(
         LocalAttachmentGrantResolver::open(&request.attachment_grant_directory)
             .map_err(|error| LocalAgentHostAssemblyError::Host(error.to_string()))?,

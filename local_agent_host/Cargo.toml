@@ -15,6 +15,7 @@ chatos_client_storage = { path = "../crates/chatos_client_storage" }
 chatos_local_agent_protocol = { path = "../crates/chatos_local_agent_protocol" }
 chatos_local_agent_runtime = { path = "../crates/chatos_local_agent_runtime" }
 chatos_mcp_runtime = { path = "../crates/chatos_mcp_runtime" }
+chatos_plugin_management_sdk = { path = "../crates/chatos_plugin_management_sdk" }
 memory_engine_sdk = { path = "../crates/memory_engine_sdk" }
 chrono = "0.4"
 libc = "0.2"
@@ -48,5 +49,6 @@ security-framework = "3.7"
 
 [dev-dependencies]
 async-trait = "0.1"
+ring = "0.17"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

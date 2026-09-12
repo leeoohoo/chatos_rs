@@ -13,11 +13,13 @@ use chatos_client_storage::{
 use chatos_local_agent_host::{
     path_grant_file_name, LocalAgentPathGrant, LocalAgentPathGrantKind,
     LocalAgentPlatformCredentialError, LocalAgentPlatformCredentialReader,
-    LocalAgentPlatformDeviceKeyReader, LocalAgentStoragePlatform, NativeLocalAgentStoragePlatform,
+    LocalAgentPlatformDeviceKeyReader, LocalAgentStoragePlatform, LocalCapabilityPlatform,
+    NativeLocalAgentStoragePlatform,
 };
 use chatos_local_agent_protocol::{
     ClientStorageBackendKind, ClientStorageHealth, ClientStorageProfileSelection,
 };
+use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 struct Credentials;
@@ -198,6 +200,57 @@ async fn archive_io_uses_distinct_opaque_read_and_write_grants() {
         b"bounded archive"
     );
     assert!(!format!("{platform:?}").contains(root.path().to_string_lossy().as_ref()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resolves_only_digest_checked_executable_grants() {
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join("state");
+    private_directory(state.as_path());
+    let executable = root.path().join("plugin-bin");
+    fs::write(&executable, b"#!/bin/sh\nprintf plugin\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    grant(
+        state.as_path(),
+        "plugin-executable",
+        LocalAgentPathGrantKind::PluginExecutable,
+        executable.as_path(),
+    );
+    let platform = platform(state.as_path(), &root.path().join("active.sqlite3"));
+    let digest = format!("{:x}", Sha256::digest(fs::read(&executable).unwrap()));
+
+    assert_eq!(
+        platform
+            .resolve_plugin_executable("plugin-executable", digest.as_str())
+            .await
+            .unwrap(),
+        executable
+    );
+    assert!(platform
+        .resolve_plugin_executable("plugin-executable", &"0".repeat(64))
+        .await
+        .is_err());
+    assert!(platform
+        .resolve_plugin_executable("archive-output", digest.as_str())
+        .await
+        .is_err());
+
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(platform
+        .resolve_plugin_executable("plugin-executable", digest.as_str())
+        .await
+        .is_err());
+
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let grant_file = state
+        .join("path-grants")
+        .join(path_grant_file_name("plugin-executable"));
+    fs::set_permissions(&grant_file, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(platform
+        .resolve_plugin_executable("plugin-executable", digest.as_str())
+        .await
+        .is_err());
 }
 
 #[cfg(unix)]
