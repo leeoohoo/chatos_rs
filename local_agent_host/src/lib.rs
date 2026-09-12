@@ -10,6 +10,7 @@ mod ipc_transport_common;
 mod ipc_transport_unix;
 #[cfg(windows)]
 mod ipc_transport_windows;
+mod lifecycle;
 mod main_chat_context;
 mod profile_registry;
 mod storage_ipc;
@@ -26,6 +27,7 @@ pub use ipc_server::*;
 pub use ipc_transport_unix::*;
 #[cfg(windows)]
 pub use ipc_transport_windows::*;
+pub use lifecycle::*;
 pub use main_chat_context::*;
 pub use profile_registry::*;
 pub use storage_ipc::*;
