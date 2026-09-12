@@ -3,33 +3,17 @@ import SwiftUI
 
 struct TurnProcessSheet: View {
     @EnvironmentObject private var model: AppModel
-    @StateObject private var viewModel: TurnProcessViewModel
     @Environment(\.dismiss) private var dismiss
-
-    init(turn: ConversationTurn, service: any TurnProcessServicing) {
-        _viewModel = StateObject(
-            wrappedValue: TurnProcessViewModel(turn: turn, service: service)
-        )
-    }
+    let turn: ConversationTurn
 
     var body: some View {
         NavigationStack {
             Group {
-                if viewModel.isLoading && viewModel.nodes.isEmpty {
-                    ProgressView("正在加载任务节点…")
-                } else if let errorMessage = viewModel.errorMessage {
-                    ContentUnavailableView {
-                        Label("任务过程加载失败", systemImage: "exclamationmark.triangle")
-                    } description: {
-                        Text(errorMessage)
-                    } actions: {
-                        Button("重试", action: viewModel.load)
-                    }
-                } else if viewModel.nodes.isEmpty {
+                if turn.processEvents.isEmpty {
                     ContentUnavailableView(
-                        "没有可展示的任务节点",
+                        "没有可展示的本地过程",
                         systemImage: "point.3.connected.trianglepath.dotted",
-                        description: Text("该消息的详细过程接口没有返回任务或工具节点。")
+                        description: Text("Local Host 尚未为这一轮记录模型、工具或人工交互事件。")
                     )
                 } else {
                     processTimeline
@@ -44,17 +28,25 @@ struct TurnProcessSheet: View {
         }
         .frame(minWidth: 680, minHeight: 560)
         .environment(\.locale, model.interfaceLocale)
-        .task { viewModel.load() }
     }
 
     private var processTimeline: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                header
-                ForEach(Array(viewModel.nodes.enumerated()), id: \.element.id) { index, node in
-                    ProcessNodeRow(
-                        node: node,
-                        showsConnector: index < viewModel.nodes.count - 1
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(turn.userMessage.text)
+                        .appFont(.headline)
+                        .lineLimit(3)
+                    Text("\(turn.processEvents.count) 个本地过程节点")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.bottom, 22)
+
+                ForEach(Array(turn.processEvents.enumerated()), id: \.element.id) { index, event in
+                    ProcessEventRow(
+                        event: event,
+                        showsConnector: index < turn.processEvents.count - 1
                     )
                 }
             }
@@ -62,22 +54,10 @@ struct TurnProcessSheet: View {
         }
         .background(Color(nsColor: .textBackgroundColor))
     }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(viewModel.turn.userMessage.text)
-                .appFont(.headline)
-                .lineLimit(3)
-            Text("\(viewModel.nodes.count) 个真实过程节点")
-                .appFont(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.bottom, 22)
-    }
 }
 
-private struct ProcessNodeRow: View {
-    let node: TurnProcessNode
+private struct ProcessEventRow: View {
+    let event: TurnProcessEvent
     let showsConnector: Bool
 
     var body: some View {
@@ -96,16 +76,8 @@ private struct ProcessNodeRow: View {
             }
 
             VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    Text(node.title).appFont(.subheadline.weight(.semibold))
-                    Spacer()
-                    if let timestamp = node.timestamp {
-                        Text(timestamp, style: .time)
-                            .appFont(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                if let detail = node.detail {
+                Text(event.title).appFont(.subheadline.weight(.semibold))
+                if let detail = event.detail, !detail.isEmpty {
                     Text(detail)
                         .appFont(.callout)
                         .foregroundStyle(.secondary)
@@ -119,16 +91,16 @@ private struct ProcessNodeRow: View {
     }
 
     private var symbol: String {
-        switch node.kind {
-        case .task: "checklist"
-        case .tool: "wrench.and.screwdriver"
-        case .reasoning: "brain"
-        case .update: "arrow.triangle.2.circlepath"
-        }
+        if event.id.hasPrefix("local-agent-tool-") { return "wrench.and.screwdriver" }
+        if event.id.hasPrefix("local-agent-reasoning-") { return "brain" }
+        if event.id.hasPrefix("local-agent-interaction-") { return "person.crop.circle.badge.questionmark" }
+        if event.id.hasPrefix("local-agent-memory-") { return "externaldrive.badge.checkmark" }
+        if event.id.hasPrefix("local-agent-run-") { return "sparkles" }
+        return "arrow.triangle.2.circlepath"
     }
 
     private var color: Color {
-        switch node.status {
+        switch event.status {
         case .completed: .green
         case .failed, .cancelled: .red
         case .queued: .secondary

@@ -41,7 +41,6 @@ enum ConversationHistoryMapper {
             DateParser.parse($0.updatedAt ?? $0.createdAt)
         }
         let revision = ([user.resolvedRevision] + assistantReplies.map(\.resolvedRevision)).max() ?? 1
-        let processCount = user.metadata.value(at: "historyProcess", "processMessageCount")?.intValue ?? 0
         let status = turnStatus(user: user, assistant: assistant)
 
         return ConversationTurn(
@@ -50,11 +49,6 @@ enum ConversationHistoryMapper {
             sequence: user.sequenceNumber ?? fallbackSequence,
             revision: revision,
             userMessage: user.domainMessage(role: .user, fallbackDate: startedAt),
-            processEvents: processEvents(
-                count: processCount,
-                turnID: turnID,
-                status: status
-            ),
             finalAssistantMessage: assistant?.domainMessage(role: .assistant, fallbackDate: completedAt ?? startedAt),
             assistantReplies: assistantReplies.map {
                 ConversationAssistantReply(
@@ -65,22 +59,6 @@ enum ConversationHistoryMapper {
             startedAt: startedAt,
             completedAt: completedAt
         )
-    }
-
-    private static func processEvents(
-        count: Int,
-        turnID: String,
-        status: TurnStatus
-    ) -> [TurnProcessEvent] {
-        guard count > 0 else { return [] }
-        return [
-            TurnProcessEvent(
-                id: "history-process-\(turnID)",
-                title: "包含 \(count) 条过程记录",
-                detail: "查看这一轮对话的推理、工具调用和中间结果。",
-                status: status
-            ),
-        ]
     }
 
     private static func turnStatus(

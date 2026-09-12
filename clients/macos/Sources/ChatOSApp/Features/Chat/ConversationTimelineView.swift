@@ -30,9 +30,7 @@ struct ConversationTimelineView: View {
         .workspaceFill()
         .background(Color(nsColor: .textBackgroundColor))
         .sheet(item: $selectedProcessTurn) { turn in
-            if let service = conversation.turnProcessService {
-                TurnProcessSheet(turn: turn, service: service)
-            }
+            TurnProcessSheet(turn: turn)
         }
         .sheet(item: $selectedTaskTurn) { turn in
             if let graphService = conversation.messageTaskGraphService {

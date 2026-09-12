@@ -48,7 +48,6 @@ final class ConversationSessionViewModel: ObservableObject {
 
     let historyStore: any ConversationHistoryStoring
     let commandService: (any ConversationCommandServicing)?
-    let turnProcessService: (any TurnProcessServicing)?
     let messageTaskGraphService: (any MessageTaskGraphServicing)?
     private let remoteService: (any ConversationRemoteServicing)?
     private let runtimeSettingsService: (any ConversationRuntimeSettingsServicing)?
@@ -75,7 +74,6 @@ final class ConversationSessionViewModel: ObservableObject {
         historyStore: any ConversationHistoryStoring,
         remoteService: (any ConversationRemoteServicing)? = nil,
         commandService: (any ConversationCommandServicing)? = nil,
-        turnProcessService: (any TurnProcessServicing)? = nil,
         messageTaskGraphService: (any MessageTaskGraphServicing)? = nil,
         runtimeSettingsService: (any ConversationRuntimeSettingsServicing)? = nil,
         askUserPromptService: (any AskUserPromptServicing)? = nil,
@@ -88,7 +86,6 @@ final class ConversationSessionViewModel: ObservableObject {
         self.historyStore = historyStore
         self.remoteService = remoteService
         self.commandService = commandService
-        self.turnProcessService = turnProcessService
         self.messageTaskGraphService = messageTaskGraphService
         self.runtimeSettingsService = runtimeSettingsService
         self.askUserPromptService = askUserPromptService

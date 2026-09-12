@@ -56,7 +56,7 @@ final class ConversationHistoryMapperTests: XCTestCase {
         XCTAssertEqual(page.turns[0].userMessage.text, "请检查聊天历史")
         XCTAssertEqual(page.turns[0].finalAssistantMessage?.text, "已经开始检查。")
         XCTAssertEqual(page.turns[0].assistantReplies.map(\.message.text), ["已经开始检查。"])
-        XCTAssertEqual(page.turns[0].processEvents.count, 1)
+        XCTAssertTrue(page.turns[0].processEvents.isEmpty)
         XCTAssertEqual(page.turns[0].status, .completed)
         XCTAssertEqual(page.turns[0].revision, 6)
         XCTAssertEqual(page.olderCursor, "turn-0")

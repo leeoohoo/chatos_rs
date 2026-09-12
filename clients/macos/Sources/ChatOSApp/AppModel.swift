@@ -100,7 +100,6 @@ final class AppModel: ObservableObject {
     private let conversationService: ChatOSConversationService
     private let apiClient: ChatOSAPIClient
     private let commandService: NativeLocalAgentConversationCommandService
-    private let turnProcessService: ChatOSTurnProcessService
     let messageTaskGraphService: NativeLocalAgentTaskGraphService
     private let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
     private let askUserPromptService: NativeLocalAgentAskUserPromptService
@@ -235,7 +234,6 @@ final class AppModel: ObservableObject {
                 .appendingPathComponent("ProjectRunSettings.json")
         )
         self.commandService = commandService
-        self.turnProcessService = ChatOSTurnProcessService(client: apiClient)
         self.messageTaskGraphService = NativeLocalAgentTaskGraphService(
             accountSession: localAgentAccountSession
         )
@@ -1368,7 +1366,6 @@ final class AppModel: ObservableObject {
             historyStore: historyStore,
             remoteService: conversationService,
             commandService: commandService,
-            turnProcessService: turnProcessService,
             messageTaskGraphService: messageTaskGraphService,
             runtimeSettingsService: runtimeSettingsService,
             askUserPromptService: askUserPromptService,

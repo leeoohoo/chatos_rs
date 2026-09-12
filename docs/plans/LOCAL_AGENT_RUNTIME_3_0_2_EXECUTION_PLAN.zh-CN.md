@@ -140,7 +140,8 @@
 - 2026-09-13：macOS Task 入口改为直接使用 Local Host 恢复的 `source_thread_id + source_turn_id + task_id + run_id` 关联；删除 `MessageTaskLookup`、历史消息元数据映射和逐 turn 的远程任务图存在性探测。会话时间线、聚焦路由与任务画布只根据本地 Task 投影决定关联，不再从 `source_user_message_id` 或当前 UI 状态猜测。
 - 2026-09-13：删除 macOS 对 `task_runner_callback` / `task_runner_async` 历史消息的解析、模型、排序、状态推断和专用 Reply Inspector；会话历史只映射正式 user/final assistant 消息。Task 进度、终态、结果、重试与详情统一由 Local Host 的 Task/Run 权威投影提供，Pet Quick Chat 不再从历史 callback 恢复任务状态或打开第二套 inspector。
 - 2026-09-13：删除 macOS 远程 Conversation/Task Realtime WebSocket、Pet Activity Inbox Client/DTO、WebSocket ticket 和云端 activity disposition；Task Workspace 不再展示服务端实时过程副本。`LocalAgentTaskStateStore` 新增账户级全局更新流，Pet 直接把本地 Task/Run、终态结果和 Ask User 投影为活动，相关来源只保留本地审批、Ask User 与 Task Runner。
+- 2026-09-13：删除 macOS `ChatOSTurnProcessService`、远程过程 DTO/Mapper、`TurnProcessViewModel` 及其测试；主聊天“查看过程”直接展示 Local Host 已持久化并恢复到 `ConversationTurn.processEvents` 的模型、工具、人工交互、记忆与 Run 事件。服务端 compact history 的 `processMessageCount` 不再伪造可点击过程节点。
 - 验证记录：`cargo test -p chatos_local_agent_protocol -p chatos_local_agent_host`、`swift test --skip NativePluginRuntimeTests`、客户端存储边界审计、Cargo metadata 与静态远程路径搜索全部通过。macOS 全量回归期间发现并修复终端退出状态早于尾部 stdout 落库的竞态，定向连续执行 10 次及全量回归均通过。当前 macOS 主机未安装 .NET SDK，Windows v12 代码和共享夹具测试尚未在 Windows/.NET 环境执行，不能记为通过。
 - 当前在制：阶段 2，完成 Main Chat 与 Task 的本地结果闭环。
-- 下一切片：补齐 Main Chat turn → Task → 全部 Run → 最终结果的重启恢复测试，并删除 `ChatOSTurnProcessService` 中剩余的服务端 Agent 过程读取，让主聊天过程与最终结果只来自 Local Host 持久事件。
+- 下一切片：补齐 Main Chat turn → Task → 全部 Run → 最终结果的重启恢复测试，锁定来源 Turn、Task、初始/当前/历史 Run、最终结果和过程事件在客户端重启及事件重放后的精确一致性。
 - 完成状态：阶段 1 已达到完成门槛；阶段 2—8 尚未达到完整门槛。
