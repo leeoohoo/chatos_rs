@@ -166,6 +166,53 @@ struct NativeLocalAgentAccountSessionTests {
         }
     }
 
+    @Test("switching accounts stops the old Host and isolates credentials and IPC identity")
+    func accountSwitchIsIsolated() async throws {
+        let credentials = InMemoryLocalAgentCredentials()
+        let supervisor = FakeLocalAgentSupervisor()
+        let session = NativeLocalAgentAccountSession(
+            credentials: credentials,
+            supervisor: supervisor,
+            builder: FakeLocalAgentBuilder(),
+            randomBytes: { Data(repeating: 0x29, count: $0) }
+        )
+        try await session.login(
+            accountID: "user-1",
+            accessToken: "token-1",
+            settingsProvider: { self.settings(accountID: "user-1", deviceID: $0) }
+        )
+
+        try await session.login(
+            accountID: "user-2",
+            accessToken: "token-2",
+            settingsProvider: { self.settings(accountID: "user-2", deviceID: $0) }
+        )
+
+        #expect(await supervisor.startedAccounts() == ["user-1", "user-2"])
+        #expect(
+            await credentials.value(
+                accountID: "user-1",
+                reference: NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference
+            ) == nil
+        )
+        #expect(
+            await credentials.value(
+                accountID: "user-1",
+                reference: NativeLocalAgentHostBootstrapBuilder.providerContextKeyReference
+            ) != nil
+        )
+        #expect(
+            await credentials.value(
+                accountID: "user-2",
+                reference: NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference
+            ) == Data("token-2".utf8)
+        )
+        await #expect(throws: NativeLocalAgentAccountSessionError.accountMismatch) {
+            _ = try await session.client(accountID: "user-1")
+        }
+        _ = try await session.client(accountID: "user-2")
+    }
+
     @Test("a damaged persistent key aborts startup without retaining the access token")
     func rejectsDamagedPersistentKey() async throws {
         let credentials = InMemoryLocalAgentCredentials()

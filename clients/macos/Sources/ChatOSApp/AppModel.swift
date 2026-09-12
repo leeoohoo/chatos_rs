@@ -856,6 +856,7 @@ final class AppModel: ObservableObject {
                     await hub.stop()
                 }
                 await accountSession.logout()
+                await self?.historyStore.reset()
                 try? await self?.localAgentTaskStateStore.restoreLocalAgentTasks([], runs: [])
                 guard let self, workspaceAccountGeneration == localAgentGeneration else { return }
                 localAgentHostState = .stopped
@@ -908,6 +909,11 @@ final class AppModel: ObservableObject {
                   workspaceAccountGeneration == generation
             else { return }
             do {
+                // A presentation Store is account-scoped even when server IDs
+                // happen to be globally unique. Clear it before binding the
+                // next Host so no optimistic or recovered state can cross users.
+                await historyStore.reset()
+                try await localAgentTaskStateStore.restoreLocalAgentTasks([], runs: [])
                 guard let accessToken = await apiClient.currentAccessToken() else {
                     throw NativeLocalAgentAccountSessionError.invalidAccessToken
                 }

@@ -21,6 +21,16 @@ public actor ConversationHistoryStore {
 
     public init() {}
 
+    /// Clears every account-derived presentation snapshot while preserving
+    /// active UI subscriptions so signed-out views are immediately emptied.
+    public func reset() {
+        let affectedSessionIDs = Set(sessions.keys).union(localUpdateContinuations.keys)
+        sessions.removeAll(keepingCapacity: false)
+        for sessionID in affectedSessionIDs {
+            localUpdateContinuations[sessionID]?.values.forEach { $0.yield(()) }
+        }
+    }
+
     public func upsertOptimisticTurn(
         _ turn: ConversationTurn,
         sessionID: String

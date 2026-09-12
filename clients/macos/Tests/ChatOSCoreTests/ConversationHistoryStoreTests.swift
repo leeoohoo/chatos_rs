@@ -65,6 +65,25 @@ struct ConversationHistoryStoreTests {
         #expect(second.viewportAnchor == nil)
     }
 
+    @Test("account reset removes optimistic messages and every conversation projection")
+    func resetIsAccountIsolated() async throws {
+        let store = ConversationHistoryStore()
+        try await store.upsertOptimisticTurn(
+            turn(id: "old-a", sessionID: "session-a", sequence: 1),
+            sessionID: "session-a"
+        )
+        try await store.upsertOptimisticTurn(
+            turn(id: "old-b", sessionID: "session-b", sequence: 1),
+            sessionID: "session-b"
+        )
+
+        await store.reset()
+
+        #expect(await store.snapshot(sessionID: "session-a").turns.isEmpty)
+        #expect(await store.snapshot(sessionID: "session-b").turns.isEmpty)
+        #expect(await store.snapshot(sessionID: "session-a").viewportAnchor == nil)
+    }
+
     private func turn(id: String, sessionID: String, sequence: Int64) -> ConversationTurn {
         let createdAt = Date(timeIntervalSince1970: TimeInterval(sequence))
         return ConversationTurn(
