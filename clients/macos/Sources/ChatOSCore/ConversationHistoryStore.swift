@@ -257,9 +257,10 @@ public actor ConversationHistoryStore {
         let didChange = try apply(event, to: &turn)
         switch event.event {
         case let .runSnapshot(run):
-            state.localAgentRunControlsByID[run.runID] = Self.runControlState(
+            state.localAgentRunControlsByID[run.runID] = LocalAgentUIPresentation.runControl(
                 run,
-                binding: binding
+                sessionID: binding.threadID,
+                turnID: binding.turnID
             )
             if run.status == .failed || run.status == .cancelled || run.status == .succeeded {
                 state.localAgentToolApprovalsByID = state.localAgentToolApprovalsByID.filter {
@@ -275,29 +276,28 @@ public actor ConversationHistoryStore {
                 }
                 for id in promptIDs {
                     state.localAgentPromptsByID[id]?.status = resolvedStatus
-                    state.localAgentPromptsByID[id]?.updatedAt = Self.localAgentDate(event.emittedAt)
+                    state.localAgentPromptsByID[id]?.updatedAt = LocalAgentUIPresentation.date(
+                        event.emittedAt
+                    )
                     state.localAgentPromptRoutes[id] = nil
                 }
             }
         case let .toolSnapshot(tool):
             if tool.status == .awaitingApproval {
                 state.localAgentToolApprovalsByID[tool.invocationID] =
-                    LocalAgentToolApprovalRequest(
-                        invocationID: tool.invocationID,
-                        runID: tool.runID,
+                    LocalAgentUIPresentation.toolApproval(
+                        tool,
                         sessionID: binding.threadID,
-                        turnID: binding.turnID,
-                        toolName: tool.toolName,
-                        effect: tool.effect,
-                        argumentsDigest: tool.argumentsDigest
+                        turnID: binding.turnID
                     )
             } else {
                 state.localAgentToolApprovalsByID[tool.invocationID] = nil
             }
         case let .userInteraction(interaction):
-            let prompt = Self.askUserPrompt(
+            let prompt = LocalAgentUIPresentation.askUserPrompt(
                 interaction,
-                binding: binding,
+                sessionID: binding.threadID,
+                turnID: binding.turnID,
                 emittedAt: event.emittedAt
             )
             state.localAgentPromptsByID[prompt.id] = prompt
@@ -386,7 +386,7 @@ public actor ConversationHistoryStore {
         else {
             throw LocalAgentConversationHistoryError.userMessageBindingMismatch
         }
-        let createdAt = Self.localAgentDate(message.createdAt) ?? .distantPast
+        let createdAt = LocalAgentUIPresentation.date(message.createdAt) ?? .distantPast
         return ConversationTurn(
             id: binding.turnID,
             sessionID: binding.threadID,
@@ -421,7 +421,8 @@ public actor ConversationHistoryStore {
                 in: &turn
             )
             turn.status = status
-            if let startedAt = Self.localAgentDate(run.createdAt), turn.startedAt == .distantPast {
+            if let startedAt = LocalAgentUIPresentation.date(run.createdAt),
+               turn.startedAt == .distantPast {
                 turn.startedAt = startedAt
             }
             if run.status == .succeeded {
@@ -431,8 +432,8 @@ public actor ConversationHistoryStore {
                 setAssistantText(text, runID: run.runID, createdAt: event.emittedAt, in: &turn)
             }
             if status == .completed || status == .failed || status == .cancelled {
-                turn.completedAt = Self.localAgentDate(run.updatedAt)
-                    ?? Self.localAgentDate(event.emittedAt)
+                turn.completedAt = LocalAgentUIPresentation.date(run.updatedAt)
+                    ?? LocalAgentUIPresentation.date(event.emittedAt)
             }
             return true
 
@@ -522,7 +523,7 @@ public actor ConversationHistoryStore {
                 id: messageID,
                 role: .assistant,
                 text: "",
-                createdAt: Self.localAgentDate(createdAt) ?? Date()
+                createdAt: LocalAgentUIPresentation.date(createdAt) ?? Date()
             )
         }
         turn.finalAssistantMessage?.text += delta
@@ -542,7 +543,7 @@ public actor ConversationHistoryStore {
                 id: messageID,
                 role: .assistant,
                 text: text,
-                createdAt: Self.localAgentDate(createdAt) ?? Date()
+                createdAt: LocalAgentUIPresentation.date(createdAt) ?? Date()
             )
         }
     }
@@ -574,14 +575,6 @@ public actor ConversationHistoryStore {
         }
     }
 
-    private static func localAgentDate(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: value) { return date }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: value)
-    }
-
     private static func localAgentAttachments(
         _ payload: LocalAgentJSONValue?
     ) -> [ConversationAttachmentReference] {
@@ -607,97 +600,6 @@ public actor ConversationHistoryStore {
                 kind: kind
             )
         }
-    }
-
-    private static func askUserPrompt(
-        _ event: LocalAgentUserInteractionEvent,
-        binding: LocalAgentMainChatRunBinding,
-        emittedAt: String
-    ) -> AskUserPrompt {
-        let details = event.details?.objectValue
-        let title = details?["title"]?.plainString?.nonEmpty ?? "需要你的确认"
-        let kind = details?["kind"]?.plainString?.nonEmpty ?? "local_agent"
-        let allowsCancel = details?["allows_cancel"]?.boolValue ?? true
-        let allowsMultiple = details?["allows_multiple"]?.boolValue ?? false
-        let options = event.options.map {
-            AskUserChoiceOption(
-                value: $0.optionID,
-                label: $0.label,
-                description: $0.description
-            )
-        }
-        let choice = options.isEmpty ? nil : AskUserChoice(
-            allowsMultiple: allowsMultiple,
-            options: options,
-            minimumSelectionCount: 1,
-            maximumSelectionCount: allowsMultiple ? options.count : 1
-        )
-        let fields = options.isEmpty
-            ? [AskUserField(
-                key: "answer",
-                label: "回复",
-                placeholder: "告诉 AI 你的决定或补充信息",
-                isRequired: true,
-                isMultiline: true
-            )]
-            : []
-        return AskUserPrompt(
-            id: event.interactionID,
-            sessionID: binding.threadID,
-            turnID: binding.turnID,
-            kind: kind,
-            status: .pending,
-            title: title,
-            message: event.prompt,
-            allowsCancel: allowsCancel,
-            fields: fields,
-            choice: choice,
-            createdAt: localAgentDate(emittedAt),
-            updatedAt: localAgentDate(emittedAt)
-        )
-    }
-
-    private static func runControlState(
-        _ run: LocalAgentRunSnapshot,
-        binding: LocalAgentMainChatRunBinding
-    ) -> LocalAgentRunControlState {
-        LocalAgentRunControlState(
-            runID: run.runID,
-            sessionID: binding.threadID,
-            turnID: binding.turnID,
-            status: run.status,
-            iteration: run.iteration,
-            retryCount: run.retryCount,
-            interactionKind: localAgentInteractionKind(run.pendingInteraction),
-            reviewReason: localAgentReviewReason(run.pendingInteraction),
-            updatedAt: localAgentDate(run.updatedAt)
-        )
-    }
-
-    private static func localAgentReviewReason(
-        _ interaction: LocalAgentJSONValue?
-    ) -> String? {
-        guard case let .object(value) = interaction,
-              let type = value["type"]?.plainString
-        else { return nil }
-        switch type {
-        case "review_unknown_tool_outcome":
-            let batchID = value["batch_id"]?.plainString
-            return batchID.map {
-                "工具批次 \($0) 的执行结果无法确认。继续前请核对外部结果，避免重复执行。"
-            } ?? "工具执行结果无法确认。继续前请核对外部结果，避免重复执行。"
-        case "runtime_blocked":
-            return "本地 Agent 已阻塞，需要检查执行过程后再继续。"
-        default:
-            return nil
-        }
-    }
-
-    private static func localAgentInteractionKind(
-        _ interaction: LocalAgentJSONValue?
-    ) -> String? {
-        guard case let .object(value) = interaction else { return nil }
-        return value["type"]?.plainString
     }
 
     private static func localAgentPromptOrder(
@@ -842,43 +744,6 @@ private extension LocalAgentUIEventPayload {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
-}
-
-private extension LocalAgentJSONValue {
-    func stringValue(forKey key: String) -> String? {
-        guard case let .object(object) = self,
-              case let .string(value)? = object[key]
-        else { return nil }
-        return value
-    }
-
-    var boolValue: Bool? {
-        guard case let .bool(value) = self else { return nil }
-        return value
-    }
-
-    var objectValue: [String: LocalAgentJSONValue]? {
-        guard case let .object(value) = self else { return nil }
-        return value
-    }
-
-    var arrayValue: [LocalAgentJSONValue]? {
-        guard case let .array(value) = self else { return nil }
-        return value
-    }
-
-    var plainString: String? {
-        guard case let .string(value) = self else { return nil }
-        return value
-    }
-
-    var integerValue: UInt64? {
-        switch self {
-        case let .unsigned(value): value
-        case let .signed(value) where value >= 0: UInt64(value)
-        default: nil
-        }
-    }
 }
 
 private extension ConversationTurn {

@@ -156,6 +156,8 @@ final class ConversationSessionViewModel: ObservableObject {
             for await _ in stream {
                 guard !Task.isCancelled else { return }
                 await self.refreshLocalAgentTasks()
+                await self.refreshAskUserPrompts()
+                await self.refreshLocalAgentControls()
             }
         }
     }

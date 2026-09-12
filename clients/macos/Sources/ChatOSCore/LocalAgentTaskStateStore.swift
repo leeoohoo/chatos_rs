@@ -48,6 +48,7 @@ public struct LocalAgentTaskState: Identifiable, Equatable, Sendable {
     public var modelSteps: [LocalAgentTaskModelStepState]
     public var tools: [LocalAgentToolSnapshot]
     public var pendingInteraction: LocalAgentUserInteractionEvent?
+    public var userPrompt: AskUserPrompt?
     public var memorySync: LocalAgentMemorySyncStatus?
     public var lastAppliedEventSequence: UInt64
 
@@ -57,6 +58,7 @@ public struct LocalAgentTaskState: Identifiable, Equatable, Sendable {
         modelSteps: [LocalAgentTaskModelStepState] = [],
         tools: [LocalAgentToolSnapshot] = [],
         pendingInteraction: LocalAgentUserInteractionEvent? = nil,
+        userPrompt: AskUserPrompt? = nil,
         memorySync: LocalAgentMemorySyncStatus? = nil,
         lastAppliedEventSequence: UInt64 = 0
     ) {
@@ -65,6 +67,7 @@ public struct LocalAgentTaskState: Identifiable, Equatable, Sendable {
         self.modelSteps = modelSteps
         self.tools = tools
         self.pendingInteraction = pendingInteraction
+        self.userPrompt = userPrompt
         self.memorySync = memorySync
         self.lastAppliedEventSequence = lastAppliedEventSequence
     }
@@ -112,7 +115,20 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
             guard restored[task.taskID] == nil, restoredTaskIDByRunID[run.runID] == nil else {
                 throw LocalAgentTaskStateError.identityMismatch("任务或 Run ID 重复")
             }
-            restored[task.taskID] = LocalAgentTaskState(task: task, run: run)
+            let interaction = LocalAgentUIPresentation.pendingUserInteraction(run)
+            restored[task.taskID] = LocalAgentTaskState(
+                task: task,
+                run: run,
+                pendingInteraction: interaction,
+                userPrompt: interaction.map {
+                    LocalAgentUIPresentation.askUserPrompt(
+                        $0,
+                        sessionID: task.sourceThreadID,
+                        turnID: task.sourceTurnID,
+                        emittedAt: run.updatedAt
+                    )
+                }
+            )
             restoredTaskIDByRunID[run.runID] = task.taskID
         }
         for run in taskRuns where restoredTaskIDByRunID[run.runID] == nil {
@@ -138,12 +154,28 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
             throw LocalAgentTaskStateError.identityMismatch("同一个任务关联到两个 Run")
         }
         let previous = tasksByID[task.taskID]
+        let restoredInteraction = LocalAgentUIPresentation.pendingUserInteraction(run)
+        let userPrompt: AskUserPrompt?
+        if let previousPrompt = previous?.userPrompt,
+           previousPrompt.id == restoredInteraction?.interactionID {
+            userPrompt = previousPrompt
+        } else if let restoredInteraction {
+            userPrompt = LocalAgentUIPresentation.askUserPrompt(
+                restoredInteraction,
+                sessionID: task.sourceThreadID,
+                turnID: task.sourceTurnID,
+                emittedAt: run.updatedAt
+            )
+        } else {
+            userPrompt = previous?.userPrompt
+        }
         tasksByID[task.taskID] = LocalAgentTaskState(
             task: task,
             run: run,
             modelSteps: previous?.modelSteps ?? [],
             tools: previous?.tools ?? [],
-            pendingInteraction: previous?.pendingInteraction,
+            pendingInteraction: restoredInteraction,
+            userPrompt: userPrompt,
             memorySync: previous?.memorySync,
             lastAppliedEventSequence: previous?.lastAppliedEventSequence ?? 0
         )
@@ -162,8 +194,23 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
         case let .runSnapshot(run):
             try Self.validate(task: state.task, run: run)
             state.run = run
-            if run.status != .paused {
+            if let interaction = LocalAgentUIPresentation.pendingUserInteraction(run) {
+                state.pendingInteraction = interaction
+                if state.userPrompt?.id != interaction.interactionID {
+                    state.userPrompt = LocalAgentUIPresentation.askUserPrompt(
+                        interaction,
+                        sessionID: state.task.sourceThreadID,
+                        turnID: state.task.sourceTurnID,
+                        emittedAt: event.emittedAt
+                    )
+                }
+            } else if run.status != .paused {
                 state.pendingInteraction = nil
+                if state.userPrompt?.status.isPending == true {
+                    state.userPrompt?.status = run.status == .cancelled ? .canceled
+                        : (run.status == .failed ? .failed : .ok)
+                    state.userPrompt?.updatedAt = LocalAgentUIPresentation.date(run.updatedAt)
+                }
             }
         case let .modelStream(stream):
             let index: Int
@@ -195,6 +242,12 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
             }
         case let .userInteraction(interaction):
             state.pendingInteraction = interaction
+            state.userPrompt = LocalAgentUIPresentation.askUserPrompt(
+                interaction,
+                sessionID: state.task.sourceThreadID,
+                turnID: state.task.sourceTurnID,
+                emittedAt: event.emittedAt
+            )
         case let .memorySync(status):
             state.memorySync = status
         case .hostStatus:
@@ -230,6 +283,139 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
         }
     }
 
+    public func localAgentPrompts(
+        sessionID: String,
+        limit: Int
+    ) -> [AskUserPrompt] {
+        guard limit > 0 else { return [] }
+        return Array(tasksByID.values
+            .filter { $0.task.sourceThreadID == sessionID }
+            .compactMap(\.userPrompt)
+            .sorted(by: Self.promptOrder)
+            .suffix(limit))
+    }
+
+    public func localAgentPromptRoute(
+        promptID: String,
+        sessionID: String
+    ) throws -> LocalAgentAskUserRoute {
+        guard let state = tasksByID.values.first(where: {
+            $0.task.sourceThreadID == sessionID
+                && $0.userPrompt?.id == promptID
+                && $0.userPrompt?.status.isPending == true
+        }), let interaction = state.pendingInteraction else {
+            throw LocalAgentConversationHistoryError.promptUnavailable
+        }
+        return LocalAgentAskUserRoute(
+            runID: state.run.runID,
+            interactionID: interaction.interactionID
+        )
+    }
+
+    public func updateLocalAgentPromptStatus(
+        promptID: String,
+        sessionID: String,
+        status: AskUserPromptStatus
+    ) throws -> AskUserPrompt {
+        guard let taskID = tasksByID.first(where: {
+            $0.value.task.sourceThreadID == sessionID
+                && $0.value.userPrompt?.id == promptID
+        })?.key, var state = tasksByID[taskID], var prompt = state.userPrompt else {
+            throw LocalAgentConversationHistoryError.promptUnavailable
+        }
+        prompt.status = status
+        prompt.updatedAt = Date()
+        state.userPrompt = prompt
+        if !status.isPending { state.pendingInteraction = nil }
+        tasksByID[taskID] = state
+        notify(sessionID)
+        return prompt
+    }
+
+    public func localAgentRunControls(sessionID: String) -> [LocalAgentRunControlState] {
+        tasksByID.values
+            .filter { $0.task.sourceThreadID == sessionID }
+            .map {
+                LocalAgentUIPresentation.runControl(
+                    $0.run,
+                    sessionID: $0.task.sourceThreadID,
+                    turnID: $0.task.sourceTurnID
+                )
+            }
+            .filter { !$0.isTerminal }
+            .sorted(by: Self.controlOrder)
+    }
+
+    public func localAgentPendingToolApprovals(
+        sessionID: String
+    ) -> [LocalAgentToolApprovalRequest] {
+        tasksByID.values
+            .filter {
+                $0.task.sourceThreadID == sessionID
+                    && !LocalAgentUIPresentation.runControl(
+                        $0.run,
+                        sessionID: $0.task.sourceThreadID,
+                        turnID: $0.task.sourceTurnID
+                    ).isTerminal
+            }
+            .flatMap { state in
+                state.tools
+                    .filter { $0.status == .awaitingApproval }
+                    .map {
+                        LocalAgentUIPresentation.toolApproval(
+                            $0,
+                            sessionID: state.task.sourceThreadID,
+                            turnID: state.task.sourceTurnID
+                        )
+                    }
+            }
+            .sorted { $0.invocationID < $1.invocationID }
+    }
+
+    public func requireLocalAgentRunControl(
+        runID: String,
+        sessionID: String
+    ) throws -> LocalAgentRunControlState {
+        guard let state = tasksByID.values.first(where: {
+            $0.run.runID == runID && $0.task.sourceThreadID == sessionID
+        }) else {
+            throw LocalAgentConversationHistoryError.runUnavailable
+        }
+        let control = LocalAgentUIPresentation.runControl(
+            state.run,
+            sessionID: state.task.sourceThreadID,
+            turnID: state.task.sourceTurnID
+        )
+        guard !control.isTerminal else {
+            throw LocalAgentConversationHistoryError.runUnavailable
+        }
+        return control
+    }
+
+    public func requireLocalAgentToolApproval(
+        invocationID: String,
+        sessionID: String
+    ) throws -> LocalAgentToolApprovalRequest {
+        guard let state = tasksByID.values.first(where: {
+            $0.task.sourceThreadID == sessionID
+                && !LocalAgentUIPresentation.runControl(
+                    $0.run,
+                    sessionID: $0.task.sourceThreadID,
+                    turnID: $0.task.sourceTurnID
+                ).isTerminal
+                && $0.tools.contains(where: {
+                    $0.invocationID == invocationID && $0.status == .awaitingApproval
+                })
+        }), let tool = state.tools.first(where: { $0.invocationID == invocationID }) else {
+            throw LocalAgentConversationHistoryError.toolApprovalUnavailable
+        }
+        return LocalAgentUIPresentation.toolApproval(
+            tool,
+            sessionID: state.task.sourceThreadID,
+            turnID: state.task.sourceTurnID
+        )
+    }
+
     private func removeContinuation(_ id: UUID, sessionID: String) {
         updateContinuations[sessionID]?[id] = nil
         if updateContinuations[sessionID]?.isEmpty == true {
@@ -259,7 +445,27 @@ public actor LocalAgentTaskStateStore: LocalAgentTaskStateStoring {
             )
         }
     }
+
+    private static func promptOrder(_ lhs: AskUserPrompt, _ rhs: AskUserPrompt) -> Bool {
+        let left = lhs.createdAt ?? lhs.updatedAt ?? .distantPast
+        let right = rhs.createdAt ?? rhs.updatedAt ?? .distantPast
+        if left != right { return left < right }
+        return lhs.id < rhs.id
+    }
+
+    private static func controlOrder(
+        _ lhs: LocalAgentRunControlState,
+        _ rhs: LocalAgentRunControlState
+    ) -> Bool {
+        let left = lhs.updatedAt ?? .distantPast
+        let right = rhs.updatedAt ?? .distantPast
+        if left != right { return left < right }
+        return lhs.runID < rhs.runID
+    }
 }
+
+extension LocalAgentTaskStateStore: LocalAgentAskUserStateStoring {}
+extension LocalAgentTaskStateStore: LocalAgentRunControlStateStoring {}
 
 private extension LocalAgentUIEventPayload {
     var runID: String? {

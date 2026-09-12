@@ -73,6 +73,162 @@ struct LocalAgentTaskStateStoreTests {
             try await store.restoreLocalAgentTasks([task], runs: [runSnapshot()])
         }
     }
+
+    @Test("restores a pending Task Runner question from its authoritative Run snapshot")
+    func restoresPendingQuestion() async throws {
+        let store = LocalAgentTaskStateStore()
+        let task = taskSnapshot()
+        var run = runSnapshot()
+        run.status = .paused
+        run.pendingInteraction = .object([
+            "type": .string("ask_user"),
+            "interaction_id": .string("restored-interaction"),
+            "question": .object([
+                "prompt": .string("Choose a restored visual direction"),
+                "options": .array([
+                    .object([
+                        "option_id": .string("editorial"),
+                        "label": .string("Editorial"),
+                        "description": .string("Typography-led"),
+                    ]),
+                ]),
+                "image_references": .array([.string("reference://restored-preview")]),
+                "details": .object(["title": .string("Visual direction")]),
+            ]),
+        ])
+
+        try await store.restoreLocalAgentTasks([task], runs: [run])
+
+        let prompt = try #require(await store.localAgentPrompts(
+            sessionID: task.sourceThreadID,
+            limit: 100
+        ).first)
+        #expect(prompt.id == "restored-interaction")
+        #expect(prompt.message == "Choose a restored visual direction")
+        #expect(prompt.choice?.options.first?.description == "Typography-led")
+        #expect(try await store.localAgentPromptRoute(
+            promptID: prompt.id,
+            sessionID: task.sourceThreadID
+        ) == LocalAgentAskUserRoute(
+            runID: run.runID,
+            interactionID: "restored-interaction"
+        ))
+        #expect(await store.localAgentRunControls(
+            sessionID: task.sourceThreadID
+        ).first?.requiresUserAnswer == true)
+    }
+
+    @Test("binds Task prompts controls and approvals to the exact Run and conversation")
+    func bindsNativeInteractions() async throws {
+        let store = LocalAgentTaskStateStore()
+        let task = taskSnapshot()
+        var run = runSnapshot()
+        try await store.restoreLocalAgentTasks([task], runs: [run])
+
+        let interaction = LocalAgentUserInteractionEvent(
+            interactionID: "task-interaction-1",
+            runID: run.runID,
+            prompt: "Which visual direction should the Task continue?",
+            options: [
+                .init(optionID: "editorial", label: "Editorial"),
+                .init(optionID: "spatial", label: "Spatial"),
+            ],
+            imageReferences: ["reference://task-visual"],
+            details: .object([
+                "title": .string("Choose the visual direction"),
+                "allows_multiple": .bool(false),
+            ])
+        )
+        try await store.applyLocalAgentTaskEvent(LocalAgentUIEvent(
+            eventSeq: 1,
+            emittedAt: "2026-09-12T03:01:00Z",
+            event: .userInteraction(interaction)
+        ))
+        let tool = LocalAgentToolSnapshot(
+            invocationID: "task-invocation-1",
+            runID: run.runID,
+            batchID: "task-batch-1",
+            toolCallID: "task-call-1",
+            toolName: "save_design",
+            effect: .write,
+            argumentsDigest: "sha256:" + String(repeating: "b", count: 64),
+            status: .awaitingApproval
+        )
+        try await store.applyLocalAgentTaskEvent(LocalAgentUIEvent(
+            eventSeq: 2,
+            emittedAt: "2026-09-12T03:02:00Z",
+            event: .toolSnapshot(tool)
+        ))
+
+        let prompt = try #require(await store.localAgentPrompts(
+            sessionID: "thread-1",
+            limit: 100
+        ).first)
+        #expect(prompt.id == interaction.interactionID)
+        #expect(prompt.turnID == task.sourceTurnID)
+        #expect(prompt.choice?.options.map(\.value) == ["editorial", "spatial"])
+        #expect(try await store.localAgentPromptRoute(
+            promptID: prompt.id,
+            sessionID: "thread-1"
+        ) == LocalAgentAskUserRoute(
+            runID: run.runID,
+            interactionID: interaction.interactionID
+        ))
+        #expect(await store.localAgentRunControls(sessionID: "thread-1").map(\.runID) == [
+            run.runID,
+        ])
+        #expect(await store.localAgentPendingToolApprovals(
+            sessionID: "thread-1"
+        ).map(\.invocationID) == [tool.invocationID])
+
+        await #expect(throws: LocalAgentConversationHistoryError.promptUnavailable) {
+            _ = try await store.localAgentPromptRoute(
+                promptID: prompt.id,
+                sessionID: "thread-other"
+            )
+        }
+        await #expect(throws: LocalAgentConversationHistoryError.runUnavailable) {
+            _ = try await store.requireLocalAgentRunControl(
+                runID: run.runID,
+                sessionID: "thread-other"
+            )
+        }
+        await #expect(throws: LocalAgentConversationHistoryError.toolApprovalUnavailable) {
+            _ = try await store.requireLocalAgentToolApproval(
+                invocationID: tool.invocationID,
+                sessionID: "thread-other"
+            )
+        }
+
+        let answered = try await store.updateLocalAgentPromptStatus(
+            promptID: prompt.id,
+            sessionID: "thread-1",
+            status: .ok
+        )
+        #expect(answered.status == .ok)
+        await #expect(throws: LocalAgentConversationHistoryError.promptUnavailable) {
+            _ = try await store.localAgentPromptRoute(
+                promptID: prompt.id,
+                sessionID: "thread-1"
+            )
+        }
+
+        run.status = .succeeded
+        run.updatedAt = "2026-09-12T03:03:00Z"
+        try await store.applyLocalAgentTaskEvent(LocalAgentUIEvent(
+            eventSeq: 3,
+            emittedAt: run.updatedAt,
+            event: .runSnapshot(run)
+        ))
+        #expect(await store.localAgentRunControls(sessionID: "thread-1").isEmpty)
+        #expect(await store.localAgentPendingToolApprovals(sessionID: "thread-1").isEmpty)
+        await #expect(throws: LocalAgentConversationHistoryError.toolApprovalUnavailable) {
+            _ = try await store.requireLocalAgentToolApproval(
+                invocationID: tool.invocationID,
+                sessionID: "thread-1"
+            )
+        }
+    }
 }
 
 private func taskSnapshot() -> LocalAgentTaskSnapshot {

@@ -187,13 +187,17 @@ final class AppModel: ObservableObject {
             contactContexts: ChatOSLocalAgentContactRuntimeContextService(client: apiClient),
             projects: localProjectsService
         )
+        let localAgentInteractionState = LocalAgentUnifiedInteractionState(
+            mainChat: historyStore,
+            taskRunner: localAgentTaskStateStore
+        )
         let askUserPromptService = NativeLocalAgentAskUserPromptService(
             accountSession: localAgentAccountSession,
-            state: historyStore
+            state: localAgentInteractionState
         )
         let localAgentRunControlService = NativeLocalAgentRunControlService(
             accountSession: localAgentAccountSession,
-            state: historyStore
+            state: localAgentInteractionState
         )
 
         self.historyStore = historyStore

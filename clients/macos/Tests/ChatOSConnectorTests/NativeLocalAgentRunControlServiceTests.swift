@@ -69,6 +69,107 @@ struct NativeLocalAgentRunControlServiceTests {
         }
         #expect(await fixture.transport.lastRequest() == nil)
     }
+
+    @Test("Task Runner controls and approvals are sent through the same native Host service")
+    func controlsTaskRunnerRun() async throws {
+        let taskState = LocalAgentTaskStateStore()
+        let task = controlTaskSnapshot()
+        let run = controlTaskRunSnapshot()
+        try await taskState.restoreLocalAgentTasks([task], runs: [run])
+        try await taskState.applyLocalAgentTaskEvent(.init(
+            eventSeq: 21,
+            emittedAt: controlTaskTimestamp,
+            event: .toolSnapshot(.init(
+                invocationID: "task-invocation-1",
+                runID: run.runID,
+                batchID: "task-batch-1",
+                toolCallID: "task-call-1",
+                toolName: "save_design",
+                effect: .write,
+                argumentsDigest: "sha256:task-arguments",
+                status: .awaitingApproval
+            ))
+        ))
+        let interactionState = LocalAgentUnifiedInteractionState(
+            mainChat: ConversationHistoryStore(),
+            taskRunner: taskState
+        )
+        let transport = ControlTransport()
+        let client = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: transport
+        )
+        let service = NativeLocalAgentRunControlService(
+            accountSession: ControlAccountSession(client: client),
+            state: interactionState
+        )
+
+        try await service.pause(runID: run.runID, sessionID: task.sourceThreadID)
+        var command = try controlCommand(try #require(await transport.lastRequest()))
+        #expect(command["type"] as? String == "pause_run")
+        var payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["run_id"] as? String == run.runID)
+
+        try await service.decideToolApproval(
+            invocationID: "task-invocation-1",
+            sessionID: task.sourceThreadID,
+            decision: .approve,
+            reason: "Approved visual write"
+        )
+        command = try controlCommand(try #require(await transport.lastRequest()))
+        #expect(command["type"] as? String == "decide_tool_approval")
+        payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["invocation_id"] as? String == "task-invocation-1")
+        #expect(payload["decision"] as? String == "approve")
+
+        await #expect(throws: LocalAgentConversationHistoryError.runUnavailable) {
+            try await service.cancel(runID: run.runID, sessionID: "thread-other")
+        }
+    }
+}
+
+private let controlTaskTimestamp = "2026-09-12T07:00:00Z"
+
+private func controlTaskSnapshot() -> LocalAgentTaskSnapshot {
+    LocalAgentTaskSnapshot(
+        taskID: "task-1",
+        revision: 1,
+        sourceThreadID: "thread-1",
+        sourceTurnID: "turn-1",
+        projectID: "project-1",
+        runID: "task-run-1",
+        objective: "Complete the visual design",
+        acceptanceCriteria: ["Visual review accepted"],
+        status: "running",
+        modelConfigID: "model-1",
+        modelConfigRevision: 1,
+        createdAt: controlTaskTimestamp,
+        updatedAt: controlTaskTimestamp
+    )
+}
+
+private func controlTaskRunSnapshot() -> LocalAgentRunSnapshot {
+    LocalAgentRunSnapshot(
+        runID: "task-run-1",
+        profileKey: "task_runner",
+        ownerUserID: "user-1",
+        ownerEntityType: "task",
+        ownerEntityID: "task-1",
+        projectID: "project-1",
+        status: .modelRunning,
+        version: 1,
+        stepSeq: 1,
+        iteration: 1,
+        retryCount: 0,
+        modelConfigID: "model-1",
+        modelConfigRevision: 1,
+        modelRuntimeSnapshot: .object([:]),
+        contextStrategy: "provider_native",
+        promptRevision: "prompt-1",
+        capabilitySnapshotRef: "capabilities-1",
+        createdAt: controlTaskTimestamp,
+        updatedAt: controlTaskTimestamp
+    )
 }
 
 private struct ControlFixture {

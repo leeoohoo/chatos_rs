@@ -17,7 +17,7 @@ extension NativeLocalAgentRunControlError: LocalizedError {
     }
 }
 
-/// Main Chat controls backed only by the account's Rust Local Agent Host.
+/// Main Chat and Task Runner controls backed only by the account's Rust Local Agent Host.
 /// Accepted commands are reflected back into UI exclusively through durable
 /// typed events; this service never fabricates a successful state transition.
 public struct NativeLocalAgentRunControlService: LocalAgentRunControlServicing {

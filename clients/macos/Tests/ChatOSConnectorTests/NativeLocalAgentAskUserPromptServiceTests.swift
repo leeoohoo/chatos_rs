@@ -66,6 +66,56 @@ struct NativeLocalAgentAskUserPromptServiceTests {
         }
         #expect(await fixture.transport.lastRequest() == nil)
     }
+
+    @Test("Task Runner Ask User is answered through the same native Host service")
+    func submitsTaskRunnerSelection() async throws {
+        let taskState = LocalAgentTaskStateStore()
+        let task = askUserTaskSnapshot()
+        let run = askUserTaskRunSnapshot()
+        try await taskState.restoreLocalAgentTasks([task], runs: [run])
+        try await taskState.applyLocalAgentTaskEvent(.init(
+            eventSeq: 11,
+            emittedAt: askUserTimestamp,
+            event: .userInteraction(.init(
+                interactionID: "task-interaction-1",
+                runID: run.runID,
+                prompt: "Which Task visual direction should I continue?",
+                options: [
+                    .init(optionID: "visual-a", label: "Direction A"),
+                    .init(optionID: "visual-b", label: "Direction B"),
+                ],
+                imageReferences: ["reference://task-preview"]
+            ))
+        ))
+        let interactionState = LocalAgentUnifiedInteractionState(
+            mainChat: ConversationHistoryStore(),
+            taskRunner: taskState
+        )
+        let transport = AskUserTransport()
+        let client = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: transport
+        )
+        let service = NativeLocalAgentAskUserPromptService(
+            accountSession: AskUserAccountSession(client: client),
+            state: interactionState
+        )
+
+        let updated = try await service.submit(
+            promptID: "task-interaction-1",
+            sessionID: "thread-1",
+            submission: AskUserSubmission(selection: .single("visual-b"))
+        )
+
+        #expect(updated.status == .ok)
+        let command = try commandObject(try #require(await transport.lastRequest()))
+        #expect(command["type"] as? String == "answer_user_question")
+        let payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["run_id"] as? String == run.runID)
+        #expect(payload["interaction_id"] as? String == "task-interaction-1")
+        let answer = try #require(payload["answer"] as? [String: Any])
+        #expect(answer["selected_option_ids"] as? [String] == ["visual-b"])
+    }
 }
 
 private struct AskUserFixture {
@@ -131,6 +181,49 @@ private struct AskUserFixture {
 
 private let askUserTimestamp = "2026-09-12T06:00:00Z"
 
+private func askUserTaskSnapshot() -> LocalAgentTaskSnapshot {
+    LocalAgentTaskSnapshot(
+        taskID: "task-1",
+        revision: 1,
+        sourceThreadID: "thread-1",
+        sourceTurnID: "turn-1",
+        projectID: "project-1",
+        runID: "task-run-1",
+        objective: "Refine the selected visual direction",
+        acceptanceCriteria: ["Visual review accepted"],
+        status: "running",
+        modelConfigID: "model-1",
+        modelConfigRevision: 1,
+        createdAt: askUserTimestamp,
+        updatedAt: askUserTimestamp
+    )
+}
+
+private func askUserTaskRunSnapshot() -> LocalAgentRunSnapshot {
+    LocalAgentRunSnapshot(
+        runID: "task-run-1",
+        profileKey: "task_runner",
+        ownerUserID: "user-1",
+        ownerEntityType: "task",
+        ownerEntityID: "task-1",
+        projectID: "project-1",
+        status: .paused,
+        version: 1,
+        stepSeq: 1,
+        iteration: 1,
+        retryCount: 0,
+        modelConfigID: "model-1",
+        modelConfigRevision: 1,
+        modelRuntimeSnapshot: .object([:]),
+        contextStrategy: "provider_native",
+        promptRevision: "prompt-1",
+        capabilitySnapshotRef: "capabilities-1",
+        pendingInteraction: .object(["type": .string("ask_user")]),
+        createdAt: askUserTimestamp,
+        updatedAt: askUserTimestamp
+    )
+}
+
 private struct AskUserAccountSession: NativeLocalAgentAccountSessionAccess {
     var client: NativeLocalAgentIPCClient
 
@@ -172,4 +265,3 @@ private func commandObject(_ request: Data) throws -> [String: Any] {
     let object = try #require(JSONSerialization.jsonObject(with: request) as? [String: Any])
     return try #require(object["command"] as? [String: Any])
 }
-
