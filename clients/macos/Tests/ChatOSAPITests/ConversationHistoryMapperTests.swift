@@ -23,8 +23,6 @@ final class ConversationHistoryMapperTests: XCTestCase {
         XCTAssertEqual(page.turns[0].assistantReplies.map(\.message.text), ["已经开始检查。"])
         XCTAssertEqual(page.turns[0].processEvents.count, 1)
         XCTAssertEqual(page.turns[0].status, .completed)
-        XCTAssertEqual(page.turns[0].messageTaskLookup?.sourceUserMessageID, "group-1")
-        XCTAssertEqual(page.turns[0].messageTaskLookup?.turnID, "turn-1")
         XCTAssertEqual(page.turns[0].revision, 6)
         XCTAssertEqual(page.olderCursor, "turn-0")
         XCTAssertTrue(page.hasOlder)
@@ -63,10 +61,9 @@ final class ConversationHistoryMapperTests: XCTestCase {
         )
 
         XCTAssertTrue(page.turns[0].processEvents.isEmpty)
-        XCTAssertEqual(page.turns[0].messageTaskLookup?.sourceUserMessageID, "group-1")
     }
 
-    func testStoppedTaskBatchStillKeepsHistoricalTurnAndTaskLookup() throws {
+    func testStoppedTaskBatchStillKeepsHistoricalTurn() throws {
         let json = taskWithoutProcessFixtureJSON.replacingOccurrences(
             of: #""confirmation_status": "confirmed""#,
             with: #""confirmation_status": "stopped""#
@@ -85,7 +82,6 @@ final class ConversationHistoryMapperTests: XCTestCase {
         XCTAssertEqual(page.turns.count, 1)
         XCTAssertEqual(page.turns[0].userMessage.text, "执行任务")
         XCTAssertTrue(page.turns[0].processEvents.isEmpty)
-        XCTAssertEqual(page.turns[0].messageTaskLookup?.sourceUserMessageID, "group-1")
     }
 
     func testOneUserMessageKeepsEveryTaskRunnerAgentReply() throws {

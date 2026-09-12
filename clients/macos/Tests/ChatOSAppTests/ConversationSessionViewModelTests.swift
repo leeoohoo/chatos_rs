@@ -146,6 +146,28 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.turns.count, 2)
     }
 
+    func testTaskGraphAvailabilityComesFromStableLocalTaskBinding() async throws {
+        let taskStateStore = LocalAgentTaskStateStore()
+        try await taskStateStore.registerLocalAgentTask(
+            Self.taskSnapshot(),
+            run: Self.taskRunSnapshot()
+        )
+        let turn = ConversationRemoteServiceStub.turn(revision: 1)
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [turn],
+            historyStore: ConversationHistoryStore(),
+            localAgentTaskStateStore: taskStateStore
+        )
+
+        viewModel.activate()
+        try await waitUntil { viewModel.tasks(for: turn.id).count == 1 }
+
+        XCTAssertTrue(viewModel.hasTaskGraph(for: turn))
+        XCTAssertEqual(viewModel.tasks(for: turn.id).first?.task.taskID, "task-1")
+        XCTAssertEqual(viewModel.tasks(for: turn.id).first?.run.runID, "task-run-1")
+    }
+
     private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
         ConversationRealtimeSignal(
             eventID: id,
@@ -155,6 +177,49 @@ final class ConversationSessionViewModelTests: XCTestCase {
             kind: .reconcile,
             eventName: "conversation.reconcile",
             timestamp: "2026-09-03T08:00:00Z"
+        )
+    }
+
+    private static func taskSnapshot() -> LocalAgentTaskSnapshot {
+        LocalAgentTaskSnapshot(
+            taskID: "task-1",
+            revision: 1,
+            sourceThreadID: "session-1",
+            sourceTurnID: "turn-1",
+            projectID: "project-1",
+            currentRunID: "task-run-1",
+            runIDs: ["task-run-1"],
+            objective: "Refine the visual design",
+            acceptanceCriteria: ["Match the approved reference"],
+            status: "running",
+            modelConfigID: "model-1",
+            modelConfigRevision: 1,
+            createdAt: "2026-09-12T03:00:00Z",
+            updatedAt: "2026-09-12T03:00:00Z"
+        )
+    }
+
+    private static func taskRunSnapshot() -> LocalAgentRunSnapshot {
+        LocalAgentRunSnapshot(
+            runID: "task-run-1",
+            profileKey: "task_runner",
+            ownerUserID: "user-1",
+            ownerEntityType: "task",
+            ownerEntityID: "task-1",
+            projectID: "project-1",
+            status: .modelRunning,
+            version: 1,
+            stepSeq: 1,
+            iteration: 1,
+            retryCount: 0,
+            modelConfigID: "model-1",
+            modelConfigRevision: 1,
+            modelRuntimeSnapshot: .object([:]),
+            contextStrategy: "provider_native",
+            promptRevision: "prompt-1",
+            capabilitySnapshotRef: "capability-1",
+            createdAt: "2026-09-12T03:00:00Z",
+            updatedAt: "2026-09-12T03:00:00Z"
         )
     }
 

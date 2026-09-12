@@ -238,8 +238,9 @@ struct ConversationTimelineView: View {
                 showsTaskGraph: conversation.hasTaskGraph(for: turn),
                 onOpenProcess: { selectedProcessTurn = turn },
                 onOpenTaskGraph: {
-                    requestedTaskID = nil
-                    requestedRunID = nil
+                    let task = conversation.tasks(for: turn.id).first
+                    requestedTaskID = task?.task.taskID
+                    requestedRunID = task?.run.runID
                     selectedTaskTurn = turn
                 }
             )
@@ -372,9 +373,11 @@ struct ConversationTimelineView: View {
         let targetTurn = request.turnID.flatMap { turnID in
             conversation.turns.first(where: { $0.id == turnID })
         } ?? request.taskID.flatMap { taskID in
-            conversation.turns.first(where: { turn in
-                turn.assistantReplies.contains { $0.taskCallback?.taskID == taskID }
-            })
+            conversation.localAgentTasks
+                .first(where: { $0.task.taskID == taskID })
+                .flatMap { task in
+                    conversation.turns.first(where: { $0.id == task.task.sourceTurnID })
+                }
         }
 
         if let targetTurn {

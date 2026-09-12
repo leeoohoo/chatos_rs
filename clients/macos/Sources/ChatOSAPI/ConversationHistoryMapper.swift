@@ -42,11 +42,6 @@ enum ConversationHistoryMapper {
         }
         let revision = ([user.resolvedRevision] + assistantReplies.map(\.resolvedRevision)).max() ?? 1
         let processCount = user.metadata.value(at: "historyProcess", "processMessageCount")?.intValue ?? 0
-        let taskLookup = mergedTaskLookup(
-            user.messageTaskLookup,
-            assistant?.messageTaskLookup,
-            sessionID: sessionID
-        )
         let status = turnStatus(user: user, assistant: assistant)
 
         return ConversationTurn(
@@ -67,23 +62,9 @@ enum ConversationHistoryMapper {
                     taskCallback: $0.taskRunnerCallbackReference
                 )
             },
-            messageTaskLookup: taskLookup,
             status: status,
             startedAt: startedAt,
             completedAt: completedAt
-        )
-    }
-
-    private static func mergedTaskLookup(
-        _ primary: MessageTaskLookup?,
-        _ secondary: MessageTaskLookup?,
-        sessionID: String
-    ) -> MessageTaskLookup? {
-        guard primary != nil || secondary != nil else { return nil }
-        return MessageTaskLookup(
-            sessionID: sessionID,
-            turnID: primary?.turnID ?? secondary?.turnID,
-            sourceUserMessageID: primary?.sourceUserMessageID ?? secondary?.sourceUserMessageID
         )
     }
 

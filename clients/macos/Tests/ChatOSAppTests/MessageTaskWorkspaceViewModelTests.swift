@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class MessageTaskWorkspaceViewModelTests: XCTestCase {
-    func testEmptyGraphWithMessageLookupStartsAutomaticRetryState() async {
+    func testEmptyGraphWithStableTaskIdentityStartsAutomaticRetryState() async {
         let service = MessageTaskGraphServiceStub(graphs: [.empty])
         let viewModel = makeViewModel(service: service)
 
@@ -69,17 +69,13 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
                 text: "检查任务图",
                 createdAt: Date(timeIntervalSince1970: 1)
             ),
-            messageTaskLookup: MessageTaskLookup(
-                sessionID: "session-1",
-                turnID: "turn-1",
-                sourceUserMessageID: "message-1"
-            ),
             status: .completed,
             startedAt: Date(timeIntervalSince1970: 1)
         )
         return MessageTaskWorkspaceViewModel(
             turn: turn,
-            graphService: service
+            graphService: service,
+            initialTaskID: "task-1"
         )
     }
 }

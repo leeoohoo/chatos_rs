@@ -29,7 +29,6 @@ final class ConversationSessionViewModel: ObservableObject {
     @Published private(set) var selectedRemoteConnectionID: String?
     @Published private(set) var selectedThinkingLevel: String?
     @Published private(set) var reasoningEnabled = false
-    @Published private(set) var taskGraphAvailability: [String: Bool] = [:]
     @Published var historyError: String?
     @Published var runtimeSettingsError: String?
     @Published var sendError: String?
@@ -70,8 +69,6 @@ final class ConversationSessionViewModel: ObservableObject {
     private var latestRefreshInFlight = false
     private var latestRefreshPending: LatestRefreshPresentation?
     private var viewportUpdateGeneration: Int64 = 0
-    private var taskGraphAvailabilityTasks: [String: Task<Void, Never>] = [:]
-    private var taskGraphAvailabilityRevisions: [String: Int64] = [:]
     var pendingLocalAgentRunStatuses: [String: LocalAgentRunStatus] = [:]
 
     init(
@@ -111,7 +108,6 @@ final class ConversationSessionViewModel: ObservableObject {
         localAgentTaskUpdateTask?.cancel()
         historyRetryTask?.cancel()
         latestRefreshDebounceTask?.cancel()
-        taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
     }
 
     func refreshLatest() {
@@ -361,50 +357,7 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func hasTaskGraph(for turn: ConversationTurn) -> Bool {
-        taskGraphAvailability[turn.id] == true
-    }
-
-    func resolveTaskGraphAvailability(for turn: ConversationTurn) {
-        let isCandidate = turn.isTaskGraphAvailable && turn.messageTaskLookup != nil
-        guard isCandidate, let messageTaskGraphService else {
-            guard taskGraphAvailabilityRevisions[turn.id] != turn.revision
-                    || taskGraphAvailability[turn.id] != nil
-                    || taskGraphAvailabilityTasks[turn.id] != nil else { return }
-            taskGraphAvailability.removeValue(forKey: turn.id)
-            taskGraphAvailabilityRevisions[turn.id] = turn.revision
-            taskGraphAvailabilityTasks[turn.id]?.cancel()
-            taskGraphAvailabilityTasks[turn.id] = nil
-            return
-        }
-        guard taskGraphAvailabilityRevisions[turn.id] != turn.revision else { return }
-
-        taskGraphAvailabilityRevisions[turn.id] = turn.revision
-        taskGraphAvailability.removeValue(forKey: turn.id)
-        taskGraphAvailabilityTasks[turn.id]?.cancel()
-        taskGraphAvailabilityTasks[turn.id] = Task { [weak self] in
-            do {
-                let graph = try await messageTaskGraphService.fetchGraph(
-                    sourceThreadID: turn.sessionID,
-                    sourceTurnID: turn.id
-                )
-                guard !Task.isCancelled,
-                      self?.taskGraphAvailabilityRevisions[turn.id] == turn.revision else {
-                    return
-                }
-                if graph.nodes.isEmpty {
-                    self?.taskGraphAvailability.removeValue(forKey: turn.id)
-                } else {
-                    self?.taskGraphAvailability[turn.id] = true
-                }
-            } catch {
-                guard !Task.isCancelled,
-                      self?.taskGraphAvailabilityRevisions[turn.id] == turn.revision else {
-                    return
-                }
-                self?.taskGraphAvailability.removeValue(forKey: turn.id)
-            }
-            self?.taskGraphAvailabilityTasks[turn.id] = nil
-        }
+        !tasks(for: turn.id).isEmpty
     }
 
     private func bootstrap(initialTurns: [ConversationTurn]) async {
@@ -605,7 +558,6 @@ final class ConversationSessionViewModel: ObservableObject {
         if turns != snapshot.turns {
             turns = snapshot.turns
         }
-        preloadTaskGraphAvailability(for: snapshot.turns)
         olderCursor = snapshot.olderCursor
         if hasOlder != snapshot.hasOlder {
             hasOlder = snapshot.hasOlder
@@ -615,21 +567,6 @@ final class ConversationSessionViewModel: ObservableObject {
         }
     }
 
-    private func preloadTaskGraphAvailability(for turns: [ConversationTurn]) {
-        let currentTurnIDs = Set(turns.map(\.id))
-        let staleTurnIDs = taskGraphAvailabilityTasks.keys.filter {
-            !currentTurnIDs.contains($0)
-        }
-        for turnID in staleTurnIDs {
-            taskGraphAvailabilityTasks[turnID]?.cancel()
-            taskGraphAvailabilityTasks[turnID] = nil
-            taskGraphAvailabilityRevisions[turnID] = nil
-            taskGraphAvailability[turnID] = nil
-        }
-        for turn in turns {
-            resolveTaskGraphAvailability(for: turn)
-        }
-    }
 }
 
 private extension String {

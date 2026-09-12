@@ -1,21 +1,5 @@
 import Foundation
 
-public struct MessageTaskLookup: Codable, Sendable, Equatable {
-    public var sessionID: String?
-    public var turnID: String?
-    public var sourceUserMessageID: String?
-
-    public init(
-        sessionID: String? = nil,
-        turnID: String? = nil,
-        sourceUserMessageID: String? = nil
-    ) {
-        self.sessionID = sessionID
-        self.turnID = turnID
-        self.sourceUserMessageID = sourceUserMessageID
-    }
-}
-
 public struct MessageTask: Identifiable, Sendable, Equatable {
     public let id: String
     public var title: String

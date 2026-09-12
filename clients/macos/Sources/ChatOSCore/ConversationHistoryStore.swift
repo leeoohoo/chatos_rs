@@ -329,8 +329,7 @@ public actor ConversationHistoryStore {
     ) -> Bool {
         var didChange = false
 
-        for incomingTurn in incomingTurns {
-            var turn = incomingTurn
+        for turn in incomingTurns {
             guard turn.sessionID == sessionID else { continue }
 
             guard let existing = state.turnsByID[turn.id] else {
@@ -343,9 +342,6 @@ public actor ConversationHistoryStore {
                 || (replacingChangedEqualRevisions
                     && turn.revision == existing.revision
                     && turn != existing) {
-                if !existing.isTaskGraphAvailable {
-                    turn.isTaskGraphAvailable = false
-                }
                 state.turnsByID[turn.id] = turn
                 didChange = true
             }
@@ -399,7 +395,6 @@ public actor ConversationHistoryStore {
                 createdAt: createdAt,
                 attachments: Self.localAgentAttachments(message.structuredPayload)
             ),
-            isTaskGraphAvailable: false,
             status: .queued,
             startedAt: createdAt
         )

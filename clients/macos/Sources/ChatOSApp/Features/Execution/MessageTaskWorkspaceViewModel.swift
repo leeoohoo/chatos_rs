@@ -152,9 +152,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     }
 
     var expectsTaskGraph: Bool {
-        turn.messageTaskLookup != nil
-            || initialTaskID != nil
-            || initialRunID != nil
+        initialTaskID != nil || initialRunID != nil
     }
 
     var shouldRetryEmptyGraph: Bool {
