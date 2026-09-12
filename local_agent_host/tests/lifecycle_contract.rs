@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use chatos_local_agent_host::{
     LocalAgentHostError, LocalAgentHostService, LocalAgentHostServiceError,
     LocalAgentHostServiceExit, LocalAgentIpcTransport, LocalAgentIpcTransportError,
+    LocalAgentMemorySyncRuntime, LocalAgentMemorySyncWorkerError, LocalAgentMemorySyncWorkerExit,
     LocalAgentWorkerExit, LocalAgentWorkerRuntime,
 };
 use tokio::sync::Notify;
@@ -29,6 +30,36 @@ impl LocalAgentWorkerRuntime for WaitingWorker {
         Ok(LocalAgentWorkerExit {
             processed_event_count: 0,
         })
+    }
+}
+
+struct WaitingMemorySync {
+    started: Arc<Notify>,
+    cancelled: Arc<Notify>,
+}
+
+#[async_trait]
+impl LocalAgentMemorySyncRuntime for WaitingMemorySync {
+    async fn run(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<LocalAgentMemorySyncWorkerExit, LocalAgentMemorySyncWorkerError> {
+        self.started.notify_one();
+        cancellation.cancelled().await;
+        self.cancelled.notify_one();
+        Ok(LocalAgentMemorySyncWorkerExit::default())
+    }
+}
+
+struct ExitingMemorySync;
+
+#[async_trait]
+impl LocalAgentMemorySyncRuntime for ExitingMemorySync {
+    async fn run(
+        &self,
+        _cancellation: CancellationToken,
+    ) -> Result<LocalAgentMemorySyncWorkerExit, LocalAgentMemorySyncWorkerError> {
+        Ok(LocalAgentMemorySyncWorkerExit::default())
     }
 }
 
@@ -82,13 +113,23 @@ fn waiting_worker(
     Arc::new(WaitingWorker { started, cancelled })
 }
 
+fn waiting_memory_sync(
+    started: Arc<Notify>,
+    cancelled: Arc<Notify>,
+) -> Arc<dyn LocalAgentMemorySyncRuntime> {
+    Arc::new(WaitingMemorySync { started, cancelled })
+}
+
 #[tokio::test]
 async fn explicit_shutdown_cancels_worker_and_transport_as_one_host() {
     let worker_started = Arc::new(Notify::new());
     let worker_cancelled = Arc::new(Notify::new());
+    let memory_sync_started = Arc::new(Notify::new());
+    let memory_sync_cancelled = Arc::new(Notify::new());
     let transport_started = Arc::new(Notify::new());
     let service = LocalAgentHostService::new(
         waiting_worker(worker_started.clone(), worker_cancelled.clone()),
+        waiting_memory_sync(memory_sync_started.clone(), memory_sync_cancelled.clone()),
         Box::new(WaitingTransport {
             started: transport_started.clone(),
         }),
@@ -96,6 +137,7 @@ async fn explicit_shutdown_cancels_worker_and_transport_as_one_host() {
     let shutdown = CancellationToken::new();
     let running = tokio::spawn(service.run(shutdown.clone()));
     worker_started.notified().await;
+    memory_sync_started.notified().await;
     transport_started.notified().await;
     shutdown.cancel();
 
@@ -105,17 +147,22 @@ async fn explicit_shutdown_cancels_worker_and_transport_as_one_host() {
             worker: LocalAgentWorkerExit {
                 processed_event_count: 0,
             },
+            memory_sync: LocalAgentMemorySyncWorkerExit::default(),
         }
     );
     worker_cancelled.notified().await;
+    memory_sync_cancelled.notified().await;
 }
 
 #[tokio::test]
 async fn transport_failure_cancels_the_worker_and_is_not_hidden() {
     let worker_started = Arc::new(Notify::new());
     let worker_cancelled = Arc::new(Notify::new());
+    let memory_sync_started = Arc::new(Notify::new());
+    let memory_sync_cancelled = Arc::new(Notify::new());
     let service = LocalAgentHostService::new(
         waiting_worker(worker_started.clone(), worker_cancelled.clone()),
+        waiting_memory_sync(memory_sync_started, memory_sync_cancelled.clone()),
         Box::new(FailingTransport),
     );
     let error = service.run(CancellationToken::new()).await.unwrap_err();
@@ -128,14 +175,18 @@ async fn transport_failure_cancels_the_worker_and_is_not_hidden() {
         })
     ));
     worker_cancelled.notified().await;
+    memory_sync_cancelled.notified().await;
 }
 
 #[tokio::test]
 async fn clean_transport_exit_without_shutdown_is_a_host_failure() {
     let worker_started = Arc::new(Notify::new());
     let worker_cancelled = Arc::new(Notify::new());
+    let memory_sync_started = Arc::new(Notify::new());
+    let memory_sync_cancelled = Arc::new(Notify::new());
     let service = LocalAgentHostService::new(
         waiting_worker(worker_started, worker_cancelled.clone()),
+        waiting_memory_sync(memory_sync_started, memory_sync_cancelled.clone()),
         Box::new(ExitingTransport),
     );
     let error = service.run(CancellationToken::new()).await.unwrap_err();
@@ -143,6 +194,28 @@ async fn clean_transport_exit_without_shutdown_is_a_host_failure() {
     assert!(matches!(
         error,
         LocalAgentHostServiceError::UnexpectedTransportExit
+    ));
+    worker_cancelled.notified().await;
+    memory_sync_cancelled.notified().await;
+}
+
+#[tokio::test]
+async fn clean_memory_sync_exit_without_shutdown_is_a_host_failure() {
+    let worker_started = Arc::new(Notify::new());
+    let worker_cancelled = Arc::new(Notify::new());
+    let transport_started = Arc::new(Notify::new());
+    let service = LocalAgentHostService::new(
+        waiting_worker(worker_started, worker_cancelled.clone()),
+        Arc::new(ExitingMemorySync),
+        Box::new(WaitingTransport {
+            started: transport_started,
+        }),
+    );
+    let error = service.run(CancellationToken::new()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        LocalAgentHostServiceError::UnexpectedMemorySyncExit
     ));
     worker_cancelled.notified().await;
 }

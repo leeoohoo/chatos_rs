@@ -22,11 +22,11 @@ use crate::{
     LocalAgentExecutionSession, LocalAgentHost, LocalAgentHostBootstrapError,
     LocalAgentHostIpcEndpoint, LocalAgentHostPolicy, LocalAgentHostService,
     LocalAgentHostStartupReport, LocalAgentHostWorker, LocalAgentIpcMutationExecutor,
-    LocalAgentIpcServerError, LocalAgentProfileRegistry, LocalAgentStoragePlatform,
-    LocalAttachmentGrantResolver, LocalCapabilityPlatform, ProviderContextEncryptionKey,
-    RegisteredLocalCapabilityRuntime, StandardLocalAgentContextRuntime,
-    StoredLocalCapabilityLoader, StoredLocalTaskCreationPlanner, StoredMainChatContextProvider,
-    StoredTaskRunnerContextProvider,
+    LocalAgentIpcServerError, LocalAgentMemorySyncWorker, LocalAgentProfileRegistry,
+    LocalAgentStoragePlatform, LocalAttachmentGrantResolver, LocalCapabilityPlatform,
+    ProviderContextEncryptionKey, RegisteredLocalCapabilityRuntime,
+    StandardLocalAgentContextRuntime, StoredLocalCapabilityLoader, StoredLocalTaskCreationPlanner,
+    StoredMainChatContextProvider, StoredTaskRunnerContextProvider,
 };
 
 const MEMORY_ENGINE_TIMEOUT: Duration = Duration::from_secs(180);
@@ -166,9 +166,14 @@ pub async fn assemble_local_agent_host(
     let context_runtime = Arc::new(StandardLocalAgentContextRuntime::new(
         &provider_key,
         memory_context,
-        memory_sync,
+        memory_sync.clone(),
         request.owner_user_id.clone(),
     )?);
+    let memory_sync_worker = Arc::new(LocalAgentMemorySyncWorker::new(
+        storage.clone(),
+        scope.clone(),
+        memory_sync,
+    ));
 
     let main_context = Arc::new(StoredMainChatContextProvider::new(
         storage.clone(),
@@ -230,8 +235,11 @@ pub async fn assemble_local_agent_host(
         terminal_mutation_executor,
     )?;
     let client_endpoint = request.ipc_endpoint.client_endpoint().to_string();
-    let service =
-        LocalAgentHostService::new(worker, bind_transport(&request.ipc_endpoint, ipc_server)?);
+    let service = LocalAgentHostService::new(
+        worker,
+        memory_sync_worker,
+        bind_transport(&request.ipc_endpoint, ipc_server)?,
+    );
     Ok(AssembledLocalAgentHost {
         service,
         session,
