@@ -786,6 +786,14 @@ impl MemorySynchronizer {
         })
     }
 
+    pub fn tenant_id(&self) -> &str {
+        self.tenant_id.as_str()
+    }
+
+    pub fn source_id(&self) -> &str {
+        self.source_id.as_str()
+    }
+
     /// Claims and sends at most one bounded batch. It never owns a polling
     /// loop; the Host or platform scheduler decides when to invoke it again.
     pub async fn sync_once(

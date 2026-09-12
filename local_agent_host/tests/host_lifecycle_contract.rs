@@ -1194,12 +1194,16 @@ async fn host_renews_the_claim_and_commits_a_successful_local_tool_batch() {
     )
     .await
     .unwrap();
-    let SchedulerTickResult::Claimed(claimed) = host.claim_next("tool-claim-1", now).await.unwrap()
+    let execution_now = Utc::now();
+    let SchedulerTickResult::Claimed(claimed) = host
+        .claim_next("tool-claim-1", execution_now)
+        .await
+        .unwrap()
     else {
         panic!("tool batch was not claimed");
     };
     let committed = host
-        .execute_claimed_tool_batch(&claimed, CancellationToken::new(), now)
+        .execute_claimed_tool_batch(&claimed, CancellationToken::new(), execution_now)
         .await
         .unwrap();
     assert_eq!(tools.invocations.lock().unwrap().len(), 1);

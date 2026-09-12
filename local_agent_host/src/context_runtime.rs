@@ -13,10 +13,10 @@ use chatos_client_storage::{
     ClientStorage, ListQuery, ProviderContextStateRecord, RecordScope, StorageError,
     StorageTransaction, TransactionRepositories,
 };
-use chatos_local_agent_protocol::{ContextStrategy, LocalAgentRun};
+use chatos_local_agent_protocol::{ContextStrategy, LocalAgentRun, SyncOutboxStatus};
 use chatos_local_agent_runtime::{
     DurableProviderContextCommit, DurableProviderContextItem, MemoryEngineContextAdapter,
-    MemoryEngineContextScope, ModelStepContext, ProviderNativeContextCommit,
+    MemoryEngineContextScope, MemorySynchronizer, ModelStepContext, ProviderNativeContextCommit,
     ProviderNativeContextWindow,
 };
 use chrono::{DateTime, Utc};
@@ -27,6 +27,7 @@ use zeroize::Zeroizing;
 const PROVIDER_CONTEXT_PREFIX: &str = "chatos-provider-context-v1:";
 const PROVIDER_CONTEXT_AAD: &[u8] = b"chatos-local-agent-provider-context-v1";
 const NONCE_LENGTH: usize = 12;
+const MAX_BLOCKING_MEMORY_SYNC_BATCHES: usize = 1_000;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum LocalAgentContextRuntimeError {
@@ -126,6 +127,7 @@ impl AuthenticatedProviderContextCipher {
 pub struct StandardLocalAgentContextRuntime {
     provider_cipher: AuthenticatedProviderContextCipher,
     memory_engine: MemoryEngineContextAdapter,
+    memory_synchronizer: MemorySynchronizer,
     memory_tenant_id: String,
 }
 
@@ -133,6 +135,7 @@ impl StandardLocalAgentContextRuntime {
     pub fn new(
         provider_key: &ProviderContextEncryptionKey,
         memory_engine: MemoryEngineContextAdapter,
+        memory_synchronizer: MemorySynchronizer,
         memory_tenant_id: impl Into<String>,
     ) -> Result<Self, LocalAgentContextRuntimeError> {
         let memory_tenant_id = memory_tenant_id.into();
@@ -141,9 +144,17 @@ impl StandardLocalAgentContextRuntime {
                 "memory_tenant_id",
             ));
         }
+        if memory_synchronizer.tenant_id() != memory_tenant_id
+            || memory_synchronizer.source_id() != memory_engine.source_id()
+        {
+            return Err(LocalAgentContextRuntimeError::InvalidIdentity(
+                "memory synchronizer scope",
+            ));
+        }
         Ok(Self {
             provider_cipher: AuthenticatedProviderContextCipher::new(provider_key),
             memory_engine,
+            memory_synchronizer,
             memory_tenant_id,
         })
     }
@@ -257,6 +268,53 @@ impl LocalAgentContextRuntime for StandardLocalAgentContextRuntime {
                 Ok(ModelStepContext::ProviderNative(context))
             }
             ContextStrategy::MemoryEngine => {
+                let mut drained = false;
+                for _ in 0..MAX_BLOCKING_MEMORY_SYNC_BATCHES {
+                    if cancellation.is_cancelled() {
+                        return Err(LocalAgentContextRuntimeError::Cancelled);
+                    }
+                    let report = self
+                        .memory_synchronizer
+                        .sync_once(storage, scope.clone(), Utc::now(), cancellation.clone())
+                        .await?;
+                    if cancellation.is_cancelled() {
+                        return Err(LocalAgentContextRuntimeError::Cancelled);
+                    }
+                    if report.deferred > 0
+                        || report.permanently_failed > 0
+                        || report.exhausted_before_send > 0
+                        || !report.errors.is_empty()
+                    {
+                        return Err(LocalAgentContextRuntimeError::Runtime(format!(
+                            "Memory Engine sync blocked model context: deferred={}, permanently_failed={}, exhausted={}, errors={}",
+                            report.deferred,
+                            report.permanently_failed,
+                            report.exhausted_before_send,
+                            report.errors.len()
+                        )));
+                    }
+                    if report.claimed == 0 {
+                        drained = true;
+                        break;
+                    }
+                }
+                if !drained {
+                    return Err(LocalAgentContextRuntimeError::Runtime(
+                        "Memory Engine sync did not drain within the bounded batch limit"
+                            .to_string(),
+                    ));
+                }
+                let mut inspection = InspectUnsyncedMemoryOperation {
+                    scope: scope.clone(),
+                    unsynced_count: 0,
+                };
+                storage.transaction(&mut inspection).await?;
+                if inspection.unsynced_count > 0 {
+                    return Err(LocalAgentContextRuntimeError::Runtime(format!(
+                        "Memory Engine sync still has {} pending, in-flight, or failed records",
+                        inspection.unsynced_count
+                    )));
+                }
                 let memory_scope = MemoryEngineContextScope::thread(
                     self.memory_tenant_id.clone(),
                     self.memory_engine.source_id().to_string(),
@@ -318,6 +376,46 @@ struct LoadProviderContextOperation {
     scope: RecordScope,
     run_id: String,
     records: Vec<ProviderContextStateRecord>,
+}
+
+struct InspectUnsyncedMemoryOperation {
+    scope: RecordScope,
+    unsynced_count: usize,
+}
+
+#[async_trait]
+impl StorageTransaction for InspectUnsyncedMemoryOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> Result<(), StorageError> {
+        let mut cursor = None;
+        loop {
+            let page = repositories
+                .sync_outbox()
+                .list(&ListQuery {
+                    scope: self.scope.clone(),
+                    cursor: cursor.clone(),
+                    limit: ListQuery::MAX_LIMIT,
+                })
+                .await?;
+            self.unsynced_count += page
+                .records
+                .into_iter()
+                .filter(|record| record.item.status != SyncOutboxStatus::Succeeded)
+                .count();
+            match page.next_cursor {
+                Some(next) if Some(next.as_str()) != cursor.as_deref() => cursor = Some(next),
+                Some(_) => {
+                    return Err(StorageError::InvalidData {
+                        reason: "Memory Sync pagination cursor did not advance".to_string(),
+                    });
+                }
+                None => break,
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
