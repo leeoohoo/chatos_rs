@@ -28,6 +28,7 @@ struct NativeLocalAgentRunControlServiceTests {
             #expect(command["type"] as? String == expectedType)
             let payload = try #require(command["payload"] as? [String: Any])
             #expect(payload["run_id"] as? String == "run-1")
+            #expect(payload["expected_version"] as? Int == 7)
         }
     }
 
@@ -184,6 +185,7 @@ private struct ControlFixture {
         let state = ControlState(
             control: LocalAgentRunControlState(
                 runID: "run-1",
+                runVersion: 7,
                 sessionID: "thread-1",
                 turnID: "turn-1",
                 status: status,

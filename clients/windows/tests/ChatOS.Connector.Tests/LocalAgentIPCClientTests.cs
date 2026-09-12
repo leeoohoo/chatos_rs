@@ -62,7 +62,23 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesTheSharedV13RetryTaskAndTaskSnapshotFixtures()
+    public async Task EncodesRunControlAgainstTheExactObservedVersion()
+    {
+        using var expectedRequest = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("run_control_request.json")));
+        var transport = new RecordingTransport(request => Reply(request, """
+            {"type":"accepted","payload":{"operation_id":"operation-1"}}
+            """));
+        var client = new WindowsLocalAgentIPCClient("user-1", transport);
+
+        await client.AcceptAsync(LocalAgentCommand.PauseRun("run-1", 7));
+
+        using var request = JsonDocument.Parse(transport.Request!);
+        Assert.True(JsonElement.DeepEquals(expectedRequest.RootElement, request.RootElement));
+    }
+
+    [Fact]
+    public async Task UsesTheSharedV14RetryTaskAndTaskSnapshotFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("retry_task_request.json")));
@@ -77,7 +93,7 @@ public sealed class LocalAgentIPCClientTests
             "Preserve the approved visual hierarchy.")));
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
-        Assert.Equal(13u, LocalAgentProtocol.Version);
+        Assert.Equal(14u, LocalAgentProtocol.Version);
         Assert.True(JsonElement.DeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));
@@ -120,7 +136,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesSharedV13TaskGraphAndRunDetailProjections()
+    public async Task UsesSharedV14TaskGraphAndRunDetailProjections()
     {
         using var graphFixture = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("task_graph_response.json")));
@@ -288,7 +304,7 @@ public sealed class LocalAgentIPCClientTests
         var client = new WindowsLocalAgentIPCClient("user-1", transport);
 
         var error = await Assert.ThrowsAsync<LocalAgentRejectedException>(() =>
-            client.SendAsync(LocalAgentCommand.PauseRun("run-1")));
+            client.SendAsync(LocalAgentCommand.PauseRun("run-1", 1)));
 
         Assert.Equal("run_conflict", error.Error.Code);
         Assert.True(error.Error.Retryable);
@@ -362,7 +378,7 @@ public sealed class LocalAgentIPCClientTests
             "shared",
             "fixtures",
             "local_agent",
-            "v13",
+            "v14",
             name));
 
     private static MemoryStream FrameHeader(uint length, byte[]? body = null)

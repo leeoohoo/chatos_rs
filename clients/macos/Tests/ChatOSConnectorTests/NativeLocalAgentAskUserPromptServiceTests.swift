@@ -51,6 +51,7 @@ struct NativeLocalAgentAskUserPromptServiceTests {
         #expect(command["type"] as? String == "cancel_run")
         let payload = try #require(command["payload"] as? [String: Any])
         #expect(payload["run_id"] as? String == "run-1")
+        #expect(payload["expected_version"] as? UInt64 == 4)
     }
 
     @Test("an empty answer is rejected before IPC")
@@ -250,17 +251,65 @@ private actor AskUserTransport: LocalAgentFrameTransport {
         self.request = request
         let object = try #require(JSONSerialization.jsonObject(with: request) as? [String: Any])
         let requestID = try #require(object["request_id"] as? String)
+        let command = try #require(object["command"] as? [String: Any])
+        let commandType = try #require(command["type"] as? String)
+        let response: [String: Any]
+        if commandType == "get_run" {
+            response = ["type": "run", "payload": Self.pendingRun()]
+        } else {
+            response = [
+                "type": "accepted",
+                "payload": ["operation_id": "operation-1"],
+            ]
+        }
         return try JSONSerialization.data(withJSONObject: [
             "protocol_version": localAgentProtocolVersion,
             "request_id": requestID,
-            "response": [
-                "type": "accepted",
-                "payload": ["operation_id": "operation-1"],
-            ],
+            "response": response,
         ])
     }
 
     func lastRequest() -> Data? { request }
+
+    private static func pendingRun() -> [String: Any] {
+        [
+            "run_id": "run-1",
+            "profile_key": "main_chat",
+            "owner_user_id": "user-1",
+            "owner_entity_type": "conversation",
+            "owner_entity_id": "thread-1",
+            "project_id": NSNull(),
+            "status": "paused",
+            "version": 4,
+            "step_seq": 1,
+            "iteration": 1,
+            "retry_count": 0,
+            "model_config_id": "model-1",
+            "model_config_revision": 1,
+            "model_runtime_snapshot": [:],
+            "context_strategy": "provider_native",
+            "prompt_revision": "prompt-1",
+            "capability_snapshot_ref": "capabilities-1",
+            "pending_interaction": [
+                "type": "ask_user",
+                "interaction_id": "interaction-1",
+                "question": [
+                    "prompt": "Which visual direction should I continue?",
+                    "options": [
+                        ["option_id": "visual-a", "label": "方向 A"],
+                        ["option_id": "visual-b", "label": "方向 B"],
+                    ],
+                    "image_references": [],
+                    "details": [
+                        "title": "选择视觉方向",
+                        "allows_multiple": false,
+                    ],
+                ],
+            ],
+            "created_at": "2026-09-12T06:00:00Z",
+            "updated_at": "2026-09-12T06:00:01Z",
+        ]
+    }
 }
 
 private func commandObject(_ request: Data) throws -> [String: Any] {

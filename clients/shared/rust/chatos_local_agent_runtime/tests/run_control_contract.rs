@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chatos_client_storage::{
     AgentRunStateRecord, ClientStorage, ListQuery, PutRecord, RecordMetadata, RecordScope,
     SecretReference, SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey,
-    StorageResult, StorageTransaction, TransactionRepositories,
+    StorageError, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
     ContextStrategy, LocalAgentRun, LocalAgentRunStatus, LocalAttachmentReference, ModelProtocol,
@@ -127,6 +127,7 @@ fn control(action: RunControlAction) -> RequestRunControl {
     RequestRunControl {
         scope: scope(),
         run_id: "run-1".to_string(),
+        expected_version: 1,
         action,
         origin_device_id: "device-1".to_string(),
         causation_id: "ipc-request-1".to_string(),
@@ -212,6 +213,22 @@ async fn invalid_resume_is_rejected_before_an_event_is_written() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("cannot request Resume"));
+    let mut count = CountEvents(0);
+    storage.transaction(&mut count).await.unwrap();
+    assert_eq!(count.0, 0);
+}
+
+#[tokio::test]
+async fn stale_run_control_version_is_rejected_before_an_event_is_written() {
+    let (_directory, storage) = storage(LocalAgentRunStatus::ModelRunning).await;
+    let mut request = control(RunControlAction::Pause);
+    request.expected_version = 2;
+
+    let error = request_run_control(&storage, request).await.unwrap_err();
+    assert!(matches!(
+        error,
+        StorageError::Conflict { actual_revision: 1 }
+    ));
     let mut count = CountEvents(0);
     storage.transaction(&mut count).await.unwrap();
     assert_eq!(count.0, 0);

@@ -269,7 +269,7 @@ struct NativeLocalAgentIPCClientTests {
         let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
 
         await #expect(throws: NativeLocalAgentIPCError.self) {
-            _ = try await client.accepted(.pauseRun(runID: "run-1"))
+            _ = try await client.accepted(.pauseRun(runID: "run-1", expectedVersion: 1))
         }
     }
 
@@ -279,7 +279,7 @@ struct NativeLocalAgentIPCClientTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v13")
+            .appendingPathComponent("shared/fixtures/local_agent/v14")
             .appendingPathComponent(name)
     }
 }

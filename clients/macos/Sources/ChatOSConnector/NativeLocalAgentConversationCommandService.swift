@@ -151,7 +151,14 @@ public actor NativeLocalAgentConversationCommandService: ConversationCommandServ
     public func cancelRun(runID: String) async throws {
         try validateIdentity(runID, field: "运行 ID")
         let client = try await accountSession.activeClient()
-        _ = try await client.accepted(.cancelRun(runID: runID))
+        let run = try await client.run(id: runID)
+        guard run.runID == runID else {
+            throw NativeLocalAgentConversationCommandError.invalidCreatedRun
+        }
+        _ = try await client.accepted(.cancelRun(
+            runID: runID,
+            expectedVersion: run.version
+        ))
     }
 
     private func contactContext(

@@ -639,6 +639,7 @@ impl LocalAgentHost {
     pub async fn request_control(
         &self,
         run_id: impl Into<String>,
+        expected_version: u64,
         action: RunControlAction,
         causation_id: impl Into<String>,
         now: DateTime<Utc>,
@@ -648,6 +649,7 @@ impl LocalAgentHost {
             RequestRunControl {
                 scope: self.scope.clone(),
                 run_id: run_id.into(),
+                expected_version,
                 action,
                 origin_device_id: self.device_id.clone(),
                 causation_id: causation_id.into(),
@@ -1589,10 +1591,10 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostControlExecutor {
         request_id: &str,
         command: LocalAgentCommand,
     ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError> {
-        let (run_id, action) = match command {
-            LocalAgentCommand::PauseRun { run_id } => (run_id, RunControlAction::Pause),
-            LocalAgentCommand::ResumeRun { run_id } => (run_id, RunControlAction::Resume),
-            LocalAgentCommand::CancelRun { run_id } => (run_id, RunControlAction::Cancel),
+        let (control, action) = match command {
+            LocalAgentCommand::PauseRun(command) => (command, RunControlAction::Pause),
+            LocalAgentCommand::ResumeRun(command) => (command, RunControlAction::Resume),
+            LocalAgentCommand::CancelRun(command) => (command, RunControlAction::Cancel),
             LocalAgentCommand::AnswerUserQuestion(command) => {
                 return self
                     .host
@@ -1616,7 +1618,13 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostControlExecutor {
             other => return self.next.execute_mutation(request_id, other).await,
         };
         self.host
-            .request_control(run_id, action, request_id, Utc::now())
+            .request_control(
+                control.run_id,
+                control.expected_version,
+                action,
+                request_id,
+                Utc::now(),
+            )
             .await
             .map(|event| LocalAgentIpcResponse::Accepted {
                 operation_id: event.event.event_id,

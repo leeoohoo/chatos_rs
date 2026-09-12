@@ -6,6 +6,7 @@ import Foundation
 public struct LocalAgentRunControlState: Identifiable, Equatable, Sendable {
     public var id: String { runID }
     public var runID: String
+    public var runVersion: UInt64
     public var sessionID: String
     public var turnID: String
     public var status: LocalAgentRunStatus
@@ -17,6 +18,7 @@ public struct LocalAgentRunControlState: Identifiable, Equatable, Sendable {
 
     public init(
         runID: String,
+        runVersion: UInt64,
         sessionID: String,
         turnID: String,
         status: LocalAgentRunStatus,
@@ -27,6 +29,7 @@ public struct LocalAgentRunControlState: Identifiable, Equatable, Sendable {
         updatedAt: Date? = nil
     ) {
         self.runID = runID
+        self.runVersion = runVersion
         self.sessionID = sessionID
         self.turnID = turnID
         self.status = status

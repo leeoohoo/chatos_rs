@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 13;
+    public const uint Version = 14;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -84,9 +84,12 @@ public sealed record LocalAgentCommand
 
     public static LocalAgentCommand CreateTask(LocalAgentCreateTask value) => new("create_task", value);
     public static LocalAgentCommand RetryTask(LocalAgentRetryTask value) => new("retry_task", value);
-    public static LocalAgentCommand PauseRun(string runId) => RunCommand("pause_run", runId);
-    public static LocalAgentCommand ResumeRun(string runId) => RunCommand("resume_run", runId);
-    public static LocalAgentCommand CancelRun(string runId) => RunCommand("cancel_run", runId);
+    public static LocalAgentCommand PauseRun(string runId, ulong expectedVersion) =>
+        RunControlCommand("pause_run", runId, expectedVersion);
+    public static LocalAgentCommand ResumeRun(string runId, ulong expectedVersion) =>
+        RunControlCommand("resume_run", runId, expectedVersion);
+    public static LocalAgentCommand CancelRun(string runId, ulong expectedVersion) =>
+        RunControlCommand("cancel_run", runId, expectedVersion);
     public static LocalAgentCommand GetRun(string runId) => RunCommand("get_run", runId);
     public static LocalAgentCommand GetRunDetail(
         string runId,
@@ -183,8 +186,14 @@ public sealed record LocalAgentCommand
 
     private static LocalAgentCommand RunCommand(string type, string runId) =>
         new(type, new RunPayload(runId));
+    private static LocalAgentCommand RunControlCommand(
+        string type,
+        string runId,
+        ulong expectedVersion) =>
+        new(type, new RunControlPayload(runId, expectedVersion));
 
     private sealed record RunPayload(string RunId);
+    private sealed record RunControlPayload(string RunId, ulong ExpectedVersion);
     private sealed record RunDetailPayload(string RunId, uint EventLimit, uint EventOffset);
     private sealed record TaskPayload(string TaskId);
     private sealed record TaskGraphPayload(string SourceThreadId, string SourceTurnId);

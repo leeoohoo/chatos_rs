@@ -113,7 +113,17 @@ public struct NativeLocalAgentTaskGraphService: MessageTaskGraphServicing {
     public func cancelTask(taskID: String) async throws {
         let client = try await accountSession.activeClient()
         let task = try await client.task(id: taskID)
-        _ = try await client.accepted(.cancelRun(runID: task.currentRunID))
+        let run = try await client.run(id: task.currentRunID)
+        guard run.runID == task.currentRunID,
+              run.ownerEntityType == "task",
+              run.ownerEntityID == task.taskID
+        else {
+            throw NativeLocalAgentIPCError.invalidResponse
+        }
+        _ = try await client.accepted(.cancelRun(
+            runID: run.runID,
+            expectedVersion: run.version
+        ))
     }
 
     private func map(_ projection: LocalAgentTaskProjection) -> MessageTask {

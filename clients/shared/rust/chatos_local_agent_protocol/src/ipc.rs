@@ -66,9 +66,9 @@ pub enum LocalAgentCommand {
     CreateMainChatTurn(Box<CreateMainChatTurnCommand>),
     CreateTask(Box<CreateTaskCommand>),
     RetryTask(RetryTaskCommand),
-    PauseRun { run_id: String },
-    ResumeRun { run_id: String },
-    CancelRun { run_id: String },
+    PauseRun(RunControlCommand),
+    ResumeRun(RunControlCommand),
+    CancelRun(RunControlCommand),
     AnswerUserQuestion(AnswerUserQuestionCommand),
     DecideToolApproval(ToolApprovalCommand),
     GetRun { run_id: String },
@@ -97,11 +97,12 @@ impl LocalAgentCommand {
             Self::CreateMainChatTurn(command) => command.validate(),
             Self::CreateTask(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),
-            Self::PauseRun { run_id }
-            | Self::ResumeRun { run_id }
-            | Self::CancelRun { run_id }
-            | Self::GetRun { run_id }
-            | Self::GetMainChatRunBinding { run_id } => require_identifier("run_id", run_id),
+            Self::PauseRun(command) | Self::ResumeRun(command) | Self::CancelRun(command) => {
+                command.validate()
+            }
+            Self::GetRun { run_id } | Self::GetMainChatRunBinding { run_id } => {
+                require_identifier("run_id", run_id)
+            }
             Self::GetTask { task_id } => require_identifier("task_id", task_id),
             Self::GetRunDetail(command) => command.validate(),
             Self::GetTaskGraph(command) => command.validate(),
@@ -429,6 +430,25 @@ pub struct AnswerUserQuestionCommand {
     pub run_id: String,
     pub interaction_id: String,
     pub answer: UserInteractionAnswer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RunControlCommand {
+    pub run_id: String,
+    pub expected_version: u64,
+}
+
+impl RunControlCommand {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("run_id", &self.run_id)?;
+        if self.expected_version == 0 {
+            return Err(ProtocolError::InvalidState {
+                reason: "Run control expected version must be positive",
+            });
+        }
+        Ok(())
+    }
 }
 
 impl AnswerUserQuestionCommand {
@@ -1148,12 +1168,14 @@ mod tests {
 
     #[test]
     fn command_serialization_uses_stable_snake_case_tags() {
-        let value = serde_json::to_value(LocalAgentCommand::PauseRun {
+        let value = serde_json::to_value(LocalAgentCommand::PauseRun(RunControlCommand {
             run_id: "run-1".to_string(),
-        })
+            expected_version: 7,
+        }))
         .unwrap();
         assert_eq!(value["type"], "pause_run");
         assert_eq!(value["payload"]["run_id"], "run-1");
+        assert_eq!(value["payload"]["expected_version"], 7);
     }
 
     #[test]

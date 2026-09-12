@@ -94,6 +94,7 @@ struct NativeLocalAgentConversationCommandServiceTests {
         #expect(command["type"] as? String == "cancel_run")
         let payload = try #require(command["payload"] as? [String: Any])
         #expect(payload["run_id"] as? String == "run-1")
+        #expect(payload["expected_version"] as? UInt64 == 3)
         #expect(await fixture.account.activeClientRequestCount() == 1)
     }
 }
@@ -180,35 +181,19 @@ private actor MainChatCommandTransport: LocalAgentFrameTransport {
         request = data
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let requestID = object["request_id"] as? String ?? "missing"
+        let command = try #require(object["command"] as? [String: Any])
+        let commandType = try #require(command["type"] as? String)
         let response: [String: Any]
-        if responseType == "accepted" {
+        if commandType == "get_run" {
+            response = ["type": "run", "payload": Self.runPayload(ownerUserID: returnedOwnerID)]
+        } else if responseType == "accepted" {
             response = ["type": "accepted", "payload": ["operation_id": "operation-1"]]
         } else {
             response = [
                 "type": "run_created",
                 "payload": [
                     "operation_id": "operation-1",
-                    "run": [
-                        "run_id": "run-1",
-                        "profile_key": "main_chat",
-                        "owner_user_id": returnedOwnerID,
-                        "owner_entity_type": "conversation",
-                        "owner_entity_id": "conversation-1",
-                        "project_id": "project-1",
-                        "status": "queued",
-                        "version": 1,
-                        "step_seq": 0,
-                        "iteration": 0,
-                        "retry_count": 0,
-                        "model_config_id": "model-1",
-                        "model_config_revision": 1,
-                        "model_runtime_snapshot": [:],
-                        "context_strategy": "provider_native",
-                        "prompt_revision": "prompt-1",
-                        "capability_snapshot_ref": "main-chat-capabilities-v1",
-                        "created_at": "2026-09-12T03:00:00Z",
-                        "updated_at": "2026-09-12T03:00:00Z",
-                    ],
+                    "run": Self.runPayload(ownerUserID: returnedOwnerID),
                 ],
             ]
         }
@@ -220,6 +205,30 @@ private actor MainChatCommandTransport: LocalAgentFrameTransport {
     }
 
     func lastRequestData() -> Data? { request }
+
+    private static func runPayload(ownerUserID: String) -> [String: Any] {
+        [
+            "run_id": "run-1",
+            "profile_key": "main_chat",
+            "owner_user_id": ownerUserID,
+            "owner_entity_type": "conversation",
+            "owner_entity_id": "conversation-1",
+            "project_id": "project-1",
+            "status": "model_running",
+            "version": 3,
+            "step_seq": 1,
+            "iteration": 0,
+            "retry_count": 0,
+            "model_config_id": "model-1",
+            "model_config_revision": 1,
+            "model_runtime_snapshot": [:],
+            "context_strategy": "provider_native",
+            "prompt_revision": "prompt-1",
+            "capability_snapshot_ref": "main-chat-capabilities-v1",
+            "created_at": "2026-09-12T03:00:00Z",
+            "updated_at": "2026-09-12T03:00:01Z",
+        ]
+    }
 }
 
 private actor MainChatAccountSession: NativeLocalAgentAccountSessionAccess {

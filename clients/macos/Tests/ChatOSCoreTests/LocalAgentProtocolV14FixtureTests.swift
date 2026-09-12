@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v13 fixtures")
-struct LocalAgentProtocolV13FixtureTests {
+@Suite("Shared Local Agent protocol v14 fixtures")
+struct LocalAgentProtocolV14FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV13FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 13)
+        #expect(localAgentProtocolVersion == 14)
         #expect(encoded == fixture)
     }
 
@@ -53,6 +53,23 @@ struct LocalAgentProtocolV13FixtureTests {
         let encoded = try JSONSerialization.jsonObject(with: encoder.encode(request)) as? NSDictionary
         let fixture = try JSONSerialization.jsonObject(
             with: Data(contentsOf: fixtureURL("tool_approval_request.json"))
+        ) as? NSDictionary
+
+        #expect(encoded == fixture)
+    }
+
+    @Test("encodes Run control against the exact observed version")
+    func runControlRequest() throws {
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-pause-run-1",
+            ownerUserID: "user-1",
+            command: .pauseRun(runID: "run-1", expectedVersion: 7)
+        )
+        let encoder = LocalAgentProtocolJSON.encoder()
+        let encoded = try JSONSerialization.jsonObject(with: encoder.encode(request)) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("run_control_request.json"))
         ) as? NSDictionary
 
         #expect(encoded == fixture)
@@ -122,7 +139,7 @@ struct LocalAgentProtocolV13FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v13")
+            .appendingPathComponent("shared/fixtures/local_agent/v14")
             .appendingPathComponent(name)
     }
 }

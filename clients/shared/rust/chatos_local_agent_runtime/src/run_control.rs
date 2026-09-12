@@ -50,6 +50,7 @@ impl RunControlAction {
 pub struct RequestRunControl {
     pub scope: RecordScope,
     pub run_id: String,
+    pub expected_version: u64,
     pub action: RunControlAction,
     pub origin_device_id: String,
     pub causation_id: String,
@@ -93,6 +94,11 @@ impl StorageTransaction for RequestRunControlOperation {
             })
             .await?
             .ok_or(StorageError::NotFound)?;
+        if run.run.version != request.expected_version {
+            return Err(StorageError::Conflict {
+                actual_revision: run.run.version,
+            });
+        }
         validate_transition(run.run.status, request.action)?;
 
         self.result = Some(
@@ -404,6 +410,7 @@ fn validate_answer_request(request: &AnswerRunInteraction) -> StorageResult<()> 
 fn validate_request(request: &RequestRunControl) -> StorageResult<()> {
     if request.scope.owner_user_id.trim().is_empty()
         || request.run_id.trim().is_empty()
+        || request.expected_version == 0
         || request.origin_device_id.trim().is_empty()
         || request.causation_id.trim().is_empty()
     {

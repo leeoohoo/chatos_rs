@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 13
+public let localAgentProtocolVersion: UInt32 = 14
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -232,9 +232,9 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
     case createTask(LocalAgentCreateTask)
     case retryTask(LocalAgentRetryTask)
-    case pauseRun(runID: String)
-    case resumeRun(runID: String)
-    case cancelRun(runID: String)
+    case pauseRun(runID: String, expectedVersion: UInt64)
+    case resumeRun(runID: String, expectedVersion: UInt64)
+    case cancelRun(runID: String, expectedVersion: UInt64)
     case answerUserQuestion(runID: String, interactionID: String, answer: LocalAgentUserAnswer)
     case decideToolApproval(
         runID: String,
@@ -270,6 +270,10 @@ public enum LocalAgentCommand: Equatable, Sendable {
 extension LocalAgentCommand: Encodable {
     private enum CodingKeys: String, CodingKey { case type, payload }
     private struct RunPayload: Encodable { let runID: String }
+    private struct RunControlPayload: Encodable {
+        let runID: String
+        let expectedVersion: UInt64
+    }
     private struct RunDetailPayload: Encodable {
         let runID: String
         let eventLimit: UInt32
@@ -344,12 +348,12 @@ extension LocalAgentCommand: Encodable {
         case let .retryTask(payload):
             try container.encode("retry_task", forKey: .type)
             try container.encode(payload, forKey: .payload)
-        case let .pauseRun(runID):
-            try encodeRun("pause_run", runID, into: &container)
-        case let .resumeRun(runID):
-            try encodeRun("resume_run", runID, into: &container)
-        case let .cancelRun(runID):
-            try encodeRun("cancel_run", runID, into: &container)
+        case let .pauseRun(runID, expectedVersion):
+            try encodeRunControl("pause_run", runID, expectedVersion, into: &container)
+        case let .resumeRun(runID, expectedVersion):
+            try encodeRunControl("resume_run", runID, expectedVersion, into: &container)
+        case let .cancelRun(runID, expectedVersion):
+            try encodeRunControl("cancel_run", runID, expectedVersion, into: &container)
         case let .answerUserQuestion(runID, interactionID, answer):
             try container.encode("answer_user_question", forKey: .type)
             try container.encode(AnswerPayload(runID: runID, interactionID: interactionID, answer: answer), forKey: .payload)
@@ -463,6 +467,19 @@ extension LocalAgentCommand: Encodable {
     ) throws {
         try container.encode(type, forKey: .type)
         try container.encode(RunPayload(runID: runID), forKey: .payload)
+    }
+
+    private func encodeRunControl(
+        _ type: String,
+        _ runID: String,
+        _ expectedVersion: UInt64,
+        into container: inout KeyedEncodingContainer<CodingKeys>
+    ) throws {
+        try container.encode(type, forKey: .type)
+        try container.encode(
+            RunControlPayload(runID: runID, expectedVersion: expectedVersion),
+            forKey: .payload
+        )
     }
 }
 

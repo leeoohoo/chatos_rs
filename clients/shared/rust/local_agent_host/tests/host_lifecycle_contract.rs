@@ -32,9 +32,9 @@ use chatos_local_agent_protocol::{
     LocalAgentRunStatus, LocalAgentUiEvent, LocalAgentUiEventPayload, ModelGatewayRequest,
     ModelGatewayTerminal, ModelGatewayTerminalSource, ModelGatewayTerminalStatus,
     ModelGatewayTokenCount, ModelProtocol, ModelRuntimeDescriptor, ModelStepCompletion,
-    ModelStepResult, ModelStreamDeltaKind, RetryTaskCommand, ToolApprovalCommand,
-    ToolApprovalDecision, ToolEffect, ToolExecutionStatus, UserInteractionAnswer,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    ModelStepResult, ModelStreamDeltaKind, RetryTaskCommand, RunControlCommand,
+    ToolApprovalCommand, ToolApprovalDecision, ToolEffect, ToolExecutionStatus,
+    UserInteractionAnswer, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{
     CompletedAssistantMessage, DurableProviderContextCommit, DurableTaskState, LocalAgentProfile,
@@ -2135,9 +2135,10 @@ async fn host_schedules_a_durable_control_request_immediately() {
     let response = executor
         .execute_mutation(
             "ipc-request-1",
-            LocalAgentCommand::PauseRun {
+            LocalAgentCommand::PauseRun(RunControlCommand {
                 run_id: "run-1".to_string(),
-            },
+                expected_version: 1,
+            }),
         )
         .await
         .unwrap();

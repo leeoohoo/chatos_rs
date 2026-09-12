@@ -91,7 +91,17 @@ public struct NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
             sessionID: sessionID
         )
         let client = try await accountSession.activeClient()
-        _ = try await client.accepted(.cancelRun(runID: route.runID))
+        let run = try await client.run(id: route.runID)
+        guard run.runID == route.runID,
+              LocalAgentUIPresentation.pendingUserInteraction(run)?.interactionID
+                == route.interactionID
+        else {
+            throw LocalAgentConversationHistoryError.promptUnavailable
+        }
+        _ = try await client.accepted(.cancelRun(
+            runID: route.runID,
+            expectedVersion: run.version
+        ))
         return try await state.updateLocalAgentPromptStatus(
             promptID: promptID,
             sessionID: sessionID,
@@ -103,4 +113,3 @@ public struct NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
 }
-

@@ -123,6 +123,7 @@ public enum LocalAgentUIPresentation {
     ) -> LocalAgentRunControlState {
         LocalAgentRunControlState(
             runID: run.runID,
+            runVersion: run.version,
             sessionID: sessionID,
             turnID: turnID,
             status: run.status,

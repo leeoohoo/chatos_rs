@@ -65,14 +65,16 @@ struct NativeLocalAgentTaskGraphServiceTests {
         #expect(commands.map { $0["type"] as? String } == [
             "retry_task",
             "get_task",
+            "get_run",
             "cancel_run",
         ])
         let retryPayload = try #require(commands[0]["payload"] as? [String: Any])
         #expect(retryPayload["task_id"] as? String == "task-1")
         #expect(retryPayload["expected_run_id"] as? String == "task-run-2")
         #expect(retryPayload["instruction"] as? String == "Preserve visual hierarchy.")
-        let cancelPayload = try #require(commands[2]["payload"] as? [String: Any])
+        let cancelPayload = try #require(commands[3]["payload"] as? [String: Any])
         #expect(cancelPayload["run_id"] as? String == "task-run-2")
+        #expect(cancelPayload["expected_version"] as? UInt64 == 5)
     }
 
     private static func command(_ request: Data) throws -> [String: Any] {
@@ -103,7 +105,7 @@ private struct TaskGraphServiceFixture {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v13")
+            .appendingPathComponent("shared/fixtures/local_agent/v14")
     }
 }
 
@@ -150,6 +152,14 @@ private actor TaskGraphServiceTransport: LocalAgentFrameTransport {
         switch type {
         case "get_task_graph": response = graph
         case "get_task": response = task
+        case "get_run":
+            let detailPayload = try #require(detail["payload"] as? [String: Any])
+            let runSummary = try #require(detailPayload["run"] as? [String: Any])
+            var run = try #require(runSummary["run"] as? [String: Any])
+            run["status"] = "model_running"
+            run["version"] = 5
+            run["terminal_outcome"] = NSNull()
+            response = ["type": "run", "payload": run]
         case "get_task_run_detail": response = detail
         case "retry_task":
             let detailPayload = try #require(detail["payload"] as? [String: Any])

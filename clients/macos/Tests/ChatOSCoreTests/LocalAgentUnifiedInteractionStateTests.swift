@@ -267,6 +267,7 @@ private actor UnifiedInteractionStub:
         )
         control = LocalAgentRunControlState(
             runID: runID,
+            runVersion: 1,
             sessionID: "thread-1",
             turnID: "turn-1",
             status: .modelRunning,

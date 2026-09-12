@@ -48,7 +48,7 @@ public struct NativeLocalAgentRunControlService: LocalAgentRunControlServicing {
             sessionID: sessionID
         )
         guard control.canPause else { throw NativeLocalAgentRunControlError.actionUnavailable }
-        try await send(.pauseRun(runID: runID))
+        try await send(.pauseRun(runID: runID, expectedVersion: control.runVersion))
     }
 
     public func resume(runID: String, sessionID: String) async throws {
@@ -57,7 +57,7 @@ public struct NativeLocalAgentRunControlService: LocalAgentRunControlServicing {
             sessionID: sessionID
         )
         guard control.canResume else { throw NativeLocalAgentRunControlError.actionUnavailable }
-        try await send(.resumeRun(runID: runID))
+        try await send(.resumeRun(runID: runID, expectedVersion: control.runVersion))
     }
 
     public func cancel(runID: String, sessionID: String) async throws {
@@ -66,7 +66,7 @@ public struct NativeLocalAgentRunControlService: LocalAgentRunControlServicing {
             sessionID: sessionID
         )
         guard control.canCancel else { throw NativeLocalAgentRunControlError.actionUnavailable }
-        try await send(.cancelRun(runID: runID))
+        try await send(.cancelRun(runID: runID, expectedVersion: control.runVersion))
     }
 
     public func decideToolApproval(
