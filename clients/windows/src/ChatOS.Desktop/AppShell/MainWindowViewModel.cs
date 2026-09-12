@@ -18,7 +18,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly IWorkspaceRelationsService _workspaceRelations;
     private readonly IProjectRegistry _projectRegistry;
     private readonly ILocalProjectsService _localProjects;
-    private readonly IWindowsLocalAgentAccountSession _localAgentAccountSession;
+    private readonly IWindowsLocalAgentClientRuntime _localAgentRuntime;
     private string? _ownerUserId;
     private long _accountGeneration;
     private long _refreshGeneration;
@@ -35,7 +35,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IWorkspaceRelationsService workspaceRelations,
         IProjectRegistry projectRegistry,
         ILocalProjectsService localProjects,
-        IWindowsLocalAgentAccountSession localAgentAccountSession,
+        IWindowsLocalAgentClientRuntime localAgentRuntime,
         IProjectConversationService projectConversations,
         ILocalConnectorControlService localConnectorControl,
         ConversationSessionViewModel conversation,
@@ -49,7 +49,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _workspaceRelations = workspaceRelations;
         _projectRegistry = projectRegistry;
         _localProjects = localProjects;
-        _localAgentAccountSession = localAgentAccountSession;
+        _localAgentRuntime = localAgentRuntime;
         _projectConversations = projectConversations;
         _localConnectorControl = localConnectorControl;
         Conversation = conversation;
@@ -273,10 +273,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (authenticationGeneration != AccountGeneration) return;
             if (session is not null)
             {
-                await _localAgentAccountSession.ActivateAsync(session.User.Id, cancellationToken);
+                await _localAgentRuntime.ActivateAsync(session.User.Id, cancellationToken);
                 if (authenticationGeneration != AccountGeneration)
                 {
-                    await _localAgentAccountSession.LogoutAsync();
+                    await _localAgentRuntime.LogoutAsync();
                     return;
                 }
                 ApplySession(session);
@@ -310,10 +310,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var authenticationGeneration = AccountGeneration;
             var session = await _authenticationService.LoginAsync(Username, Password);
             if (authenticationGeneration != AccountGeneration) return;
-            await _localAgentAccountSession.ActivateAsync(session.User.Id);
+            await _localAgentRuntime.ActivateAsync(session.User.Id);
             if (authenticationGeneration != AccountGeneration)
             {
-                await _localAgentAccountSession.LogoutAsync();
+                await _localAgentRuntime.LogoutAsync();
                 return;
             }
             Password = string.Empty;
@@ -362,7 +362,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Exception? localAgentError = null;
         try
         {
-            await _localAgentAccountSession.LogoutAsync();
+            await _localAgentRuntime.LogoutAsync();
         }
         catch (Exception exception)
         {

@@ -106,7 +106,7 @@ public partial class App : Application
         }
         try
         {
-            await _host.Services.GetRequiredService<IWindowsLocalAgentAccountSession>()
+            await _host.Services.GetRequiredService<IWindowsLocalAgentClientRuntime>()
                 .LogoutAsync();
             await _host.StopAsync();
         }

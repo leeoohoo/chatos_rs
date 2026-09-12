@@ -141,6 +141,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWindowsLocalAgentRuntimeConfiguration>(
             _ => new WindowsLocalAgentRuntimeConfiguration(configuration));
         services.AddSingleton<IWindowsLocalAgentAccountSession, WindowsLocalAgentAccountSession>();
+        services.AddSingleton<IWindowsLocalAgentProjectionStore, WindowsLocalAgentProjectionStore>();
+        services.AddSingleton<IWindowsLocalAgentStartupRecovery, WindowsLocalAgentStartupRecovery>();
+        services.AddSingleton<IWindowsLocalAgentEventHub, WindowsLocalAgentEventHub>();
+        services.AddSingleton<IWindowsLocalAgentClientRuntime, WindowsLocalAgentClientRuntime>();
         services.AddSingleton<IControlledNetworkGuardClient>(provider =>
             new ControlledNetworkGuardClient(provider.GetRequiredService<INetworkGuardTransport>()));
         services.AddSingleton(provider => new NetworkGuardLeaseCoordinator(

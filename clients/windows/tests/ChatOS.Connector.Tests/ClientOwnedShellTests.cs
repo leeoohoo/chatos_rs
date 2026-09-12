@@ -62,7 +62,7 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
             new RemoteConnectionsViewModel(remote, localControl, dispatcher), localization);
     }
 
-    private sealed class LocalAgentSession : IWindowsLocalAgentAccountSession
+    private sealed class LocalAgentSession : IWindowsLocalAgentClientRuntime
     {
         public List<string> ActivatedAccounts { get; } = [];
         public Exception? StartError { get; set; }
@@ -71,13 +71,6 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
         public Task UpdateAccessTokenAsync(string accountId, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
         public Task LogoutAsync() => Task.CompletedTask;
-        public Task<ILocalAgentIPCClient> GetClientAsync(
-            string accountId,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<WindowsLocalAgentHostState> GetStateAsync() => Task.FromResult(
-            new WindowsLocalAgentHostState(WindowsLocalAgentHostStatus.Stopped));
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-
         private Task Record(string accountId)
         {
             ActivatedAccounts.Add(accountId);

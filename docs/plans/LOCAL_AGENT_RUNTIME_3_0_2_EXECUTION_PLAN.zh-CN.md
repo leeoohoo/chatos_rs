@@ -159,6 +159,9 @@
 - 2026-09-13：阶段 4 第二个切片完成 Windows 账户生命周期生产接入。新增唯一 `WindowsLocalAgentAccountSession`，恢复登录和新登录必须先从当前安全 Token Store 取得凭据、创建或精确读取账户级设备 ID 与 DPAPI 持久密钥、构造 v4 Host 配置并启动 Supervisor，成功后桌面才发布已登录状态；Token 更新重启同一账户 Host，账户切换先停止旧 Host并只删除可替换 access token，退出与主窗口关闭均先停止 Host。IPC Client 不缓存启动时端点，每次从 Supervisor 当前 Named Pipe endpoint 创建。启动或 Client 建立失败时清除半激活 Session 和 Host access token，不保留可执行的残缺状态。
 - Windows 类型化运行配置固定 bundled Host 路径、由发行配置提供的 `sha256:` 摘要、账户哈希目录、附件授权目录、平台状态目录、Model Gateway、Memory Engine 与 SQLite 默认 Profile；缺失可信摘要时明确失败，不计算当前磁盘文件作为信任来源，也不 fallback。所有 Credential Manager 删除改为 exact `ResourceName + UserName`，生产代码已不存在 `FindAllByResource` 枚举清理。
 - Windows 生命周期验证记录：Local Agent 与 Shell 定向 27 项通过；`ChatOS.Connector.Tests` 全量 331 项、API 45 项、Core 19 项、NetworkGuard 19 项、Presentation 47 项全部通过。macOS 上 Desktop C# 编译已进入 WinUI XAML 阶段，随后因 Windows 专用 `XamlCompiler.exe` 不能在 macOS 执行而停止；Windows 原生 `.exe`、Named Pipe、DPAPI、WinUI 打包与关闭事件仍必须在 Windows runner 最终验收，不能声称已由 macOS 验证。
+- 2026-09-13：阶段 4 第三个切片建立 Windows 唯一 Client Runtime 事务边界：登录后的生产顺序固定为 Host 启动、同一 IPC Client/Host lifetime 完整分页恢复、账户级 Event Hub 启动，任一步失败都会停止事件泵、清空投影并退出 Host Session。恢复层同时读取全部 Task、Run、每个 Run 的完整 Run Detail、Main Chat 持久消息绑定和已确认 UI cursor，严格验证 owner、Profile、Task 全历史 Run、冻结 `project_id`、分页推进、事件唯一性及 Main Chat 消息身份后才一次性发布不可变快照。
+- Windows Event Hub 独立于聊天页面生命周期；每轮 drain 都从 Account Session 解析 Supervisor 当前 Named Pipe endpoint，页面校验和全部身份解析成功后才原子应用并确认 cursor。Host 在恢复中换代时整个恢复重做，不拼接两代快照；同端点持续不可用有界失败，协议/数据错误立即 fail-closed。每个 Run 的 `snapshot_event_sequence` 阻止权威恢复快照被旧 UI 事件覆盖，确认失败后的同页重放在原生投影内幂等。
+- Windows 恢复与事件泵验证记录：新增 6 项定向用例，覆盖 Main Chat/Task/Run/cursor 原子恢复、冻结项目拒绝、当前 Client 换端点、应用后确认、无效事件不确认、恢复换端点整轮重试及非法快照整体回滚；`ChatOS.Connector.Tests` 全量 337 项通过。
 - 当前在制：阶段 4，完成 Windows 与 macOS 等价接入。
-- 下一切片：建立 Windows 账户级 Startup Recovery 与 Event Hub，先从同一当前 Host endpoint 原子恢复 Main Chat、Task/全部 Run 和 UI cursor，再启动增量事件消费；随后才把 Conversation/Task Presentation 切到这些本地投影并删除对应远程状态源。
+- 下一切片：把 Windows Conversation 与 Task Presentation 改为消费唯一 Local Agent Projection，接入本地创建、Run Control、Ask User 与工具授权；每完成一个 UI 闭环立即删除对应的远程 History、Realtime 或 Message Task Graph 生产路径，不保留双轨。
 - 完成状态：阶段 1、阶段 2、阶段 3 已达到完成门槛；阶段 4—8 尚未达到完整门槛。

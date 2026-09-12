@@ -29,6 +29,8 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) },
     };
 
+    internal static JsonSerializerOptions ProtocolJsonOptions => JsonOptions;
+
     private readonly string _ownerUserId;
     private readonly ILocalAgentFrameTransport _transport;
 
