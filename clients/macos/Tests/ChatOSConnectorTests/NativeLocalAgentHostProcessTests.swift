@@ -7,7 +7,7 @@ import Testing
 
 @Suite("Native local Agent Host process")
 struct NativeLocalAgentHostProcessTests {
-    @Test("uses stdin credentials and accepts only the correlated ready frame")
+    @Test("uses opaque stdin references and accepts only the correlated ready frame")
     func performsCorrelatedHandshake() async throws {
         let fixture = try HostFixture(mode: "ready")
         let configuration = try fixture.configuration()
@@ -69,7 +69,7 @@ private struct HostFixture {
             time.sleep(30)
             sys.exit(0)
         ready = {
-            'protocol_version': 2,
+            'protocol_version': 3,
             'launch_id': 'wrong-launch' if mode == 'wrong-launch' else request['launch_id'],
             'process_id': os.getpid(),
             'client_endpoint': request['ipc_endpoint']['path'],
@@ -90,10 +90,13 @@ private struct HostFixture {
         timeout: Duration = .seconds(15)
     ) throws -> NativeLocalAgentHostLaunchConfiguration {
         let request = try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 2,
+            "protocol_version": 3,
             "launch_id": "launch-1",
             "ipc_endpoint": ["transport": "unix_socket", "path": socketPath],
-            "credentials": ["model_access_token": "must-stay-on-stdin"],
+            "credential_references": [
+                "model_access_token_reference": "model-access-token",
+                "provider_context_key_reference": "provider-context-key",
+            ],
         ])
         return try NativeLocalAgentHostLaunchConfiguration(
             executableURL: executable,

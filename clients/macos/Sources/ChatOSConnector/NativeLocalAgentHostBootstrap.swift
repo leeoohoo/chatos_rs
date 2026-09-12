@@ -6,8 +6,6 @@ import Foundation
 
 public enum NativeLocalAgentHostBootstrapError: Error, Equatable, Sendable {
     case invalidConfiguration(String)
-    case missingCredential(String)
-    case malformedCredential(String)
     case privateDirectoryRequired
     case socketPathTooLong
     case encodingFailed
@@ -101,11 +99,7 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
     public static let modelAccessTokenReference = "model-access-token"
     public static let providerContextKeyReference = "provider-context-key"
 
-    private let credentials: NativeLocalAgentCredentialStore
-
-    public init(credentials: NativeLocalAgentCredentialStore) {
-        self.credentials = credentials
-    }
+    public init() {}
 
     public func makeConfiguration(
         settings: NativeLocalAgentHostBootstrapSettings
@@ -123,37 +117,15 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
             throw NativeLocalAgentHostBootstrapError.socketPathTooLong
         }
 
-        let modelTokenData = try await requiredCredential(
-            settings.accountID,
-            Self.modelAccessTokenReference
-        )
-        let providerKey = try await requiredCredential(
-            settings.accountID,
-            Self.providerContextKeyReference
-        )
-        guard providerKey.count == 32 else {
-            throw NativeLocalAgentHostBootstrapError.malformedCredential(
-                Self.providerContextKeyReference
-            )
-        }
-        let modelToken = try strictString(
-            modelTokenData,
-            reference: Self.modelAccessTokenReference
-        )
-
         let storageProfile: [String: Any]
-        let storageCredentials: [String: Any]
         switch settings.storage {
         case let .sqlite(databaseURL, encryptionSecretReference):
-            guard databaseURL.isFileURL, databaseURL.path.hasPrefix("/") else {
+            guard databaseURL.isFileURL,
+                  databaseURL.path.hasPrefix("/"),
+                  validIdentity(encryptionSecretReference)
+            else {
                 throw NativeLocalAgentHostBootstrapError.invalidConfiguration(
-                    "SQLite database path must be absolute"
-                )
-            }
-            let key = try await requiredCredential(settings.accountID, encryptionSecretReference)
-            guard key.count == 32 else {
-                throw NativeLocalAgentHostBootstrapError.malformedCredential(
-                    encryptionSecretReference
+                    "SQLite storage profile is invalid"
                 )
             }
             storageProfile = [
@@ -161,38 +133,15 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
                 "database_path": databaseURL.path,
                 "encryption_secret": encryptionSecretReference,
             ]
-            storageCredentials = [
-                "backend": "sqlite",
-                "encryption_secret_reference": encryptionSecretReference,
-                "encryption_key_base64": key.base64EncodedString(),
-            ]
         case let .postgres(connectionSecretReference):
-            let envelopeData = try await requiredCredential(settings.accountID, connectionSecretReference)
-            let envelope: NativeLocalAgentPostgresCredential
-            do {
-                envelope = try JSONDecoder().decode(
-                    NativeLocalAgentPostgresCredential.self,
-                    from: envelopeData
-                )
-            } catch {
-                throw NativeLocalAgentHostBootstrapError.malformedCredential(
-                    connectionSecretReference
+            guard validIdentity(connectionSecretReference) else {
+                throw NativeLocalAgentHostBootstrapError.invalidConfiguration(
+                    "PostgreSQL storage profile is invalid"
                 )
             }
-            try validate(envelope)
             storageProfile = [
                 "backend": "postgres",
                 "connection_secret": connectionSecretReference,
-            ]
-            storageCredentials = [
-                "backend": "postgres",
-                "connection_secret_reference": connectionSecretReference,
-                "host": envelope.host,
-                "port": envelope.port,
-                "database": envelope.database,
-                "tls_mode": envelope.tlsMode.rawValue,
-                "username": envelope.username,
-                "password": envelope.password,
             ]
         }
 
@@ -209,10 +158,9 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
             "memory_engine_base_url": settings.memoryEngineBaseURL.absoluteString,
             "memory_source_id": settings.memorySourceID,
             "storage_profile": storageProfile,
-            "credentials": [
-                "model_access_token": modelToken,
-                "provider_context_key_base64": providerKey.base64EncodedString(),
-                "storage": storageCredentials,
+            "credential_references": [
+                "model_access_token_reference": Self.modelAccessTokenReference,
+                "provider_context_key_reference": Self.providerContextKeyReference,
             ],
         ]
         let data: Data
@@ -229,14 +177,6 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
         )
     }
 
-    private func requiredCredential(_ accountID: String, _ reference: String) async throws -> Data {
-        guard let data = try await credentials.load(accountID: accountID, reference: reference)
-        else {
-            throw NativeLocalAgentHostBootstrapError.missingCredential(reference)
-        }
-        return data
-    }
-
     private func validate(_ settings: NativeLocalAgentHostBootstrapSettings) throws {
         for (name, value) in [
             ("accountID", settings.accountID),
@@ -247,17 +187,6 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
         }
         try validateServiceURL(settings.modelGatewayBaseURL, field: "modelGatewayBaseURL")
         try validateServiceURL(settings.memoryEngineBaseURL, field: "memoryEngineBaseURL")
-    }
-
-    private func validate(_ credential: NativeLocalAgentPostgresCredential) throws {
-        guard validIdentity(credential.host),
-              validIdentity(credential.database),
-              validIdentity(credential.username),
-              !credential.password.isEmpty,
-              credential.password == credential.password.trimmingCharacters(in: .whitespacesAndNewlines)
-        else {
-            throw NativeLocalAgentHostBootstrapError.malformedCredential("postgres")
-        }
     }
 
     private func validateServiceURL(_ url: URL, field: String) throws {
@@ -294,16 +223,6 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
         else {
             throw NativeLocalAgentHostBootstrapError.privateDirectoryRequired
         }
-    }
-
-    private func strictString(_ data: Data, reference: String) throws -> String {
-        guard let value = String(data: data, encoding: .utf8),
-              !value.isEmpty,
-              value == value.trimmingCharacters(in: .whitespacesAndNewlines)
-        else {
-            throw NativeLocalAgentHostBootstrapError.malformedCredential(reference)
-        }
-        return value
     }
 
     private func validIdentity(_ value: String) -> Bool {

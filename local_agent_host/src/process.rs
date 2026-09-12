@@ -11,8 +11,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     assemble_local_agent_host, read_local_agent_host_launch_request, write_local_agent_host_ready,
     LocalAgentHostAssemblyDependencies, LocalAgentHostAssemblyError, LocalAgentHostBootstrapError,
-    LocalAgentHostReady, LocalAgentHostServiceError, LocalAgentHostServiceExit,
-    LocalAgentIpcMutationExecutor, NativeLocalAgentStoragePlatform,
+    LocalAgentHostReady, LocalAgentHostResolvedCredentials, LocalAgentHostServiceError,
+    LocalAgentHostServiceExit, LocalAgentIpcMutationExecutor, NativeLocalAgentStoragePlatform,
     NativeLocalAgentStoragePlatformError, RegisteredLocalCapabilityRuntime,
     LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
 };
@@ -43,8 +43,8 @@ pub enum NativeLocalAgentHostProcessError {
 
 /// Runs the complete one-account Host process boundary.
 ///
-/// The native launcher writes exactly one secret-bearing length-prefixed
-/// launch frame to `launch_reader`. A non-secret ready frame is emitted only
+/// The native launcher writes exactly one reference-only length-prefixed
+/// launch frame to `launch_reader`. A ready frame is emitted only
 /// after storage recovery and protected IPC binding have succeeded. From that
 /// point, the process owns exactly one durable Worker and one IPC listener
 /// until the launcher cancels `shutdown` or either runtime fails.
@@ -108,8 +108,9 @@ where
     W: AsyncWrite + Unpin,
 {
     let request = read_local_agent_host_launch_request(launch_reader).await?;
-    let storage_platform = native_storage_platform(&request)?;
+    let (storage_platform, credentials) = native_process_dependencies(&request)?;
     let dependencies = LocalAgentHostAssemblyDependencies {
+        credentials,
         storage_platform,
         terminal_mutation_executor: Arc::new(RejectUnknownNativeMutation),
         capability_runtime: Arc::new(RegisteredLocalCapabilityRuntime::new()),
@@ -137,27 +138,19 @@ impl LocalAgentIpcMutationExecutor for RejectUnknownNativeMutation {
 }
 
 #[cfg(target_os = "macos")]
-fn native_storage_platform(
+fn native_process_dependencies(
     request: &crate::LocalAgentHostLaunchRequest,
-) -> Result<Arc<dyn crate::LocalAgentStoragePlatform>, NativeLocalAgentHostProcessError> {
+) -> Result<NativeProcessDependencies, NativeLocalAgentHostProcessError> {
     let reader = Arc::new(crate::MacOsLocalAgentCredentialReader::production());
     let credentials: Arc<dyn crate::LocalAgentPlatformCredentialReader> = reader.clone();
     let device_keys: Arc<dyn crate::LocalAgentPlatformDeviceKeyReader> = reader;
-    NativeLocalAgentStoragePlatform::new(
-        request.owner_user_id.clone(),
-        request.platform_state_directory.clone(),
-        request.storage_profile.clone(),
-        credentials,
-        device_keys,
-    )
-    .map(|platform| Arc::new(platform) as Arc<dyn crate::LocalAgentStoragePlatform>)
-    .map_err(Into::into)
+    build_native_process_dependencies(request, credentials, device_keys)
 }
 
 #[cfg(windows)]
-fn native_storage_platform(
+fn native_process_dependencies(
     request: &crate::LocalAgentHostLaunchRequest,
-) -> Result<Arc<dyn crate::LocalAgentStoragePlatform>, NativeLocalAgentHostProcessError> {
+) -> Result<NativeProcessDependencies, NativeLocalAgentHostProcessError> {
     let credentials: Arc<dyn crate::LocalAgentPlatformCredentialReader> = Arc::new(
         crate::WindowsLocalAgentCredentialReader::production()
             .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?,
@@ -166,20 +159,71 @@ fn native_storage_platform(
         crate::WindowsLocalAgentDeviceKeyReader::production()
             .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?,
     );
-    NativeLocalAgentStoragePlatform::new(
+    build_native_process_dependencies(request, credentials, device_keys)
+}
+
+type NativeProcessDependencies = (
+    Arc<dyn crate::LocalAgentStoragePlatform>,
+    LocalAgentHostResolvedCredentials,
+);
+
+#[cfg(any(target_os = "macos", windows))]
+fn build_native_process_dependencies(
+    request: &crate::LocalAgentHostLaunchRequest,
+    credential_reader: Arc<dyn crate::LocalAgentPlatformCredentialReader>,
+    device_key_reader: Arc<dyn crate::LocalAgentPlatformDeviceKeyReader>,
+) -> Result<NativeProcessDependencies, NativeLocalAgentHostProcessError> {
+    const MAXIMUM_NATIVE_SECRET_BYTES: usize = 64 * 1024;
+
+    let model_access_token = credential_reader
+        .read(
+            request.owner_user_id.as_str(),
+            request
+                .credential_references
+                .model_access_token_reference
+                .as_str(),
+        )
+        .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
+    if model_access_token.is_empty() || model_access_token.len() > MAXIMUM_NATIVE_SECRET_BYTES {
+        return Err(NativeLocalAgentHostProcessError::CredentialStore);
+    }
+    let model_access_token = String::from_utf8(model_access_token.to_vec())
+        .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
+    let provider_context_key = device_key_reader
+        .read_device_key(
+            request.owner_user_id.as_str(),
+            request
+                .credential_references
+                .provider_context_key_reference
+                .as_str(),
+        )
+        .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
+    let provider_context_key = <[u8; 32]>::try_from(provider_context_key.as_slice())
+        .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
+
+    let platform = Arc::new(NativeLocalAgentStoragePlatform::new(
         request.owner_user_id.clone(),
         request.platform_state_directory.clone(),
         request.storage_profile.clone(),
-        credentials,
-        device_keys,
+        credential_reader,
+        device_key_reader,
+    )?);
+    let storage_secrets: Arc<dyn chatos_client_storage::StorageSecretResolver> = platform.clone();
+    let resolved = LocalAgentHostResolvedCredentials::new(
+        model_access_token,
+        provider_context_key,
+        storage_secrets,
     )
-    .map(|platform| Arc::new(platform) as Arc<dyn crate::LocalAgentStoragePlatform>)
-    .map_err(Into::into)
+    .map_err(|_| NativeLocalAgentHostProcessError::CredentialStore)?;
+    Ok((
+        platform as Arc<dyn crate::LocalAgentStoragePlatform>,
+        resolved,
+    ))
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
-fn native_storage_platform(
+fn native_process_dependencies(
     _request: &crate::LocalAgentHostLaunchRequest,
-) -> Result<Arc<dyn crate::LocalAgentStoragePlatform>, NativeLocalAgentHostProcessError> {
+) -> Result<NativeProcessDependencies, NativeLocalAgentHostProcessError> {
     Err(NativeLocalAgentHostProcessError::UnsupportedPlatform)
 }

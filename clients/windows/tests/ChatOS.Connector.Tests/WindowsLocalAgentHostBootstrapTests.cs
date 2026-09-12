@@ -11,8 +11,7 @@ public sealed class WindowsLocalAgentHostBootstrapTests
         var root = Path.Combine(Path.GetTempPath(), $"chatos-bootstrap-{Guid.NewGuid():N}");
         try
         {
-            var credentials = new FakeCredentials();
-            var builder = new WindowsLocalAgentHostBootstrapBuilder(credentials);
+            var builder = new WindowsLocalAgentHostBootstrapBuilder();
             var configuration = await builder.BuildAsync(Settings(
                 root,
                 new WindowsLocalAgentSqliteBootstrap(
@@ -27,12 +26,14 @@ public sealed class WindowsLocalAgentHostBootstrapTests
                 request.GetProperty("ipc_endpoint").GetProperty("transport").GetString());
             Assert.Equal("sqlite", request.GetProperty("storage_profile").GetProperty("backend").GetString());
             Assert.Equal(
-                Convert.ToBase64String(Enumerable.Repeat((byte)7, 32).ToArray()),
-                request.GetProperty("credentials").GetProperty("storage")
-                    .GetProperty("encryption_key_base64").GetString());
+                "model-access-token",
+                request.GetProperty("credential_references")
+                    .GetProperty("model_access_token_reference").GetString());
             Assert.Equal(
-                "model-token",
-                request.GetProperty("credentials").GetProperty("model_access_token").GetString());
+                "provider-context-key",
+                request.GetProperty("credential_references")
+                    .GetProperty("provider_context_key_reference").GetString());
+            Assert.False(request.TryGetProperty("credentials", out _));
             configuration.LaunchMaterial.Dispose();
         }
         finally
@@ -45,12 +46,11 @@ public sealed class WindowsLocalAgentHostBootstrapTests
     }
 
     [Fact]
-    public async Task BuildsOnlyVerifyFullPostgresAndRedactsItsDisplay()
+    public async Task PassesOnlyPostgresReferenceAndRedactsCredentialDisplay()
     {
         var root = Path.Combine(Path.GetTempPath(), $"chatos-bootstrap-{Guid.NewGuid():N}");
         try
         {
-            var credentials = new FakeCredentials();
             var postgres = new WindowsLocalAgentPostgresCredential(
                 "database.example.com",
                 5432,
@@ -58,14 +58,16 @@ public sealed class WindowsLocalAgentHostBootstrapTests
                 "verify_full",
                 "chatos-user",
                 "private-password");
-            credentials.Postgres = JsonSerializer.Serialize(postgres);
-            var configuration = await new WindowsLocalAgentHostBootstrapBuilder(credentials)
+            var configuration = await new WindowsLocalAgentHostBootstrapBuilder()
                 .BuildAsync(Settings(root, new WindowsLocalAgentPostgresBootstrap("postgres-1")));
             using var document = JsonDocument.Parse(configuration.LaunchMaterial.RequestJson);
-            var storage = document.RootElement.GetProperty("credentials").GetProperty("storage");
+            var storage = document.RootElement.GetProperty("storage_profile");
 
-            Assert.Equal("verify_full", storage.GetProperty("tls_mode").GetString());
-            Assert.Equal("private-password", storage.GetProperty("password").GetString());
+            Assert.Equal("postgres-1", storage.GetProperty("connection_secret").GetString());
+            Assert.False(document.RootElement.TryGetProperty("credentials", out _));
+            Assert.DoesNotContain(
+                "private-password",
+                System.Text.Encoding.UTF8.GetString(configuration.LaunchMaterial.RequestJson.Span));
             Assert.DoesNotContain("private-password", postgres.ToString(), StringComparison.Ordinal);
             Assert.DoesNotContain("database.example.com", postgres.ToString(), StringComparison.Ordinal);
             configuration.LaunchMaterial.Dispose();
@@ -93,32 +95,4 @@ public sealed class WindowsLocalAgentHostBootstrapTests
         MemoryEngineBaseUri = new Uri("https://memory.example.com"),
         Storage = storage,
     };
-
-    private sealed class FakeCredentials : IWindowsLocalAgentCredentialStore
-    {
-        public string Postgres { get; set; } = "{}";
-
-        public ValueTask<string?> LoadCredentialAsync(
-            string accountId,
-            string reference,
-            CancellationToken cancellationToken = default) =>
-            ValueTask.FromResult<string?>(reference switch
-            {
-                WindowsLocalAgentHostBootstrapBuilder.ModelAccessTokenReference => "model-token",
-                "postgres-1" => Postgres,
-                _ => null,
-            });
-
-        public Task<byte[]?> LoadDeviceKeyAsync(
-            string accountId,
-            string reference,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult<byte[]?>(reference switch
-            {
-                WindowsLocalAgentHostBootstrapBuilder.ProviderContextKeyReference =>
-                    Enumerable.Repeat((byte)3, 32).ToArray(),
-                "sqlite-key" => Enumerable.Repeat((byte)7, 32).ToArray(),
-                _ => null,
-            });
-    }
 }

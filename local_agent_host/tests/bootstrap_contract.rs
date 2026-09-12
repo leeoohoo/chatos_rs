@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
-use chatos_client_storage::{SecretReference, StorageSecretResolver};
 use chatos_local_agent_host::{
     read_local_agent_host_launch_request, write_local_agent_host_ready,
-    LocalAgentHostBootstrapError, LocalAgentHostReady, LocalAgentLaunchStorageCredentials,
-    LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION, MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES,
+    LocalAgentHostBootstrapError, LocalAgentHostReady, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
+    MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES,
 };
 use serde_json::{json, Value};
 use std::io::Cursor;
@@ -37,14 +34,9 @@ fn sqlite_launch(
             "database_path": format!("{socket_path}.sqlite"),
             "encryption_secret": "sqlite-secret-1",
         },
-        "credentials": {
-            "model_access_token": "private-model-token",
-            "provider_context_key_base64": STANDARD.encode([3_u8; 32]),
-            "storage": {
-                "backend": "sqlite",
-                "encryption_secret_reference": "sqlite-secret-1",
-                "encryption_key_base64": STANDARD.encode([7_u8; 32]),
-            },
+        "credential_references": {
+            "model_access_token_reference": "model-access-token",
+            "provider_context_key_reference": "provider-context-key",
         },
     })
 }
@@ -74,36 +66,22 @@ async fn reads_one_strict_length_prefixed_launch_request() {
         .unwrap();
 
     assert_eq!(request.owner_user_id, "user-1");
-    assert_eq!(request.provider_context_key().unwrap(), [3_u8; 32]);
     assert_eq!(
         request.ipc_endpoint.client_endpoint(),
         socket.to_str().unwrap()
     );
-    let LocalAgentLaunchStorageCredentials::Sqlite {
-        encryption_key_base64,
-        ..
-    } = &request.credentials.storage
-    else {
-        panic!("expected SQLite credentials");
-    };
     assert_eq!(
-        STANDARD.decode(encryption_key_base64.expose()).unwrap(),
-        [7_u8; 32]
+        request.credential_references.model_access_token_reference,
+        "model-access-token"
     );
-    request
-        .credentials
-        .resolve_sqlite_encryption_key(&SecretReference::new("sqlite-secret-1").unwrap())
-        .await
-        .unwrap();
-    assert!(request
-        .credentials
-        .resolve_sqlite_encryption_key(&SecretReference::new("wrong-secret").unwrap())
-        .await
-        .is_err());
+    assert_eq!(
+        request.credential_references.provider_context_key_reference,
+        "provider-context-key"
+    );
 }
 
 #[tokio::test]
-async fn rejects_unknown_fields_and_profile_credential_mismatches() {
+async fn rejects_unknown_fields_and_raw_credential_material() {
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("agent.sock");
     let grants = private_grant_directory(directory.path());
@@ -124,22 +102,25 @@ async fn rejects_unknown_fields_and_profile_credential_mismatches() {
         LocalAgentHostBootstrapError::InvalidJson
     );
 
-    let mut mismatch = sqlite_launch(
+    let mut secret_bearing = sqlite_launch(
         socket.to_str().unwrap(),
         grants.to_str().unwrap(),
         state.to_str().unwrap(),
     );
-    mismatch["credentials"]["storage"]["encryption_secret_reference"] = json!("another-secret");
+    secret_bearing.as_object_mut().unwrap().insert(
+        "credentials".to_string(),
+        json!({"model_access_token": "must-never-cross-launch-pipe"}),
+    );
     assert_eq!(
-        read_local_agent_host_launch_request(&mut framed(&mismatch))
+        read_local_agent_host_launch_request(&mut framed(&secret_bearing))
             .await
             .unwrap_err(),
-        LocalAgentHostBootstrapError::StorageCredentialMismatch
+        LocalAgentHostBootstrapError::InvalidJson
     );
 }
 
 #[tokio::test]
-async fn rejects_remote_postgres_without_verified_tls() {
+async fn rejects_invalid_credential_references() {
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("agent.sock");
     let grants = private_grant_directory(directory.path());
@@ -149,26 +130,13 @@ async fn rejects_remote_postgres_without_verified_tls() {
         grants.to_str().unwrap(),
         state.to_str().unwrap(),
     );
-    request["storage_profile"] = json!({
-        "backend": "postgres",
-        "connection_secret": "postgres-secret-1",
-    });
-    request["credentials"]["storage"] = json!({
-        "backend": "postgres",
-        "connection_secret_reference": "postgres-secret-1",
-        "host": "database.example.com",
-        "port": 5432,
-        "database": "chatos",
-        "tls_mode": "disabled",
-        "username": "chatos",
-        "password": "private-password",
-    });
+    request["credential_references"]["model_access_token_reference"] = json!(" token-ref");
 
     assert_eq!(
         read_local_agent_host_launch_request(&mut framed(&request))
             .await
             .unwrap_err(),
-        LocalAgentHostBootstrapError::InvalidCredential("postgres_tls_mode")
+        LocalAgentHostBootstrapError::InvalidIdentity("model_access_token_reference")
     );
 }
 
@@ -189,11 +157,10 @@ async fn never_renders_launch_credentials_in_debug_output() {
     let rendered = format!("{request:?}");
 
     assert!(!rendered.contains("private-model-token"));
-    assert!(!rendered.contains(STANDARD.encode([3_u8; 32]).as_str()));
-    assert!(!rendered.contains(STANDARD.encode([7_u8; 32]).as_str()));
+    assert!(!rendered.contains("must-never-cross-launch-pipe"));
     assert!(!rendered.contains(grants.to_str().unwrap()));
     assert!(rendered.contains("[PRIVATE DIRECTORY]"));
-    assert!(rendered.contains("[REDACTED]"));
+    assert!(rendered.contains("model-access-token"));
 }
 
 fn private_grant_directory(parent: &std::path::Path) -> std::path::PathBuf {

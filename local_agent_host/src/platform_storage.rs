@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use chatos_client_storage::{
     probe_postgres_connection, BootstrapStorageProfile, PostgresBootstrapProfile,
     PostgresConnectionSettings, PostgresCredentials, PostgresEndpoint, PostgresTlsMode,
-    SecretReference, SqliteBootstrapProfile, CLIENT_STORAGE_SCHEMA_VERSION,
+    SecretReference, SqliteBootstrapProfile, StorageEncryptionKey, StorageError, StorageResult,
+    StorageSecretResolver, CLIENT_STORAGE_SCHEMA_VERSION,
 };
 use chatos_local_agent_protocol::{
     ClientStorageBackendKind, ClientStorageHealth, ClientStorageProfileDescriptor,
@@ -282,6 +283,29 @@ impl fmt::Debug for NativeLocalAgentStoragePlatform {
 }
 
 #[async_trait]
+impl StorageSecretResolver for NativeLocalAgentStoragePlatform {
+    async fn resolve_sqlite_encryption_key(
+        &self,
+        reference: &SecretReference,
+    ) -> StorageResult<StorageEncryptionKey> {
+        let key = self
+            .device_keys
+            .read_device_key(self.owner_user_id.as_str(), reference.as_str())
+            .map_err(|_| secure_store_unavailable())?;
+        let key = <[u8; 32]>::try_from(key.as_slice()).map_err(|_| secure_store_unavailable())?;
+        Ok(StorageEncryptionKey::new(key))
+    }
+
+    async fn resolve_postgres(
+        &self,
+        reference: &SecretReference,
+    ) -> StorageResult<PostgresConnectionSettings> {
+        self.postgres_settings(reference.as_str())
+            .map_err(|_| secure_store_unavailable())
+    }
+}
+
+#[async_trait]
 impl LocalAgentStoragePlatform for NativeLocalAgentStoragePlatform {
     async fn current_profile(&self) -> Result<ClientStorageProfileDescriptor, String> {
         validate_private_state_directory(self.state_directory.as_path())
@@ -443,6 +467,13 @@ fn valid_opaque_identity(value: &str) -> bool {
         && !value.chars().any(char::is_control)
         && !value.contains('/')
         && !value.contains('\\')
+}
+
+fn secure_store_unavailable() -> StorageError {
+    StorageError::Unavailable {
+        reason: "platform secure storage could not resolve the selected client storage profile"
+            .to_string(),
+    }
 }
 
 fn open_regular_bounded_file(

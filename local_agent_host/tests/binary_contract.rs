@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-#![cfg(unix)]
+#![cfg(target_os = "macos")]
 
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
 
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use chatos_local_agent_host::{
-    LocalAgentHostReady, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
-    MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES,
+    LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION, MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES,
 };
 use serde_json::json;
 
 #[test]
-fn bundled_binary_performs_ready_handshake_and_shuts_down_on_sigterm() {
+fn bundled_binary_rejects_missing_secure_store_values_before_ready() {
     let directory = tempfile::tempdir().unwrap();
+    let owner_user_id = format!("binary-contract-user-{}", std::process::id());
     let socket = directory.path().join("agent.sock");
     let database = directory.path().join("client.sqlite3");
     let grants = directory.path().join("attachment-grants");
@@ -30,7 +28,7 @@ fn bundled_binary_performs_ready_handshake_and_shuts_down_on_sigterm() {
     let request = json!({
         "protocol_version": LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
         "launch_id": "binary-contract-launch",
-        "owner_user_id": "binary-contract-user",
+        "owner_user_id": owner_user_id,
         "device_id": "binary-contract-device",
         "worker_id": "binary-contract-worker",
         "ipc_endpoint": { "transport": "unix_socket", "path": socket },
@@ -44,14 +42,9 @@ fn bundled_binary_performs_ready_handshake_and_shuts_down_on_sigterm() {
             "database_path": database,
             "encryption_secret": "binary-contract-sqlite-key",
         },
-        "credentials": {
-            "model_access_token": "binary-contract-access-token",
-            "provider_context_key_base64": STANDARD.encode([3_u8; 32]),
-            "storage": {
-                "backend": "sqlite",
-                "encryption_secret_reference": "binary-contract-sqlite-key",
-                "encryption_key_base64": STANDARD.encode([7_u8; 32]),
-            },
+        "credential_references": {
+            "model_access_token_reference": "missing-binary-contract-token",
+            "provider_context_key_reference": "missing-binary-contract-provider-key",
         },
     });
     let body = serde_json::to_vec(&request).unwrap();
@@ -71,26 +64,14 @@ fn bundled_binary_performs_ready_handshake_and_shuts_down_on_sigterm() {
     stdin.flush().unwrap();
     drop(stdin);
 
-    let mut stdout = child.stdout.take().unwrap();
-    let mut length = [0_u8; 4];
-    stdout.read_exact(&mut length).unwrap();
-    let length = u32::from_be_bytes(length) as usize;
-    assert!((1..=MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES).contains(&length));
-    let mut ready_body = vec![0_u8; length];
-    stdout.read_exact(ready_body.as_mut_slice()).unwrap();
-    let ready: LocalAgentHostReady = serde_json::from_slice(&ready_body).unwrap();
-    assert_eq!(
-        ready.protocol_version,
-        LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION
-    );
-    assert_eq!(ready.launch_id, "binary-contract-launch");
-    assert_eq!(ready.process_id, child.id());
-    assert_eq!(ready.client_endpoint, socket.to_string_lossy());
-    assert!(socket.exists());
-
-    // SAFETY: `child.id()` is the live process created above and SIGTERM is
-    // used to verify the executable's graceful shutdown contract.
-    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
-    assert!(child.wait().unwrap().success());
+    let mut output = Vec::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_end(&mut output)
+        .unwrap();
+    assert!(!child.wait().unwrap().success());
+    assert!(output.is_empty());
     assert!(!socket.exists());
 }

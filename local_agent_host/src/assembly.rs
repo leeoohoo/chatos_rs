@@ -5,7 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chatos_agent_profiles::{MainChatAgentProfile, TaskRunnerAgentProfile};
-use chatos_client_storage::{ClientStorage, ClientStorageFactory, RecordScope, StorageError};
+use chatos_client_storage::{
+    ClientStorage, ClientStorageFactory, RecordScope, StorageError, StorageSecretResolver,
+};
 use chatos_local_agent_runtime::{
     HttpModelGatewayClient, LocalAgentProfile, MemoryEngineContextAdapter, MemorySyncPolicy,
     MemorySynchronizer, ModelGatewayCallbacks,
@@ -13,6 +15,7 @@ use chatos_local_agent_runtime::{
 use chrono::Utc;
 use memory_engine_sdk::MemoryEngineClient;
 use tokio_util::sync::CancellationToken;
+use zeroize::Zeroizing;
 
 use crate::{
     build_local_agent_ipc_server, FrozenCapabilityLocalToolRuntime, LocalAgentContextRuntimeError,
@@ -28,9 +31,43 @@ use crate::{
 const MEMORY_ENGINE_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub struct LocalAgentHostAssemblyDependencies {
+    pub credentials: LocalAgentHostResolvedCredentials,
     pub storage_platform: Arc<dyn LocalAgentStoragePlatform>,
     pub terminal_mutation_executor: Arc<dyn LocalAgentIpcMutationExecutor>,
     pub capability_runtime: Arc<RegisteredLocalCapabilityRuntime>,
+}
+
+/// Secrets resolved inside the Rust Host from opaque launch references.
+/// Debug intentionally exposes neither the bearer token nor either storage or
+/// provider key material.
+pub struct LocalAgentHostResolvedCredentials {
+    model_access_token: Zeroizing<String>,
+    provider_context_key: Zeroizing<[u8; 32]>,
+    storage: Arc<dyn StorageSecretResolver>,
+}
+
+impl LocalAgentHostResolvedCredentials {
+    pub fn new(
+        model_access_token: impl Into<String>,
+        provider_context_key: [u8; 32],
+        storage: Arc<dyn StorageSecretResolver>,
+    ) -> Result<Self, &'static str> {
+        let model_access_token = model_access_token.into();
+        if model_access_token.trim().is_empty() || model_access_token.trim() != model_access_token {
+            return Err("model access token is invalid");
+        }
+        Ok(Self {
+            model_access_token: Zeroizing::new(model_access_token),
+            provider_context_key: Zeroizing::new(provider_context_key),
+            storage,
+        })
+    }
+}
+
+impl std::fmt::Debug for LocalAgentHostResolvedCredentials {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("LocalAgentHostResolvedCredentials([REDACTED])")
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -73,8 +110,14 @@ pub async fn assemble_local_agent_host(
     dependencies: LocalAgentHostAssemblyDependencies,
 ) -> Result<AssembledLocalAgentHost, LocalAgentHostAssemblyError> {
     request.validate()?;
+    let LocalAgentHostAssemblyDependencies {
+        credentials,
+        storage_platform,
+        terminal_mutation_executor,
+        capability_runtime,
+    } = dependencies;
     let storage: Arc<dyn ClientStorage> = Arc::from(
-        ClientStorageFactory::open(&request.storage_profile, &request.credentials).await?,
+        ClientStorageFactory::open(&request.storage_profile, credentials.storage.as_ref()).await?,
     );
     let scope = RecordScope {
         owner_user_id: request.owner_user_id.clone(),
@@ -93,7 +136,7 @@ pub async fn assemble_local_agent_host(
         request.memory_source_id.clone(),
     )
     .map_err(LocalAgentHostAssemblyError::MemoryEngine)?
-    .with_bearer_token(request.credentials.model_access_token.expose().to_string());
+    .with_bearer_token(credentials.model_access_token.to_string());
     let memory_context = MemoryEngineContextAdapter::new(
         Arc::new(memory_client.clone()),
         request.memory_source_id.clone(),
@@ -106,7 +149,7 @@ pub async fn assemble_local_agent_host(
         MemorySyncPolicy::default(),
     )
     .map_err(LocalAgentHostAssemblyError::MemoryEngine)?;
-    let provider_key = ProviderContextEncryptionKey::new(request.provider_context_key()?);
+    let provider_key = ProviderContextEncryptionKey::new(*credentials.provider_context_key);
     let context_runtime = Arc::new(StandardLocalAgentContextRuntime::new(
         &provider_key,
         memory_context,
@@ -132,12 +175,12 @@ pub async fn assemble_local_agent_host(
     let task_planner = Arc::new(StoredLocalTaskCreationPlanner::new(
         storage.clone(),
         scope.clone(),
-        dependencies.capability_runtime.clone(),
+        capability_runtime.clone(),
     ));
     let tool_runtime = Arc::new(FrozenCapabilityLocalToolRuntime::new(
         storage.clone(),
         scope.clone(),
-        dependencies.capability_runtime.clone(),
+        capability_runtime.clone(),
     ));
     let (host, startup_report) = LocalAgentHost::start(
         storage.clone(),
@@ -156,7 +199,7 @@ pub async fn assemble_local_agent_host(
     let host = Arc::new(host);
     let host_cancellation = CancellationToken::new();
     let session = LocalAgentExecutionSession::new(
-        request.credentials.model_access_token.expose().to_string(),
+        credentials.model_access_token.to_string(),
         ModelGatewayCallbacks::default(),
         host_cancellation,
     )
@@ -170,8 +213,8 @@ pub async fn assemble_local_agent_host(
         scope,
         host,
         session.clone(),
-        dependencies.storage_platform,
-        dependencies.terminal_mutation_executor,
+        storage_platform,
+        terminal_mutation_executor,
     )?;
     let client_endpoint = request.ipc_endpoint.client_endpoint().to_string();
     let service =
@@ -179,7 +222,7 @@ pub async fn assemble_local_agent_host(
     Ok(AssembledLocalAgentHost {
         service,
         session,
-        capability_runtime: dependencies.capability_runtime,
+        capability_runtime,
         startup_report,
         client_endpoint,
     })

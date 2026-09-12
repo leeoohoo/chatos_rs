@@ -6,7 +6,10 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 
-use chatos_client_storage::{BootstrapStorageProfile, SecretReference, SqliteBootstrapProfile};
+use chatos_client_storage::{
+    BootstrapStorageProfile, PostgresTlsMode, SecretReference, SqliteBootstrapProfile,
+    StorageSecretResolver,
+};
 use chatos_local_agent_host::{
     path_grant_file_name, LocalAgentPathGrant, LocalAgentPathGrantKind,
     LocalAgentPlatformCredentialError, LocalAgentPlatformCredentialReader,
@@ -22,11 +25,42 @@ struct Credentials;
 impl LocalAgentPlatformCredentialReader for Credentials {
     fn read(
         &self,
-        _owner_user_id: &str,
-        _reference: &str,
+        owner_user_id: &str,
+        reference: &str,
     ) -> Result<Zeroizing<Vec<u8>>, LocalAgentPlatformCredentialError> {
-        Err(LocalAgentPlatformCredentialError::Unavailable)
+        if owner_user_id == "platform-user" && reference == "postgres-secret" {
+            Ok(Zeroizing::new(
+                br#"{"host":"database.example.test","port":5432,"database":"chatos","tls_mode":"verify_full","username":"chatos-user","password":"private-password"}"#.to_vec(),
+            ))
+        } else {
+            Err(LocalAgentPlatformCredentialError::Unavailable)
+        }
     }
+}
+
+#[tokio::test]
+async fn resolves_active_storage_secrets_only_through_platform_readers() {
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join("state");
+    private_directory(state.as_path());
+    let platform = platform(state.as_path(), &root.path().join("active.sqlite3"));
+
+    platform
+        .resolve_sqlite_encryption_key(&SecretReference::new("sqlite-key").unwrap())
+        .await
+        .unwrap();
+    assert!(platform
+        .resolve_sqlite_encryption_key(&SecretReference::new("wrong-key").unwrap())
+        .await
+        .is_err());
+    let postgres = platform
+        .resolve_postgres(&SecretReference::new("postgres-secret").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(postgres.endpoint.port, 5432);
+    assert_eq!(postgres.endpoint.tls_mode, PostgresTlsMode::VerifyFull);
+    assert!(!format!("{postgres:?}").contains("private-password"));
+    assert!(!format!("{postgres:?}").contains("database.example.test"));
 }
 
 impl LocalAgentPlatformDeviceKeyReader for Credentials {

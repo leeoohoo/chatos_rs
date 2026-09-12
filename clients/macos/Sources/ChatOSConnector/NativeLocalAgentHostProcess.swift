@@ -4,7 +4,7 @@
 import Darwin
 import Foundation
 
-public let localAgentHostLaunchProtocolVersion: UInt32 = 2
+public let localAgentHostLaunchProtocolVersion: UInt32 = 3
 
 public enum NativeLocalAgentHostLaunchError: Error, Equatable, Sendable {
     case invalidConfiguration(String)
@@ -25,7 +25,7 @@ extension NativeLocalAgentHostLaunchError: LocalizedError {
         case let .invalidConfiguration(message): message
         case .untrustedExecutable: "本地 Agent Host 可执行文件未通过身份校验"
         case let .processLaunchFailed(message): "本地 Agent Host 启动失败：\(message)"
-        case .launchFrameWriteFailed: "本地 Agent Host 启动凭据写入失败"
+        case .launchFrameWriteFailed: "本地 Agent Host 启动配置写入失败"
         case .readyTimeout: "本地 Agent Host 启动握手超时"
         case .readyFrameInvalid: "本地 Agent Host 返回了无效启动握手"
         case let .readyProtocolMismatch(version): "本地 Agent Host 启动协议不匹配（\(version)）"
@@ -80,7 +80,7 @@ public final class NativeLocalAgentHostLaunchMaterial: @unchecked Sendable {
     public init(_ requestJSON: Data) throws {
         guard !requestJSON.isEmpty, requestJSON.count <= 1024 * 1024 else {
             throw NativeLocalAgentHostLaunchError.invalidConfiguration(
-                "本地 Agent Host 启动凭据大小无效"
+                "本地 Agent Host 启动配置大小无效"
             )
         }
         self.requestJSON = requestJSON
@@ -97,7 +97,7 @@ public final class NativeLocalAgentHostLaunchMaterial: @unchecked Sendable {
         defer { lock.unlock() }
         guard let data = requestJSON else {
             throw NativeLocalAgentHostLaunchError.invalidConfiguration(
-                "本地 Agent Host 启动凭据已经使用"
+                "本地 Agent Host 启动配置已经使用"
             )
         }
         requestJSON = nil
@@ -109,7 +109,7 @@ public final class NativeLocalAgentHostLaunchMaterial: @unchecked Sendable {
         defer { lock.unlock() }
         guard let requestJSON else {
             throw NativeLocalAgentHostLaunchError.invalidConfiguration(
-                "本地 Agent Host 启动凭据已经使用"
+                "本地 Agent Host 启动配置已经使用"
             )
         }
         return requestJSON
@@ -161,9 +161,9 @@ public final class NativeLocalAgentHostProcess: @unchecked Sendable {
 }
 
 /// Launches the bundled Rust Host without placing any credential in argv,
-/// environment variables, preferences, or a temporary file. The one-time
-/// secret frame is written to stdin and closed immediately; stdout is accepted
-/// only as the correlated, non-secret ready frame.
+/// environment variables, preferences, a temporary file, or the launch frame.
+/// Only opaque secure-store references cross stdin; stdout is accepted only as
+/// the correlated ready frame.
 public struct NativeLocalAgentHostProcessLauncher: Sendable {
     public init() {}
 

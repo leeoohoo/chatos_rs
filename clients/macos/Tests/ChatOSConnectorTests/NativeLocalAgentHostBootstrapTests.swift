@@ -29,16 +29,20 @@ struct NativeLocalAgentHostBootstrapTests {
         let profile = try #require(request["storage_profile"] as? [String: Any])
         #expect(profile["backend"] as? String == "sqlite")
         #expect(profile["database_path"] as? String == database.path)
-        let credentials = try #require(request["credentials"] as? [String: Any])
-        #expect(credentials["model_access_token"] as? String == "model-token")
-        #expect(credentials["provider_context_key_base64"] as? String == Data(repeating: 3, count: 32).base64EncodedString())
-        let storage = try #require(credentials["storage"] as? [String: Any])
-        #expect(storage["backend"] as? String == "sqlite")
-        #expect(storage["encryption_key_base64"] as? String == Data(repeating: 7, count: 32).base64EncodedString())
+        let references = try #require(request["credential_references"] as? [String: Any])
+        #expect(references["model_access_token_reference"] as? String == "model-access-token")
+        #expect(references["provider_context_key_reference"] as? String == "provider-context-key")
+        #expect(request["credentials"] == nil)
+        let launchText = String(
+            data: try configuration.launchMaterial.snapshotForTesting(),
+            encoding: .utf8
+        )
+        #expect(launchText?.contains("model-token") == false)
+        #expect(launchText?.contains(Data(repeating: 7, count: 32).base64EncodedString()) == false)
         #expect(configuration.expectedClientEndpoint.hasSuffix(".sock"))
     }
 
-    @Test("builds verified TLS PostgreSQL credentials without logging them")
+    @Test("passes only the PostgreSQL secure-store reference")
     func buildsPostgresLaunch() async throws {
         let fixture = try await BootstrapFixture()
         defer { fixture.cleanup() }
@@ -48,12 +52,6 @@ struct NativeLocalAgentHostBootstrapTests {
             username: "chatos-user",
             password: "private-password"
         )
-        try await fixture.store.save(
-            try JSONEncoder().encode(postgres),
-            accountID: "user-1",
-            reference: "postgres-1"
-        )
-
         let configuration = try await fixture.builder.makeConfiguration(settings: fixture.settings(
             storage: .postgres(connectionSecretReference: "postgres-1")
         ))
@@ -61,10 +59,13 @@ struct NativeLocalAgentHostBootstrapTests {
         let request = try #require(
             JSONSerialization.jsonObject(with: configuration.launchMaterial.snapshotForTesting()) as? [String: Any]
         )
-        let credentials = try #require(request["credentials"] as? [String: Any])
-        let storage = try #require(credentials["storage"] as? [String: Any])
-        #expect(storage["tls_mode"] as? String == "verify_full")
-        #expect(storage["password"] as? String == "private-password")
+        let profile = try #require(request["storage_profile"] as? [String: Any])
+        #expect(profile["connection_secret"] as? String == "postgres-1")
+        #expect(request["credentials"] == nil)
+        #expect(
+            String(data: try configuration.launchMaterial.snapshotForTesting(), encoding: .utf8)?
+                .contains("private-password") == false
+        )
         #expect(!postgres.debugDescription.contains("private-password"))
         #expect(!postgres.debugDescription.contains("database.example.com"))
     }
@@ -75,8 +76,6 @@ private struct BootstrapFixture: Sendable {
     let runtime: URL
     let grants: URL
     let state: URL
-    let service: String
-    let store: NativeLocalAgentCredentialStore
     let builder: NativeLocalAgentHostBootstrapBuilder
 
     init() async throws {
@@ -87,24 +86,7 @@ private struct BootstrapFixture: Sendable {
         runtime = root.appendingPathComponent("runtime", isDirectory: true)
         grants = root.appendingPathComponent("grants", isDirectory: true)
         state = root.appendingPathComponent("state", isDirectory: true)
-        service = "com.chatos.tests.local-agent.bootstrap.\(UUID().uuidString)"
-        store = try NativeLocalAgentCredentialStore(service: service)
-        builder = NativeLocalAgentHostBootstrapBuilder(credentials: store)
-        try await store.save(
-            Data("model-token".utf8),
-            accountID: "user-1",
-            reference: NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference
-        )
-        try await store.save(
-            Data(repeating: 3, count: 32),
-            accountID: "user-1",
-            reference: NativeLocalAgentHostBootstrapBuilder.providerContextKeyReference
-        )
-        try await store.save(
-            Data(repeating: 7, count: 32),
-            accountID: "user-1",
-            reference: "sqlite-key"
-        )
+        builder = NativeLocalAgentHostBootstrapBuilder()
     }
 
     func settings(storage: NativeLocalAgentStorageBootstrap) -> NativeLocalAgentHostBootstrapSettings {
@@ -122,17 +104,6 @@ private struct BootstrapFixture: Sendable {
     }
 
     func cleanup() {
-        let store = store
-        Task {
-            for reference in [
-                NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference,
-                NativeLocalAgentHostBootstrapBuilder.providerContextKeyReference,
-                "sqlite-key",
-                "postgres-1",
-            ] {
-                try? await store.delete(accountID: "user-1", reference: reference)
-            }
-        }
         try? FileManager.default.removeItem(at: root)
     }
 }

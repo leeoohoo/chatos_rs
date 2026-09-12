@@ -7,12 +7,15 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
+use chatos_client_storage::{
+    PostgresConnectionSettings, SecretReference, StorageEncryptionKey, StorageError, StorageResult,
+    StorageSecretResolver,
+};
 use chatos_local_agent_host::{
     assemble_local_agent_host, read_local_agent_host_launch_request,
-    LocalAgentHostAssemblyDependencies, LocalAgentIpcMutationExecutor, LocalAgentStoragePlatform,
-    RegisteredLocalCapabilityRuntime, LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
+    LocalAgentHostAssemblyDependencies, LocalAgentHostResolvedCredentials,
+    LocalAgentIpcMutationExecutor, LocalAgentStoragePlatform, RegisteredLocalCapabilityRuntime,
+    LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION,
 };
 use chatos_local_agent_protocol::{
     ClientStorageProfileDescriptor, ClientStorageProfileSelection, LocalAgentCommand,
@@ -76,6 +79,27 @@ impl LocalAgentIpcMutationExecutor for Terminal {
     }
 }
 
+struct Secrets;
+
+#[async_trait]
+impl StorageSecretResolver for Secrets {
+    async fn resolve_sqlite_encryption_key(
+        &self,
+        _reference: &SecretReference,
+    ) -> StorageResult<StorageEncryptionKey> {
+        Ok(StorageEncryptionKey::new([7_u8; 32]))
+    }
+
+    async fn resolve_postgres(
+        &self,
+        _reference: &SecretReference,
+    ) -> StorageResult<PostgresConnectionSettings> {
+        Err(StorageError::Unavailable {
+            reason: "PostgreSQL is not used by this test".to_string(),
+        })
+    }
+}
+
 #[tokio::test]
 async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
     let directory = tempfile::tempdir().unwrap();
@@ -115,14 +139,9 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
             "database_path": database_path,
             "encryption_secret": "sqlite-secret-1",
         },
-        "credentials": {
-            "model_access_token": "private-model-token",
-            "provider_context_key_base64": STANDARD.encode([3_u8; 32]),
-            "storage": {
-                "backend": "sqlite",
-                "encryption_secret_reference": "sqlite-secret-1",
-                "encryption_key_base64": STANDARD.encode([7_u8; 32]),
-            },
+        "credential_references": {
+            "model_access_token_reference": "model-access-token",
+            "provider_context_key_reference": "provider-context-key",
         },
     });
     let body = serde_json::to_vec(&launch).unwrap();
@@ -137,6 +156,12 @@ async fn assembles_one_storage_runtime_worker_and_protected_ipc_listener() {
     let assembly = assemble_local_agent_host(
         &request,
         LocalAgentHostAssemblyDependencies {
+            credentials: LocalAgentHostResolvedCredentials::new(
+                "private-model-token",
+                [3_u8; 32],
+                Arc::new(Secrets),
+            )
+            .unwrap(),
             storage_platform: Arc::new(Platform),
             terminal_mutation_executor: Arc::new(Terminal),
             capability_runtime: capability_runtime.clone(),
