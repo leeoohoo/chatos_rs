@@ -18,6 +18,7 @@ mod recovery;
 mod reducer;
 mod run_control;
 mod scheduler;
+mod task_state;
 mod tool_runtime;
 mod ui_events;
 

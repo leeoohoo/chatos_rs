@@ -580,7 +580,14 @@ async fn task_record_run_message_outbox_and_start_event_are_one_idempotent_trans
         Some("project-1")
     );
     assert_eq!(
-        first.run.initial_message.unwrap().outbox.item.record_id,
+        first
+            .run
+            .initial_message
+            .as_ref()
+            .unwrap()
+            .outbox
+            .item
+            .record_id,
         "task-message-1"
     );
 
@@ -596,6 +603,45 @@ async fn task_record_run_message_outbox_and_start_event_are_one_idempotent_trans
     assert_eq!(counts.events, 1);
     assert_eq!(counts.messages, 1);
     assert_eq!(counts.outbox, 1);
+
+    let transition_at = now + Duration::seconds(6);
+    let claimed = claim_event(
+        &storage,
+        EventClaimRequest {
+            scope: scope(),
+            event_id: first.run.start_event.event.event_id,
+            device_id: "device-1".to_string(),
+            claim_token: "claim-task-start".to_string(),
+            now: transition_at,
+            claim_until: transition_at + Duration::seconds(90),
+            max_attempts: 3,
+        },
+    )
+    .await
+    .unwrap();
+    let EventClaimResult::Acquired(claimed) = claimed else {
+        panic!("task start event must be claimable");
+    };
+    reduce_and_commit(
+        &storage,
+        ReduceAndCommitRequest {
+            scope: scope(),
+            event_id: claimed.event.event_id,
+            claim_token: "claim-task-start".to_string(),
+            origin_device_id: "device-1".to_string(),
+            evidence: StepEvidence::None,
+            now: transition_at,
+            policy: ReducerPolicy::default(),
+        },
+    )
+    .await
+    .unwrap();
+    let mut task = ReadTask(None);
+    storage.transaction(&mut task).await.unwrap();
+    let task = task.0.unwrap();
+    assert_eq!(task.status, "running");
+    assert_eq!(task.state["run_status"], "model_ready");
+    assert_eq!(task.state["run_version"], 2);
 }
 
 #[tokio::test]

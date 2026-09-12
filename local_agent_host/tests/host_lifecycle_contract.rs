@@ -725,6 +725,21 @@ impl StorageTransaction for SeedToolBatch {
             updated_at: self.now,
         };
         repositories
+            .tasks()
+            .put(PutRecord {
+                record: TaskRecord {
+                    metadata: metadata("task-1"),
+                    conversation_id: Some("thread-1".to_string()),
+                    status: "running".to_string(),
+                    state: serde_json::json!({
+                        "run_id": "run-1",
+                        "project_id": "project-1"
+                    }),
+                },
+                expected_revision: None,
+            })
+            .await?;
+        repositories
             .agent_runs()
             .put(PutRecord {
                 record: AgentRunStateRecord {

@@ -23,6 +23,7 @@ use crate::memory_sync::{
     RecordedSemanticMessage,
 };
 use crate::pagination::advance_cursor;
+use crate::task_state::sync_task_from_run;
 use crate::ui_events::{
     append_pending_user_interaction, append_run_snapshot, append_tool_snapshot,
 };
@@ -844,6 +845,7 @@ async fn exhaust_event_attempts(
             expected_revision: Some(run_revision),
         })
         .await?;
+    sync_task_from_run(repositories, &run_record).await?;
     append_run_snapshot(repositories, &run_record).await?;
     fail_event(repositories, event_record, "event attempt limit exceeded").await?;
 
@@ -1053,6 +1055,7 @@ impl StorageTransaction for ReduceAndCommitOperation {
                 expected_revision: Some(run_revision),
             })
             .await?;
+        sync_task_from_run(repositories, &run_record).await?;
         append_run_snapshot(repositories, &run_record).await?;
         append_pending_user_interaction(repositories, &run_record).await?;
 
@@ -1245,6 +1248,7 @@ impl StorageTransaction for BeginModelStepExecutionOperation {
                 expected_revision: Some(run_revision),
             })
             .await?;
+        sync_task_from_run(repositories, &run).await?;
         append_run_snapshot(repositories, &run).await?;
 
         let event_revision = event.metadata.revision;
