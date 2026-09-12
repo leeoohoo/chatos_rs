@@ -29,6 +29,7 @@ use chatos_local_agent_runtime::{
 use chrono::{DateTime, Duration, Utc};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use zeroize::Zeroizing;
 
 use crate::{
     LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentIpcMutationExecutor,
@@ -75,6 +76,41 @@ pub struct LocalAgentHostRunRequest {
     pub causation_id: String,
     pub deadline_at: Option<DateTime<Utc>>,
     pub initial_message: Option<InitialRunMessage>,
+}
+
+#[derive(Clone)]
+pub struct LocalAgentExecutionSession {
+    access_token: Arc<Zeroizing<String>>,
+    callbacks: ModelGatewayCallbacks,
+    cancellation: CancellationToken,
+}
+
+impl LocalAgentExecutionSession {
+    pub fn new(
+        access_token: impl Into<String>,
+        callbacks: ModelGatewayCallbacks,
+        cancellation: CancellationToken,
+    ) -> Result<Self, LocalAgentHostError> {
+        let access_token = access_token.into();
+        if access_token.trim().is_empty() || access_token.trim() != access_token {
+            return Err(LocalAgentHostError::InvalidModelAccessToken);
+        }
+        Ok(Self {
+            access_token: Arc::new(Zeroizing::new(access_token)),
+            callbacks,
+            cancellation,
+        })
+    }
+
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProcessedClaimedEvent {
+    ModelCompletionScheduled(Box<AgentEventStateRecord>),
+    ReductionCommitted(Box<CommittedReduction>),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -571,6 +607,40 @@ impl LocalAgentHost {
             _ => StepEvidence::None,
         };
         self.commit_claimed(claimed, evidence, now).await
+    }
+
+    /// Routes exactly one claimed event through the shared Rust execution
+    /// runtime. Platform clients own wake/sleep lifecycle, but never choose a
+    /// second model loop, tool loop, or reducer path based on Profile type.
+    pub async fn process_claimed_event(
+        &self,
+        claimed: &AgentEventStateRecord,
+        session: &LocalAgentExecutionSession,
+        now: DateTime<Utc>,
+    ) -> Result<ProcessedClaimedEvent, LocalAgentHostError> {
+        match claimed.event.event_type {
+            LocalAgentEventType::ModelStepRequested => self
+                .execute_claimed_model_step(
+                    claimed,
+                    session.access_token.as_str(),
+                    session.callbacks.clone(),
+                    session.cancellation.clone(),
+                    now,
+                )
+                .await
+                .map(Box::new)
+                .map(ProcessedClaimedEvent::ModelCompletionScheduled),
+            LocalAgentEventType::ToolBatchRequested => self
+                .execute_claimed_tool_batch(claimed, session.cancellation.clone(), now)
+                .await
+                .map(Box::new)
+                .map(ProcessedClaimedEvent::ReductionCommitted),
+            _ => self
+                .commit_claimed_protocol_event(claimed, now)
+                .await
+                .map(Box::new)
+                .map(ProcessedClaimedEvent::ReductionCommitted),
+        }
     }
 
     /// Executes one already-claimed tool batch. Invocation identities and

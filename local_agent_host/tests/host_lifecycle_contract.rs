@@ -10,9 +10,9 @@ use chatos_client_storage::{
     StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_host::{
-    LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentHost,
-    LocalAgentHostControlExecutor, LocalAgentHostPolicy, LocalAgentHostRunRequest,
-    LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry,
+    LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentExecutionSession,
+    LocalAgentHost, LocalAgentHostControlExecutor, LocalAgentHostPolicy, LocalAgentHostRunRequest,
+    LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry, ProcessedClaimedEvent,
 };
 use chatos_local_agent_protocol::{
     AnswerUserQuestionCommand, ContextStrategy, LocalAgentCommand, LocalAgentEvent,
@@ -672,25 +672,32 @@ async fn host_executes_and_persists_one_claimed_model_step_end_to_end() {
     else {
         panic!("run start was not claimed");
     };
-    host.commit_claimed(&started, StepEvidence::None, now)
+    let session = LocalAgentExecutionSession::new(
+        "access-token",
+        ModelGatewayCallbacks::default(),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    let ProcessedClaimedEvent::ReductionCommitted(_) = host
+        .process_claimed_event(&started, &session, now)
         .await
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("run start did not use the reducer path");
+    };
     let SchedulerTickResult::Claimed(requested) =
         host.claim_next("claim-model", now).await.unwrap()
     else {
         panic!("model step was not claimed");
     };
 
-    let completion = host
-        .execute_claimed_model_step(
-            &requested,
-            "access-token",
-            ModelGatewayCallbacks::default(),
-            CancellationToken::new(),
-            now,
-        )
+    let ProcessedClaimedEvent::ModelCompletionScheduled(completion) = host
+        .process_claimed_event(&requested, &session, now)
         .await
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("model request did not use the model execution path");
+    };
     assert_eq!(
         completion.event.event_type,
         LocalAgentEventType::ModelStepCompleted
