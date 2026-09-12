@@ -1496,23 +1496,31 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostCreationExecutor {
         request_id: &str,
         command: LocalAgentCommand,
     ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError> {
-        let event = match command {
-            LocalAgentCommand::CreateMainChatTurn(command) => self
-                .host
-                .create_main_chat_turn(request_id, *command, &self.session, Utc::now())
-                .await
-                .map(|created| created.start_event),
-            LocalAgentCommand::CreateTask(command) => self
-                .host
-                .create_task(request_id, *command, &self.session, Utc::now())
-                .await
-                .map(|created| created.run.start_event),
-            other => return self.next.execute_mutation(request_id, other).await,
+        match command {
+            LocalAgentCommand::CreateMainChatTurn(command) => {
+                let created = self
+                    .host
+                    .create_main_chat_turn(request_id, *command, &self.session, Utc::now())
+                    .await
+                    .map_err(run_creation_ipc_error)?;
+                Ok(LocalAgentIpcResponse::RunCreated {
+                    operation_id: created.start_event.event.event_id,
+                    run: Box::new(created.run_record.run),
+                })
+            }
+            LocalAgentCommand::CreateTask(command) => {
+                let created = self
+                    .host
+                    .create_task(request_id, *command, &self.session, Utc::now())
+                    .await
+                    .map_err(run_creation_ipc_error)?;
+                Ok(LocalAgentIpcResponse::RunCreated {
+                    operation_id: created.run.start_event.event.event_id,
+                    run: Box::new(created.run.run_record.run),
+                })
+            }
+            other => self.next.execute_mutation(request_id, other).await,
         }
-        .map_err(run_creation_ipc_error)?;
-        Ok(LocalAgentIpcResponse::Accepted {
-            operation_id: event.event.event_id,
-        })
     }
 }
 

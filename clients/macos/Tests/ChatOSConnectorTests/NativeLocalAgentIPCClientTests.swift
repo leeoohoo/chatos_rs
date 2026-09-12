@@ -28,7 +28,7 @@ struct NativeLocalAgentIPCClientTests {
         let object = try #require(
             JSONSerialization.jsonObject(with: request) as? [String: Any]
         )
-        #expect(object["protocol_version"] as? Int == 6)
+        #expect(object["protocol_version"] as? Int == Int(localAgentProtocolVersion))
         #expect(object["owner_user_id"] as? String == "user-1")
         let command = try #require(object["command"] as? [String: Any])
         #expect(command["type"] as? String == "answer_user_question")
@@ -52,6 +52,36 @@ struct NativeLocalAgentIPCClientTests {
         #expect(page.events[0].event.payload == .object([
             "model_config_id": .string("opaque-value"),
         ]))
+    }
+
+    @Test("creates a Run and returns its authoritative local identity")
+    func createsMainChatRun() async throws {
+        let transport = RecordingLocalAgentTransport(responseType: "run_created")
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+        let payload: LocalAgentJSONValue = .object(["prompt_revision": .string("prompt-1")])
+        let snapshot = LocalAgentFrozenSnapshot(
+            snapshotID: "snapshot-1",
+            revision: "prompt-1",
+            digest: "sha256:" + String(repeating: "a", count: 64),
+            payload: payload
+        )
+
+        let created = try await client.createMainChatTurn(LocalAgentCreateMainChatTurn(
+            threadID: "thread-1",
+            turnID: "turn-1",
+            messageID: "message-1",
+            projectID: nil,
+            modelConfigID: "model-1",
+            promptSnapshot: snapshot,
+            capabilitySnapshot: snapshot,
+            projectSnapshot: nil,
+            content: "Design the page",
+            attachments: []
+        ))
+
+        #expect(created.operationID == "operation-1")
+        #expect(created.run.runID == "run-1")
+        #expect(created.run.ownerEntityID == "thread-1")
     }
 
     @Test("encodes one project Plugin capability for Host validation")
@@ -131,6 +161,33 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
             ]
         case "success":
             response = ["type": "success"]
+        case "run_created":
+            response = [
+                "type": "run_created",
+                "payload": [
+                    "operation_id": "operation-1",
+                    "run": [
+                        "run_id": "run-1",
+                        "profile_key": "main_chat",
+                        "owner_user_id": "user-1",
+                        "owner_entity_type": "conversation",
+                        "owner_entity_id": "thread-1",
+                        "status": "queued",
+                        "version": 1,
+                        "step_seq": 0,
+                        "iteration": 0,
+                        "retry_count": 0,
+                        "model_config_id": "model-1",
+                        "model_config_revision": 1,
+                        "model_runtime_snapshot": [:],
+                        "context_strategy": "provider_native",
+                        "prompt_revision": "prompt-1",
+                        "capability_snapshot_ref": "capabilities-1",
+                        "created_at": "2026-09-12T03:00:00Z",
+                        "updated_at": "2026-09-12T03:00:00Z",
+                    ],
+                ],
+            ]
         default:
             response = [
                 "type": "accepted",
@@ -138,7 +195,7 @@ private actor RecordingLocalAgentTransport: LocalAgentFrameTransport {
             ]
         }
         return try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 6,
+            "protocol_version": localAgentProtocolVersion,
             "request_id": requestID,
             "response": response,
         ])

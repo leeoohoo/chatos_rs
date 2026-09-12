@@ -287,6 +287,26 @@ public actor NativeLocalAgentIPCClient {
         return operationID
     }
 
+    public func createMainChatTurn(
+        _ command: LocalAgentCreateMainChatTurn
+    ) async throws -> (operationID: String, run: LocalAgentRunSnapshot) {
+        let response = try await send(.createMainChatTurn(command))
+        guard case let .runCreated(operationID, run) = response else {
+            throw unexpected("run_created", response)
+        }
+        return (operationID, run)
+    }
+
+    public func createTask(
+        _ command: LocalAgentCreateTask
+    ) async throws -> (operationID: String, run: LocalAgentRunSnapshot) {
+        let response = try await send(.createTask(command))
+        guard case let .runCreated(operationID, run) = response else {
+            throw unexpected("run_created", response)
+        }
+        return (operationID, run)
+    }
+
     public func run(id: String) async throws -> LocalAgentRunSnapshot {
         let response = try await send(.getRun(runID: id))
         guard case let .run(run) = response else { throw unexpected("run", response) }
@@ -325,6 +345,7 @@ private extension LocalAgentResponse {
     var typeName: String {
         switch self {
         case .accepted: "accepted"
+        case .runCreated: "run_created"
         case .run: "run"
         case .runs: "runs"
         case .events: "events"

@@ -1748,8 +1748,16 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
     let first_task = server.handle_request(task_request.clone()).await.response;
     let repeated_task = server.handle_request(task_request).await.response;
     assert_eq!(first_task, repeated_task);
-    assert!(matches!(first_main, LocalAgentIpcResponse::Accepted { .. }));
-    assert!(matches!(first_task, LocalAgentIpcResponse::Accepted { .. }));
+    let LocalAgentIpcResponse::RunCreated { run, .. } = first_main else {
+        panic!("Main Chat creation must return its durable Run");
+    };
+    assert_eq!(run.profile_key, "main_chat");
+    assert_eq!(run.owner_entity_id, "thread-created-1");
+    let LocalAgentIpcResponse::RunCreated { run, .. } = first_task else {
+        panic!("Task creation must return its durable Run");
+    };
+    assert_eq!(run.profile_key, "task_runner");
+    assert_eq!(run.owner_entity_id, "task-created-1");
 
     {
         let descriptor_calls = gateway.calls.lock().unwrap();

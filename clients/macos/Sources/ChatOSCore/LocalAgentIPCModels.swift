@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 6
+public let localAgentProtocolVersion: UInt32 = 7
 
 public enum LocalAgentJSONValue: Codable, Equatable, Sendable {
     case null
@@ -432,6 +432,7 @@ public struct LocalAgentIPCErrorPayload: Codable, Error, Equatable, Sendable {
 
 public enum LocalAgentResponse: Equatable, Sendable {
     case accepted(operationID: String)
+    case runCreated(operationID: String, run: LocalAgentRunSnapshot)
     case run(LocalAgentRunSnapshot)
     case runs([LocalAgentRunSnapshot], nextCursor: String?)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
@@ -445,6 +446,10 @@ public enum LocalAgentResponse: Equatable, Sendable {
 extension LocalAgentResponse: Decodable {
     private enum CodingKeys: String, CodingKey { case type, payload }
     private struct Accepted: Decodable { let operationID: String }
+    private struct RunCreated: Decodable {
+        let operationID: String
+        let run: LocalAgentRunSnapshot
+    }
     private struct Runs: Decodable {
         let runs: [LocalAgentRunSnapshot]
         let nextCursor: String?
@@ -460,6 +465,9 @@ extension LocalAgentResponse: Decodable {
         switch try container.decode(String.self, forKey: .type) {
         case "accepted":
             self = .accepted(operationID: try container.decode(Accepted.self, forKey: .payload).operationID)
+        case "run_created":
+            let value = try container.decode(RunCreated.self, forKey: .payload)
+            self = .runCreated(operationID: value.operationID, run: value.run)
         case "run": self = .run(try container.decode(LocalAgentRunSnapshot.self, forKey: .payload))
         case "runs":
             let value = try container.decode(Runs.self, forKey: .payload)

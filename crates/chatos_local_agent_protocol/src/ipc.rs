@@ -409,6 +409,10 @@ pub enum LocalAgentIpcResponse {
     Accepted {
         operation_id: String,
     },
+    RunCreated {
+        operation_id: String,
+        run: Box<LocalAgentRun>,
+    },
     Run(Box<LocalAgentRun>),
     Runs {
         runs: Vec<LocalAgentRun>,
@@ -430,6 +434,10 @@ impl LocalAgentIpcResponse {
     fn validate(&self) -> Result<(), ProtocolError> {
         match self {
             Self::Accepted { operation_id } => require_identifier("operation_id", operation_id),
+            Self::RunCreated { operation_id, run } => {
+                require_identifier("operation_id", operation_id)?;
+                run.validate()
+            }
             Self::Run(run) => run.validate(),
             Self::Runs { runs, next_cursor } => {
                 for run in runs {
