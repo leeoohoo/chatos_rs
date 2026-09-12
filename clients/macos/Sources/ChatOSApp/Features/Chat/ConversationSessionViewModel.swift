@@ -3,25 +3,10 @@ import Foundation
 
 @MainActor
 final class ConversationSessionViewModel: ObservableObject {
-    private static let historyPageSize = 10
-    private static let realtimeRefreshDebounce: Duration = .milliseconds(250)
-
-    private enum LatestRefreshPresentation: Equatable {
-        case silent
-        case visible
-
-        func merged(with other: Self) -> Self {
-            self == .visible || other == .visible ? .visible : .silent
-        }
-    }
-
     let sessionID: String
 
     @Published private(set) var turns: [ConversationTurn]
-    @Published private(set) var hasOlder = false
     @Published private(set) var unreadNewerCount = 0
-    @Published private(set) var isRefreshing = false
-    @Published private(set) var isLoadingOlder = false
     @Published var isSending = false
     @Published private(set) var isUpdatingRuntimeSettings = false
     @Published private(set) var availableModels: [ConversationModelOption] = []
@@ -29,7 +14,7 @@ final class ConversationSessionViewModel: ObservableObject {
     @Published private(set) var selectedRemoteConnectionID: String?
     @Published private(set) var selectedThinkingLevel: String?
     @Published private(set) var reasoningEnabled = false
-    @Published var historyError: String?
+    @Published var askUserStateError: String?
     @Published var runtimeSettingsError: String?
     @Published var sendError: String?
     @Published var selectedTurnID: String?
@@ -49,30 +34,18 @@ final class ConversationSessionViewModel: ObservableObject {
     let historyStore: any ConversationHistoryStoring
     let commandService: (any ConversationCommandServicing)?
     let messageTaskGraphService: (any MessageTaskGraphServicing)?
-    private let remoteService: (any ConversationRemoteServicing)?
     private let runtimeSettingsService: (any ConversationRuntimeSettingsServicing)?
     let askUserPromptService: (any AskUserPromptServicing)?
     let localAgentRunControlService: (any LocalAgentRunControlServicing)?
     private let localAgentTaskStateStore: (any LocalAgentTaskStateStoring)?
-    private var olderCursor: String?
-    private var requestGeneration: Int64 = 0
-    private var inFlightOlderCursor: String?
     private var localAgentUpdateTask: Task<Void, Never>?
     private var localAgentTaskUpdateTask: Task<Void, Never>?
-    private var historyRetryTask: Task<Void, Never>?
-    private var latestRefreshDebounceTask: Task<Void, Never>?
-    private var latestRefreshDebouncePresentation: LatestRefreshPresentation?
-    private var historyRetryAttempt = 0
-    private var latestRefreshInFlight = false
-    private var latestRefreshPending: LatestRefreshPresentation?
     private var viewportUpdateGeneration: Int64 = 0
     var pendingLocalAgentRunStatuses: [String: LocalAgentRunStatus] = [:]
 
     init(
         sessionID: String,
-        initialTurns: [ConversationTurn],
         historyStore: any ConversationHistoryStoring,
-        remoteService: (any ConversationRemoteServicing)? = nil,
         commandService: (any ConversationCommandServicing)? = nil,
         messageTaskGraphService: (any MessageTaskGraphServicing)? = nil,
         runtimeSettingsService: (any ConversationRuntimeSettingsServicing)? = nil,
@@ -81,10 +54,9 @@ final class ConversationSessionViewModel: ObservableObject {
         localAgentTaskStateStore: (any LocalAgentTaskStateStoring)? = nil
     ) {
         self.sessionID = sessionID
-        self.turns = initialTurns
-        self.selectedTurnID = initialTurns.last?.id
+        self.turns = []
+        self.selectedTurnID = nil
         self.historyStore = historyStore
-        self.remoteService = remoteService
         self.commandService = commandService
         self.messageTaskGraphService = messageTaskGraphService
         self.runtimeSettingsService = runtimeSettingsService
@@ -92,25 +64,15 @@ final class ConversationSessionViewModel: ObservableObject {
         self.localAgentRunControlService = localAgentRunControlService
         self.localAgentTaskStateStore = localAgentTaskStateStore
 
-        Task { await bootstrap(initialTurns: initialTurns) }
+        Task { await bootstrap() }
     }
 
     deinit {
         localAgentUpdateTask?.cancel()
         localAgentTaskUpdateTask?.cancel()
-        historyRetryTask?.cancel()
-        latestRefreshDebounceTask?.cancel()
-    }
-
-    func refreshLatest() {
-        historyRetryTask?.cancel()
-        historyRetryTask = nil
-        historyRetryAttempt = 0
-        enqueueLatestRefresh(presentation: .visible, debounce: false)
     }
 
     func activate() {
-        refreshLatestSilently()
         startLocalAgentUpdates()
         startLocalAgentTaskUpdates()
     }
@@ -122,8 +84,14 @@ final class ConversationSessionViewModel: ObservableObject {
         let sessionID = sessionID
         localAgentUpdateTask = Task { [weak self] in
             let stream = await updates.localAgentUpdates(sessionID: sessionID)
+            // Subscribe before reading the snapshot so an event arriving during
+            // activation is either present in this read or queued on the stream.
+            guard let self else { return }
+            await self.refreshSnapshot()
+            await self.refreshAskUserPrompts()
+            await self.refreshLocalAgentControls()
             for await _ in stream {
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled else { return }
                 await self.refreshSnapshot()
                 await self.refreshAskUserPrompts()
                 await self.refreshLocalAgentControls()
@@ -136,10 +104,11 @@ final class ConversationSessionViewModel: ObservableObject {
         let sessionID = sessionID
         localAgentTaskUpdateTask = Task { [weak self] in
             guard let self else { return }
-            await refreshLocalAgentTasks()
             let stream = await localAgentTaskStateStore.localAgentTaskUpdates(
                 sessionID: sessionID
             )
+            // Keep the same subscribe-then-snapshot ordering as Main Chat.
+            await refreshLocalAgentTasks()
             for await _ in stream {
                 guard !Task.isCancelled else { return }
                 await self.refreshLocalAgentTasks()
@@ -156,150 +125,6 @@ final class ConversationSessionViewModel: ObservableObject {
     private func refreshLocalAgentTasks() async {
         guard let localAgentTaskStateStore else { return }
         localAgentTasks = await localAgentTaskStateStore.localAgentTasks(sessionID: sessionID)
-    }
-
-    func refreshLatestSilently() {
-        enqueueLatestRefresh(presentation: .silent, debounce: true)
-    }
-
-    private func enqueueLatestRefresh(
-        presentation: LatestRefreshPresentation,
-        debounce: Bool
-    ) {
-        guard let remoteService else { return }
-
-        if debounce {
-            let scheduledPresentation = latestRefreshDebouncePresentation?
-                .merged(with: presentation) ?? presentation
-            latestRefreshDebouncePresentation = scheduledPresentation
-            latestRefreshDebounceTask?.cancel()
-            latestRefreshDebounceTask = Task { [weak self] in
-                do {
-                    try await Task.sleep(for: Self.realtimeRefreshDebounce)
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled, let self else { return }
-                self.latestRefreshDebounceTask = nil
-                self.latestRefreshDebouncePresentation = nil
-                self.performLatestRefresh(
-                    using: remoteService,
-                    presentation: scheduledPresentation
-                )
-            }
-            return
-        }
-
-        latestRefreshDebounceTask?.cancel()
-        latestRefreshDebounceTask = nil
-        latestRefreshDebouncePresentation = nil
-        performLatestRefresh(using: remoteService, presentation: presentation)
-    }
-
-    private func performLatestRefresh(
-        using remoteService: any ConversationRemoteServicing,
-        presentation: LatestRefreshPresentation
-    ) {
-        guard !latestRefreshInFlight else {
-            latestRefreshPending = latestRefreshPending?
-                .merged(with: presentation) ?? presentation
-            return
-        }
-
-        latestRefreshInFlight = true
-        latestRefreshPending = nil
-        requestGeneration += 1
-        let generation = requestGeneration
-        if presentation == .visible {
-            isRefreshing = true
-            historyError = nil
-        }
-
-        Task {
-            do {
-                let page = try await remoteService.fetchHistory(
-                    ConversationHistoryQuery(
-                        sessionID: sessionID,
-                        limit: Self.historyPageSize,
-                        requestGeneration: generation
-                    )
-                )
-                await historyStore.mergePage(page, sessionID: sessionID, origin: .latest)
-                await refreshSnapshot()
-                if historyError != nil {
-                    historyError = nil
-                }
-                historyRetryAttempt = 0
-                historyRetryTask?.cancel()
-                historyRetryTask = nil
-            } catch {
-                if historyError != error.localizedDescription {
-                    historyError = error.localizedDescription
-                }
-                scheduleHistoryRetry()
-            }
-            if presentation == .visible {
-                isRefreshing = false
-            }
-            latestRefreshInFlight = false
-            if let pending = latestRefreshPending {
-                latestRefreshPending = nil
-                enqueueLatestRefresh(presentation: pending, debounce: true)
-            }
-        }
-    }
-
-    private func scheduleHistoryRetry() {
-        let delays: [Duration] = [
-            .seconds(2),
-            .seconds(5),
-            .seconds(10),
-            .seconds(20),
-        ]
-        guard historyRetryTask == nil, historyRetryAttempt < delays.count else { return }
-        let delay = delays[historyRetryAttempt]
-        historyRetryAttempt += 1
-        historyRetryTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self else { return }
-            self.historyRetryTask = nil
-            self.enqueueLatestRefresh(presentation: .silent, debounce: false)
-        }
-    }
-
-    func loadOlder() {
-        guard let remoteService,
-              let cursor = olderCursor,
-              hasOlder,
-              !isLoadingOlder,
-              inFlightOlderCursor != cursor else { return }
-
-        requestGeneration += 1
-        let generation = requestGeneration
-        inFlightOlderCursor = cursor
-        isLoadingOlder = true
-        historyError = nil
-
-        Task {
-            do {
-                let page = try await remoteService.fetchHistory(
-                    ConversationHistoryQuery(
-                        sessionID: sessionID,
-                        limit: Self.historyPageSize,
-                        before: cursor,
-                        requestGeneration: generation
-                    )
-                )
-                await historyStore.mergePage(page, sessionID: sessionID, origin: .older)
-                await refreshSnapshot()
-            } catch {
-                historyError = error.localizedDescription
-            }
-            if inFlightOlderCursor == cursor {
-                inFlightOlderCursor = nil
-            }
-            isLoadingOlder = false
-        }
     }
 
     func markNewerContentRead() {
@@ -351,14 +176,12 @@ final class ConversationSessionViewModel: ObservableObject {
         !tasks(for: turn.id).isEmpty
     }
 
-    private func bootstrap(initialTurns: [ConversationTurn]) async {
+    private func bootstrap() async {
         async let runtimeSettings: Void = loadRuntimeSettings()
         async let prompts: Void = refreshAskUserPrompts()
         async let controls: Void = refreshLocalAgentControls()
         _ = await (runtimeSettings, prompts, controls)
-        await historyStore.mergeCachedTurns(initialTurns, sessionID: sessionID)
         await refreshSnapshot()
-        refreshLatest()
     }
 
     var selectedModelDisplayName: String {
@@ -515,10 +338,6 @@ final class ConversationSessionViewModel: ObservableObject {
         let snapshot = await historyStore.snapshot(sessionID: sessionID)
         if turns != snapshot.turns {
             turns = snapshot.turns
-        }
-        olderCursor = snapshot.olderCursor
-        if hasOlder != snapshot.hasOlder {
-            hasOlder = snapshot.hasOlder
         }
         if unreadNewerCount != snapshot.unreadNewerCount {
             unreadNewerCount = snapshot.unreadNewerCount

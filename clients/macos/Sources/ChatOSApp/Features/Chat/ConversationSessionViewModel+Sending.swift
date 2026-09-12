@@ -24,17 +24,9 @@ extension ConversationSessionViewModel {
         selectedTurnID = turn.id
 
         Task {
-            await historyStore.applyRealtime(
-                RealtimeTurnEvent(
-                    eventID: "optimistic-\(turn.id)",
-                    eventSequence: turn.sequence,
-                    turn: turn
-                ),
-                userIsReadingOlderContent: false
-            )
-            await refreshSnapshot()
-
             do {
+                try await historyStore.upsertOptimisticTurn(turn, sessionID: sessionID)
+                await refreshSnapshot()
                 _ = try await service.sendNewTurn(
                     ConversationSendCommand(
                         sessionID: sessionID,

@@ -7,14 +7,12 @@ import XCTest
 @MainActor
 final class ConversationSessionViewModelTests: XCTestCase {
     func testUnchangedSnapshotDoesNotPublishViewUpdates() async throws {
-        let turn = ConversationRemoteServiceStub.turn(revision: 1)
         let viewModel = ConversationSessionViewModel(
             sessionID: "session-1",
-            initialTurns: [turn],
             historyStore: ConversationHistoryStore()
         )
 
-        try await waitUntil { viewModel.turns == [turn] }
+        try await waitUntil { viewModel.turns.isEmpty }
         try await Task.sleep(for: .milliseconds(50))
         var updateCount = 0
         let cancellable = viewModel.objectWillChange.sink {
@@ -28,12 +26,13 @@ final class ConversationSessionViewModelTests: XCTestCase {
     }
 
     func testSendingWhileAnotherTurnStreamsCreatesANewLocalRun() async throws {
-        let streaming = ConversationRemoteServiceStub.turn(revision: 1)
+        let streaming = Self.optimisticTurn()
+        let store = ConversationHistoryStore()
+        try await store.upsertOptimisticTurn(streaming, sessionID: "session-1")
         let commands = ConversationCommandRecorder()
         let viewModel = ConversationSessionViewModel(
             sessionID: "session-1",
-            initialTurns: [streaming],
-            historyStore: ConversationHistoryStore(),
+            historyStore: store,
             commandService: commands
         )
         try await waitUntil { viewModel.turns == [streaming] }
@@ -53,17 +52,47 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.turns.count, 2)
     }
 
+    func testFailedSendRemovesOptimisticTurnAndRestoresDraftAndAttachments() async throws {
+        let store = ConversationHistoryStore()
+        let commands = ConversationCommandRecorder(error: ConversationCommandTestError.rejected)
+        let attachment = ConversationAttachmentDraft(
+            id: "attachment-1",
+            name: "reference.txt",
+            mimeType: "text/plain",
+            kind: .file,
+            origin: .pastedText,
+            data: Data("visual reference".utf8)
+        )
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            historyStore: store,
+            commandService: commands
+        )
+        viewModel.draft = "Refine the visual hierarchy"
+        viewModel.attachments = [attachment]
+
+        viewModel.sendDraft()
+
+        try await waitUntil { !viewModel.isSending && viewModel.sendError != nil }
+        XCTAssertEqual(viewModel.draft, "Refine the visual hierarchy")
+        XCTAssertEqual(viewModel.attachments, [attachment])
+        XCTAssertTrue(viewModel.turns.isEmpty)
+        let snapshot = await store.snapshot(sessionID: "session-1")
+        XCTAssertEqual(snapshot.turns, [])
+    }
+
     func testTaskGraphAvailabilityComesFromStableLocalTaskBinding() async throws {
         let taskStateStore = LocalAgentTaskStateStore()
         try await taskStateStore.registerLocalAgentTask(
             Self.taskSnapshot(),
             run: Self.taskRunSnapshot()
         )
-        let turn = ConversationRemoteServiceStub.turn(revision: 1)
+        let turn = Self.optimisticTurn()
+        let store = ConversationHistoryStore()
+        try await store.upsertOptimisticTurn(turn, sessionID: "session-1")
         let viewModel = ConversationSessionViewModel(
             sessionID: "session-1",
-            initialTurns: [turn],
-            historyStore: ConversationHistoryStore(),
+            historyStore: store,
             localAgentTaskStateStore: taskStateStore
         )
 
@@ -92,6 +121,23 @@ final class ConversationSessionViewModelTests: XCTestCase {
             modelConfigRevision: 1,
             createdAt: "2026-09-12T03:00:00Z",
             updatedAt: "2026-09-12T03:00:00Z"
+        )
+    }
+
+    private static func optimisticTurn() -> ConversationTurn {
+        ConversationTurn(
+            id: "turn-1",
+            sessionID: "session-1",
+            sequence: 1,
+            revision: 0,
+            userMessage: ChatMessage(
+                id: "message-1",
+                role: .user,
+                text: "执行任务",
+                createdAt: Date(timeIntervalSince1970: 1)
+            ),
+            status: .streaming,
+            startedAt: Date(timeIntervalSince1970: 1)
         )
     }
 
@@ -131,13 +177,23 @@ final class ConversationSessionViewModelTests: XCTestCase {
     }
 }
 
+private enum ConversationCommandTestError: Error {
+    case rejected
+}
+
 private actor ConversationCommandRecorder: ConversationCommandServicing {
     private var commands: [ConversationSendCommand] = []
+    private let error: Error?
+
+    init(error: Error? = nil) {
+        self.error = error
+    }
 
     func sendNewTurn(_ command: ConversationSendCommand) async throws
         -> ConversationCommandAck
     {
         commands.append(command)
+        if let error { throw error }
         return ConversationCommandAck(
             operationID: "operation-1",
             runID: "run-1",
@@ -149,63 +205,4 @@ private actor ConversationCommandRecorder: ConversationCommandServicing {
     func cancelRun(runID: String) async throws {}
 
     func sentCommands() -> [ConversationSendCommand] { commands }
-}
-
-private actor ConversationRemoteServiceStub: ConversationRemoteServicing {
-    private var queries: [ConversationHistoryQuery] = []
-    private var fetchDelayMilliseconds = 0
-
-    func fetchHistory(_ query: ConversationHistoryQuery) async throws -> HistoryPage {
-        queries.append(query)
-        let revision = Int64(queries.count)
-        let delay = fetchDelayMilliseconds
-        if delay > 0 {
-            try await Task.sleep(for: .milliseconds(delay))
-        }
-        return HistoryPage(
-            turns: [Self.turn(revision: revision)],
-            olderCursor: nil,
-            hasOlder: false,
-            snapshotRevision: revision,
-            requestGeneration: query.requestGeneration
-        )
-    }
-
-    func requestedSessionIDs() -> [String] {
-        queries.map(\.sessionID)
-    }
-
-    func requestCount() -> Int {
-        queries.count
-    }
-
-    func setFetchDelay(milliseconds: Int) {
-        fetchDelayMilliseconds = milliseconds
-    }
-
-    static func turn(revision: Int64) -> ConversationTurn {
-        ConversationTurn(
-            id: "turn-1",
-            sessionID: "session-1",
-            sequence: 1,
-            revision: revision,
-            userMessage: ChatMessage(
-                id: "message-1",
-                role: .user,
-                text: "执行任务",
-                createdAt: Date(timeIntervalSince1970: 1)
-            ),
-            finalAssistantMessage: revision > 1
-                ? ChatMessage(
-                    id: "assistant-1",
-                    role: .assistant,
-                    text: "任务已完成",
-                    createdAt: Date(timeIntervalSince1970: 2)
-                )
-                : nil,
-            status: revision > 1 ? .completed : .streaming,
-            startedAt: Date(timeIntervalSince1970: 1),
-            completedAt: revision > 1 ? Date(timeIntervalSince1970: 2) : nil
-        )
-    }
 }

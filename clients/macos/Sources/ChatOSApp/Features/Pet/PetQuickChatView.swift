@@ -193,9 +193,6 @@ private struct PetQuickChatConversationView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if conversation?.isRefreshing == true {
-                ProgressView().controlSize(.small)
-            }
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
@@ -216,7 +213,7 @@ private struct PetQuickChatTimeline: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 10) {
-                    if conversation.turns.isEmpty, !conversation.isRefreshing {
+                    if conversation.turns.isEmpty {
                         Text(model.localized("还没有聊天记录", english: "No messages yet"))
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
@@ -244,7 +241,6 @@ private struct PetQuickChatTimeline: View {
                 .padding(12)
             }
             .onAppear {
-                conversation.refreshLatest()
                 scrollToBottom(proxy, animated: false)
             }
             .onChange(of: conversation.turns.count) {

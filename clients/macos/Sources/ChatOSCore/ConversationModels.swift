@@ -111,68 +111,20 @@ public struct ViewportAnchor: Codable, Sendable, Equatable {
     }
 }
 
-public struct HistoryPage: Sendable, Equatable {
-    public var turns: [ConversationTurn]
-    public var olderCursor: String?
-    public var hasOlder: Bool
-    public var snapshotRevision: Int64
-    public var requestGeneration: Int64
-
-    public init(
-        turns: [ConversationTurn],
-        olderCursor: String?,
-        hasOlder: Bool,
-        snapshotRevision: Int64,
-        requestGeneration: Int64
-    ) {
-        self.turns = turns
-        self.olderCursor = olderCursor
-        self.hasOlder = hasOlder
-        self.snapshotRevision = snapshotRevision
-        self.requestGeneration = requestGeneration
-    }
-}
-
-public enum ConversationHistoryPageOrigin: Sendable, Equatable {
-    case latest
-    case older
-}
-
-public struct RealtimeTurnEvent: Sendable, Equatable {
-    public var eventID: String
-    public var eventSequence: Int64
-    public var turn: ConversationTurn
-
-    public init(eventID: String, eventSequence: Int64, turn: ConversationTurn) {
-        self.eventID = eventID
-        self.eventSequence = eventSequence
-        self.turn = turn
-    }
-}
-
 public struct ConversationHistorySnapshot: Sendable, Equatable {
     public var sessionID: String
     public var turns: [ConversationTurn]
-    public var olderCursor: String?
-    public var hasOlder: Bool
-    public var snapshotRevision: Int64
     public var viewportAnchor: ViewportAnchor?
     public var unreadNewerCount: Int
 
     public init(
         sessionID: String,
         turns: [ConversationTurn],
-        olderCursor: String?,
-        hasOlder: Bool,
-        snapshotRevision: Int64,
         viewportAnchor: ViewportAnchor?,
         unreadNewerCount: Int
     ) {
         self.sessionID = sessionID
         self.turns = turns
-        self.olderCursor = olderCursor
-        self.hasOlder = hasOlder
-        self.snapshotRevision = snapshotRevision
         self.viewportAnchor = viewportAnchor
         self.unreadNewerCount = unreadNewerCount
     }

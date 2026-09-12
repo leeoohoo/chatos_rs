@@ -3,14 +3,6 @@ import Foundation
 public actor ConversationHistoryStore {
     private struct SessionState: Sendable {
         var turnsByID: [String: ConversationTurn] = [:]
-        var olderCursor: String?
-        var hasOlder = false
-        var snapshotRevision: Int64 = 0
-        var newestAcceptedLatestGeneration: Int64 = 0
-        var newestAcceptedOlderGeneration: Int64 = 0
-        var hasLoadedOlderPage = false
-        var lastAppliedEventSequence: Int64 = 0
-        var appliedEventIDs: Set<String> = []
         var lastAppliedLocalAgentEventSequence: UInt64 = 0
         var localAgentPromptsByID: [String: AskUserPrompt] = [:]
         var localAgentPromptRoutes: [String: LocalAgentAskUserRoute] = [:]
@@ -29,81 +21,21 @@ public actor ConversationHistoryStore {
 
     public init() {}
 
-    public func mergeCachedTurns(_ turns: [ConversationTurn], sessionID: String) {
-        var state = sessions[sessionID] ?? SessionState()
-        merge(
-            turns,
-            sessionID: sessionID,
-            replacingChangedEqualRevisions: false,
-            into: &state
-        )
-        sessions[sessionID] = state
-    }
-
-    public func mergePage(
-        _ page: HistoryPage,
-        sessionID: String,
-        origin: ConversationHistoryPageOrigin = .latest
-    ) {
-        var state = sessions[sessionID] ?? SessionState()
-        let acceptsLatestSnapshot = origin == .latest
-            && page.requestGeneration >= state.newestAcceptedLatestGeneration
-        let didChange = merge(
-            page.turns,
-            sessionID: sessionID,
-            replacingChangedEqualRevisions: acceptsLatestSnapshot,
-            into: &state
-        )
-
-        if didChange,
-           origin == .latest,
-           state.viewportAnchor?.isPinnedToBottom == false {
-            state.unreadNewerCount += 1
+    public func upsertOptimisticTurn(
+        _ turn: ConversationTurn,
+        sessionID: String
+    ) throws {
+        guard turn.sessionID == sessionID, turn.revision == 0 else {
+            throw LocalAgentConversationHistoryError.invalidOptimisticTurn
         }
-
-        switch origin {
-        case .latest:
-            if page.requestGeneration >= state.newestAcceptedLatestGeneration {
-                state.newestAcceptedLatestGeneration = page.requestGeneration
-                if !state.hasLoadedOlderPage {
-                    state.olderCursor = page.olderCursor
-                    state.hasOlder = page.hasOlder
-                }
+        var state = sessions[sessionID] ?? SessionState()
+        if let existing = state.turnsByID[turn.id] {
+            guard existing.revision == 0, existing == turn else {
+                throw LocalAgentConversationHistoryError.invalidOptimisticTurn
             }
-        case .older:
-            if page.requestGeneration >= state.newestAcceptedOlderGeneration {
-                state.newestAcceptedOlderGeneration = page.requestGeneration
-                state.hasLoadedOlderPage = true
-                state.olderCursor = page.olderCursor
-                state.hasOlder = page.hasOlder
-            }
+        } else {
+            state.turnsByID[turn.id] = turn
         }
-        state.snapshotRevision = max(state.snapshotRevision, page.snapshotRevision)
-
-        sessions[sessionID] = state
-    }
-
-    public func applyRealtime(_ event: RealtimeTurnEvent, userIsReadingOlderContent: Bool) {
-        let sessionID = event.turn.sessionID
-        var state = sessions[sessionID] ?? SessionState()
-
-        guard !state.appliedEventIDs.contains(event.eventID) else {
-            return
-        }
-
-        state.appliedEventIDs.insert(event.eventID)
-        state.lastAppliedEventSequence = max(state.lastAppliedEventSequence, event.eventSequence)
-        let didChange = merge(
-            [event.turn],
-            sessionID: sessionID,
-            replacingChangedEqualRevisions: false,
-            into: &state
-        )
-
-        if didChange, userIsReadingOlderContent {
-            state.unreadNewerCount += 1
-        }
-
         sessions[sessionID] = state
     }
 
@@ -134,9 +66,6 @@ public actor ConversationHistoryStore {
         return ConversationHistorySnapshot(
             sessionID: sessionID,
             turns: state.turnsByID.values.sorted(by: ConversationTurn.isOrderedBefore),
-            olderCursor: state.olderCursor,
-            hasOlder: state.hasOlder,
-            snapshotRevision: state.snapshotRevision,
             viewportAnchor: state.viewportAnchor,
             unreadNewerCount: state.unreadNewerCount
         )
@@ -439,37 +368,6 @@ public actor ConversationHistoryStore {
         changedSessions.forEach { sessionID in
             localUpdateContinuations[sessionID]?.values.forEach { $0.yield(()) }
         }
-    }
-
-    @discardableResult
-    private func merge(
-        _ incomingTurns: [ConversationTurn],
-        sessionID: String,
-        replacingChangedEqualRevisions: Bool,
-        into state: inout SessionState
-    ) -> Bool {
-        var didChange = false
-
-        for turn in incomingTurns {
-            guard turn.sessionID == sessionID else { continue }
-            guard !state.localAgentTurnIDs.contains(turn.id) else { continue }
-
-            guard let existing = state.turnsByID[turn.id] else {
-                state.turnsByID[turn.id] = turn
-                didChange = true
-                continue
-            }
-
-            if turn.revision > existing.revision
-                || (replacingChangedEqualRevisions
-                    && turn.revision == existing.revision
-                    && turn != existing) {
-                state.turnsByID[turn.id] = turn
-                didChange = true
-            }
-        }
-
-        return didChange
     }
 
     private func applyRecoveredTimelineEvent(
@@ -907,6 +805,7 @@ extension ConversationHistoryStore: LocalAgentAskUserStateStoring {}
 extension ConversationHistoryStore: LocalAgentRunControlStateStoring {}
 
 public enum LocalAgentConversationHistoryError: Error, Equatable, Sendable {
+    case invalidOptimisticTurn
     case runBindingMismatch
     case userMessageBindingMismatch
     case missingSuccessfulOutcome
@@ -918,6 +817,7 @@ public enum LocalAgentConversationHistoryError: Error, Equatable, Sendable {
 extension LocalAgentConversationHistoryError: LocalizedError {
     public var errorDescription: String? {
         switch self {
+        case .invalidOptimisticTurn: "只能暂存当前会话中尚未持久化的新消息"
         case .runBindingMismatch: "本地 Agent 事件与 Run 绑定不一致"
         case .userMessageBindingMismatch: "本地 Agent 用户消息身份不一致"
         case .missingSuccessfulOutcome: "本地 Agent 成功结果缺少最终文本"
@@ -953,22 +853,10 @@ private extension String {
 
 private extension ConversationTurn {
     static func isOrderedBefore(_ lhs: ConversationTurn, _ rhs: ConversationTurn) -> Bool {
-        let lhsHasStartedAt = lhs.startedAt != .distantPast
-        let rhsHasStartedAt = rhs.startedAt != .distantPast
-
-        // Some older gateways do not return sequence_no. The mapper can only assign a
-        // page-local fallback in that case, so sequence values repeat after loading an
-        // older page. A real creation time is therefore the stable cross-page order.
-        if lhsHasStartedAt, rhsHasStartedAt, lhs.startedAt != rhs.startedAt {
-            return lhs.startedAt < rhs.startedAt
-        }
-
-        // Preserve server ordering for legacy records with no usable timestamp and use
-        // it as the tie-breaker when multiple turns share the same creation time.
         if lhs.sequence != rhs.sequence {
             return lhs.sequence < rhs.sequence
         }
-
+        if lhs.startedAt != rhs.startedAt { return lhs.startedAt < rhs.startedAt }
         return lhs.id < rhs.id
     }
 }

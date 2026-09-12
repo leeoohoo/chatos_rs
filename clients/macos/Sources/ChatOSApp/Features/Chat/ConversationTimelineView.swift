@@ -59,26 +59,6 @@ struct ConversationTimelineView: View {
                 ZStack(alignment: .bottom) {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
-                            if conversation.hasOlder {
-                                if conversation.isLoadingOlder {
-                                    ProgressView(model.localized(
-                                        "正在加载更早消息…",
-                                        english: "Loading earlier messages…"
-                                    ))
-                                        .controlSize(.small)
-                                        .frame(maxWidth: .infinity)
-                                } else {
-                                    Button(
-                                        model.localized("加载更早消息", english: "Load Earlier Messages"),
-                                        systemImage: "arrow.up"
-                                    ) {
-                                        conversation.loadOlder()
-                                    }
-                                    .controlSize(.small)
-                                    .frame(maxWidth: .infinity)
-                                }
-                            }
-
                             if conversation.turns.isEmpty {
                                 ContentUnavailableView(
                                     model.localized(
@@ -268,7 +248,7 @@ struct ConversationTimelineView: View {
         let requestID = conversation.focusRequest?.id.uuidString ?? "none"
         let turnIDs = conversation.turns.map(\.id).joined(separator: ",")
         let promptIDs = conversation.askUserPrompts.map(\.id).joined(separator: ",")
-        return "\(requestID)|\(turnIDs)|\(promptIDs)|\(conversation.hasOlder)|\(conversation.isLoadingOlder)"
+        return "\(requestID)|\(turnIDs)|\(promptIDs)"
     }
 
     private func applyFocusRequest(using proxy: ScrollViewProxy) {
@@ -304,12 +284,10 @@ struct ConversationTimelineView: View {
             return
         }
 
-        if conversation.hasOlder, !conversation.isLoadingOlder {
-            conversation.loadOlder()
-        } else if request.turnID == nil,
-                  request.promptID == nil,
-                  request.taskID == nil,
-                  request.runID == nil {
+        if request.turnID == nil,
+           request.promptID == nil,
+           request.taskID == nil,
+           request.runID == nil {
             conversation.consumeFocusRequest(id: request.id)
         }
     }

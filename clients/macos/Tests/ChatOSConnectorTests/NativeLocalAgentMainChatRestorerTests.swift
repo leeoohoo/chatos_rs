@@ -13,28 +13,23 @@ struct NativeLocalAgentMainChatRestorerTests {
         let run = mainChatRecoveryRun()
         let client = MainChatRecoveryClient(run: run)
         let store = ConversationHistoryStore()
-        await store.mergeCachedTurns([
+        try await store.upsertOptimisticTurn(
             ConversationTurn(
                 id: "turn-1",
                 sessionID: "thread-1",
                 sequence: 1,
-                revision: 99,
+                revision: 0,
                 userMessage: ChatMessage(
                     id: "message-1",
                     role: .user,
-                    text: "stale remote text",
+                    text: "optimistic text",
                     createdAt: .distantPast
                 ),
-                finalAssistantMessage: ChatMessage(
-                    id: "remote-assistant",
-                    role: .assistant,
-                    text: "stale remote result",
-                    createdAt: .distantPast
-                ),
-                status: .completed,
+                status: .streaming,
                 startedAt: .distantPast
             ),
-        ], sessionID: "thread-1")
+            sessionID: "thread-1"
+        )
         let restorer = NativeLocalAgentMainChatRestorer(client: client, store: store)
 
         try await restorer.restore()
@@ -52,30 +47,6 @@ struct NativeLocalAgentMainChatRestorerTests {
             ),
             mainChatBinding: try await client.mainChatRunBinding(runID: "run-main-1")
         )
-        await store.mergePage(
-            HistoryPage(
-                turns: [ConversationTurn(
-                    id: "turn-1",
-                    sessionID: "thread-1",
-                    sequence: 1,
-                    revision: 1_000,
-                    userMessage: ChatMessage(
-                        id: "message-1",
-                        role: .user,
-                        text: "remote overwrite",
-                        createdAt: .distantPast
-                    ),
-                    status: .failed,
-                    startedAt: .distantPast
-                )],
-                olderCursor: nil,
-                hasOlder: false,
-                snapshotRevision: 1_000,
-                requestGeneration: 1
-            ),
-            sessionID: "thread-1"
-        )
-
         let snapshot = await store.snapshot(sessionID: "thread-1")
         let turn = try #require(snapshot.turns.first)
         #expect(snapshot.turns.count == 1)

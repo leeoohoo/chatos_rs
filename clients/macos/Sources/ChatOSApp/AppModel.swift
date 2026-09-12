@@ -97,7 +97,6 @@ final class AppModel: ObservableObject {
         ]
     }
 
-    private let conversationService: ChatOSConversationService
     private let apiClient: ChatOSAPIClient
     private let commandService: NativeLocalAgentConversationCommandService
     let messageTaskGraphService: NativeLocalAgentTaskGraphService
@@ -148,7 +147,6 @@ final class AppModel: ObservableObject {
             client: apiClient,
             credentialStore: credentialStore
         )
-        let conversationService = ChatOSConversationService(client: apiClient)
         let historyStore = ConversationHistoryStore()
         let localAgentTaskStateStore = LocalAgentTaskStateStore()
         let connectorTicketProvider = ChatOSLocalConnectorPairingTicketProvider(client: apiClient)
@@ -211,7 +209,6 @@ final class AppModel: ObservableObject {
         self.localConnectorService = localConnectorService
         self.localAgentAccountSession = localAgentAccountSession
         self.localAgentConversationScopes = localAgentConversationScopes
-        self.conversationService = conversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
         self.localProjectsService = localProjectsService
@@ -1368,9 +1365,7 @@ final class AppModel: ObservableObject {
         }
         let created = ConversationSessionViewModel(
             sessionID: sessionID,
-            initialTurns: [],
             historyStore: historyStore,
-            remoteService: conversationService,
             commandService: commandService,
             messageTaskGraphService: messageTaskGraphService,
             runtimeSettingsService: runtimeSettingsService,
