@@ -1,0 +1,26 @@
+{
+  "protocol_version": 15,
+  "request_id": "request-events-memory-sync-1",
+  "response": {
+    "type": "events",
+    "payload": {
+      "events": [
+        {
+          "event_seq": 43,
+          "emitted_at": "2026-09-13T02:00:00Z",
+          "event": {
+            "type": "memory_sync",
+            "payload": {
+              "run_id": "run-1",
+              "pending_count": 2,
+              "failed_count": 1,
+              "last_error_code": "memory_sync_failed"
+            }
+          }
+        }
+      ],
+      "next_seq": 43,
+      "has_more": false
+    }
+  }
+}

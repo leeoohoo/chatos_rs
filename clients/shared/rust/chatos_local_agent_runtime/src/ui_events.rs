@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::collections::BTreeMap;
+
 use chatos_client_storage::{
     AgentRunStateRecord, AppendAgentUiEvent, ClientStorage, ListQuery, RecordScope, StorageError,
     StorageResult, StorageTransaction, ToolExecutionStateRecord, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    LocalAgentUiEventPayload, MemorySyncUiStatus, ModelStreamUiEvent, SyncOutboxStatus,
+    LocalAgentUiEventPayload, MemorySyncStatus, MemorySyncUiStatus, ModelStreamUiEvent,
     UserInteractionQuestion, UserInteractionRequest,
 };
 use serde::Deserialize;
@@ -145,17 +147,30 @@ pub(crate) async fn append_tool_snapshot(
     Ok(())
 }
 
-pub(crate) async fn append_memory_sync_status(
+pub(crate) async fn append_memory_sync_statuses(
     repositories: &mut dyn TransactionRepositories,
     scope: &RecordScope,
-    origin_device_id: &str,
+    run_origins: &BTreeMap<String, String>,
 ) -> StorageResult<()> {
+    if run_origins.is_empty() {
+        return Ok(());
+    }
+    if run_origins.iter().any(|(run_id, origin_device_id)| {
+        run_id.trim().is_empty() || origin_device_id.trim().is_empty()
+    }) {
+        return Err(StorageError::InvalidData {
+            reason: "Memory Sync UI event requires Run and device identities".to_string(),
+        });
+    }
+    let mut counts = run_origins
+        .keys()
+        .cloned()
+        .map(|run_id| (run_id, (0_u64, 0_u64)))
+        .collect::<BTreeMap<_, _>>();
     let mut cursor = None;
-    let mut pending_count = 0_u64;
-    let mut failed_count = 0_u64;
     loop {
         let page = repositories
-            .sync_outbox()
+            .agent_messages()
             .list(&ListQuery {
                 scope: scope.clone(),
                 cursor: cursor.clone(),
@@ -163,42 +178,50 @@ pub(crate) async fn append_memory_sync_status(
             })
             .await?;
         for record in page.records {
-            match record.item.status {
-                SyncOutboxStatus::Pending | SyncOutboxStatus::InFlight => {
-                    pending_count =
+            let Some((pending_count, failed_count)) = counts.get_mut(&record.message.run_id) else {
+                continue;
+            };
+            match record.message.memory_sync_status {
+                MemorySyncStatus::Pending => {
+                    *pending_count =
                         pending_count
                             .checked_add(1)
                             .ok_or_else(|| StorageError::InvalidData {
                                 reason: "Memory Sync pending count overflow".to_string(),
                             })?;
                 }
-                SyncOutboxStatus::Failed => {
-                    failed_count =
+                MemorySyncStatus::Failed => {
+                    *failed_count =
                         failed_count
                             .checked_add(1)
                             .ok_or_else(|| StorageError::InvalidData {
                                 reason: "Memory Sync failure count overflow".to_string(),
                             })?;
                 }
-                SyncOutboxStatus::Succeeded => {}
+                MemorySyncStatus::Synced => {}
             }
         }
         if !advance_cursor(&mut cursor, page.next_cursor)? {
             break;
         }
     }
-    repositories
-        .agent_ui_events()
-        .append(AppendAgentUiEvent {
-            scope: scope.clone(),
-            origin_device_id: origin_device_id.to_string(),
-            payload: LocalAgentUiEventPayload::MemorySync(MemorySyncUiStatus {
-                run_id: None,
-                pending_count,
-                failed_count,
-                last_error_code: (failed_count > 0).then(|| "memory_sync_failed".to_string()),
-            }),
-        })
-        .await?;
+    for (run_id, (pending_count, failed_count)) in counts {
+        let origin_device_id = run_origins
+            .get(&run_id)
+            .expect("counts are initialized from run origins");
+        repositories
+            .agent_ui_events()
+            .append(AppendAgentUiEvent {
+                scope: scope.clone(),
+                origin_device_id: origin_device_id.to_string(),
+                payload: LocalAgentUiEventPayload::MemorySync(MemorySyncUiStatus {
+                    run_id,
+                    pending_count,
+                    failed_count,
+                    last_error_code: (failed_count > 0).then(|| "memory_sync_failed".to_string()),
+                }),
+            })
+            .await?;
+    }
     Ok(())
 }

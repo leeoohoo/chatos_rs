@@ -1098,7 +1098,7 @@ impl UserInteractionOption {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct MemorySyncUiStatus {
-    pub run_id: Option<String>,
+    pub run_id: String,
     pub pending_count: u64,
     pub failed_count: u64,
     pub last_error_code: Option<String>,
@@ -1106,9 +1106,7 @@ pub struct MemorySyncUiStatus {
 
 impl MemorySyncUiStatus {
     fn validate(&self) -> Result<(), ProtocolError> {
-        if let Some(run_id) = &self.run_id {
-            require_identifier("run_id", run_id)?;
-        }
+        require_identifier("run_id", &self.run_id)?;
         if let Some(code) = &self.last_error_code {
             require_identifier("memory_sync_error_code", code)?;
         }

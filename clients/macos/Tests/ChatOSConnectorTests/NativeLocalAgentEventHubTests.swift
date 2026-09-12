@@ -30,6 +30,15 @@ struct NativeLocalAgentEventHubTests {
             LocalAgentUIEvent(
                 eventSeq: 3,
                 emittedAt: timestamp,
+                event: .memorySync(LocalAgentMemorySyncStatus(
+                    runID: run.runID,
+                    pendingCount: 1,
+                    failedCount: 0
+                ))
+            ),
+            LocalAgentUIEvent(
+                eventSeq: 4,
+                emittedAt: timestamp,
                 event: .hostStatus(LocalAgentHostRuntimeStatus(
                     state: .ready,
                     activeRunCount: 1
@@ -44,17 +53,18 @@ struct NativeLocalAgentEventHubTests {
 
         #expect(result == NativeLocalAgentEventDrainResult(
             initialSequence: 0,
-            acknowledgedSequence: 3,
-            appliedEventCount: 3
+            acknowledgedSequence: 4,
+            appliedEventCount: 4
         ))
-        #expect(await client.acknowledgements() == [3])
+        #expect(await client.acknowledgements() == [4])
         #expect(await client.bindingRequestCount() == 1)
         #expect(await client.runRequestCount() == 0)
         let applied = await sink.appliedEvents()
-        #expect(applied.map(\.sequence) == [1, 2, 3])
+        #expect(applied.map(\.sequence) == [1, 2, 3, 4])
         #expect(applied[0].threadID == "thread-1")
         #expect(applied[1].threadID == "thread-1")
-        #expect(applied[2].threadID == nil)
+        #expect(applied[2].threadID == "thread-1")
+        #expect(applied[3].threadID == nil)
     }
 
     @Test("does not advance the durable cursor when applying one event fails")

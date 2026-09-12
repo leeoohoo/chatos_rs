@@ -609,7 +609,7 @@ public actor ConversationHistoryStore {
                 : (status.pendingCount > 0 ? .queued : .completed)
             upsertProcessEvent(
                 TurnProcessEvent(
-                    id: "local-agent-memory-\(status.runID ?? "account")",
+                    id: "local-agent-memory-\(status.runID)",
                     title: "记忆同步",
                     detail: Self.memoryDetail(status),
                     status: processStatus

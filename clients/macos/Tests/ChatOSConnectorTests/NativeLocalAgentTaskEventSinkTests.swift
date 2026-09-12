@@ -21,6 +21,24 @@ struct NativeLocalAgentTaskEventSinkTests {
         #expect(restored.task.objective == "Design task-1")
         #expect(restored.run.runID == "run-1")
         #expect(restored.run.projectID == "project-1")
+
+        try await sink.applyLocalAgentUIEvent(
+            LocalAgentUIEvent(
+                eventSeq: 9,
+                emittedAt: "2026-09-12T03:00:01Z",
+                event: .memorySync(LocalAgentMemorySyncStatus(
+                    runID: run.runID,
+                    pendingCount: 2,
+                    failedCount: 1,
+                    lastErrorCode: "memory_sync_failed"
+                ))
+            ),
+            mainChatBinding: nil
+        )
+        let updated = try #require(await store.localAgentTask(taskID: "task-1"))
+        #expect(updated.memorySync?.runID == run.runID)
+        #expect(updated.memorySync?.pendingCount == 2)
+        #expect(updated.memorySync?.failedCount == 1)
     }
 
     @Test("discovers a newly created Task before reducing its first event")

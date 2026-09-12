@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::ui_events::append_memory_sync_status;
+use crate::ui_events::append_memory_sync_statuses;
 use crate::{digest::canonical_json_digest, digest::stable_digest_id, pagination::advance_cursor};
 
 #[derive(Debug, Clone)]
@@ -76,6 +76,7 @@ pub(crate) async fn persist_semantic_message(
     request: RecordSemanticMessageRequest,
 ) -> StorageResult<RecordedSemanticMessage> {
     let event_scope = request.scope.clone();
+    let event_run_id = request.message.run_id.clone();
     let event_origin_device_id = request.origin_device_id.clone();
     request
         .message
@@ -138,7 +139,12 @@ pub(crate) async fn persist_semantic_message(
     let (stored_outbox, outbox_created) =
         put_outbox_idempotently(repositories, outbox_record).await?;
     if message_created || outbox_created {
-        append_memory_sync_status(repositories, &event_scope, &event_origin_device_id).await?;
+        append_memory_sync_statuses(
+            repositories,
+            &event_scope,
+            &BTreeMap::from([(event_run_id, event_origin_device_id)]),
+        )
+        .await?;
     }
     Ok(RecordedSemanticMessage {
         message: stored_message,
@@ -388,7 +394,7 @@ impl StorageTransaction for ClaimMemorySyncBatchOperation {
 
         let mut claimed = Vec::new();
         let mut exhausted = Vec::new();
-        let mut event_origin_device_id = None;
+        let mut event_run_origins = BTreeMap::new();
         for mut outbox in candidates {
             let message_query = RecordQuery {
                 scope: request.scope.clone(),
@@ -402,13 +408,14 @@ impl StorageTransaction for ClaimMemorySyncBatchOperation {
             if message.message.message_mode != MessageMode::Semantic {
                 return invalid_data("Memory Sync outbox points to a provider-only message");
             }
+            event_run_origins
+                .entry(message.message.run_id.clone())
+                .or_insert_with(|| outbox.metadata.origin_device_id.clone());
             let remote_record = MemorySyncRecord::from_message(&message.message)?;
             if remote_record.digest()? != outbox.item.payload_digest {
                 return invalid_data("Memory Sync outbox payload digest no longer matches message");
             }
             if outbox.item.attempt_count >= request.policy.maximum_attempts {
-                event_origin_device_id
-                    .get_or_insert_with(|| outbox.metadata.origin_device_id.clone());
                 let outbox_revision = outbox.metadata.revision;
                 outbox.item.status = SyncOutboxStatus::Failed;
                 outbox.item.last_error = Some("memory_sync_attempt_limit_exceeded".to_string());
@@ -432,7 +439,6 @@ impl StorageTransaction for ClaimMemorySyncBatchOperation {
                 continue;
             }
             let revision = outbox.metadata.revision;
-            event_origin_device_id.get_or_insert_with(|| outbox.metadata.origin_device_id.clone());
             outbox.item.status = SyncOutboxStatus::InFlight;
             outbox.item.attempt_count =
                 outbox.item.attempt_count.checked_add(1).ok_or_else(|| {
@@ -455,9 +461,7 @@ impl StorageTransaction for ClaimMemorySyncBatchOperation {
                 remote_record,
             });
         }
-        if let Some(origin_device_id) = event_origin_device_id {
-            append_memory_sync_status(repositories, &request.scope, &origin_device_id).await?;
-        }
+        append_memory_sync_statuses(repositories, &request.scope, &event_run_origins).await?;
         self.result = Some(ClaimedMemorySyncBatch {
             records: claimed,
             exhausted_outbox_ids: exhausted,
@@ -717,7 +721,7 @@ impl StorageTransaction for CompleteMemorySyncOperation {
             reason: "Memory Sync completion request was already consumed".to_string(),
         })?;
         let event_scope = request.scope.clone();
-        let mut event_origin_device_id = None;
+        let mut event_run_origins = BTreeMap::new();
         let mut completion = MemorySyncCompletion::default();
         for claim in request.claims {
             let query = RecordQuery {
@@ -729,7 +733,6 @@ impl StorageTransaction for CompleteMemorySyncOperation {
                 .get(&query)
                 .await?
                 .ok_or(StorageError::NotFound)?;
-            event_origin_device_id.get_or_insert_with(|| outbox.metadata.origin_device_id.clone());
             if outbox.item.status != SyncOutboxStatus::InFlight
                 || outbox.item.attempt_count != claim.attempt_count
             {
@@ -744,6 +747,9 @@ impl StorageTransaction for CompleteMemorySyncOperation {
                 .get(&message_query)
                 .await?
                 .ok_or(StorageError::NotFound)?;
+            event_run_origins
+                .entry(message.message.run_id.clone())
+                .or_insert_with(|| outbox.metadata.origin_device_id.clone());
             let outbox_revision = outbox.metadata.revision;
             let message_revision = message.metadata.revision;
             match &request.result {
@@ -782,9 +788,7 @@ impl StorageTransaction for CompleteMemorySyncOperation {
                 })
                 .await?;
         }
-        if let Some(origin_device_id) = event_origin_device_id {
-            append_memory_sync_status(repositories, &event_scope, &origin_device_id).await?;
-        }
+        append_memory_sync_statuses(repositories, &event_scope, &event_run_origins).await?;
         self.result = Some(completion);
         Ok(())
     }

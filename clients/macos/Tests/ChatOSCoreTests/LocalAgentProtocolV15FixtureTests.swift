@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v14 fixtures")
-struct LocalAgentProtocolV14FixtureTests {
+@Suite("Shared Local Agent protocol v15 fixtures")
+struct LocalAgentProtocolV15FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV14FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 14)
+        #expect(localAgentProtocolVersion == 15)
         #expect(encoded == fixture)
     }
 
@@ -133,13 +133,33 @@ struct LocalAgentProtocolV14FixtureTests {
         #expect(runDetail.snapshotEventSequence == 42)
     }
 
+    @Test("decodes Run-bound Memory Sync status")
+    func memorySyncEventResponse() throws {
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("memory_sync_event_response.json"))
+        )
+        guard case let .events(events, nextSequence, hasMore) = reply.response,
+              case let .memorySync(status) = events.first?.event
+        else {
+            Issue.record("Expected a Memory Sync event page")
+            return
+        }
+
+        #expect(status.runID == "run-1")
+        #expect(status.pendingCount == 2)
+        #expect(status.failedCount == 1)
+        #expect(nextSequence == 43)
+        #expect(!hasMore)
+    }
+
     private func fixtureURL(_ name: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v14")
+            .appendingPathComponent("shared/fixtures/local_agent/v15")
             .appendingPathComponent(name)
     }
 }

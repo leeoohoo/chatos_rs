@@ -88,9 +88,19 @@ async fn storage() -> (tempfile::TempDir, Arc<SqliteClientStorage>) {
 }
 
 fn message(id: &str, thread_id: &str, sequence: u64, now: chrono::DateTime<Utc>) -> AgentMessage {
+    message_for_run(id, "run-1", thread_id, sequence, now)
+}
+
+fn message_for_run(
+    id: &str,
+    run_id: &str,
+    thread_id: &str,
+    sequence: u64,
+    now: chrono::DateTime<Utc>,
+) -> AgentMessage {
     AgentMessage {
         record_id: id.to_string(),
-        run_id: "run-1".to_string(),
+        run_id: run_id.to_string(),
         thread_id: thread_id.to_string(),
         turn_id: format!("turn-{sequence}"),
         sequence,
@@ -222,6 +232,57 @@ async fn successful_batches_are_grouped_by_thread_and_not_sent_twice() {
     };
     assert_eq!(status.pending_count, 0);
     assert_eq!(status.failed_count, 0);
+    assert_eq!(status.run_id, "run-1");
+}
+
+#[tokio::test]
+async fn status_events_are_aggregated_and_routed_per_run() {
+    let now = Utc::now();
+    let (_directory, storage) = storage().await;
+    record(
+        storage.as_ref(),
+        message_for_run("message-1", "run-1", "thread-1", 1, now),
+        now,
+    )
+    .await;
+    record(
+        storage.as_ref(),
+        message_for_run("message-2", "run-2", "thread-2", 1, now),
+        now,
+    )
+    .await;
+
+    let api = Arc::new(MockMemoryApi {
+        behavior: Mutex::new(VecDeque::from([ApiBehavior::Success, ApiBehavior::Success])),
+        requests: Mutex::new(Vec::new()),
+    });
+    let synchronizer = MemorySynchronizer::new(api, "tenant-1", "source-1", policy(3)).unwrap();
+    let report = synchronizer
+        .sync_once(storage.as_ref(), scope(), now, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(report.synced, 2);
+
+    let events = read_ui_events(storage.as_ref()).await;
+    assert_eq!(events.len(), 6);
+    let statuses = events
+        .iter()
+        .map(|event| match &event.event {
+            LocalAgentUiEventPayload::MemorySync(status) => status,
+            other => panic!("expected Memory Sync status, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    let latest =
+        statuses
+            .into_iter()
+            .fold(std::collections::BTreeMap::new(), |mut values, status| {
+                values.insert(status.run_id.as_str(), status);
+                values
+            });
+    assert_eq!(latest["run-1"].pending_count, 0);
+    assert_eq!(latest["run-1"].failed_count, 0);
+    assert_eq!(latest["run-2"].pending_count, 0);
+    assert_eq!(latest["run-2"].failed_count, 0);
 }
 
 #[tokio::test]
@@ -268,6 +329,7 @@ async fn transport_failures_back_off_and_eventually_become_explicit_failures() {
     };
     assert_eq!(status.pending_count, 0);
     assert_eq!(status.failed_count, 1);
+    assert_eq!(status.run_id, "run-1");
     assert_eq!(
         status.last_error_code.as_deref(),
         Some("memory_sync_failed")

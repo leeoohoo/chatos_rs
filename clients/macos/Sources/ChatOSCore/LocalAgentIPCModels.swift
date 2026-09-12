@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 14
+public let localAgentProtocolVersion: UInt32 = 15
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -1004,13 +1004,13 @@ public struct LocalAgentUserInteractionEvent: Decodable, Equatable, Sendable {
 }
 
 public struct LocalAgentMemorySyncStatus: Decodable, Equatable, Sendable {
-    public var runID: String?
+    public var runID: String
     public var pendingCount: UInt64
     public var failedCount: UInt64
     public var lastErrorCode: String?
 
     public init(
-        runID: String? = nil,
+        runID: String,
         pendingCount: UInt64,
         failedCount: UInt64,
         lastErrorCode: String? = nil

@@ -61,6 +61,24 @@ struct LocalAgentTaskCardView: View {
                     .foregroundStyle(.orange)
             }
 
+            if let memorySync = LocalAgentTaskMemorySyncPresentation(status: state.memorySync) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: memorySync.systemImage)
+                        .foregroundStyle(memorySyncColor(memorySync.kind))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(memorySyncTitle(memorySync))
+                            .appFont(.caption.weight(.semibold))
+                        if let errorCode = memorySync.errorCode {
+                            Text(errorCode)
+                                .appFont(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+
             if let outcomeSummary {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(model.localized("完成结果", english: "Outcome"))
@@ -181,6 +199,28 @@ struct LocalAgentTaskCardView: View {
         return nil
     }
 
+    private func memorySyncTitle(_ presentation: LocalAgentTaskMemorySyncPresentation) -> String {
+        switch presentation.kind {
+        case .pending:
+            model.localized(
+                "\(presentation.count) 条任务记忆等待同步",
+                english: "\(presentation.count) task memories waiting to sync"
+            )
+        case .failed:
+            model.localized(
+                "\(presentation.count) 条任务记忆同步失败",
+                english: "\(presentation.count) task memories failed to sync"
+            )
+        }
+    }
+
+    private func memorySyncColor(_ kind: LocalAgentTaskMemorySyncPresentation.Kind) -> Color {
+        switch kind {
+        case .pending: .orange
+        case .failed: .red
+        }
+    }
+
     private func modelStepSummary(_ step: LocalAgentTaskModelStepState) -> String {
         let detail = [step.status, step.content, step.reasoning]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -193,6 +233,39 @@ struct LocalAgentTaskCardView: View {
 
     private func toolSummary(_ tool: LocalAgentToolSnapshot) -> String {
         "\(tool.toolName) · \(tool.status.rawValue)"
+    }
+}
+
+struct LocalAgentTaskMemorySyncPresentation: Equatable {
+    enum Kind: Equatable {
+        case pending
+        case failed
+    }
+
+    let kind: Kind
+    let count: UInt64
+    let errorCode: String?
+
+    var systemImage: String {
+        switch kind {
+        case .pending: "arrow.triangle.2.circlepath"
+        case .failed: "exclamationmark.arrow.triangle.2.circlepath"
+        }
+    }
+
+    init?(status: LocalAgentMemorySyncStatus?) {
+        guard let status else { return nil }
+        if status.failedCount > 0 {
+            kind = .failed
+            count = status.failedCount
+            errorCode = status.lastErrorCode
+        } else if status.pendingCount > 0 {
+            kind = .pending
+            count = status.pendingCount
+            errorCode = nil
+        } else {
+            return nil
+        }
     }
 }
 

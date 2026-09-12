@@ -78,7 +78,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesTheSharedV14RetryTaskAndTaskSnapshotFixtures()
+    public async Task UsesTheSharedV15RetryTaskAndTaskSnapshotFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("retry_task_request.json")));
@@ -93,7 +93,7 @@ public sealed class LocalAgentIPCClientTests
             "Preserve the approved visual hierarchy.")));
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
-        Assert.Equal(14u, LocalAgentProtocol.Version);
+        Assert.Equal(15u, LocalAgentProtocol.Version);
         Assert.True(JsonElement.DeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));
@@ -136,7 +136,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesSharedV14TaskGraphAndRunDetailProjections()
+    public async Task UsesSharedV15TaskGraphAndRunDetailProjections()
     {
         using var graphFixture = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("task_graph_response.json")));
@@ -259,6 +259,23 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
+    public async Task PreservesRunBoundMemorySyncStatusFromTheSharedFixture()
+    {
+        using var fixture = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("memory_sync_event_response.json")));
+        var responseJson = fixture.RootElement.GetProperty("response").GetRawText();
+        var transport = new RecordingTransport(request => Reply(request, responseJson));
+        var client = new WindowsLocalAgentIPCClient("user-1", transport);
+
+        var page = await client.SubscribeRunEventsAsync(42, 50);
+
+        var payload = Assert.Single(page.Events).Event.Payload!.Value;
+        Assert.Equal("run-1", payload.GetProperty("run_id").GetString());
+        Assert.Equal(2ul, payload.GetProperty("pending_count").GetUInt64());
+        Assert.Equal(1ul, payload.GetProperty("failed_count").GetUInt64());
+    }
+
+    [Fact]
     public async Task RejectsMismatchedRequestAndProtocolVersions()
     {
         var wrongRequest = new RecordingTransport(_ => JsonSerializer.SerializeToUtf8Bytes(new
@@ -378,7 +395,7 @@ public sealed class LocalAgentIPCClientTests
             "shared",
             "fixtures",
             "local_agent",
-            "v14",
+            "v15",
             name));
 
     private static MemoryStream FrameHeader(uint length, byte[]? body = null)

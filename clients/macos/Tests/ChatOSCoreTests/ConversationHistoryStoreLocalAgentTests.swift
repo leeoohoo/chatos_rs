@@ -47,7 +47,16 @@ struct ConversationHistoryStoreLocalAgentTests {
             mainChatBinding: binding
         )
         try await store.applyLocalAgentUIEvent(
-            uiEvent(6, .runSnapshot(run(
+            uiEvent(6, .memorySync(LocalAgentMemorySyncStatus(
+                runID: "run-1",
+                pendingCount: 0,
+                failedCount: 1,
+                lastErrorCode: "memory_sync_failed"
+            ))),
+            mainChatBinding: binding
+        )
+        try await store.applyLocalAgentUIEvent(
+            uiEvent(7, .runSnapshot(run(
                 status: .succeeded,
                 terminalOutcome: .object(["text": .string("Hello")])
             ))),
@@ -69,8 +78,13 @@ struct ConversationHistoryStoreLocalAgentTests {
         #expect(turn.processEvents.contains(where: {
             $0.id == "local-agent-tool-invocation-1" && $0.status == .completed
         }))
+        let memoryEvent = turn.processEvents.first(where: {
+            $0.id == "local-agent-memory-run-1"
+        })
+        #expect(memoryEvent?.status == .failed)
+        #expect(memoryEvent?.detail?.contains("失败 1 条") == true)
         #expect(turn.status == .completed)
-        #expect(turn.revision == 6)
+        #expect(turn.revision == 7)
         #expect(turn.completedAt != nil)
     }
 
