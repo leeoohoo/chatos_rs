@@ -43,3 +43,7 @@ pub use postgres::{probe_postgres_connection, PostgresClientStorage, PostgresCon
 pub use repositories::*;
 pub use sqlite::SqliteClientStorage;
 pub use transaction::{ClientStorage, StorageTransaction, TransactionRepositories};
+
+/// Current schema shared by SQLite and PostgreSQL. Native settings surfaces
+/// expose this value without opening either database directly.
+pub const CLIENT_STORAGE_SCHEMA_VERSION: u32 = record_store::SCHEMA_VERSION;

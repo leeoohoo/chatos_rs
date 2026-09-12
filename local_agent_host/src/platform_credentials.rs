@@ -42,7 +42,6 @@ pub trait LocalAgentPlatformCredentialReader: Send + Sync {
 /// Reads device-bound binary keys which cannot be represented safely by the
 /// Windows PasswordVault string contract. The production implementation uses
 /// DPAPI CurrentUser and returns zeroizing memory.
-#[cfg(windows)]
 pub trait LocalAgentPlatformDeviceKeyReader: Send + Sync {
     fn read_device_key(
         &self,
@@ -128,6 +127,17 @@ impl LocalAgentPlatformCredentialReader for MacOsLocalAgentCredentialReader {
         } else {
             Ok(Zeroizing::new(secret))
         }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl LocalAgentPlatformDeviceKeyReader for MacOsLocalAgentCredentialReader {
+    fn read_device_key(
+        &self,
+        owner_user_id: &str,
+        reference: &str,
+    ) -> Result<Zeroizing<Vec<u8>>, LocalAgentPlatformCredentialError> {
+        self.read(owner_user_id, reference)
     }
 }
 
