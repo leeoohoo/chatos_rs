@@ -25,6 +25,15 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "
 tokio-util = "0.7"
 zeroize = "1"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 async-trait = "0.1"
 memory_engine_sdk = { path = "../crates/memory_engine_sdk" }

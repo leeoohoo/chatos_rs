@@ -7,15 +7,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixListener;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
+use crate::ipc_transport_common::{
+    handle_framed_connection, DEFAULT_IO_TIMEOUT, DEFAULT_MAXIMUM_CONNECTIONS,
+};
 use crate::{LocalAgentIpcServer, DEFAULT_MAXIMUM_IPC_FRAME_BYTES};
-
-const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(30);
-const DEFAULT_MAXIMUM_CONNECTIONS: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UnixLocalAgentIpcError {
@@ -138,7 +137,13 @@ impl UnixLocalAgentIpcTransport {
                     let maximum_frame_bytes = self.maximum_frame_bytes;
                     let io_timeout = self.io_timeout;
                     connections.spawn(async move {
-                        handle_connection(stream, server, maximum_frame_bytes, io_timeout).await
+                        handle_framed_connection(
+                            stream,
+                            server.as_ref(),
+                            maximum_frame_bytes,
+                            io_timeout,
+                        )
+                        .await
                     });
                 }
             }
@@ -161,40 +166,6 @@ impl Drop for UnixLocalAgentIpcTransport {
         }
         .remove();
     }
-}
-
-async fn handle_connection(
-    mut stream: UnixStream,
-    server: Arc<LocalAgentIpcServer>,
-    maximum_frame_bytes: usize,
-    io_timeout: Duration,
-) -> Result<(), io::Error> {
-    tokio::time::timeout(io_timeout, async {
-        let frame_length = stream.read_u32().await? as usize;
-        if frame_length == 0 || frame_length > maximum_frame_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Unix IPC request frame exceeds its boundary",
-            ));
-        }
-        let mut frame = vec![0u8; frame_length];
-        stream.read_exact(frame.as_mut_slice()).await?;
-        let reply = server
-            .handle_frame(frame.as_slice())
-            .await
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if reply.len() > maximum_frame_bytes || reply.len() > u32::MAX as usize {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Unix IPC reply frame exceeds its boundary",
-            ));
-        }
-        stream.write_u32(reply.len() as u32).await?;
-        stream.write_all(reply.as_slice()).await?;
-        stream.shutdown().await
-    })
-    .await
-    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Unix IPC request timed out"))?
 }
 
 fn validate_socket_path(path: &Path) -> Result<(), UnixLocalAgentIpcError> {

@@ -981,6 +981,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 
