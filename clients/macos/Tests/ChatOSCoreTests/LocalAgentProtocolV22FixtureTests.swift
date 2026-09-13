@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v21 fixtures")
-struct LocalAgentProtocolV21FixtureTests {
+@Suite("Shared Local Agent protocol v22 fixtures")
+struct LocalAgentProtocolV22FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV21FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 21)
+        #expect(localAgentProtocolVersion == 22)
         #expect(encoded == fixture)
     }
 
@@ -211,6 +211,52 @@ struct LocalAgentProtocolV21FixtureTests {
         #expect(nextCursor == nil)
     }
 
+    @Test("encodes and decodes owner-scoped Client Settings")
+    func clientSettingState() throws {
+        let value: LocalAgentJSONValue = .object([
+            "projects": .object([
+                "project-1": .object([
+                    "defaultTargetID": .string("target-1"),
+                    "selectedToolchains": .object([:]),
+                    "customToolchains": .object([:]),
+                    "environmentVariables": .object([
+                        "APP_ENV": .string("development"),
+                    ]),
+                ]),
+            ]),
+        ])
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-client-setting-put-1",
+            ownerUserID: "user-1",
+            command: .putClientSetting(
+                key: "project_run.preferences",
+                expectedRevision: nil,
+                value: value
+            )
+        )
+        let encoded = try JSONSerialization.jsonObject(
+            with: LocalAgentProtocolJSON.encoder().encode(request)
+        ) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("client_setting_put_request.json"))
+        ) as? NSDictionary
+        #expect(encoded == fixture)
+
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("client_setting_response.json"))
+        )
+        guard case let .clientSetting(setting) = reply.response else {
+            Issue.record("Expected a Client Setting response")
+            return
+        }
+        #expect(setting.key == "project_run.preferences")
+        #expect(setting.ownerUserID == "user-1")
+        #expect(setting.value == value)
+        #expect(setting.revision == 3)
+    }
+
     @Test("encodes and decodes owner-scoped Project CRUD")
     func projectCRUD() throws {
         let request = Request(
@@ -371,7 +417,7 @@ struct LocalAgentProtocolV21FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v21")
+            .appendingPathComponent("shared/fixtures/local_agent/v22")
             .appendingPathComponent(name)
     }
 }

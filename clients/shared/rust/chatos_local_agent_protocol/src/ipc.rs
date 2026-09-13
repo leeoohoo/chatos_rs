@@ -12,17 +12,18 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
     ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
-    ClipboardMutationResult, CreateProjectCommand, DeleteClipboardCommand, DeleteMediaCommand,
-    DeleteNotepadCommand, DeleteNotepadFolderCommand, DeleteStoryCommand, ExportClientDataCommand,
-    GetClipboardCommand, GetMediaCommand, GetNotepadCommand, GetProjectCommand, GetStoryCommand,
+    ClipboardMutationResult, CreateProjectCommand, DeleteClientSettingCommand,
+    DeleteClipboardCommand, DeleteMediaCommand, DeleteNotepadCommand, DeleteNotepadFolderCommand,
+    DeleteStoryCommand, ExportClientDataCommand, GetClientSettingCommand, GetClipboardCommand,
+    GetMediaCommand, GetNotepadCommand, GetProjectCommand, GetStoryCommand,
     ImportClientDataCommand, InstallProjectPluginCapabilityCommand, ListClipboardCommand,
     ListMediaCommand, ListNotepadCommand, ListProjectsCommand, ListStoriesCommand, LocalAgentRun,
-    LocalClipboardSnapshot, LocalMediaSnapshot, LocalNotepadSnapshot, LocalProjectSnapshot,
-    LocalStorySnapshot, MediaMutationResult, PostgresConnectionTestCommand,
-    PostgresConnectionTestResult, ProtocolError, PutMediaCommand, PutNotepadCommand,
-    PutStoryCommand, RemoveProjectPluginCapabilityCommand, RenameNotepadFolderCommand,
-    SetClipboardPinnedCommand, StoreClipboardCommand, ToolExecution, UpdateProjectCommand,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalClientSettingSnapshot, LocalClipboardSnapshot, LocalMediaSnapshot, LocalNotepadSnapshot,
+    LocalProjectSnapshot, LocalStorySnapshot, MediaMutationResult, PostgresConnectionTestCommand,
+    PostgresConnectionTestResult, ProtocolError, PutClientSettingCommand, PutMediaCommand,
+    PutNotepadCommand, PutStoryCommand, RemoveProjectPluginCapabilityCommand,
+    RenameNotepadFolderCommand, SetClipboardPinnedCommand, StoreClipboardCommand, ToolExecution,
+    UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -112,6 +113,9 @@ pub enum LocalAgentCommand {
     DeleteNotepad(DeleteNotepadCommand),
     RenameNotepadFolder(RenameNotepadFolderCommand),
     DeleteNotepadFolder(DeleteNotepadFolderCommand),
+    GetClientSetting(GetClientSettingCommand),
+    PutClientSetting(PutClientSettingCommand),
+    DeleteClientSetting(DeleteClientSettingCommand),
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -169,6 +173,9 @@ impl LocalAgentCommand {
             Self::DeleteNotepad(command) => command.validate(),
             Self::RenameNotepadFolder(command) => command.validate(),
             Self::DeleteNotepadFolder(command) => command.validate(),
+            Self::GetClientSetting(command) => command.validate(),
+            Self::PutClientSetting(command) => command.validate(),
+            Self::DeleteClientSetting(command) => command.validate(),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -987,6 +994,7 @@ pub enum LocalAgentIpcResponse {
         records: Vec<LocalNotepadSnapshot>,
         next_cursor: Option<String>,
     },
+    ClientSetting(LocalClientSettingSnapshot),
     Events {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
@@ -1101,6 +1109,7 @@ impl LocalAgentIpcResponse {
                 }
                 Ok(())
             }
+            Self::ClientSetting(setting) => setting.validate(),
             Self::Events {
                 events, next_seq, ..
             } => {

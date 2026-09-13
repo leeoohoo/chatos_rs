@@ -11,14 +11,15 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessageRole, GetClipboardCommand, GetMediaCommand, GetNotepadCommand, GetProjectCommand,
-    GetRunDetailCommand, GetStoryCommand, GetTaskGraphCommand, GetTaskRunDetailCommand,
-    ListClipboardCommand, ListMediaCommand, ListNotepadCommand, ListProjectsCommand,
-    ListStoriesCommand, LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply,
-    LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail,
-    LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot,
-    LocalAgentTaskProjection, LocalAgentTaskRunDetail, LocalAgentTaskRunSummary,
-    LocalAgentTaskSnapshot, MainChatRunBinding, LOCAL_AGENT_PROTOCOL_VERSION,
+    AgentMessageRole, GetClientSettingCommand, GetClipboardCommand, GetMediaCommand,
+    GetNotepadCommand, GetProjectCommand, GetRunDetailCommand, GetStoryCommand,
+    GetTaskGraphCommand, GetTaskRunDetailCommand, ListClipboardCommand, ListMediaCommand,
+    ListNotepadCommand, ListProjectsCommand, ListStoriesCommand, LocalAgentCommand,
+    LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse,
+    LocalAgentRun, LocalAgentRunDetail, LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode,
+    LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection, LocalAgentTaskRunDetail,
+    LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
 use chrono::Utc;
@@ -385,6 +386,22 @@ impl LocalAgentIpcServer {
                             reason: "notepad list transaction returned no page".to_string(),
                         })
                     })
+            }
+            LocalAgentCommand::GetClientSetting(command) => {
+                let mut operation = GetClientSettingOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage.transaction(&mut operation).await.map(|()| {
+                    operation
+                        .response
+                        .unwrap_or(LocalAgentIpcResponse::Error(LocalAgentIpcError {
+                            code: "client_setting_not_found".to_string(),
+                            message: "Client setting was not found".to_string(),
+                            retryable: false,
+                        }))
+                })
             }
             LocalAgentCommand::GetTaskGraph(command) => {
                 let mut operation = GetTaskGraphOperation {
@@ -763,6 +780,32 @@ struct ListNotepadOperation {
     scope: RecordScope,
     command: ListNotepadCommand,
     response: Option<LocalAgentIpcResponse>,
+}
+
+struct GetClientSettingOperation {
+    scope: RecordScope,
+    command: GetClientSettingCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetClientSettingOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.response = repositories
+            .settings()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: crate::client_setting_record_id(&self.command.key),
+            })
+            .await?
+            .map(crate::client_setting_snapshot)
+            .transpose()?
+            .map(LocalAgentIpcResponse::ClientSetting);
+        Ok(())
+    }
 }
 
 #[async_trait]

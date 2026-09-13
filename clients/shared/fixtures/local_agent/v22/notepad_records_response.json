@@ -1,5 +1,5 @@
 {
-  "protocol_version": 21,
+  "protocol_version": 22,
   "request_id": "request-notepad-list-1",
   "response": {
     "type": "notepad_records",

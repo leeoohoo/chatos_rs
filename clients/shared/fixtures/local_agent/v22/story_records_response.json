@@ -1,5 +1,5 @@
 {
-  "protocol_version": 21,
+  "protocol_version": 22,
   "request_id": "request-list-stories-1",
   "response": {
     "type": "story_records",

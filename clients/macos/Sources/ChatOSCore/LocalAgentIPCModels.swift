@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 21
+public let localAgentProtocolVersion: UInt32 = 22
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -551,6 +551,31 @@ public struct LocalAgentNotepadSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalAgentClientSettingSnapshot: Codable, Equatable, Sendable {
+    public var key: String
+    public var ownerUserID: String
+    public var value: LocalAgentJSONValue
+    public var revision: UInt64
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        key: String,
+        ownerUserID: String,
+        value: LocalAgentJSONValue,
+        revision: UInt64,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.key = key
+        self.ownerUserID = ownerUserID
+        self.value = value
+        self.revision = revision
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 public enum LocalAgentCommand: Equatable, Sendable {
     case updateAccessToken(String)
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
@@ -602,6 +627,9 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case deleteNotepad(recordID: String, expectedRevision: UInt64)
     case renameNotepadFolder(folder: String, replacement: String)
     case deleteNotepadFolder(folder: String, recursive: Bool)
+    case getClientSetting(key: String)
+    case putClientSetting(key: String, expectedRevision: UInt64?, value: LocalAgentJSONValue)
+    case deleteClientSetting(key: String, expectedRevision: UInt64)
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -714,6 +742,16 @@ extension LocalAgentCommand: Encodable {
     private struct DeleteNotepadFolderPayload: Encodable {
         let folder: String
         let recursive: Bool
+    }
+    private struct ClientSettingPayload: Encodable { let key: String }
+    private struct PutClientSettingPayload: Encodable {
+        let key: String
+        let expectedRevision: UInt64?
+        let value: LocalAgentJSONValue
+    }
+    private struct DeleteClientSettingPayload: Encodable {
+        let key: String
+        let expectedRevision: UInt64
     }
     private struct EventsPayload: Encodable {
         let afterSeq: UInt64
@@ -969,6 +1007,25 @@ extension LocalAgentCommand: Encodable {
             try container.encode("delete_notepad_folder", forKey: .type)
             try container.encode(
                 DeleteNotepadFolderPayload(folder: folder, recursive: recursive),
+                forKey: .payload
+            )
+        case let .getClientSetting(key):
+            try container.encode("get_client_setting", forKey: .type)
+            try container.encode(ClientSettingPayload(key: key), forKey: .payload)
+        case let .putClientSetting(key, expectedRevision, value):
+            try container.encode("put_client_setting", forKey: .type)
+            try container.encode(
+                PutClientSettingPayload(
+                    key: key,
+                    expectedRevision: expectedRevision,
+                    value: value
+                ),
+                forKey: .payload
+            )
+        case let .deleteClientSetting(key, expectedRevision):
+            try container.encode("delete_client_setting", forKey: .type)
+            try container.encode(
+                DeleteClientSettingPayload(key: key, expectedRevision: expectedRevision),
                 forKey: .payload
             )
         case let .subscribeRunEvents(afterSequence, limit):
@@ -1704,6 +1761,7 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case storyRecords([LocalAgentStorySnapshot], nextCursor: String?)
     case notepad(LocalAgentNotepadSnapshot)
     case notepadRecords([LocalAgentNotepadSnapshot], nextCursor: String?)
+    case clientSetting(LocalAgentClientSettingSnapshot)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -1828,6 +1886,10 @@ extension LocalAgentResponse: Decodable {
         case "notepad_records":
             let value = try container.decode(NotepadRecords.self, forKey: .payload)
             self = .notepadRecords(value.records, nextCursor: value.nextCursor)
+        case "client_setting":
+            self = .clientSetting(
+                try container.decode(LocalAgentClientSettingSnapshot.self, forKey: .payload)
+            )
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)

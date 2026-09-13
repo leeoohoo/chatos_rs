@@ -3,16 +3,19 @@ import Foundation
 
 public actor NativeProjectRunService: ProjectRunServicing {
     private let connector: NativeLocalConnectorService
-    private let preferencesURL: URL
+    private let preferencesStore: NativeLocalProjectRunPreferencesStore
     private var rootsByProjectID: [String: String] = [:]
     private var analyses: [String: NativeProjectRunAnalysis] = [:]
-    private var preferences: NativeProjectRunPreferences
     private var processes: [String: NativeProjectProcess] = [:]
 
-    public init(connector: NativeLocalConnectorService, preferencesURL: URL) {
+    public init(
+        connector: NativeLocalConnectorService,
+        accountSession: any NativeLocalAgentAccountSessionAccess
+    ) {
         self.connector = connector
-        self.preferencesURL = preferencesURL
-        self.preferences = (try? Self.loadPreferences(from: preferencesURL)) ?? .init()
+        self.preferencesStore = NativeLocalProjectRunPreferencesStore(
+            accountSession: accountSession
+        )
     }
 
     public func updateProjects(_ projects: [WorkspaceProject]) {
@@ -49,7 +52,7 @@ public actor NativeProjectRunService: ProjectRunServicing {
     public func fetchEnvironment(projectID: String) async throws -> ProjectRunEnvironment {
         let catalog = try await catalog(projectID: projectID, force: false)
         guard let analysis = analyses[projectID] else { throw NativeProjectRunError.projectDirectoryUnavailable }
-        let selection = preferences.projects[projectID] ?? .init()
+        let selection = try await preferencesStore.selection(projectID: projectID)
         let target = catalog.targets.first(where: { $0.id == catalog.defaultTargetID }) ?? catalog.targets.first
         let missing = target?.requiredToolchains.filter { kind in
             let selected = selection.selectedToolchains[kind]
@@ -83,12 +86,11 @@ public actor NativeProjectRunService: ProjectRunServicing {
         customToolchains: [String: ProjectRunCustomToolchain],
         environmentVariables: [String: String]
     ) async throws -> ProjectRunEnvironment {
-        var selection = preferences.projects[projectID] ?? .init()
+        var selection = try await preferencesStore.selection(projectID: projectID)
         selection.selectedToolchains = selectedToolchains.filter { !$0.value.isEmpty }
         selection.customToolchains = customToolchains
         selection.environmentVariables = environmentVariables
-        preferences.projects[projectID] = selection
-        try persistPreferences()
+        try await preferencesStore.save(projectID: projectID, selection: selection)
         return try await fetchEnvironment(projectID: projectID)
     }
 
@@ -97,10 +99,9 @@ public actor NativeProjectRunService: ProjectRunServicing {
         guard catalog.targets.contains(where: { $0.id == targetID }) else {
             throw NativeProjectRunError.targetNotFound
         }
-        var selection = preferences.projects[projectID] ?? .init()
+        var selection = try await preferencesStore.selection(projectID: projectID)
         selection.defaultTargetID = targetID
-        preferences.projects[projectID] = selection
-        try persistPreferences()
+        try await preferencesStore.save(projectID: projectID, selection: selection)
         catalog.defaultTargetID = targetID
         catalog.targets = catalog.targets.map { target in
             var target = target
@@ -128,7 +129,7 @@ public actor NativeProjectRunService: ProjectRunServicing {
         process.standardOutput = outputPipe
         process.standardError = outputPipe
         process.standardInput = FileHandle.nullDevice
-        process.environment = launchEnvironment(projectID: projectID)
+        process.environment = try await launchEnvironment(projectID: projectID)
         let instanceID = UUID().uuidString
         let instance = NativeProjectProcess(
             id: instanceID,
@@ -174,7 +175,7 @@ public actor NativeProjectRunService: ProjectRunServicing {
 
     private func catalog(projectID: String, force: Bool) async throws -> ProjectRunCatalog {
         if !force, let analysis = analyses[projectID] {
-            return catalog(projectID: projectID, analysis: analysis)
+            return try await catalog(projectID: projectID, analysis: analysis)
         }
         guard let rootPath = rootsByProjectID[projectID] else {
             throw NativeProjectRunError.projectNotRegistered
@@ -184,11 +185,14 @@ public actor NativeProjectRunService: ProjectRunServicing {
             try NativeProjectRunAnalyzer().analyze(root: resolved.absoluteURL)
         }.value
         analyses[projectID] = analysis
-        return catalog(projectID: projectID, analysis: analysis)
+        return try await catalog(projectID: projectID, analysis: analysis)
     }
 
-    private func catalog(projectID: String, analysis: NativeProjectRunAnalysis) -> ProjectRunCatalog {
-        let selected = preferences.projects[projectID]?.defaultTargetID
+    private func catalog(
+        projectID: String,
+        analysis: NativeProjectRunAnalysis
+    ) async throws -> ProjectRunCatalog {
+        let selected = try await preferencesStore.selection(projectID: projectID).defaultTargetID
         let defaultID = selected.flatMap { id in analysis.targets.contains(where: { $0.id == id }) ? id : nil }
             ?? analysis.targets.first?.id
         let targets = analysis.targets.map { target in
@@ -205,9 +209,9 @@ public actor NativeProjectRunService: ProjectRunServicing {
         )
     }
 
-    private func launchEnvironment(projectID: String) -> [String: String] {
+    private func launchEnvironment(projectID: String) async throws -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
-        let selection = preferences.projects[projectID] ?? .init()
+        let selection = try await preferencesStore.selection(projectID: projectID)
         for (key, value) in selection.environmentVariables { environment[key] = value }
         let directories = selection.selectedToolchains.values
             .map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
@@ -226,29 +230,6 @@ public actor NativeProjectRunService: ProjectRunServicing {
         instance.status = exitCode == 0 ? "exited" : "failed"
     }
 
-    private func persistPreferences() throws {
-        let data = try JSONEncoder().encode(preferences)
-        try FileManager.default.createDirectory(
-            at: preferencesURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try data.write(to: preferencesURL, options: [.atomic])
-    }
-
-    private static func loadPreferences(from url: URL) throws -> NativeProjectRunPreferences {
-        try JSONDecoder().decode(NativeProjectRunPreferences.self, from: Data(contentsOf: url))
-    }
-}
-
-private struct NativeProjectRunPreferences: Codable, Sendable {
-    var projects: [String: NativeProjectRunSelection] = [:]
-}
-
-private struct NativeProjectRunSelection: Codable, Sendable {
-    var defaultTargetID: String?
-    var selectedToolchains: [String: String] = [:]
-    var customToolchains: [String: ProjectRunCustomToolchain] = [:]
-    var environmentVariables: [String: String] = [:]
 }
 
 private final class NativeProjectProcess: @unchecked Sendable {

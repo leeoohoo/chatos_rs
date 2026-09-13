@@ -736,6 +736,40 @@ public actor NativeLocalAgentIPCClient {
         }
     }
 
+    public func clientSetting(key: String) async throws -> LocalAgentClientSettingSnapshot {
+        let response = try await send(.getClientSetting(key: key))
+        guard case let .clientSetting(setting) = response else {
+            throw unexpected("client_setting", response)
+        }
+        return setting
+    }
+
+    public func putClientSetting(
+        key: String,
+        expectedRevision: UInt64?,
+        value: LocalAgentJSONValue
+    ) async throws -> LocalAgentClientSettingSnapshot {
+        let response = try await send(.putClientSetting(
+            key: key,
+            expectedRevision: expectedRevision,
+            value: value
+        ))
+        guard case let .clientSetting(setting) = response else {
+            throw unexpected("client_setting", response)
+        }
+        return setting
+    }
+
+    public func deleteClientSetting(key: String, expectedRevision: UInt64) async throws {
+        let response = try await send(.deleteClientSetting(
+            key: key,
+            expectedRevision: expectedRevision
+        ))
+        guard case .success = response else {
+            throw unexpected("success", response)
+        }
+    }
+
     public func taskGraph(
         sourceThreadID: String,
         sourceTurnID: String
@@ -859,6 +893,7 @@ private extension LocalAgentResponse {
         case .storyRecords: "story_records"
         case .notepad: "notepad"
         case .notepadRecords: "notepad_records"
+        case .clientSetting: "client_setting"
         case .events: "events"
         case .uiEventCursor: "ui_event_cursor"
         case .storageProfile: "storage_profile"

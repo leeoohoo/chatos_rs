@@ -236,9 +236,7 @@ final class AppModel: ObservableObject {
         self.userLanguagePreferencesService = ChatOSUserLanguagePreferencesService(client: apiClient)
         self.projectRunService = NativeProjectRunService(
             connector: localConnectorService,
-            preferencesURL: RuntimeConfiguration.nativeConnectorStateURL
-                .deletingLastPathComponent()
-                .appendingPathComponent("ProjectRunSettings.json")
+            accountSession: localAgentAccountSession
         )
         self.commandService = commandService
         self.messageTaskGraphService = NativeLocalAgentTaskGraphService(
