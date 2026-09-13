@@ -31,7 +31,6 @@ import type {
 
 const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
   'chatos-backend': { label: 'Chat OS', order: 10 },
-  'mcp-management-service': { label: 'MCP 管理', order: 30 },
   'memory-engine': { label: 'Memory Engine', order: 40 },
   'user-service': { label: '用户服务', order: 70 },
   'plugin-management-service': { label: '插件管理', order: 80 },
@@ -49,7 +48,6 @@ function configAreaKey(definition: ConfigDefinition) {
   }
   const categoryRoot = definition.category.split('/')[0]?.trim().toLowerCase();
   if (categoryRoot === 'chat os') return 'chatos-backend';
-  if (categoryRoot === 'mcp management') return 'mcp-management-service';
   if (categoryRoot === 'memory engine') return 'memory-engine';
   if (categoryRoot === 'user service') return 'user-service';
   if (categoryRoot === 'plugin management') return 'plugin-management-service';

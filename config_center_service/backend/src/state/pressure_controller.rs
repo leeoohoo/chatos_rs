@@ -437,7 +437,7 @@ mod tests {
                 now,
             ),
             instance(
-                "mcp-management-service",
+                "plugin-management-service",
                 PlatformPressureLevel::Critical,
                 "queue unavailable",
                 now - TimeDelta::seconds(31),

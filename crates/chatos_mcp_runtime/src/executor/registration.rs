@@ -409,8 +409,8 @@ mod tests {
         );
 
         executor.register_available_tool(
-            "mcp_management",
-            "mcp_management",
+            "http_gateway",
+            "http_gateway",
             "http",
             Some("http://127.0.0.1:39280/mcp".to_string()),
             None,
@@ -438,7 +438,7 @@ mod tests {
             .tool_metadata()
             .get("code_maintainer_read_read_file")
             .expect("tool metadata");
-        assert_eq!(metadata.server_name, "mcp_management");
+        assert_eq!(metadata.server_name, "http_gateway");
         assert_eq!(metadata.original_name, "code_maintainer_read_read_file");
     }
 }

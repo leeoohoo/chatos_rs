@@ -34,7 +34,7 @@ impl FromRef<AppState> for PluginArtifactRelayState {
         Self {
             relay: state.relay.clone(),
             read_timeout: state.config.relay_request_timeout,
-            write_timeout: state.config.plugin_hook_relay_request_timeout,
+            write_timeout: state.config.relay_request_timeout,
             authorizer: PluginArtifactRelayAuthorizer::Store(state.store.clone()),
         }
     }

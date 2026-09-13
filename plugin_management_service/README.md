@@ -88,9 +88,7 @@ Vite 会把 `/api/admin/plugin-management` 交给本地 APISIX，再转发到 `h
 - `optional`：该 agent 可以按需调用。
 - `required`：该 agent 默认必须携带。
 
-项目工作区通过运行上下文收口。MCP Management 根据 Project Execution Context 将文件、终端、浏览器和本地 Plugin 工具统一路由到 Local Connector。模型和 Task Runner Agent 身份不感知底层连接方式。
-
-Task Runner 只登记 `task_runner_run_phase`。只读分析与实际工程执行使用同一运行身份，能力由任务配置和可信插件策略共同限制；不存在聊天规划模式或另一套规划 Agent。项目工作区能力由 MCP Management 路由到 Local Connector。
+项目工作区与插件能力由客户端本地 Agent Host 统一解析和执行。Plugin Management 只负责插件目录、版本、安装包与能力元数据，不参与工具调用路由，也不维护 Agent Run 状态。
 
 ## 当前系统 Agent
 

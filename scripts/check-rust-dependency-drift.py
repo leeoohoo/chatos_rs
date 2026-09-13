@@ -53,11 +53,6 @@ BASELINE: dict[str, dict[str, str]] = {
         "tower-http": "0.7",
         "mongodb": "2.8",
     },
-    "mcp_management_service/backend/Cargo.toml": {
-        "axum": "0.8",
-        "tower-http": "0.7",
-        "mongodb": "2.8",
-    },
     "memory_engine/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",

@@ -2,12 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::BTreeMap;
-use std::time::Duration;
 
 use crate::models::normalize_optional_text;
 use crate::models::{
     now_rfc3339, CurrentUser, HealthResponse, LocalConnectorSystemStatsResponse,
-    LocalConnectorWorkspace, WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_DISABLED,
+    WORKSPACE_STATUS_DISABLED,
 };
 use crate::relay::{
     plugin_artifact_relay_request, PluginArtifactRelayAction, RelayError, RelayRequest,
@@ -42,7 +41,6 @@ mod plugin_management_oauth;
 mod plugin_management_plugins;
 mod plugin_management_prompts;
 mod project_bindings;
-mod project_context;
 mod remote_connection_relay;
 mod router;
 mod sandbox_pairings;
@@ -85,14 +83,9 @@ pub use self::router::{
     build_plugin_artifact_relay_store_test_router, build_plugin_artifact_relay_test_router,
 };
 use self::sandbox_pairings::{
-    create_sandbox_pairing, delete_sandbox_pairing, list_sandbox_pairings,
-    load_owned_sandbox_pairing, update_sandbox_pairing,
+    create_sandbox_pairing, delete_sandbox_pairing, list_sandbox_pairings, update_sandbox_pairing,
 };
-use self::terminal_relay::{
-    controlled_network_readiness, drop_terminal_subscription, terminal_close_relay,
-    terminal_event_to_ws_payload, terminal_exec_relay, terminal_input_relay,
-    terminal_session_create_relay, terminal_ws_relay,
-};
+use self::terminal_relay::{drop_terminal_subscription, terminal_event_to_ws_payload};
 use self::workspace_directory_relay::{
     workspace_directory_create_relay, workspace_directory_list_relay, workspace_filesystem_relay,
 };
@@ -101,25 +94,10 @@ use self::workspaces::{
 };
 
 const MAX_USER_SERVICE_PROXY_BODY_BYTES: usize = 2 * 1024 * 1024;
-// Ordinary MCP tools are long-running operations. Keep this transport aligned
-// with the platform-wide two-hour MCP execution budget instead of inheriting
-// the short control-plane relay timeout.
-const STANDARD_MCP_RELAY_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
-const MCP_TERMINAL_WAIT_TRANSPORT_GRACE_MS: u64 = 15_000;
-const MCP_TERMINAL_WAIT_MAX_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
-const NATIVE_REMOTE_CONNECTION_DEVICE_ALIAS: &str = "chatos-swift-native-client";
-const NATIVE_REMOTE_CONNECTION_WORKSPACE_ALIAS: &str = "local-machine";
-
-#[derive(Debug, Deserialize)]
-struct McpRelayQuery {
-    workspace_id: Option<String>,
-    cwd: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 struct PluginRelayQuery {
     workspace_id: Option<String>,
-    cwd: Option<String>,
 }
 
 async fn health_handler() -> Json<HealthResponse> {
@@ -292,124 +270,6 @@ fn is_allowed_model_config_proxy_request(method: &Method, path: &str) -> bool {
     false
 }
 
-async fn mcp_relay(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(device_id): Path<String>,
-    Query(query): Query<McpRelayQuery>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response, ApiError> {
-    let workspace_id = normalize_optional_text(query.workspace_id);
-    let (device_id, workspace_id) =
-        resolve_native_remote_connection_relay_target(&state, &user, device_id, workspace_id)
-            .await?;
-    if let Some(workspace_id) = workspace_id.as_deref() {
-        validate_device_workspace(&state, &user, device_id.as_str(), workspace_id).await?;
-    } else if !has_inline_http_mcp_runtime_header(&headers) {
-        return Err(ApiError::bad_request("workspace_id is required"));
-    }
-    let mut relay_headers = relay_headers(&headers);
-    if workspace_id.is_some() {
-        if let Some(cwd) = normalize_optional_text(query.cwd) {
-            relay_headers.insert("x-local-connector-cwd".to_string(), cwd);
-        }
-    }
-    let relay_body = relay_body(body.as_ref());
-    let relay_timeout = mcp_relay_timeout(state.config.relay_request_timeout, &relay_body);
-    let request = RelayRequest {
-        message_type: "mcp".to_string(),
-        request_id: Uuid::new_v4().to_string(),
-        owner_user_id: user.effective_owner_user_id().to_string(),
-        device_id,
-        workspace_id: workspace_id.unwrap_or_default(),
-        method: "POST".to_string(),
-        path: "/mcp".to_string(),
-        headers: relay_headers,
-        body: relay_body,
-        platform_signature: None,
-        platform_signature_key_id: None,
-        platform_signature_alg: None,
-        platform_timestamp: None,
-        platform_nonce: None,
-    };
-    let response = dispatch_relay(&state, request, relay_timeout).await?;
-    Ok(relay_response_to_http(response))
-}
-
-async fn resolve_native_remote_connection_relay_target(
-    state: &AppState,
-    user: &CurrentUser,
-    device_id: String,
-    workspace_id: Option<String>,
-) -> Result<(String, Option<String>), ApiError> {
-    if device_id != NATIVE_REMOTE_CONNECTION_DEVICE_ALIAS
-        || workspace_id.as_deref() != Some(NATIVE_REMOTE_CONNECTION_WORKSPACE_ALIAS)
-    {
-        return Ok((device_id, workspace_id));
-    }
-    let owner_user_id = user.effective_owner_user_id();
-    let session = state
-        .store
-        .active_session(owner_user_id)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(|| {
-            ApiError::service_unavailable(
-                "no active Local Connector device is available for the selected remote connection",
-            )
-        })?;
-    let workspaces = state
-        .store
-        .list_workspaces(owner_user_id, Some(session.device_id.clone()))
-        .await
-        .map_err(ApiError::internal)?;
-    let workspace = active_remote_connection_workspace(workspaces.as_slice()).ok_or_else(|| {
-        ApiError::service_unavailable(
-            "the active Local Connector device has no available workspace for remote connection relay",
-        )
-    })?;
-    Ok((session.device_id, Some(workspace.id.clone())))
-}
-
-fn active_remote_connection_workspace(
-    workspaces: &[LocalConnectorWorkspace],
-) -> Option<&LocalConnectorWorkspace> {
-    workspaces
-        .iter()
-        .find(|workspace| workspace.status == WORKSPACE_STATUS_ACTIVE)
-}
-
-async fn plugin_prepare_relay(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(device_id): Path<String>,
-    Query(query): Query<PluginRelayQuery>,
-    Json(body): Json<Value>,
-) -> Result<Response, ApiError> {
-    plugin_relay(state, user, device_id, query, "prepare", body).await
-}
-
-async fn plugin_execute_relay(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(device_id): Path<String>,
-    Query(query): Query<PluginRelayQuery>,
-    Json(body): Json<Value>,
-) -> Result<Response, ApiError> {
-    plugin_relay(state, user, device_id, query, "execute", body).await
-}
-
-async fn plugin_cancel_relay(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(device_id): Path<String>,
-    Query(query): Query<PluginRelayQuery>,
-    Json(body): Json<Value>,
-) -> Result<Response, ApiError> {
-    plugin_relay(state, user, device_id, query, "cancel", body).await
-}
-
 async fn plugin_ui_asset_relay(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -568,138 +428,6 @@ async fn plugin_artifact_relay(
     Ok(relay_response_to_http(response))
 }
 
-async fn plugin_relay(
-    state: AppState,
-    user: CurrentUser,
-    device_id: String,
-    query: PluginRelayQuery,
-    action: &str,
-    body: Value,
-) -> Result<Response, ApiError> {
-    let workspace_id = normalize_optional_text(query.workspace_id)
-        .or_else(|| {
-            body.get("workspace_id")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_default();
-    if workspace_id.is_empty() {
-        load_owned_device(&state, &user, device_id.as_str(), true).await?;
-        ensure_device_active_lease(&state, user.effective_owner_user_id(), device_id.as_str())
-            .await?;
-    } else {
-        validate_device_workspace(&state, &user, device_id.as_str(), workspace_id.as_str()).await?;
-    }
-    let relay_timeout = plugin_relay_timeout(
-        state.config.relay_request_timeout,
-        state.config.plugin_hook_relay_request_timeout,
-        action,
-        &body,
-    );
-    let mut relay_headers = BTreeMap::new();
-    if let Some(cwd) = normalize_optional_text(query.cwd) {
-        relay_headers.insert("x-local-connector-cwd".to_string(), cwd);
-    }
-    let request = RelayRequest {
-        message_type: format!("plugin_{action}_request"),
-        request_id: Uuid::new_v4().to_string(),
-        owner_user_id: user.effective_owner_user_id().to_string(),
-        device_id,
-        workspace_id,
-        method: "POST".to_string(),
-        path: format!("/plugins/{action}"),
-        headers: relay_headers,
-        body,
-        platform_signature: None,
-        platform_signature_key_id: None,
-        platform_signature_alg: None,
-        platform_timestamp: None,
-        platform_nonce: None,
-    };
-    let response = dispatch_relay(&state, request, relay_timeout).await?;
-    Ok(relay_response_to_http(response))
-}
-
-async fn sandbox_facade_root(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path(pairing_id): Path<String>,
-    method: Method,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response, ApiError> {
-    sandbox_facade_impl(
-        state,
-        user,
-        pairing_id,
-        String::new(),
-        method,
-        headers,
-        body,
-    )
-    .await
-}
-
-async fn sandbox_facade_path(
-    State(state): State<AppState>,
-    Extension(user): Extension<CurrentUser>,
-    Path((pairing_id, path)): Path<(String, String)>,
-    method: Method,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response, ApiError> {
-    sandbox_facade_impl(state, user, pairing_id, path, method, headers, body).await
-}
-
-async fn sandbox_facade_impl(
-    state: AppState,
-    user: CurrentUser,
-    pairing_id: String,
-    path: String,
-    method: Method,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response, ApiError> {
-    let pairing = load_owned_sandbox_pairing(&state, &user, pairing_id.as_str()).await?;
-    if !pairing.enabled {
-        return Err(ApiError::bad_request(
-            "Local Connector sandbox pairing is disabled",
-        ));
-    }
-    validate_device_workspace(
-        &state,
-        &user,
-        pairing.device_id.as_str(),
-        pairing.workspace_id.as_str(),
-    )
-    .await?;
-
-    let relay_path = normalize_relay_path(path.as_str());
-    if is_local_sandbox_mcp_path(relay_path.as_str()) {
-        internal_auth::require_mcp_management_service_caller(&user)?;
-    }
-    let relay_timeout = state.config.relay_request_timeout;
-    let request = RelayRequest {
-        message_type: "lease_request".to_string(),
-        request_id: Uuid::new_v4().to_string(),
-        owner_user_id: user.effective_owner_user_id().to_string(),
-        device_id: pairing.device_id.clone(),
-        workspace_id: pairing.workspace_id.clone(),
-        method: method.as_str().to_string(),
-        path: relay_path,
-        headers: relay_headers(&headers),
-        body: relay_body(body.as_ref()),
-        platform_signature: None,
-        platform_signature_key_id: None,
-        platform_signature_alg: None,
-        platform_timestamp: None,
-        platform_nonce: None,
-    };
-
-    let response = dispatch_relay(&state, request, relay_timeout).await?;
-    Ok(relay_response_to_http(response))
-}
-
 async fn validate_device_workspace(
     state: &AppState,
     user: &CurrentUser,
@@ -776,102 +504,6 @@ async fn send_relay(state: &AppState, request: RelayRequest) -> Result<(), ApiEr
         .map_err(relay_error_to_api_error)
 }
 
-fn normalize_relay_path(path: &str) -> String {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{trimmed}")
-    }
-}
-
-fn relay_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
-    headers
-        .iter()
-        .filter_map(|(key, value)| {
-            let key = key.as_str().to_ascii_lowercase();
-            if matches!(
-                key.as_str(),
-                "authorization"
-                    | "cookie"
-                    | "set-cookie"
-                    | "x-local-connector-caller"
-                    | "x-local-connector-internal-token"
-                    | "x-local-connector-internal-secret"
-                    | "x-local-connector-owner-user-id"
-                    | "x-chatos-owner-user-id"
-            ) {
-                return None;
-            }
-            value.to_str().ok().map(|value| (key, value.to_string()))
-        })
-        .collect()
-}
-
-fn is_local_sandbox_mcp_path(path: &str) -> bool {
-    let parts = path.trim_matches('/').split('/').collect::<Vec<_>>();
-    matches!(parts.as_slice(), ["api", "sandboxes", _, "mcp"])
-}
-
-fn has_nonempty_header(headers: &HeaderMap, name: &str) -> bool {
-    headers
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-}
-
-fn has_inline_http_mcp_runtime_header(headers: &HeaderMap) -> bool {
-    has_nonempty_header(headers, "x-local-connector-inline-mcp-runtime")
-}
-
-fn relay_body(body: &[u8]) -> Value {
-    if body.is_empty() {
-        return Value::Null;
-    }
-    serde_json::from_slice::<Value>(body)
-        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).into_owned()))
-}
-
-fn mcp_relay_timeout(configured_timeout: Duration, body: &Value) -> Duration {
-    let baseline = configured_timeout.max(STANDARD_MCP_RELAY_TIMEOUT);
-    if !is_terminal_wait_mcp_call(body) {
-        return baseline;
-    }
-    let arguments = body.pointer("/params/arguments").unwrap_or(&Value::Null);
-    let requested_timeout_ms = arguments
-        .get("timeout_ms")
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            arguments
-                .get("timeout")
-                .and_then(Value::as_u64)
-                .map(|seconds| seconds.saturating_mul(1_000))
-        })
-        .unwrap_or(30_000)
-        .clamp(1_000, MCP_TERMINAL_WAIT_MAX_TIMEOUT_MS);
-    baseline.max(Duration::from_millis(
-        requested_timeout_ms.saturating_add(MCP_TERMINAL_WAIT_TRANSPORT_GRACE_MS),
-    ))
-}
-
-fn is_terminal_wait_mcp_call(body: &Value) -> bool {
-    if body.get("method").and_then(Value::as_str) != Some("tools/call") {
-        return false;
-    }
-    let Some(tool_name) = body.pointer("/params/name").and_then(Value::as_str) else {
-        return false;
-    };
-    let tool_name = tool_name.trim();
-    tool_name == "process_wait"
-        || tool_name.ends_with("_process_wait")
-        || ((tool_name == "process" || tool_name.ends_with("_process"))
-            && body
-                .pointer("/params/arguments/action")
-                .and_then(Value::as_str)
-                == Some("wait"))
-}
-
 fn relay_error_to_api_error(error: RelayError) -> ApiError {
     match error {
         RelayError::Offline => ApiError::service_unavailable(error.message()),
@@ -895,97 +527,10 @@ fn required_text(value: Option<String>, field: &str) -> Result<String, ApiError>
         .ok_or_else(|| ApiError::bad_request(format!("{field} is required and cannot be empty")))
 }
 
-fn is_plugin_hook_dispatch(action: &str, body: &Value) -> bool {
-    action == "execute"
-        && body.get("operation").and_then(Value::as_str) == Some("dispatch_hook_event")
-}
-
-fn plugin_relay_timeout(
-    configured_timeout: Duration,
-    plugin_hook_timeout: Duration,
-    action: &str,
-    body: &Value,
-) -> Duration {
-    let configured_timeout = if is_plugin_hook_dispatch(action, body) {
-        plugin_hook_timeout
-    } else {
-        configured_timeout
-    };
-    if matches!(action, "prepare" | "execute") {
-        configured_timeout.max(STANDARD_MCP_RELAY_TIMEOUT)
-    } else {
-        configured_timeout
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
-    use super::{
-        active_remote_connection_workspace, is_allowed_model_config_proxy_request,
-        is_local_sandbox_mcp_path, is_plugin_hook_dispatch, mcp_relay_timeout,
-        plugin_relay_timeout, STANDARD_MCP_RELAY_TIMEOUT,
-    };
-    use crate::models::{
-        LocalConnectorWorkspace, WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_DISABLED,
-    };
+    use super::is_allowed_model_config_proxy_request;
     use axum::http::Method;
-    use serde_json::json;
-
-    #[test]
-    fn only_hook_dispatch_uses_the_extended_interactive_relay_window() {
-        assert!(is_plugin_hook_dispatch(
-            "execute",
-            &json!({"operation": "dispatch_hook_event"})
-        ));
-        assert!(!is_plugin_hook_dispatch(
-            "execute",
-            &json!({"operation": "mcp_tools_call"})
-        ));
-        assert!(!is_plugin_hook_dispatch(
-            "prepare",
-            &json!({"operation": "dispatch_hook_event"})
-        ));
-    }
-
-    #[test]
-    fn plugin_prepare_and_execute_use_the_two_hour_platform_budget() {
-        let control_plane_timeout = Duration::from_secs(30);
-        let hook_timeout = Duration::from_secs(5 * 60 + 15);
-        for (action, body) in [
-            ("prepare", json!({})),
-            ("execute", json!({"operation": "mcp_tools_call"})),
-            ("execute", json!({"operation": "command_invoke"})),
-            ("execute", json!({"operation": "agent_apply"})),
-            ("execute", json!({"operation": "dispatch_hook_event"})),
-        ] {
-            assert_eq!(
-                plugin_relay_timeout(control_plane_timeout, hook_timeout, action, &body),
-                STANDARD_MCP_RELAY_TIMEOUT
-            );
-        }
-    }
-
-    #[test]
-    fn plugin_cancel_keeps_the_short_control_plane_timeout() {
-        assert_eq!(
-            plugin_relay_timeout(
-                Duration::from_secs(30),
-                Duration::from_secs(5 * 60 + 15),
-                "cancel",
-                &json!({})
-            ),
-            Duration::from_secs(30)
-        );
-    }
-
-    #[test]
-    fn only_concrete_sandbox_tool_calls_require_the_mcp_management_caller() {
-        assert!(is_local_sandbox_mcp_path("/api/sandboxes/sandbox-1/mcp"));
-        assert!(!is_local_sandbox_mcp_path("/api/sandboxes/leases"));
-        assert!(!is_local_sandbox_mcp_path("/api/local/sandbox/images/mcp"));
-    }
 
     #[test]
     fn model_provider_crud_and_refresh_are_available_to_native_clients() {
@@ -1013,78 +558,5 @@ mod tests {
             &Method::PUT,
             "/api/model-providers/provider-1"
         ));
-    }
-
-    #[test]
-    fn ordinary_mcp_relay_uses_the_two_hour_platform_budget() {
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": "command-1",
-            "method": "tools/call",
-            "params": {
-                "name": "execute_command",
-                "arguments": {"command": "npm install", "background": false}
-            }
-        });
-        for seconds in [30, 90, 105, 180] {
-            assert_eq!(
-                mcp_relay_timeout(Duration::from_secs(seconds), &body),
-                STANDARD_MCP_RELAY_TIMEOUT
-            );
-        }
-    }
-
-    #[test]
-    fn remote_connection_alias_uses_only_an_active_workspace() {
-        let workspace = |id: &str, status: &str| LocalConnectorWorkspace {
-            id: id.to_string(),
-            owner_user_id: "owner-1".to_string(),
-            device_id: "device-1".to_string(),
-            display_name: id.to_string(),
-            local_path_alias: "/tmp".to_string(),
-            local_path_fingerprint: id.to_string(),
-            capabilities: Vec::new(),
-            status: status.to_string(),
-            created_at: "now".to_string(),
-            updated_at: "now".to_string(),
-        };
-        let workspaces = vec![
-            workspace("disabled", WORKSPACE_STATUS_DISABLED),
-            workspace("active", WORKSPACE_STATUS_ACTIVE),
-        ];
-        assert_eq!(
-            active_remote_connection_workspace(workspaces.as_slice()).map(|item| item.id.as_str()),
-            Some("active")
-        );
-    }
-
-    #[test]
-    fn mcp_terminal_wait_relay_keeps_the_standard_two_hour_budget() {
-        assert_eq!(
-            mcp_relay_timeout(
-                Duration::from_secs(30),
-                &json!({
-                    "method": "tools/call",
-                    "params": {
-                        "name": "terminal_controller_process_wait",
-                        "arguments": {"timeout_ms": 600_000}
-                    }
-                })
-            ),
-            STANDARD_MCP_RELAY_TIMEOUT
-        );
-        assert_eq!(
-            mcp_relay_timeout(
-                Duration::from_secs(30),
-                &json!({
-                    "method": "tools/call",
-                    "params": {
-                        "name": "process",
-                        "arguments": {"action": "wait", "timeout": 600}
-                    }
-                })
-            ),
-            STANDARD_MCP_RELAY_TIMEOUT
-        );
     }
 }

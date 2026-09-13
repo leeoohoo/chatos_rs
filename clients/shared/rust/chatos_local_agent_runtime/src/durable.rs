@@ -690,7 +690,7 @@ async fn load_idempotent_task_retry(
         .run_ids
         .iter()
         .position(|run_id| run_id == &request.expected_run_id)
-        .ok_or_else(|| StorageError::Conflict {
+        .ok_or(StorageError::Conflict {
             actual_revision: task.metadata.revision,
         })?;
     if state.run_ids.get(previous_index + 1) != Some(&request.new_run_id) {

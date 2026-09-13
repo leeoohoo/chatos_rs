@@ -90,8 +90,7 @@ pub fn validate_stdio_environment_name(name: &str) -> Result<(), StdioPolicyViol
             | "PROMPT_COMMAND"
     ) || normalized.starts_with("LD_")
         || normalized.starts_with("DYLD_")
-        || normalized.starts_with("XDG_")
-        || normalized.starts_with("MCP_MANAGEMENT_");
+        || normalized.starts_with("XDG_");
     if !valid || controlled {
         return Err(StdioPolicyViolation::EnvironmentEntry);
     }
@@ -104,12 +103,7 @@ mod tests {
 
     #[test]
     fn controlled_host_environment_is_rejected_consistently() {
-        for name in [
-            "PATH",
-            "CHATOS_CLOUD_STDIO_LAUNCH_SPEC_PATH",
-            "LD_PRELOAD",
-            "MCP_MANAGEMENT_SECRET",
-        ] {
+        for name in ["PATH", "CHATOS_CLOUD_STDIO_LAUNCH_SPEC_PATH", "LD_PRELOAD"] {
             assert_eq!(
                 validate_stdio_environment_name(name),
                 Err(StdioPolicyViolation::EnvironmentEntry)

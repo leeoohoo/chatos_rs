@@ -760,7 +760,6 @@ dependencies = [
  "aes-gcm 0.11.0",
  "async-trait",
  "axum",
- "axum-server",
  "base64 0.22.1",
  "bytes",
  "chatos_config_sdk",
@@ -984,21 +983,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "chatos_mcp_management_sdk"
-version = "0.1.0"
-dependencies = [
- "chatos_plugin_management_sdk",
- "chatos_service_runtime",
- "hex",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.20",
- "urlencoding",
 ]
 
 [[package]]
@@ -3009,7 +2993,6 @@ dependencies = [
  "axum-server",
  "base64 0.22.1",
  "chatos_config_sdk",
- "chatos_mcp_management_sdk",
  "chatos_plugin_management_sdk",
  "chatos_sandbox_contract",
  "chatos_service_runtime",
@@ -3124,48 +3107,6 @@ name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
-
-[[package]]
-name = "mcp_management_service_backend"
-version = "0.1.0"
-dependencies = [
- "aes-gcm 0.11.0",
- "axum",
- "axum-server",
- "chatos_config_sdk",
- "chatos_mcp",
- "chatos_mcp_management_sdk",
- "chatos_mcp_runtime",
- "chatos_mcp_service",
- "chatos_plugin_management_sdk",
- "chatos_queue_observability",
- "chatos_service_runtime",
- "chrono",
- "futures-util",
- "hex",
- "jsonwebtoken",
- "lapin",
- "mongodb",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "rand 0.10.2",
- "redis",
- "reqwest",
- "rustls 0.23.43",
- "rustls-pemfile 2.2.0",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "tower",
- "tower-http 0.7.0",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
-]
 
 [[package]]
 name = "md-5"

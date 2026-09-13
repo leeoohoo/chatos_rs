@@ -203,6 +203,18 @@ fn topics_for_envelope(envelope: &RealtimeEventEnvelope) -> Vec<RealtimeTopic> {
     topics
 }
 
+fn extract_string_path(envelope: &RealtimeEventEnvelope, path: &[&str]) -> Option<String> {
+    let value = serde_json::to_value(envelope).ok()?;
+    let mut current = &value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current
+        .as_str()
+        .and_then(normalize_non_empty_str)
+        .map(|value| value.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{RealtimeSubscriptionSet, RealtimeTopic, RealtimeTopicScope};
@@ -249,16 +261,4 @@ mod tests {
             .expect("user topic should be valid without id");
         assert_eq!(topics.len(), 1);
     }
-}
-
-fn extract_string_path(envelope: &RealtimeEventEnvelope, path: &[&str]) -> Option<String> {
-    let value = serde_json::to_value(envelope).ok()?;
-    let mut current = &value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    current
-        .as_str()
-        .and_then(normalize_non_empty_str)
-        .map(|value| value.to_string())
 }

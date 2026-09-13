@@ -3,24 +3,17 @@
 # expires_on is inclusive; expired, stale, missing, and over-budget entries fail CI.
 plugins/browser/crates/browser-cdp-core/src/runtime.rs	1887	2026-10-31	3.0 plugin import: split browser runtime lifecycle and session state
 plugins/browser/crates/browser-cdp-mcp/src/lib.rs	1842	2026-10-31	3.0 plugin import: split MCP tools, schemas, and execution handlers
-mcp_management_service/backend/src/api/mcp.rs	1521	2026-10-31	3.0 hardening: split MCP API validation, routing, and projection
 plugins/browser/crates/browser-cdp-extension/src/lib.rs	1520	2026-10-31	3.0 plugin import: split extension pairing, transport, and protocol handlers
 mcp/src/implementations/builtin/code_maintainer/registration_write.rs	1412	2026-10-31	3.0 hardening: split registration mutation validation and write operations
-mcp_management_service/backend/src/async_dispatch/rabbitmq.rs	1408	2026-10-31	3.0 hardening: split RabbitMQ dispatch topology, consumers, and recovery
-config_center_service/backend/src/state/support.rs	1312	2026-10-31	3.0 hardening: split configuration support loading, merge, and validation
 config_center_service/backend/src/state/maintenance.rs	1242	2026-10-31	3.0 hardening: split maintenance state transitions and reconciliation
-mcp_management_service/backend/src/api/runtime_sessions.rs	1237	2026-10-31	3.0 hardening: split Runtime Session creation, resolution, and authorization
-mcp_management_service/backend/src/runtime/execution_scope_store.rs	1177	2026-10-31	3.0 hardening: split execution-scope persistence and lifecycle rules
 docker/deploy.sh	1110	2026-10-31	3.0 hardening: split deployment validation, lifecycle, runtime mTLS preflight, and reporting helpers
 plugins/browser/crates/browser-cdp-bridge/src/server.rs	1052	2026-10-31	3.0 plugin import: split Browser Bridge server protocol and connection lifecycle
-local_connector_service/backend/src/api/mod.rs	1013	2026-10-31	3.0 hardening: split Local Connector API router, middleware, and shared responses
 chatos/backend/src/api/sessions/history_process.rs	1002	2026-10-31	3.0 hardening: split history compaction, callbacks, repair, and display projection
 chatos/backend/src/api/local_connectors.rs	1000	2026-10-31	3.0 hardening: split Local Connector API aggregation into domain modules
 plugins/browser/crates/browser-cdp-direct/src/lib.rs	994	2026-10-31	3.0 plugin import: split direct CDP transport and command families
 plugin_management_service/backend/src/api/plugin_package_publish.rs	977	2026-10-31	3.0 hardening: split plugin package publication and trust validation
 plugin_management_service/backend/src/api/plugin_catalog_sync.rs	939	2026-09-30	Phase 1D: split catalog fetch, signature validation, key rotation, and persistence
 memory_engine/backend/src/subject_memory_queue.rs	922	2026-10-31	3.0 hardening: split subject-memory queue scheduling and recovery
-local_connector_service/backend/src/api/terminal_relay.rs	906	2026-10-31	3.0 hardening: split terminal relay authorization, dispatch, and response mapping
 crates/chatos_model_transport/src/error_policy.rs	890	2026-10-31	3.0 hardening: split AI error classification, retry decisions, and user messages
 plugins/document/src/tools.ts	855	2026-10-31	3.0 plugin import: split document tool schemas and dispatch handlers
 chatos/backend/src/api/projects/requirement_execution/sync.rs	849	2026-10-31	3.0 hardening: split requirement execution synchronization stages

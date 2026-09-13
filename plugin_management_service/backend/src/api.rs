@@ -113,12 +113,8 @@ use skill_packages::{get_skill_package, list_skill_packages};
 use skills::{check_skill, get_skill, list_skills};
 use system::{get_system_stats, prometheus_metrics};
 
-const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] = &[
-    "chatos-backend",
-    "local-connector-service",
-    "memory-engine",
-    "mcp-management-service",
-];
+const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] =
+    &["chatos-backend", "local-connector-service", "memory-engine"];
 
 fn truncate_text(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()

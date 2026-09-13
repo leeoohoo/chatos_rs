@@ -198,7 +198,6 @@ impl AppConfig {
                     "change_me_plugin_management_internal_secret",
                     "change_me_plugin_management_local_connector_secret",
                     "change_me_plugin_management_memory_engine_secret",
-                    "change_me_plugin_management_mcp_management_secret",
                 ],
             )?;
         }
@@ -236,24 +235,6 @@ fn validate_artifact_public_base_url(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::validate_artifact_public_base_url;
-
-    #[test]
-    fn artifact_public_base_allows_http_only_for_loopback_development() {
-        assert!(validate_artifact_public_base_url("https://plugins.example.com").is_ok());
-        assert!(validate_artifact_public_base_url("http://127.0.0.1:39260").is_ok());
-        assert!(validate_artifact_public_base_url("http://localhost:39260/plugins").is_ok());
-        assert!(validate_artifact_public_base_url("http://[::1]:39260").is_ok());
-        assert!(validate_artifact_public_base_url("http://plugins.example.com").is_err());
-        assert!(validate_artifact_public_base_url("http://10.0.0.2:39260").is_err());
-        assert!(
-            validate_artifact_public_base_url("https://plugins.example.com?token=secret").is_err()
-        );
-    }
-}
-
 fn caller_internal_api_secrets() -> Result<HashMap<String, String>, String> {
     [
         (
@@ -267,10 +248,6 @@ fn caller_internal_api_secrets() -> Result<HashMap<String, String>, String> {
         (
             "memory-engine",
             "PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET",
-        ),
-        (
-            "mcp-management-service",
-            "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()
@@ -329,4 +306,22 @@ fn required_usize(key: &str) -> Result<usize, String> {
 fn required_bool(key: &str) -> Result<bool, String> {
     let value = require_config_center_secret(key)?;
     parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_artifact_public_base_url;
+
+    #[test]
+    fn artifact_public_base_allows_http_only_for_loopback_development() {
+        assert!(validate_artifact_public_base_url("https://plugins.example.com").is_ok());
+        assert!(validate_artifact_public_base_url("http://127.0.0.1:39260").is_ok());
+        assert!(validate_artifact_public_base_url("http://localhost:39260/plugins").is_ok());
+        assert!(validate_artifact_public_base_url("http://[::1]:39260").is_ok());
+        assert!(validate_artifact_public_base_url("http://plugins.example.com").is_err());
+        assert!(validate_artifact_public_base_url("http://10.0.0.2:39260").is_err());
+        assert!(
+            validate_artifact_public_base_url("https://plugins.example.com?token=secret").is_err()
+        );
+    }
 }

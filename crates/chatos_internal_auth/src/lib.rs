@@ -285,8 +285,8 @@ mod tests {
         let token = issue_internal_service_token_with_trace_id(
             "a-long-test-internal-secret",
             "configuration-center",
-            "mcp-management-service",
-            "queue.dead_letter.archive",
+            "plugin-management-service",
+            "catalog.release.read",
             60,
             trace_id.as_str(),
         )
@@ -295,8 +295,8 @@ mod tests {
             token.as_str(),
             "a-long-test-internal-secret",
             "configuration-center",
-            "mcp-management-service",
-            "queue.dead_letter.archive",
+            "plugin-management-service",
+            "catalog.release.read",
         )
         .expect("verify operation-bound token");
         assert_eq!(claims.trace_id, trace_id);
@@ -304,8 +304,8 @@ mod tests {
         assert!(issue_internal_service_token_with_trace_id(
             "a-long-test-internal-secret",
             "configuration-center",
-            "mcp-management-service",
-            "queue.dead_letter.archive",
+            "plugin-management-service",
+            "catalog.release.read",
             60,
             "not-a-uuid",
         )

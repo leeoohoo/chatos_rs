@@ -20,14 +20,12 @@ const DURATION_BUCKETS_SECONDS: [f64; 12] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum HttpSurface {
     Public,
-    Internal,
 }
 
 impl HttpSurface {
     fn as_str(self) -> &'static str {
         match self {
             Self::Public => "public",
-            Self::Internal => "internal",
         }
     }
 }
@@ -95,7 +93,6 @@ impl Default for HttpMetricValue {
 struct MetricsRegistry {
     http: DashMap<HttpMetricKey, HttpMetricValue>,
     public_active_requests: AtomicU64,
-    internal_active_requests: AtomicU64,
     realtime_websockets: AtomicU64,
     terminal_websockets: AtomicU64,
     remote_terminal_websockets: AtomicU64,
@@ -111,7 +108,6 @@ impl ActiveHttpRequest {
     fn start(surface: HttpSurface) -> Self {
         let counter = match surface {
             HttpSurface::Public => &METRICS.public_active_requests,
-            HttpSurface::Internal => &METRICS.internal_active_requests,
         };
         counter.fetch_add(1, Ordering::Relaxed);
         Self { counter }
@@ -129,13 +125,6 @@ pub(crate) async fn observe_public_http(
     next: middleware::Next,
 ) -> Response {
     observe_http(HttpSurface::Public, request, next).await
-}
-
-pub(crate) async fn observe_internal_http(
-    request: Request<axum::body::Body>,
-    next: middleware::Next,
-) -> Response {
-    observe_http(HttpSurface::Internal, request, next).await
 }
 
 async fn observe_http(
@@ -295,12 +284,6 @@ fn render_prometheus_metrics() -> String {
         "public",
         METRICS.public_active_requests.load(Ordering::Relaxed),
     );
-    append_surface_gauge(
-        &mut body,
-        "internal",
-        METRICS.internal_active_requests.load(Ordering::Relaxed),
-    );
-
     body.push_str(
         "# HELP chatos_websocket_connections_active Active ChatOS WebSocket connections.\n\
 # TYPE chatos_websocket_connections_active gauge\n",
@@ -357,10 +340,7 @@ fn escape_prometheus_label(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        normalize_method, observe_internal_http, observe_public_http, prometheus_metrics,
-        status_class,
-    };
+    use super::{normalize_method, observe_public_http, prometheus_metrics, status_class};
     use axum::body::{to_bytes, Body};
     use axum::http::{Method, Request, StatusCode};
     use axum::middleware;
@@ -413,25 +393,5 @@ mod tests {
         assert!(!body.contains("widget-123"));
         assert!(body.contains("status_class=\"2xx\""));
         assert!(body.contains("chatos_http_request_duration_seconds_bucket{"));
-    }
-
-    #[tokio::test]
-    async fn internal_requests_are_classified_separately() {
-        let app = Router::new()
-            .route("/internal/callback", get(|| async { StatusCode::ACCEPTED }))
-            .layer(middleware::from_fn(observe_internal_http));
-        let response = app
-            .oneshot(
-                Request::get("/internal/callback")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-        let body = super::render_prometheus_metrics();
-        assert!(body.contains("surface=\"internal\""));
-        assert!(body.contains("route=\"/internal/callback\""));
     }
 }

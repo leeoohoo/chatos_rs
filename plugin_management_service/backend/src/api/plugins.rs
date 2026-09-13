@@ -151,7 +151,7 @@ pub(super) async fn publish_plugin_catalog_entry(
     if !marketplace.enabled {
         return Err(ApiError::conflict("Plugin marketplace is disabled"));
     }
-    if require_approved_publisher_identity(&state, &marketplace, &payload.publisher)
+    if require_approved_publisher_identity(state, &marketplace, &payload.publisher)
         .await?
         .is_some()
     {
@@ -364,9 +364,11 @@ fn is_disabled_transition(previous_enabled: Option<bool>, enabled: bool) -> bool
 }
 
 fn plugin_release_runtime_targets(components: &[PluginComponentDescriptor]) -> Vec<String> {
-    (!components.is_empty())
-        .then(|| vec![PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string()])
-        .unwrap_or_default()
+    if components.is_empty() {
+        Vec::new()
+    } else {
+        vec![PLUGIN_RUNTIME_TARGET_LOCAL_CONNECTOR.to_string()]
+    }
 }
 
 fn normalize_catalog_payload(payload: &mut PluginCatalogPayload) -> Result<(), ApiError> {

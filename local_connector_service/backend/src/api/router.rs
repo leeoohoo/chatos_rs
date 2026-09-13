@@ -12,23 +12,19 @@ use crate::state::AppState;
 
 use super::managed_runtime_config::get_managed_runtime_config;
 use super::{
-    connect_device, controlled_network_readiness, create_device,
-    create_managed_requirements_assignment, create_managed_requirements_policy,
-    create_project_binding, create_sandbox_pairing, create_workspace, current_user_handler,
-    delete_managed_requirements_assignment, delete_managed_requirements_policy,
-    delete_project_binding, delete_sandbox_pairing, delete_workspace, disconnect_device,
-    get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
-    get_managed_requirements, health_handler, heartbeat_device, list_devices,
+    connect_device, create_device, create_managed_requirements_assignment,
+    create_managed_requirements_policy, create_project_binding, create_sandbox_pairing,
+    create_workspace, current_user_handler, delete_managed_requirements_assignment,
+    delete_managed_requirements_policy, delete_project_binding, delete_sandbox_pairing,
+    delete_workspace, disconnect_device, get_agent_prompt_bundle, get_agent_prompt_bundle_manifest,
+    get_device, get_managed_requirements, health_handler, heartbeat_device, list_devices,
     list_managed_requirements_assignments, list_managed_requirements_policies,
     list_plugin_install_sources, list_project_bindings, list_sandbox_pairings, list_workspaces,
-    mcp_relay, plugin_artifact_create_relay, plugin_artifact_list_relay,
-    plugin_artifact_read_relay, plugin_artifact_update_relay, plugin_cancel_relay,
-    plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay,
-    proxy_plugin_release_artifact, remote_connection_command_relay, remote_connection_test_relay,
-    remote_sftp_relay, remote_terminal_close_relay, remote_terminal_ws_relay,
-    require_internal_auth, require_public_auth, resolve_local_runtime_capabilities, revoke_device,
-    sandbox_facade_path, sandbox_facade_root, system_stats_handler, terminal_close_relay,
-    terminal_exec_relay, terminal_input_relay, terminal_session_create_relay, terminal_ws_relay,
+    plugin_artifact_create_relay, plugin_artifact_list_relay, plugin_artifact_read_relay,
+    plugin_artifact_update_relay, plugin_ui_asset_relay, proxy_plugin_release_artifact,
+    remote_connection_command_relay, remote_connection_test_relay, remote_sftp_relay,
+    remote_terminal_close_relay, remote_terminal_ws_relay, require_internal_auth,
+    require_public_auth, resolve_local_runtime_capabilities, revoke_device, system_stats_handler,
     update_managed_requirements_assignment, update_managed_requirements_policy,
     update_plugin_preference, update_project_binding, update_sandbox_pairing, update_workspace,
     user_service_protected_proxy, user_service_public_proxy, workspace_directory_create_relay,
@@ -38,10 +34,6 @@ use super::{
 fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
     let auth_state = AuthState::from_app_state(state);
     let protected_api = Router::new()
-        .route(
-            "/api/local-connectors/project-context/authorize",
-            post(super::project_context::authorize_project_context),
-        )
         .route("/api/auth/me", get(current_user_handler))
         .route("/api/model-configs", any(user_service_protected_proxy))
         .route(
@@ -58,10 +50,6 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
             get(list_devices).post(create_device),
         )
         .route("/api/local-connectors/devices/{id}", get(get_device))
-        .route(
-            "/api/local-connectors/devices/{id}/controlled-network/readiness",
-            get(controlled_network_readiness),
-        )
         .route(
             "/api/local-connectors/devices/{id}/managed-requirements",
             get(get_managed_requirements),
@@ -128,22 +116,6 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
             put(update_sandbox_pairing).delete(delete_sandbox_pairing),
         )
         .route(
-            "/api/local-connectors/relay/{device_id}/mcp",
-            post(mcp_relay),
-        )
-        .route(
-            "/api/local-connectors/relay/{device_id}/plugins/prepare",
-            post(plugin_prepare_relay),
-        )
-        .route(
-            "/api/local-connectors/relay/{device_id}/plugins/execute",
-            post(plugin_execute_relay),
-        )
-        .route(
-            "/api/local-connectors/relay/{device_id}/plugins/cancel",
-            post(plugin_cancel_relay),
-        )
-        .route(
             "/api/local-connectors/relay/{device_id}/plugins/ui/assets",
             post(plugin_ui_asset_relay),
         )
@@ -185,10 +157,6 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
             get(proxy_plugin_release_artifact),
         )
         .route(
-            "/api/local-connectors/relay/{device_id}/terminal/exec",
-            post(terminal_exec_relay),
-        )
-        .route(
             "/api/local-connectors/relay/{device_id}/remote-connections/test",
             post(remote_connection_test_relay),
         )
@@ -207,30 +175,6 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
         .route(
             "/api/local-connectors/relay/{device_id}/remote-connections/terminal/close",
             post(remote_terminal_close_relay),
-        )
-        .route(
-            "/api/local-connectors/relay/{device_id}/terminal/sessions",
-            post(terminal_session_create_relay),
-        )
-        .route(
-            "/api/local-connectors/relay/{device_id}/terminal/input",
-            post(terminal_input_relay),
-        )
-        .route(
-            "/api/local-connectors/relay/{device_id}/terminal/close",
-            post(terminal_close_relay),
-        )
-        .route(
-            "/api/local-connectors/relay/{device_id}/terminal/ws",
-            get(terminal_ws_relay),
-        )
-        .route(
-            "/api/local-connectors/sandbox-facade/{pairing_id}",
-            any(sandbox_facade_root),
-        )
-        .route(
-            "/api/local-connectors/sandbox-facade/{pairing_id}/{*path}",
-            any(sandbox_facade_path),
         );
 
     if internal {
@@ -327,7 +271,7 @@ pub fn build_plugin_artifact_relay_test_router(
     let relay_state = super::PluginArtifactRelayState::for_test(
         relay,
         config.relay_request_timeout,
-        config.plugin_hook_relay_request_timeout,
+        config.relay_request_timeout,
         scope,
     );
     Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()
@@ -348,7 +292,7 @@ pub fn build_plugin_artifact_relay_store_test_router(
     let relay_state = super::PluginArtifactRelayState::for_store_test(
         relay,
         config.relay_request_timeout,
-        config.plugin_hook_relay_request_timeout,
+        config.relay_request_timeout,
         store,
     );
     Ok(plugin_artifact_routes::<super::PluginArtifactRelayState>()

@@ -337,21 +337,8 @@ impl AppState {
                 );
             }
         }
-        for key in [
-            SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
-            CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY,
-        ] {
-            let is_https = values
-                .get(key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.trim().starts_with("https://"));
-            if !is_https {
-                errors.push(format!(
-                    "{key} must use https:// because MCP Management internal APIs require mTLS"
-                ));
-            }
-        }
-        for key in [MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY] {
+        {
+            let key = MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY;
             let is_https = values
                 .get(key)
                 .and_then(Value::as_str)
@@ -362,10 +349,8 @@ impl AppState {
                 ));
             }
         }
-        for key in [
-            MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
-            SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
-        ] {
+        {
+            let key = SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY;
             let is_https = values
                 .get(key)
                 .and_then(Value::as_str)
@@ -389,19 +374,6 @@ impl AppState {
                     "{key} must use https:// because Memory Engine internal APIs require mTLS"
                 ));
             }
-        }
-        validate_chatos_mtls_invariants(values, &mut errors);
-        let public_port = values
-            .get(MCP_MANAGEMENT_PORT_CONFIG_KEY)
-            .and_then(Value::as_i64);
-        let internal_mtls_port = values
-            .get(MCP_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY)
-            .and_then(Value::as_i64);
-        if public_port.is_some() && public_port == internal_mtls_port {
-            errors.push(
-                "mcp_management.runtime.internal_mtls_port must differ from mcp_management.runtime.port"
-                    .to_string(),
-            );
         }
         let memory_engine_public_port = values
             .get(MEMORY_ENGINE_PORT_CONFIG_KEY)
@@ -495,35 +467,6 @@ pub(super) fn preserve_user_service_secret_rotation(
         {
             changed_keys.push(USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY.to_string());
         }
-    }
-}
-
-pub(super) fn validate_chatos_mtls_invariants(
-    values: &BTreeMap<String, Value>,
-    errors: &mut Vec<String>,
-) {
-    for key in [MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY] {
-        let is_https = values
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(|value| value.trim().starts_with("https://"));
-        if !is_https {
-            errors.push(format!(
-                "{key} must use https:// because ChatOS internal APIs require mTLS"
-            ));
-        }
-    }
-
-    let public_port = values
-        .get(CHATOS_BACKEND_PORT_CONFIG_KEY)
-        .and_then(Value::as_i64);
-    let internal_mtls_port = values
-        .get(CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY)
-        .and_then(Value::as_i64);
-    if public_port.is_some() && public_port == internal_mtls_port {
-        errors.push(
-            "chatos.runtime.internal_mtls_port must differ from chatos.runtime.port".to_string(),
-        );
     }
 }
 

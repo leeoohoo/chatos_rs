@@ -52,14 +52,8 @@ start_backend() {
       export CONFIG_CENTER_CALLER_SIGNING_SECRET="$config_center_secret"
       export CONFIG_CENTER_MTLS_CLIENT_IDENTITY_PATH="$(config_center_client_identity_path "$service_name")"
     fi
-    if mcp_management_identity="$(mcp_management_client_identity_path "$service_name")"; then
-      export MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH="$mcp_management_identity"
-    fi
     if memory_engine_identity="$(memory_engine_client_identity_path "$service_name")"; then
       export MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH="$memory_engine_identity"
-    fi
-    if chatos_identity="$(chatos_client_identity_path "$service_name")"; then
-      export CHATOS_MTLS_CLIENT_IDENTITY_PATH="$chatos_identity"
     fi
     if local_connector_identity="$(local_connector_identity_path "$service_name")"; then
       export LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH="$local_connector_identity"
@@ -74,11 +68,6 @@ start_backend() {
       export MEMORY_ENGINE_MTLS_SERVER_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/server.crt"
       export MEMORY_ENGINE_MTLS_SERVER_KEY_PATH="$MEMORY_ENGINE_MTLS_DIR/server.key"
       export MEMORY_ENGINE_MTLS_CLIENT_CA_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/ca.crt"
-    fi
-    if [[ "$name" == "chatos-backend" ]]; then
-      export CHATOS_MTLS_SERVER_CERT_PATH="$CHATOS_MTLS_DIR/server.crt"
-      export CHATOS_MTLS_SERVER_KEY_PATH="$CHATOS_MTLS_DIR/server.key"
-      export CHATOS_MTLS_CLIENT_CA_CERT_PATH="$CHATOS_MTLS_DIR/ca.crt"
     fi
     if [[ "$name" == "local-connector-service-backend" ]]; then
       export LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH="$LOCAL_CONNECTOR_MTLS_DIR/server.crt"
@@ -109,14 +98,6 @@ start_backend() {
 
 ensure_config_center_mtls_material() {
   "$ROOT_DIR/scripts/generate-config-center-mtls.sh" "$CONFIG_CENTER_MTLS_DIR"
-}
-
-ensure_mcp_management_mtls_material() {
-  "$ROOT_DIR/scripts/generate-mcp-management-mtls.sh" "$MCP_MANAGEMENT_MTLS_DIR"
-}
-
-ensure_chatos_mtls_material() {
-  "$ROOT_DIR/scripts/generate-chatos-mtls.sh" "$CHATOS_MTLS_DIR"
 }
 
 ensure_local_connector_mtls_material() {
@@ -222,10 +203,6 @@ valkey_port = os.environ.get("VALKEY_PORT", "6379")
 valkey_url = f"redis://:{valkey_password}@127.0.0.1:{valkey_port}/0"
 desired.update({
     "user_service.observability.otlp_endpoint": "http://127.0.0.1:4317",
-    "mcp_management.observability.otlp_endpoint": "http://127.0.0.1:4317",
-    "mcp_management.async_tool.dispatch_mode": "rabbitmq",
-    "mcp_management.async_tool.rabbitmq_url": rabbitmq_url,
-    "mcp_management.security.allowed_internal_callers": "chatos,configuration-center",
     "local_connector.coordination.valkey_url": valkey_url,
     "chatos.observability.otlp_endpoint": "http://127.0.0.1:4317",
 })
@@ -584,8 +561,6 @@ start_all() {
   export_local_env
   ensure_dirs
   ensure_config_center_mtls_material
-  ensure_mcp_management_mtls_material
-  ensure_chatos_mtls_material
   ensure_local_connector_mtls_material
   ensure_user_service_mtls_material
   ensure_memory_engine_mtls_material
@@ -749,7 +724,6 @@ Grafana:                  http://127.0.0.1:${GRAFANA_PORT:-3001}
 Main backend:             http://localhost:3997
 Harness:                  http://localhost:3000
 Local Connector Service:  http://localhost:39230
-MCP Management Service:   http://localhost:39280
 
 Status:  $0 status
 Logs:    $0 logs <service-name>

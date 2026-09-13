@@ -225,10 +225,7 @@ services:
     environment:
       MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
 
-  mcp-management-service-backend:
-    environment:
-      MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
-
+volumes:
   rabbitmq-data:
   valkey-data:
   prometheus-data:

@@ -187,12 +187,8 @@ extension NativeLocalConnectorService {
                     body: Self.rpcError(id: call.id, code: -32601, message: "当前任务未授权代码修改 MCP")
                 )
             }
-            let sessionID = request.header("x-mcp-management-session-id")
-                ?? request.header("x-mcp-management-run-id")
-                ?? request.workspaceID
-            let runID = request.header("x-mcp-management-run-id")
-                ?? request.header("x-mcp-management-session-id")
-                ?? request.workspaceID
+            let sessionID = request.workspaceID
+            let runID = request.workspaceID
             do {
                 let result = try await mcpCodeWriteStore.call(
                     name: toolName,

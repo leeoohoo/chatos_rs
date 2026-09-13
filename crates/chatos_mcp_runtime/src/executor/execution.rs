@@ -253,51 +253,11 @@ async fn http_tool_call_headers(
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_remote_tool_call_error, McpExecutor};
-    use crate::registry::BuiltinToolRegistry;
-    use crate::types::{McpAsyncResultTransport, ParsedToolDefinition};
-    use serde_json::json;
+    use super::classify_remote_tool_call_error;
 
     #[test]
     fn ordinary_remote_tool_failure_remains_non_fatal() {
         let error = classify_remote_tool_call_error("No such file or directory".to_string());
         assert!(!error.is_fatal());
-    }
-
-    #[test]
-    fn single_and_multiple_mcp_management_calls_use_the_same_command_path() {
-        let mut executor = McpExecutor::new(
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            BuiltinToolRegistry::new(),
-        );
-        executor.register_available_tool(
-            "mcp_management",
-            "mcp_management",
-            "http",
-            Some("http://127.0.0.1/mcp".to_string()),
-            None,
-            None,
-            None,
-            McpAsyncResultTransport::RabbitMq,
-            None,
-            None,
-            true,
-            ParsedToolDefinition {
-                name: "read_file".to_string(),
-                description: "read".to_string(),
-                parameters: json!({"type": "object"}),
-            },
-            json!({"name": "read_file"}),
-        );
-        assert!(executor.is_mcp_management_command(&[json!({
-            "id": "call-1",
-            "function": {"name": "read_file", "arguments": {}}
-        })]));
-        assert!(executor.is_mcp_management_command(&[
-            json!({"id": "call-1", "function": {"name": "read_file", "arguments": {}}}),
-            json!({"id": "call-2", "function": {"name": "missing_tool", "arguments": {}}}),
-        ]));
     }
 }

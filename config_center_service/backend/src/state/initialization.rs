@@ -19,11 +19,9 @@ impl AppState {
         }
         let http = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
             .map_err(|err| format!("build configuration center HTTP client failed: {err}"))?;
-        let mcp_management_http = build_mcp_management_mtls_client(&config)?;
         let memory_engine_http = build_memory_engine_mtls_client(&config)?;
         let state = Self {
             http,
-            mcp_management_http,
             memory_engine_http,
             config,
             store,
@@ -33,7 +31,6 @@ impl AppState {
             .await?;
         state.purge_user_preferences_from_config_center().await?;
         state.purge_retired_config_keys().await?;
-        state.migrate_mcp_management_runtime_config().await?;
         state.migrate_local_connector_runtime_config().await?;
         state.migrate_memory_engine_runtime_config().await?;
         state.migrate_platform_pressure_config().await?;
@@ -47,10 +44,6 @@ impl AppState {
 
     pub(crate) fn http_client(&self) -> &reqwest::Client {
         &self.http
-    }
-
-    pub(crate) fn mcp_management_http_client(&self) -> &reqwest::Client {
-        &self.mcp_management_http
     }
 
     pub(crate) fn memory_engine_http_client(&self) -> &reqwest::Client {
@@ -190,36 +183,6 @@ impl AppState {
         .await?;
         Ok(definition)
     }
-}
-
-fn build_mcp_management_mtls_client(config: &AppConfig) -> Result<reqwest::Client, String> {
-    let ca_pem =
-        std::fs::read(config.mcp_management_mtls_ca_cert_path.as_path()).map_err(|err| {
-            format!(
-                "read MCP Management mTLS CA certificate {} failed: {err}",
-                config.mcp_management_mtls_ca_cert_path.display()
-            )
-        })?;
-    let identity_pem = std::fs::read(config.mcp_management_mtls_client_identity_path.as_path())
-        .map_err(|err| {
-            format!(
-                "read MCP Management mTLS client identity {} failed: {err}",
-                config.mcp_management_mtls_client_identity_path.display()
-            )
-        })?;
-    let ca = reqwest::Certificate::from_pem(ca_pem.as_slice())
-        .map_err(|err| format!("parse MCP Management mTLS CA certificate failed: {err}"))?;
-    let identity = reqwest::Identity::from_pem(identity_pem.as_slice())
-        .map_err(|err| format!("parse MCP Management mTLS client identity failed: {err}"))?;
-    reqwest::Client::builder()
-        .use_rustls_tls()
-        .https_only(true)
-        .timeout(config.user_service_request_timeout)
-        .redirect(reqwest::redirect::Policy::none())
-        .add_root_certificate(ca)
-        .identity(identity)
-        .build()
-        .map_err(|err| format!("build MCP Management mTLS client failed: {err}"))
 }
 
 fn build_memory_engine_mtls_client(config: &AppConfig) -> Result<reqwest::Client, String> {

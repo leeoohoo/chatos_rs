@@ -23,11 +23,6 @@ pub const CONFIG_CENTER_CALLER_BOOTSTRAP_SECRETS: &[(&str, &str, &str)] = &[
         "change_me_config_center_local_connector_signing_secret",
     ),
     (
-        "mcp-management-service",
-        "CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET",
-        "change_me_config_center_mcp_management_signing_secret",
-    ),
-    (
         "memory-engine",
         "CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET",
         "change_me_config_center_memory_engine_signing_secret",
@@ -64,8 +59,6 @@ pub struct AppConfig {
     pub mtls_server_cert_path: PathBuf,
     pub mtls_server_key_path: PathBuf,
     pub mtls_client_ca_cert_path: PathBuf,
-    pub mcp_management_mtls_ca_cert_path: PathBuf,
-    pub mcp_management_mtls_client_identity_path: PathBuf,
     pub memory_engine_mtls_ca_cert_path: PathBuf,
     pub memory_engine_mtls_client_identity_path: PathBuf,
     pub cors_origins: Vec<String>,
@@ -130,12 +123,6 @@ impl AppConfig {
             mtls_server_cert_path: required_path_env("CONFIG_CENTER_MTLS_SERVER_CERT_PATH")?,
             mtls_server_key_path: required_path_env("CONFIG_CENTER_MTLS_SERVER_KEY_PATH")?,
             mtls_client_ca_cert_path: required_path_env("CONFIG_CENTER_MTLS_CLIENT_CA_CERT_PATH")?,
-            mcp_management_mtls_ca_cert_path: required_path_env(
-                "MCP_MANAGEMENT_MTLS_CA_CERT_PATH",
-            )?,
-            mcp_management_mtls_client_identity_path: required_path_env(
-                "MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH",
-            )?,
             memory_engine_mtls_ca_cert_path: required_path_env("MEMORY_ENGINE_MTLS_CA_CERT_PATH")?,
             memory_engine_mtls_client_identity_path: required_path_env(
                 "MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH",

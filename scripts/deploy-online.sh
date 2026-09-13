@@ -20,7 +20,6 @@ BACKEND_SERVICES=(
   memory-engine-backend
   plugin-management-backend
   local-connector-service-backend
-  mcp-management-service-backend
   chatos-backend
   official-website-backend
 )

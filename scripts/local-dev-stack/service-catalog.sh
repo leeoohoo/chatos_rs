@@ -9,7 +9,6 @@ ALL_DOCKER_APP_SERVICES=(
   memory-engine-worker
   plugin-management-backend
   local-connector-service-backend
-  mcp-management-service-backend
   chatos-backend
   official-website-backend
   admin-console-frontend
@@ -35,9 +34,6 @@ stack_service_definition() {
       ;;
     local-connector-service-backend)
       printf '%s\n' "local-connector-service-backend|local-connector-service|local_connector_service/backend/Cargo.toml|/api/health|39230|local_connector_service_backend|-"
-      ;;
-    mcp-management-service-backend)
-      printf '%s\n' "mcp-management-service-backend|mcp-management-service|mcp_management_service/backend/Cargo.toml|/health|39280|mcp_management_service_backend|-"
       ;;
     chatos-backend)
       printf '%s\n' "chatos-backend|chatos-backend|chatos/backend/Cargo.toml|/health|3997|chat_app_server_rs|-"

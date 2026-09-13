@@ -1,7 +1,6 @@
 pub const CHATOS_NODE_ENV_CONFIG_KEY: &str = "chatos.runtime.node_env";
 pub const CHATOS_HOST_CONFIG_KEY: &str = "chatos.runtime.host";
 pub const CHATOS_BACKEND_PORT_CONFIG_KEY: &str = "chatos.runtime.port";
-pub const CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY: &str = "chatos.runtime.internal_mtls_port";
 pub const CHATOS_DATABASE_URL_CONFIG_KEY: &str = "chatos.runtime.database_url";
 pub const CHATOS_MONGODB_DATABASE_CONFIG_KEY: &str = "chatos.runtime.mongodb_database";
 pub const CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY: &str =
@@ -15,8 +14,6 @@ pub const CHATOS_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "chatos.security.user_service_internal_api_secret";
 pub const CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "chatos.downstream.user_service_request_timeout_ms";
-pub const CHATOS_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "chatos.downstream.mcp_management_internal_api_secret";
 pub const CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "chatos.downstream.plugin_management_internal_api_secret";
 pub const CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY: &str =

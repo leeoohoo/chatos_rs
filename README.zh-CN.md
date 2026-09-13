@@ -90,7 +90,6 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | `clients/windows` | .NET 8 / WinUI 3 原生客户端、Windows Local Connector、Network Guard 与安装器。 |
 | `chatos/backend` | ChatOS 主 API 与对话编排服务。 |
 | `memory_engine/backend` | 会话摘要与分层项目/主题记忆。 |
-| `mcp_management_service/backend` | MCP 能力物化、路由与运行会话。 |
 | `plugin_management_service/backend` | 插件目录、版本、安装包与运行能力元数据。 |
 | `local_connector_service/backend` | 原生 Local Connector 的云端路由与协调。 |
 | `user_service/backend` | 账号、认证、模型供应商与用户设置。 |

@@ -607,7 +607,7 @@ async fn critical_platform_pressure_pauses_only_new_terminal_sessions() {
         Err(error) => error,
     };
     assert!(error.contains("platform pressure is critical"));
-    assert!(relay.new_terminal_sessions_paused().await);
+    assert!(relay.stats().await.new_terminal_sessions_paused);
 
     relay.set_platform_pressure_level(PlatformPressureLevel::Elevated);
     relay

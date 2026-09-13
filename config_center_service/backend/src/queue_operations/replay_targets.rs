@@ -2,8 +2,6 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::catalog::{
-    CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY,
-    CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
     CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY,
     MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -28,13 +26,6 @@ struct PluginManagementReplayResponse {
     marketplace_id: String,
     version: i64,
     event_enqueued: bool,
-    dead_letter_archived: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct McpManagementArchiveResponse {
-    operation_id: String,
-    invocation_id: String,
     dead_letter_archived: bool,
 }
 
@@ -217,82 +208,5 @@ pub(super) async fn replay_plugin_management(
         event_type: None,
         event_enqueued: true,
         dead_letter_archived: plugin_replay.dead_letter_archived,
-    })
-}
-
-pub(super) async fn archive_mcp_management(
-    state: &AppState,
-    values: &BTreeMap<String, Value>,
-    operation_id: &str,
-    invocation_id: &str,
-    reason: &str,
-) -> Result<QueueReplayResponse, String> {
-    let base_url = required_text(
-        values,
-        CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY,
-    )?;
-    if !base_url.trim().starts_with("https://") {
-        return Err(
-            "Configuration Center MCP Management Base URL must use https:// for mTLS".to_string(),
-        );
-    }
-    let secret = required_text(
-        values,
-        CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-    )?;
-    let token = chatos_service_runtime::issue_internal_service_token_with_trace_id(
-        secret.as_str(),
-        "configuration-center",
-        "mcp-management-service",
-        "queue.dead_letter.archive",
-        60,
-        operation_id,
-    )
-    .map_err(|err| format!("issue MCP Management archive token failed: {err}"))?;
-    let response = state
-        .mcp_management_http_client()
-        .post(format!(
-            "{}/api/internal/queue-operations/async-tool/archive",
-            base_url.trim_end_matches('/')
-        ))
-        .header("x-mcp-management-caller-service", "configuration-center")
-        .header("x-mcp-management-internal-token", token)
-        .json(&json!({
-            "operation_id": operation_id,
-            "invocation_id": invocation_id,
-            "reason": reason,
-        }))
-        .send()
-        .await
-        .map_err(|err| format!("MCP Management archive request failed: {err}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "MCP Management rejected dead-letter archival with {status}: {}",
-            detail.chars().take(500).collect::<String>()
-        ));
-    }
-    let archive = response
-        .json::<McpManagementArchiveResponse>()
-        .await
-        .map_err(|err| format!("decode MCP Management archive response failed: {err}"))?;
-    if archive.operation_id != operation_id
-        || archive.invocation_id != invocation_id
-        || !archive.dead_letter_archived
-    {
-        return Err("MCP Management archive response identity mismatch".to_string());
-    }
-    Ok(QueueReplayResponse {
-        operation_id: operation_id.to_string(),
-        service: "mcp-management".to_string(),
-        stream: "async_tool".to_string(),
-        item_id: invocation_id.to_string(),
-        tenant_id: None,
-        source_id: None,
-        version: None,
-        event_type: None,
-        event_enqueued: false,
-        dead_letter_archived: true,
     })
 }

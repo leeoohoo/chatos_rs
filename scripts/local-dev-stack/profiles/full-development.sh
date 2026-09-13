@@ -11,7 +11,6 @@ BACKEND_SERVICE_NAMES=(
   memory-engine-worker
   plugin-management-backend
   local-connector-service-backend
-  mcp-management-service-backend
   chatos-backend
   official-website-backend
 )
@@ -35,7 +34,6 @@ Grafana:                  http://127.0.0.1:${GRAFANA_PORT:-3001}
 Main backend:             http://localhost:3997
 Harness:                  http://localhost:3000
 Local Connector Service:  http://localhost:39230
-MCP Management Service:   http://localhost:39280
 
 Status:  $STACK_COMMAND status
 Logs:    $STACK_COMMAND logs <service-name>

@@ -414,25 +414,6 @@ routes:
       nodes:
         "plugin-management-backend:39260": 1
 
-  - id: mcp-protocol-api
-    priority: 560
-    uri: /api/mcp
-    plugins:
-      request-id: *request_id
-      cors: *api_cors
-      client-control: *api_body_limit
-      limit-req: *api_ip_rate_limit
-      proxy-rewrite:
-        uri: /mcp
-    upstream:
-      type: roundrobin
-      timeout:
-        connect: 5
-        send: 600
-        read: 3600
-      nodes:
-        "mcp-management-service-backend:39280": 1
-
   - id: local-connector-api
     priority: 520
     uri: /api/local/*

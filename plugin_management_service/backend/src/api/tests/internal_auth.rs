@@ -69,7 +69,7 @@ async fn internal_capability_resolver_requires_secret() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("mcp-management-service"),
+        HeaderValue::from_static("memory-engine"),
     );
 
     let err = resolve_agent_capabilities_internal(
@@ -92,7 +92,7 @@ async fn internal_capability_resolver_rejects_wrong_signed_token() {
     let state = test_state_with_secret(Some("internal-secret")).await;
     let token = chatos_service_runtime::issue_internal_service_token(
         "wrong-secret",
-        "mcp-management-service",
+        "memory-engine",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -101,7 +101,7 @@ async fn internal_capability_resolver_rejects_wrong_signed_token() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("mcp-management-service"),
+        HeaderValue::from_static("memory-engine"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
@@ -124,8 +124,8 @@ async fn internal_capability_resolver_rejects_wrong_signed_token() {
 async fn internal_secret_is_bound_to_declared_caller_service() {
     let mut state = test_state_with_secret(Some("legacy-secret")).await;
     state.config.internal_api_secrets.insert(
-        "mcp-management-service".to_string(),
-        "mcp-management-secret".to_string(),
+        "memory-engine".to_string(),
+        "memory-engine-secret".to_string(),
     );
     state.config.internal_api_secrets.insert(
         "chatos-backend".to_string(),
@@ -134,11 +134,11 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("mcp-management-service"),
+        HeaderValue::from_static("memory-engine"),
     );
     let chatos_token = chatos_service_runtime::issue_internal_service_token(
         "chatos-backend-secret",
-        "mcp-management-service",
+        "memory-engine",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -152,15 +152,15 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
     let err = require_internal_api_secret(
         &state,
         &headers,
-        "mcp-management-service",
+        "memory-engine",
         CAPABILITIES_RESOLVE_SCOPE,
     )
-    .expect_err("another service secret must not authorize MCP Management");
+    .expect_err("another service secret must not authorize Memory Engine");
     assert_eq!(err.status, StatusCode::UNAUTHORIZED);
 
     let caller_token = chatos_service_runtime::issue_internal_service_token(
-        "mcp-management-secret",
-        "mcp-management-service",
+        "memory-engine-secret",
+        "memory-engine",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -173,7 +173,7 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
     require_internal_api_secret(
         &state,
         &headers,
-        "mcp-management-service",
+        "memory-engine",
         CAPABILITIES_RESOLVE_SCOPE,
     )
     .expect("matching caller secret should authorize");
@@ -185,7 +185,7 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
     state.config.require_signed_internal_requests = true;
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
-        "mcp-management-service",
+        "memory-engine",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -194,7 +194,7 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("mcp-management-service"),
+        HeaderValue::from_static("memory-engine"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
@@ -204,17 +204,17 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
     let identity = require_internal_api_secret(
         &state,
         &headers,
-        "mcp-management-service",
+        "memory-engine",
         CAPABILITIES_RESOLVE_SCOPE,
     )
     .expect("matching signed token should authorize");
-    assert_eq!(identity.caller_service, "mcp-management-service");
+    assert_eq!(identity.caller_service, "memory-engine");
     assert_eq!(identity.scope, CAPABILITIES_RESOLVE_SCOPE);
     uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("signed trace id");
     let err = require_internal_api_secret(
         &state,
         &headers,
-        "mcp-management-service",
+        "memory-engine",
         PLUGIN_INSTALL_MANAGE_SCOPE,
     )
     .expect_err("scope mismatch must be rejected");
@@ -228,7 +228,7 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
     let err = require_internal_api_secret(
         &state,
         &headers,
-        "mcp-management-service",
+        "memory-engine",
         CAPABILITIES_RESOLVE_SCOPE,
     )
     .expect_err("production-style config must reject legacy-only auth");
@@ -244,7 +244,7 @@ async fn system_stats_accepts_valid_scoped_signed_token() {
     state.config.require_signed_internal_requests = true;
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
-        "mcp-management-service",
+        "memory-engine",
         INTERNAL_TOKEN_AUDIENCE,
         SYSTEM_STATS_READ_SCOPE,
         60,
@@ -253,7 +253,7 @@ async fn system_stats_accepts_valid_scoped_signed_token() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("mcp-management-service"),
+        HeaderValue::from_static("memory-engine"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
@@ -306,7 +306,7 @@ async fn system_stats_rejects_token_with_wrong_scope() {
     state.config.require_signed_internal_requests = true;
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
-        "mcp-management-service",
+        "memory-engine",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -315,7 +315,7 @@ async fn system_stats_rejects_token_with_wrong_scope() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("mcp-management-service"),
+        HeaderValue::from_static("memory-engine"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
@@ -394,7 +394,7 @@ async fn system_stats_redacts_rabbitmq_inspection_failures() {
     .expect("create invalid RabbitMQ queue inspector");
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
-        "mcp-management-service",
+        "memory-engine",
         INTERNAL_TOKEN_AUDIENCE,
         SYSTEM_STATS_READ_SCOPE,
         60,
@@ -403,7 +403,7 @@ async fn system_stats_redacts_rabbitmq_inspection_failures() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("mcp-management-service"),
+        HeaderValue::from_static("memory-engine"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
@@ -512,7 +512,7 @@ fn runtime_request(owner_user_id: &str) -> RuntimeCapabilitiesRequest {
 fn internal_headers() -> HeaderMap {
     let token = chatos_service_runtime::issue_internal_service_token(
         "internal-secret",
-        "mcp-management-service",
+        "memory-engine",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -525,7 +525,7 @@ fn internal_headers() -> HeaderMap {
     );
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("mcp-management-service"),
+        HeaderValue::from_static("memory-engine"),
     );
     headers
 }

@@ -35,10 +35,6 @@ scrape_configs:
     static_configs:
       - targets: ["host.docker.internal:3997"]
 
-  - job_name: mcp-management-service
-    static_configs:
-      - targets: ["host.docker.internal:39280"]
-
   - job_name: memory-engine
     static_configs:
       - targets: ["host.docker.internal:7081"]

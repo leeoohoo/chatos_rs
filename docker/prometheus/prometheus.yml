@@ -35,10 +35,6 @@ scrape_configs:
     static_configs:
       - targets: ["chatos-backend:3997"]
 
-  - job_name: mcp-management-service
-    static_configs:
-      - targets: ["mcp-management-service-backend:39280"]
-
   - job_name: memory-engine
     static_configs:
       - targets: ["memory-engine-backend:7081"]

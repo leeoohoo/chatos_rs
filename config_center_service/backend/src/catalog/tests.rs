@@ -17,32 +17,6 @@ fn catalog_does_not_reintroduce_retired_configuration() {
 }
 
 #[test]
-fn catalog_exposes_separate_mcp_management_timeout_profiles() {
-    let definitions = builtin_definitions();
-    let control = definitions
-        .iter()
-        .find(|definition| definition.key == SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY)
-        .expect("MCP Management control request timeout definition");
-    let runtime_session = definitions
-        .iter()
-        .find(|definition| {
-            definition.key == SHARED_MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS_CONFIG_KEY
-        })
-        .expect("MCP Management runtime session request timeout definition");
-
-    assert_eq!(control.default_value, json!(5_000));
-    assert_eq!(
-        control.env_aliases,
-        vec!["MCP_MANAGEMENT_REQUEST_TIMEOUT_MS"]
-    );
-    assert_eq!(runtime_session.default_value, json!(315_000));
-    assert_eq!(
-        runtime_session.env_aliases,
-        vec!["MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS"]
-    );
-}
-
-#[test]
 fn catalog_exposes_authoritative_pressure_controls() {
     let definitions = builtin_definitions();
     let platform = definitions
@@ -88,12 +62,6 @@ fn catalog_exposes_chatos_runtime_routes_via_env_projection() {
             CHATOS_BACKEND_PORT_CONFIG_KEY,
             "chatos-backend",
             "BACKEND_PORT",
-            "integer",
-        ),
-        (
-            CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY,
-            "chatos-backend",
-            "CHATOS_INTERNAL_MTLS_PORT",
             "integer",
         ),
         (
@@ -379,31 +347,23 @@ fn catalog_exposes_local_connector_remote_control_trust_as_managed_config_only()
         vec!["LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS".to_string()]
     );
 
-    for (key, env_alias, expected_default) in [
-        (
-            LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
-            "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-            json!("change_me_chatos_local_connector_secret"),
-        ),
-        (
-            LOCAL_CONNECTOR_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-            "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-            json!("change_me_mcp_management_local_connector_secret"),
-        ),
-    ] {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing definition for {key}"));
-        assert_eq!(definition.scope, "service");
-        assert_eq!(
-            definition.service_name.as_deref(),
-            Some("local-connector-service")
-        );
-        assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
-        assert_eq!(definition.default_value, expected_default);
-        assert_eq!(definition.sensitivity, "secret");
-    }
+    let (key, env_alias, expected_default) = (
+        LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
+        "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+        json!("change_me_chatos_local_connector_secret"),
+    );
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.key == key)
+        .unwrap_or_else(|| panic!("missing definition for {key}"));
+    assert_eq!(definition.scope, "service");
+    assert_eq!(
+        definition.service_name.as_deref(),
+        Some("local-connector-service")
+    );
+    assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
+    assert_eq!(definition.default_value, expected_default);
+    assert_eq!(definition.sensitivity, "secret");
 
     for key in [
         LOCAL_CONNECTOR_RELAY_SIGNING_KEY_PATH_CONFIG_KEY,
@@ -513,11 +473,6 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
             "duration_ms",
         ),
         (
-            LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-            "LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS",
-            "duration_ms",
-        ),
-        (
             LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
             "LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS",
             "integer",
@@ -587,21 +542,6 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
             "LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID",
             "string",
         ),
-        (
-            LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
-            "LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS",
-            "integer",
-        ),
-        (
-            LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY,
-            "LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH",
-            "string",
-        ),
-        (
-            LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY,
-            "LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID",
-            "string",
-        ),
     ] {
         let definition = definitions
             .iter()
@@ -631,175 +571,6 @@ fn local_connector_valkey_url_is_an_authenticated_secret() {
         definition.default_value,
         json!("redis://:change_me_valkey_password@127.0.0.1:6379/0")
     );
-}
-
-#[test]
-fn catalog_exposes_mcp_management_async_dispatch_controls() {
-    let definitions = builtin_definitions();
-    for key in [
-        MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_WORKER_CONCURRENCY_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_EXCHANGE_CONFIG_KEY,
-        MCP_MANAGEMENT_INVOCATION_CANCELLATION_EXCHANGE_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_RETRY_DELAY_MS_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY,
-        MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY,
-    ] {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing definition for {key}"));
-        assert_eq!(definition.scope, "service");
-        assert_eq!(
-            definition.service_name.as_deref(),
-            Some("mcp-management-service")
-        );
-        assert!(
-            !definition.env_aliases.is_empty(),
-            "{key} must project into managed env aliases for bootstrap loading"
-        );
-    }
-
-    let rabbitmq_url = definitions
-        .iter()
-        .find(|definition| definition.key == MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY)
-        .expect("mcp management rabbitmq url definition");
-    assert_eq!(
-        rabbitmq_url.default_value,
-        json!(DEFAULT_LOCAL_RABBITMQ_URL)
-    );
-    let queue_max_length = definitions
-        .iter()
-        .find(|definition| definition.key == MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_LENGTH_CONFIG_KEY)
-        .expect("mcp management queue max length definition");
-    assert_eq!(queue_max_length.default_value, json!(10_000));
-    let queue_max_bytes = definitions
-        .iter()
-        .find(|definition| definition.key == MCP_MANAGEMENT_ASYNC_TOOL_QUEUE_MAX_BYTES_CONFIG_KEY)
-        .expect("mcp management queue max bytes definition");
-    assert_eq!(queue_max_bytes.default_value, json!(256_i64 * 1024 * 1024));
-}
-
-#[test]
-fn catalog_exposes_mcp_management_pressure_controls_without_env_aliases() {
-    let definitions = builtin_definitions();
-    for (key, expected_default) in [
-        (
-            MCP_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_PERCENT_CONFIG_KEY,
-            json!(70),
-        ),
-        (
-            MCP_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_PERCENT_CONFIG_KEY,
-            json!(90),
-        ),
-        (
-            MCP_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
-            json!(5_000),
-        ),
-    ] {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing MCP pressure definition for {key}"));
-        assert_eq!(definition.scope, "service");
-        assert_eq!(
-            definition.service_name.as_deref(),
-            Some("mcp-management-service")
-        );
-        assert_eq!(definition.reload_mode, "hot_reload");
-        assert_eq!(definition.default_value, expected_default);
-        assert!(definition.env_aliases.is_empty());
-    }
-}
-
-#[test]
-fn catalog_exposes_mcp_runtime_session_cache_limits_without_env_overrides() {
-    let definitions = builtin_definitions();
-    for (key, expected_default) in [
-        (
-            MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY,
-            json!(2_048),
-        ),
-        (
-            MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY,
-            json!(32 * 1024 * 1024),
-        ),
-    ] {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing definition for {key}"));
-        assert_eq!(
-            definition.service_name.as_deref(),
-            Some("mcp-management-service")
-        );
-        assert_eq!(definition.value_type, "integer");
-        assert_eq!(definition.default_value, expected_default);
-        assert_eq!(definition.reload_mode, "restart_required");
-        assert!(
-            definition.env_aliases.is_empty(),
-            "{key} must be loaded directly from configuration center"
-        );
-    }
-}
-
-#[test]
-fn catalog_exposes_atomic_mcp_invocation_quotas_without_env_overrides() {
-    let definitions = builtin_definitions();
-    for (key, expected_type, expected_default) in [
-        (
-            MCP_MANAGEMENT_INVOCATION_QUOTA_VALKEY_URL_CONFIG_KEY,
-            "string",
-            json!("redis://:change_me_valkey_password@127.0.0.1:6379/0"),
-        ),
-        (
-            MCP_MANAGEMENT_INVOCATION_QUOTA_KEY_PREFIX_CONFIG_KEY,
-            "string",
-            json!("chatos:mcp-management:invocation-quota"),
-        ),
-        (
-            MCP_MANAGEMENT_INVOCATION_TENANT_ACTIVE_LIMIT_CONFIG_KEY,
-            "integer",
-            json!(2_000),
-        ),
-        (
-            MCP_MANAGEMENT_INVOCATION_USER_ACTIVE_LIMIT_CONFIG_KEY,
-            "integer",
-            json!(200),
-        ),
-        (
-            MCP_MANAGEMENT_INVOCATION_PROJECT_ACTIVE_LIMIT_CONFIG_KEY,
-            "integer",
-            json!(100),
-        ),
-        (
-            MCP_MANAGEMENT_INVOCATION_DEVICE_ACTIVE_LIMIT_CONFIG_KEY,
-            "integer",
-            json!(50),
-        ),
-    ] {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing definition for {key}"));
-        assert_eq!(
-            definition.service_name.as_deref(),
-            Some("mcp-management-service")
-        );
-        assert_eq!(definition.value_type, expected_type);
-        assert_eq!(definition.default_value, expected_default);
-        assert_eq!(definition.reload_mode, "restart_required");
-        assert!(
-            definition.env_aliases.is_empty(),
-            "{key} must be loaded directly from configuration center"
-        );
-    }
 }
 
 #[test]
@@ -846,30 +617,6 @@ fn catalog_exposes_configuration_center_plugin_management_route() {
 }
 
 #[test]
-fn catalog_exposes_configuration_center_mcp_management_route() {
-    let definitions = builtin_definitions();
-    let definition = definitions
-        .iter()
-        .find(|definition| {
-            definition.key == CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY
-        })
-        .expect("Configuration Center MCP Management route definition");
-    assert_eq!(
-        definition.service_name.as_deref(),
-        Some("configuration-center")
-    );
-    assert_eq!(
-        definition.default_value,
-        json!("https://mcp-management-service-backend:39282")
-    );
-    assert_eq!(definition.sensitivity, "public");
-    assert_eq!(
-        definition.env_aliases,
-        vec!["CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL".to_string()]
-    );
-}
-
-#[test]
 fn catalog_exposes_runtime_secrets_for_active_services() {
     let definitions = builtin_definitions();
     for (key, service_name, env_alias, expected_default) in [
@@ -878,12 +625,6 @@ fn catalog_exposes_runtime_secrets_for_active_services() {
             "chatos-backend",
             "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
             json!("change_me_chatos_user_service_secret"),
-        ),
-        (
-            CHATOS_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-            "chatos-backend",
-            "MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
-            json!("change_me_mcp_management_chatos_secret"),
         ),
         (
             CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -902,12 +643,6 @@ fn catalog_exposes_runtime_secrets_for_active_services() {
             "plugin-management-service",
             "PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET",
             json!("change_me_plugin_management_memory_engine_secret"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-            "plugin-management-service",
-            "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
-            json!("change_me_plugin_management_mcp_management_secret"),
         ),
         (
             USER_SERVICE_JWT_SECRET_CONFIG_KEY,

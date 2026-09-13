@@ -11,7 +11,6 @@ members = [
   "crates/chatos_sandbox_contract",
   "crates/memory_engine_sdk",
   "crates/chatos_mcp_runtime",
-  "crates/chatos_mcp_management_sdk",
   "crates/chatos_mcp_service",
   "crates/chatos_service_runtime",
   "crates/chatos_terminal_runtime",
@@ -30,7 +29,6 @@ members = [
   "crates/chatos_queue_observability",
   "config_center_service/backend",
   "local_connector_service/backend",
-  "mcp_management_service/backend",
   "plugin_management_service/backend",
   "official_website_service/backend",
 ]

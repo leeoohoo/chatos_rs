@@ -20,7 +20,6 @@ LOCAL_BUILD_SERVICES=(
   memory-engine-backend
   plugin-management-backend
   local-connector-service-backend
-  mcp-management-service-backend
   chatos-backend
   official-website-backend
   admin-console-frontend
@@ -270,7 +269,6 @@ RABBITMQ_DEFAULT_PASS|change_me_rabbitmq_password
 VALKEY_PASSWORD|change_me_valkey_password
 CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET|change_me_config_center_chatos_backend_signing_secret
 CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_local_connector_signing_secret
-CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_mcp_management_signing_secret
 CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET|change_me_config_center_memory_engine_signing_secret
 CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET|change_me_config_center_official_website_signing_secret
 CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_plugin_management_signing_secret
@@ -298,7 +296,6 @@ ensure_config_center_mtls_material() {
     ca.crt server.crt server.key \
     chatos-backend.identity.pem \
     local-connector-service.identity.pem \
-    mcp-management-service.identity.pem \
     memory-engine.identity.pem \
     official-website.identity.pem \
     plugin-management-service.identity.pem \
@@ -326,7 +323,6 @@ ensure_config_center_mtls_material() {
   for required_file in \
     chatos-backend.identity.pem \
     local-connector-service.identity.pem \
-    mcp-management-service.identity.pem \
     memory-engine.identity.pem \
     official-website.identity.pem \
     plugin-management-service.identity.pem \
@@ -339,111 +335,6 @@ ensure_config_center_mtls_material() {
     fi
     if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
       echo "[ERROR] Configuration Center client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-ensure_mcp_management_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value MCP_MANAGEMENT_MTLS_DIR ./secrets/mcp-management-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    chatos.identity.pem \
-    configuration-center.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-mcp-management-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] MCP Management mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] MCP Management server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  for required_file in \
-    chatos.identity.pem \
-    configuration-center.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] MCP Management client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] MCP Management client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-ensure_chatos_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value CHATOS_MTLS_DIR ./secrets/chatos-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    mcp-management-service.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-chatos-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] ChatOS mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] ChatOS server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  if ! openssl pkey -in "$resolved_dir/server.key" -noout >/dev/null 2>&1; then
-    echo "[ERROR] ChatOS server key is unreadable" >&2
-    return 1
-  fi
-  for required_file in mcp-management-service.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] ChatOS client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] ChatOS client identity has no readable private key: $required_file" >&2
       return 1
     fi
   done
@@ -462,8 +353,7 @@ ensure_local_connector_mtls_material() {
 
   for required_file in \
     ca.crt server.crt server.key \
-    chatos-backend.identity.pem \
-    mcp-management-service.identity.pem
+    chatos-backend.identity.pem
   do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
       failures=1
@@ -490,8 +380,7 @@ ensure_local_connector_mtls_material() {
     return 1
   fi
   for required_file in \
-    chatos-backend.identity.pem \
-    mcp-management-service.identity.pem
+    chatos-backend.identity.pem
   do
     if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
       "$resolved_dir/$required_file" >/dev/null; then
@@ -564,8 +453,6 @@ ensure_user_service_mtls_material() {
 validate_runtime_material() {
   validate_production_secrets
   ensure_config_center_mtls_material
-  ensure_mcp_management_mtls_material
-  ensure_chatos_mtls_material
   ensure_local_connector_mtls_material
   ensure_user_service_mtls_material
   ensure_plugin_management_mtls_material
@@ -587,8 +474,7 @@ ensure_plugin_management_mtls_material() {
     ca.crt server.crt server.key \
     chatos-backend.identity.pem \
     local-connector-service.identity.pem \
-    memory-engine.identity.pem \
-    mcp-management-service.identity.pem
+    memory-engine.identity.pem
   do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
       failures=1
@@ -617,8 +503,7 @@ ensure_plugin_management_mtls_material() {
   for required_file in \
     chatos-backend.identity.pem \
     local-connector-service.identity.pem \
-    memory-engine.identity.pem \
-    mcp-management-service.identity.pem
+    memory-engine.identity.pem
   do
     if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
       "$resolved_dir/$required_file" >/dev/null; then
@@ -687,7 +572,7 @@ ensure_memory_engine_mtls_material() {
 }
 
 print_urls() {
-  local main_backend_port local_connector_service_port mcp_management_port gateway_port
+  local main_backend_port local_connector_service_port gateway_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
   consul_port="$(env_value CONSUL_HTTP_PORT 8500)"
@@ -695,7 +580,6 @@ print_urls() {
   harness_ssh_host="$(env_value HARNESS_SSH_PUBLIC_HOST "$(env_value HARNESS_SSH_HOST localhost)")"
   harness_ssh_port="$(env_value HARNESS_SSH_PORT 3022)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
-  mcp_management_port="$(env_value MCP_MANAGEMENT_PORT 39280)"
   gateway_port="$(env_value APISIX_GATEWAY_PORT 9080)"
   cat <<EOF
 
@@ -709,7 +593,6 @@ Consul:                   http://localhost:${consul_port}
 Harness:                  http://localhost:${harness_port}
 Harness SSH:              ssh://git@${harness_ssh_host}:${harness_ssh_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
-MCP Management Service:   http://localhost:${mcp_management_port}
 
 Logs:    $0 logs
 Status:  $0 ps

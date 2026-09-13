@@ -101,6 +101,8 @@ for retired_path in [
     "mcp/provider_skills/task-runner-service.md",
     ".harness/pipelines/images/image-task-runner-backend.yml",
     "official_website_service/frontend/public/showcase/task-runner.png",
+    "mcp_management_service/backend",
+    "crates/chatos_mcp_management_sdk",
 ]:
     require_absent(retired_path, "retired server execution plane must stay physically deleted")
 
@@ -204,11 +206,6 @@ require(
     "the Windows fail-closed approval fallback",
 )
 
-require(
-    "mcp_management_service/backend/src/api/runtime_sessions.rs",
-    "if !tool_plane.uses_managed_gateway()",
-    "fail-closed rejection for local-only and tool-less Agents",
-)
 production_files = rust_files(
     [
         "clients/shared/rust",

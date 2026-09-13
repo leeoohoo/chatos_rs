@@ -4,10 +4,6 @@ pub const CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
     "configuration_center.downstream.memory_engine_base_url";
 pub const CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY: &str =
     "configuration_center.downstream.plugin_management_base_url";
-pub const CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY: &str =
-    "configuration_center.downstream.mcp_management_base_url";
-pub const CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "configuration_center.downstream.mcp_management_internal_api_secret";
 pub const MEMORY_ENGINE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.security.chatos_internal_api_secret";
 pub const MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =

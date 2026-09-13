@@ -2,8 +2,6 @@ pub const LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "local_connector.security.require_signed_internal_requests";
 pub const LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "local_connector.security.chatos_internal_api_secret";
-pub const LOCAL_CONNECTOR_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "local_connector.security.mcp_management_internal_api_secret";
 pub const LOCAL_CONNECTOR_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "local_connector.downstream.plugin_management_internal_api_secret";
 pub const LOCAL_CONNECTOR_HOST_CONFIG_KEY: &str = "local_connector.runtime.host";
@@ -17,8 +15,6 @@ pub const LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "local_connector.downstream.user_service_request_timeout_ms";
 pub const LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "local_connector.relay.request_timeout_ms";
-pub const LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "local_connector.relay.plugin_hook_request_timeout_ms";
 pub const LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY: &str = "local_connector.public.base_url";
 pub const LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY: &str =
     "local_connector.device_connect.require_signature";
@@ -49,12 +45,6 @@ pub const LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY: &str
     "local_connector.managed_requirements.signing_key_path";
 pub const LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY: &str =
     "local_connector.managed_requirements.signing_key_id";
-pub const LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY: &str =
-    "local_connector.controlled_network.policy_ttl_seconds";
-pub const LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY: &str =
-    "local_connector.controlled_network.signing_key_path";
-pub const LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY: &str =
-    "local_connector.controlled_network.signing_key_id";
 pub const LOCAL_CONNECTOR_RELAY_SIGNING_KEY_PATH_CONFIG_KEY: &str =
     "local_connector.security.relay_signing.key_path";
 pub const LOCAL_CONNECTOR_RELAY_SIGNING_KEY_ID_CONFIG_KEY: &str =

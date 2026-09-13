@@ -271,15 +271,6 @@ impl ConnectorRelay {
             .store(level == PlatformPressureLevel::Critical, Ordering::Relaxed);
     }
 
-    pub(crate) async fn new_terminal_sessions_paused(&self) -> bool {
-        if self.platform_pressure_critical.load(Ordering::Relaxed) {
-            return true;
-        }
-        let limits = self.runtime_config().limits;
-        self.inner.lock().await.terminal_subscriptions.len()
-            >= limits.terminal_new_session_soft_limit
-    }
-
     pub(crate) fn update_runtime_config(
         &self,
         signer: Option<Arc<PlatformRelaySigner>>,

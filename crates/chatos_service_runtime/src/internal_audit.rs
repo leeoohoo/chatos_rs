@@ -79,9 +79,9 @@ mod tests {
 
     fn event() -> InternalResourceAccessAudit {
         InternalResourceAccessAudit {
-            caller_service: "task-runner".to_string(),
-            audience_service: "mcp-management-service".to_string(),
-            scope: "runtime.tools.call".to_string(),
+            caller_service: "memory-engine".to_string(),
+            audience_service: "plugin-management-service".to_string(),
+            scope: "memory.resource.read".to_string(),
             trace_id: Uuid::new_v4().to_string(),
             represented_user_id: Some("user-1".to_string()),
             tenant_id: Some("tenant-1".to_string()),

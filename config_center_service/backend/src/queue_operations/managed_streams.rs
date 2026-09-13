@@ -5,12 +5,8 @@ use serde_json::Value;
 
 use super::*;
 use crate::catalog::{
-    MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY,
-    MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
-    MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
-    MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY, MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
-    MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY, MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY,
-    MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY, MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY, MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY,
@@ -65,8 +61,6 @@ pub(super) fn resolve_managed_streams(
     values: &BTreeMap<String, Value>,
 ) -> Result<Vec<ManagedQueueStream>, String> {
     let memory_engine_url = required_text(values, MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY)?;
-    let mcp_management_url =
-        required_text(values, MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY)?;
     let plugin_management_url =
         required_text(values, PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY)?;
     Ok(vec![
@@ -96,15 +90,6 @@ pub(super) fn resolve_managed_streams(
             MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY,
             MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY,
             MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY,
-        )?,
-        managed_stream(
-            "mcp-management",
-            "async_tool",
-            mcp_management_url,
-            values,
-            MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
-            MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY,
-            MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY,
         )?,
         managed_stream(
             "plugin-management",
@@ -157,7 +142,6 @@ mod tests {
         let mut values = BTreeMap::new();
         for key in [
             MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
-            MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
             PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY,
         ] {
             values.insert(key.to_string(), Value::String("amqp://managed".to_string()));
@@ -193,18 +177,6 @@ mod tests {
                 MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY,
                 "memory.subject.dead",
             ),
-            (
-                MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
-                "mcp.main",
-            ),
-            (
-                MCP_MANAGEMENT_ASYNC_TOOL_RETRY_QUEUE_CONFIG_KEY,
-                "mcp.retry",
-            ),
-            (
-                MCP_MANAGEMENT_ASYNC_TOOL_DEAD_LETTER_QUEUE_CONFIG_KEY,
-                "mcp.dead",
-            ),
             (PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY, "plugin.main"),
             (
                 PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY,
@@ -219,9 +191,9 @@ mod tests {
         }
 
         let streams = resolve_managed_streams(&values).expect("resolve managed streams");
-        assert_eq!(streams.len(), 5);
+        assert_eq!(streams.len(), 4);
         assert_eq!(streams[0].service, "memory-engine");
-        assert_eq!(streams[4].stream, "catalog_sync");
+        assert_eq!(streams[3].stream, "catalog_sync");
 
         values.insert(
             PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),

@@ -90,7 +90,6 @@ Plugins can combine MCP servers, skills, permission declarations, managed artifa
 | `clients/windows` | .NET 8 / WinUI 3 native client, Windows Local Connector, Network Guard, and installer. |
 | `chatos/backend` | Main ChatOS API and conversation orchestration service. |
 | `memory_engine/backend` | Conversation summaries and layered project/subject memory. |
-| `mcp_management_service/backend` | MCP capability materialization, routing, and runtime sessions. |
 | `plugin_management_service/backend` | Plugin catalog, releases, packages, and runtime capability metadata. |
 | `local_connector_service/backend` | Cloud routing and coordination for native Local Connectors. |
 | `user_service/backend` | Accounts, authentication, model providers, and user settings. |

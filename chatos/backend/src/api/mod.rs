@@ -41,9 +41,7 @@ mod cors;
 pub mod fs;
 // Filesystem policy remains an internal runtime primitive. Git and filesystem
 // project operations are owned by the desktop client and Local Connector.
-mod internal_audit;
 pub mod local_connectors;
-pub mod mcp_management;
 pub mod memory_compat;
 pub mod memory_mappings;
 pub mod messages;
@@ -126,33 +124,6 @@ pub fn public_router() -> Result<Router, String> {
             REQUEST_ID_HEADER.clone(),
             MakeRequestUuid,
         )))
-}
-
-pub fn internal_router() -> Router {
-    let trace = TraceLayer::new_for_http().make_span_with(|req: &Request<Body>| {
-        info_span!(
-            "http.request",
-            otel.kind = "server",
-            otel.name = %format!("{} {}", req.method(), matched_route(req)),
-            http.request.method = %req.method(),
-            http.route = %matched_route(req),
-            server.address = %header_value(req, &HOST),
-            surface = "internal"
-        )
-    });
-    Router::new()
-        .merge(modules::app_api::internal_routes())
-        .fallback(fallback_404)
-        .layer(DefaultBodyLimit::max(default_request_body_limit_bytes()))
-        .layer(middleware::from_fn(log_server_error_requests))
-        .layer(middleware::from_fn(metrics::observe_internal_http))
-        .layer(middleware::from_fn(trace_context::accept_remote_parent))
-        .layer(trace)
-        .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
-        .layer(SetRequestIdLayer::new(
-            REQUEST_ID_HEADER.clone(),
-            MakeRequestUuid,
-        ))
 }
 
 async fn log_server_error_requests(request: Request<Body>, next: middleware::Next) -> Response {
@@ -348,14 +319,11 @@ fn is_websocket_upgrade(req: &Request<Body>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        internal_router, sanitize_request_uri, websocket_auth_from_query, WebSocketQueryAuth,
-    };
+    use super::{sanitize_request_uri, websocket_auth_from_query, WebSocketQueryAuth};
     use crate::core::auth::{AuthHeaderError, AuthUser};
     use crate::core::websocket_ticket::issue_websocket_ticket;
     use axum::body::Body;
     use axum::http::{header::UPGRADE, Request, Uri};
-    use tower::ServiceExt;
 
     fn websocket_request(uri: &str) -> Request<Body> {
         Request::builder()
@@ -404,18 +372,5 @@ mod tests {
         let request = websocket_request("/api/realtime/ws?access_token=legacy_token");
         let error = websocket_auth_from_query(&request).expect_err("legacy query token rejected");
         assert_eq!(error, AuthHeaderError::MissingAuthorization);
-    }
-
-    #[tokio::test]
-    async fn internal_mtls_router_does_not_expose_metrics_endpoint() {
-        let response = internal_router()
-            .oneshot(
-                Request::get("/metrics")
-                    .body(Body::empty())
-                    .expect("build metrics request"),
-            )
-            .await
-            .expect("route metrics request");
-        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
     }
 }

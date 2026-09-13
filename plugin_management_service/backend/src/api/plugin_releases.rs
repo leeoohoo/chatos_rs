@@ -61,7 +61,7 @@ pub(super) async fn publish_plugin_release_from_manifest(
         ));
     }
     require_approved_publisher_release_key(
-        &state,
+        state,
         &marketplace,
         &plugin.publisher,
         payload.signature.key_id.as_str(),
@@ -85,7 +85,7 @@ pub(super) async fn publish_plugin_release_from_manifest(
     )?;
     let release_channel = normalize_release_channel(payload.release_channel.as_str())?;
     validate_stable_release_progression(
-        &state,
+        state,
         &plugin,
         manifest.version.as_str(),
         &release_channel,

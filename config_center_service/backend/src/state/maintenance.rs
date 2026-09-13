@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::catalog::DEFAULT_LOCAL_RABBITMQ_URL;
 
 impl AppState {
     pub(super) async fn audit(
@@ -163,109 +162,6 @@ impl AppState {
         tracing::info!(
             retired_key_count = RETIRED_CONFIG_KEYS.len(),
             "retired configuration has been removed from configuration center"
-        );
-        Ok(())
-    }
-
-    pub(super) async fn migrate_mcp_management_runtime_config(&self) -> Result<(), String> {
-        let definitions = self.store.list_definitions().await?;
-        let defaults = mcp_management_service_default_values(&definitions);
-        if defaults.len() != MCP_MANAGEMENT_RUNTIME_CONFIG_KEYS.len() {
-            return Err(
-                "MCP Management runtime configuration definitions are incomplete".to_string(),
-            );
-        }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys = ensure_mcp_management_runtime_values(&mut release.values, &defaults);
-            let effective_values = defaults
-                .iter()
-                .map(|(key, fallback)| {
-                    (
-                        key.clone(),
-                        release
-                            .values
-                            .get(key)
-                            .cloned()
-                            .unwrap_or_else(|| fallback.clone()),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                effective_values,
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
-
-        for mut snapshot in self.store.list_all_snapshots().await? {
-            if snapshot.service_name != "mcp-management-service" {
-                continue;
-            }
-            let snapshot_defaults = values_by_release
-                .get(&(snapshot.environment.clone(), snapshot.revision))
-                .cloned()
-                .unwrap_or_else(|| defaults.clone());
-            let changed =
-                !ensure_mcp_management_runtime_values(&mut snapshot.values, &snapshot_defaults)
-                    .is_empty();
-            let previous_env = snapshot.env.clone();
-            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
-                definition.scope == "shared"
-                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
-            });
-            if changed || snapshot.env != previous_env {
-                snapshot.checksum = checksum(&json!({
-                    "values": snapshot.values,
-                    "env": snapshot.env,
-                }))?;
-                self.store.save_snapshot(&snapshot).await?;
-            }
-        }
-
-        for mut draft in self.store.list_drafts().await? {
-            if ensure_root_vhost_rabbitmq_url(
-                &mut draft.changes,
-                MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
-                defaults
-                    .get(MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY)
-                    .unwrap_or(&json!(DEFAULT_LOCAL_RABBITMQ_URL)),
-            ) | migrate_https_url_draft(
-                &mut draft.changes,
-                MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
-                defaults
-                    .get(MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY)
-                    .ok_or_else(|| {
-                        "MCP Management Plugin Management HTTPS default is missing".to_string()
-                    })?,
-            ) {
-                draft.validation_status = "pending".to_string();
-                draft.validation_errors.clear();
-                draft.updated_at = Utc::now().to_rfc3339();
-                self.store.save_draft(&draft).await?;
-            }
-        }
-
-        self.republish_active_releases_to_consul(
-            &definitions,
-            "add MCP Management runtime configuration",
-        )
-        .await?;
-
-        tracing::info!(
-            dispatch_mode_key = MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY,
-            configuration_center_secret_key =
-                MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
-            allowed_callers_key = MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY,
-            rabbitmq_url_key = MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY,
-            dispatch_queue_key = MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_QUEUE_CONFIG_KEY,
-            "MCP Management runtime configuration is present in configuration center releases and snapshots"
         );
         Ok(())
     }
@@ -529,7 +425,6 @@ impl AppState {
         for mut snapshot in self.store.list_all_snapshots().await? {
             if ![
                 "local-connector-service",
-                "mcp-management-service",
                 "plugin-management-service",
                 "memory-engine",
                 "chatos-backend",
@@ -597,7 +492,6 @@ impl AppState {
 
         tracing::info!(
             local_connector_key = LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
-            mcp_management_key = MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             plugin_management_key = PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             memory_engine_key = MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             "Internal request security configuration is present in configuration center releases and snapshots"

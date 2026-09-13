@@ -18,7 +18,6 @@ pub struct AppConfig {
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
     pub relay_request_timeout: Duration,
-    pub plugin_hook_relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
     pub internal_api_secrets: HashMap<String, String>,
     pub require_device_connect_signature: bool,
@@ -36,9 +35,6 @@ pub struct AppConfig {
     pub managed_requirements_signing_key_path: Option<PathBuf>,
     pub managed_requirements_signing_key_id: Option<String>,
     pub managed_requirements_bundle_ttl: Duration,
-    pub controlled_network_signing_key_path: Option<PathBuf>,
-    pub controlled_network_signing_key_id: Option<String>,
-    pub controlled_network_policy_ttl: Duration,
 }
 
 impl AppConfig {
@@ -58,9 +54,6 @@ impl AppConfig {
         }
         let timeout_ms = required_u64("LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
         let relay_timeout_ms = required_u64("LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS")?.max(1_000);
-        let plugin_hook_relay_timeout_ms =
-            required_u64("LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS")?
-                .clamp(30_000, 10 * 60 * 1_000);
         let signature_skew_seconds =
             required_u64("LOCAL_CONNECTOR_DEVICE_SIGNATURE_MAX_SKEW_SECONDS")?.clamp(30, 3600);
         let active_session_lease_ttl_seconds =
@@ -80,19 +73,6 @@ impl AppConfig {
         let managed_requirements_bundle_ttl_seconds =
             required_u64("LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS")?
                 .clamp(300, 7 * 24 * 60 * 60);
-        let controlled_network_policy_ttl_seconds = optional_text(
-            "LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS",
-        )
-        .map(|value| {
-            value.parse::<u64>().map_err(|err| {
-                format!(
-                    "LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS must be a valid integer: {err}"
-                )
-            })
-        })
-        .transpose()?
-        .unwrap_or(300)
-        .clamp(30, 24 * 60 * 60);
         let require_signed_internal_requests =
             required_managed_bool("LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS")?;
         ensure_signed_internal_requests_required(require_signed_internal_requests)?;
@@ -105,7 +85,6 @@ impl AppConfig {
             user_service_base_url: required_text("LOCAL_CONNECTOR_USER_SERVICE_BASE_URL")?,
             user_service_request_timeout: Duration::from_millis(timeout_ms),
             relay_request_timeout: Duration::from_millis(relay_timeout_ms),
-            plugin_hook_relay_request_timeout: Duration::from_millis(plugin_hook_relay_timeout_ms),
             public_base_url: normalized_env("LOCAL_CONNECTOR_PUBLIC_BASE_URL"),
             internal_api_secrets: caller_internal_api_secrets(),
             require_device_connect_signature: required_managed_bool(
@@ -137,19 +116,9 @@ impl AppConfig {
             managed_requirements_bundle_ttl: Duration::from_secs(
                 managed_requirements_bundle_ttl_seconds,
             ),
-            controlled_network_signing_key_path: optional_text(
-                "LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH",
-            )
-            .map(PathBuf::from),
-            controlled_network_signing_key_id: optional_text(
-                "LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID",
-            ),
-            controlled_network_policy_ttl: Duration::from_secs(
-                controlled_network_policy_ttl_seconds,
-            ),
         };
 
-        for caller in ["chatos-backend", "mcp-management-service"] {
+        for caller in ["chatos-backend"] {
             if !config.internal_api_secrets.contains_key(caller) {
                 return Err(format!(
                     "dedicated Local Connector internal secret is required for {caller}"
@@ -180,7 +149,6 @@ impl AppConfig {
                     "change_me_task_runner_internal_secret",
                     "change_me_chatos_local_connector_secret",
                     "change_me_task_runner_local_connector_secret",
-                    "change_me_mcp_management_local_connector_secret",
                 ],
             )?;
         }
@@ -211,7 +179,6 @@ impl AppConfig {
             user_service_base_url: "http://127.0.0.1.invalid".to_string(),
             user_service_request_timeout: Duration::from_secs(1),
             relay_request_timeout: Duration::from_secs(2),
-            plugin_hook_relay_request_timeout: Duration::from_secs(2),
             public_base_url: None,
             internal_api_secrets,
             require_device_connect_signature: true,
@@ -229,24 +196,15 @@ impl AppConfig {
             managed_requirements_signing_key_path: None,
             managed_requirements_signing_key_id: None,
             managed_requirements_bundle_ttl: Duration::from_secs(3600),
-            controlled_network_signing_key_path: None,
-            controlled_network_signing_key_id: None,
-            controlled_network_policy_ttl: Duration::from_secs(300),
         }
     }
 }
 
 fn caller_internal_api_secrets() -> HashMap<String, String> {
-    [
-        (
-            "chatos-backend",
-            "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-        ),
-        (
-            "mcp-management-service",
-            "MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-        ),
-    ]
+    [(
+        "chatos-backend",
+        "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
+    )]
     .into_iter()
     .filter_map(|(caller, env_name)| {
         normalized_env(env_name).map(|secret| (caller.to_string(), secret))

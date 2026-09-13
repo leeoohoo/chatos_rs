@@ -131,7 +131,6 @@ service_bins = {
     "memory_engine",
     "plugin_management_service_backend",
     "local_connector_service_backend",
-    "mcp_management_service_backend",
     "chat_app_server_rs",
     "official_website_service_backend",
 }
@@ -182,7 +181,6 @@ service_bins = {
     "memory_engine",
     "plugin_management_service_backend",
     "local_connector_service_backend",
-    "mcp_management_service_backend",
     "chat_app_server_rs",
     "official_website_service_backend",
 }

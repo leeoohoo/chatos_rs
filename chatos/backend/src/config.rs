@@ -13,7 +13,6 @@ pub struct Config {
     pub openai_api_key: String,
     pub openai_base_url: String,
     pub port: u16,
-    pub internal_mtls_port: u16,
     pub node_env: String,
     pub host: String,
     pub log_level: String,
@@ -43,7 +42,6 @@ pub struct Config {
     pub user_service_internal_http_client: reqwest::Client,
     pub user_service_internal_api_secret: Option<String>,
     pub user_service_request_timeout_ms: i64,
-    pub mcp_management_internal_api_secret: Option<String>,
     pub local_connector_service_base_url: String,
     pub local_connector_http_client: reqwest::Client,
     pub local_connector_long_running_http_client: reqwest::Client,
@@ -87,10 +85,6 @@ impl Config {
         let openai_base_url = require_config_center_value("OPENAI_BASE_URL")?;
 
         let port = require_config_center_u16("BACKEND_PORT")?;
-        let internal_mtls_port = require_config_center_u16("CHATOS_INTERNAL_MTLS_PORT")?;
-        if internal_mtls_port == port {
-            return Err("CHATOS_INTERNAL_MTLS_PORT must differ from BACKEND_PORT".to_string());
-        }
         let host = require_config_center_value("HOST")?;
 
         let log_level = require_config_center_value("LOG_LEVEL")?;
@@ -144,9 +138,6 @@ impl Config {
         )?;
         let user_service_internal_api_secret = Some(require_config_center_value(
             "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
-        )?);
-        let mcp_management_internal_api_secret = Some(require_config_center_value(
-            "MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
         )?);
         let local_connector_service_base_url =
             require_config_center_value("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL")?;
@@ -215,11 +206,6 @@ impl Config {
             user_service_internal_api_secret.as_deref(),
             &["change_me_chatos_user_service_secret"],
         )?;
-        validate_production_secret(
-            "MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
-            mcp_management_internal_api_secret.as_deref(),
-            &["change_me_mcp_management_chatos_secret"],
-        )?;
         validate_config(
             normalized_env,
             port,
@@ -231,7 +217,6 @@ impl Config {
             openai_api_key,
             openai_base_url,
             port,
-            internal_mtls_port,
             node_env,
             host,
             log_level,
@@ -261,7 +246,6 @@ impl Config {
             user_service_internal_http_client,
             user_service_internal_api_secret,
             user_service_request_timeout_ms,
-            mcp_management_internal_api_secret,
             local_connector_service_base_url,
             local_connector_http_client,
             local_connector_long_running_http_client,

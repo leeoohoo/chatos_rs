@@ -308,13 +308,13 @@ mod tests {
             secret,
             "chatos-backend",
             super::super::internal_auth::TOKEN_AUDIENCE,
-            "relay.mcp",
+            super::super::internal_auth::PLUGIN_UI_READ_SCOPE,
             60,
         )
         .expect("internal token");
         let app = Router::new()
             .route(
-                "/api/local-connectors/relay/device-1/mcp",
+                "/api/local-connectors/relay/device-1/plugins/ui/assets",
                 get(|| async { "ok" }),
             )
             .route_layer(middleware::from_fn_with_state(
@@ -324,7 +324,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/api/local-connectors/relay/device-1/mcp")
+                    .uri("/api/local-connectors/relay/device-1/plugins/ui/assets")
                     .header("x-local-connector-caller", "chatos-backend")
                     .header("x-local-connector-internal-token", token)
                     .body(axum::body::Body::empty())

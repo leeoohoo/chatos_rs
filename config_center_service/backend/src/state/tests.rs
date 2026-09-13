@@ -1,26 +1,20 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::releases::{overlay_pressure_state, validate_chatos_mtls_invariants};
+use super::releases::overlay_pressure_state;
 use super::support::*;
 
 use super::*;
 use crate::catalog::{
-    CHATOS_BACKEND_PORT_CONFIG_KEY, CHATOS_CORS_ORIGINS_CONFIG_KEY, CHATOS_HOST_CONFIG_KEY,
-    CHATOS_LOG_MAX_FILES_CONFIG_KEY, CHATOS_NODE_ENV_CONFIG_KEY, DEFAULT_LOCAL_RABBITMQ_URL,
-    LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
-    LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
-    LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY,
-    LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY,
+    DEFAULT_LOCAL_RABBITMQ_URL, LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY,
     LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_DEVICE_PRESENCE_TTL_SECONDS_CONFIG_KEY, LOCAL_CONNECTOR_HOST_CONFIG_KEY,
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY,
     LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY,
-    LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY,
-    LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-    LOCAL_CONNECTOR_PORT_CONFIG_KEY, LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY,
+    LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY, LOCAL_CONNECTOR_PORT_CONFIG_KEY,
+    LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY,
     LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY,
     LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY,
@@ -65,55 +59,10 @@ use crate::catalog::{
     MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_ROLLUP_CONCURRENCY_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY_CONFIG_KEY,
-    MEMORY_ENGINE_WORKER_SUMMARY_CONCURRENCY_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY, PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_MAX_TOOL_SNAPSHOT_BYTES_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY, PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-    USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY, USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
-    USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY, USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
-    USER_SERVICE_HARNESS_PROJECT_PAT_PREFIX_CONFIG_KEY,
-    USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
-    USER_SERVICE_HARNESS_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-    USER_SERVICE_HARNESS_SPACE_PREFIX_CONFIG_KEY,
-    USER_SERVICE_HARNESS_SYNTHETIC_EMAIL_DOMAIN_CONFIG_KEY, USER_SERVICE_JWT_ISSUER_CONFIG_KEY,
-    USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS_CONFIG_KEY,
-    USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY,
-    USER_SERVICE_LOGIN_MAX_FAILED_ATTEMPTS_CONFIG_KEY,
-    USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT_CONFIG_KEY,
-    USER_SERVICE_REGISTER_CODE_MAX_ATTEMPTS_CONFIG_KEY,
-    USER_SERVICE_REGISTER_CODE_RESEND_SECONDS_CONFIG_KEY,
-    USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY, USER_SERVICE_SMTP_HOST_CONFIG_KEY,
+    MEMORY_ENGINE_WORKER_SUMMARY_CONCURRENCY_CONFIG_KEY, USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
+    USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY, USER_SERVICE_SMTP_HOST_CONFIG_KEY,
     USER_SERVICE_SMTP_PASSWORD_CONFIG_KEY, USER_SERVICE_SMTP_PORT_CONFIG_KEY,
-    USER_SERVICE_SMTP_USERNAME_CONFIG_KEY, USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY,
-    USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
+    USER_SERVICE_SMTP_USERNAME_CONFIG_KEY,
 };
 
 #[test]
@@ -146,102 +95,38 @@ fn memory_engine_https_draft_migration_only_changes_explicit_http_values() {
 #[test]
 fn local_connector_internal_urls_are_forced_to_mtls_defaults() {
     let definitions = builtin_definitions();
-    let cases = [
-        (
-            CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-            chatos_service_default_values(&definitions),
-            ensure_chatos_runtime_values
-                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
-        ),
-        (
-            MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-            mcp_management_service_default_values(&definitions),
-            ensure_mcp_management_runtime_values,
-        ),
-    ];
-
-    for (key, defaults, ensure_values) in cases {
-        let mut values = BTreeMap::from([(
-            key.to_string(),
-            json!("http://local-connector-service-backend:39230"),
-        )]);
-        let changed_keys = ensure_values(&mut values, &defaults);
-        assert!(changed_keys.contains(&key.to_string()));
-        assert_eq!(values.get(key), defaults.get(key));
-        assert!(values
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(|value| value == "https://127.0.0.1:39232"));
-    }
+    let key = CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY;
+    let defaults = chatos_service_default_values(&definitions);
+    let mut values = BTreeMap::from([(
+        key.to_string(),
+        json!("http://local-connector-service-backend:39230"),
+    )]);
+    let changed_keys = ensure_chatos_runtime_values(&mut values, &defaults);
+    assert!(changed_keys.contains(&key.to_string()));
+    assert_eq!(values.get(key), defaults.get(key));
+    assert!(values
+        .get(key)
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == "https://127.0.0.1:39232"));
 }
 
 #[test]
 fn plugin_management_internal_urls_are_forced_to_https_without_inserting_draft_keys() {
     let definitions = builtin_definitions();
-    let cases = [
-        (
-            SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
-            plugin_management_service_runtime_default_values(&definitions),
-            ensure_plugin_management_runtime_values
-                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
-        ),
-        (
-            MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
-            mcp_management_service_default_values(&definitions),
-            ensure_mcp_management_runtime_values,
-        ),
-    ];
-
-    for (key, defaults, ensure_values) in cases {
-        let mut values = BTreeMap::from([(
-            key.to_string(),
-            json!("http://plugin-management-backend:39260"),
-        )]);
-        let changed_keys = ensure_values(&mut values, &defaults);
-        assert!(changed_keys.contains(&key.to_string()));
-        assert_eq!(values.get(key), defaults.get(key));
-
-        let mut draft = BTreeMap::new();
-        let fallback = defaults.get(key).expect("Plugin Management HTTPS default");
-        assert!(!migrate_https_url_draft(&mut draft, key, fallback));
-        assert!(!draft.contains_key(key));
-    }
-}
-
-#[test]
-fn mcp_management_runtime_backfill_normalizes_legacy_root_vhost_url() {
-    let definitions = builtin_definitions();
-    let defaults = mcp_management_service_default_values(&definitions);
+    let key = SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY;
+    let defaults = plugin_management_service_runtime_default_values(&definitions);
     let mut values = BTreeMap::from([(
-        MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY.to_string(),
-        json!("amqp://chatos:change_me_rabbitmq_password@127.0.0.1:5672/"),
+        key.to_string(),
+        json!("http://plugin-management-backend:39260"),
     )]);
+    let changed_keys = ensure_plugin_management_runtime_values(&mut values, &defaults);
+    assert!(changed_keys.contains(&key.to_string()));
+    assert_eq!(values.get(key), defaults.get(key));
 
-    let changed_keys = ensure_mcp_management_runtime_values(&mut values, &defaults);
-
-    assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY.to_string()));
-    assert_eq!(
-        values.get(MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY),
-        Some(&json!(DEFAULT_LOCAL_RABBITMQ_URL))
-    );
-}
-
-#[test]
-fn mcp_management_runtime_backfill_replaces_legacy_local_dispatch_mode() {
-    let definitions = builtin_definitions();
-    let defaults = mcp_management_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY.to_string(),
-        json!("local_queue"),
-    )]);
-
-    let changed_keys = ensure_mcp_management_runtime_values(&mut values, &defaults);
-
-    assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY.to_string()));
-    assert_eq!(
-        values.get(MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY),
-        Some(&json!("rabbitmq"))
-    );
+    let mut draft = BTreeMap::new();
+    let fallback = defaults.get(key).expect("Plugin Management HTTPS default");
+    assert!(!migrate_https_url_draft(&mut draft, key, fallback));
+    assert!(!draft.contains_key(key));
 }
 
 #[test]
@@ -272,12 +157,6 @@ fn local_connector_runtime_backfill_adds_all_service_defaults() {
         .contains(&LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY.to_string()));
-    assert!(changed_keys
-        .contains(&LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY.to_string()));
-    assert!(changed_keys
-        .contains(&LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY.to_string()));
-    assert!(changed_keys
-        .contains(&LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys
@@ -321,10 +200,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
         (
             LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(30_000),
-        ),
-        (
-            LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(315_000),
         ),
         (
             LOCAL_CONNECTOR_DEVICE_CONNECT_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY.to_string(),
@@ -382,18 +257,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
             LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID_CONFIG_KEY.to_string(),
             json!("managed-req-key-1"),
         ),
-        (
-            LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY.to_string(),
-            json!(300),
-        ),
-        (
-            LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY.to_string(),
-            json!("/etc/chatos/controlled-network-signing-key.pk8"),
-        ),
-        (
-            LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY.to_string(),
-            json!("controlled-network-key-1"),
-        ),
     ]);
 
     let snapshot = build_snapshot("local", "local-connector-service", 1, &definitions, &values)
@@ -431,12 +294,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS"),
         Some(&"30000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("LOCAL_CONNECTOR_PLUGIN_HOOK_RELAY_REQUEST_TIMEOUT_MS"),
-        Some(&"315000".to_string())
     );
     assert_eq!(
         snapshot
@@ -515,24 +372,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
             .env
             .get("LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID"),
         Some(&"managed-req-key-1".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS"),
-        Some(&"300".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH"),
-        Some(&"/etc/chatos/controlled-network-signing-key.pk8".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID"),
-        Some(&"controlled-network-key-1".to_string())
     );
 }
 

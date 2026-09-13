@@ -36,22 +36,5 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             358,
             now,
         ),
-        definition(
-            CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY,
-            "MCP Management Base URL",
-            "Configuration Center 执行队列运维操作时调用 MCP Management 的内部地址",
-            "Configuration Center / Downstream",
-            "service",
-            Some("configuration-center"),
-            "string",
-            json!("https://mcp-management-service-backend:39282"),
-            None,
-            None,
-            &[],
-            "immediate",
-            &["CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL"],
-            359,
-            now,
-        ),
     ]
 }

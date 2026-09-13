@@ -15,7 +15,7 @@ mod managed_streams;
 mod replay_targets;
 
 use managed_streams::resolve_managed_streams;
-use replay_targets::{archive_mcp_management, replay_memory_engine, replay_plugin_management};
+use replay_targets::{replay_memory_engine, replay_plugin_management};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct QueueOperationsResponse {
@@ -155,27 +155,13 @@ pub async fn replay(
             )
             .await?
         }
-        ("mcp-management", "async_tool") => {
-            archive_mcp_management(
-                state,
-                &release.values,
-                operation_id.as_str(),
-                item_id,
-                reason,
-            )
-            .await?
-        }
         _ => {
             return Err(format!(
                 "queue operation is not implemented for {service}/{stream}"
             ));
         }
     };
-    let audit_action = if service == "mcp-management" && stream == "async_tool" {
-        "queue.dead_letter.archive"
-    } else {
-        "queue.dead_letter.replay"
-    };
+    let audit_action = "queue.dead_letter.replay";
     state
         .store
         .insert_audit(&AuditEventRecord {

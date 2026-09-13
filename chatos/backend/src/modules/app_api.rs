@@ -11,10 +11,6 @@ pub fn public_routes() -> Router {
         .merge(conversation_runtime::public_routes())
 }
 
-pub fn internal_routes() -> Router {
-    Router::new().merge(crate::api::mcp_management::router())
-}
-
 pub fn protected_routes() -> Router {
     Router::new()
         .merge(crate::api::model_gateway::router())
@@ -27,14 +23,14 @@ pub fn protected_routes() -> Router {
 
 #[cfg(test)]
 mod tests {
-    use super::{internal_routes, protected_routes, public_routes};
+    use super::{protected_routes, public_routes};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
     #[tokio::test]
     async fn public_router_does_not_register_internal_service_routes() {
-        for path in ["/internal/mcp-management/mcp/ask_user"] {
+        for path in ["/internal/retired-service"] {
             let response = public_routes()
                 .oneshot(
                     Request::post(path)
@@ -44,21 +40,6 @@ mod tests {
                 .await
                 .expect("route request");
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "path={path}");
-        }
-    }
-
-    #[tokio::test]
-    async fn internal_router_registers_internal_service_routes() {
-        for path in ["/internal/mcp-management/mcp/ask_user"] {
-            let response = internal_routes()
-                .oneshot(
-                    Request::post(path)
-                        .body(Body::empty())
-                        .expect("build request"),
-                )
-                .await
-                .expect("route request");
-            assert_ne!(response.status(), StatusCode::NOT_FOUND, "path={path}");
         }
     }
 

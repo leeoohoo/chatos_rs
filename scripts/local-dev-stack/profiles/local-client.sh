@@ -29,7 +29,6 @@ stack_after_start() {
   local item forbidden_name forbidden_port forbidden_pid
   local forbidden_services=(
     "local-connector-service-backend|39230"
-    "mcp-management-service-backend|39280"
     "official-website-backend|39250"
     "admin-console-frontend|39200"
     "official-website-frontend|39251"

@@ -5,14 +5,6 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "chatos.ai.max_iterations",
     "chatos.ui.local_project_creation_enabled",
     "local_connector.relay.sandbox_image_request_timeout_ms",
-    "mcp_management.async_tool.local_queue_buffer",
-    "mcp_management.async_tool.result_outbox_batch_size",
-    "mcp_management.async_tool.result_outbox_reconcile_ms",
-    "mcp_management.downstream.sandbox_manager_internal_api_secret",
-    "mcp_management.downstream.sandbox_manager_service_base_url",
-    "mcp_management.runtime.embedded_work_dir",
-    "mcp_management.runtime.sandbox_image_tool_timeout_ms",
-    "mcp_management.runtime.sandbox_tool_timeout_ms",
     "memory_engine.ai.openai_api_key",
     "memory_engine.ai.openai_base_url",
     "memory_engine.ai.openai_model",
@@ -43,7 +35,6 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "sandbox_manager.runtime.mongodb_database",
     "sandbox_manager.runtime.port",
     "sandbox_manager.security.agent_token_secret",
-    "sandbox_manager.security.mcp_management_internal_api_secret",
     "sandbox_manager.security.require_auth",
     "sandbox_manager.security.require_signed_internal_requests",
     "sandbox_manager.security.system_client_max_lease_ttl_seconds",
@@ -69,9 +60,3 @@ pub const SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY: &str =
     "shared.downstream.plugin_management_service_internal_url";
 pub const SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "shared.downstream.plugin_management_request_timeout_ms";
-pub const SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY: &str =
-    "shared.downstream.mcp_management_service_base_url";
-pub const SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "shared.downstream.mcp_management_request_timeout_ms";
-pub const SHARED_MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "shared.downstream.mcp_management_runtime_session_request_timeout_ms";
