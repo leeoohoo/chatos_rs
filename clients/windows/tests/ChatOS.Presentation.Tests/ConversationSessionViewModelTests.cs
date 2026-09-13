@@ -102,6 +102,38 @@ public sealed class ConversationSessionViewModelTests
     }
 
     [Fact]
+    public async Task ProjectionEventRefreshesAskUserPromptAndPreservesVisualReferences()
+    {
+        var services = new TestServices();
+        using var viewModel = services.CreateViewModel();
+        await viewModel.OpenAsync(ProjectScope, "Website");
+        services.Prompts.Add(services.Prompt("prompt-1", "thread-1"));
+
+        services.PublishProjectionChanged();
+
+        await WaitUntilAsync(() => viewModel.PendingPrompts.Count == 1);
+        var prompt = Assert.Single(viewModel.PendingPrompts);
+        Assert.Equal("prompt-1", prompt.Id);
+        Assert.Equal(["reference://hero", "reference://type"], prompt.ImageReferences);
+    }
+
+    [Fact]
+    public async Task SubmittedPromptDisappearsAfterTheAuthoritativeProjectionRefresh()
+    {
+        var services = new TestServices();
+        services.Prompts.Add(services.Prompt("prompt-1", "thread-1"));
+        using var viewModel = services.CreateViewModel();
+        await viewModel.OpenAsync(ProjectScope, "Website");
+        var prompt = Assert.Single(viewModel.PendingPrompts);
+        prompt.Fields[0].Value = "Use the editorial direction";
+
+        await prompt.SubmitCommand.ExecuteAsync(null);
+
+        Assert.Equal(("prompt-1", "thread-1"), services.SubmittedPrompt);
+        Assert.Empty(viewModel.PendingPrompts);
+    }
+
+    [Fact]
     public async Task ProjectionClearImmediatelyDropsAccountDataAndClosesSession()
     {
         var services = new TestServices();
@@ -162,6 +194,31 @@ public sealed class ConversationSessionViewModelTests
     }
 
     [Fact]
+    public async Task LatePromptFetchFromClosedConversationCannotPolluteTheNewConversation()
+    {
+        var delayed = new TaskCompletionSource<IReadOnlyList<AskUserPrompt>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var services = new TestServices
+        {
+            PromptFetcher = (conversationId, _) => conversationId == "thread-1"
+                ? delayed.Task
+                : Task.FromResult<IReadOnlyList<AskUserPrompt>>([]),
+        };
+        using var viewModel = services.CreateViewModel();
+        var openingFirst = viewModel.OpenAsync(ProjectScope, "First");
+        await WaitUntilAsync(() => services.PromptFetches.Contains("thread-1"));
+
+        var next = new LocalAgentConversationScope("account-1", "thread-2", null, "agent-2");
+        await viewModel.OpenAsync(next, "Second");
+        delayed.SetResult([services.Prompt("prompt-old", "thread-1")]);
+        await openingFirst;
+
+        Assert.Equal(next, viewModel.Scope);
+        Assert.Empty(viewModel.PendingPrompts);
+        Assert.Null(viewModel.ErrorMessage);
+    }
+
+    [Fact]
     public async Task ProjectionIdentityMismatchFailsClosed()
     {
         var services = new TestServices { SnapshotAccountId = "another-account" };
@@ -207,10 +264,18 @@ public sealed class ConversationSessionViewModelTests
         public event EventHandler? ProjectionCleared;
         public List<LocalAgentMainChatTurn> Turns { get; } = [];
         public List<LocalAgentCreateConversationTurn> CreatedTurns { get; } = [];
+        public List<AskUserPrompt> Prompts { get; } = [];
         public Exception? CreateError { get; init; }
         public TaskCompletionSource<LocalAgentRunCreatedResponse>? PendingCreate { get; init; }
+        public Func<string, CancellationToken, Task<IReadOnlyList<AskUserPrompt>>>? PromptFetcher
+        {
+            get;
+            init;
+        }
         public string SnapshotAccountId { get; init; } = "account-1";
         public (string ThreadId, string TurnId, string RunId, ulong Version)? CancelledRun { get; private set; }
+        public (string PromptId, string ConversationId)? SubmittedPrompt { get; private set; }
+        public List<string> PromptFetches { get; } = [];
 
         public ConversationSessionViewModel CreateViewModel() =>
             new(this, this, this, new ImmediateUiDispatcher());
@@ -260,15 +325,47 @@ public sealed class ConversationSessionViewModelTests
             Task.FromResult(new ConversationRuntimeSettings("model-1", "Model", "high", enabled));
 
         public Task<IReadOnlyList<AskUserPrompt>> FetchPromptsAsync(
-            string conversationId, int limit = 100, CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<AskUserPrompt>>([]);
+            string conversationId, int limit = 100, CancellationToken cancellationToken = default)
+        {
+            PromptFetches.Add(conversationId);
+            if (PromptFetcher is not null) return PromptFetcher(conversationId, cancellationToken);
+            return Task.FromResult<IReadOnlyList<AskUserPrompt>>(Prompts
+                .Where(prompt => prompt.ConversationId == conversationId)
+                .Take(limit)
+                .ToArray());
+        }
 
         public Task<AskUserPrompt> SubmitAsync(string promptId, string conversationId,
-            AskUserSubmission submission, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            AskUserSubmission submission, CancellationToken cancellationToken = default)
+        {
+            SubmittedPrompt = (promptId, conversationId);
+            var prompt = Prompts.Single(value => value.Id == promptId
+                && value.ConversationId == conversationId);
+            Prompts.Remove(prompt);
+            return Task.FromResult(prompt with { Status = AskUserPromptStatus.Ok });
+        }
 
         public Task<AskUserPrompt> CancelAsync(string promptId, string conversationId,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public AskUserPrompt Prompt(string id, string conversationId) => new(
+            id,
+            conversationId,
+            "turn-1",
+            null,
+            "visual_direction",
+            AskUserPromptStatus.Pending,
+            "Visual direction",
+            "Which direction should the page take?",
+            true,
+            null,
+            [new AskUserField(
+                "answer", "Answer", null, "Describe the intended look", string.Empty,
+                true, true, false)],
+            null,
+            _now,
+            _now,
+            ["reference://hero", "reference://type"]);
 
         public LocalAgentMainChatTurn Turn(
             string turnId,

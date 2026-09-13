@@ -482,6 +482,7 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         try
         {
             await RefreshProjectionAsync(scope, generation, cancellationToken).ConfigureAwait(false);
+            await LoadPromptsAsync(scope.ThreadId, generation, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

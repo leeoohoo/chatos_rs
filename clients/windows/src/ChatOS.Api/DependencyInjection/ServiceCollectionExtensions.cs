@@ -1,7 +1,6 @@
 using ChatOS.Api.Http;
 using ChatOS.Api.Pet;
 using ChatOS.Api.Authentication;
-using ChatOS.Api.AskUser;
 using ChatOS.Api.Conversation;
 using ChatOS.Api.Realtime;
 using ChatOS.Api.Projects;
@@ -34,7 +33,6 @@ public static class ServiceCollectionExtensions
         });
         services.AddSingleton<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();
-        services.AddSingleton<IAskUserPromptService, AskUserPromptService>();
         services.AddSingleton<IConversationRuntimeSettingsService, ConversationRuntimeSettingsService>();
         services.AddSingleton<ILocalAgentContactRuntimeContextService,
             LocalAgentContactRuntimeContextService>();

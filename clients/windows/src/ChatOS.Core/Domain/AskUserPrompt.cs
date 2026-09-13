@@ -45,7 +45,8 @@ public sealed record AskUserPrompt(
     IReadOnlyList<AskUserField> Fields,
     AskUserChoice? Choice,
     DateTimeOffset? CreatedAt,
-    DateTimeOffset? UpdatedAt)
+    DateTimeOffset? UpdatedAt,
+    IReadOnlyList<string>? ImageReferences = null)
 {
     public bool IsPending => Status == AskUserPromptStatus.Pending;
 }

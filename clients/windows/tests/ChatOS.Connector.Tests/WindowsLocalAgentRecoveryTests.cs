@@ -462,6 +462,8 @@ public sealed class WindowsLocalAgentRecoveryTests
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task UpsertCreatedRunAsync(string accountId, WindowsLocalAgentRecoveredRun run,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task ReplaceAuthoritativeRunAsync(string accountId, WindowsLocalAgentRecoveredRun run,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task MarkAcknowledgedAsync(string accountId, ulong throughSequence,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<WindowsLocalAgentProjectionSnapshot?> GetAsync(

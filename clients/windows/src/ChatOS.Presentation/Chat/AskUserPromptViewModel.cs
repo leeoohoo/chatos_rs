@@ -53,6 +53,10 @@ public sealed partial class AskUserPromptViewModel : ObservableObject
 
     public bool HasChoice => Options.Count > 0;
 
+    public bool HasImageReferences => ImageReferences.Count > 0;
+
+    public IReadOnlyList<string> ImageReferences => Prompt.ImageReferences ?? [];
+
     public bool AllowsMultiple => Prompt.Choice?.AllowsMultiple == true;
 
     public bool IsSingleChoice => HasChoice && !AllowsMultiple;

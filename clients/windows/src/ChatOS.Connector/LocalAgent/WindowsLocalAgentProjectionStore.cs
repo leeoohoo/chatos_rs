@@ -46,6 +46,11 @@ public interface IWindowsLocalAgentProjectionStore
         WindowsLocalAgentRecoveredRun run,
         CancellationToken cancellationToken = default);
 
+    Task ReplaceAuthoritativeRunAsync(
+        string accountId,
+        WindowsLocalAgentRecoveredRun run,
+        CancellationToken cancellationToken = default);
+
     Task<WindowsLocalAgentProjectionSnapshot?> GetAsync(
         CancellationToken cancellationToken = default);
 
@@ -215,6 +220,52 @@ public sealed class WindowsLocalAgentProjectionStore : IWindowsLocalAgentProject
         Changed?.Invoke(this, Clone(updated));
     }
 
+    public async Task ReplaceAuthoritativeRunAsync(
+        string accountId,
+        WindowsLocalAgentRecoveredRun run,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        WindowsLocalAgentProjectionSnapshot? updated = null;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var current = RequireAccount(accountId);
+            if (!current.Runs.TryGetValue(run.Run.RunId, out var previous))
+                throw new KeyNotFoundException("The Local Agent run is not projected.");
+            if (run.Run.Version < previous.Run.Version) return;
+            if (run.SnapshotEventSequence < previous.SnapshotEventSequence)
+            {
+                if (run.Run.Version == previous.Run.Version) return;
+                throw new InvalidDataException(
+                    "The refreshed Local Agent run regressed its snapshot event sequence.");
+            }
+            if (run.Run.Version == previous.Run.Version
+                && !SameRunSnapshot(previous.Run, run.Run))
+            {
+                throw new InvalidDataException(
+                    "The refreshed Local Agent run changed without advancing its version.");
+            }
+            ValidateReplacement(previous, run);
+            var runs = current.Runs.ToDictionary(pair => pair.Key, pair => pair.Value,
+                StringComparer.Ordinal);
+            runs[run.Run.RunId] = run;
+            updated = current with
+            {
+                Runs = runs,
+                LastAppliedEventSequence = Math.Max(
+                    current.LastAppliedEventSequence,
+                    run.SnapshotEventSequence),
+            };
+            _snapshot = updated;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        if (updated is not null) Changed?.Invoke(this, Clone(updated));
+    }
+
     public async Task<WindowsLocalAgentProjectionSnapshot?> GetAsync(
         CancellationToken cancellationToken = default)
     {
@@ -267,6 +318,73 @@ public sealed class WindowsLocalAgentProjectionStore : IWindowsLocalAgentProject
         Tasks = value.Tasks.ToDictionary(pair => pair.Key, pair => pair.Value,
             StringComparer.Ordinal),
     };
+
+    private static void ValidateReplacement(
+        WindowsLocalAgentRecoveredRun previous,
+        WindowsLocalAgentRecoveredRun replacement)
+    {
+        WindowsLocalAgentStartupRecovery.ValidateRunDetail(previous.Run, replacement.Run);
+        var run = replacement.Run;
+        if (run.ModelConfigId != previous.Run.ModelConfigId
+            || run.ModelConfigRevision != previous.Run.ModelConfigRevision
+            || run.ContextStrategy != previous.Run.ContextStrategy
+            || run.PromptRevision != previous.Run.PromptRevision
+            || run.CapabilitySnapshotRef != previous.Run.CapabilitySnapshotRef
+            || run.ModelRuntimeSnapshot.GetRawText() != previous.Run.ModelRuntimeSnapshot.GetRawText()
+            || run.CreatedAt != previous.Run.CreatedAt
+            || replacement.Detail is null
+            || !SameRunSnapshot(replacement.Detail.Run, run))
+        {
+            throw new InvalidDataException("The Local Agent run refresh changed frozen identity.");
+        }
+        if (run.ProfileKey == "main_chat")
+        {
+            var binding = replacement.MainChatBinding
+                ?? throw new InvalidDataException("The refreshed Main Chat run has no binding.");
+            WindowsLocalAgentStartupRecovery.ValidateBinding(run, binding);
+            if (previous.MainChatBinding is not { } old
+                || binding.ThreadId != old.ThreadId
+                || binding.TurnId != old.TurnId
+                || binding.MessageId != old.MessageId)
+            {
+                throw new InvalidDataException("The refreshed Main Chat binding changed identity.");
+            }
+        }
+        else if (replacement.MainChatBinding is not null)
+        {
+            throw new InvalidDataException("A non-Main Chat run cannot have a Main Chat binding.");
+        }
+    }
+
+    private static bool SameRunSnapshot(LocalAgentRunSnapshot left, LocalAgentRunSnapshot right) =>
+        left.RunId == right.RunId
+        && left.ProfileKey == right.ProfileKey
+        && left.OwnerUserId == right.OwnerUserId
+        && left.OwnerEntityType == right.OwnerEntityType
+        && left.OwnerEntityId == right.OwnerEntityId
+        && left.ProjectId == right.ProjectId
+        && left.Status == right.Status
+        && left.Version == right.Version
+        && left.StepSeq == right.StepSeq
+        && left.Iteration == right.Iteration
+        && left.RetryCount == right.RetryCount
+        && left.ModelConfigId == right.ModelConfigId
+        && left.ModelConfigRevision == right.ModelConfigRevision
+        && Json(left.ModelRuntimeSnapshot) == Json(right.ModelRuntimeSnapshot)
+        && left.ContextStrategy == right.ContextStrategy
+        && left.PromptRevision == right.PromptRevision
+        && left.CapabilitySnapshotRef == right.CapabilitySnapshotRef
+        && left.PendingBatchId == right.PendingBatchId
+        && Json(left.PendingInteraction) == Json(right.PendingInteraction)
+        && Json(left.TerminalOutcome) == Json(right.TerminalOutcome)
+        && left.DeadlineAt == right.DeadlineAt
+        && left.CreatedAt == right.CreatedAt
+        && left.UpdatedAt == right.UpdatedAt;
+
+    private static string? Json(System.Text.Json.JsonElement? value) =>
+        value is { } element ? element.GetRawText() : null;
+
+    private static string Json(System.Text.Json.JsonElement value) => value.GetRawText();
 
     private static void ValidateIdentity(string value)
     {
