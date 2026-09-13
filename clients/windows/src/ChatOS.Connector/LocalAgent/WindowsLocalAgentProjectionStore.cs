@@ -18,6 +18,7 @@ public sealed record WindowsLocalAgentProjectionSnapshot(
 public sealed record WindowsLocalAgentResolvedEvent(
     LocalAgentUIEvent Event,
     LocalAgentRunSnapshot? Run,
+    LocalAgentRunDetail? Detail,
     LocalAgentTaskSnapshot? Task,
     LocalAgentMainChatRunBinding? MainChatBinding);
 
@@ -116,9 +117,11 @@ public sealed class WindowsLocalAgentProjectionStore : IWindowsLocalAgentProject
                     {
                         runs[run.RunId] = new WindowsLocalAgentRecoveredRun(
                             run,
-                            previousRun?.Detail,
+                            item.Detail ?? previousRun?.Detail,
                             item.MainChatBinding ?? previousRun?.MainChatBinding,
-                            previousRun?.SnapshotEventSequence ?? 0);
+                            item.Detail?.SnapshotEventSequence
+                                ?? previousRun?.SnapshotEventSequence
+                                ?? 0);
                     }
                 }
                 if (item.Task is { } task)

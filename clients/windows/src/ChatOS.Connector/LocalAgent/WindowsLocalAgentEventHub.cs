@@ -176,7 +176,7 @@ public sealed class WindowsLocalAgentEventHub : IWindowsLocalAgentEventHub
         var runId = RunId(item.Event);
         if (runId is null)
         {
-            return new WindowsLocalAgentResolvedEvent(item, null, null, null);
+            return new WindowsLocalAgentResolvedEvent(item, null, null, null, null);
         }
         LocalAgentRunSnapshot run;
         if (item.Event.Type == "run_snapshot")
@@ -193,6 +193,12 @@ public sealed class WindowsLocalAgentEventHub : IWindowsLocalAgentEventHub
         {
             throw new InvalidDataException("Local Agent event resolved to a different Run identity.");
         }
+        var detail = await WindowsLocalAgentStartupRecovery.CompleteDetailAsync(
+            client,
+            run.RunId,
+            cancellationToken).ConfigureAwait(false);
+        WindowsLocalAgentStartupRecovery.ValidateRunDetail(run, detail.Run);
+        run = detail.Run;
 
         LocalAgentTaskSnapshot? task = null;
         LocalAgentMainChatRunBinding? binding = null;
@@ -221,7 +227,7 @@ public sealed class WindowsLocalAgentEventHub : IWindowsLocalAgentEventHub
                 .ConfigureAwait(false);
             WindowsLocalAgentStartupRecovery.ValidateBinding(run, binding);
         }
-        return new WindowsLocalAgentResolvedEvent(item, run, task, binding);
+        return new WindowsLocalAgentResolvedEvent(item, run, detail, task, binding);
     }
 
     private static string? RunId(LocalAgentTaggedValue value)

@@ -78,7 +78,7 @@ public sealed class WindowsLocalAgentRecoveryTests
                 new LocalAgentTaggedValue(
                     "run_snapshot",
                     JsonSerializer.SerializeToElement(updated, JsonOptions))),
-        ]) { CurrentTask = task };
+        ]) { CurrentTask = task, CurrentRun = updated };
         var account = new SwappingAccountSession(first, second);
         var hub = new WindowsLocalAgentEventHub(account, store);
 
@@ -91,6 +91,8 @@ public sealed class WindowsLocalAgentRecoveryTests
         Assert.Equal([(ulong)5], second.Acknowledgements);
         var snapshot = Assert.IsType<WindowsLocalAgentProjectionSnapshot>(await store.GetAsync());
         Assert.Equal(LocalAgentRunStatus.ModelRunning, snapshot.Runs[updated.RunId].Run.Status);
+        Assert.Equal("fresh", Assert.Single(snapshot.Runs[updated.RunId].Detail!.Events).Message);
+        Assert.Equal((ulong)5, snapshot.Runs[updated.RunId].SnapshotEventSequence);
         Assert.Equal((ulong)5, snapshot.AcknowledgedEventSequence);
         Assert.Equal(2, account.ClientRequests);
     }
@@ -240,6 +242,7 @@ public sealed class WindowsLocalAgentRecoveryTests
     private sealed class EventClient(ulong cursor, IReadOnlyList<LocalAgentUIEvent> events) : StubClient
     {
         public LocalAgentTaskSnapshot? CurrentTask { get; init; }
+        public LocalAgentRunSnapshot? CurrentRun { get; init; }
         public List<ulong> Acknowledgements { get; } = [];
         public override Task<ulong> GetUIEventCursorAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(cursor);
@@ -250,6 +253,21 @@ public sealed class WindowsLocalAgentRecoveryTests
                 : new LocalAgentEventPage(events, events[^1].EventSeq, false));
         public override Task<LocalAgentTaskSnapshot> GetTaskAsync(string taskId,
             CancellationToken cancellationToken = default) => Task.FromResult(CurrentTask!);
+        public override Task<LocalAgentRunDetail> GetRunDetailAsync(
+            string runId,
+            uint eventLimit = 40,
+            uint eventOffset = 0,
+            CancellationToken cancellationToken = default)
+        {
+            var run = CurrentRun ?? throw new InvalidOperationException();
+            return Task.FromResult(new LocalAgentRunDetail(
+                run,
+                [new LocalAgentRunTimelineEvent("event-current", "model", "fresh", run.UpdatedAt)],
+                [],
+                1,
+                false,
+                5));
+        }
         public override Task<ulong> AcknowledgeUIEventsAsync(ulong throughSequence,
             CancellationToken cancellationToken = default)
         {

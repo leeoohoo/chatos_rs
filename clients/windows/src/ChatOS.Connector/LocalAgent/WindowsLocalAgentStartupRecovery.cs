@@ -114,7 +114,7 @@ public sealed class WindowsLocalAgentStartupRecovery : IWindowsLocalAgentStartup
         return values;
     }
 
-    private static async Task<LocalAgentRunDetail> CompleteDetailAsync(
+    internal static async Task<LocalAgentRunDetail> CompleteDetailAsync(
         ILocalAgentIPCClient client,
         string runId,
         CancellationToken cancellationToken)
@@ -195,7 +195,7 @@ public sealed class WindowsLocalAgentStartupRecovery : IWindowsLocalAgentStartup
         }
     }
 
-    private static void ValidateRunDetail(
+    internal static void ValidateRunDetail(
         LocalAgentRunSnapshot listed,
         LocalAgentRunSnapshot detailed)
     {
