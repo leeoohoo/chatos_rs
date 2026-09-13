@@ -2,12 +2,43 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 @testable import ChatOSConnector
+import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 import Testing
 
 @Suite("Native local Project Run preferences")
 struct NativeLocalProjectRunPreferencesStoreTests {
+    @Test("Agent Runtime preferences use the account-scoped Client Setting repository")
+    func agentRuntimePreferencesPersistWithoutUserDefaults() async throws {
+        let transport = ProjectRunPreferencesTransport()
+        let client = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: transport
+        )
+        let session = ProjectRunPreferencesAccountSession(client: client)
+        let first = NativeAgentRuntimeSettingsStore(accountSession: session)
+
+        var preferences = try await first.load(ownerUserID: "user-1")
+        #expect(preferences.storyMaximumCalls == nil)
+        preferences.storyMaximumCalls = 42
+        preferences.global.requestTimeoutSeconds = 240
+        try await first.save(ownerUserID: "user-1", preferences: preferences)
+
+        let restored = NativeAgentRuntimeSettingsStore(accountSession: session)
+        let value = try await restored.load(ownerUserID: "user-1")
+        #expect(value.storyMaximumCalls == 42)
+        #expect(value.global.requestTimeoutSeconds == 240)
+
+        let requests = try await transport.requests().map(Self.requestFields)
+        #expect(requests.map(\.type) == [
+            "get_client_setting",
+            "put_client_setting",
+            "get_client_setting",
+        ])
+        #expect(requests.allSatisfy { $0.owner == "user-1" })
+    }
+
     @Test("typed Client Setting store commits only the newest account-scoped mutation")
     func typedStorePersistsWithoutAFileFallback() async throws {
         let transport = ProjectRunPreferencesTransport()

@@ -26,7 +26,8 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL
             ),
-            ticketProvider: NavigationTicketProvider()
+            ticketProvider: NavigationTicketProvider(),
+            agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
         let service = NativeProjectCodeNavigationService(connector: connector)
         let projectRoot = "local://connector/device/workspace"

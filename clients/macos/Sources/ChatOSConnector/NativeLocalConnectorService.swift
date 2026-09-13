@@ -1,3 +1,4 @@
+import ChatOSAgentRuntime
 import ChatOSCore
 import CryptoKit
 import Foundation
@@ -32,6 +33,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var pluginSkillRuntimeSessions: [String: NativePluginSkillRuntimeSession] = [:]
     let pluginApplicationRuntime = NativePluginApplicationRuntime()
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
+    let agentRuntimeSettings: any AgentRuntimePreferencesProviding
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
@@ -68,6 +70,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         configuration: NativeConnectorConfiguration,
         ticketProvider: any LocalConnectorPairingTicketProviding,
         routeStore: NativeConnectorRouteStore = .init(),
+        agentRuntimeSettings: any AgentRuntimePreferencesProviding,
         remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)? = nil
     ) {
         self.configuration = configuration
@@ -75,6 +78,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
         self.stateStore = NativeConnectorStateStore(stateURL: configuration.stateURL)
         self.routeStore = routeStore
+        self.agentRuntimeSettings = agentRuntimeSettings
         self.pluginInstaller = NativePluginInstaller(
             rootURL: configuration.stateURL
                 .deletingLastPathComponent()

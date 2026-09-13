@@ -308,11 +308,8 @@ final class StoryAgentTests: XCTestCase {
 
     func testViewModelUsesVisibleBudgetAndResumesWithMemoryByDefault() async throws {
         let store = fixture(); let project = project()
-        let suite = "StoryAgentTests-\(UUID())"
-        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
-        let settings = AgentSettingsStore(suiteName: suite)
         var preferences = AgentRuntimePreferences(); preferences.storyMaximumCalls = 2
-        try settings.save(preferences)
+        let settings = AppAgentRuntimePreferencesTestProvider(preferences)
         let service = StoryLoopServices(calls: outlineCalls())
         let vm = StoryStudioViewModel(media: service, planner: service, store: store, agentSettings: settings)
         vm.activate(userID: "alice"); try await idle(vm)
@@ -324,7 +321,8 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertEqual(vm.latestAgentRun?.checkpoint.modelCalls, 2)
         XCTAssertTrue(vm.project?.segments.isEmpty == true, "Unfinished draft must not replace canonical project")
         let id = try XCTUnwrap(vm.latestAgentRun?.id)
-        preferences.storyMaximumCalls = 600; try settings.save(preferences)
+        preferences.storyMaximumCalls = 600
+        await settings.replace(preferences)
         let reopened = StoryStudioViewModel(media: service, planner: service, store: store, agentSettings: settings)
         reopened.activate(userID: "alice"); try await idle(reopened)
         reopened.open(project.id); try await idle(reopened)
@@ -339,7 +337,12 @@ final class StoryAgentTests: XCTestCase {
     func testViewModelCloudConsentBindsScopeAndCompletedDraftAppliesOffline() async throws {
         let store = fixture(); let project = project()
         let service = StoryLoopServices(calls: outlineCalls())
-        let vm = StoryStudioViewModel(media: service, planner: service, store: store)
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            agentSettings: AppAgentRuntimePreferencesTestProvider()
+        )
         vm.activate(userID: "alice"); try await idle(vm)
         _ = await vm.create(project, availableModels: models)
         vm.planOutline(); try await idle(vm)
@@ -363,7 +366,12 @@ final class StoryAgentTests: XCTestCase {
 
     func testAccountSwitchIgnoresLateModelResponse() async throws {
         let store = fixture(); let service = StoryLoopServices(calls: outlineCalls(), delay: true)
-        let vm = StoryStudioViewModel(media: service, planner: service, store: store)
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            agentSettings: AppAgentRuntimePreferencesTestProvider()
+        )
         vm.activate(userID: "alice"); try await idle(vm)
         _ = await vm.create(project(), availableModels: models)
         vm.planOutline()

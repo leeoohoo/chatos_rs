@@ -9,7 +9,8 @@ final class MediaStudioViewModelTests: XCTestCase {
         let viewModel = MediaStudioViewModel(
             service: MediaStudioFailureService(),
             historyStore: testHistoryStore(),
-            storyStore: testStoryStore()
+            storyStore: testStoryStore(),
+            agentRuntimeSettings: AppAgentRuntimePreferencesTestProvider()
         )
         viewModel.activate(userID: "media-studio-test")
         viewModel.loadIfNeeded()
@@ -28,7 +29,8 @@ final class MediaStudioViewModelTests: XCTestCase {
         let viewModel = MediaStudioViewModel(
             service: MediaStudioFailureService(),
             historyStore: testHistoryStore(),
-            storyStore: testStoryStore()
+            storyStore: testStoryStore(),
+            agentRuntimeSettings: AppAgentRuntimePreferencesTestProvider()
         )
         viewModel.activate(userID: "media-studio-test")
         viewModel.loadIfNeeded()

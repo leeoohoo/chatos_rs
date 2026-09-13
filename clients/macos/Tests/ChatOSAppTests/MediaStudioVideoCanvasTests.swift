@@ -63,7 +63,8 @@ final class MediaStudioVideoCanvasTests: XCTestCase {
         let vm = MediaStudioViewModel(
             service: service,
             historyStore: store,
-            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories")),
+            agentRuntimeSettings: AppAgentRuntimePreferencesTestProvider()
         )
         vm.activate(userID: "canvas-test")
         vm.loadIfNeeded()

@@ -1,5 +1,6 @@
 import AppKit
 import ChatOSAPI
+import ChatOSAgentRuntime
 import ChatOSCore
 import Combine
 import Foundation
@@ -95,10 +96,16 @@ final class MediaStudioViewModel: ObservableObject {
         historyStore: MediaStudioHistoryStore,
         storyStore: StoryProjectStore,
         imageTransport: any HTTPTransport = URLSessionHTTPTransport(),
-        storyPlanner: (any StoryPlanningServicing)? = nil
+        storyPlanner: (any StoryPlanningServicing)? = nil,
+        agentRuntimeSettings: any AgentRuntimePreferencesProviding
     ) {
         self.service = service
-        self.stories = StoryStudioViewModel(media: service, planner: storyPlanner, store: storyStore)
+        self.stories = StoryStudioViewModel(
+            media: service,
+            planner: storyPlanner,
+            store: storyStore,
+            agentSettings: agentRuntimeSettings
+        )
         self.historyStore = historyStore
         self.imageTransport = imageTransport
     }

@@ -81,6 +81,7 @@ final class AppModel: ObservableObject {
     let petOverlayStore = PetOverlayStore()
     let globalUtilityPreferences: GlobalUtilityPreferencesStore
     let quickSearchUsage: QuickSearchUsageStore
+    let agentRuntimeSettings: NativeAgentRuntimeSettingsStore
     private(set) lazy var globalUtilityCoordinator = GlobalUtilityCoordinator(
         model: self,
         preferences: globalUtilityPreferences,
@@ -152,6 +153,16 @@ final class AppModel: ObservableObject {
         )
         let historyStore = ConversationHistoryStore()
         let localAgentTaskStateStore = LocalAgentTaskStateStore()
+        let localAgentAccountSession: NativeLocalAgentAccountSession
+        let agentRuntimeSettings: NativeAgentRuntimeSettingsStore
+        do {
+            localAgentAccountSession = try NativeLocalAgentAccountSession()
+            agentRuntimeSettings = NativeAgentRuntimeSettingsStore(
+                accountSession: localAgentAccountSession
+            )
+        } catch {
+            preconditionFailure("Local Agent account session configuration is invalid")
+        }
         let connectorTicketProvider = ChatOSLocalConnectorPairingTicketProvider(client: apiClient)
         let connectorRouteStore = NativeConnectorRouteStore()
         let remoteConnectionService = NativeRemoteConnectionService(
@@ -165,14 +176,9 @@ final class AppModel: ObservableObject {
             ),
             ticketProvider: connectorTicketProvider,
             routeStore: connectorRouteStore,
+            agentRuntimeSettings: agentRuntimeSettings,
             remoteConnectionRuntime: remoteConnectionService
         )
-        let localAgentAccountSession: NativeLocalAgentAccountSession
-        do {
-            localAgentAccountSession = try NativeLocalAgentAccountSession()
-        } catch {
-            preconditionFailure("Local Agent account session configuration is invalid")
-        }
         let localAgentConversationScopes = NativeLocalAgentConversationScopeStore()
         let localProjectsService = NativeLocalProjectsService(
             connector: localConnectorService,
@@ -211,6 +217,7 @@ final class AppModel: ObservableObject {
             accountSession: localAgentAccountSession
         )
         self.quickSearchUsage = QuickSearchUsageStore(accountSession: localAgentAccountSession)
+        self.agentRuntimeSettings = agentRuntimeSettings
         let mediaHistoryStore = MediaStudioHistoryStore { ownerUserID in
             let client = try await localAgentAccountSession.client(accountID: ownerUserID)
             return MediaStudioHistoryStorageContext(ownerUserID: ownerUserID, client: client)
@@ -223,7 +230,8 @@ final class AppModel: ObservableObject {
             service: ChatOSMediaGenerationService(client: apiClient),
             historyStore: mediaHistoryStore,
             storyStore: storyStore,
-            storyPlanner: ChatOSStoryPlanningService(client: apiClient)
+            storyPlanner: ChatOSStoryPlanningService(client: apiClient),
+            agentRuntimeSettings: agentRuntimeSettings
         )
         self.localConnectorService = localConnectorService
         self.localAgentAccountSession = localAgentAccountSession
@@ -891,6 +899,7 @@ final class AppModel: ObservableObject {
                 await self?.petPreferences.deactivate()
                 await self?.globalUtilityPreferences.deactivate()
                 await self?.quickSearchUsage.deactivate()
+                await self?.agentRuntimeSettings.deactivate()
                 if let hub = self?.localAgentEventHub {
                     self?.localAgentEventHub = nil
                     await hub.stop()
@@ -955,6 +964,7 @@ final class AppModel: ObservableObject {
                 await petPreferences.deactivate()
                 await globalUtilityPreferences.deactivate()
                 await quickSearchUsage.deactivate()
+                await agentRuntimeSettings.deactivate()
                 // A presentation Store is account-scoped even when server IDs
                 // happen to be globally unique. Clear it before binding the
                 // next Host so no optimistic or recovered state can cross users.

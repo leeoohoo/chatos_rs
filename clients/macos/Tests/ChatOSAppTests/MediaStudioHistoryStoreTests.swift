@@ -116,7 +116,8 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         let vm = MediaStudioViewModel(
             service: HistoryGenerationService(),
             historyStore: makeMediaStudioHistoryStore(root: root, backend: backend),
-            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories")),
+            agentRuntimeSettings: AppAgentRuntimePreferencesTestProvider()
         )
         vm.activate(userID: "alice")
         vm.loadIfNeeded()
@@ -132,7 +133,8 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         let restarted = MediaStudioViewModel(
             service: HistoryGenerationService(),
             historyStore: makeMediaStudioHistoryStore(root: root, backend: backend),
-            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories")),
+            agentRuntimeSettings: AppAgentRuntimePreferencesTestProvider()
         )
         restarted.activate(userID: "alice")
         try await wait { !restarted.isLoadingHistory }
@@ -153,7 +155,8 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         let vm = MediaStudioViewModel(
             service: service,
             historyStore: makeMediaStudioHistoryStore(root: root, backend: backend),
-            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories")),
+            agentRuntimeSettings: AppAgentRuntimePreferencesTestProvider()
         )
         vm.activate(userID: "alice")
         vm.loadIfNeeded()
@@ -187,7 +190,8 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         let vm = MediaStudioViewModel(
             service: HistoryGenerationService(),
             historyStore: store,
-            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories")),
+            agentRuntimeSettings: AppAgentRuntimePreferencesTestProvider()
         )
         vm.activate(userID: "alice")
         try await wait { !vm.isLoadingHistory }

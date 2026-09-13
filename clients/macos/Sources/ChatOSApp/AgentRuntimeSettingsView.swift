@@ -1,4 +1,5 @@
 import ChatOSAgentRuntime
+import ChatOSConnector
 import SwiftUI
 
 struct AgentRuntimeSettingsView: View {
@@ -8,7 +9,6 @@ struct AgentRuntimeSettingsView: View {
     @State private var error = false
     @State private var didSave = false
     @State private var hasSavedPreferences = false
-    private let store = AgentSettingsStore()
 
     private enum Field: String, CaseIterable {
         case calls, approval, story, retries, requestTimeout, runTimeout, noProgress
@@ -50,7 +50,7 @@ struct AgentRuntimeSettingsView: View {
     var body: some View {
         SettingsGroupedPage {
             LocalConnectorCard(model.localized("Agent 运行", english: "Agent Runtime"),
-                subtitle: model.localized("保存于这台 Mac，修改对下一次运行生效。默认最多调用模型 600 次；单次请求默认重试 5 次，并采用 1、2、4、8、16 秒指数退避。重试也计入调用次数。", english: "Stored on this Mac; changes apply to the next run. The defaults are 600 model calls and five retries per request with 1, 2, 4, 8, and 16-second exponential backoff. Retries count as model calls."),
+                subtitle: model.localized("按当前账户保存到客户端统一数据存储，修改对下一次运行生效。默认最多调用模型 600 次；单次请求默认重试 5 次，并采用 1、2、4、8、16 秒指数退避。重试也计入调用次数。", english: "Stored for the current account in unified client storage; changes apply to the next run. The defaults are 600 model calls and five retries per request with 1, 2, 4, 8, and 16-second exponential backoff. Retries count as model calls."),
                 systemImage: "arrow.triangle.2.circlepath") {
                 VStack(spacing: 12) {
                     ForEach([Field.calls, .approval, .story, .retries, .requestTimeout, .runTimeout, .noProgress], id: \.self) { field in row(field) }
@@ -92,7 +92,14 @@ struct AgentRuntimeSettingsView: View {
             }
         }
         .task {
-            do { saved = try store.load(); populate(saved); hasSavedPreferences = true }
+            do {
+                guard let ownerUserID = model.localProjectOwnerUserID else {
+                    throw NativeLocalAgentAccountSessionError.inactive
+                }
+                saved = try await model.agentRuntimeSettings.load(ownerUserID: ownerUserID)
+                populate(saved)
+                hasSavedPreferences = true
+            }
             catch { populate(.init()); self.error = true }
         }
     }
@@ -138,9 +145,25 @@ struct AgentRuntimeSettingsView: View {
             context.compactionThresholdTokens = try number(.threshold); context.maximumCompactionPasses = try number(.compactions)
             context.summaryTimeoutSeconds = try number(.summaryTimeout); context.summaryPollSeconds = try number(.summaryPoll)
             preferences.global.context = context
-            try store.save(preferences)
-            saved = preferences; didSave = true; error = false
-            hasSavedPreferences = true
+            try preferences.validate()
+            guard let ownerUserID = model.localProjectOwnerUserID else {
+                throw NativeLocalAgentAccountSessionError.inactive
+            }
+            Task {
+                do {
+                    try await model.agentRuntimeSettings.save(
+                        ownerUserID: ownerUserID,
+                        preferences: preferences
+                    )
+                    saved = preferences
+                    didSave = true
+                    error = false
+                    hasSavedPreferences = true
+                } catch {
+                    self.error = true
+                    didSave = false
+                }
+            }
         } catch { self.error = true; didSave = false }
     }
 }

@@ -10,7 +10,11 @@ final class NativeApprovalAgentTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         try Data((1...12).map { "line \($0)" }.joined(separator: "\n").utf8).write(to: root.appendingPathComponent("sample.txt"))
         let model = ApprovalTestModel(finishAt: 11)
-        let result = await NativeApprovalAgent().evaluate(request: request(root), modelClient: model, policy: .init())
+        let result = await agent().evaluate(
+            request: request(root),
+            modelClient: model,
+            policy: .init()
+        )
         XCTAssertEqual(result, .approve(reason: "checked", rememberAllow: false))
         let calls = await model.calls
         XCTAssertEqual(calls, 11)
@@ -22,14 +26,18 @@ final class NativeApprovalAgentTests: XCTestCase {
         var policy = AgentRunPolicy(); policy.maximumModelCalls = 1
         for fail in [false, true] {
             let model = ApprovalTestModel(finishAt: 2, fail: fail)
-            let result = await NativeApprovalAgent().evaluate(request: request(FileManager.default.temporaryDirectory), modelClient: model, policy: policy)
+            let result = await agent().evaluate(
+                request: request(FileManager.default.temporaryDirectory),
+                modelClient: model,
+                policy: policy
+            )
             guard case .askUser = result else { return XCTFail("Errors and limits must never grant approval") }
         }
     }
 
     func testInvalidTerminalDecisionDoesNotApprove() async throws {
         var policy = AgentRunPolicy(); policy.maximumModelCalls = 1
-        let result = await NativeApprovalAgent().evaluate(request: request(FileManager.default.temporaryDirectory),
+        let result = await agent().evaluate(request: request(FileManager.default.temporaryDirectory),
             modelClient: ApprovalTestModel(finishAt: 1, invalidDecision: true), policy: policy)
         guard case .askUser = result else { return XCTFail("Invalid decision cannot approve") }
     }
@@ -51,6 +59,10 @@ final class NativeApprovalAgentTests: XCTestCase {
     private func request(_ root: URL) -> NativeApprovalAgentRequest {
         .init(command: "read", arguments: ["sample.txt"], cwd: ".", source: "test", projectRoot: root,
               riskLevel: "low", riskReason: nil, requestedPermissionsDescription: nil)
+    }
+
+    private func agent() -> NativeApprovalAgent {
+        NativeApprovalAgent(settingsStore: AgentRuntimePreferencesTestProvider())
     }
 }
 

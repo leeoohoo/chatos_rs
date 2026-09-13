@@ -9,6 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 AUDIT = ROOT / "clients/shared/rust/chatos_client_storage/audit/legacy_access.json"
 PROVIDER_OWNED_MACOS_PREFERENCES = (
+    "clients/macos/Sources/ChatOSAgentRuntime/AgentTypes.swift",
     "clients/macos/Sources/ChatOSApp/Features/Pet/PetPreferencesStore.swift",
     "clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/GlobalUtilityPreferencesStore.swift",
     "clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/QuickSearch/QuickSearchViewModel.swift",
@@ -58,12 +59,14 @@ class ClientStorageBoundaryTests(unittest.TestCase):
         self.assertNotIn("isLegacyRoute", source)
         self.assertIn("routeStore.requireCurrent()", source)
 
-    def test_swift_agent_settings_do_not_restore_legacy_value_migrations(self) -> None:
+    def test_agent_runtime_preferences_use_client_settings_repository(self) -> None:
         source = (
-            ROOT / "clients/macos/Sources/ChatOSAgentRuntime/AgentTypes.swift"
+            ROOT
+            / "clients/macos/Sources/ChatOSConnector/NativeAgentRuntimeSettingsStore.swift"
         ).read_text(errors="replace")
-        self.assertNotIn("retryDefaultMigrationKey", source)
-        self.assertNotIn("migratedLegacyRetryDefault", source)
+        self.assertIn("NativeLocalClientSettingStore<AgentRuntimePreferences>", source)
+        self.assertNotIn("UserDefaults", source)
+        self.assertNotIn("FileManager", source)
 
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()

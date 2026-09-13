@@ -119,7 +119,8 @@ final class NativeProjectGitServiceTests: XCTestCase {
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
                 stateURL: stateURL
             ),
-            ticketProvider: GitTicketProvider()
+            ticketProvider: GitTicketProvider(),
+            agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
         return GitTestContext(
             root: root,

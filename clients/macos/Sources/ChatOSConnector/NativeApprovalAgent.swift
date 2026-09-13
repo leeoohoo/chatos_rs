@@ -20,17 +20,20 @@ struct NativeApprovalAgentRequest: Sendable {
 
 struct NativeApprovalAgent: Sendable {
     private let tools = NativeApprovalAgentTools()
-    private let settingsStore: AgentSettingsStore
+    private let settingsStore: any AgentRuntimePreferencesProviding
 
-    init(settingsStore: AgentSettingsStore = .init()) { self.settingsStore = settingsStore }
+    init(settingsStore: any AgentRuntimePreferencesProviding) {
+        self.settingsStore = settingsStore
+    }
 
     func evaluate(
         request: NativeApprovalAgentRequest,
+        ownerUserID: String,
         model: GatewayModelConfigDTO,
         thinkingLevel: String?
     ) async -> NativeApprovalDecision {
         do {
-            let policy = try settingsStore.load().effective(.approval)
+            let policy = try await settingsStore.load(ownerUserID: ownerUserID).effective(.approval)
             guard model.enabled != false,
                   let apiKey = model.apiKey?.trimmedNonEmpty,
                   let baseURLText = model.baseURL?.trimmedNonEmpty,

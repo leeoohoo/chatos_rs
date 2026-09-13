@@ -69,23 +69,8 @@ public struct AgentRuntimePreferences: Codable, Equatable, Sendable {
     public func validate() throws { try global.validate(); try effective(.approval).validate(); try effective(.story).validate() }
 }
 
-/// Device-local configuration, shared by native approval and story creation. No secrets.
-public struct AgentSettingsStore: Sendable {
-    private let suiteName: String?
-    private let key = "chatos.agent-runtime.settings.v1"
-    public init(suiteName: String? = nil) { self.suiteName = suiteName }
-    public func load() throws -> AgentRuntimePreferences {
-        let defaults = suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
-        guard let data = defaults.data(forKey: key) else { return .init() }
-        let value = try JSONDecoder().decode(AgentRuntimePreferences.self, from: data)
-        try value.validate()
-        return value
-    }
-    public func save(_ value: AgentRuntimePreferences) throws {
-        try value.validate()
-        let defaults = suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
-        defaults.set(try JSONEncoder().encode(value), forKey: key)
-    }
+public protocol AgentRuntimePreferencesProviding: Sendable {
+    func load(ownerUserID: String) async throws -> AgentRuntimePreferences
 }
 
 public struct AgentRunCheckpoint: Codable, Equatable, Sendable {

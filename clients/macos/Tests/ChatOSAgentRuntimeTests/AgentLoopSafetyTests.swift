@@ -72,27 +72,15 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertTrue(retryEvents.last?.detail.contains("16 秒") == true)
     }
 
-    func testSettingsPersistAndValidateOverridesAndWindowBudget() throws {
-        let name = "AgentSettingsTests.\(UUID())"
-        defer { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
-        let store = AgentSettingsStore(suiteName: name)
+    func testSettingsValidateOverridesAndWindowBudget() throws {
         var preferences = AgentRuntimePreferences()
         preferences.approvalMaximumCalls = 77; preferences.storyMaximumCalls = 800
         preferences.global.context = .init()
-        try store.save(preferences)
-        let restored = try store.load()
-        XCTAssertEqual(restored.effective(.approval).maximumModelCalls, 77)
-        XCTAssertEqual(restored.effective(.story).maximumModelCalls, 800)
+        try preferences.validate()
+        XCTAssertEqual(preferences.effective(.approval).maximumModelCalls, 77)
+        XCTAssertEqual(preferences.effective(.story).maximumModelCalls, 800)
         preferences.global.context!.outputReserveTokens = preferences.global.context!.windowTokens
-        XCTAssertThrowsError(try store.save(preferences))
-        XCTAssertEqual(try store.load(), restored, "Invalid changes do not overwrite saved settings")
-    }
-
-    func testMalformedStoredPreferencesDoNotSilentlyFallback() throws {
-        let name = "AgentSettingsTests.\(UUID())"
-        defer { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
-        UserDefaults(suiteName: name)?.set(Data("invalid".utf8), forKey: "chatos.agent-runtime.settings.v1")
-        XCTAssertThrowsError(try AgentSettingsStore(suiteName: name).load())
+        XCTAssertThrowsError(try preferences.validate())
     }
 
     func testRepeatedIdenticalToolWorkPausesInsteadOfUsing600Calls() async throws {

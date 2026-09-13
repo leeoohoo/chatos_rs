@@ -63,7 +63,10 @@ struct StoryAgentStartView: View {
                 }.buttonStyle(.borderedProminent).disabled(policy == nil || !viewModel.canCreate)
             }
         }.padding(24).frame(width: 620)
-        .onAppear { do { policy = try viewModel.effectiveAgentPolicy() } catch { self.error = error.localizedDescription } }
+        .task {
+            do { policy = try await viewModel.effectiveAgentPolicy() }
+            catch { self.error = error.localizedDescription }
+        }
     }
 }
 

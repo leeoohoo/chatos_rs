@@ -43,7 +43,7 @@ final class StoryStudioViewModel: ObservableObject {
     private let media: any MediaGenerationServicing
     private let planner: (any StoryPlanningServicing)?
     private let agentServices: (any AgentServiceProviding)?
-    private let agentSettings: AgentSettingsStore
+    private let agentSettings: any AgentRuntimePreferencesProviding
     private var owner: String?
     private var session = UUID()
     private var task: Task<Void, Never>?
@@ -55,7 +55,7 @@ final class StoryStudioViewModel: ObservableObject {
 
     init(media: any MediaGenerationServicing, planner: (any StoryPlanningServicing)? = nil,
          store: StoryProjectStore, agentServices: (any AgentServiceProviding)? = nil,
-         agentSettings: AgentSettingsStore = .init()) {
+         agentSettings: any AgentRuntimePreferencesProviding) {
         self.media = media; self.planner = planner; self.store = store
         self.agentServices = agentServices ?? (planner as? any AgentServiceProviding)
         self.agentSettings = agentSettings
@@ -88,7 +88,10 @@ final class StoryStudioViewModel: ObservableObject {
     func activeVideoGenerationCount(projectID: UUID) -> Int {
         activeVideoGenerations.filter { $0.projectID == projectID }.count
     }
-    func effectiveAgentPolicy() throws -> AgentRunPolicy { try agentSettings.load().effective(.story) }
+    func effectiveAgentPolicy() async throws -> AgentRunPolicy {
+        guard let owner else { throw StoryAgentError.unavailable }
+        return try await agentSettings.load(ownerUserID: owner).effective(.story)
+    }
 
     /// The canonical project remains unchanged until the agent finishes and the store can apply
     /// the whole run atomically. Only an actively executing run replaces it for live preview;
@@ -1029,8 +1032,14 @@ final class StoryStudioViewModel: ObservableObject {
     private func startAgent(stage: StoryAgentRun.Stage, targets: [String]) {
         guard let project else { return }
         run("启动分步剧情规划") { owner, token in
-            let draft = try StoryAgentRun(project: project, owner: owner, stage: stage, targetIDs: targets,
-                                           policy: self.effectiveAgentPolicy())
+            let policy = try await self.effectiveAgentPolicy()
+            let draft = try StoryAgentRun(
+                project: project,
+                owner: owner,
+                stage: stage,
+                targetIDs: targets,
+                policy: policy
+            )
             try await self.executeAgent(draft, resume: false, owner: owner, token: token)
         }
     }
@@ -1091,7 +1100,12 @@ final class StoryStudioViewModel: ObservableObject {
             await self?.publishAgentRun(snapshot, token: token)
         }
         do {
-            if resume { saved = try await coordinator.prepareForResume(policy: effectiveAgentPolicy()) }
+            if resume {
+                let policy = try await effectiveAgentPolicy()
+                saved = try await coordinator.prepareForResume(
+                    policy: policy
+                )
+            }
             if saved.checkpoint.status != .completed {
                 let model = try await services.makeAgentModel(configID: saved.draft.models.textModelID, policy: saved.policy)
                 try check(token)

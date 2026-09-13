@@ -190,7 +190,12 @@ extension NativeLocalConnectorService {
             do {
                 let token = try requireAccessToken()
                 async let model = gateway.modelConfig(token: token, id: modelID, includeSecret: true)
-                let decision = await NativeApprovalAgent().evaluate(
+                guard let ownerUserID = state.user?.id else {
+                    throw NativeTerminalRelayError.invalidContext
+                }
+                let decision = await NativeApprovalAgent(
+                    settingsStore: agentRuntimeSettings
+                ).evaluate(
                     request: .init(
                         command: command,
                         arguments: arguments,
@@ -201,6 +206,7 @@ extension NativeLocalConnectorService {
                         riskReason: risk.reason,
                         requestedPermissionsDescription: requestedPermissionsDescription
                     ),
+                    ownerUserID: ownerUserID,
                     model: try await model,
                     thinkingLevel: state.commandApprovalThinkingLevel
                 )

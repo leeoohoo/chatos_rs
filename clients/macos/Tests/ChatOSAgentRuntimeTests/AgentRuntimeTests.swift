@@ -17,27 +17,6 @@ final class AgentRuntimeTests: XCTestCase {
         try settings.validate()
     }
 
-    func testStoredPreferencesAreLoadedWithoutRewritingTheirValues() throws {
-        let name = "AgentSettingsStoreTests.\(UUID())"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
-        var stored = AgentRuntimePreferences()
-        stored.global.maximumRequestRetries = 2
-        var context = AgentContextPolicy()
-        context.windowTokens = 2_000_000
-        context.outputReserveTokens = 30_000
-        context.compactionThresholdTokens = 200_000
-        stored.global.context = context
-        let originalData = try JSONEncoder().encode(stored)
-        defaults.set(originalData, forKey: "chatos.agent-runtime.settings.v1")
-
-        let loaded = try AgentSettingsStore(suiteName: name).load()
-
-        XCTAssertEqual(loaded.global.maximumRequestRetries, 2)
-        XCTAssertEqual(loaded.global.context?.windowTokens, 2_000_000)
-        XCTAssertEqual(defaults.data(forKey: "chatos.agent-runtime.settings.v1"), originalData)
-    }
-
     func testContextEstimateReturnsApproximateTokensRatherThanRawBytes() throws {
         let messages = [AgentMessage(role: .user, content: String(repeating: "x", count: 4_000))]
         let estimate = try AgentContextBudget.estimate(messages: messages, tools: [])
