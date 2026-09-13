@@ -73,7 +73,7 @@ public sealed class PetOverlayViewModelTests
     [Fact]
     public async Task Conversation_activity_can_cancel_the_active_turn()
     {
-        var commands = new FakeConversationCommandService();
+        var commands = new FakePetConversationControl();
         var route = new PetActivityRoute(ConversationId: "conversation-one", TurnId: "turn-one");
         var activity = Activity("chat", PetActivityKind.Reviewing, "Reviewing", route) with
         {
@@ -146,7 +146,7 @@ public sealed class PetOverlayViewModelTests
         FakeInboxService inbox,
         FakeSuppressionStore? suppression = null,
         FakeRealtimeClient? realtime = null,
-        FakeConversationCommandService? commands = null,
+        FakePetConversationControl? commands = null,
         FakeTaskGraphService? tasks = null,
         FakeAskUserPromptService? ask = null)
     {
@@ -155,7 +155,7 @@ public sealed class PetOverlayViewModelTests
         return new PetOverlayViewModel(
             new PetActivityCoordinator(inbox, suppression ?? new FakeSuppressionStore()),
             realtime ?? new FakeRealtimeClient(),
-            commands ?? new FakeConversationCommandService(),
+            commands ?? new FakePetConversationControl(),
             tasks ?? new FakeTaskGraphService(),
             ask ?? new FakeAskUserPromptService(),
             new LocalizationViewModel(preferences, dispatcher),
@@ -254,26 +254,11 @@ public sealed class PetOverlayViewModelTests
             }
         }
 
-        public async IAsyncEnumerable<ConversationRealtimeSignal> StreamConversationAsync(
-            string conversationId,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
     }
 
-    private sealed class FakeConversationCommandService : IConversationCommandService
+    private sealed class FakePetConversationControl : IPetConversationControl
     {
         public (string ConversationId, string? TurnId)? StoppedTurn { get; private set; }
-
-        public Task<ConversationCommandAck> SendNewTurnAsync(
-            ConversationSendCommand command,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-
-        public Task<ConversationCommandAck> SendGuidanceAsync(
-            ConversationSendCommand command,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public Task StopTurnAsync(
             string conversationId,

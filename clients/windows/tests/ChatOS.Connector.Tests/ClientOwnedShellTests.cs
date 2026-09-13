@@ -56,7 +56,7 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
             Stub<IAppPreferencesStore>((_, _) => throw new NotSupportedException())), dispatcher);
         _shell = new(_auth, _relations, _registry, _projects, _localAgent,
             _conversations, localControl,
-            new ConversationSessionViewModel(null!, null!, null!, null!, null!, null!, new(), dispatcher),
+            new ConversationSessionViewModel(new EmptyMainChatService(), null!, null!, dispatcher),
             new ProjectFilesViewModel(null!, dispatcher), new ProjectGitViewModel(null!, dispatcher),
             new ProjectRunViewModel(null!, dispatcher),
             new RemoteConnectionsViewModel(remote, localControl, dispatcher), localization);
@@ -207,9 +207,13 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
         await _shell.InitializeAsync();
         _shell.SelectedResource = Assert.Single(_shell.Projects);
         var selected = _shell.SelectedResource;
-        var first = await _shell.EnsureProjectConversationAsync(_aliceProject.Id);
-        var second = await _shell.EnsureProjectConversationAsync(_aliceProject.Id);
+        var first = await _shell.EnsureProjectConversationScopeAsync(_aliceProject.Id);
+        var second = await _shell.EnsureProjectConversationScopeAsync(_aliceProject.Id);
         Assert.Equal(first, second);
+        Assert.Equal("alice", first.AccountId);
+        Assert.Equal("conversation", first.ThreadId);
+        Assert.Equal(_aliceProject.Id, first.ProjectId);
+        Assert.Equal("jiguli", first.ContactAgentId);
         Assert.Equal(1, _conversations.Calls);
         Assert.Same(selected, _shell.SelectedResource);
     }
@@ -262,6 +266,21 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
         var instance = DispatchProxy.Create<T, ServiceStub>();
         ((ServiceStub)(object)instance).Call = call;
         return instance;
+    }
+
+    private sealed class EmptyMainChatService : ILocalAgentMainChatService
+    {
+        public event EventHandler? ProjectionChanged { add { } remove { } }
+        public event EventHandler? ProjectionCleared { add { } remove { } }
+        public Task<LocalAgentConversationSnapshot> GetConversationAsync(
+            string threadId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LocalAgentConversationSnapshot("alice", threadId, []));
+        public Task<LocalAgentRunCreatedResponse> CreateTurnAsync(
+            LocalAgentCreateConversationTurn command, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public Task CancelTurnAsync(string threadId, string turnId, string runId,
+            ulong expectedVersion, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     public class ServiceStub : DispatchProxy

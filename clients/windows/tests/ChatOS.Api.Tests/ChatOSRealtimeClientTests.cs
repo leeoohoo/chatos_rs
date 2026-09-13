@@ -26,11 +26,8 @@ public sealed class ChatOSRealtimeClientTests
     }
 
     [Fact]
-    public void SubscriptionPayloadsUseGatewayTopicContract()
+    public void PetSubscriptionUsesTheUserGatewayTopicContract()
     {
-        Assert.Equal(
-            "{\"type\":\"subscribe\",\"topics\":[{\"scope\":\"conversation\",\"id\":\"c1\"}]}",
-            ChatOSRealtimeClient.ConversationSubscription("c1"));
         Assert.Equal(
             "{\"type\":\"subscribe\",\"topics\":[{\"scope\":\"user\"}]}",
             ChatOSRealtimeClient.UserSubscription());

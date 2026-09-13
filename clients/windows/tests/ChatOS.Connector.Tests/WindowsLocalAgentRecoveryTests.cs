@@ -298,6 +298,12 @@ public sealed class WindowsLocalAgentRecoveryTests
                 "user-1",
                 1,
                 "pipe-1"));
+        public Task<IReadOnlyList<LocalAgentAttachmentReference>> StageAttachmentsAsync(
+            string accountId, IReadOnlyList<ConversationAttachmentDraft> attachments,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task DiscardStagedAttachmentsAsync(
+            string accountId, IReadOnlyList<LocalAgentAttachmentReference> references) =>
+            throw new NotSupportedException();
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
@@ -360,6 +366,12 @@ public sealed class WindowsLocalAgentRecoveryTests
                 "user-1",
                 1,
                 "pipe-1"));
+        public Task<IReadOnlyList<LocalAgentAttachmentReference>> StageAttachmentsAsync(
+            string accountId, IReadOnlyList<ConversationAttachmentDraft> attachments,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task DiscardStagedAttachmentsAsync(
+            string accountId, IReadOnlyList<LocalAgentAttachmentReference> references) =>
+            throw new NotSupportedException();
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
@@ -388,6 +400,12 @@ public sealed class WindowsLocalAgentRecoveryTests
             return Task.FromResult(new WindowsLocalAgentHostState(
                 WindowsLocalAgentHostStatus.Running, "user-1", 1, endpoint));
         }
+        public Task<IReadOnlyList<LocalAgentAttachmentReference>> StageAttachmentsAsync(
+            string accountId, IReadOnlyList<ConversationAttachmentDraft> attachments,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task DiscardStagedAttachmentsAsync(
+            string accountId, IReadOnlyList<LocalAgentAttachmentReference> references) =>
+            throw new NotSupportedException();
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
@@ -441,6 +459,8 @@ public sealed class WindowsLocalAgentRecoveryTests
         public Task ReplaceAsync(WindowsLocalAgentProjectionSnapshot snapshot,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task ApplyPageAsync(string accountId, IReadOnlyList<WindowsLocalAgentResolvedEvent> events,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task UpsertCreatedRunAsync(string accountId, WindowsLocalAgentRecoveredRun run,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task MarkAcknowledgedAsync(string accountId, ulong throughSequence,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();

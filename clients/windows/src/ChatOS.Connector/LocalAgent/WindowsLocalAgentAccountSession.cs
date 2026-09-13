@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using ChatOS.Api.Http;
 using ChatOS.Core.Abstractions;
+using ChatOS.Core.Domain;
 
 namespace ChatOS.Connector.LocalAgent;
 
@@ -37,6 +38,15 @@ public interface IWindowsLocalAgentAccountSession : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     Task<WindowsLocalAgentHostState> GetStateAsync();
+
+    Task<IReadOnlyList<LocalAgentAttachmentReference>> StageAttachmentsAsync(
+        string accountId,
+        IReadOnlyList<ConversationAttachmentDraft> attachments,
+        CancellationToken cancellationToken = default);
+
+    Task DiscardStagedAttachmentsAsync(
+        string accountId,
+        IReadOnlyList<LocalAgentAttachmentReference> references);
 }
 
 /// Owns the one authenticated Windows Local Agent Host session. Common Agent
@@ -57,6 +67,7 @@ public sealed class WindowsLocalAgentAccountSession : IWindowsLocalAgentAccountS
     private readonly IWindowsLocalAgentRuntimeConfiguration _runtimeConfiguration;
     private readonly ILocalAgentIPCClientFactory _clientFactory;
     private readonly Func<int, byte[]> _randomBytes;
+    private readonly WindowsLocalAgentAttachmentStager _attachmentStager = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private string? _activeAccountId;
     private WindowsLocalAgentHostBootstrapSettings? _activeSettings;
@@ -183,6 +194,47 @@ public sealed class WindowsLocalAgentAccountSession : IWindowsLocalAgentAccountS
 
     public Task<WindowsLocalAgentHostState> GetStateAsync() => _supervisor.GetStateAsync();
 
+    public async Task<IReadOnlyList<LocalAgentAttachmentReference>> StageAttachmentsAsync(
+        string accountId,
+        IReadOnlyList<ConversationAttachmentDraft> attachments,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateIdentity(accountId);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var settings = RequireActiveSettings(accountId);
+            return await _attachmentStager.StageAsync(
+                attachments,
+                settings.AttachmentGrantDirectory,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task DiscardStagedAttachmentsAsync(
+        string accountId,
+        IReadOnlyList<LocalAgentAttachmentReference> references)
+    {
+        ValidateIdentity(accountId);
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (string.Equals(_activeAccountId, accountId, StringComparison.Ordinal)
+                && _activeSettings is { } settings)
+            {
+                _attachmentStager.Discard(references, settings.AttachmentGrantDirectory);
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await LogoutAsync().ConfigureAwait(false);
@@ -247,7 +299,20 @@ public sealed class WindowsLocalAgentAccountSession : IWindowsLocalAgentAccountS
                 accountId,
                 settings,
                 providerCancellation),
-            cancellationToken);
+        cancellationToken);
+
+    private WindowsLocalAgentHostBootstrapSettings RequireActiveSettings(string accountId)
+    {
+        if (!string.Equals(_activeAccountId, accountId, StringComparison.Ordinal))
+        {
+            throw Error(
+                WindowsLocalAgentAccountSessionFailure.AccountMismatch,
+                "The Local Agent account does not match the authenticated account.");
+        }
+        return _activeSettings ?? throw Error(
+            WindowsLocalAgentAccountSessionFailure.Inactive,
+            "The Local Agent account session is inactive.");
+    }
 
     private async Task<WindowsLocalAgentHostLaunchConfiguration> BuildConfigurationAsync(
         string accountId,

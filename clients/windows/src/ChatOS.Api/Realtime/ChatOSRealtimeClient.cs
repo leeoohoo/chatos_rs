@@ -24,46 +24,6 @@ public sealed class ChatOSRealtimeClient : IRealtimeClient
         _options = options.Value;
     }
 
-    public async IAsyncEnumerable<ConversationRealtimeSignal> StreamConversationAsync(
-        string conversationId,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
-        var reconnectAttempt = 0;
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            var failed = false;
-            await using (var enumerator = ConnectAsync(
-                ConversationSubscription(conversationId),
-                cancellationToken).GetAsyncEnumerator(cancellationToken))
-            {
-                while (true)
-                {
-                    var next = await MoveNextSafelyAsync(enumerator, cancellationToken).ConfigureAwait(false);
-                    if (next.Cancelled)
-                    {
-                        yield break;
-                    }
-
-                    if (!next.HasValue)
-                    {
-                        failed = next.Failed;
-                        break;
-                    }
-
-                    var signal = ConversationRealtimeEventDecoder.Decode(next.Value!, conversationId);
-                    if (signal is not null)
-                    {
-                        yield return signal;
-                    }
-                }
-            }
-
-            reconnectAttempt = failed ? reconnectAttempt + 1 : 0;
-            await DelayBeforeReconnectAsync(reconnectAttempt, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
     public async IAsyncEnumerable<PetActivityEvent> StreamPetActivitiesAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -120,13 +80,6 @@ public sealed class ChatOSRealtimeClient : IRealtimeClient
         };
         return builder.Uri;
     }
-
-    internal static string ConversationSubscription(string conversationId) =>
-        JsonSerializer.Serialize(new
-        {
-            type = "subscribe",
-            topics = new[] { new { scope = "conversation", id = conversationId } },
-        });
 
     internal static string UserSubscription() =>
         JsonSerializer.Serialize(new

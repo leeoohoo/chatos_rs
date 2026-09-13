@@ -2,14 +2,6 @@ using ChatOS.Core.Domain;
 
 namespace ChatOS.Core.Abstractions;
 
-public interface IConversationAttachmentService
-{
-    Task<IReadOnlyList<ConversationAttachmentReference>> UploadAsync(
-        IReadOnlyList<ConversationAttachmentDraft> attachments,
-        string conversationId,
-        CancellationToken cancellationToken = default);
-}
-
 public interface IConversationRuntimeSettingsService
 {
     Task<ConversationRuntimeSettings> FetchAsync(
@@ -30,16 +22,8 @@ public interface IConversationRuntimeSettingsService
         CancellationToken cancellationToken = default);
 }
 
-public interface IConversationCommandService
+public interface IPetConversationControl
 {
-    Task<ConversationCommandAck> SendNewTurnAsync(
-        ConversationSendCommand command,
-        CancellationToken cancellationToken = default);
-
-    Task<ConversationCommandAck> SendGuidanceAsync(
-        ConversationSendCommand command,
-        CancellationToken cancellationToken = default);
-
     Task StopTurnAsync(
         string conversationId,
         string? turnId,

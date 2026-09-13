@@ -35,11 +35,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();
         services.AddSingleton<IAskUserPromptService, AskUserPromptService>();
-        services.AddHttpClient(ConversationAttachmentService.UploadClientName);
-        services.AddSingleton<IConversationAttachmentService, ConversationAttachmentService>();
         services.AddSingleton<IConversationRuntimeSettingsService, ConversationRuntimeSettingsService>();
-        services.AddSingleton<IConversationCommandService, ConversationCommandService>();
-        services.AddSingleton<IConversationHistoryService, ConversationHistoryService>();
+        services.AddSingleton<ILocalAgentContactRuntimeContextService,
+            LocalAgentContactRuntimeContextService>();
+        services.AddSingleton<IPetConversationControl, PetConversationControlService>();
         services.AddSingleton<WorkspaceService>();
         services.AddSingleton<IWorkspaceRelationsService>(provider => provider.GetRequiredService<WorkspaceService>());
         services.AddSingleton<IProjectConversationService, ProjectConversationService>();

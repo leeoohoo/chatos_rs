@@ -170,12 +170,18 @@ public sealed class WindowsLocalAgentTaskServiceTests
             CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task LogoutAsync() => Task.CompletedTask;
         public Task<WindowsLocalAgentHostState> GetStateAsync() => throw new NotSupportedException();
+        public Task<IReadOnlyList<LocalAgentAttachmentReference>> StageAttachmentsAsync(
+            string accountId, IReadOnlyList<ConversationAttachmentDraft> attachments,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task DiscardStagedAttachmentsAsync(
+            string accountId, IReadOnlyList<LocalAgentAttachmentReference> references) =>
+            throw new NotSupportedException();
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class TaskClient(
         LocalAgentTaskSnapshot task,
-        IReadOnlyDictionary<string, LocalAgentRunSnapshot> runs) : StubClient
+        IReadOnlyDictionary<string, LocalAgentRunSnapshot> runs) : LocalAgentIPCClientStub
     {
         public (string ThreadId, string TurnId)? GraphSource { get; private set; }
         public LocalAgentRetryTask? RetryCommand { get; private set; }
@@ -239,44 +245,4 @@ public sealed class WindowsLocalAgentTaskServiceTests
         }
     }
 
-    private abstract class StubClient : ILocalAgentIPCClient
-    {
-        public virtual Task<LocalAgentResponse> SendAsync(LocalAgentCommand command,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<string> AcceptAsync(LocalAgentCommand command,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<LocalAgentRunCreatedResponse> CreateMainChatTurnAsync(
-            LocalAgentCreateMainChatTurn command, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-        public virtual Task<LocalAgentRunCreatedResponse> CreateTaskAsync(LocalAgentCreateTask command,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<LocalAgentRunCreatedResponse> RetryTaskAsync(LocalAgentRetryTask command,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<LocalAgentRunSnapshot> GetRunAsync(string runId,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<LocalAgentRunDetail> GetRunDetailAsync(string runId, uint eventLimit = 40,
-            uint eventOffset = 0, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-        public virtual Task<LocalAgentTaskSnapshot> GetTaskAsync(string taskId,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<LocalAgentTaskGraphSnapshot> GetTaskGraphAsync(string sourceThreadId,
-            string sourceTurnId, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-        public virtual Task<LocalAgentTaskRunDetail> GetTaskRunDetailAsync(string taskId, string runId,
-            uint eventLimit = 40, uint eventOffset = 0,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<LocalAgentMainChatRunBinding> GetMainChatRunBindingAsync(string runId,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<LocalAgentRunPage> ListRunsAsync(string? cursor = null, uint limit = 100,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<LocalAgentTaskPage> ListTasksAsync(string? cursor = null, uint limit = 100,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<LocalAgentEventPage> SubscribeRunEventsAsync(ulong afterSequence,
-            uint limit = 200, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-        public virtual Task<ulong> GetUIEventCursorAsync(
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public virtual Task<ulong> AcknowledgeUIEventsAsync(ulong throughSequence,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    }
 }

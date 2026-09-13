@@ -106,6 +106,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public async Task<string> EnsureProjectConversationAsync(
         string projectId,
         CancellationToken cancellationToken = default)
+        => (await EnsureProjectConversationScopeAsync(projectId, cancellationToken)).ThreadId;
+
+    public async Task<LocalAgentConversationScope> EnsureProjectConversationScopeAsync(
+        string projectId,
+        CancellationToken cancellationToken = default)
     {
         var generation = AccountGeneration;
         var owner = RequireAccount(generation);
@@ -122,7 +127,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var resource = Projects.FirstOrDefault(value =>
                 value.Kind == WorkspaceResourceKind.Project &&
                 string.Equals(value.Id, projectId, StringComparison.Ordinal));
-            if (resource?.ConversationId is { Length: > 0 } existing) return existing;
+            if (resource?.ConversationId is { Length: > 0 } existing)
+                return await ResolveConversationScopeAsync(
+                    WorkspaceResourceKind.Project, projectId, existing, cancellationToken);
             var project = _workspaceSnapshot.Projects.FirstOrDefault(value =>
                 string.Equals(value.Id, projectId, StringComparison.Ordinal))
                 ?? throw new KeyNotFoundException(Localization.Text(
@@ -132,7 +139,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             {
                 ProjectContext = await _localProjects.ResolveContextAsync(owner, projectId, cancellationToken),
             };
-            if (project.LatestConversationId is { Length: > 0 } cached) return cached;
+            if (project.LatestConversationId is { Length: > 0 } cached)
+                return await ResolveConversationScopeAsync(
+                    WorkspaceResourceKind.Project, projectId, cached, cancellationToken);
             var contact = _workspaceSnapshot.Contacts.FirstOrDefault(value =>
                     string.Equals(value.AgentId, "jiguli", StringComparison.OrdinalIgnoreCase))
                 ?? _workspaceSnapshot.Contacts.FirstOrDefault()
@@ -154,12 +163,94 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     string.Equals(value.Id, projectId, StringComparison.Ordinal)
                         ? value with { LatestConversationId = conversationId }
                         : value).ToArray(),
+                Conversations = UpsertPreparedConversation(
+                    _workspaceSnapshot.Conversations,
+                    new WorkspaceConversation(
+                        conversationId,
+                        project.Name,
+                        projectId,
+                        contact.Id,
+                        contact.AgentId,
+                        0,
+                        DateTimeOffset.UtcNow,
+                        false)),
             };
-            return conversationId;
+            PublishPreparedConversationId(projectId, conversationId);
+            return new LocalAgentConversationScope(owner, conversationId, projectId, contact.AgentId);
         }
         finally
         {
             _conversationPreparationGate.Release();
+        }
+    }
+
+    public async Task<LocalAgentConversationScope> ResolveConversationScopeAsync(
+        WorkspaceResourceKind kind,
+        string sourceId,
+        string threadId,
+        CancellationToken cancellationToken = default)
+    {
+        if (kind is not (WorkspaceResourceKind.Contact or WorkspaceResourceKind.Project))
+            throw new InvalidOperationException("Only contacts and projects can own a Main Chat conversation.");
+        if (string.IsNullOrWhiteSpace(sourceId) || string.IsNullOrWhiteSpace(threadId))
+            throw new InvalidOperationException("The conversation scope identity is incomplete.");
+
+        var generation = AccountGeneration;
+        var owner = RequireAccount(generation);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _accountCancellation.Token);
+        var token = linked.Token;
+        var conversation = _workspaceSnapshot.Conversations.FirstOrDefault(value =>
+            !value.IsArchived && string.Equals(value.Id, threadId, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException(
+                "The conversation does not have an authoritative workspace scope.");
+
+        if (kind == WorkspaceResourceKind.Project)
+        {
+            if (!string.Equals(conversation.ProjectId, sourceId, StringComparison.Ordinal))
+                throw new InvalidOperationException("The conversation project identity does not match the selected project.");
+            var localProject = await _projectRegistry.GetAsync(owner, sourceId, token);
+            RequireAccount(generation);
+            if (localProject?.Status != LocalProjectStatus.Active)
+                throw new InvalidOperationException("The local project is unavailable.");
+        }
+        else
+        {
+            if (conversation.ProjectId is not null)
+                throw new InvalidOperationException("A project conversation cannot be opened as a contact conversation.");
+            var contact = _workspaceSnapshot.Contacts.FirstOrDefault(value =>
+                string.Equals(value.Id, sourceId, StringComparison.Ordinal)
+                || string.Equals(value.AgentId, sourceId, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException("The selected contact is no longer available.");
+            if (!string.Equals(conversation.ContactId, contact.Id, StringComparison.Ordinal)
+                && !string.Equals(conversation.ContactAgentId, contact.AgentId, StringComparison.Ordinal))
+                throw new InvalidOperationException("The conversation contact identity does not match the selected contact.");
+        }
+
+        if (string.IsNullOrWhiteSpace(conversation.ContactAgentId))
+            throw new InvalidOperationException("The conversation does not identify its contact Agent.");
+        return new LocalAgentConversationScope(
+            owner,
+            conversation.Id,
+            conversation.ProjectId,
+            conversation.ContactAgentId);
+    }
+
+    private static IReadOnlyList<WorkspaceConversation> UpsertPreparedConversation(
+        IReadOnlyList<WorkspaceConversation> conversations,
+        WorkspaceConversation prepared) => conversations
+            .Where(value => !string.Equals(value.Id, prepared.Id, StringComparison.Ordinal))
+            .Append(prepared)
+            .ToArray();
+
+    private void PublishPreparedConversationId(string projectId, string conversationId)
+    {
+        for (var index = 0; index < Projects.Count; index++)
+        {
+            if (Projects[index].Kind != WorkspaceResourceKind.Project
+                || !string.Equals(Projects[index].Id, projectId, StringComparison.Ordinal)) continue;
+            Projects[index] = Projects[index] with { ConversationId = conversationId };
+            return;
         }
     }
 
@@ -562,7 +653,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             await ProjectRun.CloseAsync(cancellationToken);
             await ProjectGit.CloseAsync(cancellationToken);
-            await Conversation.OpenAsync(resource.ConversationId, resource.Title, cancellationToken);
+            var scope = resource.ConversationId is { Length: > 0 } threadId
+                ? await ResolveConversationScopeAsync(resource.Kind, resource.Id, threadId, cancellationToken)
+                : null;
+            await Conversation.OpenAsync(scope, resource.Title, cancellationToken);
             return;
         }
 
@@ -596,9 +690,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             {
                 case "chat":
                     IsPreparingConversation = true;
-                    var conversationId = await EnsureProjectConversationAsync(project.Id, token);
+                    var scope = await EnsureProjectConversationScopeAsync(project.Id, token);
                     token.ThrowIfCancellationRequested();
-                    await Conversation.OpenAsync(conversationId, project.Name, token);
+                    await Conversation.OpenAsync(scope, project.Name, token);
                     break;
                 case "git":
                     await ProjectGit.OpenAsync(project, token);

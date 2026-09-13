@@ -103,25 +103,34 @@ public sealed partial class PetQuickChatViewModel : ObservableObject, IDisposabl
         try
         {
             var conversationId = resource.ConversationId;
+            LocalAgentConversationScope scope;
             if (resource.Kind == WorkspaceResourceKind.Project && string.IsNullOrWhiteSpace(conversationId))
             {
-                conversationId = await _mainWindow.EnsureProjectConversationAsync(
+                scope = await _mainWindow.EnsureProjectConversationScopeAsync(
                     resource.SourceId,
                     cancellationToken);
+                conversationId = scope.ThreadId;
                 RebuildResources();
                 resource = Resources.First(value => value.Id == resource.Id);
             }
-
-            if (string.IsNullOrWhiteSpace(conversationId))
+            else if (string.IsNullOrWhiteSpace(conversationId))
             {
                 throw new InvalidOperationException(_localization.Text(
                     "叽咕狸当前没有可用会话，请先在主界面刷新工作区。",
                     "Jiguli does not have an available conversation. Refresh the workspace first."));
             }
+            else
+            {
+                scope = await _mainWindow.ResolveConversationScopeAsync(
+                    resource.Kind,
+                    resource.SourceId,
+                    conversationId,
+                    cancellationToken);
+            }
 
             SelectedResource = resource;
             await Conversation.OpenAsync(
-                conversationId,
+                scope,
                 resource.Title,
                 cancellationToken);
         }

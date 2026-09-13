@@ -13,7 +13,7 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
 {
     private readonly PetActivityCoordinator _coordinator;
     private readonly IRealtimeClient _realtime;
-    private readonly IConversationCommandService _conversationCommands;
+    private readonly IPetConversationControl _conversationCommands;
     private readonly ILocalAgentTaskService _taskGraph;
     private readonly IAskUserPromptService _askUser;
     private readonly LocalizationViewModel _localization;
@@ -27,7 +27,7 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
     public PetOverlayViewModel(
         PetActivityCoordinator coordinator,
         IRealtimeClient realtime,
-        IConversationCommandService conversationCommands,
+        IPetConversationControl conversationCommands,
         ILocalAgentTaskService taskGraph,
         IAskUserPromptService askUser,
         LocalizationViewModel localization,

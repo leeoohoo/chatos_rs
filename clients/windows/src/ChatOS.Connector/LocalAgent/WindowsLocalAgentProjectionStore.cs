@@ -41,6 +41,11 @@ public interface IWindowsLocalAgentProjectionStore
         ulong throughSequence,
         CancellationToken cancellationToken = default);
 
+    Task UpsertCreatedRunAsync(
+        string accountId,
+        WindowsLocalAgentRecoveredRun run,
+        CancellationToken cancellationToken = default);
+
     Task<WindowsLocalAgentProjectionSnapshot?> GetAsync(
         CancellationToken cancellationToken = default);
 
@@ -160,6 +165,47 @@ public sealed class WindowsLocalAgentProjectionStore : IWindowsLocalAgentProject
                 throw new InvalidDataException("Local Agent acknowledged cursor is invalid.");
             }
             updated = current with { AcknowledgedEventSequence = throughSequence };
+            _snapshot = updated;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        Changed?.Invoke(this, Clone(updated));
+    }
+
+    public async Task UpsertCreatedRunAsync(
+        string accountId,
+        WindowsLocalAgentRecoveredRun run,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        WindowsLocalAgentProjectionSnapshot updated;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var current = RequireAccount(accountId);
+            if (current.Runs.ContainsKey(run.Run.RunId))
+            {
+                throw new InvalidOperationException("The Local Agent run is already projected.");
+            }
+            if (run.MainChatBinding is { } binding
+                && current.Runs.Values.Any(value =>
+                    string.Equals(value.MainChatBinding?.TurnId, binding.TurnId, StringComparison.Ordinal)
+                    || string.Equals(value.MainChatBinding?.MessageId, binding.MessageId, StringComparison.Ordinal)))
+            {
+                throw new InvalidDataException("The Local Agent Main Chat identity is already projected.");
+            }
+            var runs = current.Runs.ToDictionary(pair => pair.Key, pair => pair.Value,
+                StringComparer.Ordinal);
+            runs.Add(run.Run.RunId, run);
+            updated = current with
+            {
+                Runs = runs,
+                LastAppliedEventSequence = Math.Max(
+                    current.LastAppliedEventSequence,
+                    run.SnapshotEventSequence),
+            };
             _snapshot = updated;
         }
         finally

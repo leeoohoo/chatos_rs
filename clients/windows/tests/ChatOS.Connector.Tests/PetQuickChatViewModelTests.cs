@@ -73,14 +73,25 @@ public sealed class PetQuickChatViewModelTests
         Localization(dispatcher));
 
     private static ConversationSessionFactory EmptyConversationFactory(IUiDispatcher dispatcher) => new(
+        new EmptyMainChatService(),
         null!,
         null!,
-        null!,
-        null!,
-        null!,
-        null!,
-        new ConversationHistoryStore(),
         dispatcher);
+
+    private sealed class EmptyMainChatService : ILocalAgentMainChatService
+    {
+        public event EventHandler? ProjectionChanged { add { } remove { } }
+        public event EventHandler? ProjectionCleared { add { } remove { } }
+        public Task<LocalAgentConversationSnapshot> GetConversationAsync(
+            string threadId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LocalAgentConversationSnapshot("account", threadId, []));
+        public Task<LocalAgentRunCreatedResponse> CreateTurnAsync(
+            LocalAgentCreateConversationTurn command, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public Task CancelTurnAsync(string threadId, string turnId, string runId,
+            ulong expectedVersion, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
 
     private static LocalizationViewModel Localization(IUiDispatcher dispatcher) => new(
         new AppPreferencesManager(new MemoryPreferencesStore()),

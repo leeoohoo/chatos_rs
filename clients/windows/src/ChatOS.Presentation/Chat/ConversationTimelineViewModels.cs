@@ -6,56 +6,61 @@ namespace ChatOS.Presentation.Chat;
 
 public sealed class ConversationTurnItemViewModel
 {
-    public ConversationTurnItemViewModel(ConversationTurn turn)
+    public ConversationTurnItemViewModel(LocalAgentMainChatTurn turn)
     {
-        Id = turn.Id;
-        Revision = turn.Revision;
-        UserText = turn.UserMessage.Text;
-        UserCreatedAt = turn.UserMessage.CreatedAt;
-        Status = turn.Status.ToString().ToLowerInvariant();
-        IsRunning = turn.Status == TurnStatus.Streaming;
-        MessageTaskLookup = turn.MessageTaskLookup;
-        IsTaskGraphAvailable = turn.IsTaskGraphAvailable;
-        TaskGraphMessageId = turn.MessageTaskLookup?.SourceUserMessageId ?? turn.UserMessage.Id;
-        Attachments = new ObservableCollection<ConversationAttachmentReference>(turn.UserMessage.Attachments);
+        Id = turn.Binding.TurnId;
+        RunId = turn.Run.RunId;
+        RunVersion = turn.Run.Version;
+        Revision = turn.Run.Version > long.MaxValue ? long.MaxValue : (long)turn.Run.Version;
+        UserText = turn.Binding.UserMessage.Content ?? string.Empty;
+        UserCreatedAt = turn.Binding.UserMessage.CreatedAt;
+        Status = turn.Run.Status.ToString().ToLowerInvariant();
+        IsRunning = !IsTerminal(turn.Run.Status);
+        IsTaskGraphAvailable = turn.Tasks.Count > 0;
+        Attachments = new ObservableCollection<ConversationAttachmentReference>(AttachmentsFrom(turn));
         ProcessEvents = new ObservableCollection<TurnProcessItemViewModel>(
-            turn.ProcessEvents.Select(static value => new TurnProcessItemViewModel(
-                value.Id,
-                value.Title,
-                value.Detail,
-                value.Status.ToString().ToLowerInvariant())));
-        Replies = new ObservableCollection<ConversationReplyItemViewModel>(
-            turn.AssistantReplies.Count > 0
-                ? turn.AssistantReplies.Select(reply => new ConversationReplyItemViewModel(
-                    reply.Message.Id,
-                    reply.Message.Text,
-                    reply.Message.CreatedAt,
-                    reply.TaskCallback?.TaskId,
-                    reply.TaskCallback?.RunId,
-                    reply.TaskCallback?.Status,
-                    reply.TaskCallback is null
-                        ? null
-                        : new MessageTaskGraphRequest(
-                            turn.MessageTaskLookup?.ConversationId ?? turn.ConversationId,
-                            turn.MessageTaskLookup?.TurnId ?? turn.Id,
-                            reply.TaskCallback.TaskId,
-                            reply.TaskCallback.RunId)))
-                : turn.FinalAssistantMessage is { } final
-                    ? new[]
-                    {
-                        new ConversationReplyItemViewModel(
-                            final.Id,
-                            final.Text,
-                            final.CreatedAt,
-                            null,
-                            null,
-                            null,
-                            null),
-                    }
-                    : Array.Empty<ConversationReplyItemViewModel>());
+            turn.Detail.Events
+                .Where(static value => value.EventType is not
+                    ("message_user_content" or "message_assistant_content"))
+                .Select(value => new TurnProcessItemViewModel(
+                    value.EventId,
+                    DisplayEventType(value.EventType),
+                    value.Message,
+                    Status)));
+        var replies = new List<ConversationReplyItemViewModel>();
+        var assistant = turn.Detail.Events.LastOrDefault(static value =>
+            value.EventType == "message_assistant_content" && !string.IsNullOrWhiteSpace(value.Message));
+        if (assistant is not null)
+        {
+            replies.Add(new ConversationReplyItemViewModel(
+                assistant.EventId,
+                assistant.Message!,
+                assistant.CreatedAt,
+                null,
+                null,
+                null,
+                null));
+        }
+        replies.AddRange(turn.Tasks.Select(task => new ConversationReplyItemViewModel(
+            $"task-{task.TaskId}",
+            task.Objective,
+            task.UpdatedAt,
+            task.TaskId,
+            task.CurrentRunId,
+            task.Status,
+            new MessageTaskGraphRequest(
+                task.SourceThreadId,
+                task.SourceTurnId,
+                task.TaskId,
+                task.CurrentRunId))));
+        Replies = new ObservableCollection<ConversationReplyItemViewModel>(replies);
     }
 
     public string Id { get; }
+
+    public string RunId { get; }
+
+    public ulong RunVersion { get; }
 
     public long Revision { get; }
 
@@ -67,17 +72,52 @@ public sealed class ConversationTurnItemViewModel
 
     public bool IsRunning { get; }
 
-    public MessageTaskLookup? MessageTaskLookup { get; }
-
     public bool IsTaskGraphAvailable { get; }
-
-    public string TaskGraphMessageId { get; }
 
     public ObservableCollection<ConversationAttachmentReference> Attachments { get; }
 
     public ObservableCollection<TurnProcessItemViewModel> ProcessEvents { get; }
 
     public ObservableCollection<ConversationReplyItemViewModel> Replies { get; }
+
+    private static bool IsTerminal(LocalAgentRunStatus status) => status is
+        LocalAgentRunStatus.Succeeded or LocalAgentRunStatus.Failed or LocalAgentRunStatus.Cancelled;
+
+    private static string DisplayEventType(string value) =>
+        string.Join(' ', value.Split('_', StringSplitOptions.RemoveEmptyEntries)
+            .Select(word => char.ToUpperInvariant(word[0]) + word[1..]));
+
+    private static IReadOnlyList<ConversationAttachmentReference> AttachmentsFrom(
+        LocalAgentMainChatTurn turn)
+    {
+        var payload = turn.Binding.UserMessage.StructuredPayload;
+        if (payload is not { ValueKind: System.Text.Json.JsonValueKind.Object }
+            || !payload.Value.TryGetProperty("attachments", out var attachments)
+            || attachments.ValueKind != System.Text.Json.JsonValueKind.Array)
+        {
+            return [];
+        }
+        var values = new List<ConversationAttachmentReference>();
+        foreach (var item in attachments.EnumerateArray())
+        {
+            if (!item.TryGetProperty("attachment_id", out var idValue)
+                || idValue.GetString() is not { Length: > 0 } id
+                || !item.TryGetProperty("media_type", out var mediaValue)
+                || mediaValue.GetString() is not { Length: > 0 } mediaType
+                || !item.TryGetProperty("byte_size", out var sizeValue)
+                || !sizeValue.TryGetInt32(out var size))
+            {
+                continue;
+            }
+            var kind = mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                ? ConversationAttachmentKind.Image
+                : mediaType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)
+                    ? ConversationAttachmentKind.Audio
+                    : ConversationAttachmentKind.File;
+            values.Add(new ConversationAttachmentReference(id, id, mediaType, size, kind));
+        }
+        return values;
+    }
 }
 
 public sealed record TurnProcessItemViewModel(

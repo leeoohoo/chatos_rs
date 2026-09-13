@@ -1,4 +1,3 @@
-using ChatOS.Core.State;
 using ChatOS.Presentation.Chat;
 using ChatOS.Presentation.Projects;
 using ChatOS.Presentation.Tasks;
@@ -14,7 +13,6 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddChatOSPresentation(this IServiceCollection services)
     {
-        services.AddSingleton<ConversationHistoryStore>();
         services.AddSingleton<ConversationSessionViewModel>();
         services.AddSingleton<ConversationSessionFactory>();
         services.AddSingleton<ProjectFilesViewModel>();

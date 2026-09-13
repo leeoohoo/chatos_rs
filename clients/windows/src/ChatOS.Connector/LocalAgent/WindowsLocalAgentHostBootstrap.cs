@@ -210,7 +210,7 @@ public sealed class WindowsLocalAgentHostBootstrapBuilder
         }
     }
 
-    private static void EnsurePrivateDirectory(string path)
+    internal static void EnsurePrivateDirectory(string path)
     {
         var fullPath = Path.GetFullPath(path);
         if (OperatingSystem.IsWindows())
