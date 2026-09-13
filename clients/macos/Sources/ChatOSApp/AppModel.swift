@@ -172,8 +172,7 @@ final class AppModel: ObservableObject {
         let localAgentConversationScopes = NativeLocalAgentConversationScopeStore()
         let localProjectsService = NativeLocalProjectsService(
             connector: localConnectorService,
-            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
-                .appendingPathComponent("Projects.sqlite3")
+            accountSession: localAgentAccountSession
         )
         let runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
         let commandService = NativeLocalAgentConversationCommandService(
@@ -661,8 +660,11 @@ final class AppModel: ObservableObject {
 
         Task {
             do {
-                let registry = try await localProjectsService.registry()
-                let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: workspaceService, ownerUserID: ownerUserID)
+                let loader = try ClientOwnedWorkspaceLoader(
+                    registry: localProjectsService,
+                    remote: workspaceService,
+                    ownerUserID: ownerUserID
+                )
                 let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)
                 try? await localProjectsService.repairRootWorkspaceBindings(ownerUserID: ownerUserID)
                 var local = try await loader.loadLocal(deviceID: deviceID)
@@ -717,8 +719,9 @@ final class AppModel: ObservableObject {
 
     func renameLocalProject(id: String, name: String) async throws {
         guard let owner = authenticatedUserID else { throw CancellationError() }
-        let registry = try await localProjectsService.registry()
-        guard let old = try await registry.get(ownerUserID: owner, id: id) else { throw ProjectRegistryError.notFound }
+        guard let old = try await localProjectsService.get(ownerUserID: owner, id: id) else {
+            throw ProjectRegistryError.notFound
+        }
         guard owner == authenticatedUserID else { throw CancellationError() }
         try await localProjectsService.rename(ownerUserID: owner, id: id, name: name, expectedRevision: old.revision)
         guard owner == authenticatedUserID else { return }
@@ -1207,8 +1210,9 @@ final class AppModel: ObservableObject {
 
     func deleteProject(id: String) async throws {
         guard let owner = authenticatedUserID else { throw CancellationError() }
-        let registry = try await localProjectsService.registry()
-        guard let old = try await registry.get(ownerUserID: owner, id: id) else { throw ProjectRegistryError.notFound }
+        guard let old = try await localProjectsService.get(ownerUserID: owner, id: id) else {
+            throw ProjectRegistryError.notFound
+        }
         guard owner == authenticatedUserID else { throw CancellationError() }
         try await localProjectsService.remove(ownerUserID: owner, id: id, expectedRevision: old.revision)
         guard owner == authenticatedUserID else { return }

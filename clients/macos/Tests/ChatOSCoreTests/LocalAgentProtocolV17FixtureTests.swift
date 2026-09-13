@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v16 fixtures")
-struct LocalAgentProtocolV16FixtureTests {
+@Suite("Shared Local Agent protocol v17 fixtures")
+struct LocalAgentProtocolV17FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,8 +32,45 @@ struct LocalAgentProtocolV16FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 16)
+        #expect(localAgentProtocolVersion == 17)
         #expect(encoded == fixture)
+    }
+
+    @Test("encodes and decodes owner-scoped Project CRUD")
+    func projectCRUD() throws {
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-create-project-1",
+            ownerUserID: "user-1",
+            command: .createProject(
+                projectID: "project-1",
+                draft: .init(
+                    name: "Website Studio",
+                    description: "Visual website design",
+                    workspaceID: "workspace-1",
+                    relativeRoot: "apps/studio"
+                )
+            )
+        )
+        let encoded = try JSONSerialization.jsonObject(
+            with: LocalAgentProtocolJSON.encoder().encode(request)
+        ) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("project_create_request.json"))
+        ) as? NSDictionary
+        #expect(encoded == fixture)
+
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("project_response.json"))
+        )
+        guard case let .project(project) = reply.response else {
+            Issue.record("Expected a Project response")
+            return
+        }
+        #expect(project.ownerUserID == "user-1")
+        #expect(project.projectID == "project-1")
+        #expect(project.revision == 1)
     }
 
     @Test("encodes exact Run-bound tool approval from the shared contract")
@@ -159,7 +196,7 @@ struct LocalAgentProtocolV16FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v16")
+            .appendingPathComponent("shared/fixtures/local_agent/v17")
             .appendingPathComponent(name)
     }
 }

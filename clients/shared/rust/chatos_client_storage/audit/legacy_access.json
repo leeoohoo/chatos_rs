@@ -2,15 +2,12 @@
   "schema_version": 1,
   "entries": [
     {"path":"clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/Clipboard/ClipboardHistoryStore.swift","platform":"macos","access_kind":"direct_database_driver","target":"ClipboardRepository","status":"pending"},
-    {"path":"clients/macos/Sources/ChatOSConnector/SQLiteProjectRegistry.swift","platform":"macos","access_kind":"direct_database_driver","target":"ProjectRepository","status":"pending"},
-
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/LocalStateDatabase.cs","platform":"windows","access_kind":"direct_database_driver","target":"Local Agent Host IPC","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteAppPreferencesStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConnectorApprovalStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"AgentRepository","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConnectorModelSettingsStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConnectorPersistentStateStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConnectorSandboxSettingsStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
-    {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConversationCacheStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ConversationRepository","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqlitePetActivitySuppressionStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqlitePetFavoriteProjectsStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqlitePetWindowPlacementStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"OS UI preferences","status":"pending"},

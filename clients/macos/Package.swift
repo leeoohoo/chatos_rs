@@ -30,7 +30,6 @@ let package = Package(
             name: "ChatOSConnector",
             dependencies: ["ChatOSCore", "ChatOSAgentRuntime", "ChatOSMacSecurity"],
             linkerSettings: [
-                .linkedLibrary("sqlite3"),
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("AppKit"),
                 .linkedFramework("AVFoundation"),

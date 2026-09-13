@@ -19,18 +19,30 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         let connector = NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
             ticketProvider: NoNetworkTicketProvider())
-        return Context(root: root, connector: connector,
-                       service: NativeLocalProjectsService(connector: connector, databaseURL: root.appendingPathComponent("projects.db")))
+        let client = ProjectClient(ownerUserID: "alice")
+        return Context(
+            root: root,
+            connector: connector,
+            service: NativeLocalProjectsService(
+                connector: connector,
+                clientProvider: { ownerUserID in
+                    guard ownerUserID == "alice" else {
+                        throw NativeLocalAgentAccountSessionError.accountMismatch
+                    }
+                    return client
+                }
+            ),
+            client: client
+        )
     }
 
     func testCreatesOfflineWithoutGitContactOrActivationAndPersists() async throws {
         let context = try context()
         defer { try? FileManager.default.removeItem(at: context.root) }
-        let project = try await context.service.create(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "repo"))
+        let project = try await context.service.createWorkspaceProject(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "repo"))
         XCTAssertEqual(project.rootPath, "local://connector/device/ws/repo")
         XCTAssertNil(project.latestConversationID)
-        let registry = try await context.service.registry()
-        let records = try await registry.list(ownerUserID: "alice")
+        let records = try await context.service.list(ownerUserID: "alice")
         XCTAssertEqual(records.map(\.id), [project.id])
         XCTAssertFalse(FileManager.default.fileExists(atPath: context.root.appendingPathComponent("repo/.git").path))
     }
@@ -38,7 +50,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     func testSignedOutSuspensionPreservesPersistentProjectAccessState() async throws {
         let context = try context()
         defer { try? FileManager.default.removeItem(at: context.root) }
-        let project = try await context.service.create(
+        let project = try await context.service.createWorkspaceProject(
             ownerUserID: "alice",
             draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "repo")
         )
@@ -53,8 +65,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         XCTAssertEqual(persisted.workspaces.map(\.id), ["ws", "root-ws"])
         let deviceID = try await context.service.deviceID(ownerUserID: "alice")
         XCTAssertEqual(deviceID, "device")
-        let registry = try await context.service.registry()
-        let record = try await registry.get(ownerUserID: "alice", id: project.id)
+        let record = try await context.service.get(ownerUserID: "alice", id: project.id)
         XCTAssertEqual(record?.draft.relativeRoot, "repo")
     }
 
@@ -82,12 +93,11 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: context.root) }
         for (owner, path) in [("bob", "repo"), ("alice", "missing"), ("alice", "connector.json")] {
             do {
-                _ = try await context.service.create(ownerUserID: owner, draft: .init(name: "bad", workspaceID: "ws", relativeRoot: path))
+                _ = try await context.service.createWorkspaceProject(ownerUserID: owner, draft: .init(name: "bad", workspaceID: "ws", relativeRoot: path))
                 XCTFail("Invalid directory/account accepted")
             } catch {}
         }
-        let registry = try await context.service.registry()
-        let records = try await registry.list(ownerUserID: "alice")
+        let records = try await context.service.list(ownerUserID: "alice")
         XCTAssertTrue(records.isEmpty)
     }
 
@@ -96,7 +106,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: context.root) }
         try FileManager.default.createSymbolicLink(at: context.root.appendingPathComponent("escape"), withDestinationURL: context.root.deletingLastPathComponent())
         do {
-            _ = try await context.service.create(ownerUserID: "alice", draft: .init(name: "bad", workspaceID: "ws", relativeRoot: "escape"))
+            _ = try await context.service.createWorkspaceProject(ownerUserID: "alice", draft: .init(name: "bad", workspaceID: "ws", relativeRoot: "escape"))
             XCTFail("Escaped workspace")
         } catch {}
     }
@@ -104,7 +114,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     func testPluginContextUsesLocalNameAndBindingAndDeletionCannotFallback() async throws {
         let context = try context()
         defer { try? FileManager.default.removeItem(at: context.root) }
-        let project = try await context.service.create(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "repo"))
+        let project = try await context.service.createWorkspaceProject(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "repo"))
         try await context.service.rename(ownerUserID: "alice", id: project.id, name: "Renamed", expectedRevision: 1)
         let plugin = try await context.service.pluginContext(ownerUserID: "alice", projectID: project.id)
         XCTAssertEqual(plugin.projectName, "Renamed")
@@ -121,11 +131,15 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     func testRetiredWorkspaceIDRebindsThroughCurrentAuthorizationAndUpdatesRegistry() async throws {
         let context = try context()
         defer { try? FileManager.default.removeItem(at: context.root) }
-        let registry = try await context.service.registry()
         let relativeRoot = context.root.appendingPathComponent("repo").path.dropFirst().description
-        let record = try await registry.create(
-            ownerUserID: "alice",
-            draft: .init(name: "Rebound", workspaceID: "retired-workspace", relativeRoot: relativeRoot)
+        let record = await context.client.seed(
+            projectID: "project-rebound",
+            draft: .init(
+                name: "Rebound",
+                description: "",
+                workspaceID: "retired-workspace",
+                relativeRoot: relativeRoot
+            )
         )
 
         let resolved = try await context.connector.resolveProjectPath(
@@ -135,11 +149,14 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         XCTAssertEqual(resolved.absoluteURL.path, context.root.appendingPathComponent("repo").path)
 
         try await context.service.repairRootWorkspaceBindings(ownerUserID: "alice")
-        let snapshot = try await context.service.projectContext(ownerUserID: "alice", projectID: record.id)
+        let snapshot = try await context.service.projectContext(
+            ownerUserID: "alice",
+            projectID: record.projectID
+        )
         XCTAssertEqual(snapshot.executionTarget.workspaceId, "root-ws")
         XCTAssertEqual(snapshot.executionTarget.relativeRoot, relativeRoot)
         XCTAssertEqual(snapshot.projectRevision, 2)
-        let repaired = try await registry.get(ownerUserID: "alice", id: record.id)
+        let repaired = try await context.service.get(ownerUserID: "alice", id: record.projectID)
         XCTAssertEqual(repaired?.draft.workspaceID, "root-ws")
         XCTAssertEqual(repaired?.revision, 2)
     }
@@ -183,8 +200,108 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         } catch { XCTAssertTrue(error is CancellationError) }
     }
 
-    private struct Context { let root: URL; let connector: NativeLocalConnectorService; let service: NativeLocalProjectsService }
+    private struct Context {
+        let root: URL
+        let connector: NativeLocalConnectorService
+        let service: NativeLocalProjectsService
+        let client: ProjectClient
+    }
     private struct NoNetworkTicketProvider: LocalConnectorPairingTicketProviding {
         func issueLocalConnectorPairingTicket() async throws -> String { throw URLError(.notConnectedToInternet) }
+    }
+}
+
+private actor ProjectClient: NativeLocalProjectIPCClient {
+    let ownerUserID: String
+    private var records: [String: LocalAgentProjectSnapshot] = [:]
+
+    init(ownerUserID: String) {
+        self.ownerUserID = ownerUserID
+    }
+
+    func project(id: String) throws -> LocalAgentProjectSnapshot {
+        guard let record = records[id] else { throw notFound() }
+        return record
+    }
+
+    func projects(includeInactive: Bool) -> [LocalAgentProjectSnapshot] {
+        records.values
+            .filter { includeInactive || $0.status == .active }
+            .sorted {
+                $0.draft.name == $1.draft.name
+                    ? $0.projectID < $1.projectID
+                    : $0.draft.name < $1.draft.name
+            }
+    }
+
+    func createProject(
+        projectID: String,
+        draft: LocalAgentProjectDraft
+    ) throws -> LocalAgentProjectSnapshot {
+        guard records[projectID] == nil else { throw conflict() }
+        let record = snapshot(projectID: projectID, draft: draft, revision: 1, status: .active)
+        records[projectID] = record
+        return record
+    }
+
+    func updateProject(
+        projectID: String,
+        expectedRevision: UInt64,
+        draft: LocalAgentProjectDraft,
+        status: LocalAgentProjectStatus
+    ) throws -> LocalAgentProjectSnapshot {
+        guard let previous = records[projectID] else { throw notFound() }
+        guard previous.status != .removed else { throw removed() }
+        guard previous.revision == expectedRevision else { throw conflict() }
+        let record = snapshot(
+            projectID: projectID,
+            draft: draft,
+            revision: expectedRevision + 1,
+            status: status
+        )
+        records[projectID] = record
+        return record
+    }
+
+    func seed(
+        projectID: String,
+        draft: LocalAgentProjectDraft
+    ) -> LocalAgentProjectSnapshot {
+        let record = snapshot(projectID: projectID, draft: draft, revision: 1, status: .active)
+        records[projectID] = record
+        return record
+    }
+
+    private func snapshot(
+        projectID: String,
+        draft: LocalAgentProjectDraft,
+        revision: UInt64,
+        status: LocalAgentProjectStatus
+    ) -> LocalAgentProjectSnapshot {
+        .init(
+            projectID: projectID,
+            ownerUserID: ownerUserID,
+            draft: draft,
+            revision: revision,
+            status: status,
+            createdAt: "2026-09-13T01:00:00Z",
+            updatedAt: "2026-09-13T01:00:00Z"
+        )
+    }
+
+    private func notFound() -> NativeLocalAgentIPCError {
+        .rejected(.init(code: "project_not_found", message: "missing", retryable: false))
+    }
+
+    private func conflict() -> NativeLocalAgentIPCError {
+        .rejected(.init(code: "project_revision_conflict", message: "conflict", retryable: false))
+    }
+
+    private func removed() -> NativeLocalAgentIPCError {
+        .rejected(.init(
+            code: "project_invalid",
+            message: "removed projects cannot be updated",
+            retryable: false
+        ))
     }
 }

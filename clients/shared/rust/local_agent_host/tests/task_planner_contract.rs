@@ -58,11 +58,10 @@ impl StorageTransaction for SeedPlanningSources {
                     root_reference: Some("workspace-grant-1".to_string()),
                     state: serde_json::json!({
                         "schema_version": 1,
-                        "task_model_config_id": "model-task-1",
-                        "authority_snapshot": {
-                            "device_id": "device-1",
-                            "workspace_id": "workspace-1"
-                        }
+                        "description": "Visual Studio",
+                        "workspace_id": "workspace-grant-1",
+                        "relative_root": "apps/studio",
+                        "status": "active"
                     }),
                 },
                 expected_revision: None,
@@ -160,6 +159,7 @@ fn planning_request() -> LocalTaskPlanningRequest {
         source_thread_id: "thread-1".to_string(),
         source_turn_id: "turn-1".to_string(),
         project_id: "project-1".to_string(),
+        model_config_id: "model-task-1".to_string(),
         objective: "Implement the approved visual design".to_string(),
         acceptance_criteria: vec!["The screenshot matches the approved reference".to_string()],
         parent_capability_snapshot_ref: "main-capabilities-1".to_string(),
@@ -240,6 +240,6 @@ async fn planner_freezes_only_owner_scoped_project_prompt_and_resolved_capabilit
         .plan_task(&planning_request(), CancellationToken::new())
         .await
         .unwrap_err();
-    assert!(error.contains("opaque local grant ID"));
+    assert!(error.contains("workspace binding"));
     assert_eq!(resolver.requests.lock().unwrap().len(), 2);
 }

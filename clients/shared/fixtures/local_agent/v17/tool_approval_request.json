@@ -1,5 +1,5 @@
 {
-  "protocol_version": 16,
+  "protocol_version": 17,
   "request_id": "request-tool-approval-1",
   "owner_user_id": "user-1",
   "command": {

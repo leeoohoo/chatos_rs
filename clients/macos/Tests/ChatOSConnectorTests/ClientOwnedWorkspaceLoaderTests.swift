@@ -4,14 +4,8 @@ import Foundation
 import XCTest
 
 final class ClientOwnedWorkspaceLoaderTests: XCTestCase {
-    private func databaseURL() -> URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("workspace-loader-\(UUID().uuidString)/projects.db")
-    }
-
     func testOfflineRelationsDoNotHideLocalProjectsAndUnpairedProjectsRemainVisible() async throws {
-        let url = databaseURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let registry = try SQLiteProjectRegistry(databaseURL: url)
+        let registry = MemoryProjectRegistry()
         let project = try await registry.create(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws"))
         let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: OfflineRelations(), ownerUserID: "alice")
         let local = try await loader.loadLocal(deviceID: nil)
@@ -24,9 +18,7 @@ final class ClientOwnedWorkspaceLoaderTests: XCTestCase {
     }
 
     func testRelationsCannotCreateOrRenameProjectsAndChooseLatestActiveConversation() async throws {
-        let url = databaseURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let registry = try SQLiteProjectRegistry(databaseURL: url)
+        let registry = MemoryProjectRegistry()
         let project = try await registry.create(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "目录/a%20b #x"))
         let remote = FixedRelations(snapshot: .init(contacts: [], conversations: [
             conversation("archived", project: project.id, time: 30, archived: true),
@@ -45,9 +37,7 @@ final class ClientOwnedWorkspaceLoaderTests: XCTestCase {
     }
 
     func testCancelledRefreshIsNotReportedAsOfflineSuccess() async throws {
-        let url = databaseURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let registry = try SQLiteProjectRegistry(databaseURL: url)
+        let registry = MemoryProjectRegistry()
         let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: CancelledRelations(), ownerUserID: "alice")
         do {
             _ = try await loader.refresh(deviceID: nil)
@@ -56,9 +46,7 @@ final class ClientOwnedWorkspaceLoaderTests: XCTestCase {
     }
 
     func testDeletionDuringRemoteRefreshCannotResurrectProject() async throws {
-        let url = databaseURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let registry = try SQLiteProjectRegistry(databaseURL: url)
+        let registry = MemoryProjectRegistry()
         let project = try await registry.create(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws"))
         let remote = DeletingRelations(registry: registry, project: project)
         let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: remote, ownerUserID: "alice")
@@ -86,12 +74,66 @@ private struct FixedRelations: WorkspaceRelationsRemoteServicing {
 }
 
 private struct DeletingRelations: WorkspaceRelationsRemoteServicing {
-    let registry: SQLiteProjectRegistry
+    let registry: MemoryProjectRegistry
     let project: LocalProjectRecord
 
     func fetchWorkspaceRelations() async throws -> WorkspaceRelationsSnapshot {
         _ = try await registry.update(ownerUserID: project.ownerUserID, id: project.id,
                                       expectedRevision: project.revision, draft: project.draft, status: .removed)
         return .init(contacts: [], conversations: [])
+    }
+}
+
+private actor MemoryProjectRegistry: ProjectRegistry {
+    private var records: [String: LocalProjectRecord] = [:]
+
+    func list(ownerUserID: String, includeInactive: Bool) -> [LocalProjectRecord] {
+        records.values
+            .filter { $0.ownerUserID == ownerUserID && (includeInactive || $0.status == .active) }
+            .sorted { $0.id < $1.id }
+    }
+
+    func get(ownerUserID: String, id: String) -> LocalProjectRecord? {
+        records[id].flatMap { $0.ownerUserID == ownerUserID ? $0 : nil }
+    }
+
+    func create(ownerUserID: String, draft: LocalProjectDraft) throws -> LocalProjectRecord {
+        try draft.validate()
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        let record = LocalProjectRecord(
+            id: UUID().uuidString.lowercased(),
+            ownerUserID: ownerUserID,
+            draft: draft,
+            createdAtUnixMs: now,
+            updatedAtUnixMs: now
+        )
+        records[record.id] = record
+        return record
+    }
+
+    func update(
+        ownerUserID: String,
+        id: String,
+        expectedRevision: Int64,
+        draft: LocalProjectDraft,
+        status: LocalProjectStatus
+    ) throws -> LocalProjectRecord {
+        guard let previous = records[id], previous.ownerUserID == ownerUserID else {
+            throw ProjectRegistryError.notFound
+        }
+        guard previous.revision == expectedRevision else {
+            throw ProjectRegistryError.revisionConflict
+        }
+        let record = LocalProjectRecord(
+            id: id,
+            ownerUserID: ownerUserID,
+            draft: draft,
+            revision: expectedRevision + 1,
+            status: status,
+            createdAtUnixMs: previous.createdAtUnixMs,
+            updatedAtUnixMs: max(previous.updatedAtUnixMs, Int64(Date().timeIntervalSince1970 * 1_000))
+        )
+        records[id] = record
+        return record
     }
 }

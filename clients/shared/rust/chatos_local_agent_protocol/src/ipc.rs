@@ -12,9 +12,11 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
     ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
-    ExportClientDataCommand, ImportClientDataCommand, InstallProjectPluginCapabilityCommand,
-    LocalAgentRun, PostgresConnectionTestCommand, PostgresConnectionTestResult, ProtocolError,
-    RemoveProjectPluginCapabilityCommand, ToolExecution, LOCAL_AGENT_PROTOCOL_VERSION,
+    CreateProjectCommand, ExportClientDataCommand, GetProjectCommand, ImportClientDataCommand,
+    InstallProjectPluginCapabilityCommand, ListProjectsCommand, LocalAgentRun,
+    LocalProjectSnapshot, PostgresConnectionTestCommand, PostgresConnectionTestResult,
+    ProtocolError, RemoveProjectPluginCapabilityCommand, ToolExecution, UpdateProjectCommand,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,6 +83,10 @@ pub enum LocalAgentCommand {
     GetMainChatRunBinding { run_id: String },
     ListRuns { cursor: Option<String>, limit: u32 },
     ListTasks { cursor: Option<String>, limit: u32 },
+    GetProject(GetProjectCommand),
+    ListProjects(ListProjectsCommand),
+    CreateProject(CreateProjectCommand),
+    UpdateProject(UpdateProjectCommand),
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -115,6 +121,10 @@ impl LocalAgentCommand {
             Self::ListRuns { cursor, limit } | Self::ListTasks { cursor, limit } => {
                 validate_page(cursor.as_deref(), *limit)
             }
+            Self::GetProject(command) => command.validate(),
+            Self::ListProjects(command) => command.validate(),
+            Self::CreateProject(command) => command.validate(),
+            Self::UpdateProject(command) => command.validate(),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -906,6 +916,11 @@ pub enum LocalAgentIpcResponse {
         tasks: Vec<LocalAgentTaskSnapshot>,
         next_cursor: Option<String>,
     },
+    Project(LocalProjectSnapshot),
+    Projects {
+        projects: Vec<LocalProjectSnapshot>,
+        next_cursor: Option<String>,
+    },
     Events {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
@@ -947,6 +962,19 @@ impl LocalAgentIpcResponse {
             Self::Tasks { tasks, next_cursor } => {
                 for task in tasks {
                     task.validate()?;
+                }
+                if let Some(cursor) = next_cursor {
+                    require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
+            Self::Project(project) => project.validate(),
+            Self::Projects {
+                projects,
+                next_cursor,
+            } => {
+                for project in projects {
+                    project.validate()?;
                 }
                 if let Some(cursor) = next_cursor {
                     require_identifier("next_cursor", cursor)?;

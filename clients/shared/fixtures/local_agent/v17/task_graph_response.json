@@ -1,5 +1,5 @@
 {
-  "protocol_version": 16,
+  "protocol_version": 17,
   "request_id": "request-task-graph-1",
   "response": {
     "type": "task_graph",

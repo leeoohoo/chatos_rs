@@ -26,14 +26,6 @@ pub const TASK_RUNNER_PROMPT_SETTING_KEY: &str = "local_agent.task_runner_prompt
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LocalTaskProjectConfiguration {
-    pub schema_version: u32,
-    pub task_model_config_id: String,
-    pub authority_snapshot: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct LocalTaskPromptConfiguration {
     pub schema_version: u32,
     pub prompt_revision: String,
@@ -112,6 +104,7 @@ impl LocalTaskCreationPlanner for StoredLocalTaskCreationPlanner {
         }
         if request.project_id.trim().is_empty()
             || request.task_id.trim().is_empty()
+            || request.model_config_id.trim().is_empty()
             || request.objective.trim().is_empty()
             || request.acceptance_criteria.is_empty()
         {
@@ -131,10 +124,14 @@ impl LocalTaskCreationPlanner for StoredLocalTaskCreationPlanner {
                 "local Task planning sources are outside the frozen owner scope".to_string(),
             );
         }
-        let project_config: LocalTaskProjectConfiguration =
-            serde_json::from_value(sources.project.state.clone())
-                .map_err(|error| format!("invalid local Task project configuration: {error}"))?;
-        validate_project_configuration(&project_config)?;
+        let project = crate::project_snapshot(sources.project.clone())
+            .map_err(|error| format!("invalid local Task project configuration: {error}"))?;
+        if project.status != chatos_local_agent_protocol::LocalProjectStatus::Active
+            || project.project_id != request.project_id
+            || project.owner_user_id != self.scope.owner_user_id
+        {
+            return Err("local Task project is inactive or outside the frozen scope".to_string());
+        }
         let prompt_config: LocalTaskPromptConfiguration =
             serde_json::from_value(sources.prompt.value.clone())
                 .map_err(|error| format!("invalid Task Runner prompt configuration: {error}"))?;
@@ -149,7 +146,11 @@ impl LocalTaskCreationPlanner for StoredLocalTaskCreationPlanner {
             project_id: request.project_id.clone(),
             snapshot_revision: project_revision.clone(),
             working_directory_ref: working_directory_ref.to_string(),
-            authority_snapshot: project_config.authority_snapshot,
+            authority_snapshot: serde_json::json!({
+                "schema_version": 1,
+                "workspace_id": project.draft.workspace_id,
+                "relative_root": project.draft.relative_root,
+            }),
         };
         project.validate()?;
         let capability_request = LocalTaskCapabilityRequest {
@@ -212,7 +213,7 @@ impl LocalTaskCreationPlanner for StoredLocalTaskCreationPlanner {
         );
         Ok(LocalTaskCreationPlan {
             project_id: request.project_id.clone(),
-            model_config_id: project_config.task_model_config_id,
+            model_config_id: request.model_config_id.clone(),
             prompt_snapshot: FrozenSnapshot::new(
                 prompt_id,
                 prompt_config.prompt_revision,
@@ -274,19 +275,6 @@ impl StorageTransaction for LoadLocalTaskPlanningSources {
         self.result = Some(LocalTaskPlanningSources { project, prompt });
         Ok(())
     }
-}
-
-fn validate_project_configuration(config: &LocalTaskProjectConfiguration) -> Result<(), String> {
-    if config.schema_version != 1 {
-        return Err("unsupported local Task project configuration version".to_string());
-    }
-    if config.task_model_config_id.trim().is_empty() {
-        return Err("local Task project has no model configuration".to_string());
-    }
-    if !config.authority_snapshot.is_object() {
-        return Err("local Task project authority snapshot must be an object".to_string());
-    }
-    Ok(())
 }
 
 fn validate_prompt_configuration(config: &LocalTaskPromptConfiguration) -> Result<(), String> {

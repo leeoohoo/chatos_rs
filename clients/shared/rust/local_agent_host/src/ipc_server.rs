@@ -11,11 +11,12 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessageRole, GetRunDetailCommand, GetTaskGraphCommand, GetTaskRunDetailCommand,
-    LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest,
-    LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail, LocalAgentRunTimelineEvent,
-    LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection,
-    LocalAgentTaskRunDetail, LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
+    AgentMessageRole, GetProjectCommand, GetRunDetailCommand, GetTaskGraphCommand,
+    GetTaskRunDetailCommand, ListProjectsCommand, LocalAgentCommand, LocalAgentIpcError,
+    LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun,
+    LocalAgentRunDetail, LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode,
+    LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection, LocalAgentTaskRunDetail,
+    LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
     LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
@@ -229,6 +230,37 @@ impl LocalAgentIpcServer {
                         })
                     })
             }
+            LocalAgentCommand::GetProject(command) => {
+                let mut operation = GetProjectOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage.transaction(&mut operation).await.map(|()| {
+                    operation
+                        .response
+                        .unwrap_or(LocalAgentIpcResponse::Error(LocalAgentIpcError {
+                            code: "project_not_found".to_string(),
+                            message: "Local project was not found".to_string(),
+                            retryable: false,
+                        }))
+                })
+            }
+            LocalAgentCommand::ListProjects(command) => {
+                let mut operation = ListProjectsOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| {
+                        operation.response.ok_or(StorageError::Transaction {
+                            reason: "project list transaction returned no page".to_string(),
+                        })
+                    })
+            }
             LocalAgentCommand::GetTaskGraph(command) => {
                 let mut operation = GetTaskGraphOperation {
                     scope: self.scope.clone(),
@@ -418,6 +450,76 @@ impl StorageTransaction for GetTaskOperation {
 struct ListTasksOperation {
     query: ListQuery,
     response: Option<LocalAgentIpcResponse>,
+}
+
+struct GetProjectOperation {
+    scope: RecordScope,
+    command: GetProjectCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetProjectOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.response = repositories
+            .projects()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: self.command.project_id.clone(),
+            })
+            .await?
+            .map(crate::project_snapshot)
+            .transpose()?
+            .map(LocalAgentIpcResponse::Project);
+        Ok(())
+    }
+}
+
+struct ListProjectsOperation {
+    scope: RecordScope,
+    command: ListProjectsCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for ListProjectsOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let page = repositories
+            .projects()
+            .list(&ListQuery {
+                scope: self.scope.clone(),
+                cursor: self.command.cursor.clone(),
+                limit: self.command.limit,
+            })
+            .await?;
+        let mut projects = page
+            .records
+            .into_iter()
+            .map(crate::project_snapshot)
+            .collect::<StorageResult<Vec<_>>>()?;
+        if !self.command.include_inactive {
+            projects.retain(|project| {
+                project.status == chatos_local_agent_protocol::LocalProjectStatus::Active
+            });
+        }
+        projects.sort_by(|left, right| {
+            left.draft
+                .name
+                .cmp(&right.draft.name)
+                .then_with(|| left.project_id.cmp(&right.project_id))
+        });
+        self.response = Some(LocalAgentIpcResponse::Projects {
+            projects,
+            next_cursor: page.next_cursor,
+        });
+        Ok(())
+    }
 }
 
 #[async_trait]

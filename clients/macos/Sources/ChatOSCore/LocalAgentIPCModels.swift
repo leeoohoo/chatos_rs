@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 16
+public let localAgentProtocolVersion: UInt32 = 17
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -228,6 +228,52 @@ public enum LocalAgentToolApprovalDecision: String, Codable, Equatable, Sendable
     case reject
 }
 
+public struct LocalAgentProjectDraft: Codable, Equatable, Sendable {
+    public var name: String
+    public var description: String
+    public var workspaceID: String
+    public var relativeRoot: String
+
+    public init(name: String, description: String, workspaceID: String, relativeRoot: String) {
+        self.name = name
+        self.description = description
+        self.workspaceID = workspaceID
+        self.relativeRoot = relativeRoot
+    }
+}
+
+public enum LocalAgentProjectStatus: String, Codable, Equatable, Sendable {
+    case active, archived, removed
+}
+
+public struct LocalAgentProjectSnapshot: Codable, Equatable, Sendable {
+    public var projectID: String
+    public var ownerUserID: String
+    public var draft: LocalAgentProjectDraft
+    public var revision: UInt64
+    public var status: LocalAgentProjectStatus
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        projectID: String,
+        ownerUserID: String,
+        draft: LocalAgentProjectDraft,
+        revision: UInt64,
+        status: LocalAgentProjectStatus,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.projectID = projectID
+        self.ownerUserID = ownerUserID
+        self.draft = draft
+        self.revision = revision
+        self.status = status
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 public enum LocalAgentCommand: Equatable, Sendable {
     case updateAccessToken(String)
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
@@ -251,6 +297,15 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case getMainChatRunBinding(runID: String)
     case listRuns(cursor: String?, limit: UInt32)
     case listTasks(cursor: String?, limit: UInt32)
+    case getProject(projectID: String)
+    case listProjects(cursor: String?, limit: UInt32, includeInactive: Bool)
+    case createProject(projectID: String, draft: LocalAgentProjectDraft)
+    case updateProject(
+        projectID: String,
+        expectedRevision: UInt64,
+        draft: LocalAgentProjectDraft,
+        status: LocalAgentProjectStatus
+    )
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -295,6 +350,22 @@ extension LocalAgentCommand: Encodable {
     private struct ListPayload: Encodable {
         let cursor: String?
         let limit: UInt32
+    }
+    private struct ProjectPayload: Encodable { let projectID: String }
+    private struct ListProjectsPayload: Encodable {
+        let cursor: String?
+        let limit: UInt32
+        let includeInactive: Bool
+    }
+    private struct CreateProjectPayload: Encodable {
+        let projectID: String
+        let draft: LocalAgentProjectDraft
+    }
+    private struct UpdateProjectPayload: Encodable {
+        let projectID: String
+        let expectedRevision: UInt64
+        let draft: LocalAgentProjectDraft
+        let status: LocalAgentProjectStatus
     }
     private struct EventsPayload: Encodable {
         let afterSeq: UInt64
@@ -416,6 +487,36 @@ extension LocalAgentCommand: Encodable {
         case let .listTasks(cursor, limit):
             try container.encode("list_tasks", forKey: .type)
             try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
+        case let .getProject(projectID):
+            try container.encode("get_project", forKey: .type)
+            try container.encode(ProjectPayload(projectID: projectID), forKey: .payload)
+        case let .listProjects(cursor, limit, includeInactive):
+            try container.encode("list_projects", forKey: .type)
+            try container.encode(
+                ListProjectsPayload(
+                    cursor: cursor,
+                    limit: limit,
+                    includeInactive: includeInactive
+                ),
+                forKey: .payload
+            )
+        case let .createProject(projectID, draft):
+            try container.encode("create_project", forKey: .type)
+            try container.encode(
+                CreateProjectPayload(projectID: projectID, draft: draft),
+                forKey: .payload
+            )
+        case let .updateProject(projectID, expectedRevision, draft, status):
+            try container.encode("update_project", forKey: .type)
+            try container.encode(
+                UpdateProjectPayload(
+                    projectID: projectID,
+                    expectedRevision: expectedRevision,
+                    draft: draft,
+                    status: status
+                ),
+                forKey: .payload
+            )
         case let .subscribeRunEvents(afterSequence, limit):
             try container.encode("subscribe_run_events", forKey: .type)
             try container.encode(EventsPayload(afterSeq: afterSequence, limit: limit), forKey: .payload)
@@ -1118,6 +1219,12 @@ public struct LocalAgentIPCErrorPayload: Codable, Error, Equatable, Sendable {
     public var code: String
     public var message: String
     public var retryable: Bool
+
+    public init(code: String, message: String, retryable: Bool) {
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+    }
 }
 
 public enum LocalAgentResponse: Equatable, Sendable {
@@ -1131,6 +1238,8 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case mainChatRunBinding(LocalAgentMainChatRunBinding)
     case runs([LocalAgentRunSnapshot], nextCursor: String?)
     case tasks([LocalAgentTaskSnapshot], nextCursor: String?)
+    case project(LocalAgentProjectSnapshot)
+    case projects([LocalAgentProjectSnapshot], nextCursor: String?)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -1153,6 +1262,10 @@ extension LocalAgentResponse: Decodable {
     }
     private struct Tasks: Decodable {
         let tasks: [LocalAgentTaskSnapshot]
+        let nextCursor: String?
+    }
+    private struct Projects: Decodable {
+        let projects: [LocalAgentProjectSnapshot]
         let nextCursor: String?
     }
     private struct Events: Decodable {
@@ -1192,6 +1305,13 @@ extension LocalAgentResponse: Decodable {
         case "tasks":
             let value = try container.decode(Tasks.self, forKey: .payload)
             self = .tasks(value.tasks, nextCursor: value.nextCursor)
+        case "project":
+            self = .project(
+                try container.decode(LocalAgentProjectSnapshot.self, forKey: .payload)
+            )
+        case "projects":
+            let value = try container.decode(Projects.self, forKey: .payload)
+            self = .projects(value.projects, nextCursor: value.nextCursor)
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)

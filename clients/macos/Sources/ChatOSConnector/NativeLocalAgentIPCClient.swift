@@ -424,6 +424,68 @@ public actor NativeLocalAgentIPCClient {
         return task
     }
 
+    public func project(id: String) async throws -> LocalAgentProjectSnapshot {
+        let response = try await send(.getProject(projectID: id))
+        guard case let .project(project) = response else {
+            throw unexpected("project", response)
+        }
+        return project
+    }
+
+    public func projects(includeInactive: Bool) async throws -> [LocalAgentProjectSnapshot] {
+        var records: [LocalAgentProjectSnapshot] = []
+        var cursor: String?
+        repeat {
+            let response = try await send(
+                .listProjects(cursor: cursor, limit: 500, includeInactive: includeInactive)
+            )
+            guard case let .projects(page, nextCursor) = response else {
+                throw unexpected("projects", response)
+            }
+            records.append(contentsOf: page)
+            if let nextCursor, nextCursor == cursor {
+                throw NativeLocalAgentIPCError.invalidResponse
+            }
+            cursor = nextCursor
+        } while cursor != nil
+        return records.sorted {
+            $0.draft.name == $1.draft.name
+                ? $0.projectID < $1.projectID
+                : $0.draft.name < $1.draft.name
+        }
+    }
+
+    public func createProject(
+        projectID: String,
+        draft: LocalAgentProjectDraft
+    ) async throws -> LocalAgentProjectSnapshot {
+        let response = try await send(.createProject(projectID: projectID, draft: draft))
+        guard case let .project(project) = response else {
+            throw unexpected("project", response)
+        }
+        return project
+    }
+
+    public func updateProject(
+        projectID: String,
+        expectedRevision: UInt64,
+        draft: LocalAgentProjectDraft,
+        status: LocalAgentProjectStatus
+    ) async throws -> LocalAgentProjectSnapshot {
+        let response = try await send(
+            .updateProject(
+                projectID: projectID,
+                expectedRevision: expectedRevision,
+                draft: draft,
+                status: status
+            )
+        )
+        guard case let .project(project) = response else {
+            throw unexpected("project", response)
+        }
+        return project
+    }
+
     public func taskGraph(
         sourceThreadID: String,
         sourceTurnID: String
@@ -535,6 +597,8 @@ private extension LocalAgentResponse {
         case .mainChatRunBinding: "main_chat_run_binding"
         case .runs: "runs"
         case .tasks: "tasks"
+        case .project: "project"
+        case .projects: "projects"
         case .events: "events"
         case .uiEventCursor: "ui_event_cursor"
         case .storageProfile: "storage_profile"
