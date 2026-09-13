@@ -17,8 +17,8 @@ private struct BrokerResponse: Encodable {
 }
 
 private let allowedProductionServices: Set<String> = [
-    "com.chatos.swift-client.authentication.v5",
-    "com.chatos.local-agent.credentials.v6",
+    "com.chatos.swift-client.authentication.v6",
+    "com.chatos.local-agent.credentials.v7",
 ]
 
 private func valid(_ value: String, maximumLength: Int = 2_048) -> Bool {
@@ -86,6 +86,14 @@ private func query(service: String, account: String) -> [String: Any] {
         kSecAttrAccount as String: account,
         kSecAttrSynchronizable as String: false,
         kSecUseAuthenticationContext as String: context,
+        // LAContext.interactionNotAllowed only guarantees silent failure for
+        // Data Protection keychain items on macOS. ChatOS local development
+        // builds use the legacy login keychain because a self-signed binary
+        // cannot carry Apple's restricted keychain-access-group entitlement.
+        // The legacy query flag is therefore also required: without it an ACL
+        // mismatch can still launch SecurityAgent and ask for the user's macOS
+        // password even though the LAContext forbids interaction.
+        kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
     ]
 }
 

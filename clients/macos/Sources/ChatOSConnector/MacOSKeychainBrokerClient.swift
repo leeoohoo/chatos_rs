@@ -168,7 +168,7 @@ public struct MacOSKeychainBrokerClient: Sendable {
         return support
             .appendingPathComponent("ChatOSSwift", isDirectory: true)
             .appendingPathComponent("Security", isDirectory: true)
-            .appendingPathComponent("KeychainBrokerV1", isDirectory: true)
+            .appendingPathComponent("KeychainBrokerV3", isDirectory: true)
             .appendingPathComponent("chatos_keychain_broker", isDirectory: false)
     }
 

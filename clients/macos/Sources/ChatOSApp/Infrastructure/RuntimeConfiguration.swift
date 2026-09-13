@@ -91,7 +91,7 @@ enum RuntimeConfiguration {
         ).first ?? FileManager.default.homeDirectoryForCurrentUser
         return support
             .appendingPathComponent("ChatOSSwift", isDirectory: true)
-            .appendingPathComponent("LocalAgentV6", isDirectory: true)
+            .appendingPathComponent("LocalAgentV7", isDirectory: true)
     }
 
     static var localAgentHostExecutableURL: URL {

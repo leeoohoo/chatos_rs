@@ -11,7 +11,7 @@ actor KeychainCredentialStore: CredentialStoring {
     private let broker: MacOSKeychainBrokerClient
 
     init(
-        service: String = "com.chatos.swift-client.authentication.v5",
+        service: String = "com.chatos.swift-client.authentication.v6",
         account: String = "access-token",
         broker: MacOSKeychainBrokerClient = .init()
     ) {

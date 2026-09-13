@@ -15,7 +15,7 @@ public enum NativeLocalAgentCredentialStoreError: Error, Equatable, Sendable {
 /// a non-interactive authentication context so a background lifecycle task
 /// fails instead of opening a password or biometric prompt.
 public actor NativeLocalAgentCredentialStore {
-    public static let productionService = "com.chatos.local-agent.credentials.v6"
+    public static let productionService = "com.chatos.local-agent.credentials.v7"
 
     private let service: String
     private let broker: MacOSKeychainBrokerClient

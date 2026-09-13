@@ -85,7 +85,8 @@ class MacOSLocalSigningContractTests(unittest.TestCase):
         source = KEYCHAIN_BROKER.read_text()
         self.assertIn("interactionNotAllowed = true", source)
         self.assertIn("kSecUseAuthenticationContext", source)
-        self.assertNotIn("kSecUseAuthenticationUI", source)
+        self.assertIn("kSecUseAuthenticationUI as String", source)
+        self.assertIn("kSecUseAuthenticationUIFail", source)
 
     def test_package_reopens_signing_keychain_after_compilation_without_ui(self) -> None:
         package = PACKAGE_SCRIPT.read_text()
@@ -103,17 +104,17 @@ class MacOSLocalSigningContractTests(unittest.TestCase):
     def test_runtime_uses_fresh_non_legacy_credential_namespaces(self) -> None:
         app_source = APP_CREDENTIAL_STORE.read_text()
         agent_source = AGENT_CREDENTIAL_STORE.read_text()
-        self.assertIn("com.chatos.swift-client.authentication.v5", app_source)
-        self.assertNotIn("com.chatos.swift-client.authentication.v4", app_source)
-        self.assertIn('productionService = "com.chatos.local-agent.credentials.v6"', agent_source)
-        self.assertNotIn('productionService = "com.chatos.local-agent.credentials.v5"', agent_source)
+        self.assertIn("com.chatos.swift-client.authentication.v6", app_source)
+        self.assertNotIn("com.chatos.swift-client.authentication.v5", app_source)
+        self.assertIn('productionService = "com.chatos.local-agent.credentials.v7"', agent_source)
+        self.assertNotIn('productionService = "com.chatos.local-agent.credentials.v6"', agent_source)
 
     def test_production_broker_is_installed_once_outside_replaceable_app_bundle(self) -> None:
         client = KEYCHAIN_BROKER_CLIENT.read_text()
         broker = KEYCHAIN_BROKER.read_text()
         identity = MACOS_CODE_IDENTITY.read_text()
 
-        self.assertIn('appendingPathComponent("KeychainBrokerV1"', client)
+        self.assertIn('appendingPathComponent("KeychainBrokerV3"', client)
         self.assertIn("installStableBroker(from: bundled, to: installed)", client)
         self.assertIn("if fileManager.fileExists(atPath: destination.path)", client)
         self.assertIn("isTrustedProductionBroker(at: destination)", client)

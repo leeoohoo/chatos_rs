@@ -93,7 +93,7 @@ struct NativeLocalAgentCredentialStoreTests {
 
         #expect(throws: MacOSKeychainBrokerError.status(errSecParam)) {
             _ = try broker.load(
-                service: "com.chatos.swift-client.authentication.v5",
+                service: "com.chatos.swift-client.authentication.v6",
                 account: "access-token"
             )
         }
