@@ -873,7 +873,6 @@ final class AppModel: ObservableObject {
             }
             mediaStudio.activate(userID: session.user.id)
             loadLanguagePreferences()
-            localConnectorControl.activate(pairIfNeeded: true)
             startLocalAgentHostIfReady()
             refreshWorkspace()
             refreshRemoteConnections()
@@ -901,6 +900,7 @@ final class AppModel: ObservableObject {
                 await self?.globalUtilityPreferences.deactivate()
                 await self?.quickSearchUsage.deactivate()
                 await self?.agentRuntimeSettings.deactivate()
+                await self?.localConnectorService.deactivateClientStorage()
                 if let hub = self?.localAgentEventHub {
                     self?.localAgentEventHub = nil
                     await hub.stop()
@@ -966,6 +966,7 @@ final class AppModel: ObservableObject {
                 await globalUtilityPreferences.deactivate()
                 await quickSearchUsage.deactivate()
                 await agentRuntimeSettings.deactivate()
+                await localConnectorService.deactivateClientStorage()
                 // A presentation Store is account-scoped even when server IDs
                 // happen to be globally unique. Clear it before binding the
                 // next Host so no optimistic or recovered state can cross users.
@@ -984,6 +985,7 @@ final class AppModel: ObservableObject {
                         )
                     }
                 )
+                try await localConnectorService.activateClientStorage(ownerUserID: accountID)
                 await petPreferences.activate(ownerUserID: accountID)
                 await globalUtilityPreferences.activate(ownerUserID: accountID)
                 await quickSearchUsage.activate(ownerUserID: accountID)
@@ -1014,8 +1016,10 @@ final class AppModel: ObservableObject {
                 }
                 localAgentEventHub = eventHub
                 localAgentHostState = state
+                localConnectorControl.activate(pairIfNeeded: true)
                 observeLocalAgentHostState(accountID: accountID, generation: generation)
             } catch {
+                await localConnectorService.deactivateClientStorage()
                 guard authenticatedUserID == accountID,
                       workspaceAccountGeneration == generation
                 else { return }

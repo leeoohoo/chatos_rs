@@ -108,9 +108,17 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         errorMessage = nil
         notice = nil
         status = nil
+        runtimeSettings = nil
+        systemPermissions = nil
+        commandHistory = []
+        terminalResult = nil
         approvalSettings = nil
         pendingApprovals = []
         latestApprovalEvent = nil
+        modelCatalog = nil
+        modelProviders = []
+        sandboxBackends = []
+        sandboxSettings = nil
         plugins = []
         browserExtensionPairedPluginIDs = []
         Task {

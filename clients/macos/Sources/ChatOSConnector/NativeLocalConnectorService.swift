@@ -35,10 +35,12 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let agentRuntimeSettings: any AgentRuntimePreferencesProviding
     let terminalHistoryStore: NativeTerminalHistoryStore
+    let runtimePreferencesStore: NativeConnectorRuntimePreferencesStore
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
     var state: NativeConnectorPersistentState
+    private var activeClientStorageOwnerID: String?
     private var cachedAccessToken: String?
     private var hasLoadedAccessToken = false
     private var cachedDeviceIdentity: NativeConnectorDeviceIdentity?
@@ -81,6 +83,9 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         self.stateStore = NativeConnectorStateStore(stateURL: configuration.stateURL)
         self.routeStore = routeStore
         self.terminalHistoryStore = NativeTerminalHistoryStore(accountSession: accountSession)
+        self.runtimePreferencesStore = NativeConnectorRuntimePreferencesStore(
+            accountSession: accountSession
+        )
         self.agentRuntimeSettings = agentRuntimeSettings
         self.pluginInstaller = NativePluginInstaller(
             rootURL: configuration.stateURL
@@ -102,7 +107,18 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         if state.deviceID != nil, state.gatewayConnectionEnabled != false, !gatewayConnected {
             try? await connectGateway()
         }
-        return statusSnapshot()
+        return try await statusSnapshot()
+    }
+
+    public func activateClientStorage(ownerUserID: String) async throws {
+        activeClientStorageOwnerID = nil
+        _ = try await runtimePreferencesStore.activate(ownerUserID: ownerUserID)
+        activeClientStorageOwnerID = ownerUserID
+    }
+
+    public func deactivateClientStorage() async {
+        activeClientStorageOwnerID = nil
+        await runtimePreferencesStore.deactivate()
     }
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {
@@ -133,7 +149,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         try stateStore.save(state)
         try await connectGateway()
         try? await Task.sleep(for: .milliseconds(200))
-        return statusSnapshot()
+        return try await statusSnapshot()
     }
 
     public func suspendForSignedOut() async {
@@ -147,7 +163,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         state.gatewayConnectionEnabled = true
         try stateStore.save(state)
         try await connectGateway()
-        return statusSnapshot()
+        return try await statusSnapshot()
     }
 
     public func disconnect() async throws -> LocalConnectorStatus {
@@ -158,7 +174,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         if let deviceID = state.deviceID, let token {
             try? await gateway.disconnectDevice(token: token, id: deviceID)
         }
-        return statusSnapshot()
+        return try await statusSnapshot()
     }
 
     private func stopServerAccess() async {
@@ -193,13 +209,17 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func fetchRuntimeSettings() async throws -> LocalConnectorRuntimeSettings {
-        runtimeSettingsSnapshot()
+        let preferences = try await runtimePreferences()
+        return runtimeSettingsSnapshot(preferences: preferences)
     }
 
     public func updateDeveloperMode(_ enabled: Bool) async throws -> LocalConnectorRuntimeSettings {
-        state.developerMode = enabled
-        try stateStore.save(state)
-        return runtimeSettingsSnapshot()
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let preferences = try await runtimePreferencesStore.updateDeveloperMode(
+            ownerUserID: ownerUserID,
+            enabled: enabled
+        )
+        return runtimeSettingsSnapshot(preferences: preferences)
     }
 
     public func fetchSystemPermissions() async throws -> LocalConnectorSystemPermissions {
@@ -373,7 +393,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func fetchSandboxSettings() async throws -> LocalConnectorSandboxSettings {
-        sandboxSettingsSnapshot()
+        let preferences = try await runtimePreferences()
+        return sandboxSettingsSnapshot(preferences: preferences)
     }
 
     public func updateSandboxSettings(
@@ -383,21 +404,24 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         approvalReviewer: String?,
         networkAccess: String?
     ) async throws -> LocalConnectorSandboxSettings {
-        if let enabled { state.sandboxEnabled = enabled }
-        if let permissionProfileID { state.permissionProfileID = permissionProfileID }
-        if let approvalPolicy { state.approvalPolicy = approvalPolicy }
-        if let approvalReviewer { state.approvalReviewer = approvalReviewer }
-        if let networkAccess { state.networkAccess = networkAccess }
-        state.policyRevision = "native-\(ISO8601DateFormatter().string(from: Date()))"
-        try stateStore.save(state)
-        return sandboxSettingsSnapshot()
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let preferences = try await runtimePreferencesStore.updateSandbox(
+            ownerUserID: ownerUserID,
+            enabled: enabled,
+            permissionProfileID: permissionProfileID,
+            approvalPolicy: approvalPolicy,
+            approvalReviewer: approvalReviewer,
+            networkAccess: networkAccess
+        )
+        return sandboxSettingsSnapshot(preferences: preferences)
     }
 
-    private func statusSnapshot() -> LocalConnectorStatus {
-        .init(
+    private func statusSnapshot() async throws -> LocalConnectorStatus {
+        let preferences = try await runtimePreferences()
+        return .init(
             configured: state.deviceID != nil && (try? accessToken()) != nil,
             connectorRunning: gatewayConnected,
-            developerMode: state.developerMode,
+            developerMode: preferences.developerMode,
             cloudBaseURL: configuration.gatewayBaseURL.absoluteString,
             userServiceBaseURL: configuration.gatewayBaseURL.absoluteString,
             deviceID: state.deviceID,
@@ -408,27 +432,43 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         )
     }
 
-    private func runtimeSettingsSnapshot() -> LocalConnectorRuntimeSettings {
+    private func runtimeSettingsSnapshot(
+        preferences: NativeConnectorRuntimePreferences
+    ) -> LocalConnectorRuntimeSettings {
         .init(
-            developerMode: state.developerMode,
+            developerMode: preferences.developerMode,
             developerCloudBaseURL: configuration.gatewayBaseURL.absoluteString,
             developerUserServiceBaseURL: configuration.gatewayBaseURL.absoluteString,
             developerChatOSWebURL: ""
         )
     }
 
-    private func sandboxSettingsSnapshot() -> LocalConnectorSandboxSettings {
+    private func sandboxSettingsSnapshot(
+        preferences: NativeConnectorRuntimePreferences
+    ) -> LocalConnectorSandboxSettings {
         .init(
-            enabled: state.sandboxEnabled,
+            enabled: preferences.sandboxEnabled,
             defaultBackend: "native-macos",
-            defaultPermissionProfileID: state.permissionProfileID,
-            defaultPermissionProfileName: state.permissionProfileID,
-            defaultApprovalPolicy: state.approvalPolicy,
-            defaultApprovalReviewer: state.approvalReviewer,
-            defaultNetworkAccess: state.networkAccess,
+            defaultPermissionProfileID: preferences.permissionProfileID,
+            defaultPermissionProfileName: preferences.permissionProfileID,
+            defaultApprovalPolicy: preferences.approvalPolicy,
+            defaultApprovalReviewer: preferences.approvalReviewer,
+            defaultNetworkAccess: preferences.networkAccess,
             permissionConfigurationError: nil,
-            policyRevision: state.policyRevision
+            policyRevision: preferences.policyRevision
         )
+    }
+
+    private func activeClientStorageOwnerUserID() throws -> String {
+        guard let ownerUserID = activeClientStorageOwnerID else {
+            throw NativeLocalClientSettingStoreError.notLoaded
+        }
+        return ownerUserID
+    }
+
+    private func runtimePreferences() async throws -> NativeConnectorRuntimePreferences {
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        return try await runtimePreferencesStore.value(ownerUserID: ownerUserID)
     }
 
     private func ensureDefaultWorkspace(

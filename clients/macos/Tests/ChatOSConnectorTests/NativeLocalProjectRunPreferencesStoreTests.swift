@@ -9,6 +9,70 @@ import Testing
 
 @Suite("Native local Project Run preferences")
 struct NativeLocalProjectRunPreferencesStoreTests {
+    @Test("Local Connector runtime preferences are isolated by account and restored")
+    func connectorRuntimePreferencesUseClientStorage() async throws {
+        let transport = ProjectRunPreferencesTransport()
+        let userOneClient = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: transport
+        )
+        let first = NativeConnectorRuntimePreferencesStore(
+            accountSession: ProjectRunPreferencesAccountSession(client: userOneClient)
+        )
+
+        #expect(try await first.activate(ownerUserID: "user-1") == .defaults)
+        var saved = try await first.updateDeveloperMode(ownerUserID: "user-1", enabled: true)
+        saved = try await first.updateSandbox(
+            ownerUserID: "user-1",
+            enabled: false,
+            permissionProfileID: ":read-only",
+            approvalPolicy: "never",
+            approvalReviewer: "user",
+            networkAccess: "disabled"
+        )
+        #expect(saved.developerMode)
+        #expect(!saved.sandboxEnabled)
+        #expect(saved.permissionProfileID == ":read-only")
+        #expect(saved.approvalPolicy == "never")
+        #expect(saved.networkAccess == "disabled")
+        #expect(saved.policyRevision?.hasPrefix("native-") == true)
+        await first.deactivate()
+
+        let restored = NativeConnectorRuntimePreferencesStore(
+            accountSession: ProjectRunPreferencesAccountSession(client: userOneClient)
+        )
+        #expect(try await restored.activate(ownerUserID: "user-1") == saved)
+
+        let userTwoClient = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-2",
+            transport: transport
+        )
+        let userTwo = NativeConnectorRuntimePreferencesStore(
+            accountSession: ProjectRunPreferencesAccountSession(client: userTwoClient)
+        )
+        #expect(try await userTwo.activate(ownerUserID: "user-2") == .defaults)
+    }
+
+    @Test("Local Connector runtime preferences cannot be used outside activation")
+    func connectorRuntimePreferencesFailClosedWhenInactive() async throws {
+        let client = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: ProjectRunPreferencesTransport()
+        )
+        let store = NativeConnectorRuntimePreferencesStore(
+            accountSession: ProjectRunPreferencesAccountSession(client: client)
+        )
+
+        await #expect(throws: NativeLocalClientSettingStoreError.notLoaded) {
+            _ = try await store.updateDeveloperMode(ownerUserID: "user-1", enabled: true)
+        }
+        _ = try await store.activate(ownerUserID: "user-1")
+        await store.deactivate()
+        await #expect(throws: NativeLocalClientSettingStoreError.notLoaded) {
+            _ = try await store.value(ownerUserID: "user-1")
+        }
+    }
+
     @Test("Agent Runtime preferences use the account-scoped Client Setting repository")
     func agentRuntimePreferencesPersistWithoutUserDefaults() async throws {
         let transport = ProjectRunPreferencesTransport()
@@ -180,7 +244,7 @@ private struct TestClientPreference: Codable, Equatable, Sendable {
     var label: String
 }
 
-private struct ProjectRunPreferencesAccountSession: NativeLocalAgentAccountSessionAccess {
+struct ProjectRunPreferencesAccountSession: NativeLocalAgentAccountSessionAccess {
     let client: NativeLocalAgentIPCClient
 
     func client(accountID: String) async throws -> NativeLocalAgentIPCClient { client }
@@ -195,7 +259,7 @@ private struct ProjectRunPreferencesAccountSession: NativeLocalAgentAccountSessi
     ) async {}
 }
 
-private actor ProjectRunPreferencesTransport: LocalAgentFrameTransport {
+actor ProjectRunPreferencesTransport: LocalAgentFrameTransport {
     private struct StoredSetting {
         var value: Any
         var revision: UInt64
@@ -314,7 +378,7 @@ private actor ProjectRunPreferencesTransport: LocalAgentFrameTransport {
     }
 }
 
-private enum ProjectRunPreferencesTestError: Error {
+enum ProjectRunPreferencesTestError: Error {
     case invalidRequest
     case unexpectedCommand(String)
 }

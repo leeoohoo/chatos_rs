@@ -16,10 +16,14 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
             .init(id: "root-ws", alias: "root", absoluteRoot: "/", fingerprint: "root-fingerprint"),
         ]
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let settingsClient = try NativeLocalAgentIPCClient(
+            ownerUserID: "alice",
+            transport: ProjectRunPreferencesTransport()
+        )
         let connector = NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
             ticketProvider: NoNetworkTicketProvider(),
-            accountSession: UnavailableLocalAgentAccountSession(),
+            accountSession: ProjectRunPreferencesAccountSession(client: settingsClient),
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
         let client = ProjectClient(ownerUserID: "alice")
@@ -77,6 +81,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: context.root) }
         let stateURL = context.root.appendingPathComponent("connector.json")
         let before = try NativeConnectorStateStore(stateURL: stateURL).load()
+        try await context.connector.activateClientStorage(ownerUserID: "alice")
 
         let status = try await context.connector.disconnect()
 

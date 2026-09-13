@@ -86,7 +86,7 @@ struct NativeConnectorStateStoreTests {
     }
 
     @Test
-    func stateRoundTripsWithoutLosingSecurityOrPluginSettings() throws {
+    func stateRoundTripsOnlyConnectorIdentityApprovalAndPluginState() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -95,10 +95,6 @@ struct NativeConnectorStateStoreTests {
         state.deviceID = "device-1"
         state.deviceName = "Test Mac"
         state.gatewayConnectionEnabled = false
-        state.developerMode = true
-        state.sandboxEnabled = false
-        state.permissionProfileID = ":read-only"
-        state.networkAccess = "restricted"
         state.installedPluginIDs = ["plugin-a"]
         state.commandApprovalModelConfigID = "approval-model"
         state.commandApprovalThinkingLevel = "high"
@@ -124,10 +120,6 @@ struct NativeConnectorStateStoreTests {
         #expect(restored.deviceID == "device-1")
         #expect(restored.deviceName == "Test Mac")
         #expect(restored.gatewayConnectionEnabled == false)
-        #expect(restored.developerMode)
-        #expect(!restored.sandboxEnabled)
-        #expect(restored.permissionProfileID == ":read-only")
-        #expect(restored.networkAccess == "restricted")
         #expect(restored.installedPluginIDs == ["plugin-a"])
         #expect(restored.commandApprovalModelConfigID == "approval-model")
         #expect(restored.commandApprovalThinkingLevel == "high")
@@ -135,6 +127,18 @@ struct NativeConnectorStateStoreTests {
         #expect(restored.installedPluginRecords?["plugin-a"]?.pluginKey == "plugin-a@official")
         #expect(restored.pluginPreferences["plugin-a"] == false)
         #expect(restored.workspaces.first?.absoluteRoot == "/tmp/project")
+
+        let encoded = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: store.stateURL))
+                as? [String: Any]
+        )
+        #expect(encoded["developerMode"] == nil)
+        #expect(encoded["sandboxEnabled"] == nil)
+        #expect(encoded["permissionProfileID"] == nil)
+        #expect(encoded["approvalPolicy"] == nil)
+        #expect(encoded["approvalReviewer"] == nil)
+        #expect(encoded["networkAccess"] == nil)
+        #expect(encoded["policyRevision"] == nil)
     }
 
     @Test

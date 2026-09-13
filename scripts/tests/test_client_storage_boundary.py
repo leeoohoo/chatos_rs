@@ -84,6 +84,36 @@ class ClientStorageBoundaryTests(unittest.TestCase):
         self.assertIn("accountSession.client(accountID:", terminal_store)
         self.assertIn("terminalHistoryStore.append", connector)
 
+    def test_macos_connector_runtime_preferences_use_client_settings_repository(self) -> None:
+        persistent_state = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+        ).read_text(errors="replace")
+        runtime_store = (
+            ROOT
+            / "clients/macos/Sources/ChatOSConnector/NativeConnectorRuntimePreferencesStore.swift"
+        ).read_text(errors="replace")
+        connector = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService.swift"
+        ).read_text(errors="replace")
+        for legacy_field in (
+            "developerMode",
+            "sandboxEnabled",
+            "permissionProfileID",
+            "approvalPolicy",
+            "approvalReviewer",
+            "networkAccess",
+            "policyRevision",
+        ):
+            self.assertNotIn(legacy_field, persistent_state)
+        self.assertIn(
+            "NativeLocalClientSettingStore<NativeConnectorRuntimePreferences>",
+            runtime_store,
+        )
+        self.assertNotIn("FileManager", runtime_store)
+        self.assertNotIn("UserDefaults", runtime_store)
+        self.assertIn("runtimePreferencesStore.updateDeveloperMode", connector)
+        self.assertIn("runtimePreferencesStore.updateSandbox", connector)
+
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()
         inventoried = {

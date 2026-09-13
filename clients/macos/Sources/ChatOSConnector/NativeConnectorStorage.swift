@@ -9,17 +9,10 @@ struct NativeConnectorPersistentState: Codable, Sendable {
     var workspaces: [LocalConnectorWorkspace] = []
     /// `false` means the user explicitly blocked server-to-client calls.
     var gatewayConnectionEnabled: Bool?
-    var developerMode = false
     var approvalMode: LocalConnectorApprovalMode = .requestApproval
     var commandApprovalModelConfigID: String?
     var commandApprovalThinkingLevel: String?
     var approvalHistory: [LocalConnectorApprovalHistoryEntry] = []
-    var sandboxEnabled = true
-    var permissionProfileID = ":workspace-write"
-    var approvalPolicy = "per_call"
-    var approvalReviewer = "user"
-    var networkAccess = "restricted"
-    var policyRevision: String?
     var installedPluginIDs: Set<String> = []
     var installedPluginRecords: [String: NativeInstalledPluginRecord]?
     var pluginPreferences: [String: Bool] = [:]

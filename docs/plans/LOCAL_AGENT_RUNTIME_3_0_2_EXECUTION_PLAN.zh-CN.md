@@ -221,6 +221,7 @@ macOS 是当前首要可运行交付面。阶段 4 的 Windows 原生发行验�
 - 2026-09-14：删除 macOS Remote Connection 的旧 Local Connector 路由兼容层。AppModel 只创建一个线程安全 `NativeConnectorRouteStore` 并同时注入 Local Connector 与 Remote Connection；新建或更新连接必须取得当前真实 `device_id + workspace_id`，路由未激活时明确失败。读取、测试和执行已有连接严格使用其已冻结路由，不自动迁移、不静默改写，也不再回退到 `chatos-swift-native-client/local-machine`。静态边界测试禁止旧常量、迁移函数及 fallback 回归。
 - 2026-09-14：删除旧 Swift `AgentSettingsStore` 对 v1 重试默认值的自动修补与迁移标记。仍在迁移期使用该 Store 的审批、剧情运行只读取并校验当前保存值，不再把 `2` 静默改写为 `5`，也不写迁移哨兵；静态边界测试禁止该兼容分支回归。该 UserDefaults Store 仍属于阶段 5/6 待删除路径，不因此标记存储统一或旧 Runtime 完成。
 - 2026-09-14：完成 macOS Agent Runtime 偏好存储切片。删除 `ChatOSAgentRuntime` 内的 `AgentSettingsStore` 和全部 UserDefaults 读写；新增账户隔离的 `NativeAgentRuntimeSettingsStore`，审批 Agent、剧情 Agent 与设置页共享 `agent_runtime.preferences` Client Setting，随当前 SQLite/PostgreSQL Provider 和账户生命周期加载、提交、清空缓存。旧 UserDefaults 值不读取、不迁移、不 fallback、不双写；存储审计清单移除这一已完成违规项。
-- 当前在制：继续迁移 `NativeConnectorPersistentState` 的结构化 JSON，并完成 Main Chat 创建与 Task 创建的真实签名 App 冒烟。阶段 4 的 Windows Host 打包和原生 runner 验收保持未完成，不得标记完成。
-- 下一切片：重新执行 macOS 生产存储审计，从仍直接访问文件或独立 SQLite 的业务中选择最早一个完整垂直切片迁入共享领域 Repository，并同步删除旧路径。
+- 2026-09-14：完成 macOS Local Connector Runtime/Sandbox 偏好存储切片。开发者模式、Sandbox 开关、权限 Profile、审批 Policy/Reviewer、网络访问策略与 Policy Revision 已从 `NativeConnectorPersistentState/state.json` 删除，统一编码为账户隔离的 `local_connector.runtime_preferences` Client Setting，并只通过当前 SQLite/PostgreSQL Provider 读写。控制中心必须等账户 Host 启动并完成权威加载后才激活；退出、换号或写入失败会清空内存缓存并显式失败，不读取、不迁移、不 fallback、不双写旧 JSON 值。静态边界和 Swift 合同覆盖旧字段永久缺席、重启恢复、账户隔离及未激活 fail-closed。Client Storage/Agent Tool Plane 边界检查与定向测试通过；macOS 全量 271 项仅原有 Plugin HTTP readiness 并发超时，独立重跑该 Suite 42/42 通过。
+- 当前在制：继续迁移 `NativeConnectorPersistentState` 中的审批设置/历史与插件安装/启用状态，并完成 Main Chat 创建与 Task 创建的真实签名 App 冒烟。阶段 4 的 Windows Host 打包和原生 runner 验收保持未完成，不得标记完成。
+- 下一切片：将审批设置与历史迁入共享 Approval Repository，随后删除 JSON 字段；不在 Swift 侧复制 Agent Loop 或审批模型请求。
 - 完成状态：阶段 1、阶段 2、阶段 3、阶段 7 已达到完成门槛；阶段 4、阶段 5、阶段 6、阶段 8 尚未达到完整门槛。
