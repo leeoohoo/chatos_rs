@@ -6,9 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    ClientStorage, PostgresClientStorage, PostgresConnectionSettings, PostgresCredentials,
-    PostgresEndpoint, PostgresTlsMode, ProjectRecord, PutRecord, RecordMetadata, RecordQuery,
-    RecordScope, StorageError, StorageResult, StorageTransaction, TransactionRepositories,
+    ApprovalHistoryRecord, ClientStorage, PostgresClientStorage, PostgresConnectionSettings,
+    PostgresCredentials, PostgresEndpoint, PostgresTlsMode, ProjectRecord, PutRecord,
+    RecordMetadata, RecordQuery, RecordScope, StorageError, StorageResult, StorageTransaction,
+    TransactionRepositories,
 };
 use chrono::Utc;
 
@@ -47,9 +48,32 @@ fn query(id: &str) -> RecordQuery {
     }
 }
 
+fn approval(id: &str) -> ApprovalHistoryRecord {
+    ApprovalHistoryRecord {
+        metadata: RecordMetadata {
+            id: id.to_string(),
+            scope: RecordScope {
+                owner_user_id: "storage-contract-user".to_string(),
+            },
+            origin_device_id: "storage-contract-device".to_string(),
+            revision: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        },
+        command: "git push origin main".to_string(),
+        cwd: "/workspace/project".to_string(),
+        source: "native-terminal".to_string(),
+        mode: "request_approval".to_string(),
+        decision: "approved".to_string(),
+        risk: "high".to_string(),
+        reason: Some("Approved by the user".to_string()),
+    }
+}
+
 struct CreateAndRead {
     id: String,
     persisted: Option<ProjectRecord>,
+    approval: Option<ApprovalHistoryRecord>,
 }
 
 #[async_trait]
@@ -67,6 +91,18 @@ impl StorageTransaction for CreateAndRead {
             .await?;
         assert_eq!(created.metadata.revision, 1);
         self.persisted = repositories.projects().get(&query(&self.id)).await?;
+        let approval_id = format!("{}-approval", self.id);
+        repositories
+            .approval_history()
+            .put(PutRecord {
+                record: approval(&approval_id),
+                expected_revision: None,
+            })
+            .await?;
+        self.approval = repositories
+            .approval_history()
+            .get(&query(&approval_id))
+            .await?;
         Ok(())
     }
 }
@@ -150,9 +186,11 @@ async fn postgres_obeys_the_same_commit_and_rollback_contract() {
     let mut create = CreateAndRead {
         id: committed_id,
         persisted: None,
+        approval: None,
     };
     database.transaction(&mut create).await.unwrap();
     assert_eq!(create.persisted.unwrap().name, "PostgreSQL contract");
+    assert_eq!(create.approval.unwrap().decision, "approved");
 
     let rolled_back_id = unique_id("rolled-back");
     assert!(database

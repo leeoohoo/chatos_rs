@@ -36,6 +36,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let agentRuntimeSettings: any AgentRuntimePreferencesProviding
     let terminalHistoryStore: NativeTerminalHistoryStore
     let runtimePreferencesStore: NativeConnectorRuntimePreferencesStore
+    let approvalStore: NativeConnectorApprovalStore
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
@@ -86,6 +87,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         self.runtimePreferencesStore = NativeConnectorRuntimePreferencesStore(
             accountSession: accountSession
         )
+        self.approvalStore = NativeConnectorApprovalStore(accountSession: accountSession)
         self.agentRuntimeSettings = agentRuntimeSettings
         self.pluginInstaller = NativePluginInstaller(
             rootURL: configuration.stateURL
@@ -112,13 +114,21 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     public func activateClientStorage(ownerUserID: String) async throws {
         activeClientStorageOwnerID = nil
-        _ = try await runtimePreferencesStore.activate(ownerUserID: ownerUserID)
-        activeClientStorageOwnerID = ownerUserID
+        do {
+            _ = try await runtimePreferencesStore.activate(ownerUserID: ownerUserID)
+            _ = try await approvalStore.activate(ownerUserID: ownerUserID)
+            activeClientStorageOwnerID = ownerUserID
+        } catch {
+            await runtimePreferencesStore.deactivate()
+            await approvalStore.deactivate()
+            throw error
+        }
     }
 
     public func deactivateClientStorage() async {
         activeClientStorageOwnerID = nil
         await runtimePreferencesStore.deactivate()
+        await approvalStore.deactivate()
     }
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {
@@ -276,7 +286,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings {
-        .init(defaultMode: state.approvalMode, history: state.approvalHistory)
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        async let preferences = approvalStore.preferences(ownerUserID: ownerUserID)
+        async let history = approvalStore.history(ownerUserID: ownerUserID)
+        return try await .init(defaultMode: preferences.defaultMode, history: history)
     }
 
     public func updateDefaultApprovalMode(
@@ -289,16 +302,18 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 message: "提高审批权限前需要明确确认风险。"
             )
         }
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let current = try await approvalStore.preferences(ownerUserID: ownerUserID)
         if mode == .autoApproval,
-           state.commandApprovalModelConfigID?.trimmedNonEmpty == nil {
+           current.commandApprovalModelConfigID?.trimmedNonEmpty == nil {
             throw NativeConnectorError.server(
                 status: 409,
                 message: "请先在 AI 模型配置中选择本机审批 Agent 模型。"
             )
         }
-        state.approvalMode = mode
-        try stateStore.save(state)
-        return .init(defaultMode: mode, history: state.approvalHistory)
+        let preferences = try await approvalStore.updateMode(ownerUserID: ownerUserID, mode: mode)
+        let history = try await approvalStore.history(ownerUserID: ownerUserID)
+        return .init(defaultMode: preferences.defaultMode, history: history)
     }
 
     public func fetchPendingApprovals() async throws -> [LocalConnectorPendingApproval] {
@@ -327,43 +342,66 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func resolveApproval(id: String, decision: String) async throws {
-        let pending = pendingApprovals.first(where: { $0.id == id })
-        pendingApprovals.removeAll(where: { $0.id == id })
-        publishApprovalSnapshot()
-        let continuation = pendingApprovalContinuations.removeValue(forKey: id)
-        let approvalScopeKey = pendingApprovalScopeKeys.removeValue(forKey: id)
-        if let pending {
-            state.approvalHistory.insert(
-                .init(
+        guard let pending = pendingApprovals.first(where: { $0.id == id }) else {
+            throw NativeConnectorError.server(status: 404, message: "待审批操作不存在或已经处理。")
+        }
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let preferences = try await approvalStore.preferences(ownerUserID: ownerUserID)
+        let approved = ["accept", "acceptForSession", "approve"].contains(decision)
+        let decisionReason = decision == "acceptForSession"
+            ? "用户已允许当前会话继续执行此类操作。"
+            : (approved ? "用户已允许这次操作。" : "用户已拒绝这次操作。")
+        do {
+            _ = try await approvalStore.append(
+                ownerUserID: ownerUserID,
+                entry: .init(
                     id: UUID().uuidString,
                     command: pending.command,
                     cwd: pending.cwd,
                     source: pending.source,
-                    mode: state.approvalMode,
-                    decision: decision,
+                    mode: preferences.defaultMode,
+                    decision: approved ? "approved" : "denied",
                     risk: pending.risk,
-                    reason: pending.reason,
+                    reason: pending.reason ?? decisionReason,
                     createdAt: ISO8601DateFormatter().string(from: Date())
-                ),
-                at: 0
+                )
             )
-            try stateStore.save(state)
+        } catch {
+            pendingApprovals.removeAll(where: { $0.id == id })
+            publishApprovalSnapshot()
+            let continuation = pendingApprovalContinuations.removeValue(forKey: id)
+            pendingApprovalScopeKeys.removeValue(forKey: id)
+            let reason = "审批审计保存失败，操作已拒绝：\(error.localizedDescription)"
             publishApprovalEvent(.init(
                 requestID: pending.requestID,
                 command: pending.command,
                 cwd: pending.cwd,
                 source: pending.source,
                 risk: pending.risk,
-                decision: ["accept", "acceptForSession", "approve"].contains(decision)
-                    ? "approved"
-                    : "denied",
-                reason: decision == "acceptForSession"
-                    ? "用户已允许当前会话继续执行此类操作。"
-                    : (decision == "decline" ? "用户已拒绝这次操作。" : "用户已允许这次操作。"),
-                mode: state.approvalMode,
-                reviewer: .user
+                decision: "denied",
+                reason: reason,
+                mode: preferences.defaultMode,
+                reviewer: .policy
             ))
+            continuation?.resume(returning: .deny(reason: reason))
+            throw error
         }
+
+        pendingApprovals.removeAll(where: { $0.id == id })
+        publishApprovalSnapshot()
+        let continuation = pendingApprovalContinuations.removeValue(forKey: id)
+        let approvalScopeKey = pendingApprovalScopeKeys.removeValue(forKey: id)
+        publishApprovalEvent(.init(
+            requestID: pending.requestID,
+            command: pending.command,
+            cwd: pending.cwd,
+            source: pending.source,
+            risk: pending.risk,
+            decision: approved ? "approved" : "denied",
+            reason: decisionReason,
+            mode: preferences.defaultMode,
+            reviewer: .user
+        ))
         switch decision {
         case "accept", "acceptForSession", "approve":
             if decision == "acceptForSession", let approvalScopeKey {
@@ -459,7 +497,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         )
     }
 
-    private func activeClientStorageOwnerUserID() throws -> String {
+    func activeClientStorageOwnerUserID() throws -> String {
         guard let ownerUserID = activeClientStorageOwnerID else {
             throw NativeLocalClientSettingStoreError.notLoaded
         }

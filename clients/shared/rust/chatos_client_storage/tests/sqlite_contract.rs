@@ -184,7 +184,7 @@ async fn sqlite_persists_only_authenticated_ciphertext() {
             .fetch_one(&mut raw_connection)
             .await
             .unwrap();
-    assert_eq!(schema_version, 5);
+    assert_eq!(schema_version, 6);
     raw_connection.close().await.unwrap();
 
     let wrong_key = StorageEncryptionKey::new([99; 32]);
@@ -262,6 +262,7 @@ async fn schema_v1_is_atomically_rewritten_to_the_current_schema() {
             "client_sync_outbox",
             "client_agent_ui_events",
             "client_agent_ui_event_sequences",
+            "client_approval_history",
         ];
         let sql = if runtime_tables.contains(&table.as_str()) {
             format!("DROP TABLE {table}")
@@ -397,7 +398,7 @@ async fn only_one_client_host_can_own_a_sqlite_database() {
 }
 
 #[tokio::test]
-async fn schema_v4_migrates_only_the_new_ui_event_tables() {
+async fn schema_v4_migrates_ui_event_and_approval_history_tables() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("client.sqlite3");
     let database = storage(&path).await;
@@ -413,7 +414,11 @@ async fn schema_v4_migrates_only_the_new_ui_event_tables() {
         .execute(&mut raw_connection)
         .await
         .unwrap();
-    sqlx::query("UPDATE chatos_client_schema_migrations SET version = 4 WHERE version = 5")
+    sqlx::query("DROP TABLE client_approval_history")
+        .execute(&mut raw_connection)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE chatos_client_schema_migrations SET version = 4 WHERE version = 6")
         .execute(&mut raw_connection)
         .await
         .unwrap();
@@ -427,18 +432,58 @@ async fn schema_v4_migrates_only_the_new_ui_event_tables() {
             .unwrap();
     let table_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN \
-         ('client_agent_ui_events', 'client_agent_ui_event_sequences')",
+         ('client_agent_ui_events', 'client_agent_ui_event_sequences', 'client_approval_history')",
     )
     .fetch_one(&mut raw_connection)
     .await
     .unwrap();
-    assert_eq!(table_count, 2);
+    assert_eq!(table_count, 3);
     let schema_version: i64 =
         sqlx::query_scalar("SELECT MAX(version) FROM chatos_client_schema_migrations")
             .fetch_one(&mut raw_connection)
             .await
             .unwrap();
-    assert_eq!(schema_version, 5);
+    assert_eq!(schema_version, 6);
+}
+
+#[tokio::test]
+async fn schema_v5_adds_only_approval_history_domain() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("client.sqlite3");
+    let database = storage(&path).await;
+    database.close().await;
+
+    let options = SqliteConnectOptions::new().filename(&path);
+    let mut raw_connection = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::query("DROP TABLE client_approval_history")
+        .execute(&mut raw_connection)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE chatos_client_schema_migrations SET version = 5 WHERE version = 6")
+        .execute(&mut raw_connection)
+        .await
+        .unwrap();
+    raw_connection.close().await.unwrap();
+
+    let migrated = storage(&path).await;
+    migrated.close().await;
+    let mut raw_connection =
+        SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    let table_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'client_approval_history'",
+    )
+    .fetch_one(&mut raw_connection)
+    .await
+    .unwrap();
+    assert_eq!(table_count, 1);
+    let schema_version: i64 =
+        sqlx::query_scalar("SELECT MAX(version) FROM chatos_client_schema_migrations")
+            .fetch_one(&mut raw_connection)
+            .await
+            .unwrap();
+    assert_eq!(schema_version, 6);
 }
 
 struct StoreClipboard {

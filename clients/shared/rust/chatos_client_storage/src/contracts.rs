@@ -216,6 +216,21 @@ pub struct TerminalHistoryRecord {
     pub state: Value,
 }
 
+/// Durable audit record for a native command or plugin approval decision.
+/// Pending interactions remain runtime state; this repository contains only
+/// terminal decisions that may be inspected after an app or Host restart.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApprovalHistoryRecord {
+    pub metadata: RecordMetadata,
+    pub command: String,
+    pub cwd: String,
+    pub source: String,
+    pub mode: String,
+    pub decision: String,
+    pub risk: String,
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PutRecord<R> {
     pub record: R,

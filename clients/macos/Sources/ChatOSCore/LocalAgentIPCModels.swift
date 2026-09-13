@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 23
+public let localAgentProtocolVersion: UInt32 = 24
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -598,6 +598,59 @@ public struct LocalAgentTerminalHistorySnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalAgentApprovalHistoryDraft: Codable, Equatable, Sendable {
+    public var command: String
+    public var cwd: String
+    public var source: String
+    public var mode: String
+    public var decision: String
+    public var risk: String
+    public var reason: String?
+
+    public init(
+        command: String,
+        cwd: String,
+        source: String,
+        mode: String,
+        decision: String,
+        risk: String,
+        reason: String?
+    ) {
+        self.command = command
+        self.cwd = cwd
+        self.source = source
+        self.mode = mode
+        self.decision = decision
+        self.risk = risk
+        self.reason = reason
+    }
+}
+
+public struct LocalAgentApprovalHistorySnapshot: Codable, Equatable, Sendable {
+    public var recordID: String
+    public var ownerUserID: String
+    public var draft: LocalAgentApprovalHistoryDraft
+    public var revision: UInt64
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        recordID: String,
+        ownerUserID: String,
+        draft: LocalAgentApprovalHistoryDraft,
+        revision: UInt64,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.recordID = recordID
+        self.ownerUserID = ownerUserID
+        self.draft = draft
+        self.revision = revision
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct LocalAgentClientSettingSnapshot: Codable, Equatable, Sendable {
     public var key: String
     public var ownerUserID: String
@@ -681,6 +734,8 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case listTerminalHistory(cursor: String?, limit: UInt32)
     case deleteTerminalHistory(recordID: String, expectedRevision: UInt64)
     case clearTerminalHistory
+    case appendApprovalHistory(recordID: String, draft: LocalAgentApprovalHistoryDraft)
+    case listApprovalHistory(cursor: String?, limit: UInt32)
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -811,6 +866,10 @@ extension LocalAgentCommand: Encodable {
     private struct DeleteTerminalHistoryPayload: Encodable {
         let recordID: String
         let expectedRevision: UInt64
+    }
+    private struct AppendApprovalHistoryPayload: Encodable {
+        let recordID: String
+        let draft: LocalAgentApprovalHistoryDraft
     }
     private struct EventsPayload: Encodable {
         let afterSeq: UInt64
@@ -1107,6 +1166,15 @@ extension LocalAgentCommand: Encodable {
             )
         case .clearTerminalHistory:
             try container.encode("clear_terminal_history", forKey: .type)
+        case let .appendApprovalHistory(recordID, draft):
+            try container.encode("append_approval_history", forKey: .type)
+            try container.encode(
+                AppendApprovalHistoryPayload(recordID: recordID, draft: draft),
+                forKey: .payload
+            )
+        case let .listApprovalHistory(cursor, limit):
+            try container.encode("list_approval_history", forKey: .type)
+            try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
         case let .subscribeRunEvents(afterSequence, limit):
             try container.encode("subscribe_run_events", forKey: .type)
             try container.encode(EventsPayload(afterSeq: afterSequence, limit: limit), forKey: .payload)
@@ -1843,6 +1911,8 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case clientSetting(LocalAgentClientSettingSnapshot)
     case terminalHistory(LocalAgentTerminalHistorySnapshot)
     case terminalHistoryRecords([LocalAgentTerminalHistorySnapshot], nextCursor: String?)
+    case approvalHistory(LocalAgentApprovalHistorySnapshot)
+    case approvalHistoryRecords([LocalAgentApprovalHistorySnapshot], nextCursor: String?)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -1889,6 +1959,10 @@ extension LocalAgentResponse: Decodable {
     }
     private struct TerminalHistoryRecords: Decodable {
         let records: [LocalAgentTerminalHistorySnapshot]
+        let nextCursor: String?
+    }
+    private struct ApprovalHistoryRecords: Decodable {
+        let records: [LocalAgentApprovalHistorySnapshot]
         let nextCursor: String?
     }
     private struct Events: Decodable {
@@ -1982,6 +2056,13 @@ extension LocalAgentResponse: Decodable {
         case "terminal_history_records":
             let value = try container.decode(TerminalHistoryRecords.self, forKey: .payload)
             self = .terminalHistoryRecords(value.records, nextCursor: value.nextCursor)
+        case "approval_history":
+            self = .approvalHistory(
+                try container.decode(LocalAgentApprovalHistorySnapshot.self, forKey: .payload)
+            )
+        case "approval_history_records":
+            let value = try container.decode(ApprovalHistoryRecords.self, forKey: .payload)
+            self = .approvalHistoryRecords(value.records, nextCursor: value.nextCursor)
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)

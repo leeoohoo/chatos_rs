@@ -13,10 +13,10 @@ use crate::{
     LocalAgentHostWorker, LocalAgentIpcMutationExecutor, LocalAgentIpcServer,
     LocalAgentIpcServerError, LocalAgentMemorySyncWorker, LocalAgentMemorySyncWorkerError,
     LocalAgentMemorySyncWorkerExit, LocalAgentStorageIpcExecutor, LocalAgentStoragePlatform,
-    LocalAgentWorkerExit, LocalCapabilityIpcExecutor, LocalClientSettingIpcExecutor,
-    LocalClipboardIpcExecutor, LocalMediaIpcExecutor, LocalNotepadIpcExecutor,
-    LocalProjectIpcExecutor, LocalStoryIpcExecutor, LocalTerminalHistoryIpcExecutor,
-    RegisteredLocalCapabilityRuntime, StoredLocalCapabilityLoader,
+    LocalAgentWorkerExit, LocalApprovalHistoryIpcExecutor, LocalCapabilityIpcExecutor,
+    LocalClientSettingIpcExecutor, LocalClipboardIpcExecutor, LocalMediaIpcExecutor,
+    LocalNotepadIpcExecutor, LocalProjectIpcExecutor, LocalStoryIpcExecutor,
+    LocalTerminalHistoryIpcExecutor, RegisteredLocalCapabilityRuntime, StoredLocalCapabilityLoader,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -282,12 +282,19 @@ pub fn build_local_agent_ipc_server(
             device_id.clone(),
             notepad_executor,
         ));
+    let approval_history_executor: Arc<dyn LocalAgentIpcMutationExecutor> =
+        Arc::new(LocalApprovalHistoryIpcExecutor::new(
+            storage.clone(),
+            scope.clone(),
+            device_id.clone(),
+            terminal_history_executor,
+        ));
     let client_setting_executor: Arc<dyn LocalAgentIpcMutationExecutor> =
         Arc::new(LocalClientSettingIpcExecutor::new(
             storage.clone(),
             scope.clone(),
             device_id.clone(),
-            terminal_history_executor,
+            approval_history_executor,
         ));
     let capability_executor: Arc<dyn LocalAgentIpcMutationExecutor> =
         Arc::new(LocalCapabilityIpcExecutor::new(

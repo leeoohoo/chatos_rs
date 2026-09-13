@@ -5,10 +5,10 @@ use async_trait::async_trait;
 
 use crate::{
     AgentEventStateRepository, AgentMessageStateRepository, AgentRepository,
-    AgentRunStateRepository, AgentUiEventStateRepository, ClientSettingsRepository,
-    ClipboardRepository, ConversationRepository, MediaStateRepository, NotepadRepository,
-    PluginStateRepository, ProjectRepository, ProviderContextStateRepository, StorageBackend,
-    StorageResult, StoryRepository, SyncOutboxStateRepository, TaskRepository,
+    AgentRunStateRepository, AgentUiEventStateRepository, ApprovalHistoryRepository,
+    ClientSettingsRepository, ClipboardRepository, ConversationRepository, MediaStateRepository,
+    NotepadRepository, PluginStateRepository, ProjectRepository, ProviderContextStateRepository,
+    StorageBackend, StorageResult, StoryRepository, SyncOutboxStateRepository, TaskRepository,
     TerminalHistoryRepository, ToolExecutionStateRepository,
 };
 
@@ -32,6 +32,7 @@ pub trait TransactionRepositories: Send {
     fn stories(&mut self) -> Box<dyn StoryRepository + '_>;
     fn notepad(&mut self) -> Box<dyn NotepadRepository + '_>;
     fn terminal_history(&mut self) -> Box<dyn TerminalHistoryRepository + '_>;
+    fn approval_history(&mut self) -> Box<dyn ApprovalHistoryRepository + '_>;
 }
 
 /// A caller-owned operation executed atomically by the selected backend.

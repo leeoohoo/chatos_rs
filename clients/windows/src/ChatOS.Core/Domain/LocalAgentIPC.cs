@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 23;
+    public const uint Version = 24;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -55,6 +55,23 @@ public sealed record LocalAgentUserAnswer(
     string? Text,
     IReadOnlyList<string> SelectedOptionIds,
     IReadOnlyList<LocalAgentAttachmentReference> Attachments);
+
+public sealed record LocalAgentApprovalHistoryDraft(
+    string Command,
+    string Cwd,
+    string Source,
+    string Mode,
+    string Decision,
+    string Risk,
+    string? Reason);
+
+public sealed record LocalAgentApprovalHistorySnapshot(
+    string RecordId,
+    string OwnerUserId,
+    LocalAgentApprovalHistoryDraft Draft,
+    ulong Revision,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
 
 public enum LocalAgentToolApprovalDecision
 {
@@ -172,6 +189,14 @@ public sealed record LocalAgentCommand
     public static LocalAgentCommand ListTasks(string? cursor = null, uint limit = 100) =>
         new("list_tasks", new ListPayload(cursor, limit));
 
+    public static LocalAgentCommand AppendApprovalHistory(
+        string recordId,
+        LocalAgentApprovalHistoryDraft draft) =>
+        new("append_approval_history", new AppendApprovalHistoryPayload(recordId, draft));
+
+    public static LocalAgentCommand ListApprovalHistory(string? cursor = null, uint limit = 500) =>
+        new("list_approval_history", new ListPayload(cursor, limit));
+
     public static LocalAgentCommand SubscribeRunEvents(ulong afterSequence, uint limit = 200) =>
         new("subscribe_run_events", new EventsPayload(afterSequence, limit));
 
@@ -252,6 +277,9 @@ public sealed record LocalAgentCommand
         string InvocationId,
         LocalAgentToolApprovalDecision Decision,
         string? Reason);
+    private sealed record AppendApprovalHistoryPayload(
+        string RecordId,
+        LocalAgentApprovalHistoryDraft Draft);
     private sealed record PostgresTestPayload(string ConnectionSecretReference);
     private sealed record ApplyStoragePayload(
         LocalAgentStorageProfileSelection Profile,
@@ -548,6 +576,11 @@ public sealed record LocalAgentRunsResponse(
 public sealed record LocalAgentTasksResponse(
     IReadOnlyList<LocalAgentTaskSnapshot> Tasks,
     string? NextCursor) : LocalAgentResponse("tasks");
+public sealed record LocalAgentApprovalHistoryResponse(
+    LocalAgentApprovalHistorySnapshot Record) : LocalAgentResponse("approval_history");
+public sealed record LocalAgentApprovalHistoryRecordsResponse(
+    IReadOnlyList<LocalAgentApprovalHistorySnapshot> Records,
+    string? NextCursor) : LocalAgentResponse("approval_history_records");
 public sealed record LocalAgentEventsResponse(
     IReadOnlyList<LocalAgentUIEvent> Events,
     ulong NextSequence,

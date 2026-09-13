@@ -270,10 +270,25 @@ extension NativeLocalConnectorService {
         let source = isHarnessImport(command) ? "project-harness-import" : "local-mcp"
         let decision: NativeApprovalDecision
         if source == "project-harness-import" {
-            decision = .approve(
-                reason: "用户创建本机项目时，由平台签名的 Harness 导入流程发起。",
-                rememberAllow: false
-            )
+            if let ownerUserID = try? activeClientStorageOwnerUserID(),
+               let preferences = try? await approvalStore.preferences(ownerUserID: ownerUserID) {
+                decision = await persistImmediateApprovalDecision(
+                    requestID: request.requestID,
+                    command: "/bin/zsh",
+                    arguments: shellArguments,
+                    cwd: cwd,
+                    source: source,
+                    risk: risk,
+                    mode: preferences.defaultMode,
+                    reviewer: .policy,
+                    decision: .approve(
+                        reason: "用户创建本机项目时，由平台签名的 Harness 导入流程发起。",
+                        rememberAllow: false
+                    )
+                )
+            } else {
+                decision = .deny(reason: "审批设置不可用，已安全拒绝本次操作。")
+            }
         } else {
             decision = await approvalDecision(
                 requestID: request.requestID,
@@ -288,15 +303,6 @@ extension NativeLocalConnectorService {
 
         switch decision {
         case let .deny(reason), let .askUser(reason):
-            appendApprovalHistory(
-                command: "/bin/zsh",
-                arguments: shellArguments,
-                cwd: cwd.path,
-                source: source,
-                decision: "denied",
-                risk: risk,
-                reason: reason
-            )
             return Self.mcpCommandResponse(
                 requestID: request.requestID,
                 rpcID: call.id,
@@ -305,16 +311,8 @@ extension NativeLocalConnectorService {
                 result: nil,
                 error: reason
             )
-        case let .approve(reason, _):
-            appendApprovalHistory(
-                command: "/bin/zsh",
-                arguments: shellArguments,
-                cwd: cwd.path,
-                source: source,
-                decision: "approved",
-                risk: risk,
-                reason: reason
-            )
+        case .approve:
+            break
         }
 
         do {

@@ -86,7 +86,7 @@ struct NativeConnectorStateStoreTests {
     }
 
     @Test
-    func stateRoundTripsOnlyConnectorIdentityApprovalAndPluginState() throws {
+    func stateRoundTripsOnlyConnectorIdentityAndPluginState() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -96,8 +96,6 @@ struct NativeConnectorStateStoreTests {
         state.deviceName = "Test Mac"
         state.gatewayConnectionEnabled = false
         state.installedPluginIDs = ["plugin-a"]
-        state.commandApprovalModelConfigID = "approval-model"
-        state.commandApprovalThinkingLevel = "high"
         state.installedPluginRecords = [
             "plugin-a": .init(
                 pluginID: "plugin-a",
@@ -121,8 +119,6 @@ struct NativeConnectorStateStoreTests {
         #expect(restored.deviceName == "Test Mac")
         #expect(restored.gatewayConnectionEnabled == false)
         #expect(restored.installedPluginIDs == ["plugin-a"])
-        #expect(restored.commandApprovalModelConfigID == "approval-model")
-        #expect(restored.commandApprovalThinkingLevel == "high")
         #expect(restored.installedPluginRecords?["plugin-a"]?.version == "1.2.3")
         #expect(restored.installedPluginRecords?["plugin-a"]?.pluginKey == "plugin-a@official")
         #expect(restored.pluginPreferences["plugin-a"] == false)
@@ -138,6 +134,10 @@ struct NativeConnectorStateStoreTests {
         #expect(encoded["approvalPolicy"] == nil)
         #expect(encoded["approvalReviewer"] == nil)
         #expect(encoded["networkAccess"] == nil)
+        #expect(encoded["approvalMode"] == nil)
+        #expect(encoded["commandApprovalModelConfigID"] == nil)
+        #expect(encoded["commandApprovalThinkingLevel"] == nil)
+        #expect(encoded["approvalHistory"] == nil)
         #expect(encoded["policyRevision"] == nil)
     }
 

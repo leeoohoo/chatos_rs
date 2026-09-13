@@ -8,15 +8,15 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AgentEventStateRecord, AgentMessageStateRecord, AgentRecord, AgentRunStateRecord,
-    AgentUiEventCursorQuery, AgentUiEventStateRecord, ClientSettingRecord, ClientStorage,
-    ClipboardRecord, ConversationRecord, ListQuery, MediaStateRecord, NotepadRecord,
+    AgentUiEventCursorQuery, AgentUiEventStateRecord, ApprovalHistoryRecord, ClientSettingRecord,
+    ClientStorage, ClipboardRecord, ConversationRecord, ListQuery, MediaStateRecord, NotepadRecord,
     PluginStateRecord, ProjectRecord, ProviderContextStateRecord, RecordScope, StorageBackend,
     StorageError, StorageResult, StorageTransaction, StoryRecord, SyncOutboxStateRecord,
     TaskRecord, TerminalHistoryRecord, ToolExecutionStateRecord, TransactionRepositories,
 };
 
 const ARCHIVE_FORMAT: &str = "chatos-client-storage";
-const ARCHIVE_VERSION: u32 = 4;
+const ARCHIVE_VERSION: u32 = 5;
 const EXPORT_PAGE_SIZE: u32 = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -48,6 +48,7 @@ pub struct StorageArchiveRecords {
     pub stories: Vec<StoryRecord>,
     pub notepad: Vec<NotepadRecord>,
     pub terminal_history: Vec<TerminalHistoryRecord>,
+    pub approval_history: Vec<ApprovalHistoryRecord>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -182,6 +183,7 @@ impl StorageTransaction for ExportOperation {
         collect_records!(stories, stories);
         collect_records!(notepad, notepad);
         collect_records!(terminal_history, terminal_history);
+        collect_records!(approval_history, approval_history);
 
         self.archive = Some(ClientStorageArchive {
             format_version: ARCHIVE_VERSION,
@@ -256,6 +258,7 @@ impl StorageTransaction for ImportOperation<'_> {
         require_empty!(stories);
         require_empty!(notepad);
         require_empty!(terminal_history);
+        require_empty!(approval_history);
 
         macro_rules! restore_records {
             ($repository:ident, $source:ident) => {
@@ -288,6 +291,7 @@ impl StorageTransaction for ImportOperation<'_> {
         restore_records!(stories, stories);
         restore_records!(notepad, notepad);
         restore_records!(terminal_history, terminal_history);
+        restore_records!(approval_history, approval_history);
         Ok(())
     }
 }
@@ -335,6 +339,7 @@ fn validate_archive(archive: &ClientStorageArchive) -> StorageResult<()> {
     validate_scope!(&archive.records.stories);
     validate_scope!(&archive.records.notepad);
     validate_scope!(&archive.records.terminal_history);
+    validate_scope!(&archive.records.approval_history);
     Ok(())
 }
 

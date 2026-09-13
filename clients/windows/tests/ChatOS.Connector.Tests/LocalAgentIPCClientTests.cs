@@ -106,7 +106,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesTheSharedV23RetryTaskAndTaskSnapshotFixtures()
+    public async Task UsesTheSharedV24RetryTaskAndTaskSnapshotFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("retry_task_request.json")));
@@ -121,7 +121,7 @@ public sealed class LocalAgentIPCClientTests
             "Preserve the approved visual hierarchy.")));
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
-        Assert.Equal(23u, LocalAgentProtocol.Version);
+        Assert.Equal(24u, LocalAgentProtocol.Version);
         Assert.True(JsonDeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));
@@ -138,6 +138,47 @@ public sealed class LocalAgentIPCClientTests
         Assert.Equal("task-run-2", task.CurrentRunId);
         Assert.Equal(["task-run-1", "task-run-2"], task.RunIds);
         Assert.Equal("project-1", task.ProjectId);
+    }
+
+    [Fact]
+    public async Task UsesSharedV24ApprovalHistoryFixtures()
+    {
+        using var expectedRequest = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("approval_history_append_request.json")));
+        var requestTransport = new RecordingTransport(request => Reply(request, """
+            {"type":"approval_history","payload":{"record_id":"approval-history-1","owner_user_id":"user-1","draft":{"command":"git push origin main","cwd":"/workspace/project","source":"native-terminal","mode":"request_approval","decision":"approved","risk":"high","reason":"Approved by the user"},"revision":1,"created_at":"2026-09-14T04:00:00Z","updated_at":"2026-09-14T04:00:00Z"}}
+            """));
+        var requestClient = new WindowsLocalAgentIPCClient("user-1", requestTransport);
+
+        var response = await requestClient.SendAsync(LocalAgentCommand.AppendApprovalHistory(
+            "approval-history-1",
+            new LocalAgentApprovalHistoryDraft(
+                "git push origin main",
+                "/workspace/project",
+                "native-terminal",
+                "request_approval",
+                "approved",
+                "high",
+                "Approved by the user")));
+
+        Assert.IsType<LocalAgentApprovalHistoryResponse>(response);
+        using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
+        Assert.True(JsonDeepEquals(
+            expectedRequest.RootElement.GetProperty("command"),
+            actualRequest.RootElement.GetProperty("command")));
+
+        using var recordsFixture = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("approval_history_records_response.json")));
+        var recordsTransport = new RecordingTransport(request => Reply(
+            request,
+            recordsFixture.RootElement.GetProperty("response").GetRawText()));
+        var recordsClient = new WindowsLocalAgentIPCClient("user-1", recordsTransport);
+        var recordsResponse = Assert.IsType<LocalAgentApprovalHistoryRecordsResponse>(
+            await recordsClient.SendAsync(LocalAgentCommand.ListApprovalHistory()));
+
+        var record = Assert.Single(recordsResponse.Records);
+        Assert.Equal("approval-history-1", record.RecordId);
+        Assert.Equal("approved", record.Draft.Decision);
     }
 
     [Fact]
@@ -423,7 +464,7 @@ public sealed class LocalAgentIPCClientTests
             "shared",
             "fixtures",
             "local_agent",
-            "v23",
+            "v24",
             name));
 
     private static bool JsonDeepEquals(JsonElement expected, JsonElement actual) =>

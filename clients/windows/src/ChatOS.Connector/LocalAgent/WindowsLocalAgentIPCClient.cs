@@ -325,6 +325,10 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
                     RequirePayload<LocalAgentMainChatRunBinding>(hasPayload, payload)),
                 "runs" => Runs(RequirePayload<RunsPayload>(hasPayload, payload)),
                 "tasks" => Tasks(RequirePayload<TasksPayload>(hasPayload, payload)),
+                "approval_history" => new LocalAgentApprovalHistoryResponse(
+                    RequirePayload<LocalAgentApprovalHistorySnapshot>(hasPayload, payload)),
+                "approval_history_records" => ApprovalHistoryRecords(
+                    RequirePayload<ApprovalHistoryRecordsPayload>(hasPayload, payload)),
                 "events" => Events(RequirePayload<EventsPayload>(hasPayload, payload)),
                 "ui_event_cursor" => new LocalAgentUIEventCursorResponse(
                     RequirePayload<UIEventCursorPayload>(hasPayload, payload).EventSeq),
@@ -365,6 +369,10 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
     private static LocalAgentTasksResponse Tasks(TasksPayload payload) =>
         new(payload.Tasks, payload.NextCursor);
 
+    private static LocalAgentApprovalHistoryRecordsResponse ApprovalHistoryRecords(
+        ApprovalHistoryRecordsPayload payload) =>
+        new(payload.Records, payload.NextCursor);
+
     private static LocalAgentEventsResponse Events(EventsPayload payload) =>
         new(payload.Events, payload.NextSeq, payload.HasMore);
 
@@ -386,6 +394,9 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
     private sealed record RunCreatedPayload(string OperationId, LocalAgentRunSnapshot Run);
     private sealed record RunsPayload(IReadOnlyList<LocalAgentRunSnapshot> Runs, string? NextCursor);
     private sealed record TasksPayload(IReadOnlyList<LocalAgentTaskSnapshot> Tasks, string? NextCursor);
+    private sealed record ApprovalHistoryRecordsPayload(
+        IReadOnlyList<LocalAgentApprovalHistorySnapshot> Records,
+        string? NextCursor);
     private sealed record UIEventCursorPayload(ulong EventSeq);
     private sealed record EventsPayload(
         IReadOnlyList<LocalAgentUIEvent> Events,

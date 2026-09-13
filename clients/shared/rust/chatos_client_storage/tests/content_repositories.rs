@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    export_storage_archive, import_storage_archive, ClientStorage, NotepadRecord,
-    NotepadRecordKind, PutRecord, RecordMetadata, RecordScope, SecretReference,
+    export_storage_archive, import_storage_archive, ApprovalHistoryRecord, ClientStorage,
+    NotepadRecord, NotepadRecordKind, PutRecord, RecordMetadata, RecordScope, SecretReference,
     SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey, StorageResult,
     StorageTransaction, StoryRecord, StoryRecordKind, TerminalHistoryRecord,
     TransactionRepositories,
@@ -77,6 +77,22 @@ impl StorageTransaction for SeedContent {
                 expected_revision: None,
             })
             .await?;
+        repositories
+            .approval_history()
+            .put(PutRecord {
+                record: ApprovalHistoryRecord {
+                    metadata: metadata("approval-1"),
+                    command: "git push".to_string(),
+                    cwd: "/project".to_string(),
+                    source: "native-terminal".to_string(),
+                    mode: "request_approval".to_string(),
+                    decision: "approved".to_string(),
+                    risk: "high".to_string(),
+                    reason: Some("confirmed by user".to_string()),
+                },
+                expected_revision: None,
+            })
+            .await?;
         Ok(())
     }
 }
@@ -100,6 +116,7 @@ async fn content_domains_share_transactions_and_archive_semantics() {
     assert_eq!(source_archive.records.stories.len(), 1);
     assert_eq!(source_archive.records.notepad.len(), 1);
     assert_eq!(source_archive.records.terminal_history.len(), 1);
+    assert_eq!(source_archive.records.approval_history.len(), 1);
 
     let target = SqliteClientStorage::open(
         &SqliteBootstrapProfile {
@@ -126,5 +143,9 @@ async fn content_domains_share_transactions_and_archive_semantics() {
     assert_eq!(
         restored_archive.records.terminal_history,
         source_archive.records.terminal_history
+    );
+    assert_eq!(
+        restored_archive.records.approval_history,
+        source_archive.records.approval_history
     );
 }

@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v23 fixtures")
-struct LocalAgentProtocolV23FixtureTests {
+@Suite("Shared Local Agent protocol v24 fixtures")
+struct LocalAgentProtocolV24FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV23FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 23)
+        #expect(localAgentProtocolVersion == 24)
         #expect(encoded == fixture)
     }
 
@@ -460,13 +460,54 @@ struct LocalAgentProtocolV23FixtureTests {
         #expect(!hasMore)
     }
 
+    @Test("encodes and decodes owner-scoped Approval History")
+    func approvalHistoryState() throws {
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-approval-history-1",
+            ownerUserID: "user-1",
+            command: .appendApprovalHistory(
+                recordID: "approval-history-1",
+                draft: .init(
+                    command: "git push origin main",
+                    cwd: "/workspace/project",
+                    source: "native-terminal",
+                    mode: "request_approval",
+                    decision: "approved",
+                    risk: "high",
+                    reason: "Approved by the user"
+                )
+            )
+        )
+        let encoded = try JSONSerialization.jsonObject(
+            with: LocalAgentProtocolJSON.encoder().encode(request)
+        ) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("approval_history_append_request.json"))
+        ) as? NSDictionary
+        #expect(encoded == fixture)
+
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("approval_history_records_response.json"))
+        )
+        guard case let .approvalHistoryRecords(records, nextCursor) = reply.response else {
+            Issue.record("Expected an Approval History records response")
+            return
+        }
+        #expect(records.first?.recordID == "approval-history-1")
+        #expect(records.first?.ownerUserID == "user-1")
+        #expect(records.first?.draft.decision == "approved")
+        #expect(nextCursor == nil)
+    }
+
     private func fixtureURL(_ name: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v23")
+            .appendingPathComponent("shared/fixtures/local_agent/v24")
             .appendingPathComponent(name)
     }
 }

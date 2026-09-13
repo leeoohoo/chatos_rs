@@ -556,6 +556,8 @@ Memory Synchronizer 持续发送 `batch-sync`。Memory Engine 不可用时：
 
 Memory Engine 对所有已同步消息持续执行自己的 Summary、Rollup 和 Subject Memory Job。它使用服务端受管模型配置，生成可读、跨设备、跨 Run 的长期记忆。
 
+物理删除旧服务端或客户端 Agent Runtime 前，必须做一次符号级能力清单。旧实现中只有以下纯 AI 能力允许进入 `memory_engine/backend/src/services/ai_pipeline`：单次模型请求、Responses/Chat Completions 终态解析、摘要分块与合并、上下文溢出收缩、错误分类和有界重试。若 Memory Engine 已有等价实现，则只补齐缺失测试后删除旧副本，不再复制一套。Agent Loop、工具循环、Run/Step 状态、审批、MCP 执行和任务调度一律不得迁入 Memory Engine。
+
 厂商 compaction 与 Memory Engine 总结互不替代：
 
 - 厂商 compaction 只服务于当前厂商上下文续传，保存在本地 Provider Context。

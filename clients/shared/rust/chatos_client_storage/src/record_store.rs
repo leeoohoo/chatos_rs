@@ -13,9 +13,10 @@ use crate::{
     AgentEventStateRecord, AgentEventStateRepository, AgentMessageStateRecord,
     AgentMessageStateRepository, AgentRecord, AgentRepository, AgentRunStateRecord,
     AgentRunStateRepository, AgentUiEventCursorQuery, AgentUiEventPage, AgentUiEventStateRecord,
-    AgentUiEventStateRepository, AppendAgentUiEvent, ClientSettingRecord, ClientSettingsRepository,
-    ClipboardRecord, ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery,
-    MediaStateRecord, MediaStateRepository, NotepadRecord, NotepadRepository, PluginStateRecord,
+    AgentUiEventStateRepository, AppendAgentUiEvent, ApprovalHistoryRecord,
+    ApprovalHistoryRepository, ClientSettingRecord, ClientSettingsRepository, ClipboardRecord,
+    ClipboardRepository, ConversationRecord, ConversationRepository, ListQuery, MediaStateRecord,
+    MediaStateRepository, NotepadRecord, NotepadRepository, PluginStateRecord,
     PluginStateRepository, ProjectRecord, ProjectRepository, ProviderContextStateRecord,
     ProviderContextStateRepository, PutRecord, RecordMetadata, RecordPage, RecordQuery,
     StorageError, StorageResult, StoryRecord, StoryRepository, SyncOutboxStateRecord,
@@ -24,7 +25,7 @@ use crate::{
     TransactionRepositories,
 };
 
-pub(crate) const SCHEMA_VERSION: u32 = 5;
+pub(crate) const SCHEMA_VERSION: u32 = 6;
 pub(crate) const LEGACY_DOMAIN_TABLES: [&str; 11] = [
     "client_agents",
     "client_conversations",
@@ -47,7 +48,8 @@ pub(crate) const AUXILIARY_RUNTIME_TABLES: [&str; 4] = [
 ];
 pub(crate) const UI_EVENT_DOMAIN_TABLE: &str = "client_agent_ui_events";
 pub(crate) const UI_EVENT_SEQUENCE_TABLE: &str = "client_agent_ui_event_sequences";
-pub(crate) const DOMAIN_TABLES: [&str; 18] = [
+pub(crate) const APPROVAL_HISTORY_DOMAIN_TABLE: &str = "client_approval_history";
+pub(crate) const DOMAIN_TABLES: [&str; 19] = [
     "client_agents",
     "client_conversations",
     "client_tasks",
@@ -66,6 +68,7 @@ pub(crate) const DOMAIN_TABLES: [&str; 18] = [
     "client_provider_context",
     "client_tool_executions",
     "client_sync_outbox",
+    "client_approval_history",
 ];
 
 pub(crate) struct StoredRow {
@@ -288,6 +291,13 @@ impl TransactionRepositories for RecordTransactionRepositories<'_> {
             "client_terminal_history",
         ))
     }
+
+    fn approval_history(&mut self) -> Box<dyn ApprovalHistoryRepository + '_> {
+        Box::new(JsonRecordRepository::<ApprovalHistoryRecord>::new(
+            self.store,
+            APPROVAL_HISTORY_DOMAIN_TABLE,
+        ))
+    }
 }
 
 pub(crate) trait RepositoryRecord: Serialize + DeserializeOwned + Send + Unpin {
@@ -323,6 +333,7 @@ impl_repository_record!(
     StoryRecord,
     NotepadRecord,
     TerminalHistoryRecord,
+    ApprovalHistoryRecord,
 );
 
 impl RepositoryRecord for AgentRunStateRecord {
@@ -730,6 +741,7 @@ impl_domain_repository!(ClipboardRepository, ClipboardRecord);
 impl_domain_repository!(StoryRepository, StoryRecord);
 impl_domain_repository!(NotepadRepository, NotepadRecord);
 impl_domain_repository!(TerminalHistoryRepository, TerminalHistoryRecord);
+impl_domain_repository!(ApprovalHistoryRepository, ApprovalHistoryRecord);
 
 #[async_trait]
 impl AgentUiEventStateRepository for JsonRecordRepository<'_, AgentUiEventStateRecord> {

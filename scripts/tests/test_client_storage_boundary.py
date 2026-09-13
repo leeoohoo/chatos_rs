@@ -114,6 +114,35 @@ class ClientStorageBoundaryTests(unittest.TestCase):
         self.assertIn("runtimePreferencesStore.updateDeveloperMode", connector)
         self.assertIn("runtimePreferencesStore.updateSandbox", connector)
 
+    def test_macos_connector_approval_state_uses_selected_client_storage_provider(self) -> None:
+        persistent_state = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+        ).read_text(errors="replace")
+        approval_store = (
+            ROOT
+            / "clients/macos/Sources/ChatOSConnector/NativeConnectorApprovalStore.swift"
+        ).read_text(errors="replace")
+        connector = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService.swift"
+        ).read_text(errors="replace")
+        for legacy_field in (
+            "approvalMode",
+            "commandApprovalModelConfigID",
+            "commandApprovalThinkingLevel",
+            "approvalHistory",
+        ):
+            self.assertNotIn(legacy_field, persistent_state)
+        self.assertIn(
+            "NativeLocalClientSettingStore<NativeConnectorApprovalPreferences>",
+            approval_store,
+        )
+        self.assertIn("client.appendApprovalHistory", approval_store)
+        self.assertIn("client.approvalHistoryRecords", approval_store)
+        self.assertNotIn("FileManager", approval_store)
+        self.assertNotIn("UserDefaults", approval_store)
+        self.assertIn("approvalStore.activate", connector)
+        self.assertIn("approvalStore.append", connector)
+
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()
         inventoried = {

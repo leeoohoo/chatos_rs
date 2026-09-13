@@ -4,6 +4,8 @@ import Foundation
 extension NativeLocalConnectorService {
     public func fetchModelCatalog(refresh: Bool) async throws -> LocalConnectorModelCatalog {
         let token = try requireAccessToken()
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let approvalPreferences = try await approvalStore.preferences(ownerUserID: ownerUserID)
         let configs = try await gateway.modelConfigs(token: token)
         let settings = try? await gateway.modelSettings(token: token)
         return .init(
@@ -32,8 +34,8 @@ extension NativeLocalConnectorService {
                 modelRequestMaxRetries: settings?.modelRequestMaxRetries ?? 5,
                 memorySummaryModelConfigID: settings?.memorySummaryModelConfigID,
                 memorySummaryThinkingLevel: settings?.memorySummaryThinkingLevel,
-                commandApprovalModelConfigID: state.commandApprovalModelConfigID,
-                commandApprovalThinkingLevel: state.commandApprovalThinkingLevel
+                commandApprovalModelConfigID: approvalPreferences.commandApprovalModelConfigID,
+                commandApprovalThinkingLevel: approvalPreferences.commandApprovalThinkingLevel
             )
         )
     }
@@ -61,12 +63,16 @@ extension NativeLocalConnectorService {
     public func deleteModelProvider(id: String) async throws {
         let token = try requireAccessToken()
         try await gateway.deleteModelProvider(token: token, id: id)
-        if let selected = state.commandApprovalModelConfigID {
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let approvalPreferences = try await approvalStore.preferences(ownerUserID: ownerUserID)
+        if let selected = approvalPreferences.commandApprovalModelConfigID {
             let models = try await gateway.modelConfigs(token: token)
             if !models.contains(where: { $0.id == selected }) {
-                state.commandApprovalModelConfigID = nil
-                state.commandApprovalThinkingLevel = nil
-                try stateStore.save(state)
+                _ = try await approvalStore.updateModelSelection(
+                    ownerUserID: ownerUserID,
+                    modelConfigID: nil,
+                    thinkingLevel: nil
+                )
             }
         }
     }
@@ -74,17 +80,28 @@ extension NativeLocalConnectorService {
     public func updateModelConfig(id: String, update: LocalConnectorModelConfigUpdate) async throws {
         let token = try requireAccessToken()
         _ = try await gateway.updateModelConfig(token: token, id: id, update: update)
-        if !update.taskEnabled, state.commandApprovalModelConfigID == id {
-            state.commandApprovalModelConfigID = nil
-            state.commandApprovalThinkingLevel = nil
-            try stateStore.save(state)
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let approvalPreferences = try await approvalStore.preferences(ownerUserID: ownerUserID)
+        if !update.taskEnabled, approvalPreferences.commandApprovalModelConfigID == id {
+            _ = try await approvalStore.updateModelSelection(
+                ownerUserID: ownerUserID,
+                modelConfigID: nil,
+                thinkingLevel: nil
+            )
         }
     }
 
     public func updateModelSettings(_ settings: LocalConnectorModelSettings) async throws {
         let token = try requireAccessToken()
-        if let approvalID = settings.commandApprovalModelConfigID?.trimmedNonEmpty {
-            let model = try await gateway.modelConfig(token: token, id: approvalID, includeSecret: false)
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let approvalID: String?
+        let approvalThinkingLevel: String?
+        if let selectedApprovalID = settings.commandApprovalModelConfigID?.trimmedNonEmpty {
+            let model = try await gateway.modelConfig(
+                token: token,
+                id: selectedApprovalID,
+                includeSecret: false
+            )
             guard model.enabled ?? true,
                   model.taskEnabled ?? (model.enabled ?? true),
                   model.hasAPIKey ?? false else {
@@ -93,14 +110,18 @@ extension NativeLocalConnectorService {
                     message: "本机审批 Agent 必须使用已启用且配置了密钥的模型。"
                 )
             }
-            state.commandApprovalModelConfigID = approvalID
-            state.commandApprovalThinkingLevel = settings.commandApprovalThinkingLevel?.trimmedNonEmpty
+            approvalID = selectedApprovalID
+            approvalThinkingLevel = settings.commandApprovalThinkingLevel?.trimmedNonEmpty
         } else {
-            state.commandApprovalModelConfigID = nil
-            state.commandApprovalThinkingLevel = nil
+            approvalID = nil
+            approvalThinkingLevel = nil
         }
         _ = try await gateway.updateModelSettings(token: token, settings: settings)
-        try stateStore.save(state)
+        _ = try await approvalStore.updateModelSelection(
+            ownerUserID: ownerUserID,
+            modelConfigID: approvalID,
+            thinkingLevel: approvalThinkingLevel
+        )
     }
 
     private static func mapModelProvider(_ provider: GatewayModelProviderDTO) -> LocalConnectorModelProvider {

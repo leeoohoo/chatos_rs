@@ -377,7 +377,7 @@ struct NativeLocalAgentIPCClientTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v23")
+            .appendingPathComponent("shared/fixtures/local_agent/v24")
             .appendingPathComponent(name)
     }
 }

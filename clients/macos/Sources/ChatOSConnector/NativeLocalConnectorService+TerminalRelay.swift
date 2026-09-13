@@ -67,15 +67,6 @@ extension NativeLocalConnectorService {
         )
         switch approval {
         case let .deny(reason), let .askUser(reason):
-            appendApprovalHistory(
-                command: command,
-                arguments: body.args,
-                cwd: cwd.path,
-                source: body.source ?? "terminal-relay",
-                decision: "denied",
-                risk: risk,
-                reason: reason
-            )
             return terminalResponse(
                 requestID: request.requestID,
                 command: command,
@@ -85,16 +76,8 @@ extension NativeLocalConnectorService {
                 error: reason,
                 approvalDecision: "denied"
             )
-        case let .approve(reason, _):
-            appendApprovalHistory(
-                command: command,
-                arguments: body.args,
-                cwd: cwd.path,
-                source: body.source ?? "terminal-relay",
-                decision: "approved",
-                risk: risk,
-                reason: reason
-            )
+        case .approve:
+            break
         }
 
         let result = try await Task.detached {
@@ -133,36 +116,44 @@ extension NativeLocalConnectorService {
         requestedPermissionsDescription: String? = nil,
         approvalScopeKey: String? = nil
     ) async -> NativeApprovalDecision {
+        guard let ownerUserID = try? activeClientStorageOwnerUserID(),
+              let preferences = try? await approvalStore.preferences(ownerUserID: ownerUserID)
+        else {
+            return .deny(reason: "审批设置不可用，已安全拒绝本次操作。")
+        }
         if let approvalScopeKey, sessionApprovalAllowlist.contains(approvalScopeKey) {
             let reason = "用户已允许当前本机会话执行此类操作。"
-            publishApprovalEvent(.init(
+            let persisted = await persistImmediateApprovalDecision(
                 requestID: requestID,
-                command: ([command] + arguments).joined(separator: " "),
-                cwd: cwd.path,
+                command: command,
+                arguments: arguments,
+                cwd: cwd,
                 source: source,
-                risk: risk.level,
-                decision: "approved",
-                reason: reason,
-                mode: state.approvalMode,
-                reviewer: .session
-            ))
-            return .approve(reason: reason, rememberAllow: true)
+                risk: risk,
+                mode: preferences.defaultMode,
+                reviewer: .session,
+                decision: .approve(reason: reason, rememberAllow: true)
+            )
+            if case .approve = persisted {
+                return persisted
+            }
+            sessionApprovalAllowlist.remove(approvalScopeKey)
+            return persisted
         }
-        switch state.approvalMode {
+        switch preferences.defaultMode {
         case .fullControl:
             let reason = "当前策略无需逐次审批。"
-            publishApprovalEvent(.init(
+            return await persistImmediateApprovalDecision(
                 requestID: requestID,
-                command: ([command] + arguments).joined(separator: " "),
-                cwd: cwd.path,
+                command: command,
+                arguments: arguments,
+                cwd: cwd,
                 source: source,
-                risk: risk.level,
-                decision: "approved",
-                reason: reason,
+                risk: risk,
                 mode: .fullControl,
-                reviewer: .policy
-            ))
-            return .approve(reason: reason, rememberAllow: false)
+                reviewer: .policy,
+                decision: .approve(reason: reason, rememberAllow: false)
+            )
         case .requestApproval:
             return await requestUserApproval(
                 requestID: requestID,
@@ -175,7 +166,7 @@ extension NativeLocalConnectorService {
                 approvalScopeKey: approvalScopeKey
             )
         case .autoApproval:
-            guard let modelID = state.commandApprovalModelConfigID else {
+            guard let modelID = preferences.commandApprovalModelConfigID else {
                 return await requestUserApproval(
                     requestID: requestID,
                     command: command,
@@ -190,9 +181,6 @@ extension NativeLocalConnectorService {
             do {
                 let token = try requireAccessToken()
                 async let model = gateway.modelConfig(token: token, id: modelID, includeSecret: true)
-                guard let ownerUserID = state.user?.id else {
-                    throw NativeTerminalRelayError.invalidContext
-                }
                 let decision = await NativeApprovalAgent(
                     settingsStore: agentRuntimeSettings
                 ).evaluate(
@@ -208,7 +196,7 @@ extension NativeLocalConnectorService {
                     ),
                     ownerUserID: ownerUserID,
                     model: try await model,
-                    thinkingLevel: state.commandApprovalThinkingLevel
+                    thinkingLevel: preferences.commandApprovalThinkingLevel
                 )
                 if case let .askUser(reason) = decision {
                     return await requestUserApproval(
@@ -222,38 +210,21 @@ extension NativeLocalConnectorService {
                         approvalScopeKey: approvalScopeKey
                     )
                 }
-                if case .approve(_, true) = decision, let approvalScopeKey {
+                let persisted = await persistImmediateApprovalDecision(
+                    requestID: requestID,
+                    command: command,
+                    arguments: arguments,
+                    cwd: cwd,
+                    source: source,
+                    risk: risk,
+                    mode: .autoApproval,
+                    reviewer: .ai,
+                    decision: decision
+                )
+                if case .approve(_, true) = persisted, let approvalScopeKey {
                     sessionApprovalAllowlist.insert(approvalScopeKey)
                 }
-                switch decision {
-                case let .approve(reason, _):
-                    publishApprovalEvent(.init(
-                        requestID: requestID,
-                        command: ([command] + arguments).joined(separator: " "),
-                        cwd: cwd.path,
-                        source: source,
-                        risk: risk.level,
-                        decision: "approved",
-                        reason: reason,
-                        mode: .autoApproval,
-                        reviewer: .ai
-                    ))
-                case let .deny(reason):
-                    publishApprovalEvent(.init(
-                        requestID: requestID,
-                        command: ([command] + arguments).joined(separator: " "),
-                        cwd: cwd.path,
-                        source: source,
-                        risk: risk.level,
-                        decision: "denied",
-                        reason: reason,
-                        mode: .autoApproval,
-                        reviewer: .ai
-                    ))
-                case .askUser:
-                    break
-                }
-                return decision
+                return persisted
             } catch {
                 return await requestUserApproval(
                     requestID: requestID,
@@ -267,6 +238,73 @@ extension NativeLocalConnectorService {
                 )
             }
         }
+    }
+
+    func persistImmediateApprovalDecision(
+        requestID: String,
+        command: String,
+        arguments: [String],
+        cwd: URL,
+        source: String,
+        risk: NativeApprovalRisk,
+        mode: LocalConnectorApprovalMode,
+        reviewer: LocalConnectorApprovalEventReviewer,
+        decision: NativeApprovalDecision
+    ) async -> NativeApprovalDecision {
+        let decisionName: String
+        let reason: String
+        switch decision {
+        case let .approve(value, _):
+            decisionName = "approved"
+            reason = value
+        case let .deny(value), let .askUser(value):
+            decisionName = "denied"
+            reason = value
+        }
+        let displayCommand = ([command] + arguments).joined(separator: " ")
+        do {
+            let ownerUserID = try activeClientStorageOwnerUserID()
+            _ = try await approvalStore.append(
+                ownerUserID: ownerUserID,
+                entry: .init(
+                    id: UUID().uuidString,
+                    command: displayCommand,
+                    cwd: cwd.path,
+                    source: source,
+                    mode: mode,
+                    decision: decisionName,
+                    risk: risk.level,
+                    reason: reason,
+                    createdAt: ISO8601DateFormatter().string(from: Date())
+                )
+            )
+        } catch {
+            let failure = "审批审计保存失败，操作已拒绝：\(error.localizedDescription)"
+            publishApprovalEvent(.init(
+                requestID: requestID,
+                command: displayCommand,
+                cwd: cwd.path,
+                source: source,
+                risk: risk.level,
+                decision: "denied",
+                reason: failure,
+                mode: mode,
+                reviewer: .policy
+            ))
+            return .deny(reason: failure)
+        }
+        publishApprovalEvent(.init(
+            requestID: requestID,
+            command: displayCommand,
+            cwd: cwd.path,
+            source: source,
+            risk: risk.level,
+            decision: decisionName,
+            reason: reason,
+            mode: mode,
+            reviewer: reviewer
+        ))
+        return decision
     }
 
     private func requestUserApproval(
@@ -329,30 +367,6 @@ extension NativeLocalConnectorService {
         guard url.path != root.path else { return "." }
         let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         return url.path.hasPrefix(prefix) ? String(url.path.dropFirst(prefix.count)) : url.path
-    }
-
-    func appendApprovalHistory(
-        command: String,
-        arguments: [String],
-        cwd: String,
-        source: String,
-        decision: String,
-        risk: NativeApprovalRisk,
-        reason: String
-    ) {
-        state.approvalHistory.insert(.init(
-            id: UUID().uuidString,
-            command: ([command] + arguments).joined(separator: " "),
-            cwd: cwd,
-            source: source,
-            mode: state.approvalMode,
-            decision: decision,
-            risk: risk.level,
-            reason: reason,
-            createdAt: ISO8601DateFormatter().string(from: Date())
-        ), at: 0)
-        state.approvalHistory = Array(state.approvalHistory.prefix(1_000))
-        try? stateStore.save(state)
     }
 
     func appendCommandHistory(

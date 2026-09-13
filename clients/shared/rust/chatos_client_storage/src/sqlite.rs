@@ -15,9 +15,9 @@ use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
 
 use crate::canonical_json::canonicalize_encoded;
 use crate::record_store::{
-    RecordStore, RecordTransactionRepositories, StoredPayload, StoredRow, AUXILIARY_RUNTIME_TABLES,
-    DOMAIN_TABLES, LEGACY_DOMAIN_TABLES, RUNTIME_DOMAIN_TABLES, SCHEMA_VERSION,
-    UI_EVENT_DOMAIN_TABLE, UI_EVENT_SEQUENCE_TABLE,
+    RecordStore, RecordTransactionRepositories, StoredPayload, StoredRow,
+    APPROVAL_HISTORY_DOMAIN_TABLE, AUXILIARY_RUNTIME_TABLES, DOMAIN_TABLES, LEGACY_DOMAIN_TABLES,
+    RUNTIME_DOMAIN_TABLES, SCHEMA_VERSION, UI_EVENT_DOMAIN_TABLE, UI_EVENT_SEQUENCE_TABLE,
 };
 use crate::sqlite_cipher::SqlitePayloadCipher;
 use crate::{
@@ -400,6 +400,9 @@ async fn migrate(pool: &SqlitePool, cipher: &SqlitePayloadCipher) -> StorageResu
             if current <= 4 {
                 create_domain_table(&mut transaction, UI_EVENT_DOMAIN_TABLE).await?;
                 create_ui_event_sequence_table(&mut transaction).await?;
+            }
+            if current <= 5 {
+                create_domain_table(&mut transaction, APPROVAL_HISTORY_DOMAIN_TABLE).await?;
             }
         }
         sqlx::query(

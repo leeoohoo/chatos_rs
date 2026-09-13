@@ -13,13 +13,13 @@ use chatos_client_storage::{
 use chatos_local_agent_protocol::{
     AgentMessageRole, GetClientSettingCommand, GetClipboardCommand, GetMediaCommand,
     GetNotepadCommand, GetProjectCommand, GetRunDetailCommand, GetStoryCommand,
-    GetTaskGraphCommand, GetTaskRunDetailCommand, ListClipboardCommand, ListMediaCommand,
-    ListNotepadCommand, ListProjectsCommand, ListStoriesCommand, ListTerminalHistoryCommand,
-    LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest,
-    LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail, LocalAgentRunTimelineEvent,
-    LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection,
-    LocalAgentTaskRunDetail, LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    GetTaskGraphCommand, GetTaskRunDetailCommand, ListApprovalHistoryCommand, ListClipboardCommand,
+    ListMediaCommand, ListNotepadCommand, ListProjectsCommand, ListStoriesCommand,
+    ListTerminalHistoryCommand, LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply,
+    LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail,
+    LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot,
+    LocalAgentTaskProjection, LocalAgentTaskRunDetail, LocalAgentTaskRunSummary,
+    LocalAgentTaskSnapshot, MainChatRunBinding, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
 use chrono::Utc;
@@ -419,6 +419,22 @@ impl LocalAgentIpcServer {
                         })
                     })
             }
+            LocalAgentCommand::ListApprovalHistory(command) => {
+                let mut operation = ListApprovalHistoryOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| {
+                        operation.response.ok_or(StorageError::Transaction {
+                            reason: "approval history list transaction returned no page"
+                                .to_string(),
+                        })
+                    })
+            }
             LocalAgentCommand::GetTaskGraph(command) => {
                 let mut operation = GetTaskGraphOperation {
                     scope: self.scope.clone(),
@@ -808,6 +824,39 @@ struct ListTerminalHistoryOperation {
     scope: RecordScope,
     command: ListTerminalHistoryCommand,
     response: Option<LocalAgentIpcResponse>,
+}
+
+struct ListApprovalHistoryOperation {
+    scope: RecordScope,
+    command: ListApprovalHistoryCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for ListApprovalHistoryOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let page = repositories
+            .approval_history()
+            .list(&ListQuery {
+                scope: self.scope.clone(),
+                cursor: self.command.cursor.clone(),
+                limit: self.command.limit,
+            })
+            .await?;
+        let records = page
+            .records
+            .into_iter()
+            .map(crate::approval_history_snapshot)
+            .collect::<StorageResult<Vec<_>>>()?;
+        self.response = Some(LocalAgentIpcResponse::ApprovalHistoryRecords {
+            records,
+            next_cursor: page.next_cursor,
+        });
+        Ok(())
+    }
 }
 
 #[async_trait]

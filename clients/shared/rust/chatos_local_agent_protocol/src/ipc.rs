@@ -11,18 +11,19 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
-    AppendTerminalHistoryCommand, ApplyStorageProfileCommand, ClientDataTransferResult,
-    ClientStorageProfileDescriptor, ClipboardMutationResult, CreateProjectCommand,
-    DeleteClientSettingCommand, DeleteClipboardCommand, DeleteMediaCommand, DeleteNotepadCommand,
-    DeleteNotepadFolderCommand, DeleteStoryCommand, DeleteTerminalHistoryCommand,
-    ExportClientDataCommand, GetClientSettingCommand, GetClipboardCommand, GetMediaCommand,
-    GetNotepadCommand, GetProjectCommand, GetStoryCommand, ImportClientDataCommand,
-    InstallProjectPluginCapabilityCommand, ListClipboardCommand, ListMediaCommand,
-    ListNotepadCommand, ListProjectsCommand, ListStoriesCommand, ListTerminalHistoryCommand,
-    LocalAgentRun, LocalClientSettingSnapshot, LocalClipboardSnapshot, LocalMediaSnapshot,
-    LocalNotepadSnapshot, LocalProjectSnapshot, LocalStorySnapshot, LocalTerminalHistorySnapshot,
-    MediaMutationResult, PostgresConnectionTestCommand, PostgresConnectionTestResult,
-    ProtocolError, PutClientSettingCommand, PutMediaCommand, PutNotepadCommand, PutStoryCommand,
+    AppendApprovalHistoryCommand, AppendTerminalHistoryCommand, ApplyStorageProfileCommand,
+    ClientDataTransferResult, ClientStorageProfileDescriptor, ClipboardMutationResult,
+    CreateProjectCommand, DeleteClientSettingCommand, DeleteClipboardCommand, DeleteMediaCommand,
+    DeleteNotepadCommand, DeleteNotepadFolderCommand, DeleteStoryCommand,
+    DeleteTerminalHistoryCommand, ExportClientDataCommand, GetClientSettingCommand,
+    GetClipboardCommand, GetMediaCommand, GetNotepadCommand, GetProjectCommand, GetStoryCommand,
+    ImportClientDataCommand, InstallProjectPluginCapabilityCommand, ListApprovalHistoryCommand,
+    ListClipboardCommand, ListMediaCommand, ListNotepadCommand, ListProjectsCommand,
+    ListStoriesCommand, ListTerminalHistoryCommand, LocalAgentRun, LocalApprovalHistorySnapshot,
+    LocalClientSettingSnapshot, LocalClipboardSnapshot, LocalMediaSnapshot, LocalNotepadSnapshot,
+    LocalProjectSnapshot, LocalStorySnapshot, LocalTerminalHistorySnapshot, MediaMutationResult,
+    PostgresConnectionTestCommand, PostgresConnectionTestResult, ProtocolError,
+    PutClientSettingCommand, PutMediaCommand, PutNotepadCommand, PutStoryCommand,
     RemoveProjectPluginCapabilityCommand, RenameNotepadFolderCommand, SetClipboardPinnedCommand,
     StoreClipboardCommand, ToolExecution, UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
@@ -121,6 +122,8 @@ pub enum LocalAgentCommand {
     ListTerminalHistory(ListTerminalHistoryCommand),
     DeleteTerminalHistory(DeleteTerminalHistoryCommand),
     ClearTerminalHistory,
+    AppendApprovalHistory(AppendApprovalHistoryCommand),
+    ListApprovalHistory(ListApprovalHistoryCommand),
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -185,6 +188,8 @@ impl LocalAgentCommand {
             Self::ListTerminalHistory(command) => command.validate(),
             Self::DeleteTerminalHistory(command) => command.validate(),
             Self::ClearTerminalHistory => Ok(()),
+            Self::AppendApprovalHistory(command) => command.validate(),
+            Self::ListApprovalHistory(command) => command.validate(),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -1009,6 +1014,11 @@ pub enum LocalAgentIpcResponse {
         records: Vec<LocalTerminalHistorySnapshot>,
         next_cursor: Option<String>,
     },
+    ApprovalHistory(LocalApprovalHistorySnapshot),
+    ApprovalHistoryRecords {
+        records: Vec<LocalApprovalHistorySnapshot>,
+        next_cursor: Option<String>,
+    },
     Events {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
@@ -1126,6 +1136,19 @@ impl LocalAgentIpcResponse {
             Self::ClientSetting(setting) => setting.validate(),
             Self::TerminalHistory(record) => record.validate(),
             Self::TerminalHistoryRecords {
+                records,
+                next_cursor,
+            } => {
+                for record in records {
+                    record.validate()?;
+                }
+                if let Some(cursor) = next_cursor {
+                    require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
+            Self::ApprovalHistory(record) => record.validate(),
+            Self::ApprovalHistoryRecords {
                 records,
                 next_cursor,
             } => {
