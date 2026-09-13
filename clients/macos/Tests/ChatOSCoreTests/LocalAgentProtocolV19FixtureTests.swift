@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v18 fixtures")
-struct LocalAgentProtocolV18FixtureTests {
+@Suite("Shared Local Agent protocol v19 fixtures")
+struct LocalAgentProtocolV19FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV18FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 18)
+        #expect(localAgentProtocolVersion == 19)
         #expect(encoded == fixture)
     }
 
@@ -74,6 +74,55 @@ struct LocalAgentProtocolV18FixtureTests {
         }
         #expect(result.entry?.ownerUserID == "user-1")
         #expect(result.entry?.revision == 1)
+        #expect(result.discardedPayloadReferences.isEmpty)
+    }
+
+    @Test("encodes Media history metadata without transporting payload bytes")
+    func mediaMetadata() throws {
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-put-media-1",
+            ownerUserID: "user-1",
+            command: .putMedia(
+                recordID: "00000000-0000-4000-8000-000000000010",
+                expectedRevision: nil,
+                draft: .init(
+                    projectID: "project-1",
+                    kind: .image,
+                    status: .completed,
+                    prompt: "A polished product hero",
+                    modelName: "gpt-image-2",
+                    generatedAt: "2026-09-09T00:00:00Z",
+                    assets: [.init(
+                        assetID: "asset-1",
+                        mimeType: "image/png",
+                        payloadReference: "Payloads/c6c289e49e9c05b2145860387b73bcb18df43fb09a1e4a4a9713c76c88bb541b/00000000-0000-4000-8000-000000000010/asset-1.png",
+                        contentHash: "sha256:" + String(repeating: "a", count: 64),
+                        byteCount: 1024,
+                        revisedPrompt: "A polished product hero on a soft blue background"
+                    )]
+                )
+            )
+        )
+        let encoded = try JSONSerialization.jsonObject(
+            with: LocalAgentProtocolJSON.encoder().encode(request)
+        ) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("media_put_request.json"))
+        ) as? NSDictionary
+        #expect(encoded == fixture)
+
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("media_mutation_response.json"))
+        )
+        guard case let .mediaMutation(result) = reply.response else {
+            Issue.record("Expected a Media mutation response")
+            return
+        }
+        #expect(result.record?.ownerUserID == "user-1")
+        #expect(result.record?.draft.projectID == "project-1")
+        #expect(result.record?.draft.status == .completed)
         #expect(result.discardedPayloadReferences.isEmpty)
     }
 
@@ -237,7 +286,7 @@ struct LocalAgentProtocolV18FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v18")
+            .appendingPathComponent("shared/fixtures/local_agent/v19")
             .appendingPathComponent(name)
     }
 }

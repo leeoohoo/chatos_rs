@@ -11,13 +11,13 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessageRole, GetClipboardCommand, GetProjectCommand, GetRunDetailCommand,
-    GetTaskGraphCommand, GetTaskRunDetailCommand, ListClipboardCommand, ListProjectsCommand,
-    LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest,
-    LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail, LocalAgentRunTimelineEvent,
-    LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection,
-    LocalAgentTaskRunDetail, LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    AgentMessageRole, GetClipboardCommand, GetMediaCommand, GetProjectCommand, GetRunDetailCommand,
+    GetTaskGraphCommand, GetTaskRunDetailCommand, ListClipboardCommand, ListMediaCommand,
+    ListProjectsCommand, LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply,
+    LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail,
+    LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot,
+    LocalAgentTaskProjection, LocalAgentTaskRunDetail, LocalAgentTaskRunSummary,
+    LocalAgentTaskSnapshot, MainChatRunBinding, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
 use chrono::Utc;
@@ -292,6 +292,37 @@ impl LocalAgentIpcServer {
                         })
                     })
             }
+            LocalAgentCommand::GetMedia(command) => {
+                let mut operation = GetMediaOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage.transaction(&mut operation).await.map(|()| {
+                    operation
+                        .response
+                        .unwrap_or(LocalAgentIpcResponse::Error(LocalAgentIpcError {
+                            code: "media_not_found".to_string(),
+                            message: "Media record was not found".to_string(),
+                            retryable: false,
+                        }))
+                })
+            }
+            LocalAgentCommand::ListMedia(command) => {
+                let mut operation = ListMediaOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| {
+                        operation.response.ok_or(StorageError::Transaction {
+                            reason: "media list transaction returned no page".to_string(),
+                        })
+                    })
+            }
             LocalAgentCommand::GetTaskGraph(command) => {
                 let mut operation = GetTaskGraphOperation {
                     scope: self.scope.clone(),
@@ -546,6 +577,65 @@ struct ListClipboardOperation {
     scope: RecordScope,
     command: ListClipboardCommand,
     response: Option<LocalAgentIpcResponse>,
+}
+
+struct GetMediaOperation {
+    scope: RecordScope,
+    command: GetMediaCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetMediaOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.response = repositories
+            .media()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: self.command.record_id.clone(),
+            })
+            .await?
+            .map(crate::media_snapshot)
+            .transpose()?
+            .map(LocalAgentIpcResponse::Media);
+        Ok(())
+    }
+}
+
+struct ListMediaOperation {
+    scope: RecordScope,
+    command: ListMediaCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for ListMediaOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let page = repositories
+            .media()
+            .list(&ListQuery {
+                scope: self.scope.clone(),
+                cursor: self.command.cursor.clone(),
+                limit: self.command.limit,
+            })
+            .await?;
+        let records = page
+            .records
+            .into_iter()
+            .map(crate::media_snapshot)
+            .collect::<StorageResult<Vec<_>>>()?;
+        self.response = Some(LocalAgentIpcResponse::MediaRecords {
+            records,
+            next_cursor: page.next_cursor,
+        });
+        Ok(())
+    }
 }
 
 #[async_trait]

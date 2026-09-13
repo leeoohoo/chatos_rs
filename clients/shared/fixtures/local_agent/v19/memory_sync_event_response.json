@@ -1,5 +1,5 @@
 {
-  "protocol_version": 18,
+  "protocol_version": 19,
   "request_id": "request-events-memory-sync-1",
   "response": {
     "type": "events",

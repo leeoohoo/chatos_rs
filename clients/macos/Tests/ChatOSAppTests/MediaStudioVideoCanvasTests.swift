@@ -57,7 +57,7 @@ final class MediaStudioVideoCanvasTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("VideoCanvasTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
-        let store = MediaStudioHistoryStore(root: root)
+        let store = makeMediaStudioHistoryStore(root: root)
         _ = try await store.saveVideo(VideoCanvasService.result, prompt: "previous prompt", owner: "canvas-test")
         let service = VideoCanvasService()
         let vm = MediaStudioViewModel(service: service, historyStore: store)

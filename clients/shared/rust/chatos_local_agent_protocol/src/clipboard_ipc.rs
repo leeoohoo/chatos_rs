@@ -246,7 +246,7 @@ fn require_bounded_text(
     Ok(())
 }
 
-fn validate_payload_reference(value: &str) -> Result<(), ProtocolError> {
+pub(crate) fn validate_payload_reference(value: &str) -> Result<(), ProtocolError> {
     let valid = !value.is_empty()
         && value.len() <= MAXIMUM_PAYLOAD_REFERENCE_BYTES
         && value.trim() == value

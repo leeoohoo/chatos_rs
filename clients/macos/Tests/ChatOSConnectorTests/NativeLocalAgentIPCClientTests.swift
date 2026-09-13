@@ -306,6 +306,41 @@ struct NativeLocalAgentIPCClientTests {
         #expect(!encoded.contains("hello clipboard"))
     }
 
+    @Test("stores Media metadata without sending local payload bytes")
+    func storesMediaMetadata() async throws {
+        let transport = try FixtureLocalAgentTransport(
+            fixture: fixtureURL("media_mutation_response.json")
+        )
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+        let result = try await client.putMediaRecord(
+            id: "00000000-0000-4000-8000-000000000010",
+            expectedRevision: nil,
+            draft: .init(
+                projectID: "project-1",
+                kind: .image,
+                status: .completed,
+                prompt: "A polished product hero",
+                modelName: "gpt-image-2",
+                generatedAt: "2026-09-09T00:00:00Z",
+                assets: [.init(
+                    assetID: "asset-1",
+                    mimeType: "image/png",
+                    payloadReference: "Payloads/c6c289e49e9c05b2145860387b73bcb18df43fb09a1e4a4a9713c76c88bb541b/00000000-0000-4000-8000-000000000010/asset-1.png",
+                    contentHash: "sha256:" + String(repeating: "a", count: 64),
+                    byteCount: 1024,
+                    revisedPrompt: "A polished product hero on a soft blue background"
+                )]
+            )
+        )
+
+        #expect(result.record?.revision == 1)
+        let request = try #require(await transport.request())
+        let encoded = String(decoding: request, as: UTF8.self)
+        #expect(encoded.contains("put_media"))
+        #expect(encoded.contains("content_hash"))
+        #expect(!encoded.contains("base64"))
+    }
+
     @Test("rejects a response correlated to another request")
     func rejectsRequestMismatch() async throws {
         let transport = RecordingLocalAgentTransport(
@@ -325,7 +360,7 @@ struct NativeLocalAgentIPCClientTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v18")
+            .appendingPathComponent("shared/fixtures/local_agent/v19")
             .appendingPathComponent(name)
     }
 }

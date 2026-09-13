@@ -6,10 +6,13 @@ import XCTest
 @MainActor
 final class MediaStudioViewModelTests: XCTestCase {
     func testModelChangesResetUnsupportedResolutionAndDuration() async throws {
-        let viewModel = MediaStudioViewModel(service: MediaStudioFailureService())
+        let viewModel = MediaStudioViewModel(
+            service: MediaStudioFailureService(),
+            historyStore: testHistoryStore()
+        )
         viewModel.activate(userID: "media-studio-test")
         viewModel.loadIfNeeded()
-        for _ in 0..<100 where viewModel.isLoadingModels {
+        for _ in 0..<100 where viewModel.isLoadingModels || viewModel.isLoadingHistory {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(viewModel.videoSize, "768P")
@@ -21,10 +24,13 @@ final class MediaStudioViewModelTests: XCTestCase {
     }
 
     func testRejectedCreationClearsQueuedProgressAndAllowsRetry() async throws {
-        let viewModel = MediaStudioViewModel(service: MediaStudioFailureService())
+        let viewModel = MediaStudioViewModel(
+            service: MediaStudioFailureService(),
+            historyStore: testHistoryStore()
+        )
         viewModel.activate(userID: "media-studio-test")
         viewModel.loadIfNeeded()
-        for _ in 0..<100 where viewModel.isLoadingModels {
+        for _ in 0..<100 where viewModel.isLoadingModels || viewModel.isLoadingHistory {
             try await Task.sleep(for: .milliseconds(10))
         }
         viewModel.videoPrompt = "A running dog"
@@ -36,6 +42,13 @@ final class MediaStudioViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.videoProgress?.percent)
         XCTAssertNotNil(viewModel.errorMessage)
         XCTAssertTrue(viewModel.canGenerateVideo)
+    }
+
+    private func testHistoryStore() -> MediaStudioHistoryStore {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MediaStudioViewModelTests-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return makeMediaStudioHistoryStore(root: root)
     }
 }
 

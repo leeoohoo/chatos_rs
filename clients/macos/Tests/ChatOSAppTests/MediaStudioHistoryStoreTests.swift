@@ -15,13 +15,14 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
 
     func testImageAndVideoSurviveNewStoreAndAreIsolatedByAccount() async throws {
         let root = try directory()
-        let first = MediaStudioHistoryStore(root: root)
+        let backend = MediaStudioHistoryTestBackend()
+        let first = makeMediaStudioHistoryStore(root: root, backend: backend)
         let image = try await first.saveImage(Self.image(), prompt: "original prompt", owner: "alice")
         let video = try await first.saveVideo(Self.video(), prompt: "video prompt", owner: "alice")
         XCTAssertNil(image.images[0].base64Data)
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(image.images[0].url)), Self.png)
         XCTAssertEqual(try Data(contentsOf: video.fileURL), Self.video().videoData)
-        let second = MediaStudioHistoryStore(root: root)
+        let second = makeMediaStudioHistoryStore(root: root, backend: backend)
         let restored = try await second.load(owner: "alice")
         XCTAssertEqual(restored.images, [image])
         XCTAssertEqual(restored.videos, [video])
@@ -35,11 +36,16 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
     func testURLImagesAreDownloadedOnceAndRestoreOffline() async throws {
         let root = try directory()
         let transport = HistoryImageTransport()
+        let backend = MediaStudioHistoryTestBackend()
         var result = Self.image()
         result.images = [.init(id: "remote", mimeType: "image/png", url: URL(string: "https://cdn.example/temporary.png")!)]
-        let first = MediaStudioHistoryStore(root: root, transport: transport)
+        let first = makeMediaStudioHistoryStore(root: root, transport: transport, backend: backend)
         let item = try await first.saveImage(result, prompt: "remote prompt", owner: "alice")
-        let restored = try await MediaStudioHistoryStore(root: root, transport: transport).load(owner: "alice")
+        let restored = try await makeMediaStudioHistoryStore(
+            root: root,
+            transport: transport,
+            backend: backend
+        ).load(owner: "alice")
         XCTAssertEqual(restored.images, [item])
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(restored.images[0].images[0].url)), Self.png)
         let requests = await transport.requests
@@ -47,29 +53,56 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         XCTAssertNil(requests[0].headers["Authorization"])
     }
 
+    func testGenerationStatusAndProjectAssociationAreDurable() async throws {
+        let root = try directory()
+        let backend = MediaStudioHistoryTestBackend()
+        let store = makeMediaStudioHistoryStore(root: root, backend: backend)
+        let pending = try await store.beginGeneration(
+            kind: .image,
+            prompt: "project image",
+            modelName: "image-model",
+            owner: "alice",
+            projectID: "project-1"
+        )
+        var record = try await backend.record(owner: "alice", id: pending.recordID)
+        XCTAssertEqual(record.draft.projectID, "project-1")
+        XCTAssertEqual(record.draft.status, .pending)
+        XCTAssertTrue(record.draft.assets.isEmpty)
+
+        try await store.markFailed(pending)
+        record = try await backend.record(owner: "alice", id: pending.recordID)
+        XCTAssertEqual(record.draft.status, .failed)
+        XCTAssertEqual(record.revision, 2)
+        let restored = try await store.load(owner: "alice")
+        XCTAssertTrue(restored.images.isEmpty)
+    }
+
     func testCorruptRecordDoesNotHideOtherCreationsOrGetOverwritten() async throws {
         let root = try directory()
-        let store = MediaStudioHistoryStore(root: root)
+        let store = makeMediaStudioHistoryStore(root: root)
         let good = try await store.saveImage(Self.image(), prompt: "good", owner: "alice")
         let bad = try await store.saveImage(Self.image(), prompt: "bad", owner: "alice")
-        let manifest = try XCTUnwrap(bad.images[0].url).deletingLastPathComponent().appendingPathComponent("record.json")
-        let brokenData = Data("broken JSON".utf8)
-        try brokenData.write(to: manifest)
+        let damagedAsset = try XCTUnwrap(bad.images[0].url)
+        let brokenData = Data("broken payload".utf8)
+        try brokenData.write(to: damagedAsset)
         let loaded = try await store.load(owner: "alice")
         XCTAssertEqual(loaded.images, [good])
         XCTAssertEqual(loaded.unreadableCount, 1)
-        XCTAssertEqual(try Data(contentsOf: manifest), brokenData)
+        XCTAssertEqual(try Data(contentsOf: damagedAsset), brokenData)
         _ = try await store.saveImage(Self.image(), prompt: "another", owner: "alice")
-        XCTAssertEqual(try Data(contentsOf: manifest), brokenData)
+        XCTAssertEqual(try Data(contentsOf: damagedAsset), brokenData)
     }
 
     func testRecordsUseRelativeFilenamesAndCanMoveWithAppData() async throws {
         let parent = try directory()
         let root = parent.appendingPathComponent("original")
-        _ = try await MediaStudioHistoryStore(root: root).saveImage(Self.image(), prompt: "move", owner: "alice")
+        let backend = MediaStudioHistoryTestBackend()
+        _ = try await makeMediaStudioHistoryStore(root: root, backend: backend)
+            .saveImage(Self.image(), prompt: "move", owner: "alice")
         let moved = parent.appendingPathComponent("moved")
         try FileManager.default.moveItem(at: root, to: moved)
-        let restored = try await MediaStudioHistoryStore(root: moved).load(owner: "alice")
+        let restored = try await makeMediaStudioHistoryStore(root: moved, backend: backend)
+            .load(owner: "alice")
         XCTAssertEqual(restored.images.count, 1)
         let url = try XCTUnwrap(restored.images[0].images[0].url)
         XCTAssertTrue(url.path.hasPrefix(moved.resolvingSymlinksInPath().path))
@@ -79,7 +112,11 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
     @MainActor
     func testGeneratedImageIsRestoredByNewViewModelAndSignOutKeepsDiskHistory() async throws {
         let root = try directory()
-        let vm = MediaStudioViewModel(service: HistoryGenerationService(), historyStore: .init(root: root))
+        let backend = MediaStudioHistoryTestBackend()
+        let vm = MediaStudioViewModel(
+            service: HistoryGenerationService(),
+            historyStore: makeMediaStudioHistoryStore(root: root, backend: backend)
+        )
         vm.activate(userID: "alice")
         vm.loadIfNeeded()
         try await wait { !vm.isLoadingHistory && !vm.isLoadingModels }
@@ -91,7 +128,10 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         let saved = vm.history
         vm.resetForSignedOut()
         XCTAssertTrue(vm.history.isEmpty)
-        let restarted = MediaStudioViewModel(service: HistoryGenerationService(), historyStore: .init(root: root))
+        let restarted = MediaStudioViewModel(
+            service: HistoryGenerationService(),
+            historyStore: makeMediaStudioHistoryStore(root: root, backend: backend)
+        )
         restarted.activate(userID: "alice")
         try await wait { !restarted.isLoadingHistory }
         XCTAssertEqual(restarted.history, saved)
@@ -107,7 +147,11 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
     func testResultArrivingAfterAccountSwitchCannotAppearInOtherAccount() async throws {
         let root = try directory()
         let service = DelayedHistoryGenerationService()
-        let vm = MediaStudioViewModel(service: service, historyStore: .init(root: root))
+        let backend = MediaStudioHistoryTestBackend()
+        let vm = MediaStudioViewModel(
+            service: service,
+            historyStore: makeMediaStudioHistoryStore(root: root, backend: backend)
+        )
         vm.activate(userID: "alice")
         vm.loadIfNeeded()
         try await wait { !vm.isLoadingHistory && !vm.isLoadingModels }
@@ -122,7 +166,8 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         try await wait { !vm.isLoadingHistory }
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertTrue(vm.history.isEmpty)
-        let bob = try await MediaStudioHistoryStore(root: root).load(owner: "bob")
+        let bob = try await makeMediaStudioHistoryStore(root: root, backend: backend)
+            .load(owner: "bob")
         XCTAssertTrue(bob.images.isEmpty)
     }
 
@@ -134,8 +179,9 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
             .init(id: "first", mimeType: "image/png", base64Data: Self.png.base64EncodedString()),
             .init(id: "second", mimeType: "image/png", base64Data: Self.png.base64EncodedString()),
         ]
-        _ = try await MediaStudioHistoryStore(root: root).saveImage(result, prompt: "two references", owner: "alice")
-        let vm = MediaStudioViewModel(service: HistoryGenerationService(), historyStore: .init(root: root))
+        let store = makeMediaStudioHistoryStore(root: root)
+        _ = try await store.saveImage(result, prompt: "two references", owner: "alice")
+        let vm = MediaStudioViewModel(service: HistoryGenerationService(), historyStore: store)
         vm.activate(userID: "alice")
         try await wait { !vm.isLoadingHistory }
         let assets = try XCTUnwrap(vm.history.first?.images)

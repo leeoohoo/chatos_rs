@@ -126,7 +126,7 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         let upload = root.appendingPathComponent("upload.png")
         try png.write(to: upload)
-        let store = MediaStudioHistoryStore(root: root.appendingPathComponent("history"))
+        let store = makeMediaStudioHistoryStore(root: root.appendingPathComponent("history"))
         _ = try await store.saveImage(.init(
             id: "batch", modelConfigID: "image", modelName: "Image Model", createdAt: "2026-09-09T00:00:00Z",
             images: ["first", "second"].map { .init(id: $0, mimeType: "image/png", base64Data: png.base64EncodedString()) }

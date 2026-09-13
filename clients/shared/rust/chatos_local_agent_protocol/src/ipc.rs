@@ -12,13 +12,14 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
     ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
-    ClipboardMutationResult, CreateProjectCommand, DeleteClipboardCommand, ExportClientDataCommand,
-    GetClipboardCommand, GetProjectCommand, ImportClientDataCommand,
-    InstallProjectPluginCapabilityCommand, ListClipboardCommand, ListProjectsCommand,
-    LocalAgentRun, LocalClipboardSnapshot, LocalProjectSnapshot, PostgresConnectionTestCommand,
-    PostgresConnectionTestResult, ProtocolError, RemoveProjectPluginCapabilityCommand,
-    SetClipboardPinnedCommand, StoreClipboardCommand, ToolExecution, UpdateProjectCommand,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    ClipboardMutationResult, CreateProjectCommand, DeleteClipboardCommand, DeleteMediaCommand,
+    ExportClientDataCommand, GetClipboardCommand, GetMediaCommand, GetProjectCommand,
+    ImportClientDataCommand, InstallProjectPluginCapabilityCommand, ListClipboardCommand,
+    ListMediaCommand, ListProjectsCommand, LocalAgentRun, LocalClipboardSnapshot,
+    LocalMediaSnapshot, LocalProjectSnapshot, MediaMutationResult, PostgresConnectionTestCommand,
+    PostgresConnectionTestResult, ProtocolError, PutMediaCommand,
+    RemoveProjectPluginCapabilityCommand, SetClipboardPinnedCommand, StoreClipboardCommand,
+    ToolExecution, UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -94,6 +95,10 @@ pub enum LocalAgentCommand {
     StoreClipboard(StoreClipboardCommand),
     SetClipboardPinned(SetClipboardPinnedCommand),
     DeleteClipboard(DeleteClipboardCommand),
+    GetMedia(GetMediaCommand),
+    ListMedia(ListMediaCommand),
+    PutMedia(PutMediaCommand),
+    DeleteMedia(DeleteMediaCommand),
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -137,6 +142,10 @@ impl LocalAgentCommand {
             Self::StoreClipboard(command) => command.validate(),
             Self::SetClipboardPinned(command) => command.validate(),
             Self::DeleteClipboard(command) => command.validate(),
+            Self::GetMedia(command) => command.validate(),
+            Self::ListMedia(command) => command.validate(),
+            Self::PutMedia(command) => command.validate(),
+            Self::DeleteMedia(command) => command.validate(),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -939,6 +948,12 @@ pub enum LocalAgentIpcResponse {
         next_cursor: Option<String>,
     },
     ClipboardMutation(ClipboardMutationResult),
+    Media(LocalMediaSnapshot),
+    MediaRecords {
+        records: Vec<LocalMediaSnapshot>,
+        next_cursor: Option<String>,
+    },
+    MediaMutation(MediaMutationResult),
     Events {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
@@ -1013,6 +1028,20 @@ impl LocalAgentIpcResponse {
                 Ok(())
             }
             Self::ClipboardMutation(result) => result.validate(),
+            Self::Media(record) => record.validate(),
+            Self::MediaRecords {
+                records,
+                next_cursor,
+            } => {
+                for record in records {
+                    record.validate()?;
+                }
+                if let Some(cursor) = next_cursor {
+                    require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
+            Self::MediaMutation(result) => result.validate(),
             Self::Events {
                 events, next_seq, ..
             } => {

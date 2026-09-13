@@ -245,26 +245,24 @@ fn strip_large_payload_references(archive: &mut ClientStorageArchive) {
     for record in &mut archive.records.clipboard {
         record.payload_reference = None;
     }
-    for record in &mut archive.records.media {
-        strip_reference_fields(&mut record.state);
-    }
+    archive
+        .records
+        .media
+        .retain(|record| !contains_large_payload_reference(&record.state));
 }
 
-fn strip_reference_fields(value: &mut serde_json::Value) {
+fn contains_large_payload_reference(value: &serde_json::Value) -> bool {
     match value {
-        serde_json::Value::Array(values) => {
-            values.iter_mut().for_each(strip_reference_fields);
-        }
+        serde_json::Value::Array(values) => values.iter().any(contains_large_payload_reference),
         serde_json::Value::Object(values) => {
-            values.retain(|key, _| {
-                !matches!(
+            values.keys().any(|key| {
+                matches!(
                     key.as_str(),
                     "payload_reference" | "payloadReference" | "local_path" | "localPath"
                 )
-            });
-            values.values_mut().for_each(strip_reference_fields);
+            }) || values.values().any(contains_large_payload_reference)
         }
-        _ => {}
+        _ => false,
     }
 }
 

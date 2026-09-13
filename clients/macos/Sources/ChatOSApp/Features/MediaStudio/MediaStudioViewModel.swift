@@ -90,7 +90,7 @@ final class MediaStudioViewModel: ObservableObject {
     private var inputImagesSelectionID = UUID()
     private let imageTransport: any HTTPTransport
 
-    init(service: any MediaGenerationServicing, historyStore: MediaStudioHistoryStore = MediaStudioHistoryStore(), imageTransport: any HTTPTransport = URLSessionHTTPTransport(), storyPlanner: (any StoryPlanningServicing)? = nil) {
+    init(service: any MediaGenerationServicing, historyStore: MediaStudioHistoryStore, imageTransport: any HTTPTransport = URLSessionHTTPTransport(), storyPlanner: (any StoryPlanningServicing)? = nil) {
         self.service = service
         self.stories = StoryStudioViewModel(media: service, planner: storyPlanner)
         self.historyStore = historyStore
@@ -172,6 +172,7 @@ final class MediaStudioViewModel: ObservableObject {
         guard canGenerate, let selectedModelID, let ownerID else { return }
         let session = sessionID
         let submittedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let submittedModelName = selectedModel?.modelName ?? selectedModelID
         let request = ImageGenerationRequest(
             modelConfigID: selectedModelID, prompt: submittedPrompt,
             size: size == "auto" ? nil : size, count: count,
@@ -180,16 +181,33 @@ final class MediaStudioViewModel: ObservableObject {
         isGenerating = true
         errorMessage = nil
         imageGenerationTask = Task {
+            var pending: MediaStudioHistoryStore.PendingGeneration?
+            var generatedResult: ImageGenerationResult?
             do {
+                let pendingRecord = try await historyStore.beginGeneration(
+                    kind: .image,
+                    prompt: submittedPrompt,
+                    modelName: submittedModelName,
+                    owner: ownerID
+                )
+                pending = pendingRecord
                 let result = try await service.generateImage(request)
+                generatedResult = result
+                guard sessionID == session else {
+                    if let pending { try? await historyStore.markFailed(pending) }
+                    return
+                }
+                let item = try await historyStore.completeImage(
+                    result,
+                    pending: pendingRecord
+                )
                 guard sessionID == session else { return }
-                do {
-                    let item = try await historyStore.saveImage(result, prompt: submittedPrompt, owner: ownerID)
-                    guard sessionID == session else { return }
-                    history.insert(item, at: 0)
-                } catch {
-                    guard sessionID == session else { return }
-                    // Keep the generated result visible even when the disk/download fails.
+                history.insert(item, at: 0)
+            } catch {
+                guard sessionID == session else { return }
+                if let pending { try? await historyStore.markFailed(pending) }
+                if let result = generatedResult {
+                    // Keep the provider result visible even when durable local storage fails.
                     history.insert(
                         HistoryItem(
                             id: result.id,
@@ -202,10 +220,9 @@ final class MediaStudioViewModel: ObservableObject {
                     )
                     historyErrorMessage = "图片已生成，但未能保存到本机：\(error.localizedDescription)"
                     errorMessage = historyErrorMessage
+                } else {
+                    errorMessage = error.localizedDescription
                 }
-            } catch {
-                guard sessionID == session else { return }
-                errorMessage = error.localizedDescription
             }
             isGenerating = false
             imageGenerationTask = nil
@@ -218,6 +235,7 @@ final class MediaStudioViewModel: ObservableObject {
         videoOperationID = UUID()
         let operation = videoOperationID
         let submittedPrompt = videoPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let submittedModelName = selectedVideoModel?.modelName ?? selectedVideoModelID
         let request = VideoGenerationRequest(
             modelConfigID: selectedVideoModelID, prompt: submittedPrompt,
             size: videoSize, seconds: videoSeconds, inputImage: videoInputImage, ratio: videoRatio
@@ -228,23 +246,39 @@ final class MediaStudioViewModel: ObservableObject {
         videoGenerationTask?.cancel()
         videoGenerationTask = Task { [weak self] in
             guard let self else { return }
+            var pending: MediaStudioHistoryStore.PendingGeneration?
             do {
+                let pendingRecord = try await historyStore.beginGeneration(
+                    kind: .video,
+                    prompt: submittedPrompt,
+                    modelName: submittedModelName,
+                    owner: ownerID
+                )
+                pending = pendingRecord
                 let result = try await service.generateVideo(request) { [weak self] progress in
                     await MainActor.run {
                         guard self?.sessionID == session, self?.videoOperationID == operation else { return }
                         self?.videoProgress = progress
                     }
                 }
-                guard sessionID == session, videoOperationID == operation else { return }
+                guard sessionID == session, videoOperationID == operation else {
+                    if let pending { try? await historyStore.markFailed(pending) }
+                    return
+                }
                 videoProgress = .init(status: "saving")
-                let item = try await historyStore.saveVideo(result, prompt: submittedPrompt, owner: ownerID)
+                let item = try await historyStore.completeVideo(
+                    result,
+                    pending: pendingRecord
+                )
                 guard sessionID == session, videoOperationID == operation else { return }
                 videoHistory.insert(item, at: 0)
                 videoProgress = .init(status: "completed", percent: 100)
             } catch is CancellationError {
+                if let pending { try? await historyStore.markFailed(pending) }
                 guard sessionID == session, videoOperationID == operation else { return }
                 videoProgress = nil
             } catch {
+                if let pending { try? await historyStore.markFailed(pending) }
                 guard sessionID == session, videoOperationID == operation else { return }
                 if videoProgress?.status == "saving" {
                     historyErrorMessage = "视频已生成，但未能保存到本机：\(error.localizedDescription)"

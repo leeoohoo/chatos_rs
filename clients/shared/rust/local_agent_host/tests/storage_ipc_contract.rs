@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    decode_storage_archive, AgentRunStateRecord, ClientStorage, ClipboardRecord, PutRecord,
-    RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageEncryptionKey, StorageResult, StorageTransaction, TransactionRepositories,
+    decode_storage_archive, AgentRunStateRecord, ClientStorage, ClipboardRecord, MediaStateRecord,
+    PutRecord, RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile,
+    SqliteClientStorage, StorageEncryptionKey, StorageResult, StorageTransaction,
+    TransactionRepositories,
 };
 use chatos_local_agent_host::{
     LocalAgentIpcMutationExecutor, LocalAgentStorageIpcExecutor, LocalAgentStoragePlatform,
@@ -229,7 +230,7 @@ async fn storage_switch_is_staged_only_when_every_run_is_terminal() {
 #[tokio::test]
 async fn archive_export_strips_local_payload_references_and_import_checks_digest() {
     let source = storage(83).await;
-    source.transaction(&mut SeedClipboard).await.unwrap();
+    source.transaction(&mut SeedArchiveRecords).await.unwrap();
     let source_platform = Arc::new(Platform {
         state: Mutex::new(PlatformState::default()),
     });
@@ -257,6 +258,7 @@ async fn archive_export_strips_local_payload_references_and_import_checks_digest
         .unwrap();
     let decoded = decode_storage_archive(bytes.as_slice()).unwrap();
     assert_eq!(decoded.records.clipboard[0].payload_reference, None);
+    assert!(decoded.records.media.is_empty());
 
     let target_platform = Arc::new(Platform {
         state: Mutex::new(PlatformState {
@@ -279,10 +281,10 @@ async fn archive_export_strips_local_payload_references_and_import_checks_digest
     assert!(matches!(response, LocalAgentIpcResponse::DataTransfer(_)));
 }
 
-struct SeedClipboard;
+struct SeedArchiveRecords;
 
 #[async_trait]
-impl StorageTransaction for SeedClipboard {
+impl StorageTransaction for SeedArchiveRecords {
     async fn execute(
         &mut self,
         repositories: &mut dyn TransactionRepositories,
@@ -298,6 +300,31 @@ impl StorageTransaction for SeedClipboard {
                     payload_reference: Some("clipboard-grant:image-1".to_string()),
                     byte_size: 5,
                     state: serde_json::json!({}),
+                },
+                expected_revision: None,
+            })
+            .await?;
+        repositories
+            .media()
+            .put(PutRecord {
+                record: MediaStateRecord {
+                    metadata: metadata("media-1", now),
+                    project_id: Some("project-1".to_string()),
+                    media_kind: "image".to_string(),
+                    state: serde_json::json!({
+                        "schema_version": 1,
+                        "status": "completed",
+                        "prompt": "test image",
+                        "model_name": "test-model",
+                        "generated_at": now,
+                        "assets": [{
+                            "asset_id": "asset-1",
+                            "mime_type": "image/png",
+                            "byte_count": 5,
+                            "sha256_digest": format!("sha256:{:x}", Sha256::digest(b"image")),
+                            "payload_reference": "Payloads/owner/media-1/image.png"
+                        }]
+                    }),
                 },
                 expected_revision: None,
             })

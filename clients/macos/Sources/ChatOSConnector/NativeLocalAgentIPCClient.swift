@@ -554,6 +554,63 @@ public actor NativeLocalAgentIPCClient {
         return result
     }
 
+    public func mediaRecord(id: String) async throws -> LocalAgentMediaSnapshot {
+        let response = try await send(.getMedia(recordID: id))
+        guard case let .media(record) = response else {
+            throw unexpected("media", response)
+        }
+        return record
+    }
+
+    public func mediaRecords() async throws -> [LocalAgentMediaSnapshot] {
+        var records: [LocalAgentMediaSnapshot] = []
+        var cursor: String?
+        repeat {
+            let response = try await send(.listMedia(cursor: cursor, limit: 500))
+            guard case let .mediaRecords(page, nextCursor) = response else {
+                throw unexpected("media_records", response)
+            }
+            records.append(contentsOf: page)
+            if let nextCursor, nextCursor == cursor {
+                throw NativeLocalAgentIPCError.invalidResponse
+            }
+            cursor = nextCursor
+        } while cursor != nil
+        return records.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.recordID < $1.recordID
+        }
+    }
+
+    public func putMediaRecord(
+        id: String,
+        expectedRevision: UInt64?,
+        draft: LocalAgentMediaDraft
+    ) async throws -> LocalAgentMediaMutationResult {
+        try await mediaMutation(.putMedia(
+            recordID: id,
+            expectedRevision: expectedRevision,
+            draft: draft
+        ))
+    }
+
+    public func deleteMediaRecord(
+        id: String,
+        expectedRevision: UInt64
+    ) async throws -> LocalAgentMediaMutationResult {
+        try await mediaMutation(.deleteMedia(recordID: id, expectedRevision: expectedRevision))
+    }
+
+    private func mediaMutation(
+        _ command: LocalAgentCommand
+    ) async throws -> LocalAgentMediaMutationResult {
+        let response = try await send(command)
+        guard case let .mediaMutation(result) = response else {
+            throw unexpected("media_mutation", response)
+        }
+        return result
+    }
+
     public func taskGraph(
         sourceThreadID: String,
         sourceTurnID: String
@@ -670,6 +727,9 @@ private extension LocalAgentResponse {
         case .clipboard: "clipboard"
         case .clipboardRecords: "clipboard_records"
         case .clipboardMutation: "clipboard_mutation"
+        case .media: "media"
+        case .mediaRecords: "media_records"
+        case .mediaMutation: "media_mutation"
         case .events: "events"
         case .uiEventCursor: "ui_event_cursor"
         case .storageProfile: "storage_profile"

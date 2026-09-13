@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 18
+public let localAgentProtocolVersion: UInt32 = 19
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -350,6 +350,105 @@ public struct LocalAgentClipboardMutationResult: Codable, Equatable, Sendable {
     }
 }
 
+public enum LocalAgentMediaKind: String, Codable, Equatable, Sendable {
+    case image, video
+}
+
+public enum LocalAgentMediaStatus: String, Codable, Equatable, Sendable {
+    case pending, completed, failed
+}
+
+public struct LocalAgentMediaAsset: Codable, Equatable, Sendable {
+    public var assetID: String
+    public var mimeType: String
+    public var payloadReference: String
+    public var contentHash: String
+    public var byteCount: UInt64
+    public var revisedPrompt: String?
+
+    public init(
+        assetID: String,
+        mimeType: String,
+        payloadReference: String,
+        contentHash: String,
+        byteCount: UInt64,
+        revisedPrompt: String?
+    ) {
+        self.assetID = assetID
+        self.mimeType = mimeType
+        self.payloadReference = payloadReference
+        self.contentHash = contentHash
+        self.byteCount = byteCount
+        self.revisedPrompt = revisedPrompt
+    }
+}
+
+public struct LocalAgentMediaDraft: Codable, Equatable, Sendable {
+    public var projectID: String?
+    public var kind: LocalAgentMediaKind
+    public var status: LocalAgentMediaStatus
+    public var prompt: String
+    public var modelName: String
+    public var generatedAt: String
+    public var assets: [LocalAgentMediaAsset]
+
+    public init(
+        projectID: String?,
+        kind: LocalAgentMediaKind,
+        status: LocalAgentMediaStatus,
+        prompt: String,
+        modelName: String,
+        generatedAt: String,
+        assets: [LocalAgentMediaAsset]
+    ) {
+        self.projectID = projectID
+        self.kind = kind
+        self.status = status
+        self.prompt = prompt
+        self.modelName = modelName
+        self.generatedAt = generatedAt
+        self.assets = assets
+    }
+}
+
+public struct LocalAgentMediaSnapshot: Codable, Equatable, Sendable {
+    public var recordID: String
+    public var ownerUserID: String
+    public var draft: LocalAgentMediaDraft
+    public var revision: UInt64
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        recordID: String,
+        ownerUserID: String,
+        draft: LocalAgentMediaDraft,
+        revision: UInt64,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.recordID = recordID
+        self.ownerUserID = ownerUserID
+        self.draft = draft
+        self.revision = revision
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct LocalAgentMediaMutationResult: Codable, Equatable, Sendable {
+    public var record: LocalAgentMediaSnapshot?
+    public var discardedPayloadReferences: [String]
+
+    public init(
+        record: LocalAgentMediaSnapshot?,
+        discardedPayloadReferences: [String]
+    ) {
+        self.record = record
+        self.discardedPayloadReferences = discardedPayloadReferences
+    }
+}
+
 public enum LocalAgentCommand: Equatable, Sendable {
     case updateAccessToken(String)
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
@@ -387,6 +486,10 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case storeClipboard(entryID: String, draft: LocalAgentClipboardDraft)
     case setClipboardPinned(entryID: String, expectedRevision: UInt64, isPinned: Bool)
     case deleteClipboard(entryID: String, expectedRevision: UInt64)
+    case getMedia(recordID: String)
+    case listMedia(cursor: String?, limit: UInt32)
+    case putMedia(recordID: String, expectedRevision: UInt64?, draft: LocalAgentMediaDraft)
+    case deleteMedia(recordID: String, expectedRevision: UInt64)
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -460,6 +563,16 @@ extension LocalAgentCommand: Encodable {
     }
     private struct DeleteClipboardPayload: Encodable {
         let entryID: String
+        let expectedRevision: UInt64
+    }
+    private struct MediaPayload: Encodable { let recordID: String }
+    private struct PutMediaPayload: Encodable {
+        let recordID: String
+        let expectedRevision: UInt64?
+        let draft: LocalAgentMediaDraft
+    }
+    private struct DeleteMediaPayload: Encodable {
+        let recordID: String
         let expectedRevision: UInt64
     }
     private struct EventsPayload: Encodable {
@@ -638,6 +751,28 @@ extension LocalAgentCommand: Encodable {
             try container.encode("delete_clipboard", forKey: .type)
             try container.encode(
                 DeleteClipboardPayload(entryID: entryID, expectedRevision: expectedRevision),
+                forKey: .payload
+            )
+        case let .getMedia(recordID):
+            try container.encode("get_media", forKey: .type)
+            try container.encode(MediaPayload(recordID: recordID), forKey: .payload)
+        case let .listMedia(cursor, limit):
+            try container.encode("list_media", forKey: .type)
+            try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
+        case let .putMedia(recordID, expectedRevision, draft):
+            try container.encode("put_media", forKey: .type)
+            try container.encode(
+                PutMediaPayload(
+                    recordID: recordID,
+                    expectedRevision: expectedRevision,
+                    draft: draft
+                ),
+                forKey: .payload
+            )
+        case let .deleteMedia(recordID, expectedRevision):
+            try container.encode("delete_media", forKey: .type)
+            try container.encode(
+                DeleteMediaPayload(recordID: recordID, expectedRevision: expectedRevision),
                 forKey: .payload
             )
         case let .subscribeRunEvents(afterSequence, limit):
@@ -1366,6 +1501,9 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case clipboard(LocalAgentClipboardSnapshot)
     case clipboardRecords([LocalAgentClipboardSnapshot], nextCursor: String?)
     case clipboardMutation(LocalAgentClipboardMutationResult)
+    case media(LocalAgentMediaSnapshot)
+    case mediaRecords([LocalAgentMediaSnapshot], nextCursor: String?)
+    case mediaMutation(LocalAgentMediaMutationResult)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -1396,6 +1534,10 @@ extension LocalAgentResponse: Decodable {
     }
     private struct ClipboardRecords: Decodable {
         let entries: [LocalAgentClipboardSnapshot]
+        let nextCursor: String?
+    }
+    private struct MediaRecords: Decodable {
+        let records: [LocalAgentMediaSnapshot]
         let nextCursor: String?
     }
     private struct Events: Decodable {
@@ -1452,6 +1594,17 @@ extension LocalAgentResponse: Decodable {
         case "clipboard_mutation":
             self = .clipboardMutation(
                 try container.decode(LocalAgentClipboardMutationResult.self, forKey: .payload)
+            )
+        case "media":
+            self = .media(
+                try container.decode(LocalAgentMediaSnapshot.self, forKey: .payload)
+            )
+        case "media_records":
+            let value = try container.decode(MediaRecords.self, forKey: .payload)
+            self = .mediaRecords(value.records, nextCursor: value.nextCursor)
+        case "media_mutation":
+            self = .mediaMutation(
+                try container.decode(LocalAgentMediaMutationResult.self, forKey: .payload)
             )
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
