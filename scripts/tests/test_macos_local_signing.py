@@ -105,6 +105,7 @@ class MacOSLocalSigningContractTests(unittest.TestCase):
         app_source = APP_CREDENTIAL_STORE.read_text()
         agent_source = AGENT_CREDENTIAL_STORE.read_text()
         self.assertIn("com.chatos.swift-client.authentication.v6", app_source)
+        self.assertIn('account: String = "access-token-v2"', app_source)
         self.assertNotIn("com.chatos.swift-client.authentication.v5", app_source)
         self.assertIn('productionService = "com.chatos.local-agent.credentials.v7"', agent_source)
         self.assertNotIn('productionService = "com.chatos.local-agent.credentials.v6"', agent_source)

@@ -17,6 +17,7 @@ public actor NativeLocalAgentHostSupervisor {
         -> NativeLocalAgentHostLaunchConfiguration
 
     private let launcher: NativeLocalAgentHostProcessLauncher
+    private let attacher: NativeLocalAgentHostAttacher
     private static let logger = Logger(
         subsystem: "com.chatos.swift-client",
         category: "LocalAgentHost"
@@ -32,6 +33,7 @@ public actor NativeLocalAgentHostSupervisor {
 
     public init(
         launcher: NativeLocalAgentHostProcessLauncher = .init(),
+        attacher: NativeLocalAgentHostAttacher = .init(),
         restartDelays: [Duration] = [
             .seconds(1), .seconds(2), .seconds(5), .seconds(10), .seconds(30),
         ]
@@ -44,6 +46,7 @@ public actor NativeLocalAgentHostSupervisor {
             )
         }
         self.launcher = launcher
+        self.attacher = attacher
         self.restartDelays = restartDelays
     }
 
@@ -102,6 +105,19 @@ public actor NativeLocalAgentHostSupervisor {
         publishState(.stopped)
     }
 
+    /// The desktop UI may exit while durable Runs continue in the managed
+    /// Host. Detaching cancels only this GUI's monitoring and desired restart;
+    /// an explicit account logout remains the sole path that terminates Host.
+    public func detach() {
+        desiredAccountID = nil
+        configurationProvider = nil
+        generation &+= 1
+        monitor?.cancel()
+        monitor = nil
+        process = nil
+        publishState(.stopped)
+    }
+
     private func launch(
         accountID: String,
         restartCount: Int,
@@ -113,7 +129,15 @@ public actor NativeLocalAgentHostSupervisor {
         else { return }
         let configuration = try await configurationProvider()
         guard desiredAccountID == accountID, generation == expectedGeneration else { return }
-        let launched = try await launcher.launch(configuration)
+        let launched: NativeLocalAgentHostProcess
+        if let attached = try await attacher.attachIfRunning(
+            accountID: accountID,
+            configuration: configuration
+        ) {
+            launched = attached
+        } else {
+            launched = try await launcher.launch(configuration)
+        }
         guard desiredAccountID == accountID, generation == expectedGeneration else {
             _ = await launched.stop()
             return

@@ -50,6 +50,7 @@ protocol NativeLocalAgentHostSupervising: Sendable {
             -> NativeLocalAgentHostLaunchConfiguration
     ) async throws
     func logout() async
+    func detach() async
 }
 
 extension NativeLocalAgentHostSupervisor: NativeLocalAgentHostSupervising {}
@@ -90,6 +91,10 @@ public actor NativeLocalAgentAccountSession {
         _ clientEndpoint: String,
         _ accessToken: String
     ) async throws -> Void
+    typealias ClientFactory = @Sendable (
+        _ accountID: String,
+        _ clientEndpoint: String
+    ) throws -> NativeLocalAgentIPCClient
 
     public static let deviceIDReference = "device-id"
     public static let sqliteEncryptionKeyReference = "sqlite-encryption-key"
@@ -99,6 +104,7 @@ public actor NativeLocalAgentAccountSession {
     private let builder: any NativeLocalAgentHostConfigurationBuilding
     private let randomBytes: @Sendable (Int) throws -> Data
     private let accessTokenUpdater: AccessTokenUpdater
+    private let clientFactory: ClientFactory
     private var activeAccountID: String?
     private var activeSettings: NativeLocalAgentHostBootstrapSettings?
     private let attachmentStager = NativeLocalAgentAttachmentStager()
@@ -109,6 +115,7 @@ public actor NativeLocalAgentAccountSession {
         self.builder = NativeLocalAgentHostBootstrapBuilder()
         self.randomBytes = SelfSecureRandom.bytes(count:)
         self.accessTokenUpdater = Self.updateRunningHostAccessToken
+        self.clientFactory = Self.makeClient
     }
 
     init(
@@ -116,13 +123,15 @@ public actor NativeLocalAgentAccountSession {
         supervisor: any NativeLocalAgentHostSupervising,
         builder: any NativeLocalAgentHostConfigurationBuilding,
         randomBytes: @escaping @Sendable (Int) throws -> Data,
-        accessTokenUpdater: AccessTokenUpdater? = nil
+        accessTokenUpdater: @escaping AccessTokenUpdater = { _, _, _ in },
+        clientFactory: ClientFactory? = nil
     ) {
         self.credentials = credentials
         self.supervisor = supervisor
         self.builder = builder
         self.randomBytes = randomBytes
-        self.accessTokenUpdater = accessTokenUpdater ?? Self.updateRunningHostAccessToken
+        self.accessTokenUpdater = accessTokenUpdater
+        self.clientFactory = clientFactory ?? Self.makeClient
     }
 
     public func login(
@@ -181,6 +190,16 @@ public actor NativeLocalAgentAccountSession {
                     credentialValues: values
                 )
             }
+            guard case let .running(runningAccountID, _, endpoint, _) = await supervisor.state(),
+                  runningAccountID == accountID
+            else {
+                throw NativeLocalAgentAccountSessionError.hostUnavailable
+            }
+            // A Host that survived a GUI restart may hold a token superseded
+            // while the UI was closed. Rotate it before exposing the attached
+            // endpoint; a newly launched Host accepts the same idempotent
+            // update, so callers do not need a second lifecycle path.
+            try await accessTokenUpdater(accountID, endpoint, accessToken)
             activeAccountID = accountID
             activeSettings = settings
             _ = try await client(accountID: accountID)
@@ -240,12 +259,16 @@ public actor NativeLocalAgentAccountSession {
         clientEndpoint: String,
         accessToken: String
     ) async throws {
-        let transport = try NativeLocalAgentUnixTransport(socketPath: clientEndpoint)
-        let client = try NativeLocalAgentIPCClient(
-            ownerUserID: accountID,
-            transport: transport
-        )
+        let client = try makeClient(accountID: accountID, clientEndpoint: clientEndpoint)
         try await client.updateAccessToken(accessToken)
+    }
+
+    private static func makeClient(
+        accountID: String,
+        clientEndpoint: String
+    ) throws -> NativeLocalAgentIPCClient {
+        let transport = try NativeLocalAgentUnixTransport(socketPath: clientEndpoint)
+        return try NativeLocalAgentIPCClient(ownerUserID: accountID, transport: transport)
     }
 
     public func logout() async {
@@ -254,6 +277,14 @@ public actor NativeLocalAgentAccountSession {
             return
         }
         await stop(accountID: accountID)
+    }
+
+    /// Releases only this UI process's Host binding. Durable Runs and the
+    /// Host's in-memory token continue until explicit account logout.
+    public func detach() async {
+        activeAccountID = nil
+        activeSettings = nil
+        await supervisor.detach()
     }
 
     public func state() async -> NativeLocalAgentHostState {
@@ -276,8 +307,7 @@ public actor NativeLocalAgentAccountSession {
         else {
             throw NativeLocalAgentAccountSessionError.hostUnavailable
         }
-        let transport = try NativeLocalAgentUnixTransport(socketPath: endpoint)
-        return try NativeLocalAgentIPCClient(ownerUserID: accountID, transport: transport)
+        return try clientFactory(accountID, endpoint)
     }
 
     public func activeClient() async throws -> NativeLocalAgentIPCClient {

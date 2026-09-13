@@ -3,6 +3,7 @@
 
 import Foundation
 import Security
+import ChatOSMacSecurity
 
 struct NativeLocalAgentHostIdentityError: Error, Equatable, Sendable {
     let operation: String
@@ -47,6 +48,32 @@ enum NativeLocalAgentHostIdentity {
             throw NativeLocalAgentHostIdentityError(
                 operation: "validate-host-code-signature",
                 status: validationStatus
+            )
+        }
+        guard let appIdentity = MacOSCodeSigning.identityForCurrentProcess(),
+              appIdentity.identifier == "com.chatos.swift-client",
+              let hostIdentity = MacOSCodeSigning.identity(at: executableURL),
+              hostIdentity.identifier == identifier,
+              hostIdentity.leafCertificateData == appIdentity.leafCertificateData
+        else {
+            throw NativeLocalAgentHostIdentityError(
+                operation: "match-host-code-signature",
+                status: errSecCSReqFailed
+            )
+        }
+    }
+
+    static func validate(processID: pid_t) throws {
+        guard processID > 1,
+              let appIdentity = MacOSCodeSigning.identityForCurrentProcess(),
+              appIdentity.identifier == "com.chatos.swift-client",
+              let hostIdentity = MacOSCodeSigning.identity(forProcessID: processID),
+              hostIdentity.identifier == identifier,
+              hostIdentity.leafCertificateData == appIdentity.leafCertificateData
+        else {
+            throw NativeLocalAgentHostIdentityError(
+                operation: "validate-running-host-code-signature",
+                status: errSecCSReqFailed
             )
         }
     }

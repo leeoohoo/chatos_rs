@@ -47,19 +47,36 @@ public protocol LocalAgentFrameTransport: Sendable {
 /// frame it verifies both the socket file and the connected peer belong to the
 /// current user, matching the Rust Host's reciprocal UID check.
 public final class NativeLocalAgentUnixTransport: LocalAgentFrameTransport, @unchecked Sendable {
+    typealias PeerIdentityVerifier = @Sendable (pid_t) throws -> Void
+
     private let socketPath: String
     private let maximumFrameBytes: Int
     private let ioTimeoutSeconds: Int
+    private let peerIdentityVerifier: PeerIdentityVerifier
     private let queue = DispatchQueue(
         label: "com.chatos.local.local-agent-ipc",
         qos: .userInitiated,
         attributes: .concurrent
     )
 
-    public init(
+    public convenience init(
         socketPath: String,
         maximumFrameBytes: Int = 8 * 1024 * 1024,
         ioTimeoutSeconds: Int = 35
+    ) throws {
+        try self.init(
+            socketPath: socketPath,
+            maximumFrameBytes: maximumFrameBytes,
+            ioTimeoutSeconds: ioTimeoutSeconds,
+            peerIdentityVerifier: NativeLocalAgentHostIdentity.validate(processID:)
+        )
+    }
+
+    init(
+        socketPath: String,
+        maximumFrameBytes: Int = 8 * 1024 * 1024,
+        ioTimeoutSeconds: Int = 35,
+        peerIdentityVerifier: @escaping PeerIdentityVerifier
     ) throws {
         guard socketPath.hasPrefix("/"),
               !socketPath.utf8.contains(0),
@@ -81,6 +98,7 @@ public final class NativeLocalAgentUnixTransport: LocalAgentFrameTransport, @unc
         self.socketPath = socketPath
         self.maximumFrameBytes = maximumFrameBytes
         self.ioTimeoutSeconds = ioTimeoutSeconds
+        self.peerIdentityVerifier = peerIdentityVerifier
     }
 
     public func exchange(_ request: Data) async throws -> Data {
@@ -95,43 +113,8 @@ public final class NativeLocalAgentUnixTransport: LocalAgentFrameTransport, @unc
     }
 
     private func exchangeSynchronously(_ request: Data) throws -> Data {
-        try verifySocketFile()
-        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else {
-            throw NativeLocalAgentIPCError.socketUnavailable(errno)
-        }
+        let descriptor = try openVerifiedConnection()
         defer { Darwin.close(descriptor) }
-
-        var noSignal: Int32 = 1
-        guard setsockopt(
-            descriptor,
-            SOL_SOCKET,
-            SO_NOSIGPIPE,
-            &noSignal,
-            socklen_t(MemoryLayout<Int32>.size)
-        ) == 0 else {
-            throw NativeLocalAgentIPCError.socketUnavailable(errno)
-        }
-        var timeout = timeval(tv_sec: ioTimeoutSeconds, tv_usec: 0)
-        guard setsockopt(
-            descriptor,
-            SOL_SOCKET,
-            SO_RCVTIMEO,
-            &timeout,
-            socklen_t(MemoryLayout<timeval>.size)
-        ) == 0,
-            setsockopt(
-                descriptor,
-                SOL_SOCKET,
-                SO_SNDTIMEO,
-                &timeout,
-                socklen_t(MemoryLayout<timeval>.size)
-            ) == 0
-        else {
-            throw NativeLocalAgentIPCError.socketUnavailable(errno)
-        }
-        try connect(descriptor)
-        try verifyPeer(descriptor)
 
         var length = UInt32(request.count).bigEndian
         try withUnsafeBytes(of: &length) { try writeAll(descriptor, bytes: $0) }
@@ -148,6 +131,67 @@ public final class NativeLocalAgentUnixTransport: LocalAgentFrameTransport, @unc
         var response = Data(count: Int(responseLength))
         try response.withUnsafeMutableBytes { try readAll(descriptor, bytes: $0) }
         return response
+    }
+
+    func connectedPeerProcessID() async throws -> pid_t {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { [self] in
+                continuation.resume(with: Result {
+                    let descriptor = try openVerifiedConnection()
+                    defer { Darwin.close(descriptor) }
+                    return try peerProcessID(descriptor)
+                })
+            }
+        }
+    }
+
+    private func openVerifiedConnection() throws -> Int32 {
+        try verifySocketFile()
+        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw NativeLocalAgentIPCError.socketUnavailable(errno)
+        }
+        do {
+            var noSignal: Int32 = 1
+            guard setsockopt(
+                descriptor,
+                SOL_SOCKET,
+                SO_NOSIGPIPE,
+                &noSignal,
+                socklen_t(MemoryLayout<Int32>.size)
+            ) == 0 else {
+                throw NativeLocalAgentIPCError.socketUnavailable(errno)
+            }
+            var timeout = timeval(tv_sec: ioTimeoutSeconds, tv_usec: 0)
+            guard setsockopt(
+                descriptor,
+                SOL_SOCKET,
+                SO_RCVTIMEO,
+                &timeout,
+                socklen_t(MemoryLayout<timeval>.size)
+            ) == 0,
+                setsockopt(
+                    descriptor,
+                    SOL_SOCKET,
+                    SO_SNDTIMEO,
+                    &timeout,
+                    socklen_t(MemoryLayout<timeval>.size)
+                ) == 0
+            else {
+                throw NativeLocalAgentIPCError.socketUnavailable(errno)
+            }
+            try connect(descriptor)
+            let processID = try verifyPeer(descriptor)
+            do {
+                try peerIdentityVerifier(processID)
+            } catch {
+                throw NativeLocalAgentIPCError.serverIdentityMismatch
+            }
+            return descriptor
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
     }
 
     private func verifySocketFile() throws {
@@ -184,7 +228,7 @@ public final class NativeLocalAgentUnixTransport: LocalAgentFrameTransport, @unc
         }
     }
 
-    private func verifyPeer(_ descriptor: Int32) throws {
+    private func verifyPeer(_ descriptor: Int32) throws -> pid_t {
         var userID: uid_t = 0
         var groupID: gid_t = 0
         guard getpeereid(descriptor, &userID, &groupID) == 0,
@@ -192,6 +236,25 @@ public final class NativeLocalAgentUnixTransport: LocalAgentFrameTransport, @unc
         else {
             throw NativeLocalAgentIPCError.serverIdentityMismatch
         }
+        return try peerProcessID(descriptor)
+    }
+
+    private func peerProcessID(_ descriptor: Int32) throws -> pid_t {
+        var processID: pid_t = 0
+        var length = socklen_t(MemoryLayout<pid_t>.size)
+        guard getsockopt(
+            descriptor,
+            SOL_LOCAL,
+            LOCAL_PEERPID,
+            &processID,
+            &length
+        ) == 0,
+            length == socklen_t(MemoryLayout<pid_t>.size),
+            processID > 1
+        else {
+            throw NativeLocalAgentIPCError.serverIdentityMismatch
+        }
+        return processID
     }
 
     private func writeAll(_ descriptor: Int32, bytes: UnsafeRawBufferPointer) throws {

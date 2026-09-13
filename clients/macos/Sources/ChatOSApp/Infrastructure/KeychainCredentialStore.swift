@@ -12,7 +12,7 @@ actor KeychainCredentialStore: CredentialStoring {
 
     init(
         service: String = "com.chatos.swift-client.authentication.v6",
-        account: String = "access-token",
+        account: String = "access-token-v2",
         broker: MacOSKeychainBrokerClient = .init()
     ) {
         precondition(!service.isEmpty && !account.isEmpty)

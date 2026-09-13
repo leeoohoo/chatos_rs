@@ -7,7 +7,7 @@ import Testing
 
 @Suite("Native local Agent account lifecycle")
 struct NativeLocalAgentAccountSessionTests {
-    @Test("the native app provisions Keychain credentials to the validated Rust Host")
+    @Test("the native app provisions secure credentials to the validated Rust Host")
     func launchesRealRustHost() async throws {
         guard let executablePath = ProcessInfo.processInfo.environment[
             "CHATOS_LOCAL_AGENT_HOST_TEST_EXECUTABLE"
@@ -18,12 +18,28 @@ struct NativeLocalAgentAccountSessionTests {
             isDirectory: true
         )
         let executableURL = URL(fileURLWithPath: executablePath)
-        let credentials = try NativeLocalAgentCredentialStore()
+        let credentials = InMemoryLocalAgentCredentials()
+        let processVerifier: @Sendable (pid_t) throws -> Void = { _ in }
         let session = NativeLocalAgentAccountSession(
             credentials: credentials,
-            supervisor: try NativeLocalAgentHostSupervisor(),
+            supervisor: try NativeLocalAgentHostSupervisor(
+                launcher: NativeLocalAgentHostProcessLauncher(testingIdentityVerifier: { _ in }),
+                attacher: NativeLocalAgentHostAttacher(
+                    testingIdentityVerifier: processVerifier
+                )
+            ),
             builder: NativeLocalAgentHostBootstrapBuilder(),
-            randomBytes: { Data(repeating: 0x7b, count: $0) }
+            randomBytes: { Data(repeating: 0x7b, count: $0) },
+            clientFactory: { accountID, endpoint in
+                let transport = try NativeLocalAgentUnixTransport(
+                    socketPath: endpoint,
+                    peerIdentityVerifier: processVerifier
+                )
+                return try NativeLocalAgentIPCClient(
+                    ownerUserID: accountID,
+                    transport: transport
+                )
+            }
         )
         func cleanUp() async {
             await session.logout()
@@ -217,6 +233,36 @@ struct NativeLocalAgentAccountSessionTests {
         }
     }
 
+    @Test("closing the UI detaches without revoking the account Host token")
+    func applicationExitDetachesWithoutLogout() async throws {
+        let credentials = InMemoryLocalAgentCredentials()
+        let supervisor = FakeLocalAgentSupervisor()
+        let session = NativeLocalAgentAccountSession(
+            credentials: credentials,
+            supervisor: supervisor,
+            builder: FakeLocalAgentBuilder(),
+            randomBytes: { Data(repeating: 0x31, count: $0) }
+        )
+        try await session.login(
+            accountID: "user-1",
+            accessToken: "access-token",
+            settingsProvider: { self.settings(accountID: "user-1", deviceID: $0) }
+        )
+
+        await session.detach()
+
+        #expect(await supervisor.detachCount() == 1)
+        #expect(
+            await credentials.value(
+                accountID: "user-1",
+                reference: NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference
+            ) == Data("access-token".utf8)
+        )
+        await #expect(throws: NativeLocalAgentAccountSessionError.inactive) {
+            _ = try await session.client(accountID: "user-1")
+        }
+    }
+
     @Test("switching accounts stops the old Host and isolates credentials and IPC identity")
     func accountSwitchIsIsolated() async throws {
         let credentials = InMemoryLocalAgentCredentials()
@@ -331,9 +377,9 @@ struct NativeLocalAgentAccountSessionTests {
 
         #expect(await supervisor.startedAccounts() == ["user-1"])
         #expect(stateBefore == stateAfter)
-        #expect(await updates.values().count == 1)
-        #expect(await updates.values().first?.accountID == "user-1")
-        #expect(await updates.values().first?.accessToken == "second-token")
+        #expect(await updates.values().count == 2)
+        #expect(await updates.values().last?.accountID == "user-1")
+        #expect(await updates.values().last?.accessToken == "second-token")
         #expect(
             await credentials.value(
                 accountID: "user-1",
@@ -351,7 +397,9 @@ struct NativeLocalAgentAccountSessionTests {
             supervisor: supervisor,
             builder: FakeLocalAgentBuilder(),
             randomBytes: { Data(repeating: 0x66, count: $0) },
-            accessTokenUpdater: { _, _, _ in throw TokenUpdateFailure.rejected }
+            accessTokenUpdater: { _, _, token in
+                if token == "second-token" { throw TokenUpdateFailure.rejected }
+            }
         )
         try await session.login(
             accountID: "user-1",
@@ -451,6 +499,7 @@ private actor InMemoryLocalAgentCredentials: NativeLocalAgentCredentialAccess {
 private actor FakeLocalAgentSupervisor: NativeLocalAgentHostSupervising {
     private var hostState: NativeLocalAgentHostState = .stopped
     private var accounts: [String] = []
+    private var detachments = 0
 
     func state() async -> NativeLocalAgentHostState { hostState }
 
@@ -478,7 +527,13 @@ private actor FakeLocalAgentSupervisor: NativeLocalAgentHostSupervising {
     }
 
     func logout() async { hostState = .stopped }
+
+    func detach() async {
+        detachments += 1
+        hostState = .stopped
+    }
     func startedAccounts() -> [String] { accounts }
+    func detachCount() -> Int { detachments }
     func currentState() -> NativeLocalAgentHostState { hostState }
 }
 

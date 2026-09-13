@@ -87,6 +87,42 @@ struct NativeLocalAgentHostBootstrapTests {
         #expect(!postgres.debugDescription.contains("private-password"))
         #expect(!postgres.debugDescription.contains("database.example.com"))
     }
+
+    @Test("uses one opaque endpoint per account and device")
+    func derivesStablePrivateEndpoint() async throws {
+        let fixture = try await BootstrapFixture()
+        defer { fixture.cleanup() }
+        let firstSettings = fixture.settings(storage: .sqlite(
+            databaseURL: fixture.root.appendingPathComponent("client.sqlite"),
+            encryptionSecretReference: "sqlite-key"
+        ))
+        let sameEndpoint = NativeLocalAgentHostBootstrapBuilder.clientEndpoint(
+            for: firstSettings
+        )
+        let repeatedEndpoint = NativeLocalAgentHostBootstrapBuilder.clientEndpoint(
+            for: firstSettings
+        )
+        let otherDeviceEndpoint = NativeLocalAgentHostBootstrapBuilder.clientEndpoint(
+            for: NativeLocalAgentHostBootstrapSettings(
+                executableURL: firstSettings.executableURL,
+                accountID: firstSettings.accountID,
+                deviceID: "device-2",
+                runtimeDirectory: firstSettings.runtimeDirectory,
+                attachmentGrantDirectory: firstSettings.attachmentGrantDirectory,
+                platformStateDirectory: firstSettings.platformStateDirectory,
+                modelGatewayBaseURL: firstSettings.modelGatewayBaseURL,
+                memoryEngineBaseURL: firstSettings.memoryEngineBaseURL,
+                storage: firstSettings.storage
+            )
+        )
+
+        #expect(sameEndpoint == repeatedEndpoint)
+        #expect(sameEndpoint != otherDeviceEndpoint)
+        #expect(!sameEndpoint.lastPathComponent.contains("user-1"))
+        #expect(!sameEndpoint.lastPathComponent.contains("device-1"))
+        #expect(sameEndpoint.lastPathComponent.hasPrefix("agent-"))
+        #expect(sameEndpoint.lastPathComponent.hasSuffix(".sock"))
+    }
 }
 
 private struct BootstrapFixture: Sendable {

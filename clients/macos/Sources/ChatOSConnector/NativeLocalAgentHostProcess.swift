@@ -158,9 +158,11 @@ public struct NativeLocalAgentHostReady: Decodable, Equatable, Sendable {
 
 public final class NativeLocalAgentHostProcess: @unchecked Sendable {
     public let ready: NativeLocalAgentHostReady
-    private let process: Process
-    private let standardErrorCollector: BoundedStandardErrorCollector
-    private let exitTask: Task<Int32, Never>
+    private let process: Process?
+    private let standardErrorCollector: BoundedStandardErrorCollector?
+    private let exitTask: Task<Int32, Never>?
+    private let attachedProcessID: pid_t?
+    private let attachedIdentityVerifier: (@Sendable (pid_t) throws -> Void)?
 
     fileprivate init(
         process: Process,
@@ -172,19 +174,50 @@ public final class NativeLocalAgentHostProcess: @unchecked Sendable {
         self.ready = ready
         self.standardErrorCollector = standardErrorCollector
         self.exitTask = exitTask
+        self.attachedProcessID = nil
+        self.attachedIdentityVerifier = nil
     }
 
-    public var isRunning: Bool { process.isRunning }
+    init(
+        attachedProcessID: pid_t,
+        clientEndpoint: String,
+        identityVerifier: @escaping @Sendable (pid_t) throws -> Void
+    ) {
+        self.ready = NativeLocalAgentHostReady(
+            protocolVersion: localAgentHostLaunchProtocolVersion,
+            launchID: "attached-\(attachedProcessID)",
+            processID: UInt32(attachedProcessID),
+            clientEndpoint: clientEndpoint
+        )
+        self.process = nil
+        self.standardErrorCollector = nil
+        self.exitTask = nil
+        self.attachedProcessID = attachedProcessID
+        self.attachedIdentityVerifier = identityVerifier
+    }
+
+    public var isRunning: Bool {
+        if let process { return process.isRunning }
+        return attachedProcessIsRunning()
+    }
 
     public func terminate() {
-        guard process.isRunning else { return }
-        process.terminate()
+        if let process {
+            guard process.isRunning else { return }
+            process.terminate()
+            return
+        }
+        guard let attachedProcessID, attachedProcessIsRunning() else { return }
+        _ = Darwin.kill(attachedProcessID, SIGTERM)
     }
 
     /// Stops the Host before account credentials are revoked or a replacement
     /// process is launched. A wedged native dependency cannot keep the old
     /// account process alive indefinitely after it ignores SIGTERM.
     public func stop(gracePeriod: Duration = .seconds(2)) async -> Int32 {
+        guard let process, let exitTask else {
+            return await stopAttachedProcess(gracePeriod: gracePeriod)
+        }
         if process.isRunning {
             process.terminate()
             let clock = ContinuousClock()
@@ -200,6 +233,23 @@ public final class NativeLocalAgentHostProcess: @unchecked Sendable {
     }
 
     public func waitForExit() async -> NativeLocalAgentHostExit {
+        guard let exitTask, let standardErrorCollector else {
+            while attachedProcessIsRunning() {
+                if Task.isCancelled {
+                    return NativeLocalAgentHostExit(
+                        status: -1,
+                        cause: .unexpected(status: -1),
+                        detail: "已停止监测附着的本地 Agent Host"
+                    )
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            return NativeLocalAgentHostExit(
+                status: -1,
+                cause: .unexpected(status: -1),
+                detail: "附着的本地 Agent Host 已退出"
+            )
+        }
         let status = await exitTask.value
         let detail = await standardErrorCollector.finish()
         return NativeLocalAgentHostExit(
@@ -209,6 +259,36 @@ public final class NativeLocalAgentHostProcess: @unchecked Sendable {
                 : .unexpected(status: status),
             detail: detail
         )
+    }
+
+    private func attachedProcessIsRunning() -> Bool {
+        guard let processID = attachedProcessID,
+              let identityVerifier = attachedIdentityVerifier
+        else { return false }
+        let signalResult = Darwin.kill(processID, 0)
+        guard signalResult == 0 || errno == EPERM else { return false }
+        do {
+            try identityVerifier(processID)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func stopAttachedProcess(gracePeriod: Duration) async -> Int32 {
+        guard let processID = attachedProcessID else { return -1 }
+        if attachedProcessIsRunning() {
+            _ = Darwin.kill(processID, SIGTERM)
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: gracePeriod)
+            while attachedProcessIsRunning(), clock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        if attachedProcessIsRunning() {
+            _ = Darwin.kill(processID, SIGKILL)
+        }
+        return -1
     }
 }
 

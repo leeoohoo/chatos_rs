@@ -815,7 +815,7 @@ final class AppModel: ObservableObject {
             localAgentEventHub = nil
             await hub.stop()
         }
-        await localAgentAccountSession.logout()
+        await localAgentAccountSession.detach()
     }
 
     private func applyAuthenticationPhase(_ phase: AuthenticationViewModel.Phase) {

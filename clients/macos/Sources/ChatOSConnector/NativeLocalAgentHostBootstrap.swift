@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import Darwin
+import CryptoKit
 import Foundation
 
 public enum NativeLocalAgentHostBootstrapError: Error, Equatable, Sendable {
@@ -126,8 +127,7 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
         try Self.ensurePrivateDirectory(settings.platformStateDirectory)
         let launchID = "launch-\(UUID().uuidString.lowercased())"
         let workerID = "worker-\(UUID().uuidString.lowercased())"
-        let socketURL = settings.runtimeDirectory
-            .appendingPathComponent("agent-\(UUID().uuidString.lowercased()).sock")
+        let socketURL = Self.clientEndpoint(for: settings)
         guard socketURL.path.utf8CString.count <= MemoryLayout.size(ofValue: sockaddr_un().sun_path)
         else {
             throw NativeLocalAgentHostBootstrapError.socketPathTooLong
@@ -219,6 +219,23 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
             launchRequestJSON: data,
             secretFrameJSON: secretData
         )
+    }
+
+    /// One account/device owns one predictable private endpoint. The digest
+    /// keeps opaque server identities out of the filesystem while leaving
+    /// enough room for `sockaddr_un` even in the default runtime directory.
+    static func clientEndpoint(
+        for settings: NativeLocalAgentHostBootstrapSettings
+    ) -> URL {
+        let identity = Data(
+            "v1\u{0}\(settings.accountID)\u{0}\(settings.deviceID)".utf8
+        )
+        let digest = SHA256.hash(data: identity)
+            .map { String(format: "%02x", $0) }
+            .joined()
+            .prefix(32)
+        return settings.runtimeDirectory
+            .appendingPathComponent("agent-\(String(digest)).sock", isDirectory: false)
     }
 
     private func storageSecretReference(_ storage: NativeLocalAgentStorageBootstrap) -> String {
