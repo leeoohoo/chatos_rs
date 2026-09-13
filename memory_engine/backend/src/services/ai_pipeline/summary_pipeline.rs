@@ -158,7 +158,7 @@ impl SummaryPipelineState {
                 ..
             }) if model_attempt <= ai.max_transient_retries() => Ok((
                 SummaryPipelineStep::Retry {
-                    backoff_ms: chatos_ai_runtime::transient_retry_backoff_ms(
+                    backoff_ms: crate::ai::transient_retry_backoff_ms(
                         message.as_str(),
                         model_attempt,
                     ),

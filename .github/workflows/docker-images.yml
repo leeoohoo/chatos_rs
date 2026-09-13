@@ -56,12 +56,6 @@ jobs:
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=mcp_management_service_backend
               BIN_NAME=mcp_management_service_backend
-          - image: chatos-rs-task-runner-backend
-            dockerfile: docker/Dockerfile.rust-service
-            build_args: |
-              MANIFEST_PATH=Cargo.toml
-              PACKAGE_NAME=task_runner_service_backend
-              BIN_NAME=task_runner_service_backend
           - image: chatos-rs-chatos-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |

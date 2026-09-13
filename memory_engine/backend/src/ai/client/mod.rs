@@ -187,8 +187,8 @@ impl AiClient {
 fn classify_generate_text_error(err: String, max_transient_retries: usize) -> AiGenerateTextError {
     if max_transient_retries > 0 && is_transient_summary_error(err.as_str()) {
         return AiGenerateTextError::Retryable {
-            retry_kind: chatos_ai_runtime::transient_retry_kind_label(err.as_str()).to_string(),
-            backoff_ms: chatos_ai_runtime::transient_retry_backoff_ms(err.as_str(), 1),
+            retry_kind: super::retry::transient_retry_kind_label(err.as_str()).to_string(),
+            backoff_ms: super::retry::transient_retry_backoff_ms(err.as_str(), 1),
             message: err,
         };
     }
@@ -196,7 +196,7 @@ fn classify_generate_text_error(err: String, max_transient_retries: usize) -> Ai
 }
 
 fn is_transient_summary_error(err: &str) -> bool {
-    chatos_ai_runtime::is_transient_transport_or_parse_error(err)
+    super::retry::is_transient_transport_or_parse_error(err)
 }
 
 #[cfg(test)]

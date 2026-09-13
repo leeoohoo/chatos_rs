@@ -84,6 +84,9 @@ for retired_path in [
     "memory_engine/backend/src/cloud_agent_queue.rs",
     "memory_engine/backend/src/services/memory_cloud_agent.rs",
     "agent/src/implementations/memory_engine.rs",
+    "agent/src/core",
+    "agent/src/implementations",
+    ".task_runner",
 ]:
     require_absent(retired_path, "retired server execution plane must stay physically deleted")
 
@@ -129,6 +132,16 @@ require(
     "memory_engine/backend/src/services/ai_pipeline/summary_pipeline.rs",
     "SummaryPipelineState",
     "Memory Engine-owned summary generation",
+)
+forbid(
+    "memory_engine/backend/Cargo.toml",
+    ["chatos_ai_runtime", "chatos_agent"],
+    "Memory Engine must own its tool-less AI request policy instead of importing an Agent runtime",
+)
+forbid(
+    ".github/workflows/docker-images.yml",
+    ["task_runner_service_backend", "chatos-rs-task-runner-backend"],
+    "retired Task Runner Service image must not return to the release matrix",
 )
 
 require(
