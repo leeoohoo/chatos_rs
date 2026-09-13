@@ -1,11 +1,11 @@
 {
-  "protocol_version": 24,
-  "request_id": "request-client-setting-get-1",
-  "response": {
-    "type": "client_setting",
+  "protocol_version": 25,
+  "request_id": "request-client-setting-put-1",
+  "owner_user_id": "user-1",
+  "command": {
+    "type": "put_client_setting",
     "payload": {
       "key": "project_run.preferences",
-      "owner_user_id": "user-1",
       "value": {
         "projects": {
           "project-1": {
@@ -17,10 +17,7 @@
             }
           }
         }
-      },
-      "revision": 3,
-      "created_at": "2026-09-14T01:00:00Z",
-      "updated_at": "2026-09-14T01:02:00Z"
+      }
     }
   }
 }

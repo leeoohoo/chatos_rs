@@ -37,6 +37,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let terminalHistoryStore: NativeTerminalHistoryStore
     let runtimePreferencesStore: NativeConnectorRuntimePreferencesStore
     let approvalStore: NativeConnectorApprovalStore
+    let pluginStateStore: NativePluginStateStore
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
@@ -88,6 +89,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             accountSession: accountSession
         )
         self.approvalStore = NativeConnectorApprovalStore(accountSession: accountSession)
+        self.pluginStateStore = NativePluginStateStore(accountSession: accountSession)
         self.agentRuntimeSettings = agentRuntimeSettings
         self.pluginInstaller = NativePluginInstaller(
             rootURL: configuration.stateURL
@@ -117,10 +119,12 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         do {
             _ = try await runtimePreferencesStore.activate(ownerUserID: ownerUserID)
             _ = try await approvalStore.activate(ownerUserID: ownerUserID)
+            try await pluginStateStore.activate(ownerUserID: ownerUserID)
             activeClientStorageOwnerID = ownerUserID
         } catch {
             await runtimePreferencesStore.deactivate()
             await approvalStore.deactivate()
+            await pluginStateStore.deactivate()
             throw error
         }
     }
@@ -129,6 +133,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         activeClientStorageOwnerID = nil
         await runtimePreferencesStore.deactivate()
         await approvalStore.deactivate()
+        await pluginStateStore.deactivate()
     }
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {
@@ -776,11 +781,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     func publishPluginInstallationStatus() async throws {
-        let token = try requireAccessToken()
-        let sources = try await gateway.pluginSources(token: token)
-        if reconcileInstalledPluginIdentities(with: sources.items) {
-            try stateStore.save(state)
-        }
+        _ = try requireAccessToken()
         try await sendPluginInstallationStatus()
     }
 
@@ -790,16 +791,17 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
               let deviceID = state.deviceID else {
             return
         }
-        let records = state.installedPluginRecords ?? [:]
-        let items = records.values
-            .sorted { $0.pluginID < $1.pluginID }
-            .compactMap { record in
-                try? NativePluginInstallationStatusBuilder.makeItem(
+        let installations = try await pluginStateStore.installations(ownerUserID: ownerUserID)
+        let items = installations.values
+            .sorted { $0.record.pluginID < $1.record.pluginID }
+            .compactMap { installation in
+                let record = installation.record
+                return try? NativePluginInstallationStatusBuilder.makeItem(
                     record: record,
                     ownerUserID: ownerUserID,
                     deviceID: deviceID,
                     platform: Self.pluginPlatform,
-                    active: state.pluginPreferences[record.pluginID] ?? true
+                    active: installation.enabled
                 )
             }
         let data = try JSONEncoder().encode(

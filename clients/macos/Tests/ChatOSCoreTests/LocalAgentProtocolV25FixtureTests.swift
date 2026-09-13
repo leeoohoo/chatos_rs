@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v24 fixtures")
-struct LocalAgentProtocolV24FixtureTests {
+@Suite("Shared Local Agent protocol v25 fixtures")
+struct LocalAgentProtocolV25FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV24FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 24)
+        #expect(localAgentProtocolVersion == 25)
         #expect(encoded == fixture)
     }
 
@@ -501,13 +501,59 @@ struct LocalAgentProtocolV24FixtureTests {
         #expect(nextCursor == nil)
     }
 
+    @Test("encodes and decodes owner-scoped installed Plugin state")
+    func installedPluginState() throws {
+        let installation: LocalAgentJSONValue = .object([
+            "pluginID": .string("plugin-1"),
+            "releaseID": .string("release-1"),
+            "version": .string("1.2.3"),
+            "artifactSHA256": .string(String(repeating: "a", count: 64)),
+            "installationPath": .string("/Applications/ChatOS/Plugins/plugin-1/1.2.3"),
+            "installedAt": .string("2026-09-14T02:00:00Z"),
+        ])
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-installed-plugin-put-1",
+            ownerUserID: "user-1",
+            command: .putInstalledPlugin(
+                expectedRevision: nil,
+                draft: .init(
+                    pluginID: "plugin-1",
+                    release: "release-1",
+                    enabled: true,
+                    installation: installation
+                )
+            )
+        )
+        let encoded = try JSONSerialization.jsonObject(
+            with: LocalAgentProtocolJSON.encoder().encode(request)
+        ) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("installed_plugin_put_request.json"))
+        ) as? NSDictionary
+        #expect(encoded == fixture)
+
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("installed_plugin_records_response.json"))
+        )
+        guard case let .installedPluginRecords(records, nextCursor) = reply.response else {
+            Issue.record("Expected installed Plugin records")
+            return
+        }
+        #expect(records.first?.ownerUserID == "user-1")
+        #expect(records.first?.draft.release == "release-1")
+        #expect(records.first?.draft.enabled == false)
+        #expect(nextCursor == nil)
+    }
+
     private func fixtureURL(_ name: String) -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v24")
+            .appendingPathComponent("shared/fixtures/local_agent/v25")
             .appendingPathComponent(name)
     }
 }

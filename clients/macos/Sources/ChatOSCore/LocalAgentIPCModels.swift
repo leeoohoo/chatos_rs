@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 24
+public let localAgentProtocolVersion: UInt32 = 25
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -676,6 +676,50 @@ public struct LocalAgentClientSettingSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalAgentInstalledPluginDraft: Codable, Equatable, Sendable {
+    public var pluginID: String
+    public var release: String
+    public var enabled: Bool
+    public var installation: LocalAgentJSONValue
+
+    public init(
+        pluginID: String,
+        release: String,
+        enabled: Bool,
+        installation: LocalAgentJSONValue
+    ) {
+        self.pluginID = pluginID
+        self.release = release
+        self.enabled = enabled
+        self.installation = installation
+    }
+}
+
+public struct LocalAgentInstalledPluginSnapshot: Codable, Equatable, Sendable {
+    public var recordID: String
+    public var ownerUserID: String
+    public var draft: LocalAgentInstalledPluginDraft
+    public var revision: UInt64
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        recordID: String,
+        ownerUserID: String,
+        draft: LocalAgentInstalledPluginDraft,
+        revision: UInt64,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.recordID = recordID
+        self.ownerUserID = ownerUserID
+        self.draft = draft
+        self.revision = revision
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 public enum LocalAgentCommand: Equatable, Sendable {
     case updateAccessToken(String)
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
@@ -736,6 +780,9 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case clearTerminalHistory
     case appendApprovalHistory(recordID: String, draft: LocalAgentApprovalHistoryDraft)
     case listApprovalHistory(cursor: String?, limit: UInt32)
+    case listInstalledPlugins(cursor: String?, limit: UInt32)
+    case putInstalledPlugin(expectedRevision: UInt64?, draft: LocalAgentInstalledPluginDraft)
+    case deleteInstalledPlugin(pluginID: String, expectedRevision: UInt64)
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -780,6 +827,14 @@ extension LocalAgentCommand: Encodable {
     private struct ListPayload: Encodable {
         let cursor: String?
         let limit: UInt32
+    }
+    private struct PutInstalledPluginPayload: Encodable {
+        let expectedRevision: UInt64?
+        let draft: LocalAgentInstalledPluginDraft
+    }
+    private struct DeleteInstalledPluginPayload: Encodable {
+        let pluginID: String
+        let expectedRevision: UInt64
     }
     private struct ProjectPayload: Encodable { let projectID: String }
     private struct ListProjectsPayload: Encodable {
@@ -1175,6 +1230,24 @@ extension LocalAgentCommand: Encodable {
         case let .listApprovalHistory(cursor, limit):
             try container.encode("list_approval_history", forKey: .type)
             try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
+        case let .listInstalledPlugins(cursor, limit):
+            try container.encode("list_installed_plugins", forKey: .type)
+            try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
+        case let .putInstalledPlugin(expectedRevision, draft):
+            try container.encode("put_installed_plugin", forKey: .type)
+            try container.encode(
+                PutInstalledPluginPayload(expectedRevision: expectedRevision, draft: draft),
+                forKey: .payload
+            )
+        case let .deleteInstalledPlugin(pluginID, expectedRevision):
+            try container.encode("delete_installed_plugin", forKey: .type)
+            try container.encode(
+                DeleteInstalledPluginPayload(
+                    pluginID: pluginID,
+                    expectedRevision: expectedRevision
+                ),
+                forKey: .payload
+            )
         case let .subscribeRunEvents(afterSequence, limit):
             try container.encode("subscribe_run_events", forKey: .type)
             try container.encode(EventsPayload(afterSeq: afterSequence, limit: limit), forKey: .payload)
@@ -1913,6 +1986,8 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case terminalHistoryRecords([LocalAgentTerminalHistorySnapshot], nextCursor: String?)
     case approvalHistory(LocalAgentApprovalHistorySnapshot)
     case approvalHistoryRecords([LocalAgentApprovalHistorySnapshot], nextCursor: String?)
+    case installedPlugin(LocalAgentInstalledPluginSnapshot)
+    case installedPluginRecords([LocalAgentInstalledPluginSnapshot], nextCursor: String?)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -1963,6 +2038,10 @@ extension LocalAgentResponse: Decodable {
     }
     private struct ApprovalHistoryRecords: Decodable {
         let records: [LocalAgentApprovalHistorySnapshot]
+        let nextCursor: String?
+    }
+    private struct InstalledPluginRecords: Decodable {
+        let records: [LocalAgentInstalledPluginSnapshot]
         let nextCursor: String?
     }
     private struct Events: Decodable {
@@ -2063,6 +2142,13 @@ extension LocalAgentResponse: Decodable {
         case "approval_history_records":
             let value = try container.decode(ApprovalHistoryRecords.self, forKey: .payload)
             self = .approvalHistoryRecords(value.records, nextCursor: value.nextCursor)
+        case "installed_plugin":
+            self = .installedPlugin(
+                try container.decode(LocalAgentInstalledPluginSnapshot.self, forKey: .payload)
+            )
+        case "installed_plugin_records":
+            let value = try container.decode(InstalledPluginRecords.self, forKey: .payload)
+            self = .installedPluginRecords(value.records, nextCursor: value.nextCursor)
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)

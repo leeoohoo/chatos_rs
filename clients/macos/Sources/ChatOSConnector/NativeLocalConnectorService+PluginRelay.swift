@@ -88,9 +88,8 @@ extension NativeLocalConnectorService {
         guard let ownerUserID = state.user?.id, let deviceID = state.deviceID else {
             throw NativePluginRuntimeError.invalidRequest("Plugin Relay 的设备身份已失效")
         }
-        guard state.pluginPreferences[pluginID] ?? true,
-              let record = state.installedPluginRecords?[pluginID],
-              record.releaseID == releaseID,
+        let record = try await enabledPluginRecord(pluginID: pluginID)
+        guard record.releaseID == releaseID,
               record.artifactSHA256 == artifactSHA256.lowercased() else {
             throw NativePluginRuntimeError.invalidRequest("Plugin 未安装、已停用或 Release 不匹配")
         }
@@ -251,7 +250,7 @@ extension NativeLocalConnectorService {
         let operation = try body.requireString("operation")
         let projectID = body["project_id"]?.jsonString?.nonEmptyTrimmed
         if operation == "skill_activate" || operation == "skill_read_resource" {
-            return try executePluginSkill(
+            return try await executePluginSkill(
                 request: request,
                 scope: scope,
                 body: body,
@@ -397,7 +396,7 @@ extension NativeLocalConnectorService {
         invocationID: String,
         operation: String,
         projectID: String?
-    ) throws -> NativeRelayResponse {
+    ) async throws -> NativeRelayResponse {
         guard let session = pluginSkillRuntimeSessions[adapterSessionID] else {
             throw NativePluginRuntimeError.invalidRequest("Plugin Skill 会话不存在或已经结束")
         }
@@ -409,9 +408,8 @@ extension NativeLocalConnectorService {
             workspaceID: scope.workspaceID,
             projectID: projectID
         )
-        guard state.pluginPreferences[pluginID] ?? true,
-              let record = state.installedPluginRecords?[pluginID],
-              record.releaseID == releaseID,
+        let record = try await enabledPluginRecord(pluginID: pluginID)
+        guard record.releaseID == releaseID,
               record.artifactSHA256 == artifactSHA256.lowercased() else {
             throw NativePluginRuntimeError.invalidRequest("Plugin 未安装、已停用或 Release 不匹配")
         }

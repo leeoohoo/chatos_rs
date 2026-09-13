@@ -9,21 +9,7 @@ struct NativeConnectorPersistentState: Codable, Sendable {
     var workspaces: [LocalConnectorWorkspace] = []
     /// `false` means the user explicitly blocked server-to-client calls.
     var gatewayConnectionEnabled: Bool?
-    var installedPluginIDs: Set<String> = []
-    var installedPluginRecords: [String: NativeInstalledPluginRecord]?
-    var pluginPreferences: [String: Bool] = [:]
-
     static let empty = NativeConnectorPersistentState()
-}
-
-struct NativeInstalledPluginRecord: Codable, Sendable, Equatable {
-    var pluginID: String
-    var releaseID: String
-    var version: String
-    var artifactSHA256: String
-    var installationPath: String
-    var installedAt: String
-    var pluginKey: String? = nil
 }
 
 struct NativeConnectorStateStore: Sendable {

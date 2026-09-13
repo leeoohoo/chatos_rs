@@ -1,5 +1,5 @@
 {
-  "protocol_version": 24,
+  "protocol_version": 25,
   "request_id": "request-terminal-history-1",
   "owner_user_id": "user-1",
   "command": {

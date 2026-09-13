@@ -329,6 +329,10 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
                     RequirePayload<LocalAgentApprovalHistorySnapshot>(hasPayload, payload)),
                 "approval_history_records" => ApprovalHistoryRecords(
                     RequirePayload<ApprovalHistoryRecordsPayload>(hasPayload, payload)),
+                "installed_plugin" => new LocalAgentInstalledPluginResponse(
+                    RequirePayload<LocalAgentInstalledPluginSnapshot>(hasPayload, payload)),
+                "installed_plugin_records" => InstalledPluginRecords(
+                    RequirePayload<InstalledPluginRecordsPayload>(hasPayload, payload)),
                 "events" => Events(RequirePayload<EventsPayload>(hasPayload, payload)),
                 "ui_event_cursor" => new LocalAgentUIEventCursorResponse(
                     RequirePayload<UIEventCursorPayload>(hasPayload, payload).EventSeq),
@@ -373,6 +377,10 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
         ApprovalHistoryRecordsPayload payload) =>
         new(payload.Records, payload.NextCursor);
 
+    private static LocalAgentInstalledPluginRecordsResponse InstalledPluginRecords(
+        InstalledPluginRecordsPayload payload) =>
+        new(payload.Records, payload.NextCursor);
+
     private static LocalAgentEventsResponse Events(EventsPayload payload) =>
         new(payload.Events, payload.NextSeq, payload.HasMore);
 
@@ -396,6 +404,9 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
     private sealed record TasksPayload(IReadOnlyList<LocalAgentTaskSnapshot> Tasks, string? NextCursor);
     private sealed record ApprovalHistoryRecordsPayload(
         IReadOnlyList<LocalAgentApprovalHistorySnapshot> Records,
+        string? NextCursor);
+    private sealed record InstalledPluginRecordsPayload(
+        IReadOnlyList<LocalAgentInstalledPluginSnapshot> Records,
         string? NextCursor);
     private sealed record UIEventCursorPayload(ulong EventSeq);
     private sealed record EventsPayload(

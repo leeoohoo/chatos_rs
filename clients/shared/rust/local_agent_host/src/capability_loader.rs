@@ -253,7 +253,11 @@ impl StoredLocalCapabilityLoader {
             let page = operation
                 .page
                 .ok_or_else(|| "Plugin capability query returned no page".to_string())?;
-            records.extend(page.records);
+            records.extend(
+                page.records
+                    .into_iter()
+                    .filter(|record| !crate::has_installed_plugin_kind(record)),
+            );
             match page.next_cursor {
                 Some(next) if Some(next.as_str()) != cursor.as_deref() => cursor = Some(next),
                 Some(_) => {

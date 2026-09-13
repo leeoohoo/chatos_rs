@@ -3,10 +3,12 @@ import Foundation
 
 extension NativeLocalConnectorService {
     public func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] {
-        let records = state.installedPluginRecords ?? [:]
-        return try records.values
-            .filter { state.pluginPreferences[$0.pluginID] ?? true }
-            .flatMap { record -> [LocalConnectorPluginApplication] in
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let installations = try await pluginStateStore.installations(ownerUserID: ownerUserID)
+        return try installations.values
+            .filter(\.enabled)
+            .flatMap { installation -> [LocalConnectorPluginApplication] in
+                let record = installation.record
                 let manifest = try installedPluginManifest(record: record)
                 return manifest.ui.compactMap { contribution in
                     guard contribution.surface == "workbench" else { return nil }
@@ -31,11 +33,13 @@ extension NativeLocalConnectorService {
         context: LocalConnectorPluginApplicationContext?,
         expectedOwnerUserID: String
     ) async throws -> LocalConnectorPluginApplicationLaunch {
-        guard state.user?.id == expectedOwnerUserID else { throw CancellationError() }
-        guard state.pluginPreferences[pluginID] ?? true else {
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        guard ownerUserID == expectedOwnerUserID else { throw CancellationError() }
+        let installation = try await pluginStateStore.installations(ownerUserID: ownerUserID)[pluginID]
+        guard installation?.enabled == true else {
             throw NativeConnectorError.pluginInstallation("Plugin 已停用")
         }
-        guard let record = state.installedPluginRecords?[pluginID] else {
+        guard let record = installation?.record else {
             throw NativeConnectorError.pluginInstallation("Plugin 尚未安装")
         }
         let manifest = try installedPluginManifest(record: record)
@@ -55,7 +59,7 @@ extension NativeLocalConnectorService {
         } else {
             resolvedPath = nil
         }
-        guard let ownerUserID = state.user?.id, let deviceID = state.deviceID else {
+        guard let deviceID = state.deviceID else {
             throw NativeConnectorError.notPaired
         }
         return try await pluginApplicationRuntime.launch(
@@ -87,16 +91,15 @@ extension NativeLocalConnectorService {
     }
 
     private func fetchPluginsWithCurrentPairing() async throws -> [LocalConnectorPlugin] {
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let installations = try await pluginStateStore.installations(ownerUserID: ownerUserID)
         let token = try requireAccessToken()
         let sources = try await gateway.pluginSources(token: token)
-        if reconcileInstalledPluginIdentities(with: sources.items) {
-            try stateStore.save(state)
-            try? await sendPluginInstallationStatus()
-        }
         return sources.items.map { source in
             let id = source.catalog.id
-            let installedRecord = state.installedPluginRecords?[id]
-            let installed = installedRecord != nil || state.installedPluginIDs.contains(id)
+            let installation = installations[id]
+            let installedRecord = installation?.record
+            let installed = installedRecord != nil
             let installedManifest: NativePluginManifest?
             let permissions: [LocalConnectorPluginPermission]
             if let installedRecord,
@@ -132,7 +135,7 @@ extension NativeLocalConnectorService {
                 ),
                 installAvailable: source.release.artifactSHA256 != nil
                     && source.release.npmPackage != nil,
-                enabled: state.pluginPreferences[id] ?? source.preference?.enabled ?? true,
+                enabled: installation?.enabled ?? source.preference?.enabled ?? true,
                 hasUI: source.catalog.hasUI ?? installedManifest.map { !$0.ui.isEmpty },
                 permissions: permissions
             )
@@ -158,26 +161,39 @@ extension NativeLocalConnectorService {
         return normalized?.isEmpty == false ? normalized : nil
     }
 
+    func enabledPluginRecord(pluginID: String) async throws -> NativeInstalledPluginRecord {
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let installation = try await pluginStateStore.installations(
+            ownerUserID: ownerUserID
+        )[pluginID]
+        guard installation?.enabled == true, let record = installation?.record else {
+            throw NativeConnectorError.pluginInstallation("Plugin 未安装或已停用")
+        }
+        return record
+    }
+
     public func installPlugin(id: String) async throws {
+        let ownerUserID = try activeClientStorageOwnerUserID()
         let token = try requireAccessToken()
         let sources = try await gateway.pluginSources(token: token)
         guard let source = sources.items.first(where: { $0.catalog.id == id }) else {
             throw NativeConnectorError.pluginInstallation("Marketplace 中没有找到这个 Plugin")
         }
         let record = try await pluginInstaller.install(source: source, token: token, gateway: gateway)
-        var records = state.installedPluginRecords ?? [:]
-        records[id] = record
-        state.installedPluginRecords = records
-        state.installedPluginIDs.insert(id)
-        _ = reconcileInstalledPluginIdentities(with: sources.items)
-        try stateStore.save(state)
+        do {
+            _ = try await pluginStateStore.put(ownerUserID: ownerUserID, record: record)
+        } catch {
+            try? pluginInstaller.uninstall(pluginID: id)
+            throw error
+        }
         try? await publishPluginInstallationStatus()
     }
 
     public func startBrowserExtensionPairing(pluginID: String) async throws {
-        guard state.pluginPreferences[pluginID] ?? true,
-              let record = state.installedPluginRecords?[pluginID],
-              let ownerUserID = state.user?.id,
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        let installation = try await pluginStateStore.installations(ownerUserID: ownerUserID)[pluginID]
+        guard installation?.enabled == true,
+              let record = installation?.record,
               let deviceID = state.deviceID else {
             throw NativeConnectorError.browserExtensionPairing("Browser CDP 尚未安装或设备尚未配对")
         }
@@ -201,8 +217,11 @@ extension NativeLocalConnectorService {
     }
 
     public func isBrowserExtensionPaired(pluginID: String) async throws -> Bool {
-        guard let record = state.installedPluginRecords?[pluginID],
-              let ownerUserID = state.user?.id,
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        guard let record = try await pluginStateStore.record(
+            ownerUserID: ownerUserID,
+            pluginID: pluginID
+        ),
               let deviceID = state.deviceID else {
             return false
         }
@@ -233,16 +252,16 @@ extension NativeLocalConnectorService {
     }
 
     public func uninstallPlugin(id: String) async throws {
+        let ownerUserID = try activeClientStorageOwnerUserID()
         await browserExtensionPairingRuntime.stop()
         await pluginApplicationRuntime.stop(pluginID: id)
+        try await pluginStateStore.remove(ownerUserID: ownerUserID, pluginID: id)
         try pluginInstaller.uninstall(pluginID: id)
-        state.installedPluginIDs.remove(id)
-        state.installedPluginRecords?[id] = nil
-        try stateStore.save(state)
         try? await publishPluginInstallationStatus()
     }
 
     public func updatePluginEnabled(id: String, enabled: Bool) async throws {
+        let ownerUserID = try activeClientStorageOwnerUserID()
         let token = try requireAccessToken()
         guard let deviceID = state.deviceID else { throw NativeConnectorError.notPaired }
         try await gateway.updatePluginPreference(
@@ -251,17 +270,24 @@ extension NativeLocalConnectorService {
             deviceID: deviceID,
             enabled: enabled
         )
-        state.pluginPreferences[id] = enabled
+        try await pluginStateStore.setEnabled(
+            ownerUserID: ownerUserID,
+            pluginID: id,
+            enabled: enabled
+        )
         if !enabled {
             await browserExtensionPairingRuntime.stop()
             await pluginApplicationRuntime.stop(pluginID: id)
         }
-        try stateStore.save(state)
         try? await publishPluginInstallationStatus()
     }
 
     public func requestPluginPermission(pluginID: String, permissionID: String) async throws {
-        guard let record = state.installedPluginRecords?[pluginID] else {
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        guard let record = try await pluginStateStore.record(
+            ownerUserID: ownerUserID,
+            pluginID: pluginID
+        ) else {
             throw NativeConnectorError.pluginInstallation("Plugin 尚未安装")
         }
         let manifest = try installedPluginManifest(record: record)
@@ -340,109 +366,4 @@ extension NativeLocalConnectorService {
         )
     }
 
-    @discardableResult
-    func reconcileInstalledPluginIdentities(with sources: [GatewayPluginSourceDTO]) -> Bool {
-        Self.reconcileInstalledPluginIdentities(state: &state, sources: sources)
-    }
-
-    @discardableResult
-    static func reconcileInstalledPluginIdentities(
-        state: inout NativeConnectorPersistentState,
-        sources: [GatewayPluginSourceDTO]
-    ) -> Bool {
-        guard var records = state.installedPluginRecords, !records.isEmpty else { return false }
-        let currentIDs = Set(sources.map(\.catalog.id))
-        let sourcesByPluginKey = Dictionary(grouping: sources) {
-            $0.catalog.pluginKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        }
-        let sourcesByPackageName = Dictionary(grouping: sources) {
-            ($0.catalog.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        var sourcesByArtifact: [String: [GatewayPluginSourceDTO]] = [:]
-        for source in sources {
-            guard let artifact = source.release.artifactSHA256?
-                .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines),
-                  !artifact.isEmpty else {
-                continue
-            }
-            sourcesByArtifact[artifact, default: []].append(source)
-        }
-        var changed = false
-
-        for (storedID, record) in records.sorted(by: { $0.key < $1.key }) {
-            if currentIDs.contains(storedID) {
-                guard let source = sources.first(where: { $0.catalog.id == storedID }),
-                      record.pluginKey != source.catalog.pluginKey else {
-                    continue
-                }
-                var enriched = record
-                enriched.pluginKey = source.catalog.pluginKey
-                records[storedID] = enriched
-                changed = true
-                continue
-            }
-            let artifact = record.artifactSHA256.trimmingCharacters(in: .whitespacesAndNewlines)
-            let pluginKey = record.pluginKey?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let packageName = installedPluginPackageName(record: record)
-            let identityMatches = !pluginKey.isEmpty
-                ? sourcesByPluginKey[pluginKey]
-                : packageName.flatMap { sourcesByPackageName[$0] }
-
-            if let identityMatches,
-               identityMatches.count == 1,
-               let source = identityMatches.first,
-               records[source.catalog.id] != nil {
-                records[storedID] = nil
-                state.installedPluginIDs.remove(storedID)
-                state.pluginPreferences[storedID] = nil
-                changed = true
-                continue
-            }
-
-            let matches = identityMatches ?? sourcesByArtifact[artifact]
-            guard !artifact.isEmpty,
-                  let matches,
-                  matches.count == 1,
-                  let source = matches.first,
-                  source.release.artifactSHA256?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) == artifact,
-                  source.release.version?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    == record.version.trimmingCharacters(in: .whitespacesAndNewlines) else {
-                continue
-            }
-
-            let currentID = source.catalog.id
-            var migrated = record
-            migrated.pluginID = currentID
-            migrated.pluginKey = source.catalog.pluginKey
-            migrated.releaseID = source.release.id
-            records[storedID] = nil
-            records[currentID] = migrated
-            state.installedPluginIDs.remove(storedID)
-            state.installedPluginIDs.insert(currentID)
-            if let enabled = state.pluginPreferences.removeValue(forKey: storedID) {
-                state.pluginPreferences[currentID] = enabled
-            }
-            changed = true
-        }
-
-        if changed {
-            state.installedPluginRecords = records
-        }
-        return changed
-    }
-
-    private static func installedPluginPackageName(
-        record: NativeInstalledPluginRecord
-    ) -> String? {
-        let manifestURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
-            .appendingPathComponent("chatos.plugin.json")
-        guard let data = try? Data(contentsOf: manifestURL, options: .mappedIfSafe),
-              let manifest = try? JSONDecoder().decode(NativePluginManifest.self, from: data) else {
-            return nil
-        }
-        let name = manifest.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? nil : name
-    }
 }

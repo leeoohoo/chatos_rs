@@ -852,6 +852,50 @@ public actor NativeLocalAgentIPCClient {
         }
     }
 
+    public func installedPluginRecords() async throws -> [LocalAgentInstalledPluginSnapshot] {
+        var records: [LocalAgentInstalledPluginSnapshot] = []
+        var cursor: String?
+        repeat {
+            let response = try await send(.listInstalledPlugins(cursor: cursor, limit: 500))
+            guard case let .installedPluginRecords(page, nextCursor) = response else {
+                throw unexpected("installed_plugin_records", response)
+            }
+            records.append(contentsOf: page)
+            if let nextCursor, nextCursor == cursor {
+                throw NativeLocalAgentIPCError.invalidResponse
+            }
+            cursor = nextCursor
+        } while cursor != nil
+        return records.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.recordID < $1.recordID
+        }
+    }
+
+    public func putInstalledPlugin(
+        expectedRevision: UInt64?,
+        draft: LocalAgentInstalledPluginDraft
+    ) async throws -> LocalAgentInstalledPluginSnapshot {
+        let response = try await send(.putInstalledPlugin(
+            expectedRevision: expectedRevision,
+            draft: draft
+        ))
+        guard case let .installedPlugin(record) = response else {
+            throw unexpected("installed_plugin", response)
+        }
+        return record
+    }
+
+    public func deleteInstalledPlugin(pluginID: String, expectedRevision: UInt64) async throws {
+        let response = try await send(.deleteInstalledPlugin(
+            pluginID: pluginID,
+            expectedRevision: expectedRevision
+        ))
+        guard case .success = response else {
+            throw unexpected("success", response)
+        }
+    }
+
     public func taskGraph(
         sourceThreadID: String,
         sourceTurnID: String
@@ -980,6 +1024,8 @@ private extension LocalAgentResponse {
         case .terminalHistoryRecords: "terminal_history_records"
         case .approvalHistory: "approval_history"
         case .approvalHistoryRecords: "approval_history_records"
+        case .installedPlugin: "installed_plugin"
+        case .installedPluginRecords: "installed_plugin_records"
         case .events: "events"
         case .uiEventCursor: "ui_event_cursor"
         case .storageProfile: "storage_profile"

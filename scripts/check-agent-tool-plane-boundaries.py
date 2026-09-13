@@ -154,6 +154,26 @@ require(
     "SummaryPipelineState",
     "Memory Engine-owned summary generation",
 )
+require(
+    "memory_engine/backend/src/ai/client/request.rs",
+    "request_responses",
+    "Memory Engine-owned Responses request and stream parser",
+)
+require(
+    "memory_engine/backend/src/ai/client/request.rs",
+    "request_chat_completions",
+    "Memory Engine-owned Chat Completions request and stream parser",
+)
+require(
+    "memory_engine/backend/src/services/ai_pipeline/overflow.rs",
+    "is_context_overflow_error",
+    "Memory Engine-owned context overflow classification",
+)
+require(
+    "memory_engine/backend/src/ai/retry.rs",
+    "transient_retry_backoff_ms",
+    "Memory Engine-owned bounded transient retry policy",
+)
 forbid(
     "memory_engine/backend/Cargo.toml",
     ["chatos_ai_runtime", "chatos_model_transport", "chatos_agent"],

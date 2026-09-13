@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 24;
+    public const uint Version = 25;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -69,6 +69,20 @@ public sealed record LocalAgentApprovalHistorySnapshot(
     string RecordId,
     string OwnerUserId,
     LocalAgentApprovalHistoryDraft Draft,
+    ulong Revision,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+public sealed record LocalAgentInstalledPluginDraft(
+    string PluginId,
+    string Release,
+    bool Enabled,
+    JsonElement Installation);
+
+public sealed record LocalAgentInstalledPluginSnapshot(
+    string RecordId,
+    string OwnerUserId,
+    LocalAgentInstalledPluginDraft Draft,
     ulong Revision,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -197,6 +211,21 @@ public sealed record LocalAgentCommand
     public static LocalAgentCommand ListApprovalHistory(string? cursor = null, uint limit = 500) =>
         new("list_approval_history", new ListPayload(cursor, limit));
 
+    public static LocalAgentCommand ListInstalledPlugins(string? cursor = null, uint limit = 500) =>
+        new("list_installed_plugins", new ListPayload(cursor, limit));
+
+    public static LocalAgentCommand PutInstalledPlugin(
+        ulong? expectedRevision,
+        LocalAgentInstalledPluginDraft draft) =>
+        new("put_installed_plugin", new PutInstalledPluginPayload(expectedRevision, draft));
+
+    public static LocalAgentCommand DeleteInstalledPlugin(
+        string pluginId,
+        ulong expectedRevision) =>
+        new("delete_installed_plugin", new DeleteInstalledPluginPayload(
+            pluginId,
+            expectedRevision));
+
     public static LocalAgentCommand SubscribeRunEvents(ulong afterSequence, uint limit = 200) =>
         new("subscribe_run_events", new EventsPayload(afterSequence, limit));
 
@@ -280,6 +309,10 @@ public sealed record LocalAgentCommand
     private sealed record AppendApprovalHistoryPayload(
         string RecordId,
         LocalAgentApprovalHistoryDraft Draft);
+    private sealed record PutInstalledPluginPayload(
+        ulong? ExpectedRevision,
+        LocalAgentInstalledPluginDraft Draft);
+    private sealed record DeleteInstalledPluginPayload(string PluginId, ulong ExpectedRevision);
     private sealed record PostgresTestPayload(string ConnectionSecretReference);
     private sealed record ApplyStoragePayload(
         LocalAgentStorageProfileSelection Profile,
@@ -581,6 +614,11 @@ public sealed record LocalAgentApprovalHistoryResponse(
 public sealed record LocalAgentApprovalHistoryRecordsResponse(
     IReadOnlyList<LocalAgentApprovalHistorySnapshot> Records,
     string? NextCursor) : LocalAgentResponse("approval_history_records");
+public sealed record LocalAgentInstalledPluginResponse(
+    LocalAgentInstalledPluginSnapshot Record) : LocalAgentResponse("installed_plugin");
+public sealed record LocalAgentInstalledPluginRecordsResponse(
+    IReadOnlyList<LocalAgentInstalledPluginSnapshot> Records,
+    string? NextCursor) : LocalAgentResponse("installed_plugin_records");
 public sealed record LocalAgentEventsResponse(
     IReadOnlyList<LocalAgentUIEvent> Events,
     ulong NextSequence,

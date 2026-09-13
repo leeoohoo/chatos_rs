@@ -143,6 +143,30 @@ class ClientStorageBoundaryTests(unittest.TestCase):
         self.assertIn("approvalStore.activate", connector)
         self.assertIn("approvalStore.append", connector)
 
+    def test_macos_installed_plugins_use_plugin_state_repository(self) -> None:
+        persistent_state = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+        ).read_text(errors="replace")
+        plugin_store = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativePluginStateStore.swift"
+        ).read_text(errors="replace")
+        connector_plugins = (
+            ROOT
+            / "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Plugins.swift"
+        ).read_text(errors="replace")
+        for legacy_field in (
+            "installedPluginIDs",
+            "installedPluginRecords",
+            "pluginPreferences",
+        ):
+            self.assertNotIn(legacy_field, persistent_state)
+            self.assertNotIn(legacy_field, connector_plugins)
+        self.assertIn("client.installedPluginRecords", plugin_store)
+        self.assertIn("client.putInstalledPlugin", plugin_store)
+        self.assertIn("client.deleteInstalledPlugin", plugin_store)
+        self.assertNotIn("UserDefaults", plugin_store)
+        self.assertNotIn("state.json", connector_plugins)
+
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()
         inventoried = {

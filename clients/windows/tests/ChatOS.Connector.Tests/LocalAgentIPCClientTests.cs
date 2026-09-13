@@ -106,7 +106,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesTheSharedV24RetryTaskAndTaskSnapshotFixtures()
+    public async Task UsesTheSharedV25RetryTaskAndTaskSnapshotFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("retry_task_request.json")));
@@ -121,7 +121,7 @@ public sealed class LocalAgentIPCClientTests
             "Preserve the approved visual hierarchy.")));
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
-        Assert.Equal(24u, LocalAgentProtocol.Version);
+        Assert.Equal(25u, LocalAgentProtocol.Version);
         Assert.True(JsonDeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));
@@ -141,7 +141,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesSharedV24ApprovalHistoryFixtures()
+    public async Task UsesSharedV25ApprovalHistoryFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("approval_history_append_request.json")));
@@ -179,6 +179,46 @@ public sealed class LocalAgentIPCClientTests
         var record = Assert.Single(recordsResponse.Records);
         Assert.Equal("approval-history-1", record.RecordId);
         Assert.Equal("approved", record.Draft.Decision);
+    }
+
+    [Fact]
+    public async Task UsesSharedV25InstalledPluginFixtures()
+    {
+        using var expectedRequest = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("installed_plugin_put_request.json")));
+        var requestTransport = new RecordingTransport(request => Reply(request, """
+            {"type":"installed_plugin","payload":{"record_id":"installed-plugin:test","owner_user_id":"user-1","draft":{"plugin_id":"plugin-1","release":"release-1","enabled":true,"installation":{"pluginID":"plugin-1","releaseID":"release-1","version":"1.2.3","artifactSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","installationPath":"/Applications/ChatOS/Plugins/plugin-1/1.2.3","installedAt":"2026-09-14T02:00:00Z"}},"revision":1,"created_at":"2026-09-14T02:00:00Z","updated_at":"2026-09-14T02:00:00Z"}}
+            """));
+        var requestClient = new WindowsLocalAgentIPCClient("user-1", requestTransport);
+        var expectedDraft = expectedRequest.RootElement
+            .GetProperty("command")
+            .GetProperty("payload")
+            .GetProperty("draft");
+        var response = await requestClient.SendAsync(LocalAgentCommand.PutInstalledPlugin(
+            null,
+            new LocalAgentInstalledPluginDraft(
+                "plugin-1",
+                "release-1",
+                true,
+                expectedDraft.GetProperty("installation").Clone())));
+
+        Assert.IsType<LocalAgentInstalledPluginResponse>(response);
+        using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
+        Assert.True(JsonDeepEquals(
+            expectedRequest.RootElement.GetProperty("command"),
+            actualRequest.RootElement.GetProperty("command")));
+
+        using var recordsFixture = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(Fixture("installed_plugin_records_response.json")));
+        var recordsTransport = new RecordingTransport(request => Reply(
+            request,
+            recordsFixture.RootElement.GetProperty("response").GetRawText()));
+        var recordsClient = new WindowsLocalAgentIPCClient("user-1", recordsTransport);
+        var recordsResponse = Assert.IsType<LocalAgentInstalledPluginRecordsResponse>(
+            await recordsClient.SendAsync(LocalAgentCommand.ListInstalledPlugins()));
+        var record = Assert.Single(recordsResponse.Records);
+        Assert.Equal("plugin-1", record.Draft.PluginId);
+        Assert.False(record.Draft.Enabled);
     }
 
     [Fact]
@@ -464,7 +504,7 @@ public sealed class LocalAgentIPCClientTests
             "shared",
             "fixtures",
             "local_agent",
-            "v24",
+            "v25",
             name));
 
     private static bool JsonDeepEquals(JsonElement expected, JsonElement actual) =>

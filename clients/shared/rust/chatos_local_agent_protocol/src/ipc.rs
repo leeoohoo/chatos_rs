@@ -13,17 +13,19 @@ use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
     AppendApprovalHistoryCommand, AppendTerminalHistoryCommand, ApplyStorageProfileCommand,
     ClientDataTransferResult, ClientStorageProfileDescriptor, ClipboardMutationResult,
-    CreateProjectCommand, DeleteClientSettingCommand, DeleteClipboardCommand, DeleteMediaCommand,
-    DeleteNotepadCommand, DeleteNotepadFolderCommand, DeleteStoryCommand,
-    DeleteTerminalHistoryCommand, ExportClientDataCommand, GetClientSettingCommand,
-    GetClipboardCommand, GetMediaCommand, GetNotepadCommand, GetProjectCommand, GetStoryCommand,
-    ImportClientDataCommand, InstallProjectPluginCapabilityCommand, ListApprovalHistoryCommand,
-    ListClipboardCommand, ListMediaCommand, ListNotepadCommand, ListProjectsCommand,
+    CreateProjectCommand, DeleteClientSettingCommand, DeleteClipboardCommand,
+    DeleteInstalledPluginCommand, DeleteMediaCommand, DeleteNotepadCommand,
+    DeleteNotepadFolderCommand, DeleteStoryCommand, DeleteTerminalHistoryCommand,
+    ExportClientDataCommand, GetClientSettingCommand, GetClipboardCommand, GetMediaCommand,
+    GetNotepadCommand, GetProjectCommand, GetStoryCommand, ImportClientDataCommand,
+    InstallProjectPluginCapabilityCommand, ListApprovalHistoryCommand, ListClipboardCommand,
+    ListInstalledPluginsCommand, ListMediaCommand, ListNotepadCommand, ListProjectsCommand,
     ListStoriesCommand, ListTerminalHistoryCommand, LocalAgentRun, LocalApprovalHistorySnapshot,
-    LocalClientSettingSnapshot, LocalClipboardSnapshot, LocalMediaSnapshot, LocalNotepadSnapshot,
-    LocalProjectSnapshot, LocalStorySnapshot, LocalTerminalHistorySnapshot, MediaMutationResult,
-    PostgresConnectionTestCommand, PostgresConnectionTestResult, ProtocolError,
-    PutClientSettingCommand, PutMediaCommand, PutNotepadCommand, PutStoryCommand,
+    LocalClientSettingSnapshot, LocalClipboardSnapshot, LocalInstalledPluginSnapshot,
+    LocalMediaSnapshot, LocalNotepadSnapshot, LocalProjectSnapshot, LocalStorySnapshot,
+    LocalTerminalHistorySnapshot, MediaMutationResult, PostgresConnectionTestCommand,
+    PostgresConnectionTestResult, ProtocolError, PutClientSettingCommand,
+    PutInstalledPluginCommand, PutMediaCommand, PutNotepadCommand, PutStoryCommand,
     RemoveProjectPluginCapabilityCommand, RenameNotepadFolderCommand, SetClipboardPinnedCommand,
     StoreClipboardCommand, ToolExecution, UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
@@ -124,6 +126,9 @@ pub enum LocalAgentCommand {
     ClearTerminalHistory,
     AppendApprovalHistory(AppendApprovalHistoryCommand),
     ListApprovalHistory(ListApprovalHistoryCommand),
+    ListInstalledPlugins(ListInstalledPluginsCommand),
+    PutInstalledPlugin(PutInstalledPluginCommand),
+    DeleteInstalledPlugin(DeleteInstalledPluginCommand),
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -190,6 +195,9 @@ impl LocalAgentCommand {
             Self::ClearTerminalHistory => Ok(()),
             Self::AppendApprovalHistory(command) => command.validate(),
             Self::ListApprovalHistory(command) => command.validate(),
+            Self::ListInstalledPlugins(command) => command.validate(),
+            Self::PutInstalledPlugin(command) => command.validate(),
+            Self::DeleteInstalledPlugin(command) => command.validate(),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -1019,6 +1027,15 @@ pub enum LocalAgentIpcResponse {
         records: Vec<LocalApprovalHistorySnapshot>,
         next_cursor: Option<String>,
     },
+    InstalledPlugin(LocalInstalledPluginSnapshot),
+    InstalledPluginRecords {
+        records: Vec<LocalInstalledPluginSnapshot>,
+        next_cursor: Option<String>,
+    },
+    InstalledPlugins {
+        records: Vec<LocalInstalledPluginSnapshot>,
+        next_cursor: Option<String>,
+    },
     Events {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
@@ -1149,6 +1166,31 @@ impl LocalAgentIpcResponse {
             }
             Self::ApprovalHistory(record) => record.validate(),
             Self::ApprovalHistoryRecords {
+                records,
+                next_cursor,
+            } => {
+                for record in records {
+                    record.validate()?;
+                }
+                if let Some(cursor) = next_cursor {
+                    require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
+            Self::InstalledPlugin(record) => record.validate(),
+            Self::InstalledPluginRecords {
+                records,
+                next_cursor,
+            } => {
+                for record in records {
+                    record.validate()?;
+                }
+                if let Some(cursor) = next_cursor {
+                    require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
+            Self::InstalledPlugins {
                 records,
                 next_cursor,
             } => {

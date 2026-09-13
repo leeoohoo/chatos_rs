@@ -1,5 +1,5 @@
 {
-  "protocol_version": 24,
+  "protocol_version": 25,
   "request_id": "request-approval-history-list-1",
   "response": {
     "type": "approval_history_records",

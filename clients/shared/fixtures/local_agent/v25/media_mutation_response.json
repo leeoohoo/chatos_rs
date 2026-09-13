@@ -1,5 +1,5 @@
 {
-  "protocol_version": 24,
+  "protocol_version": 25,
   "request_id": "request-put-media-1",
   "response": {
     "type": "media_mutation",
