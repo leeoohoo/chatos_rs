@@ -6,14 +6,14 @@ use std::collections::{HashMap, HashSet};
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use chatos_agent::{
-    is_chatos_conversation_agent, is_task_runner_phase_agent, parse_system_agent_key,
-};
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
     CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpProviderKind,
     ProjectExecutionContext, ResolvedMcpRoute, RuntimeProviderFinalizationStatus,
     RuntimeSessionResponse, RuntimeSessionRoutesResponse, WorkspaceProviderKind,
+};
+use chatos_plugin_management_sdk::{
+    is_chatos_conversation_agent, is_task_runner_phase_agent, parse_system_agent_key,
 };
 use chatos_plugin_management_sdk::{
     PluginComponentKind, ResolveAgentCapabilitiesRequest, ResolvedAgentCapabilities,
@@ -1117,7 +1117,7 @@ fn parse_agent_key(value: &str) -> Result<SystemAgentKey, ApiError> {
     let value = value.trim();
     let agent_key = parse_system_agent_key(value)
         .ok_or_else(|| ApiError::bad_request(format!("unknown system Agent key: {value}")))?;
-    let tool_plane = chatos_agent::agent_descriptor(agent_key).tool_plane;
+    let tool_plane = chatos_plugin_management_sdk::agent_descriptor(agent_key).tool_plane;
     if !tool_plane.uses_managed_gateway() {
         return Err(ApiError::conflict(format!(
             "system Agent {value} does not use the managed MCP Tool Plane"

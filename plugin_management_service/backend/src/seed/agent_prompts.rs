@@ -301,7 +301,10 @@ mod tests {
     #[test]
     fn baseline_catalog_covers_all_system_agents() {
         let prompts = baseline_prompts();
-        assert_eq!(prompts.len(), chatos_agent::system_agent_catalog().len());
+        assert_eq!(
+            prompts.len(),
+            chatos_plugin_management_sdk::system_agent_catalog().len()
+        );
         assert!(prompts
             .iter()
             .all(|(_, _, content)| !content.trim().is_empty()));

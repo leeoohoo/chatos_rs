@@ -173,7 +173,7 @@ mod tests {
         tests::{capabilities_with_plugin, resolved_plugin},
     };
     use super::*;
-    use chatos_agent::SystemAgentKey;
+    use chatos_plugin_management_sdk::SystemAgentKey;
     use chatos_plugin_management_sdk::{
         parse_plugin_manifest, plugin_component_descriptors, plugin_skill_snapshot_sha256,
         skill_resource_manifest_sha256, PackagedSkillMetadata, PluginAvailabilityStatus,

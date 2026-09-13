@@ -10,12 +10,12 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
     McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
     WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_mcp_service::MCP_ERROR_AUTH_REQUIRED;
+use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_plugin_management_sdk::{
     PackagedSkillMetadata, PluginComponentDescriptor, PluginComponentKind, PluginMcpServer,
     PluginPathRef, PluginSkillComponentSnapshot, SkillActivationAttestationClaims,

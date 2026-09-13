@@ -6,7 +6,6 @@ use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
-use chatos_agent::{can_use_chatos_notepad, is_chatos_conversation_agent, parse_system_agent_key};
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, MCP_ERROR_AUTH_REQUIRED,
@@ -14,6 +13,9 @@ use chatos_mcp_service::{
     METHOD_TOOLS_LIST,
 };
 use chatos_plugin_management_sdk::SystemAgentKey;
+use chatos_plugin_management_sdk::{
+    can_use_chatos_notepad, is_chatos_conversation_agent, parse_system_agent_key,
+};
 use serde_json::Value;
 
 use crate::api::internal_audit::{

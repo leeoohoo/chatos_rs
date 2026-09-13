@@ -9,7 +9,7 @@ pub(super) async fn seed_agent_bindings(
     store: &AppStore,
     admin_user_id: &str,
 ) -> Result<(), String> {
-    for descriptor in chatos_agent::system_agent_catalog()
+    for descriptor in chatos_plugin_management_sdk::system_agent_catalog()
         .iter()
         .filter(|descriptor| !descriptor.tool_plane.uses_managed_gateway())
     {

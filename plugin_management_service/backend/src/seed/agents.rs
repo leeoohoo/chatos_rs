@@ -79,7 +79,7 @@ pub(super) fn system_agent_specs() -> Vec<(
     bool,
     AgentToolPlane,
 )> {
-    chatos_agent::system_agent_catalog()
+    chatos_plugin_management_sdk::system_agent_catalog()
         .iter()
         .map(|descriptor| {
             (

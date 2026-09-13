@@ -8,11 +8,11 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
-use chatos_agent::SystemAgentKey;
 use chatos_mcp_management_sdk::{
     McpProviderKind, McpRetryClass, ProjectExecutionContext, ResolvedMcpRoute,
     WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
+use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_plugin_management_sdk::{
     plugin_command_snapshot_sha256, plugin_skill_snapshot_sha256, skill_resource_manifest_sha256,
     PackagedSkillMetadata, PluginComponentDescriptor, PluginComponentKind, PluginPathRef,

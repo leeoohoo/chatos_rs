@@ -763,7 +763,6 @@ dependencies = [
  "axum-server",
  "base64 0.22.1",
  "bytes",
- "chatos_agent",
  "chatos_ai_runtime",
  "chatos_config_sdk",
  "chatos_local_agent_protocol",
@@ -813,13 +812,6 @@ dependencies = [
  "uuid",
  "walkdir",
  "zip",
-]
-
-[[package]]
-name = "chatos_agent"
-version = "0.1.0"
-dependencies = [
- "chatos_plugin_management_sdk",
 ]
 
 [[package]]
@@ -3140,7 +3132,6 @@ dependencies = [
  "aes-gcm 0.11.0",
  "axum",
  "axum-server",
- "chatos_agent",
  "chatos_config_sdk",
  "chatos_mcp",
  "chatos_mcp_management_sdk",
@@ -3838,7 +3829,6 @@ dependencies = [
  "axum",
  "axum-server",
  "base64 0.22.1",
- "chatos_agent",
  "chatos_ai_runtime",
  "chatos_config_sdk",
  "chatos_mcp",

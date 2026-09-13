@@ -75,6 +75,7 @@ def require_absent(relative_path: str, reason: str) -> None:
 
 
 for retired_path in [
+    "agent",
     "crates/chatos_cloud_agent_protocol",
     "crates/chatos_cloud_agent_runtime",
     "crates/chatos_mcp_gateway",
@@ -96,6 +97,7 @@ for retired_path in [
     "crates/chatos_ai_runtime/src/task.rs",
     "crates/chatos_ai_runtime/src/tool_runtime",
     "crates/chatos_ai_runtime/src/tool_runtime.rs",
+    "mcp/provider_skills/task-runner-service.md",
 ]:
     require_absent(retired_path, "retired server execution plane must stay physically deleted")
 

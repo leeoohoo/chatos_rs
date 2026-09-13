@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_agent::SystemAgentKey;
+use chatos_plugin_management_sdk::SystemAgentKey;
 use chatos_plugin_management_sdk::{
     parse_plugin_manifest, plugin_component_descriptors, PLUGIN_SIGNATURE_ALGORITHM_ED25519,
 };

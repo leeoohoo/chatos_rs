@@ -11,7 +11,6 @@ axum = { version = "0.8", features = ["json", "multipart"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
-chatos_agent = { path = "../../agent", default-features = false }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_mcp = { path = "../../mcp" }

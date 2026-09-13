@@ -3,7 +3,6 @@
 
 [workspace]
 members = [
-  "agent",
   "mcp",
   "chatos/backend",
   "crates/chatos_ai_runtime",
