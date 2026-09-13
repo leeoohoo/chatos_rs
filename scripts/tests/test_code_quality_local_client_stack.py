@@ -88,6 +88,27 @@ class LocalClientStackContractTests(unittest.TestCase):
         ):
             self.assertGreaterEqual(support.count(f'"{binary}"'), 2)
 
+    def test_gateway_exposes_the_native_local_agent_model_surface(self) -> None:
+        gateway = (ROOT / "docker" / "apisix" / "apisix.yaml").read_text()
+        self.assertIn("id: chatos-model-gateway", gateway)
+        self.assertIn("uri: /api/model-gateway/*", gateway)
+        self.assertIn("id: memory-engine-sdk-api", gateway)
+        self.assertIn("uri: /api/memory-engine/v1/*", gateway)
+        self.assertIn('"chatos-backend:3997": 1', gateway)
+        self.assertIn('"memory-engine-backend:7081": 1', gateway)
+
+    def test_local_gateway_mounts_generated_runtime_files_outside_the_checkout(self) -> None:
+        runner = RUNNER.read_text()
+        environment = (ROOT / "scripts" / "local-dev-stack" / "environment.sh").read_text()
+        compose = (ROOT / "docker" / "compose.platform.yml").read_text()
+        local_override = (ROOT / "docker" / "compose.local-dev.yml").read_text()
+        self.assertIn("/tmp/chatos-local-dev-${UID}/apisix", runner)
+        self.assertIn("CHATOS_APISIX_RUNTIME_CONFIG_PATH", environment)
+        self.assertIn("CHATOS_APISIX_RUNTIME_ROUTES_PATH", environment)
+        self.assertIn("CHATOS_APISIX_RUNTIME_CONFIG_PATH", compose)
+        self.assertIn("CHATOS_APISIX_RUNTIME_ROUTES_PATH", compose)
+        self.assertNotIn("CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH", local_override)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -94,7 +94,7 @@ public struct NativeLocalAgentHostBootstrapSettings: Sendable {
         platformStateDirectory: URL,
         modelGatewayBaseURL: URL,
         memoryEngineBaseURL: URL,
-        memorySourceID: String = "local-agent",
+        memorySourceID: String = "chatos",
         storage: NativeLocalAgentStorageBootstrap
     ) {
         self.executableURL = executableURL

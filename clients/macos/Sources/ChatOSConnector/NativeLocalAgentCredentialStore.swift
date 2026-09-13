@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import Foundation
-import LocalAuthentication
 import Security
 
 public enum NativeLocalAgentCredentialStoreError: Error, Equatable, Sendable {
@@ -16,32 +15,29 @@ public enum NativeLocalAgentCredentialStoreError: Error, Equatable, Sendable {
 /// a non-interactive authentication context so a background lifecycle task
 /// fails instead of opening a password or biometric prompt.
 public actor NativeLocalAgentCredentialStore {
-    public static let productionService = "com.chatos.local-agent.credentials.v2"
+    public static let productionService = "com.chatos.local-agent.credentials.v6"
 
     private let service: String
+    private let broker: MacOSKeychainBrokerClient
 
-    public init(service: String = productionService) throws {
+    public init(
+        service: String = productionService,
+        broker: MacOSKeychainBrokerClient = .init()
+    ) throws {
         guard Self.valid(service) else {
             throw NativeLocalAgentCredentialStoreError.invalidReference
         }
         self.service = service
+        self.broker = broker
     }
 
     public func load(accountID: String, reference: String) throws -> Data? {
         let account = try accountKey(accountID: accountID, reference: reference)
-        var query = nonInteractiveQuery(account: account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else {
-            throw NativeLocalAgentCredentialStoreError.keychain(
-                operation: "load",
-                status: status
-            )
+        do {
+            return try broker.load(service: service, account: account)
+        } catch {
+            throw brokerError(error, operation: "load")
         }
-        return data
     }
 
     public func save(_ secret: Data, accountID: String, reference: String) throws {
@@ -49,59 +45,29 @@ public actor NativeLocalAgentCredentialStore {
             throw NativeLocalAgentCredentialStoreError.invalidReference
         }
         let account = try accountKey(accountID: accountID, reference: reference)
-        let query = nonInteractiveQuery(account: account)
-        let update: [String: Any] = [kSecValueData as String: secret]
-        let updateStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
-        if updateStatus == errSecSuccess { return }
-        guard updateStatus == errSecItemNotFound else {
-            throw NativeLocalAgentCredentialStoreError.keychain(
-                operation: "update",
-                status: updateStatus
-            )
-        }
-        var addition = query
-        addition[kSecValueData as String] = secret
-        addition[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        addition[kSecAttrSynchronizable as String] = false
-        let addStatus = SecItemAdd(addition as CFDictionary, nil)
-        guard addStatus == errSecSuccess else {
-            throw NativeLocalAgentCredentialStoreError.keychain(
-                operation: "add",
-                status: addStatus
-            )
+        do {
+            try broker.save(secret, service: service, account: account)
+        } catch {
+            throw brokerError(error, operation: "save")
         }
     }
 
     public func delete(accountID: String, reference: String) throws {
         let account = try accountKey(accountID: accountID, reference: reference)
-        let status = SecItemDelete(nonInteractiveQuery(account: account) as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw NativeLocalAgentCredentialStoreError.keychain(
-                operation: "delete",
-                status: status
-            )
+        do {
+            try broker.delete(service: service, account: account)
+        } catch {
+            throw brokerError(error, operation: "delete")
         }
     }
 
     func isAvailableForNonInteractiveAccess() -> Bool {
-        var query = nonInteractiveQuery(account: "availability-probe")
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        return status == errSecSuccess || status == errSecItemNotFound
-    }
-
-    private func nonInteractiveQuery(account: String) -> [String: Any] {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        query[kSecUseAuthenticationContext as String] = context
-        return query
+        do {
+            _ = try broker.load(service: service, account: "availability-probe")
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func accountKey(accountID: String, reference: String) throws -> String {
@@ -116,5 +82,18 @@ public actor NativeLocalAgentCredentialStore {
             && value.count <= 512
             && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
             && !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+    }
+
+    private func brokerError(
+        _ error: Error,
+        operation: String
+    ) -> NativeLocalAgentCredentialStoreError {
+        let status: OSStatus
+        if case let MacOSKeychainBrokerError.status(value) = error {
+            status = value
+        } else {
+            status = errSecNotAvailable
+        }
+        return .keychain(operation: operation, status: status)
     }
 }

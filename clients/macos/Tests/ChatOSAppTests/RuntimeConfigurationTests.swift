@@ -19,5 +19,6 @@ struct RuntimeConfigurationTests {
         #expect(socketPath.utf8CString.count <= MemoryLayout.size(ofValue: sockaddr_un().sun_path))
         #expect(settings.runtimeDirectory.path.hasPrefix("/tmp/chatos-la-\(geteuid())/"))
         #expect(!settings.platformStateDirectory.path.hasPrefix("/tmp/"))
+        #expect(settings.platformStateDirectory.path.contains("/ChatOSSwift/LocalAgentV6/"))
     }
 }

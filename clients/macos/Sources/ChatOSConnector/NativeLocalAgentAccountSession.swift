@@ -20,7 +20,7 @@ extension NativeLocalAgentAccountSessionError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidAccount: "本地 Agent 账户身份无效"
-        case .invalidAccessToken: "本地 Agent 登录凭据无效"
+        case .invalidAccessToken: "本地 Agent 登录凭据无效。"
         case .invalidDeviceID: "本地 Agent 设备身份无效"
         case let .invalidPersistentKey(reference):
             "本地 Agent 持久密钥损坏（\(reference)）"

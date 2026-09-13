@@ -21,6 +21,7 @@ public sealed class WindowsLocalAgentHostBootstrapTests
             var request = document.RootElement;
 
             Assert.Equal("user-1", request.GetProperty("owner_user_id").GetString());
+            Assert.Equal("chatos", request.GetProperty("memory_source_id").GetString());
             Assert.Equal(
                 "windows_named_pipe",
                 request.GetProperty("ipc_endpoint").GetProperty("transport").GetString());

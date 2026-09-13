@@ -331,13 +331,16 @@ ensure_dirs() {
 
 prepare_local_dev_apisix_config() {
   local source_config="$ROOT_DIR/docker/apisix/apisix.yaml"
-  local target_config="$CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH"
+  local runtime_config="$ROOT_DIR/docker/apisix/config.yaml"
+  local target_config="$CHATOS_APISIX_RUNTIME_ROUTES_PATH"
+  local target_runtime_config="$CHATOS_APISIX_RUNTIME_CONFIG_PATH"
   local host_address="${CHATOS_LOCAL_DEV_HOST_ADDRESS:?CHATOS_LOCAL_DEV_HOST_ADDRESS is required}"
-  if [[ ! -f "$source_config" ]]; then
-    echo "[ERROR] APISIX route config is missing: $source_config" >&2
+  if [[ ! -f "$source_config" || ! -f "$runtime_config" ]]; then
+    echo "[ERROR] APISIX configuration is missing" >&2
     return 1
   fi
-  mkdir -p "$(dirname "$target_config")"
+  mkdir -p "$(dirname "$target_config")" "$(dirname "$target_runtime_config")"
+  cp "$runtime_config" "$target_runtime_config"
   sed \
     -e "s/\"chatos-backend:3997\"/\"${host_address}:3997\"/g" \
     -e "s/\"user-service-backend:39190\"/\"${host_address}:39190\"/g" \

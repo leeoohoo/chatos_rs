@@ -17,6 +17,7 @@ use chatos_memory_client::{BatchSyncRecordsRequest, MemoryEngineClient, UpsertRe
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::ui_events::append_memory_sync_statuses;
@@ -812,6 +813,7 @@ pub struct MemorySynchronizer {
     tenant_id: String,
     source_id: String,
     policy: MemorySyncPolicy,
+    coordination: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -842,6 +844,7 @@ impl MemorySynchronizer {
             tenant_id,
             source_id,
             policy,
+            coordination: Arc::new(Mutex::new(())),
         })
     }
 
@@ -862,6 +865,10 @@ impl MemorySynchronizer {
         now: DateTime<Utc>,
         cancellation: CancellationToken,
     ) -> StorageResult<MemorySyncRunReport> {
+        let _coordination = tokio::select! {
+            guard = self.coordination.lock() => guard,
+            _ = cancellation.cancelled() => return Ok(MemorySyncRunReport::default()),
+        };
         let claimed = claim_memory_sync_batch(
             storage,
             ClaimMemorySyncBatchRequest {
@@ -885,6 +892,10 @@ impl MemorySynchronizer {
         now: DateTime<Utc>,
         cancellation: CancellationToken,
     ) -> StorageResult<MemorySyncRunReport> {
+        let _coordination = tokio::select! {
+            guard = self.coordination.lock() => guard,
+            _ = cancellation.cancelled() => return Ok(MemorySyncRunReport::default()),
+        };
         let claimed = claim_thread_memory_sync_batch(
             storage,
             ClaimThreadMemorySyncBatchRequest {

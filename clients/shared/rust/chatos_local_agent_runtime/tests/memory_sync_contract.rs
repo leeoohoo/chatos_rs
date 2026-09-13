@@ -20,7 +20,7 @@ use chatos_local_agent_runtime::{
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy)]
@@ -62,6 +62,28 @@ impl MemorySyncApi for MockMemoryApi {
             ApiBehavior::Success | ApiBehavior::Partial => Ok(receipt),
             ApiBehavior::Failure => Err("Memory Engine unavailable".to_string()),
         }
+    }
+}
+
+struct BlockingMemoryApi {
+    started: Notify,
+    release: Notify,
+}
+
+#[async_trait]
+impl MemorySyncApi for BlockingMemoryApi {
+    async fn batch_sync(
+        &self,
+        request: MemorySyncApiRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<MemorySyncApiReceipt, String> {
+        self.started.notify_one();
+        self.release.notified().await;
+        Ok(MemorySyncApiReceipt {
+            thread_id: request.thread_id,
+            received_count: request.records.len(),
+            upserted_count: request.records.len(),
+        })
     }
 }
 
@@ -233,6 +255,65 @@ async fn successful_batches_are_grouped_by_thread_and_not_sent_twice() {
     assert_eq!(status.pending_count, 0);
     assert_eq!(status.failed_count, 0);
     assert_eq!(status.run_id, "run-1");
+}
+
+#[tokio::test]
+async fn cloned_synchronizers_wait_for_an_in_flight_batch_to_finish() {
+    let now = Utc::now();
+    let (_directory, storage) = storage().await;
+    record(
+        storage.as_ref(),
+        message("message-1", "thread-1", 1, now),
+        now,
+    )
+    .await;
+    let api = Arc::new(BlockingMemoryApi {
+        started: Notify::new(),
+        release: Notify::new(),
+    });
+    let synchronizer =
+        MemorySynchronizer::new(api.clone(), "tenant-1", "source-1", policy(3)).unwrap();
+
+    let background = {
+        let synchronizer = synchronizer.clone();
+        let storage = storage.clone();
+        tokio::spawn(async move {
+            synchronizer
+                .sync_once(storage.as_ref(), scope(), now, CancellationToken::new())
+                .await
+                .unwrap()
+        })
+    };
+    api.started.notified().await;
+
+    let mut foreground = {
+        let synchronizer = synchronizer.clone();
+        let storage = storage.clone();
+        tokio::spawn(async move {
+            synchronizer
+                .sync_thread_once(
+                    storage.as_ref(),
+                    scope(),
+                    "thread-1",
+                    now,
+                    CancellationToken::new(),
+                )
+                .await
+                .unwrap()
+        })
+    };
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut foreground)
+            .await
+            .is_err(),
+        "a model-context flush must not inspect an outbox batch while the background worker owns it"
+    );
+
+    api.release.notify_one();
+    let background_report = background.await.unwrap();
+    let foreground_report = foreground.await.unwrap();
+    assert_eq!(background_report.synced, 1);
+    assert_eq!(foreground_report.claimed, 0);
 }
 
 #[tokio::test]

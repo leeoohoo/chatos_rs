@@ -36,7 +36,7 @@ public sealed record WindowsLocalAgentHostBootstrapSettings
     public required string PlatformStateDirectory { get; init; }
     public required Uri ModelGatewayBaseUri { get; init; }
     public required Uri MemoryEngineBaseUri { get; init; }
-    public string MemorySourceId { get; init; } = "local-agent";
+    public string MemorySourceId { get; init; } = "chatos";
     public required WindowsLocalAgentStorageBootstrap Storage { get; init; }
 }
 

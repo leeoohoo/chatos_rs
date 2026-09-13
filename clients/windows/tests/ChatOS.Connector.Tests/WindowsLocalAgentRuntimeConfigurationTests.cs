@@ -27,6 +27,7 @@ public sealed class WindowsLocalAgentRuntimeConfigurationTests
         Assert.Equal(Path.GetFullPath(executable), settings.ExecutablePath);
         Assert.Equal(new Uri("https://services.example.test/"), settings.ModelGatewayBaseUri);
         Assert.Equal(new Uri("https://services.example.test/"), settings.MemoryEngineBaseUri);
+        Assert.Equal("chatos", settings.MemorySourceId);
         Assert.Contains(Path.Combine("Accounts", accountHash), settings.PlatformStateDirectory);
         var sqlite = Assert.IsType<WindowsLocalAgentSqliteBootstrap>(settings.Storage);
         Assert.Equal(WindowsLocalAgentAccountSession.SqliteEncryptionKeyReference,

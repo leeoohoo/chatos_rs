@@ -204,8 +204,8 @@ services:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${APISIX_GATEWAY_PORT:-9080}:9080"
       - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${APISIX_CONTROL_PORT:-9092}:9092"
     volumes:
-      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
-      - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+      - ${CHATOS_APISIX_RUNTIME_CONFIG_PATH:-./apisix/config.yaml}:/usr/local/apisix/conf/config.yaml:ro
+      - ${CHATOS_APISIX_RUNTIME_ROUTES_PATH:-./apisix/apisix.yaml}:/usr/local/apisix/conf/apisix.yaml:ro
     deploy:
       resources:
         limits:

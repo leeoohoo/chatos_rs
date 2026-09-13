@@ -807,6 +807,17 @@ final class AppModel: ObservableObject {
         requestedConnectorSettingsTab = nil
     }
 
+    func prepareForApplicationTermination() async {
+        localAgentStateObservationTask?.cancel()
+        localAgentStateObservationTask = nil
+        localAgentLifecycleTask?.cancel()
+        if let hub = localAgentEventHub {
+            localAgentEventHub = nil
+            await hub.stop()
+        }
+        await localAgentAccountSession.logout()
+    }
+
     private func applyAuthenticationPhase(_ phase: AuthenticationViewModel.Phase) {
         switch phase {
         case let .authenticated(session):

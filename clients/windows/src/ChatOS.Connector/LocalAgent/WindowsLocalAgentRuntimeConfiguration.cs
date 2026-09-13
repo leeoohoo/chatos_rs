@@ -17,7 +17,7 @@ public sealed record WindowsLocalAgentRuntimeOptions
     public string? StateRootDirectory { get; init; }
     public string? ModelGatewayBaseUrl { get; init; }
     public string? MemoryEngineBaseUrl { get; init; }
-    public string MemorySourceId { get; init; } = "local-agent";
+    public string MemorySourceId { get; init; } = "chatos";
 }
 
 /// Resolves the Windows system boundary for the shared Rust Local Agent Host.
@@ -47,7 +47,7 @@ public sealed class WindowsLocalAgentRuntimeConfiguration : IWindowsLocalAgentRu
             StateRootDirectory = configuration[$"{prefix}StateRootDirectory"],
             ModelGatewayBaseUrl = configuration[$"{prefix}ModelGatewayBaseUrl"],
             MemoryEngineBaseUrl = configuration[$"{prefix}MemoryEngineBaseUrl"],
-            MemorySourceId = configuration[$"{prefix}MemorySourceId"] ?? "local-agent",
+            MemorySourceId = configuration[$"{prefix}MemorySourceId"] ?? "chatos",
         };
     }
 

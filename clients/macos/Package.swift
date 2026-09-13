@@ -12,18 +12,23 @@ let package = Package(
         .library(name: "ChatOSCore", targets: ["ChatOSCore"]),
         .library(name: "ChatOSAPI", targets: ["ChatOSAPI"]),
         .library(name: "ChatOSConnector", targets: ["ChatOSConnector"]),
+        .executable(name: "ChatOSKeychainBroker", targets: ["ChatOSKeychainBroker"]),
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
     ],
     targets: [
         .target(name: "ChatOSAgentRuntime"),
         .target(name: "ChatOSCore"),
         .target(
+            name: "ChatOSMacSecurity",
+            linkerSettings: [.linkedFramework("Security")]
+        ),
+        .target(
             name: "ChatOSAPI",
             dependencies: ["ChatOSCore", "ChatOSAgentRuntime"]
         ),
         .target(
             name: "ChatOSConnector",
-            dependencies: ["ChatOSCore", "ChatOSAgentRuntime"],
+            dependencies: ["ChatOSCore", "ChatOSAgentRuntime", "ChatOSMacSecurity"],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
                 .linkedFramework("ApplicationServices"),
@@ -35,6 +40,11 @@ let package = Package(
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("Security"),
             ]
+        ),
+        .executableTarget(
+            name: "ChatOSKeychainBroker",
+            dependencies: ["ChatOSMacSecurity"],
+            linkerSettings: [.linkedFramework("Security")]
         ),
         .executableTarget(
             name: "ChatOSApp",
@@ -61,11 +71,11 @@ let package = Package(
         ),
         .testTarget(
             name: "ChatOSConnectorTests",
-            dependencies: ["ChatOSConnector", "ChatOSCore"]
+            dependencies: ["ChatOSConnector", "ChatOSCore", "ChatOSKeychainBroker"]
         ),
         .testTarget(
             name: "ChatOSAppTests",
-            dependencies: ["ChatOSApp", "ChatOSCore"]
+            dependencies: ["ChatOSApp", "ChatOSCore", "ChatOSKeychainBroker"]
         ),
     ]
 )

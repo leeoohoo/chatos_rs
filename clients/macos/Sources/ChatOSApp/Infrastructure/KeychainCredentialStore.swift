@@ -1,6 +1,6 @@
 import ChatOSCore
+import ChatOSConnector
 import Foundation
-import LocalAuthentication
 import Security
 
 actor KeychainCredentialStore: CredentialStoring {
@@ -8,31 +8,32 @@ actor KeychainCredentialStore: CredentialStoring {
     private let account: String
     private var cachedAccessToken: String?
     private var hasLoadedAccessToken = false
+    private let broker: MacOSKeychainBrokerClient
 
     init(
-        service: String = "com.chatos.swift-client.authentication",
-        account: String = "access-token"
+        service: String = "com.chatos.swift-client.authentication.v5",
+        account: String = "access-token",
+        broker: MacOSKeychainBrokerClient = .init()
     ) {
         precondition(!service.isEmpty && !account.isEmpty)
         self.service = service
         self.account = account
+        self.broker = broker
     }
 
     func loadAccessToken() async throws -> String? {
         if hasLoadedAccessToken { return cachedAccessToken }
 
-        var query = nonInteractiveQuery
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound {
+        let data: Data?
+        do {
+            data = try broker.load(service: service, account: account)
+        } catch {
+            throw brokerError(error)
+        }
+        guard let data else {
             cachedAccessToken = nil
             hasLoadedAccessToken = true
             return nil
-        }
-        guard status == errSecSuccess, let data = result as? Data else {
-            throw keychainError(status)
         }
 
         let token = String(decoding: data, as: UTF8.self)
@@ -50,20 +51,10 @@ actor KeychainCredentialStore: CredentialStoring {
         }
         if hasLoadedAccessToken, cachedAccessToken == normalized { return }
 
-        let data = Data(normalized.utf8)
-        let updateStatus = SecItemUpdate(
-            nonInteractiveQuery as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
-        )
-        if updateStatus == errSecItemNotFound {
-            var addition = nonInteractiveQuery
-            addition[kSecValueData as String] = data
-            addition[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            addition[kSecAttrSynchronizable as String] = false
-            let addStatus = SecItemAdd(addition as CFDictionary, nil)
-            guard addStatus == errSecSuccess else { throw keychainError(addStatus) }
-        } else if updateStatus != errSecSuccess {
-            throw keychainError(updateStatus)
+        do {
+            try broker.save(Data(normalized.utf8), service: service, account: account)
+        } catch {
+            throw brokerError(error)
         }
         cachedAccessToken = normalized
         hasLoadedAccessToken = true
@@ -71,29 +62,13 @@ actor KeychainCredentialStore: CredentialStoring {
 
     func deleteAccessToken() async throws {
         if hasLoadedAccessToken, cachedAccessToken == nil { return }
-        let status = SecItemDelete(nonInteractiveQuery as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw keychainError(status)
+        do {
+            try broker.delete(service: service, account: account)
+        } catch {
+            throw brokerError(error)
         }
         cachedAccessToken = nil
         hasLoadedAccessToken = true
-    }
-
-    private var baseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrSynchronizable as String: false,
-        ]
-    }
-
-    private var nonInteractiveQuery: [String: Any] {
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        var query = baseQuery
-        query[kSecUseAuthenticationContext as String] = context
-        return query
     }
 
     private func keychainError(_ status: OSStatus) -> NSError {
@@ -102,5 +77,12 @@ actor KeychainCredentialStore: CredentialStoring {
             code: Int(status),
             userInfo: [NSLocalizedDescriptionKey: "macOS Keychain access failed (\(status))"]
         )
+    }
+
+    private func brokerError(_ error: Error) -> NSError {
+        if case let MacOSKeychainBrokerError.status(status) = error {
+            return keychainError(status)
+        }
+        return keychainError(errSecNotAvailable)
     }
 }

@@ -28,6 +28,7 @@ struct NativeLocalAgentHostBootstrapTests {
             JSONSerialization.jsonObject(with: configuration.launchMaterial.snapshotForTesting()) as? [String: Any]
         )
         #expect(request["owner_user_id"] as? String == "user-1")
+        #expect(request["memory_source_id"] as? String == "chatos")
         #expect(request["attachment_grant_directory"] as? String == fixture.grants.path)
         #expect(request["platform_state_directory"] as? String == fixture.state.path)
         let profile = try #require(request["storage_profile"] as? [String: Any])

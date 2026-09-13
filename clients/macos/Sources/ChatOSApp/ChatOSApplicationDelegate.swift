@@ -10,6 +10,7 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindowController: NSWindowController?
     private var mainWindowPresentationGeneration = 0
     private var didReceiveFileOpenRequest = false
+    private var terminationTask: Task<Void, Never>?
 
     override init() {
         let model = AppModel()
@@ -54,6 +55,17 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
     ) -> Bool {
         scheduleMainWindowPresentation(after: 0.08)
         return false
+    }
+
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        guard terminationTask == nil else { return .terminateLater }
+        terminationTask = Task { [model] in
+            await model.prepareForApplicationTermination()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     @objc func openFilesInPet(
