@@ -11,6 +11,7 @@ AUDIT = ROOT / "clients/shared/rust/chatos_client_storage/audit/legacy_access.js
 PROVIDER_OWNED_MACOS_PREFERENCES = (
     "clients/macos/Sources/ChatOSApp/Features/Pet/PetPreferencesStore.swift",
     "clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/GlobalUtilityPreferencesStore.swift",
+    "clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/QuickSearch/QuickSearchViewModel.swift",
 )
 
 

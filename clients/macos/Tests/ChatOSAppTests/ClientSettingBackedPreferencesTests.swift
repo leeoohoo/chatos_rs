@@ -54,6 +54,27 @@ struct ClientSettingBackedPreferencesTests {
         #expect(!restored.screenshotEnabled)
         #expect(restored.hotKey(for: .quickSearch) == replacement)
     }
+
+    @Test("Quick Search usage is bounded by the selected account-scoped provider")
+    func quickSearchUsageIsProviderOwned() async throws {
+        let context = try PreferenceTestContext()
+        let first = QuickSearchUsageStore(accountSession: context.session)
+        await first.activate(ownerUserID: "user-1")
+        first.recordUsage("project:one", now: 1_000)
+        first.recordUsage("project:one", now: 2_000)
+        await first.flush()
+
+        let restored = QuickSearchUsageStore(accountSession: context.session)
+        await restored.activate(ownerUserID: "user-1")
+        let boost = restored.usageBoost(for: "project:one", now: 2_000)
+        #expect(boost.recency == 70)
+        #expect(boost.frequency > 0)
+
+        await restored.activate(ownerUserID: "user-2")
+        let isolated = restored.usageBoost(for: "project:one", now: 2_000)
+        #expect(isolated.recency == 0)
+        #expect(isolated.frequency == 0)
+    }
 }
 
 private struct PreferenceTestContext {

@@ -11,9 +11,9 @@ final class QuickSearchCoordinator {
     private let viewModel: QuickSearchViewModel
     private let panelController: GlobalCommandPanelController
 
-    init(model: AppModel) {
+    init(model: AppModel, usageStore: QuickSearchUsageStore) {
         self.model = model
-        self.viewModel = QuickSearchViewModel(model: model)
+        self.viewModel = QuickSearchViewModel(model: model, usageStore: usageStore)
         self.panelController = GlobalCommandPanelController(size: NSSize(width: 760, height: 520))
         viewModel.onExecute = { [weak self] action in
             self?.execute(action)

@@ -15,8 +15,7 @@
     {"path":"clients/windows/src/ChatOS.Connector/Plugins/SqliteInstalledPluginStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"PluginStateRepository","status":"pending"},
 
     {"path":"clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift","platform":"macos","access_kind":"business_json_file_and_secret_file","target":"ClientSettingsRepository + PluginStateRepository + platform secure store","status":"pending"},
-    {"path":"clients/macos/Sources/ChatOSAgentRuntime/AgentTypes.swift","platform":"macos","access_kind":"business_user_defaults","target":"ClientSettingsRepository","status":"pending"},
-    {"path":"clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/QuickSearch/QuickSearchViewModel.swift","platform":"macos","access_kind":"business_user_defaults","target":"ClientSettingsRepository","status":"pending"}
+    {"path":"clients/macos/Sources/ChatOSAgentRuntime/AgentTypes.swift","platform":"macos","access_kind":"business_user_defaults","target":"ClientSettingsRepository","status":"pending"}
   ],
   "os_ui_preference_exemptions": [
     "clients/macos/Sources/ChatOSApp/AppModel.swift",

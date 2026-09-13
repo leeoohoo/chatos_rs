@@ -14,11 +14,18 @@ final class GlobalUtilityCoordinator {
     private var cancellables = Set<AnyCancellable>()
     private var hasStarted = false
 
-    init(model: AppModel, preferences: GlobalUtilityPreferencesStore) {
+    init(
+        model: AppModel,
+        preferences: GlobalUtilityPreferencesStore,
+        quickSearchUsage: QuickSearchUsageStore
+    ) {
         self.preferences = preferences
         self.hotKeys = GlobalHotKeyService()
         self.screenshotCoordinator = ScreenshotCoordinator(model: model)
-        self.quickSearchCoordinator = QuickSearchCoordinator(model: model)
+        self.quickSearchCoordinator = QuickSearchCoordinator(
+            model: model,
+            usageStore: quickSearchUsage
+        )
         self.clipboardCoordinator = ClipboardHistoryCoordinator(model: model)
         self.screenRecordingCoordinator = ScreenRecordingCoordinator(model: model)
         self.quickSearchCoordinator.shortcutLabelProvider = { [weak self] in

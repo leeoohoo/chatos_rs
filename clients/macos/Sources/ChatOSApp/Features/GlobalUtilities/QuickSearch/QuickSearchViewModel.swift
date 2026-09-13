@@ -1,5 +1,7 @@
 import AppKit
+import ChatOSConnector
 import ChatOSCore
+import Combine
 import Foundation
 import SwiftUI
 
@@ -7,6 +9,139 @@ struct QuickSearchApplicationRecord: Sendable, Hashable {
     let name: String
     let bundleIdentifier: String?
     let url: URL
+}
+
+private struct QuickSearchUsageRecord: Codable, Equatable, Sendable {
+    var lastUsedAt: TimeInterval
+    var count: Int
+}
+
+@MainActor
+final class QuickSearchUsageStore: ObservableObject {
+    @Published private(set) var persistenceError: String?
+
+    private let persistence: NativeLocalClientSettingStore<[String: QuickSearchUsageRecord]>
+    private var activeOwnerUserID: String?
+    private var records: [String: QuickSearchUsageRecord] = [:]
+    private var persistedRecords: [String: QuickSearchUsageRecord] = [:]
+    private var mutation: UInt64 = 0
+    private var persistedMutation: UInt64 = 0
+    private var isStorageReady = false
+    private var saveTask: Task<Void, Never>?
+
+    init(accountSession: any NativeLocalAgentAccountSessionAccess) {
+        do {
+            persistence = try NativeLocalClientSettingStore(
+                key: "quick_search.usage",
+                accountSession: accountSession
+            )
+        } catch {
+            preconditionFailure("Quick Search usage storage key is invalid")
+        }
+    }
+
+    func activate(ownerUserID: String) async {
+        saveTask?.cancel()
+        activeOwnerUserID = ownerUserID
+        isStorageReady = false
+        persistenceError = nil
+        await persistence.reset()
+        do {
+            let loaded = try await persistence.load(ownerUserID: ownerUserID, defaultValue: [:])
+            guard activeOwnerUserID == ownerUserID else { return }
+            records = loaded
+            persistedRecords = loaded
+            mutation = 0
+            persistedMutation = 0
+            isStorageReady = true
+        } catch {
+            guard activeOwnerUserID == ownerUserID else { return }
+            records = [:]
+            persistedRecords = [:]
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    func deactivate() async {
+        saveTask?.cancel()
+        saveTask = nil
+        activeOwnerUserID = nil
+        records = [:]
+        persistedRecords = [:]
+        mutation = 0
+        persistedMutation = 0
+        isStorageReady = false
+        persistenceError = nil
+        await persistence.reset()
+    }
+
+    func flush() async {
+        saveTask?.cancel()
+        guard isStorageReady,
+              mutation > persistedMutation,
+              let ownerUserID = activeOwnerUserID else { return }
+        await persist(records, ownerUserID: ownerUserID, mutation: mutation)
+    }
+
+    func usageBoost(
+        for id: String,
+        now: TimeInterval = Date().timeIntervalSince1970
+    ) -> (recency: Double, frequency: Double) {
+        guard let usage = records[id] else { return (0, 0) }
+        let age = max(0, now - usage.lastUsedAt)
+        return (
+            max(0, 70 - age / 86_400 * 8),
+            min(45, log2(Double(usage.count) + 1) * 12)
+        )
+    }
+
+    func recordUsage(_ id: String, now: TimeInterval = Date().timeIntervalSince1970) {
+        guard isStorageReady, let ownerUserID = activeOwnerUserID else { return }
+        var record = records[id] ?? QuickSearchUsageRecord(lastUsedAt: 0, count: 0)
+        record.lastUsedAt = now
+        record.count = min(Int.max - 1, record.count) + 1
+        records[id] = record
+        if records.count > 512 {
+            let retained = records.sorted { $0.value.lastUsedAt > $1.value.lastUsedAt }.prefix(512)
+            records = Dictionary(uniqueKeysWithValues: retained.map { ($0.key, $0.value) })
+        }
+        mutation &+= 1
+        let expectedMutation = mutation
+        let snapshot = records
+        saveTask?.cancel()
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled, let self else { return }
+            await persist(snapshot, ownerUserID: ownerUserID, mutation: expectedMutation)
+        }
+    }
+
+    private func persist(
+        _ snapshot: [String: QuickSearchUsageRecord],
+        ownerUserID: String,
+        mutation: UInt64
+    ) async {
+        do {
+            let committed = try await persistence.saveLatest(
+                ownerUserID: ownerUserID,
+                value: snapshot,
+                mutation: mutation
+            )
+            guard activeOwnerUserID == ownerUserID else { return }
+            if committed, mutation >= persistedMutation {
+                persistedMutation = mutation
+                persistedRecords = snapshot
+            }
+            if mutation == self.mutation {
+                persistenceError = nil
+            }
+        } catch {
+            guard activeOwnerUserID == ownerUserID, mutation == self.mutation else { return }
+            records = persistedRecords
+            isStorageReady = false
+            persistenceError = error.localizedDescription
+        }
+    }
 }
 
 @MainActor
@@ -26,12 +161,18 @@ final class QuickSearchViewModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var applicationLoadTask: Task<Void, Never>?
     private var generation = UUID()
-    private var usage: [String: UsageRecord]
-    private let usageDefaultsKey = "ChatOS.quickSearch.usage"
+    private let usageStore: QuickSearchUsageStore
+    private var cancellables = Set<AnyCancellable>()
 
-    init(model: AppModel) {
+    init(model: AppModel, usageStore: QuickSearchUsageStore) {
         self.model = model
-        self.usage = Self.loadUsage(key: usageDefaultsKey)
+        self.usageStore = usageStore
+        usageStore.$persistenceError
+            .sink { [weak self] error in
+                guard let error else { return }
+                self?.diagnostic = error
+            }
+            .store(in: &cancellables)
         applicationLoadTask = Task { [weak self] in
             let records = await Task.detached(priority: .utility) {
                 Self.scanApplications()
@@ -251,30 +392,15 @@ final class QuickSearchViewModel: ObservableObject {
     }
 
     private func usageBoost(for id: String) -> (recency: Double, frequency: Double) {
-        guard let usage = usage[id] else { return (0, 0) }
-        let age = max(0, Date().timeIntervalSince1970 - usage.lastUsedAt)
-        let recency = max(0, 70 - age / 86_400 * 8)
-        let frequency = min(45, log2(Double(usage.count) + 1) * 12)
-        return (recency, frequency)
+        usageStore.usageBoost(for: id)
     }
 
     private func recordUsage(_ id: String) {
-        var record = usage[id] ?? UsageRecord(lastUsedAt: 0, count: 0)
-        record.lastUsedAt = Date().timeIntervalSince1970
-        record.count += 1
-        usage[id] = record
-        if let data = try? JSONEncoder().encode(usage) {
-            UserDefaults.standard.set(data, forKey: usageDefaultsKey)
-        }
+        usageStore.recordUsage(id)
     }
 
     private func localized(_ chinese: String, _ english: String) -> String {
         model?.interfaceLanguage == .english ? english : chinese
-    }
-
-    private static func loadUsage(key: String) -> [String: UsageRecord] {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return [:] }
-        return (try? JSONDecoder().decode([String: UsageRecord].self, from: data)) ?? [:]
     }
 
     nonisolated private static func scanApplications() -> [QuickSearchApplicationRecord] {
@@ -328,8 +454,4 @@ final class QuickSearchViewModel: ObservableObject {
         case all, actions, chatOS, applications, files
     }
 
-    private struct UsageRecord: Codable {
-        var lastUsedAt: TimeInterval
-        var count: Int
-    }
 }
