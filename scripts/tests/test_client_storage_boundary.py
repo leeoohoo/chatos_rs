@@ -48,6 +48,16 @@ class ClientStorageBoundaryTests(unittest.TestCase):
         self.assertNotIn("posixPermissions", source)
         self.assertIn("MacOSKeychainBrokerClient", source)
 
+    def test_native_remote_connections_do_not_restore_legacy_route_fallbacks(self) -> None:
+        source = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeRemoteConnectionService.swift"
+        ).read_text(errors="replace")
+        self.assertNotIn("chatos-swift-native-client", source)
+        self.assertNotIn("local-machine", source)
+        self.assertNotIn("migrateLegacyRouteIfNeeded", source)
+        self.assertNotIn("isLegacyRoute", source)
+        self.assertIn("routeStore.requireCurrent()", source)
+
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()
         inventoried = {

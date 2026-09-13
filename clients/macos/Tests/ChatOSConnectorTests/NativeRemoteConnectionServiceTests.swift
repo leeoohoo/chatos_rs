@@ -7,31 +7,16 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
     func testStoresCredentialsLocallyAndNeverSendsThemToCloud() async throws {
         let upstream = RemoteConnectionUpstreamStub()
         let tester = RemoteConnectionTesterSpy()
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chatos-remote-test-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
         let credentialStore = NativeRemoteConnectionCredentialStore(
             secretStore: TestNativeConnectorSecretStore()
         )
-        let connectorStateStore = NativeConnectorStateStore(
-            stateURL: root.appendingPathComponent("connector-state.json")
-        )
-        var connectorState = NativeConnectorPersistentState.empty
-        connectorState.deviceID = "device-current"
-        connectorState.workspaces = [
-            LocalConnectorWorkspace(
-                id: "workspace-current",
-                alias: "Mac",
-                absoluteRoot: "/Users/test",
-                fingerprint: "workspace-current"
-            ),
-        ]
-        try connectorStateStore.save(connectorState)
+        let routeStore = NativeConnectorRouteStore()
+        routeStore.replace(deviceID: "device-current", workspaceID: "workspace-current")
         let service = NativeRemoteConnectionService(
             upstream: upstream,
             tester: tester,
             credentialStore: credentialStore,
-            connectorStateStore: connectorStateStore
+            routeStore: routeStore
         )
 
         let created = try await service.createConnection(Self.passwordDraft)
@@ -79,9 +64,6 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
     func testResolvedDraftCachesDirectConnectionLookupForConsecutiveTools() async throws {
         let upstream = RemoteConnectionUpstreamStub()
         let saved = try await upstream.createConnection(Self.passwordDraft)
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chatos-remote-cache-test-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
         let service = NativeRemoteConnectionService(
             upstream: upstream,
             tester: RemoteConnectionTesterSpy(),
@@ -100,45 +82,48 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertEqual(listRequests, 0)
     }
 
-    func testLegacyRouteMigratesToCurrentConnectorIdentifiers() async throws {
+    func testLoadingAnExistingConnectionNeverRewritesItsFrozenRoute() async throws {
         let upstream = RemoteConnectionUpstreamStub()
-        var legacyDraft = Self.passwordDraft
-        legacyDraft.localConnectorDeviceID = NativeRemoteConnectionService.nativeDeviceID
-        legacyDraft.localConnectorWorkspaceID = NativeRemoteConnectionService.nativeWorkspaceID
-        let saved = try await upstream.createConnection(legacyDraft)
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chatos-remote-route-test-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let stateStore = NativeConnectorStateStore(
-            stateURL: root.appendingPathComponent("connector-state.json")
-        )
-        var state = NativeConnectorPersistentState.empty
-        state.deviceID = "device-current"
-        state.workspaces = [
-            .init(
-                id: "workspace-current",
-                alias: "Mac",
-                absoluteRoot: "/",
-                fingerprint: "workspace-current"
-            ),
-        ]
-        try stateStore.save(state)
+        let saved = try await upstream.createConnection(Self.passwordDraft)
+        let routeStore = NativeConnectorRouteStore()
+        routeStore.replace(deviceID: "device-current", workspaceID: "workspace-current")
         let service = NativeRemoteConnectionService(
             upstream: upstream,
             tester: RemoteConnectionTesterSpy(),
             credentialStore: NativeRemoteConnectionCredentialStore(
                 secretStore: TestNativeConnectorSecretStore()
             ),
-            connectorStateStore: stateStore
+            routeStore: routeStore
         )
 
         let loaded = try await service.getConnection(id: saved.id)
-        let migrated = try XCTUnwrap(loaded)
+        let unchanged = try XCTUnwrap(loaded)
         let updateRequests = await upstream.updateRequestCount()
 
-        XCTAssertEqual(migrated.localConnectorDeviceID, "device-current")
-        XCTAssertEqual(migrated.localConnectorWorkspaceID, "workspace-current")
-        XCTAssertEqual(updateRequests, 1)
+        XCTAssertEqual(unchanged.localConnectorDeviceID, "legacy-device")
+        XCTAssertEqual(unchanged.localConnectorWorkspaceID, "legacy-workspace")
+        XCTAssertEqual(updateRequests, 0)
+    }
+
+    func testCreatingAConnectionFailsClosedWithoutAnActiveConnectorRoute() async throws {
+        let upstream = RemoteConnectionUpstreamStub()
+        let service = NativeRemoteConnectionService(
+            upstream: upstream,
+            tester: RemoteConnectionTesterSpy(),
+            credentialStore: NativeRemoteConnectionCredentialStore(
+                secretStore: TestNativeConnectorSecretStore()
+            ),
+            routeStore: NativeConnectorRouteStore()
+        )
+
+        do {
+            _ = try await service.createConnection(Self.passwordDraft)
+            XCTFail("Expected a missing Local Connector route to fail")
+        } catch let error as NativeConnectorRouteError {
+            XCTAssertEqual(error, .unavailable)
+        }
+        let createdDraft = await upstream.lastCreatedDraft()
+        XCTAssertNil(createdDraft)
     }
 
     func testSSHConfigCanReuseAConnectionWithoutExposingTheControlPath() throws {

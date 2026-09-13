@@ -24,6 +24,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     private let ticketProvider: any LocalConnectorPairingTicketProviding
     let gateway: NativeConnectorGateway
     let stateStore: NativeConnectorStateStore
+    let routeStore: NativeConnectorRouteStore
     let pluginInstaller: NativePluginInstaller
     let mcpCodeWriteStore = NativeMCPCodeWriteStore()
     let mcpTerminalStore = NativeMCPTerminalStore()
@@ -66,12 +67,14 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     public init(
         configuration: NativeConnectorConfiguration,
         ticketProvider: any LocalConnectorPairingTicketProviding,
+        routeStore: NativeConnectorRouteStore = .init(),
         remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)? = nil
     ) {
         self.configuration = configuration
         self.ticketProvider = ticketProvider
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
         self.stateStore = NativeConnectorStateStore(stateURL: configuration.stateURL)
+        self.routeStore = routeStore
         self.pluginInstaller = NativePluginInstaller(
             rootURL: configuration.stateURL
                 .deletingLastPathComponent()
@@ -82,6 +85,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             .appendingPathComponent("PluginRuntime", isDirectory: true)
         self.remoteConnectionRuntime = remoteConnectionRuntime
         self.state = (try? stateStore.load()) ?? .empty
+        self.routeStore.replace(
+            deviceID: self.state.deviceID,
+            workspaceID: self.state.workspaces.first?.id
+        )
     }
 
     public func fetchStatus() async throws -> LocalConnectorStatus {
@@ -114,6 +121,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         state.deviceID = device.id
         state.deviceName = resolvedName
         state.workspaces = [workspace]
+        routeStore.replace(deviceID: device.id, workspaceID: workspace.id)
         state.gatewayConnectionEnabled = true
         try stateStore.save(state)
         try await connectGateway()
