@@ -52,9 +52,9 @@ struct NativeRemoteConnectionCredentials: Codable, Sendable, Equatable {
 }
 
 struct NativeRemoteConnectionCredentialStore: Sendable {
-    private let secretStore: NativeConnectorSecretStore
+    private let secretStore: any NativeConnectorSecretStoring
 
-    init(secretStore: NativeConnectorSecretStore = NativeConnectorSecretStore()) {
+    init(secretStore: any NativeConnectorSecretStoring = NativeConnectorSecretStore()) {
         self.secretStore = secretStore
     }
 

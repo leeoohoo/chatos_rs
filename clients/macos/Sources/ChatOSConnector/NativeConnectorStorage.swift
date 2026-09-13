@@ -61,51 +61,50 @@ struct NativeConnectorStateStore: Sendable {
     }
 }
 
-struct NativeConnectorSecretStore: Sendable {
-    private let rootURL: URL
+protocol NativeConnectorSecretStoring: Sendable {
+    func load(account: String) throws -> Data?
+    func save(_ value: Data, account: String) throws
+    func delete(account: String) throws
+}
 
-    init(rootURL: URL? = nil) {
-        if let rootURL {
-            self.rootURL = rootURL
-            return
-        }
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser
-        self.rootURL = support
-            .appendingPathComponent("ChatOSSwift", isDirectory: true)
-            .appendingPathComponent("NativeConnector", isDirectory: true)
-            .appendingPathComponent("Secrets", isDirectory: true)
+enum NativeConnectorSecretStoreError: Error, Equatable, Sendable {
+    case invalidAccount
+}
+
+struct NativeConnectorSecretStore: NativeConnectorSecretStoring, Sendable {
+    static let productionService = "com.chatos.native-connector.credentials.v1"
+
+    private let service: String
+    private let broker: MacOSKeychainBrokerClient
+
+    init(
+        service: String = productionService,
+        broker: MacOSKeychainBrokerClient = .init()
+    ) {
+        self.service = service
+        self.broker = broker
     }
 
     func load(account: String) throws -> Data? {
-        let url = secretURL(account: account)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return try Data(contentsOf: url)
+        guard Self.valid(account) else { throw NativeConnectorSecretStoreError.invalidAccount }
+        return try broker.load(service: service, account: account)
     }
 
     func save(_ value: Data, account: String) throws {
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        let url = secretURL(account: account)
-        try value.write(to: url, options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        guard Self.valid(account) else { throw NativeConnectorSecretStoreError.invalidAccount }
+        try broker.save(value, service: service, account: account)
     }
 
     func delete(account: String) throws {
-        let url = secretURL(account: account)
-        if FileManager.default.fileExists(atPath: url.path) {
-            try FileManager.default.removeItem(at: url)
-        }
+        guard Self.valid(account) else { throw NativeConnectorSecretStoreError.invalidAccount }
+        try broker.delete(service: service, account: account)
     }
 
-    private func secretURL(account: String) -> URL {
-        let safeName = account.unicodeScalars.map { scalar in
-            CharacterSet.alphanumerics.contains(scalar) || scalar == "-" ? String(scalar) : "_"
-        }.joined()
-        return rootURL.appendingPathComponent(safeName, isDirectory: false)
+    private static func valid(_ account: String) -> Bool {
+        !account.isEmpty
+            && account.utf8.count <= 1_024
+            && account == account.trimmingCharacters(in: .whitespacesAndNewlines)
+            && !account.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
     }
 }
 
@@ -113,7 +112,7 @@ struct NativeConnectorDeviceIdentity: Sendable {
     private static let account = "device-signing-key-v1"
     private let privateKey: Curve25519.Signing.PrivateKey
 
-    init(secretStore: NativeConnectorSecretStore) throws {
+    init(secretStore: any NativeConnectorSecretStoring) throws {
         if let stored = try secretStore.load(account: Self.account) {
             do {
                 privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: stored)

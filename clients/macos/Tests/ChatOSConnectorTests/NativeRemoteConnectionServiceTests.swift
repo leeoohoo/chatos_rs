@@ -11,7 +11,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
             .appendingPathComponent("chatos-remote-test-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let credentialStore = NativeRemoteConnectionCredentialStore(
-            secretStore: NativeConnectorSecretStore(rootURL: root)
+            secretStore: TestNativeConnectorSecretStore()
         )
         let connectorStateStore = NativeConnectorStateStore(
             stateURL: root.appendingPathComponent("connector-state.json")
@@ -86,7 +86,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
             upstream: upstream,
             tester: RemoteConnectionTesterSpy(),
             credentialStore: NativeRemoteConnectionCredentialStore(
-                secretStore: NativeConnectorSecretStore(rootURL: root)
+                secretStore: TestNativeConnectorSecretStore()
             ),
             connectionCacheTTL: 15
         )
@@ -127,7 +127,7 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
             upstream: upstream,
             tester: RemoteConnectionTesterSpy(),
             credentialStore: NativeRemoteConnectionCredentialStore(
-                secretStore: NativeConnectorSecretStore(rootURL: root)
+                secretStore: TestNativeConnectorSecretStore()
             ),
             connectorStateStore: stateStore
         )
@@ -320,5 +320,29 @@ private actor RemoteConnectionTesterSpy: NativeRemoteConnectionTesting {
 
     func lastDraft() -> RemoteConnectionDraft? {
         draft
+    }
+}
+
+private final class TestNativeConnectorSecretStore: NativeConnectorSecretStoring,
+    @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+
+    func load(account: String) throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return values[account]
+    }
+
+    func save(_ value: Data, account: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        values[account] = value
+    }
+
+    func delete(account: String) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        values[account] = nil
     }
 }

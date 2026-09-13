@@ -40,6 +40,14 @@ class ClientStorageBoundaryTests(unittest.TestCase):
             source = (ROOT / relative_path).read_text(errors="replace")
             self.assertNotIn("UserDefaults", source, relative_path)
 
+    def test_native_connector_secrets_do_not_regress_to_plaintext_files(self) -> None:
+        source = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+        ).read_text(errors="replace")
+        self.assertNotIn('appendingPathComponent("Secrets"', source)
+        self.assertNotIn("posixPermissions", source)
+        self.assertIn("MacOSKeychainBrokerClient", source)
+
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()
         inventoried = {

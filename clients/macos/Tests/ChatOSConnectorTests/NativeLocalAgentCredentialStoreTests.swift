@@ -99,6 +99,36 @@ struct NativeLocalAgentCredentialStoreTests {
         }
     }
 
+    @Test("Native Connector secrets round-trip only through the Keychain broker")
+    func connectorSecretsUseKeychain() throws {
+        let service = "com.chatos.tests.native-connector.\(UUID().uuidString)"
+        let store = NativeConnectorSecretStore(service: service, broker: testKeychainBroker())
+        let account = "remote-connection-credentials-v1:connection-1"
+        defer { try? store.delete(account: account) }
+
+        do {
+            try store.save(Data("connector-secret".utf8), account: account)
+            #expect(try store.load(account: account) == Data("connector-secret".utf8))
+            try store.delete(account: account)
+            #expect(try store.load(account: account) == nil)
+        } catch MacOSKeychainBrokerError.status(errSecInteractionNotAllowed) {
+            return
+        }
+    }
+
+    @Test("Native Connector Keychain accounts reject ambiguous references")
+    func connectorSecretsRejectUnsafeAccounts() {
+        let store = NativeConnectorSecretStore(
+            service: "com.chatos.tests.native-connector.\(UUID().uuidString)",
+            broker: testKeychainBroker()
+        )
+        for account in ["", " padded", "line\nbreak"] {
+            #expect(throws: NativeConnectorSecretStoreError.invalidAccount) {
+                _ = try store.load(account: account)
+            }
+        }
+    }
+
     @Test("test services reject brokers copied outside the package build directory")
     func testServicesCannotEscapeBuildBroker() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
