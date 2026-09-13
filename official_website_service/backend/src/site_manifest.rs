@@ -59,11 +59,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
                 frontend: Some(4178),
             },
             DefaultPort {
-                name: "Task Runner",
-                backend: Some(39090),
-                frontend: Some(39091),
-            },
-            DefaultPort {
                 name: "User Service",
                 backend: Some(39190),
                 frontend: Some(39191),
@@ -100,12 +95,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
                 title: "Memory Engine 控制台",
                 path: "/showcase/memory-engine.png",
                 source_url: "http://127.0.0.1:4178",
-            },
-            ShowcaseImage {
-                id: "task-runner",
-                title: "Task Runner 运行台",
-                path: "/showcase/task-runner.png",
-                source_url: "http://127.0.0.1:39091",
             },
         ],
     }

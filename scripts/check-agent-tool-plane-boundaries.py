@@ -159,6 +159,20 @@ forbid(
     ["task_runner_service_backend", "chatos-rs-task-runner-backend"],
     "retired Task Runner Service image must not return to the release matrix",
 )
+forbid(
+    ".drone.yml",
+    ["task_runner_service_backend", "backend-task-runner"],
+    "retired Task Runner Service must not return to CI",
+)
+for website_source in [
+    "official_website_service/backend/src/service_status.rs",
+    "official_website_service/backend/src/site_manifest.rs",
+]:
+    forbid(
+        website_source,
+        ["OFFICIAL_WEBSITE_STATUS_TASK_RUNNER_URL", "TASK_RUNNER_BACKEND_PORT"],
+        "the website must not publish or probe a retired Task Runner service",
+    )
 
 require(
     "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+TerminalRelay.swift",

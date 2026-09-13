@@ -152,15 +152,6 @@ fn status_targets() -> Vec<StatusTarget> {
             "/api/health",
         ),
         target(
-            5,
-            "Task Runner",
-            "异步任务执行与回调",
-            "OFFICIAL_WEBSITE_STATUS_TASK_RUNNER_URL",
-            "TASK_RUNNER_BACKEND_PORT",
-            env_u16("TASK_RUNNER_PORT", 39090),
-            "/api/health",
-        ),
-        target(
             6,
             "Official Website",
             "官网静态页与站点 API",
