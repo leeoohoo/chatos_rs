@@ -73,32 +73,12 @@ public struct AgentRuntimePreferences: Codable, Equatable, Sendable {
 public struct AgentSettingsStore: Sendable {
     private let suiteName: String?
     private let key = "chatos.agent-runtime.settings.v1"
-    private let retryDefaultMigrationKey = "chatos.agent-runtime.retry-default.v2"
     public init(suiteName: String? = nil) { self.suiteName = suiteName }
     public func load() throws -> AgentRuntimePreferences {
         let defaults = suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
-        guard let data = defaults.data(forKey: key) else {
-            defaults.set(true, forKey: retryDefaultMigrationKey)
-            return .init()
-        }
-        var value = try JSONDecoder().decode(AgentRuntimePreferences.self, from: data)
-        // Version 1 originally persisted the old default (`2`) even when the user only changed
-        // unrelated context settings. Migrate that legacy default once, while preserving every
-        // non-default retry value the user may have selected explicitly.
-        var migratedLegacyRetryDefault = false
-        if !defaults.bool(forKey: retryDefaultMigrationKey) {
-            if value.global.maximumRequestRetries == 2 {
-                value.global.maximumRequestRetries = 5
-                migratedLegacyRetryDefault = true
-            }
-        }
+        guard let data = defaults.data(forKey: key) else { return .init() }
+        let value = try JSONDecoder().decode(AgentRuntimePreferences.self, from: data)
         try value.validate()
-        if !defaults.bool(forKey: retryDefaultMigrationKey) {
-            if migratedLegacyRetryDefault {
-                defaults.set(try JSONEncoder().encode(value), forKey: key)
-            }
-            defaults.set(true, forKey: retryDefaultMigrationKey)
-        }
         return value
     }
     public func save(_ value: AgentRuntimePreferences) throws {

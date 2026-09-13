@@ -58,6 +58,13 @@ class ClientStorageBoundaryTests(unittest.TestCase):
         self.assertNotIn("isLegacyRoute", source)
         self.assertIn("routeStore.requireCurrent()", source)
 
+    def test_swift_agent_settings_do_not_restore_legacy_value_migrations(self) -> None:
+        source = (
+            ROOT / "clients/macos/Sources/ChatOSAgentRuntime/AgentTypes.swift"
+        ).read_text(errors="replace")
+        self.assertNotIn("retryDefaultMigrationKey", source)
+        self.assertNotIn("migratedLegacyRetryDefault", source)
+
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()
         inventoried = {

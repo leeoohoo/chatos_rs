@@ -17,27 +17,25 @@ final class AgentRuntimeTests: XCTestCase {
         try settings.validate()
     }
 
-    func testLegacyRetryDefaultMigratesOnceWithoutResettingContextSettings() throws {
-        let name = "AgentRetryMigrationTests.\(UUID())"
+    func testStoredPreferencesAreLoadedWithoutRewritingTheirValues() throws {
+        let name = "AgentSettingsStoreTests.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        var old = AgentRuntimePreferences()
-        old.global.maximumRequestRetries = 2
+        var stored = AgentRuntimePreferences()
+        stored.global.maximumRequestRetries = 2
         var context = AgentContextPolicy()
         context.windowTokens = 2_000_000
         context.outputReserveTokens = 30_000
         context.compactionThresholdTokens = 200_000
-        old.global.context = context
-        defaults.set(try JSONEncoder().encode(old), forKey: "chatos.agent-runtime.settings.v1")
+        stored.global.context = context
+        let originalData = try JSONEncoder().encode(stored)
+        defaults.set(originalData, forKey: "chatos.agent-runtime.settings.v1")
 
-        let migrated = try AgentSettingsStore(suiteName: name).load()
-        XCTAssertEqual(migrated.global.maximumRequestRetries, 5)
-        XCTAssertEqual(migrated.global.context?.windowTokens, 2_000_000)
+        let loaded = try AgentSettingsStore(suiteName: name).load()
 
-        var explicitlyChanged = migrated
-        explicitlyChanged.global.maximumRequestRetries = 2
-        try AgentSettingsStore(suiteName: name).save(explicitlyChanged)
-        XCTAssertEqual(try AgentSettingsStore(suiteName: name).load().global.maximumRequestRetries, 2)
+        XCTAssertEqual(loaded.global.maximumRequestRetries, 2)
+        XCTAssertEqual(loaded.global.context?.windowTokens, 2_000_000)
+        XCTAssertEqual(defaults.data(forKey: "chatos.agent-runtime.settings.v1"), originalData)
     }
 
     func testContextEstimateReturnsApproximateTokensRatherThanRawBytes() throws {
