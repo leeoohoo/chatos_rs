@@ -17,6 +17,7 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
     private readonly ILocalAgentMainChatService _mainChat;
     private readonly IConversationRuntimeSettingsService _runtimeService;
     private readonly IAskUserPromptService _askUserService;
+    private readonly ILocalAgentToolApprovalService _toolApprovalService;
     private readonly IUiDispatcher _dispatcher;
     private readonly LocalizationViewModel? _localization;
     private readonly SemaphoreSlim _projectionRefreshGate = new(1, 1);
@@ -28,12 +29,14 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         ILocalAgentMainChatService mainChat,
         IConversationRuntimeSettingsService runtimeService,
         IAskUserPromptService askUserService,
+        ILocalAgentToolApprovalService toolApprovalService,
         IUiDispatcher dispatcher,
         LocalizationViewModel? localization = null)
     {
         _mainChat = mainChat;
         _runtimeService = runtimeService;
         _askUserService = askUserService;
+        _toolApprovalService = toolApprovalService;
         _dispatcher = dispatcher;
         _localization = localization;
         _mainChat.ProjectionChanged += OnProjectionChanged;
@@ -42,6 +45,8 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         Turns.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
         LiveProcesses.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasLiveProcesses));
         PendingPrompts.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPendingPrompts));
+        PendingToolApprovals.CollectionChanged += (_, _) =>
+            OnPropertyChanged(nameof(HasPendingToolApprovals));
         Attachments.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(HasAttachments));
@@ -53,11 +58,13 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
     public ObservableCollection<ConversationTurnItemViewModel> Turns { get; } = [];
     public ObservableCollection<TurnProcessItemViewModel> LiveProcesses { get; } = [];
     public ObservableCollection<AskUserPromptViewModel> PendingPrompts { get; } = [];
+    public ObservableCollection<LocalAgentToolApprovalViewModel> PendingToolApprovals { get; } = [];
     public ObservableCollection<ConversationModelOption> Models { get; } = [];
     public ObservableCollection<ConversationAttachmentDraft> Attachments { get; } = [];
     public bool IsEmpty => Turns.Count == 0;
     public bool HasLiveProcesses => LiveProcesses.Count > 0;
     public bool HasPendingPrompts => PendingPrompts.Count > 0;
+    public bool HasPendingToolApprovals => PendingToolApprovals.Count > 0;
     public bool HasAttachments => Attachments.Count > 0;
     public bool CanSendDraft =>
         IsOpen && !IsSending && !IsRunning
@@ -113,7 +120,8 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
             await Task.WhenAll(
                 RefreshProjectionAsync(scope, generation, token),
                 LoadRuntimeAsync(scope.ThreadId, generation, token),
-                LoadPromptsAsync(scope.ThreadId, generation, token)).ConfigureAwait(false);
+                LoadPromptsAsync(scope.ThreadId, generation, token),
+                LoadToolApprovalsAsync(scope.ThreadId, generation, token)).ConfigureAwait(false);
             await _dispatcher.InvokeAsync(() =>
             {
                 if (generation == _generation) IsLoading = false;
@@ -144,6 +152,8 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
             await RefreshProjectionAsync(scope, _generation, _sessionCancellation.Token)
                 .ConfigureAwait(false);
             await LoadPromptsAsync(scope.ThreadId, _generation, _sessionCancellation.Token)
+                .ConfigureAwait(false);
+            await LoadToolApprovalsAsync(scope.ThreadId, _generation, _sessionCancellation.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
@@ -389,6 +399,28 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         }, cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task LoadToolApprovalsAsync(
+        string threadId,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        var approvals = await _toolApprovalService.FetchPendingAsync(threadId, cancellationToken)
+            .ConfigureAwait(false);
+        await _dispatcher.InvokeAsync(() =>
+        {
+            if (generation != _generation) return;
+            PendingToolApprovals.Clear();
+            foreach (var approval in approvals)
+            {
+                PendingToolApprovals.Add(new LocalAgentToolApprovalViewModel(
+                    approval,
+                    _toolApprovalService,
+                    () => LoadToolApprovalsAsync(threadId, generation, cancellationToken),
+                    _localization));
+            }
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task ApplySettingsAsync(Func<CancellationToken, Task> operation)
     {
         if (_sessionCancellation is null) return;
@@ -448,6 +480,7 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         Turns.Clear();
         LiveProcesses.Clear();
         PendingPrompts.Clear();
+        PendingToolApprovals.Clear();
         Attachments.Clear();
         Models.Clear();
         SelectedModel = null;
@@ -483,6 +516,8 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         {
             await RefreshProjectionAsync(scope, generation, cancellationToken).ConfigureAwait(false);
             await LoadPromptsAsync(scope.ThreadId, generation, cancellationToken).ConfigureAwait(false);
+            await LoadToolApprovalsAsync(scope.ThreadId, generation, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

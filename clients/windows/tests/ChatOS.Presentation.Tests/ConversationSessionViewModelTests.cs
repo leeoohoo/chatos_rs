@@ -134,6 +134,40 @@ public sealed class ConversationSessionViewModelTests
     }
 
     [Fact]
+    public async Task ProjectionEventPublishesPendingToolApprovalWithRiskMetadata()
+    {
+        var services = new TestServices();
+        using var viewModel = services.CreateViewModel();
+        await viewModel.OpenAsync(ProjectScope, "Website");
+        services.ToolApprovals.Add(services.ToolApproval("invoke-1", "thread-1"));
+
+        services.PublishProjectionChanged();
+
+        await WaitUntilAsync(() => viewModel.PendingToolApprovals.Count == 1);
+        var approval = Assert.Single(viewModel.PendingToolApprovals);
+        Assert.Equal("filesystem.write", approval.ToolName);
+        Assert.Contains("写入", approval.EffectLabel);
+        Assert.Contains("sha256:argument", approval.DigestLabel);
+    }
+
+    [Fact]
+    public async Task ApprovedToolInvocationDisappearsAfterAuthoritativeRefresh()
+    {
+        var services = new TestServices();
+        services.ToolApprovals.Add(services.ToolApproval("invoke-1", "thread-1"));
+        using var viewModel = services.CreateViewModel();
+        await viewModel.OpenAsync(ProjectScope, "Website");
+        var approval = Assert.Single(viewModel.PendingToolApprovals);
+
+        await approval.ApproveCommand.ExecuteAsync(null);
+
+        Assert.Equal(
+            ("invoke-1", "thread-1", LocalAgentToolApprovalDecision.Approve),
+            services.ToolDecision);
+        Assert.Empty(viewModel.PendingToolApprovals);
+    }
+
+    [Fact]
     public async Task ProjectionClearImmediatelyDropsAccountDataAndClosesSession()
     {
         var services = new TestServices();
@@ -147,6 +181,7 @@ public sealed class ConversationSessionViewModelTests
         Assert.Null(viewModel.Scope);
         Assert.Empty(viewModel.Turns);
         Assert.Empty(viewModel.PendingPrompts);
+        Assert.Empty(viewModel.PendingToolApprovals);
     }
 
     [Fact]
@@ -219,6 +254,31 @@ public sealed class ConversationSessionViewModelTests
     }
 
     [Fact]
+    public async Task LateToolApprovalFetchCannotPolluteTheNewConversation()
+    {
+        var delayed = new TaskCompletionSource<IReadOnlyList<LocalAgentToolApprovalRequest>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var services = new TestServices
+        {
+            ToolApprovalFetcher = (conversationId, _) => conversationId == "thread-1"
+                ? delayed.Task
+                : Task.FromResult<IReadOnlyList<LocalAgentToolApprovalRequest>>([]),
+        };
+        using var viewModel = services.CreateViewModel();
+        var openingFirst = viewModel.OpenAsync(ProjectScope, "First");
+        await WaitUntilAsync(() => services.ToolApprovalFetches.Contains("thread-1"));
+
+        var next = new LocalAgentConversationScope("account-1", "thread-2", null, "agent-2");
+        await viewModel.OpenAsync(next, "Second");
+        delayed.SetResult([services.ToolApproval("invoke-old", "thread-1")]);
+        await openingFirst;
+
+        Assert.Equal(next, viewModel.Scope);
+        Assert.Empty(viewModel.PendingToolApprovals);
+        Assert.Null(viewModel.ErrorMessage);
+    }
+
+    [Fact]
     public async Task ProjectionIdentityMismatchFailsClosed()
     {
         var services = new TestServices { SnapshotAccountId = "another-account" };
@@ -256,7 +316,8 @@ public sealed class ConversationSessionViewModelTests
     private sealed class TestServices :
         ILocalAgentMainChatService,
         IConversationRuntimeSettingsService,
-        IAskUserPromptService
+        IAskUserPromptService,
+        ILocalAgentToolApprovalService
     {
         private readonly DateTimeOffset _now = DateTimeOffset.Parse("2026-09-13T00:00:00Z");
 
@@ -265,6 +326,7 @@ public sealed class ConversationSessionViewModelTests
         public List<LocalAgentMainChatTurn> Turns { get; } = [];
         public List<LocalAgentCreateConversationTurn> CreatedTurns { get; } = [];
         public List<AskUserPrompt> Prompts { get; } = [];
+        public List<LocalAgentToolApprovalRequest> ToolApprovals { get; } = [];
         public Exception? CreateError { get; init; }
         public TaskCompletionSource<LocalAgentRunCreatedResponse>? PendingCreate { get; init; }
         public Func<string, CancellationToken, Task<IReadOnlyList<AskUserPrompt>>>? PromptFetcher
@@ -272,13 +334,22 @@ public sealed class ConversationSessionViewModelTests
             get;
             init;
         }
+        public Func<string, CancellationToken,
+            Task<IReadOnlyList<LocalAgentToolApprovalRequest>>>? ToolApprovalFetcher
+        {
+            get;
+            init;
+        }
         public string SnapshotAccountId { get; init; } = "account-1";
         public (string ThreadId, string TurnId, string RunId, ulong Version)? CancelledRun { get; private set; }
         public (string PromptId, string ConversationId)? SubmittedPrompt { get; private set; }
+        public (string InvocationId, string ConversationId, LocalAgentToolApprovalDecision Decision)?
+            ToolDecision { get; private set; }
         public List<string> PromptFetches { get; } = [];
+        public List<string> ToolApprovalFetches { get; } = [];
 
         public ConversationSessionViewModel CreateViewModel() =>
-            new(this, this, this, new ImmediateUiDispatcher());
+            new(this, this, this, this, new ImmediateUiDispatcher());
 
         public void PublishProjectionChanged() => ProjectionChanged?.Invoke(this, EventArgs.Empty);
         public void PublishProjectionCleared() => ProjectionCleared?.Invoke(this, EventArgs.Empty);
@@ -347,6 +418,42 @@ public sealed class ConversationSessionViewModelTests
 
         public Task<AskUserPrompt> CancelAsync(string promptId, string conversationId,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<LocalAgentToolApprovalRequest>> FetchPendingAsync(
+            string conversationId,
+            CancellationToken cancellationToken = default)
+        {
+            ToolApprovalFetches.Add(conversationId);
+            if (ToolApprovalFetcher is not null)
+                return ToolApprovalFetcher(conversationId, cancellationToken);
+            return Task.FromResult<IReadOnlyList<LocalAgentToolApprovalRequest>>(ToolApprovals
+                .Where(value => value.ConversationId == conversationId)
+                .ToArray());
+        }
+
+        public Task DecideAsync(
+            string invocationId,
+            string conversationId,
+            LocalAgentToolApprovalDecision decision,
+            string? reason,
+            CancellationToken cancellationToken = default)
+        {
+            ToolDecision = (invocationId, conversationId, decision);
+            ToolApprovals.RemoveAll(value =>
+                value.InvocationId == invocationId && value.ConversationId == conversationId);
+            return Task.CompletedTask;
+        }
+
+        public LocalAgentToolApprovalRequest ToolApproval(
+            string invocationId,
+            string conversationId) => new(
+            invocationId,
+            "run-1",
+            conversationId,
+            "turn-1",
+            "filesystem.write",
+            LocalAgentToolEffect.Write,
+            "sha256:arguments");
 
         public AskUserPrompt Prompt(string id, string conversationId) => new(
             id,

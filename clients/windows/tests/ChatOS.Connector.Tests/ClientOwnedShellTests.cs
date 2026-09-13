@@ -56,7 +56,8 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
             Stub<IAppPreferencesStore>((_, _) => throw new NotSupportedException())), dispatcher);
         _shell = new(_auth, _relations, _registry, _projects, _localAgent,
             _conversations, localControl,
-            new ConversationSessionViewModel(new EmptyMainChatService(), null!, null!, dispatcher),
+            new ConversationSessionViewModel(
+                new EmptyMainChatService(), null!, null!, null!, dispatcher),
             new ProjectFilesViewModel(null!, dispatcher), new ProjectGitViewModel(null!, dispatcher),
             new ProjectRunViewModel(null!, dispatcher),
             new RemoteConnectionsViewModel(remote, localControl, dispatcher), localization);

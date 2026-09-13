@@ -76,6 +76,7 @@ public sealed class PetQuickChatViewModelTests
         new EmptyMainChatService(),
         null!,
         null!,
+        null!,
         dispatcher);
 
     private sealed class EmptyMainChatService : ILocalAgentMainChatService

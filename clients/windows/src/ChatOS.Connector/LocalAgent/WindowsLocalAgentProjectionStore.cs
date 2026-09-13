@@ -241,7 +241,7 @@ public sealed class WindowsLocalAgentProjectionStore : IWindowsLocalAgentProject
                     "The refreshed Local Agent run regressed its snapshot event sequence.");
             }
             if (run.Run.Version == previous.Run.Version
-                && !SameRunSnapshot(previous.Run, run.Run))
+                && !WindowsLocalAgentRunSnapshotComparer.Same(previous.Run, run.Run))
             {
                 throw new InvalidDataException(
                     "The refreshed Local Agent run changed without advancing its version.");
@@ -333,7 +333,7 @@ public sealed class WindowsLocalAgentProjectionStore : IWindowsLocalAgentProject
             || run.ModelRuntimeSnapshot.GetRawText() != previous.Run.ModelRuntimeSnapshot.GetRawText()
             || run.CreatedAt != previous.Run.CreatedAt
             || replacement.Detail is null
-            || !SameRunSnapshot(replacement.Detail.Run, run))
+            || !WindowsLocalAgentRunSnapshotComparer.Same(replacement.Detail.Run, run))
         {
             throw new InvalidDataException("The Local Agent run refresh changed frozen identity.");
         }
@@ -355,36 +355,6 @@ public sealed class WindowsLocalAgentProjectionStore : IWindowsLocalAgentProject
             throw new InvalidDataException("A non-Main Chat run cannot have a Main Chat binding.");
         }
     }
-
-    private static bool SameRunSnapshot(LocalAgentRunSnapshot left, LocalAgentRunSnapshot right) =>
-        left.RunId == right.RunId
-        && left.ProfileKey == right.ProfileKey
-        && left.OwnerUserId == right.OwnerUserId
-        && left.OwnerEntityType == right.OwnerEntityType
-        && left.OwnerEntityId == right.OwnerEntityId
-        && left.ProjectId == right.ProjectId
-        && left.Status == right.Status
-        && left.Version == right.Version
-        && left.StepSeq == right.StepSeq
-        && left.Iteration == right.Iteration
-        && left.RetryCount == right.RetryCount
-        && left.ModelConfigId == right.ModelConfigId
-        && left.ModelConfigRevision == right.ModelConfigRevision
-        && Json(left.ModelRuntimeSnapshot) == Json(right.ModelRuntimeSnapshot)
-        && left.ContextStrategy == right.ContextStrategy
-        && left.PromptRevision == right.PromptRevision
-        && left.CapabilitySnapshotRef == right.CapabilitySnapshotRef
-        && left.PendingBatchId == right.PendingBatchId
-        && Json(left.PendingInteraction) == Json(right.PendingInteraction)
-        && Json(left.TerminalOutcome) == Json(right.TerminalOutcome)
-        && left.DeadlineAt == right.DeadlineAt
-        && left.CreatedAt == right.CreatedAt
-        && left.UpdatedAt == right.UpdatedAt;
-
-    private static string? Json(System.Text.Json.JsonElement? value) =>
-        value is { } element ? element.GetRawText() : null;
-
-    private static string Json(System.Text.Json.JsonElement value) => value.GetRawText();
 
     private static void ValidateIdentity(string value)
     {

@@ -9,6 +9,7 @@ public sealed class ConversationSessionFactory(
     ILocalAgentMainChatService mainChatService,
     IConversationRuntimeSettingsService runtimeService,
     IAskUserPromptService askUserService,
+    ILocalAgentToolApprovalService toolApprovalService,
     IUiDispatcher dispatcher,
     LocalizationViewModel? localization = null)
 {
@@ -16,6 +17,7 @@ public sealed class ConversationSessionFactory(
         mainChatService,
         runtimeService,
         askUserService,
+        toolApprovalService,
         dispatcher,
         localization);
 }

@@ -62,6 +62,15 @@ public enum LocalAgentToolApprovalDecision
     Reject,
 }
 
+public sealed record LocalAgentToolApprovalRequest(
+    string InvocationId,
+    string RunId,
+    string ConversationId,
+    string TurnId,
+    string ToolName,
+    LocalAgentToolEffect Effect,
+    string ArgumentsDigest);
+
 /// <summary>
 /// Exact representation of Rust's internally tagged LocalAgentCommand enum.
 /// The factories prevent callers from accidentally creating a type/payload mismatch.

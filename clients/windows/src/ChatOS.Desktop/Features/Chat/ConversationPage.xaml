@@ -211,6 +211,54 @@
         </Grid>
 
         <StackPanel Grid.Row="3">
+            <ScrollViewer
+                MaxHeight="260"
+                VerticalScrollBarVisibility="Auto"
+                Visibility="{x:Bind ViewModel.HasPendingToolApprovals, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ItemsControl
+                    Margin="20,0,20,10"
+                    ItemsSource="{x:Bind ViewModel.PendingToolApprovals}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="chat:LocalAgentToolApprovalViewModel">
+                            <Border Margin="0,4" Padding="16" Style="{StaticResource ChatOSCardStyle}" BorderBrush="#FFF59E0B">
+                                <StackPanel Spacing="10">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                            <TextBlock Text="{x:Bind ToolName}" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                        </StackPanel>
+                                        <Border Grid.Column="1" Padding="8,4" VerticalAlignment="Top" Background="#1AF59E0B" CornerRadius="10">
+                                            <TextBlock Text="{x:Bind EffectLabel}" Foreground="#FFF59E0B" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </Border>
+                                    </Grid>
+                                    <TextBlock Text="{x:Bind Explanation}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                    <TextBlock Text="{x:Bind DigestLabel}" IsTextSelectionEnabled="True" FontFamily="Cascadia Mono, Consolas" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <TextBlock
+                                        Text="{x:Bind ErrorMessage, Mode=OneWay}"
+                                        Foreground="{StaticResource ChatOSFailureBrush}"
+                                        TextWrapping="Wrap"
+                                        Style="{StaticResource ChatOSCaptionTextStyle}"
+                                        Visibility="{x:Bind ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                    <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
+                                        <Button
+                                            Command="{x:Bind RejectCommand}"
+                                            Content="{x:Bind RejectLabel}" />
+                                        <Button
+                                            Command="{x:Bind ApproveCommand}"
+                                            Content="{x:Bind ApproveLabel}"
+                                            Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
             <ItemsControl
                 Margin="20,0,20,10"
                 ItemsSource="{x:Bind ViewModel.PendingPrompts}"

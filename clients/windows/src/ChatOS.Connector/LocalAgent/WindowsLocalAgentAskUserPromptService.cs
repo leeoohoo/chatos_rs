@@ -107,46 +107,12 @@ public sealed class WindowsLocalAgentAskUserPromptService(
     {
         foreach (var recovered in projection.Runs.Values)
         {
-            if (!TryResolveSource(projection, recovered, out var threadId, out var turnId)
-                || !string.Equals(threadId, conversationId, StringComparison.Ordinal)) continue;
-            if (TryMapPrompt(recovered.Run, threadId, turnId, out var prompt))
+            var source = WindowsLocalAgentRunSourceResolver.Resolve(projection, recovered);
+            if (source is null
+                || !string.Equals(source.ThreadId, conversationId, StringComparison.Ordinal)) continue;
+            if (TryMapPrompt(recovered.Run, source.ThreadId, source.TurnId, out var prompt))
                 yield return new PendingRoute(recovered.Run, prompt);
         }
-    }
-
-    private static bool TryResolveSource(
-        WindowsLocalAgentProjectionSnapshot projection,
-        WindowsLocalAgentRecoveredRun recovered,
-        out string threadId,
-        out string turnId)
-    {
-        threadId = string.Empty;
-        turnId = string.Empty;
-        var run = recovered.Run;
-        if (!string.Equals(run.OwnerUserId, projection.AccountId, StringComparison.Ordinal))
-            throw new InvalidDataException("The Local Agent question belongs to another account.");
-        if (run.ProfileKey == "main_chat")
-        {
-            var binding = recovered.MainChatBinding
-                ?? throw new InvalidDataException("The Main Chat question has no source binding.");
-            WindowsLocalAgentStartupRecovery.ValidateBinding(run, binding);
-            threadId = binding.ThreadId;
-            turnId = binding.TurnId;
-            return true;
-        }
-        if (run.ProfileKey != "task_runner") return false;
-        var tasks = projection.Tasks.Values.Where(task =>
-                task.RunIds.Contains(run.RunId, StringComparer.Ordinal))
-            .ToArray();
-        if (tasks.Length != 1)
-            throw new InvalidDataException("The Task question has no unique source binding.");
-        if (!string.Equals(tasks[0].TaskId, run.OwnerEntityId, StringComparison.Ordinal)
-            || !string.Equals(tasks[0].ProjectId, run.ProjectId, StringComparison.Ordinal))
-            throw new InvalidDataException("The Task question changed its project identity.");
-        if (!string.Equals(tasks[0].CurrentRunId, run.RunId, StringComparison.Ordinal)) return false;
-        threadId = tasks[0].SourceThreadId;
-        turnId = tasks[0].SourceTurnId;
-        return true;
     }
 
     private static bool TryMapPrompt(
