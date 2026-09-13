@@ -310,24 +310,6 @@ impl AsyncToolDispatch {
             }
         }
     }
-
-    pub async fn publish_invocation_terminal(
-        &self,
-        invocation_id: &str,
-        prompt_id: Option<&str>,
-    ) -> Result<(), AsyncToolEnqueueError> {
-        if self.topology.mode != AsyncToolDispatchMode::RabbitMq {
-            return Ok(());
-        }
-        let publisher = self.rabbitmq_publisher().await?;
-        rabbitmq::publish_invocation_terminal_event(
-            &publisher.channel,
-            &self.topology,
-            invocation_id,
-            prompt_id,
-        )
-        .await
-    }
 }
 
 fn rabbitmq_startup_retry_delay(base: Duration, attempt: u32) -> Duration {

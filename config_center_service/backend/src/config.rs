@@ -43,11 +43,6 @@ pub const CONFIG_CENTER_CALLER_BOOTSTRAP_SECRETS: &[(&str, &str, &str)] = &[
         "change_me_config_center_plugin_management_signing_secret",
     ),
     (
-        "task-runner",
-        "CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET",
-        "change_me_config_center_task_runner_signing_secret",
-    ),
-    (
         "user-service",
         "CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET",
         "change_me_config_center_user_service_signing_secret",

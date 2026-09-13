@@ -8,8 +8,7 @@ mod projects;
 mod support;
 
 pub use contacts::{
-    create_memory_contact, delete_memory_contact, get_contact_task_runner_runtime_config,
-    get_memory_contact, list_memory_contacts, update_contact_task_runner_config,
+    create_memory_contact, delete_memory_contact, get_memory_contact, list_memory_contacts,
 };
 pub use memories::{
     list_contact_agent_recalls, list_contact_project_memories,

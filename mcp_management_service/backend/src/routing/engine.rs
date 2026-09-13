@@ -82,26 +82,20 @@ impl RoutingEngine {
                 resource,
                 "local command approval is local-only and is not exposed through MCP Management",
             ),
-            SystemMcpKey::TaskProcessLog | SystemMcpKey::TaskRunnerService => {
-                internal_service_route(
-                    resource,
-                    descriptor,
-                    "task runtime capabilities are owned by Task Runner",
-                    allow_writes,
-                )
-            }
-            SystemMcpKey::AskUser => available_route(
+            SystemMcpKey::TaskProcessLog => internal_service_route(
                 resource,
-                McpProviderKind::InternalService,
-                Some("agent-callback".to_string()),
-                "Ask User is dispatched to the active agent callback provider",
+                descriptor,
+                "task runtime capabilities are owned by the local agent runtime",
                 allow_writes,
             ),
+            SystemMcpKey::AskUser => {
+                unavailable_route(resource, "Ask User is handled by the local Agent runtime")
+            }
             SystemMcpKey::AgentBuilder => available_route(
                 resource,
                 McpProviderKind::InternalService,
                 Some("chatos".to_string()),
-                "Agent Builder is owned by the cloud ChatOS service",
+                "Agent Builder is owned by the ChatOS service",
                 allow_writes,
             ),
             SystemMcpKey::MemorySkillReader

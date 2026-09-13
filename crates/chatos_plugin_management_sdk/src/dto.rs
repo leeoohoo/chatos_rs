@@ -14,7 +14,6 @@ use crate::plugin_runtime::{
     UserPluginPreferenceRecord,
 };
 
-pub const CHATOS_TASK_RUNNER_MCP_RESOURCE_ID: &str = "system_mcp_chatos_task_runner";
 pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_connector_approval";
 pub const TASK_PROCESS_LOG_MCP_RESOURCE_ID: &str = "system_mcp_task_process_log";
 
@@ -64,11 +63,10 @@ pub enum SystemMcpKey {
     MemoryPluginReader,
     LocalCommandApproval,
     TaskProcessLog,
-    TaskRunnerService,
 }
 
 impl SystemMcpKey {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 12] = [
         Self::CodeMaintainerRead,
         Self::CodeMaintainerWrite,
         Self::TerminalController,
@@ -81,7 +79,6 @@ impl SystemMcpKey {
         Self::MemoryPluginReader,
         Self::LocalCommandApproval,
         Self::TaskProcessLog,
-        Self::TaskRunnerService,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -99,7 +96,6 @@ impl SystemMcpKey {
             Self::MemoryPluginReader => "memory_plugin_reader",
             Self::LocalCommandApproval => "local_command_approval",
             Self::TaskProcessLog => "task_process_log",
-            Self::TaskRunnerService => "task_runner_service",
         }
     }
 }

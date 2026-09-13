@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use axum::{
     extract::{Path, Query},
@@ -18,17 +18,10 @@ use crate::core::session_access::{ensure_owned_session, map_session_access_error
 use crate::models::message::Message;
 use crate::modules::conversation_runtime::messages as conversation_messages;
 use crate::services::chatos_memory_engine;
-use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 
 use super::super::contracts::CompactHistoryQuery;
 use super::super::history::{
-    build_compact_history_messages_from_turn_slices,
-    build_compact_history_messages_from_turn_slices_with_process, build_turn_display_messages,
-    turn_slice_needs_task_runner_callback_process_messages,
-};
-use super::super::history_process_support::{
-    contact_async_user_status_needs_runtime_reconciliation,
-    reconcile_contact_async_user_status_for_display,
+    build_compact_history_messages_from_turn_slices, build_turn_display_messages,
 };
 use super::super::support::list_all_session_messages;
 
@@ -119,112 +112,6 @@ async fn list_compact_history_page(
     .await
 }
 
-#[cfg(test)]
-fn parse_compact_history_offset(
-    before: Option<&str>,
-    compact_messages: &[crate::models::message::Message],
-) -> i64 {
-    let Some(before) = before.map(str::trim).filter(|value| !value.is_empty()) else {
-        return 0;
-    };
-
-    if let Some(raw_offset) = before.strip_prefix("offset:") {
-        return raw_offset.trim().parse::<i64>().ok().unwrap_or(0).max(0);
-    }
-
-    let user_indexes: Vec<usize> = compact_messages
-        .iter()
-        .enumerate()
-        .filter_map(|(index, message)| {
-            (message.role == "user" && !is_runtime_guidance_user_message(message)).then_some(index)
-        })
-        .collect();
-    for (position, user_index) in user_indexes.iter().enumerate() {
-        if crate::core::messages::message_turn_id(&compact_messages[*user_index]) != Some(before) {
-            continue;
-        }
-        let next_user_index = if position + 1 < user_indexes.len() {
-            user_indexes[position + 1]
-        } else {
-            compact_messages.len()
-        };
-        return compact_messages.len().saturating_sub(next_user_index) as i64;
-    }
-
-    if let Some(message_index) = compact_messages
-        .iter()
-        .position(|message| message.id == before)
-    {
-        return compact_messages.len().saturating_sub(message_index) as i64;
-    }
-
-    0
-}
-
-async fn load_task_runner_callback_process_messages(
-    conversation_id: &str,
-    slices: &[memory_engine_sdk::TurnRecordSlice],
-) -> HashMap<String, Vec<Message>> {
-    let mut process_messages_by_turn = HashMap::new();
-    for slice in slices {
-        if !turn_slice_needs_task_runner_callback_process_messages(slice) {
-            continue;
-        }
-
-        match conversation_messages::list_turn_process_messages(
-            conversation_id,
-            slice.turn_id.as_str(),
-        )
-        .await
-        {
-            Ok(messages) => {
-                process_messages_by_turn.insert(slice.turn_id.clone(), messages);
-            }
-            Err(err) => {
-                warn!(
-                    conversation_id = conversation_id,
-                    turn_id = slice.turn_id.as_str(),
-                    error = err.as_str(),
-                    "failed to load task runner callback turn process messages for compact history"
-                );
-            }
-        }
-    }
-
-    process_messages_by_turn
-}
-
-async fn reconcile_contact_async_runtime_statuses(conversation_id: &str, messages: &mut [Message]) {
-    for message in messages.iter_mut() {
-        if !contact_async_user_status_needs_runtime_reconciliation(message) {
-            continue;
-        }
-        let Some(turn_id) = message_turn_id(message).map(str::to_string) else {
-            continue;
-        };
-        let active_in_runtime =
-            runtime_guidance_manager().is_active_turn(conversation_id, turn_id.as_str());
-        match conversation_messages::get_turn_runtime_snapshot_by_turn(
-            conversation_id,
-            turn_id.as_str(),
-        )
-        .await
-        {
-            Ok(lookup) => reconcile_contact_async_user_status_for_display(
-                message,
-                Some(lookup.status.as_str()),
-                active_in_runtime,
-            ),
-            Err(err) => warn!(
-                conversation_id,
-                turn_id = turn_id.as_str(),
-                error = err.as_str(),
-                "failed to reconcile contact async runtime status for compact history"
-            ),
-        }
-    }
-}
-
 pub(in crate::api::sessions) async fn get_session_compact_history(
     auth: AuthUser,
     Path(conversation_id): Path<String>,
@@ -253,17 +140,7 @@ pub(in crate::api::sessions) async fn get_session_compact_history(
         }
     };
 
-    let process_messages_by_turn =
-        load_task_runner_callback_process_messages(&conversation_id, &page.items).await;
-    let mut messages = if process_messages_by_turn.is_empty() {
-        build_compact_history_messages_from_turn_slices(page.items)
-    } else {
-        build_compact_history_messages_from_turn_slices_with_process(
-            page.items,
-            &process_messages_by_turn,
-        )
-    };
-    reconcile_contact_async_runtime_statuses(&conversation_id, &mut messages).await;
+    let mut messages = build_compact_history_messages_from_turn_slices(page.items);
     if before_turn_id.is_none() {
         match list_all_session_messages(&conversation_id).await {
             Ok(all_messages) => {
@@ -520,57 +397,4 @@ pub(in crate::api::sessions) async fn get_session_user_message_turns(
             "next_before": page.next_before,
         })),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::parse_compact_history_offset;
-    use crate::models::message::Message;
-
-    fn build_message(id: &str, role: &str, content: &str) -> Message {
-        let mut message = Message::new(
-            "session-1".to_string(),
-            role.to_string(),
-            content.to_string(),
-        );
-        message.id = id.to_string();
-        message
-    }
-
-    #[test]
-    fn parse_compact_history_offset_accepts_callback_message_ids() {
-        let mut user = build_message("user-1", "user", "help");
-        user.metadata = Some(json!({
-            "conversation_turn_id": "turn-1"
-        }));
-
-        let mut plan = build_message("assistant-plan", "assistant", "I created the task.");
-        plan.metadata = Some(json!({
-            "conversation_turn_id": "turn-1"
-        }));
-
-        let mut callback = build_message(
-            "task_runner_callback::user-1::task-1::task.completed::run-1",
-            "assistant",
-            "Task complete.",
-        );
-        callback.message_mode = Some("task_runner_callback".to_string());
-        callback.metadata = Some(json!({
-            "task_runner_async": {
-                "message_kind": "task_terminal_update"
-            }
-        }));
-
-        let compact_messages = vec![user, plan, callback];
-
-        assert_eq!(
-            parse_compact_history_offset(
-                Some("task_runner_callback::user-1::task-1::task.completed::run-1"),
-                &compact_messages,
-            ),
-            1
-        );
-    }
 }

@@ -96,7 +96,7 @@ Task Runner 只登记 `task_runner_run_phase`。只读分析与实际工程执�
 
 系统 Agent registry 登记当前代码中真实存在、具有独立 MCP/skills 能力边界的系统级智能体角色或运行模式：
 
-- `chatos_conversation_agent`：Chat OS 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
+- `chatos_conversation_agent`：客户端本地主聊天智能体；用户联系人只提供角色上下文，不逐条登记。
 - `task_runner_run_phase`：Task Runner 执行任务智能体。负责代码修改、终端执行、测试、部署及工程验收。
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。
 - `memory_engine_summary_agent`、`memory_engine_rollup_agent`、`memory_engine_subject_memory_agent`、`memory_engine_memory_rollup_agent`、`memory_engine_thread_repair_agent`：Memory Engine 的消息总结、层级归并、主体记忆与上下文修复智能体。

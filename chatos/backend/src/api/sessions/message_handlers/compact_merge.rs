@@ -20,11 +20,6 @@ fn metadata_string_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> 
 pub(super) fn compact_history_before_turn_id_from_message(message: &Message) -> Option<String> {
     message_turn_id(message)
         .or_else(|| {
-            message.metadata.as_ref().and_then(|metadata| {
-                metadata_string_path(metadata, &["task_runner_async", "source_turn_id"])
-            })
-        })
-        .or_else(|| {
             message
                 .metadata
                 .as_ref()

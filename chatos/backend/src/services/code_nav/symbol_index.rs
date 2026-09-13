@@ -29,8 +29,6 @@ use persistence::{
 
 static PROJECT_SYMBOL_INDEX_CACHE: Lazy<DashMap<String, ProjectSymbolIndexCacheEntry>> =
     Lazy::new(DashMap::new);
-static PROJECT_SYMBOL_INDEX_DIRTY_PATHS: Lazy<DashMap<String, Vec<PathBuf>>> =
-    Lazy::new(DashMap::new);
 
 const PROJECT_SYMBOL_INDEX_MAX_VISITS: usize = 20_000;
 const PROJECT_SYMBOL_INDEX_DEADLINE: Duration = Duration::from_secs(5);
@@ -59,7 +57,6 @@ pub struct ProjectSymbolIndex {
 
 #[derive(Debug, Clone)]
 struct ProjectSymbolIndexCacheEntry {
-    root: PathBuf,
     snapshot: ProjectSymbolIndexSnapshot,
     index: ProjectSymbolIndex,
 }
@@ -76,31 +73,6 @@ pub fn project_symbol_index(
         .get(&key)
         .map(|entry| entry.value().clone())
     {
-        if let Some((_, dirty_paths)) = PROJECT_SYMBOL_INDEX_DIRTY_PATHS.remove(&key) {
-            let current_snapshot = project_symbol_index_snapshot(root, extensions, ignored_dirs)?;
-            let rebuilt = rebuild_project_symbol_index_for_dirty_paths(
-                root,
-                &entry.snapshot,
-                &entry.index,
-                &current_snapshot,
-                dirty_paths.as_slice(),
-                &analyze_file,
-            )?;
-            let _ = write_cache_json(
-                root.to_string_lossy().as_ref(),
-                symbol_index_cache_path(provider_id).as_str(),
-                &persisted_project_symbol_index_entry(rebuilt.1.clone(), &rebuilt.0),
-            );
-            PROJECT_SYMBOL_INDEX_CACHE.insert(
-                key.clone(),
-                ProjectSymbolIndexCacheEntry {
-                    root: normalize_path(root),
-                    snapshot: rebuilt.1.clone(),
-                    index: rebuilt.0.clone(),
-                },
-            );
-            return Ok(rebuilt.0);
-        }
         let current_snapshot = project_symbol_index_snapshot(root, extensions, ignored_dirs)?;
         if entry.snapshot == current_snapshot {
             return Ok(entry.index.clone());
@@ -117,7 +89,6 @@ pub fn project_symbol_index(
             PROJECT_SYMBOL_INDEX_CACHE.insert(
                 key,
                 ProjectSymbolIndexCacheEntry {
-                    root: normalize_path(root),
                     snapshot: current_snapshot,
                     index: index.clone(),
                 },
@@ -136,38 +107,11 @@ pub fn project_symbol_index(
     PROJECT_SYMBOL_INDEX_CACHE.insert(
         key,
         ProjectSymbolIndexCacheEntry {
-            root: normalize_path(root),
             snapshot,
             index: index.clone(),
         },
     );
     Ok(index)
-}
-
-pub fn invalidate_project_symbol_indexes_for_path(path: &Path) -> usize {
-    let target = normalize_path(path);
-    let keys: Vec<String> = PROJECT_SYMBOL_INDEX_CACHE
-        .iter()
-        .filter_map(|entry| {
-            let root = entry.value().root.as_path();
-            if target.starts_with(root) || root.starts_with(target.as_path()) {
-                Some(entry.key().clone())
-            } else {
-                None
-            }
-        })
-        .collect();
-    for key in keys {
-        PROJECT_SYMBOL_INDEX_DIRTY_PATHS
-            .entry(key)
-            .and_modify(|paths| {
-                if !paths.iter().any(|item| item == &target) {
-                    paths.push(target.clone());
-                }
-            })
-            .or_insert_with(|| vec![target.clone()]);
-    }
-    PROJECT_SYMBOL_INDEX_DIRTY_PATHS.len()
 }
 
 pub fn nav_location_from_indexed_symbol(
@@ -289,75 +233,6 @@ fn build_project_symbol_index(
     }
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok((index, ProjectSymbolIndexSnapshot { files }))
-}
-
-fn rebuild_project_symbol_index_for_dirty_paths(
-    root: &Path,
-    previous_snapshot: &ProjectSymbolIndexSnapshot,
-    previous_index: &ProjectSymbolIndex,
-    current_snapshot: &ProjectSymbolIndexSnapshot,
-    dirty_paths: &[PathBuf],
-    analyze_file: &impl Fn(&Path) -> Result<Vec<IndexedSymbol>, String>,
-) -> Result<(ProjectSymbolIndex, ProjectSymbolIndexSnapshot), String> {
-    let dirty_relative_paths = dirty_paths
-        .iter()
-        .filter_map(|path| {
-            pathdiff::diff_paths(path, root).map(|value| value.to_string_lossy().replace('\\', "/"))
-        })
-        .collect::<Vec<_>>();
-    if dirty_relative_paths.is_empty() {
-        return Ok((previous_index.clone(), current_snapshot.clone()));
-    }
-
-    let dirty_set = dirty_relative_paths
-        .iter()
-        .cloned()
-        .collect::<std::collections::HashSet<_>>();
-    let current_fingerprint_by_path = current_snapshot
-        .files
-        .iter()
-        .cloned()
-        .map(|item| (item.relative_path.clone(), item))
-        .collect::<HashMap<_, _>>();
-
-    let mut next_index = ProjectSymbolIndex::default();
-    for (name, items) in &previous_index.symbols_by_name {
-        let retained = items
-            .iter()
-            .filter(|item| !dirty_set.contains(&item.relative_path))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !retained.is_empty() {
-            next_index.symbols_by_name.insert(name.clone(), retained);
-        }
-    }
-
-    for relative_path in dirty_set {
-        let Some(_fingerprint) = current_fingerprint_by_path.get(&relative_path) else {
-            continue;
-        };
-        let absolute_path = root.join(relative_path.as_str());
-        let path = normalize_path(absolute_path.as_path());
-        let symbols = match analyze_file(path.as_path()) {
-            Ok(symbols) => symbols,
-            Err(_) => continue,
-        };
-        let path_text = path.to_string_lossy().to_string();
-        for symbol in symbols {
-            next_index
-                .symbols_by_name
-                .entry(symbol.name.clone())
-                .or_default()
-                .push(ProjectIndexedSymbol {
-                    path: path_text.clone(),
-                    relative_path: relative_path.clone(),
-                    symbol,
-                });
-        }
-    }
-
-    let _ = previous_snapshot;
-    Ok((next_index, current_snapshot.clone()))
 }
 
 fn project_symbol_index_cache_key(root: &Path, provider_id: &str) -> String {

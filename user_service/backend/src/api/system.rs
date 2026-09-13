@@ -23,9 +23,7 @@ pub async fn get_system_config(State(state): State<AppState>) -> ApiResult<Syste
         service: "user_service_backend".to_string(),
         issuer: state.config.jwt_issuer.clone(),
         user_service_audience: state.config.user_service_audience.clone(),
-        task_runner_audience: state.config.task_runner_audience.clone(),
         database_url: state.config.database_url.clone(),
         user_access_ttl_seconds: state.config.user_access_ttl_seconds,
-        task_runner_access_ttl_seconds: state.config.task_runner_access_ttl_seconds,
     }))
 }

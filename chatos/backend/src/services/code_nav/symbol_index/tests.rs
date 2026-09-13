@@ -8,10 +8,7 @@ use std::sync::{
     Arc,
 };
 
-use super::{
-    invalidate_project_symbol_indexes_for_path, nav_location_from_indexed_symbol,
-    project_symbol_index, IndexedSymbol,
-};
+use super::{nav_location_from_indexed_symbol, project_symbol_index, IndexedSymbol};
 
 fn make_temp_symbol_index_project() -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -139,46 +136,5 @@ fn project_symbol_index_rebuilds_when_source_snapshot_changes() {
     .expect("refresh project symbol index");
 
     assert!(index.symbols_by_name.contains_key("farewell"));
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
-fn project_symbol_index_can_be_invalidated_by_changed_path() {
-    let root = make_temp_symbol_index_project();
-    let path = root.join("src/main.demo");
-    fs::write(&path, "symbol greet\n").expect("write fixture");
-    let analyze_calls = Arc::new(AtomicUsize::new(0));
-    let provider_id = format!("test-symbol-index-invalidate-{}", uuid::Uuid::new_v4());
-
-    let first_counter = Arc::clone(&analyze_calls);
-    project_symbol_index(
-        root.as_path(),
-        provider_id.as_str(),
-        &["demo"],
-        &["ignored"],
-        move |path| {
-            first_counter.fetch_add(1, Ordering::SeqCst);
-            analyze_fixture_file(path)
-        },
-    )
-    .expect("build project symbol index");
-
-    let removed = invalidate_project_symbol_indexes_for_path(path.as_path());
-    assert_eq!(removed, 1);
-
-    let second_counter = Arc::clone(&analyze_calls);
-    project_symbol_index(
-        root.as_path(),
-        provider_id.as_str(),
-        &["demo"],
-        &["ignored"],
-        move |path| {
-            second_counter.fetch_add(1, Ordering::SeqCst);
-            analyze_fixture_file(path)
-        },
-    )
-    .expect("rebuild project symbol index after invalidation");
-
-    assert_eq!(analyze_calls.load(Ordering::SeqCst), 2);
     fs::remove_dir_all(root).ok();
 }

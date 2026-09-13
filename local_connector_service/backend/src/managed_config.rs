@@ -4,9 +4,27 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use chatos_agent::RemoteControlTrustConfigBundle;
 use chatos_config_sdk::ConfigSnapshot;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct RemoteControlTrustConfigBundle {
+    pub require_signed_messages: bool,
+    pub signature_max_skew_seconds: u64,
+    pub trusted_relay_public_keys: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ManagedRuntimeConfigBundle {
+    pub environment: String,
+    pub revision: i64,
+    pub checksum: String,
+    pub generated_at: String,
+    pub stale: bool,
+    pub source: Option<String>,
+    pub remote_control_trust: RemoteControlTrustConfigBundle,
+}
 
 pub(crate) const LOCAL_CONNECTOR_RELAY_SIGNING_KEY_PATH_CONFIG_KEY: &str =
     "local_connector.security.relay_signing.key_path";

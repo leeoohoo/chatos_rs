@@ -6,14 +6,12 @@ use crate::models::message::Message;
 
 use super::super::history_process_support::{
     count_assistant_thinking_steps, extract_tool_calls_from_message,
-    is_cancelled_task_runner_callback_message, is_task_runner_callback_message,
 };
 
 pub(super) struct TurnProcessStats {
     pub(super) tool_call_count: usize,
     pub(super) thinking_count: usize,
     pub(super) process_message_count: usize,
-    pub(super) callback_updates: Vec<usize>,
 }
 
 pub(super) fn collect_turn_process_stats(
@@ -26,7 +24,6 @@ pub(super) fn collect_turn_process_stats(
         tool_call_count: 0,
         thinking_count: 0,
         process_message_count: 0,
-        callback_updates: Vec::new(),
     };
 
     for (index, message) in messages
@@ -35,13 +32,6 @@ pub(super) fn collect_turn_process_stats(
         .take(next_user_index)
         .skip(user_index + 1)
     {
-        if is_task_runner_callback_message(message) {
-            if !is_cancelled_task_runner_callback_message(message) {
-                stats.callback_updates.push(index);
-            }
-            continue;
-        }
-
         if message.role == "assistant" && !is_session_summary(message) {
             stats.tool_call_count += extract_tool_calls_from_message(message).len();
             stats.thinking_count += count_assistant_thinking_steps(message);

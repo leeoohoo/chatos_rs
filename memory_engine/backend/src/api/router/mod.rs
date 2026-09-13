@@ -83,7 +83,7 @@ mod tests {
     use crate::state::{AppState, MemoryEngineRuntimeStats};
 
     const USER_SERVICE_SECRET: &str = "test-user-service-memory-engine-signing-secret";
-    const TASK_RUNNER_SECRET: &str = "test-task-runner-memory-engine-signing-secret";
+    const CHATOS_SECRET: &str = "test-chatos-memory-engine-signing-secret";
 
     #[tokio::test]
     async fn public_router_does_not_expose_operator_routes() {
@@ -122,11 +122,11 @@ mod tests {
 
     #[tokio::test]
     async fn public_data_route_rejects_internal_service_headers() {
-        let token = service_token(TASK_RUNNER_SECRET, "task-runner", DATA_SCOPE);
+        let token = service_token(CHATOS_SECRET, "chatos-backend", DATA_SCOPE);
         let response = build_public_router(test_state().await)
             .oneshot(
                 Request::get("/api/memory-engine/v1/threads/thread-a")
-                    .header("x-memory-caller", "task-runner")
+                    .header("x-memory-caller", "chatos-backend")
                     .header("x-memory-internal-token", token)
                     .body(Body::empty())
                     .expect("request"),
@@ -139,17 +139,17 @@ mod tests {
     #[tokio::test]
     async fn internal_data_route_requires_allowed_caller_and_data_scope() {
         let router = build_internal_router(test_state().await);
-        let wrong_scope = service_token(TASK_RUNNER_SECRET, "task-runner", OPERATOR_SCOPE);
+        let wrong_scope = service_token(CHATOS_SECRET, "chatos-backend", OPERATOR_SCOPE);
         let wrong_scope_response = router
             .clone()
-            .oneshot(thread_upsert_request("task-runner", wrong_scope))
+            .oneshot(thread_upsert_request("chatos-backend", wrong_scope))
             .await
             .expect("wrong scope response");
         assert_eq!(wrong_scope_response.status(), StatusCode::UNAUTHORIZED);
 
-        let valid = service_token(TASK_RUNNER_SECRET, "task-runner", DATA_SCOPE);
+        let valid = service_token(CHATOS_SECRET, "chatos-backend", DATA_SCOPE);
         let valid_response = router
-            .oneshot(thread_upsert_request("task-runner", valid))
+            .oneshot(thread_upsert_request("chatos-backend", valid))
             .await
             .expect("valid identity response");
         assert_eq!(valid_response.status(), StatusCode::BAD_REQUEST);
@@ -196,7 +196,6 @@ mod tests {
                 queue_elevated_messages: 100,
                 queue_critical_messages: 1_000,
             }),
-            cloud_agent_store: chatos_cloud_agent_runtime::CloudAgentStateStore::memory(),
             config,
         })
     }
@@ -204,7 +203,7 @@ mod tests {
     fn test_config() -> AppConfig {
         let mut internal_api_secrets = HashMap::new();
         internal_api_secrets.insert("user-service".to_string(), USER_SERVICE_SECRET.to_string());
-        internal_api_secrets.insert("task-runner".to_string(), TASK_RUNNER_SECRET.to_string());
+        internal_api_secrets.insert("chatos-backend".to_string(), CHATOS_SECRET.to_string());
         AppConfig {
             host: "127.0.0.1".to_string(),
             port: 0,

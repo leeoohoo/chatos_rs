@@ -178,7 +178,6 @@ async fn create_agent(
         description: req.description,
         category: req.category,
         role_definition,
-        auto_provision_task_runner_account: Some(true),
         plugin_sources: req.plugin_sources,
         skills: req.skills,
         skill_ids: req.skill_ids,

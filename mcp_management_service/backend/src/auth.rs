@@ -94,24 +94,24 @@ mod tests {
     #[test]
     fn signed_request_binds_scope_and_caller() {
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-task-runner-secret",
-            "task-runner",
+            "a-long-chatos-secret",
+            "chatos",
             INTERNAL_TOKEN_AUDIENCE,
             "routes.resolve",
             60,
         )
         .unwrap();
         let mut headers = HeaderMap::new();
-        headers.insert(CALLER_SERVICE_HEADER, "task-runner".parse().unwrap());
+        headers.insert(CALLER_SERVICE_HEADER, "chatos".parse().unwrap());
         headers.insert(INTERNAL_TOKEN_HEADER, token.parse().unwrap());
         assert_eq!(
             require_internal_request(&config(), &headers, "routes.resolve").unwrap(),
-            "task-runner"
+            "chatos"
         );
         assert!(require_internal_request(&config(), &headers, "catalog.read").is_err());
         let identity =
             require_internal_request_identity(&config(), &headers, "routes.resolve").unwrap();
-        assert_eq!(identity.caller, "task-runner");
+        assert_eq!(identity.caller, "chatos");
         assert!(identity.trace_id.is_some());
         assert!(identity.require_signed_trace_id().is_ok());
     }
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn legacy_secret_header_is_rejected() {
         let mut headers = HeaderMap::new();
-        headers.insert(CALLER_SERVICE_HEADER, "task-runner".parse().unwrap());
+        headers.insert(CALLER_SERVICE_HEADER, "chatos".parse().unwrap());
         headers.insert(
             "x-mcp-management-internal-secret",
             "a-long-test-secret".parse().unwrap(),

@@ -89,8 +89,7 @@ pub async fn ai_create_agent(
     )
     .await?;
 
-    let mut create_req = build_create_agent_request(&request, raw.as_str())?;
-    create_req.auto_provision_task_runner_account = Some(true);
+    let create_req = build_create_agent_request(&request, raw.as_str())?;
     let created = chatos_agents::create_agent(&create_req).await?;
 
     Ok(AiCreateAgentResult {
@@ -232,7 +231,6 @@ fn build_create_agent_request(
         description,
         category,
         role_definition,
-        auto_provision_task_runner_account: None,
         plugin_sources: None,
         skills: if inline_skills.is_empty() {
             None

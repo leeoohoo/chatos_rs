@@ -17,10 +17,7 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::Argon2;
 
 use crate::config::AppConfig;
-use crate::models::{
-    AgentAccountRecord, AuthUser, UserRecord, PRINCIPAL_TYPE_AGENT_ACCOUNT,
-    PRINCIPAL_TYPE_HUMAN_USER, USER_ROLE_SUPER_ADMIN,
-};
+use crate::models::{AuthUser, UserRecord, PRINCIPAL_TYPE_HUMAN_USER, USER_ROLE_SUPER_ADMIN};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthClaims {
@@ -35,11 +32,6 @@ pub struct AuthClaims {
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub role: Option<String>,
-    pub agent_account_id: Option<String>,
-    pub owner_user_id: Option<String>,
-    pub owner_username: Option<String>,
-    #[serde(default)]
-    pub owner_display_name: Option<String>,
     #[serde(default)]
     pub scopes: Vec<String>,
 }
@@ -54,10 +46,6 @@ pub struct CurrentPrincipal {
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub role: Option<String>,
-    pub agent_account_id: Option<String>,
-    pub owner_user_id: Option<String>,
-    pub owner_username: Option<String>,
-    pub owner_display_name: Option<String>,
     pub scopes: Vec<String>,
 }
 
@@ -68,11 +56,7 @@ impl CurrentPrincipal {
 
     pub fn auth_user(&self) -> AuthUser {
         AuthUser {
-            id: self
-                .user_id
-                .clone()
-                .or_else(|| self.agent_account_id.clone())
-                .unwrap_or_default(),
+            id: self.user_id.clone().unwrap_or_default(),
             username: self.username.clone().unwrap_or_default(),
             display_name: self
                 .display_name
@@ -95,10 +79,6 @@ impl From<AuthClaims> for CurrentPrincipal {
             username: value.username,
             display_name: value.display_name,
             role: value.role,
-            agent_account_id: value.agent_account_id,
-            owner_user_id: value.owner_user_id,
-            owner_username: value.owner_username,
-            owner_display_name: value.owner_display_name,
             scopes: value.scopes,
         }
     }
@@ -175,52 +155,13 @@ pub fn encode_user_token(config: &AppConfig, user: &UserRecord) -> Result<String
             username: Some(user.username.clone()),
             display_name: Some(user.display_name.clone()),
             role: Some(user.role.clone()),
-            agent_account_id: None,
-            owner_user_id: None,
-            owner_username: None,
-            owner_display_name: None,
             scopes: vec!["user_service".to_string()],
         },
     )
 }
 
-pub fn encode_agent_token(
-    config: &AppConfig,
-    agent: &AgentAccountRecord,
-    owner: &UserRecord,
-) -> Result<String, String> {
-    encode_token(
-        config,
-        AuthClaims {
-            iss: config.jwt_issuer.clone(),
-            aud: config.task_runner_audience.clone(),
-            sub: format!("agent:{}", agent.id),
-            exp: expiry_timestamp(config.task_runner_access_ttl_seconds),
-            iat: now_timestamp(),
-            jti: Uuid::new_v4().to_string(),
-            principal_type: PRINCIPAL_TYPE_AGENT_ACCOUNT.to_string(),
-            user_id: None,
-            username: Some(agent.username.clone()),
-            display_name: Some(agent.display_name.clone()),
-            role: None,
-            agent_account_id: Some(agent.id.clone()),
-            owner_user_id: Some(owner.id.clone()),
-            owner_username: Some(owner.username.clone()),
-            owner_display_name: Some(owner.display_name.clone()),
-            scopes: vec!["task_runner".to_string()],
-        },
-    )
-}
-
-pub fn decode_any_user_service_token(
-    token: &str,
-    config: &AppConfig,
-) -> Result<AuthClaims, String> {
-    match decode_token(token, config, config.user_service_audience.as_str()) {
-        Ok(claims) => Ok(claims),
-        Err(user_err) => decode_token(token, config, config.task_runner_audience.as_str())
-            .map_err(|task_err| format!("{user_err}; {task_err}")),
-    }
+pub fn decode_user_service_token(token: &str, config: &AppConfig) -> Result<AuthClaims, String> {
+    decode_token(token, config, config.user_service_audience.as_str())
 }
 
 pub fn bearer_token_from_headers(headers: &HeaderMap) -> Result<String, String> {

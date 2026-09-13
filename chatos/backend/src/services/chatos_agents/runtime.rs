@@ -24,7 +24,6 @@ pub(super) async fn build_agent_runtime_context(
         description: agent.description.clone(),
         category: agent.category.clone(),
         role_definition: agent.role_definition.clone(),
-        task_runner_agent_account_id: agent.task_runner_agent_account_id.clone(),
         plugin_sources: Vec::new(),
         runtime_plugins: Vec::new(),
         skills: super::dto_skills_from_agent(agent.skills.as_slice()),
@@ -92,7 +91,6 @@ mod tests {
             description: None,
             category: None,
             role_definition: "Help the user.".to_string(),
-            task_runner_agent_account_id: None,
             plugin_sources: vec!["legacy/plugin".to_string()],
             skills: vec![AgentSkill {
                 id: "inline-review".to_string(),

@@ -196,12 +196,7 @@ impl AppConfig {
         if !config.require_signed_internal_requests {
             return Err("MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string());
         }
-        for caller in [
-            "chatos-backend",
-            "task-runner",
-            "user-service",
-            "configuration-center",
-        ] {
+        for caller in ["chatos-backend", "user-service", "configuration-center"] {
             if !config.internal_api_secrets.contains_key(caller) {
                 return Err(format!(
                     "dedicated Memory Engine internal secret is required for {caller}"
@@ -214,7 +209,6 @@ impl AppConfig {
                 Some(secret.as_str()),
                 &[
                     "change_me_chatos_memory_engine_secret",
-                    "change_me_task_runner_memory_engine_secret",
                     "change_me_user_service_memory_engine_secret",
                     "change_me_configuration_center_memory_engine_secret",
                 ],
@@ -227,10 +221,6 @@ impl AppConfig {
 fn caller_internal_api_secrets() -> HashMap<String, String> {
     [
         ("chatos-backend", "CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET"),
-        (
-            "task-runner",
-            "TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET",
-        ),
         (
             "user-service",
             "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp::{system_mcp_descriptor_by_resource_id, SystemMcpKey};
+use chatos_mcp::system_mcp_descriptor_by_resource_id;
 use chatos_mcp_management_sdk::ResolvedMcpRoute;
 use chatos_mcp_management_sdk::RuntimeRemoteConnectionRouteTarget;
 use chatos_mcp_service::{METHOD_NOTIFICATIONS_CANCELLED, METHOD_TOOLS_CALL};
@@ -134,12 +134,8 @@ impl ChatosProvider {
             self.base_url,
             urlencoding::encode(descriptor.key.as_str())
         );
-        let timeout = match descriptor.key {
-            SystemMcpKey::AskUser => self.ask_user_request_timeout,
-            _ => self.request_timeout,
-        };
         let response = self
-            .bound_request(&binding, endpoint, timeout, secret)?
+            .bound_request(&binding, endpoint, self.request_timeout, secret)?
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": invocation_id,

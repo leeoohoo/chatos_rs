@@ -3,11 +3,10 @@
 
 use std::sync::OnceLock;
 
-use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
 use serde_json::{json, Value};
 
 use crate::config::Config;
-use crate::core::ai_settings::DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES;
+const DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES: i64 = 20 * 1024 * 1024;
 use crate::core::pagination::parse_js_int_value;
 use crate::repositories::user_settings as repo;
 
@@ -18,8 +17,7 @@ fn coerce(value: &Value, key: &str) -> Value {
         return Value::Null;
     }
     match key {
-        "MAX_ITERATIONS"
-        | "TASK_FOLLOW_UP_MAX_ROUNDS"
+        "TASK_FOLLOW_UP_MAX_ROUNDS"
         | "HISTORY_LIMIT"
         | "CHAT_MAX_TOKENS"
         | "ATTACHMENT_TOTAL_MAX_BYTES" => parse_js_int_value(value)
@@ -57,7 +55,6 @@ fn coerce(value: &Value, key: &str) -> Value {
 
 pub fn get_default_user_settings() -> Result<Value, String> {
     let cfg = Config::try_get()?;
-    let max_iterations = DEFAULT_AGENT_MAX_ITERATIONS as i64;
     let task_follow_up_max_rounds = std::env::var("TASK_FOLLOW_UP_MAX_ROUNDS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
@@ -79,7 +76,6 @@ pub fn get_default_user_settings() -> Result<Value, String> {
         .unwrap_or(DEFAULT_ATTACHMENT_TOTAL_MAX_BYTES);
 
     Ok(json!({
-        "MAX_ITERATIONS": max_iterations,
         "TASK_FOLLOW_UP_MAX_ROUNDS": task_follow_up_max_rounds,
         "LOG_LEVEL": cfg.log_level,
         "HISTORY_LIMIT": history_limit,
@@ -97,7 +93,6 @@ pub async fn get_effective_user_settings(user_id: Option<String>) -> Result<Valu
         if let Ok(snapshot) = client.load().await {
             if let Value::Object(base_map) = &mut base {
                 for (config_key, legacy_key) in [
-                    (AGENT_MAX_ITERATIONS_CONFIG_KEY, "MAX_ITERATIONS"),
                     (
                         "chatos.task.follow_up_max_rounds",
                         "TASK_FOLLOW_UP_MAX_ROUNDS",

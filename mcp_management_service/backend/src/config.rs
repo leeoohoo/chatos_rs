@@ -14,7 +14,7 @@ use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secr
 const DEFAULT_RUNTIME_GRANT_SECRET: &str = "change_me_mcp_management_runtime_grant_secret";
 const DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET: &str =
     "change_me_mcp_management_runtime_session_encryption_secret";
-const REQUIRED_INTERNAL_CALLERS: [&str; 3] = ["chatos", "task-runner", "configuration-center"];
+const REQUIRED_INTERNAL_CALLERS: [&str; 2] = ["chatos", "configuration-center"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsyncToolDispatchMode {
@@ -272,17 +272,9 @@ pub struct AppConfig {
     pub plugin_management_service_base_url: String,
     pub plugin_management_http_client: reqwest::Client,
     pub plugin_management_internal_api_secret: Option<String>,
-    pub task_runner_service_base_url: String,
-    pub task_runner_mtls_ca_cert_path: PathBuf,
-    pub task_runner_mtls_client_identity_path: PathBuf,
-    pub task_runner_internal_api_secret: Option<String>,
-    pub task_runner_request_timeout: Duration,
-    pub task_runner_ask_user_request_timeout: Duration,
     pub chatos_service_base_url: String,
     pub chatos_http_client: reqwest::Client,
     pub chatos_internal_api_secret: Option<String>,
-    pub chatos_ask_user_request_timeout: Duration,
-    pub chatos_browser_request_timeout: Duration,
     pub local_connector_service_base_url: String,
     pub local_connector_http_client: reqwest::Client,
     pub local_connector_internal_api_secret: Option<String>,
@@ -363,9 +355,6 @@ impl AppConfig {
         let plugin_management_internal_api_secret = Some(required_text(
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
         )?);
-        let task_runner_caller_secret =
-            required_text("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET")?;
-        let task_runner_internal_api_secret = Some(task_runner_caller_secret.clone());
         let chatos_caller_secret = required_text("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET")?;
         let chatos_internal_api_secret = Some(chatos_caller_secret.clone());
         let configuration_center_caller_secret =
@@ -377,11 +366,6 @@ impl AppConfig {
             "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
             plugin_management_internal_api_secret.as_deref(),
             &["change_me_plugin_management_mcp_management_secret"],
-        )?;
-        validate_production_secret(
-            "MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
-            task_runner_internal_api_secret.as_deref(),
-            &["change_me_mcp_management_task_runner_secret"],
         )?;
         validate_production_secret(
             "MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
@@ -400,7 +384,6 @@ impl AppConfig {
         )?;
         let internal_api_secrets = BTreeMap::from([
             ("chatos".to_string(), chatos_caller_secret),
-            ("task-runner".to_string(), task_runner_caller_secret),
             (
                 "configuration-center".to_string(),
                 configuration_center_caller_secret,
@@ -423,32 +406,12 @@ impl AppConfig {
         let runtime_session_ttl = Duration::from_secs(
             required_u64("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")?.clamp(5 * 60, 2 * 60 * 60),
         );
-        let task_runner_request_timeout = Duration::from_millis(
-            required_u64("MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS")?
-                .clamp(1_000, 2 * 60 * 60 * 1_000),
-        );
-        let task_runner_ask_user_request_timeout = Duration::from_millis(
-            required_u64("MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS")?.clamp(
-                chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
-                7 * 24 * 60 * 60 * 1_000,
-            ),
-        );
-        let chatos_ask_user_request_timeout = Duration::from_millis(
-            required_u64("MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS")?.clamp(
-                chatos_mcp::ASK_USER_PROMPT_TIMEOUT_MS_DEFAULT,
-                7 * 24 * 60 * 60 * 1_000,
-            ),
-        );
-        let chatos_browser_request_timeout = Duration::from_millis(
-            required_u64("MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS")?
-                .clamp(30_000, 2 * 60 * 60 * 1_000),
-        );
         let chatos_service_base_url = require_https_base_url(
             "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL",
             normalize_base_url(required_text("MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL")?),
         )?;
         let chatos_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(chatos_ask_user_request_timeout),
+            chatos_service_runtime::HttpClientTimeouts::new(downstream_request_timeout),
             required_path("CHATOS_MTLS_CA_CERT_PATH")?.as_path(),
             required_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
         )?;
@@ -484,24 +447,9 @@ impl AppConfig {
             plugin_management_service_base_url,
             plugin_management_http_client,
             plugin_management_internal_api_secret,
-            task_runner_service_base_url: require_https_base_url(
-                "MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL",
-                normalize_base_url(required_text(
-                    "MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL",
-                )?),
-            )?,
-            task_runner_mtls_ca_cert_path: required_path("TASK_RUNNER_MTLS_CA_CERT_PATH")?,
-            task_runner_mtls_client_identity_path: required_path(
-                "TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH",
-            )?,
-            task_runner_internal_api_secret,
-            task_runner_request_timeout,
-            task_runner_ask_user_request_timeout,
             chatos_service_base_url,
             chatos_http_client,
             chatos_internal_api_secret,
-            chatos_ask_user_request_timeout,
-            chatos_browser_request_timeout,
             local_connector_service_base_url,
             local_connector_http_client,
             local_connector_internal_api_secret,
@@ -539,10 +487,6 @@ impl AppConfig {
             internal_api_secrets: BTreeMap::from([
                 ("chatos".to_string(), "a-long-chatos-secret".to_string()),
                 (
-                    "task-runner".to_string(),
-                    "a-long-task-runner-secret".to_string(),
-                ),
-                (
                     "configuration-center".to_string(),
                     "a-long-configuration-center-secret".to_string(),
                 ),
@@ -550,7 +494,6 @@ impl AppConfig {
             require_signed_internal_requests: true,
             allowed_internal_callers: BTreeSet::from([
                 "chatos".to_string(),
-                "task-runner".to_string(),
                 "configuration-center".to_string(),
             ]),
             plugin_management_service_base_url: "https://127.0.0.1:39262".to_string(),
@@ -558,17 +501,9 @@ impl AppConfig {
             plugin_management_internal_api_secret: Some(
                 "a-long-plugin-management-secret".to_string(),
             ),
-            task_runner_service_base_url: "http://127.0.0.1:39090".to_string(),
-            task_runner_mtls_ca_cert_path: PathBuf::new(),
-            task_runner_mtls_client_identity_path: PathBuf::new(),
-            task_runner_internal_api_secret: Some("a-long-task-runner-secret".to_string()),
-            task_runner_request_timeout: Duration::from_secs(2 * 60 * 60),
-            task_runner_ask_user_request_timeout: Duration::from_secs(86_700),
             chatos_service_base_url: "http://127.0.0.1:3997".to_string(),
             chatos_http_client: reqwest::Client::new(),
             chatos_internal_api_secret: Some("a-long-chatos-secret".to_string()),
-            chatos_ask_user_request_timeout: Duration::from_secs(86_700),
-            chatos_browser_request_timeout: Duration::from_secs(2 * 60 * 60),
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_http_client: reqwest::Client::new(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),

@@ -15,7 +15,7 @@ fn command(call_count: usize) -> McpToolCallCommand {
         source_step_seq: 1,
         batch_id: "batch-1".to_string(),
         mcp_runtime_session_ref: "session-1".to_string(),
-        result_routing_key: "cloud_agent.task_runner.mcp_results".to_string(),
+        result_routing_key: "local_agent.mcp_results".to_string(),
         calls: (0..call_count)
             .map(|call_index| McpToolCallCommandItem {
                 invocation_id: format!("invocation-{call_index}"),

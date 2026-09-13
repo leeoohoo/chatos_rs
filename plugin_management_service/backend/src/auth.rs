@@ -47,10 +47,6 @@ struct UserServiceVerifiedPrincipal {
     username: Option<String>,
     display_name: Option<String>,
     role: Option<String>,
-    agent_account_id: Option<String>,
-    owner_user_id: Option<String>,
-    owner_username: Option<String>,
-    owner_display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,55 +183,26 @@ fn current_user_from_verified_principal(
     principal: UserServiceVerifiedPrincipal,
 ) -> Result<CurrentUser, String> {
     let principal_type = principal.principal_type.trim();
-    match principal_type {
-        "human_user" => {
-            let user_id = normalize_identity_text(principal.user_id.as_deref())
-                .ok_or_else(|| "verified user principal missing user_id".to_string())?;
-            Ok(CurrentUser {
-                principal_type: "human_user".to_string(),
-                user_id: user_id.to_string(),
-                username: normalize_identity_text(principal.username.as_deref())
-                    .unwrap_or(user_id)
-                    .to_string(),
-                display_name: normalize_identity_text(principal.display_name.as_deref())
-                    .or_else(|| normalize_identity_text(principal.username.as_deref()))
-                    .unwrap_or(user_id)
-                    .to_string(),
-                role: normalize_identity_text(principal.role.as_deref())
-                    .unwrap_or("user")
-                    .to_string(),
-                owner_user_id: None,
-                owner_username: None,
-                owner_display_name: None,
-            })
-        }
-        "agent_account" => {
-            let owner_user_id = normalize_identity_text(principal.owner_user_id.as_deref())
-                .ok_or_else(|| "verified agent principal missing owner_user_id".to_string())?;
-            let agent_id = normalize_identity_text(principal.agent_account_id.as_deref())
-                .unwrap_or(owner_user_id);
-            Ok(CurrentUser {
-                principal_type: "agent_account".to_string(),
-                user_id: owner_user_id.to_string(),
-                username: normalize_identity_text(principal.username.as_deref())
-                    .unwrap_or(agent_id)
-                    .to_string(),
-                display_name: normalize_identity_text(principal.display_name.as_deref())
-                    .or_else(|| normalize_identity_text(principal.username.as_deref()))
-                    .unwrap_or(agent_id)
-                    .to_string(),
-                role: normalize_identity_text(principal.role.as_deref())
-                    .unwrap_or("user")
-                    .to_string(),
-                owner_user_id: Some(owner_user_id.to_string()),
-                owner_username: normalize_identity_text(principal.owner_username.as_deref())
-                    .map(ToOwned::to_owned),
-                owner_display_name: normalize_identity_text(
-                    principal.owner_display_name.as_deref(),
-                )
-                .map(ToOwned::to_owned),
-            })
-        }
-        _ => Err(format!("unsupported principal_type: {principal_type}")),
+    if principal_type != "human_user" {
+        return Err(format!("unsupported principal_type: {principal_type}"));
     }
+    let user_id = normalize_identity_text(principal.user_id.as_deref())
+        .ok_or_else(|| "verified user principal missing user_id".to_string())?;
+    Ok(CurrentUser {
+        principal_type: "human_user".to_string(),
+        user_id: user_id.to_string(),
+        username: normalize_identity_text(principal.username.as_deref())
+            .unwrap_or(user_id)
+            .to_string(),
+        display_name: normalize_identity_text(principal.display_name.as_deref())
+            .or_else(|| normalize_identity_text(principal.username.as_deref()))
+            .unwrap_or(user_id)
+            .to_string(),
+        role: normalize_identity_text(principal.role.as_deref())
+            .unwrap_or("user")
+            .to_string(),
+        owner_user_id: None,
+        owner_username: None,
+        owner_display_name: None,
+    })
 }

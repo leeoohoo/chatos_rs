@@ -24,18 +24,6 @@ pub struct ChatosAgentSkillDto {
     pub content: String,
 }
 
-#[cfg(test)]
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ChatosSkillPluginCommandDto {
-    pub name: String,
-    pub source_path: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub argument_hint: Option<String>,
-    pub content: String,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChatosAgentRuntimePluginSummaryDto {
     pub source: String,
@@ -78,8 +66,6 @@ pub struct ChatosAgentDto {
     pub category: Option<String>,
     pub role_definition: String,
     #[serde(default)]
-    pub task_runner_agent_account_id: Option<String>,
-    #[serde(default)]
     pub plugin_sources: Vec<String>,
     #[serde(default)]
     pub skills: Vec<ChatosAgentSkillDto>,
@@ -101,8 +87,6 @@ pub struct ChatosAgentRuntimeContextDto {
     pub description: Option<String>,
     pub category: Option<String>,
     pub role_definition: String,
-    #[serde(default)]
-    pub task_runner_agent_account_id: Option<String>,
     #[serde(default)]
     pub plugin_sources: Vec<String>,
     #[serde(default)]
@@ -126,8 +110,6 @@ pub struct CreateChatosAgentRequest {
     pub description: Option<String>,
     pub category: Option<String>,
     pub role_definition: String,
-    #[serde(default)]
-    pub auto_provision_task_runner_account: Option<bool>,
     pub plugin_sources: Option<Vec<String>>,
     pub skills: Option<Vec<ChatosAgentSkillDto>>,
     pub skill_ids: Option<Vec<String>>,

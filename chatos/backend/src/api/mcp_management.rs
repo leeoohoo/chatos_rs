@@ -6,9 +6,7 @@ use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
-use chatos_agent::{
-    is_chatos_callback_agent, parse_system_agent_key, uses_chatos_notepad_callback,
-};
+use chatos_agent::{can_use_chatos_notepad, is_chatos_conversation_agent, parse_system_agent_key};
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_service::{
     jsonrpc_error, jsonrpc_ok, JsonRpcRequest, JsonRpcResponse, MCP_ERROR_AUTH_REQUIRED,
@@ -29,7 +27,6 @@ use crate::services::{chatos_agents, chatos_sessions};
 const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 const CHATOS_TOKEN_AUDIENCE: &str = "chatos";
 const MCP_TOOLS_CALL_SCOPE: &str = "mcp.tools.call";
-const ASK_USER_SESSION_EXPIRY_SAFETY_MARGIN_MS: u64 = 5 * 60 * 1_000;
 
 mod builtins;
 mod validation;
@@ -40,14 +37,6 @@ pub fn router() -> Router {
         .route(
             "/internal/mcp-management/mcp/{system_key}",
             post(mcp_management_entrypoint),
-        )
-        .route(
-            "/internal/mcp-management/mcp/{system_key}/start",
-            post(mcp_management_ask_user_start),
-        )
-        .route(
-            "/internal/mcp-management/mcp/{system_key}/prompts/{prompt_id}",
-            post(mcp_management_ask_user_prompt),
         )
         .route(
             "/internal/mcp-management/remote-connections/{connection_id}/route",
@@ -118,63 +107,13 @@ async fn mcp_management_remote_connection_route(
     )
 }
 
-async fn mcp_management_ask_user_start(
-    Path(system_key): Path<String>,
-    headers: HeaderMap,
-    Json(request): Json<JsonRpcRequest>,
-) -> Json<JsonRpcResponse> {
-    let id = request.id.clone().unwrap_or(Value::Null);
-    if let Err(message) = require_mcp_management_request(&headers) {
-        return Json(jsonrpc_error(id, MCP_ERROR_AUTH_REQUIRED, message));
-    }
-    if system_key.parse::<SystemMcpKey>().ok() != Some(SystemMcpKey::AskUser) {
-        return Json(jsonrpc_error(
-            id,
-            MCP_ERROR_INVALID_PARAMS,
-            "only Ask User can be started",
-        ));
-    }
-    let binding = match mcp_management_binding_from_headers(&headers) {
-        Ok(binding) => binding,
-        Err(message) => return Json(jsonrpc_error(id, MCP_ERROR_INVALID_PARAMS, message)),
-    };
-    Json(builtins::dispatch_bound_ask_user_start(request, &binding).await)
-}
-
-async fn mcp_management_ask_user_prompt(
-    Path((system_key, prompt_id)): Path<(String, String)>,
-    headers: HeaderMap,
-) -> Json<Value> {
-    if require_mcp_management_request(&headers).is_err()
-        || system_key.parse::<SystemMcpKey>().ok() != Some(SystemMcpKey::AskUser)
-        || mcp_management_binding_from_headers(&headers).is_err()
-    {
-        return Json(serde_json::json!({"error": "invalid Ask User prompt request"}));
-    }
-    match crate::services::ask_user_prompt_manager::get_ask_user_prompt_record(prompt_id.as_str())
-        .await
-    {
-        Ok(Some(prompt)) => Json(serde_json::json!({
-            "pending": prompt.status
-                == crate::services::ask_user_prompt_manager::AskUserPromptStatus::Pending,
-            "kind": prompt.kind,
-            "response": prompt.response,
-        })),
-        Ok(None) => Json(serde_json::json!({"error": "ask_user prompt was not found"})),
-        Err(error) => Json(serde_json::json!({"error": error})),
-    }
-}
-
 #[derive(Debug, Clone)]
 struct McpManagementBinding {
     owner_user_id: String,
     agent_key: SystemAgentKey,
-    session_id: String,
-    session_expires_at_unix: i64,
     project_id: Option<String>,
     turn_id: Option<String>,
     source_session_id: Option<String>,
-    source_user_message_id: Option<String>,
     contact_agent_id: Option<String>,
 }
 
@@ -233,7 +172,11 @@ async fn dispatch_mcp_management_request(
         SystemMcpKey::AgentBuilder => {
             builtins::dispatch_bound_agent_builder(request, &binding).await
         }
-        SystemMcpKey::AskUser => builtins::dispatch_bound_ask_user(request, &binding).await,
+        SystemMcpKey::AskUser => jsonrpc_error(
+            id,
+            MCP_ERROR_INVALID_PARAMS,
+            "Ask User is executed by the local client runtime and is not available through the ChatOS server provider",
+        ),
         SystemMcpKey::Notepad => builtins::dispatch_bound_notepad(request, &binding).await,
         SystemMcpKey::MemorySkillReader
         | SystemMcpKey::MemoryCommandReader
@@ -304,19 +247,13 @@ fn mcp_management_binding_from_headers(
     let agent_key_text = required("x-mcp-management-agent-key")?;
     let agent_key = parse_system_agent_key(&agent_key_text)
         .ok_or_else(|| "x-mcp-management-agent-key is not a registered System Agent".to_string())?;
+    required("x-mcp-management-session-id")?;
     Ok(McpManagementBinding {
         owner_user_id,
         agent_key,
-        session_id: required("x-mcp-management-session-id")?,
-        session_expires_at_unix: required("x-mcp-management-session-expires-at-unix")?
-            .parse::<i64>()
-            .map_err(|_| {
-                "x-mcp-management-session-expires-at-unix must be an integer".to_string()
-            })?,
         project_id: header_text(headers, "x-mcp-management-project-id"),
         turn_id: header_text(headers, "x-mcp-management-turn-id"),
         source_session_id: header_text(headers, "x-mcp-management-source-session-id"),
-        source_user_message_id: header_text(headers, "x-mcp-management-source-user-message-id"),
         contact_agent_id: header_text(headers, "x-mcp-management-contact-agent-id"),
     })
 }
@@ -338,23 +275,12 @@ fn session_matches_binding(
         && project_id == binding.project_id
 }
 
-fn message_matches_turn(message: &crate::models::message::Message, turn_id: &str) -> bool {
-    message.role.trim() == "user"
-        && message
-            .metadata
-            .as_ref()
-            .and_then(|metadata| metadata.get("conversation_turn_id"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            == Some(turn_id)
-}
-
 fn is_chatos_agent(agent_key: SystemAgentKey) -> bool {
-    is_chatos_callback_agent(agent_key)
+    is_chatos_conversation_agent(agent_key)
 }
 
 fn is_notepad_agent(agent_key: SystemAgentKey) -> bool {
-    uses_chatos_notepad_callback(agent_key)
+    can_use_chatos_notepad(agent_key)
 }
 
 #[cfg(test)]

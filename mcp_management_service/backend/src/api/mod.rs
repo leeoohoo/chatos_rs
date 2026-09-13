@@ -86,10 +86,6 @@ pub fn build_internal_router(state: AppState) -> Router {
                 "/api/internal/runtime/invocations/{invocation_id}/cancel",
                 post(invocations::cancel_runtime_invocation),
             )
-            .route(
-                "/api/internal/runtime/invocations/waiting-user/{prompt_id}/resolved",
-                post(invocations::notify_waiting_user_resolved),
-            )
             .with_state(state),
         "internal",
     )
@@ -114,8 +110,8 @@ mod tests {
     #[tokio::test]
     async fn catalog_endpoint_requires_and_accepts_scoped_internal_token() {
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-task-runner-secret",
-            "task-runner",
+            "a-long-chatos-secret",
+            "chatos",
             "mcp-management-service",
             "catalog.read",
             60,
@@ -123,7 +119,7 @@ mod tests {
         .unwrap();
         let request = Request::builder()
             .uri("/api/internal/catalog")
-            .header("x-mcp-management-caller-service", "task-runner")
+            .header("x-mcp-management-caller-service", "chatos")
             .header("x-mcp-management-internal-token", token)
             .body(Body::empty())
             .unwrap();
@@ -159,7 +155,7 @@ mod tests {
                 invocation_id: "invocation-api-test".to_string(),
                 session_id: "session-api-test".to_string(),
                 request_id_key: "\"request-api-test\"".to_string(),
-                caller_service: "task-runner".to_string(),
+                caller_service: "chatos".to_string(),
                 tenant_id: "tenant-1".to_string(),
                 owner_user_id: "user-1".to_string(),
                 project_id: Some("project-1".to_string()),
@@ -185,8 +181,8 @@ mod tests {
             .await
             .unwrap();
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-task-runner-secret",
-            "task-runner",
+            "a-long-chatos-secret",
+            "chatos",
             "mcp-management-service",
             "runtime.invocations.cancel",
             60,
@@ -195,7 +191,7 @@ mod tests {
         let request = Request::builder()
             .method("POST")
             .uri("/api/internal/runtime/invocations/invocation-api-test/cancel")
-            .header("x-mcp-management-caller-service", "task-runner")
+            .header("x-mcp-management-caller-service", "chatos")
             .header("x-mcp-management-internal-token", token)
             .body(Body::empty())
             .unwrap();
@@ -218,7 +214,7 @@ mod tests {
                 invocation_id: "invocation-read-test".to_string(),
                 session_id: "session-read-test".to_string(),
                 request_id_key: "\"request-read-test\"".to_string(),
-                caller_service: "task-runner".to_string(),
+                caller_service: "chatos".to_string(),
                 tenant_id: "tenant-1".to_string(),
                 owner_user_id: "user-1".to_string(),
                 project_id: Some("project-1".to_string()),
@@ -249,8 +245,8 @@ mod tests {
             .await
             .unwrap();
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-task-runner-secret",
-            "task-runner",
+            "a-long-chatos-secret",
+            "chatos",
             "mcp-management-service",
             "runtime.invocations.read",
             60,
@@ -259,7 +255,7 @@ mod tests {
         let request = Request::builder()
             .method("GET")
             .uri("/api/internal/runtime/invocations/invocation-read-test")
-            .header("x-mcp-management-caller-service", "task-runner")
+            .header("x-mcp-management-caller-service", "chatos")
             .header("x-mcp-management-internal-token", token)
             .body(Body::empty())
             .unwrap();
@@ -291,7 +287,7 @@ mod tests {
                 invocation_id: "invocation-system-stats".to_string(),
                 session_id: "session-system-stats".to_string(),
                 request_id_key: "\"request-system-stats\"".to_string(),
-                caller_service: "task-runner".to_string(),
+                caller_service: "chatos".to_string(),
                 tenant_id: "tenant-1".to_string(),
                 owner_user_id: "user-1".to_string(),
                 project_id: Some("project-1".to_string()),
@@ -317,8 +313,8 @@ mod tests {
             .await
             .unwrap();
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-task-runner-secret",
-            "task-runner",
+            "a-long-chatos-secret",
+            "chatos",
             "mcp-management-service",
             "system.stats.read",
             60,
@@ -327,7 +323,7 @@ mod tests {
         let request = Request::builder()
             .method("GET")
             .uri("/api/internal/system/stats")
-            .header("x-mcp-management-caller-service", "task-runner")
+            .header("x-mcp-management-caller-service", "chatos")
             .header("x-mcp-management-internal-token", token)
             .body(Body::empty())
             .unwrap();

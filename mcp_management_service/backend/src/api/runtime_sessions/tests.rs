@@ -241,64 +241,6 @@ fn task_process_log_session_requires_exact_run_task_and_agent_scope() {
     .is_err());
 }
 
-#[tokio::test]
-async fn ask_user_route_is_pinned_to_the_agent_host_and_requires_task_run_scope() {
-    let mut routes = vec![system_route(SystemMcpKey::AskUser)];
-    bind_agent_callback_routes(routes.as_mut_slice(), SystemAgentKey::TaskRunnerRunPhase);
-    assert_eq!(routes[0].provider_ref.as_deref(), Some("task-runner"));
-    let state = AppState::new(crate::config::AppConfig::test())
-        .await
-        .expect("test state");
-    assert!(state.providers.supports(&routes[0]));
-
-    validate_task_runner_provider_context(
-        SystemAgentKey::TaskRunnerRunPhase,
-        &request(),
-        routes.as_slice(),
-    )
-    .expect("bound Task Runner Ask User route should be accepted");
-
-    let mut missing_task = request();
-    missing_task.task_id = None;
-    let error = validate_task_runner_provider_context(
-        SystemAgentKey::TaskRunnerRunPhase,
-        &missing_task,
-        routes.as_slice(),
-    )
-    .expect_err("task binding is required");
-    assert!(format!("{error:?}").contains("task_id"));
-
-    bind_agent_callback_routes(
-        routes.as_mut_slice(),
-        SystemAgentKey::ChatosConversationAgent,
-    );
-    assert_eq!(routes[0].provider_ref.as_deref(), Some("chatos"));
-    assert!(state.providers.supports(&routes[0]));
-
-    let mut chatos_request = request();
-    chatos_request.agent_key = SystemAgentKey::ChatosConversationAgent.as_str().to_string();
-    chatos_request.run_id = None;
-    chatos_request.task_id = None;
-    chatos_request.turn_id = Some("turn-1".to_string());
-    chatos_request.source_session_id = Some("conversation-1".to_string());
-    chatos_request.source_user_message_id = Some("message-1".to_string());
-    validate_task_runner_provider_context(
-        SystemAgentKey::ChatosConversationAgent,
-        &chatos_request,
-        routes.as_slice(),
-    )
-    .expect("bound ChatOS Ask User route should be accepted");
-
-    chatos_request.turn_id = None;
-    let error = validate_task_runner_provider_context(
-        SystemAgentKey::ChatosConversationAgent,
-        &chatos_request,
-        routes.as_slice(),
-    )
-    .expect_err("ChatOS turn binding is required");
-    assert!(format!("{error:?}").contains("turn_id"));
-}
-
 #[test]
 fn memory_reader_routes_are_pinned_to_the_runtime_contact_agent() {
     let mut routes = vec![
@@ -335,28 +277,6 @@ fn memory_reader_routes_are_unavailable_without_a_bound_contact_agent() {
     assert_eq!(routes[0].provider_kind, McpProviderKind::Unavailable);
     assert_eq!(routes[0].provider_ref, None);
     assert!(!routes[0].allow_writes);
-}
-
-#[test]
-fn task_runner_service_session_requires_chatos_source_scope() {
-    let route = system_route(SystemMcpKey::TaskRunnerService);
-    let mut request = request();
-    request.agent_key = SystemAgentKey::ChatosConversationAgent.as_str().to_string();
-    assert!(validate_task_runner_provider_context(
-        SystemAgentKey::ChatosConversationAgent,
-        &request,
-        std::slice::from_ref(&route),
-    )
-    .is_err());
-
-    request.source_session_id = Some("conversation-1".to_string());
-    request.source_user_message_id = Some("message-1".to_string());
-    validate_task_runner_provider_context(
-        SystemAgentKey::ChatosConversationAgent,
-        &request,
-        std::slice::from_ref(&route),
-    )
-    .expect("complete Chatos source binding should be accepted");
 }
 
 #[test]

@@ -3,9 +3,7 @@
 
 use crate::async_dispatch::AsyncToolDispatch;
 use crate::config::AppConfig;
-use crate::providers::{
-    ChatosProviderConfig, ProviderDispatcher, ProviderRuntimeConfig, TaskRunnerProviderConfig,
-};
+use crate::providers::{ChatosProviderConfig, ProviderDispatcher, ProviderRuntimeConfig};
 use crate::routing::RoutingEngine;
 use crate::runtime::{
     RuntimeExecutionScopeStore, RuntimeGrantService, RuntimeInvocationQuota,
@@ -88,20 +86,11 @@ impl AppState {
             )?,
         });
         let providers = ProviderDispatcher::new(
-            TaskRunnerProviderConfig {
-                http: task_runner_http_client(&config)?,
-                base_url: config.task_runner_service_base_url.clone(),
-                internal_secret: config.task_runner_internal_api_secret.clone(),
-                request_timeout: config.task_runner_request_timeout,
-                ask_user_request_timeout: config.task_runner_ask_user_request_timeout,
-            },
             ChatosProviderConfig {
                 http: config.chatos_http_client.clone(),
                 base_url: config.chatos_service_base_url.clone(),
                 internal_secret: config.chatos_internal_api_secret.clone(),
                 request_timeout: config.downstream_request_timeout,
-                ask_user_request_timeout: config.chatos_ask_user_request_timeout,
-                browser_request_timeout: config.chatos_browser_request_timeout,
             },
             config.local_connector_http_client.clone(),
             config.local_connector_service_base_url.clone(),
@@ -180,26 +169,6 @@ impl AppState {
 
 fn local_connector_tool_timeout(downstream_timeout: Duration) -> Duration {
     downstream_timeout.max(STANDARD_LOCAL_CONNECTOR_TOOL_TIMEOUT)
-}
-
-fn task_runner_http_client(config: &AppConfig) -> Result<reqwest::Client, String> {
-    #[cfg(test)]
-    if config.task_runner_mtls_ca_cert_path.as_os_str().is_empty()
-        && config
-            .task_runner_mtls_client_identity_path
-            .as_os_str()
-            .is_empty()
-    {
-        return reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|err| format!("build test Task Runner Provider client failed: {err}"));
-    }
-    chatos_service_runtime::build_mtls_http_client(
-        chatos_service_runtime::HttpClientTimeouts::new(config.task_runner_request_timeout),
-        config.task_runner_mtls_ca_cert_path.as_path(),
-        config.task_runner_mtls_client_identity_path.as_path(),
-    )
 }
 
 #[cfg(not(test))]

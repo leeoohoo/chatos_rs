@@ -24,8 +24,6 @@ impl PromptRunnerRuntime {
                 None,
                 user_id.as_deref(),
                 default_model,
-                Some(false),
-                true,
             )
             .await?;
 

@@ -94,7 +94,7 @@ export function ModelProviderDrawer({
         <Form.Item
           name="prompt_vendor"
           label="Prompt Type"
-          tooltip="Selects the optimized system prompt used by cloud agents. Known providers are filled automatically."
+          tooltip="Selects the optimized system prompt used by local agents and Memory Engine jobs. Known providers are filled automatically."
           rules={[{ required: true, message: 'Please choose a prompt type' }]}
         >
           <Select options={PROMPT_VENDOR_OPTIONS} />

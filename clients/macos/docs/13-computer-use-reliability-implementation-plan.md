@@ -1,5 +1,7 @@
 # Computer Use 输入与任务卡死治理实施方案
 
+> 历史归档：本文描述的服务端 Task Runner / Cloud Agent 执行面已在 3.0.2 删除。当前任务执行由客户端本地 Agent Runtime 负责；本文仅用于追溯旧问题，不能作为现行架构实施依据。
+
 ## 目标
 
 一次性治理 ChatOS 通过 Task Runner 调用 Open Computer Use 时出现的五类关联故障：

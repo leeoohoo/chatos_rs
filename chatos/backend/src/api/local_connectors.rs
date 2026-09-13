@@ -72,37 +72,6 @@ pub(crate) async fn test_remote_connection_via_connector(
     .await
 }
 
-pub(crate) async fn run_remote_command_via_connector(
-    connection: &RemoteConnection,
-    command: &str,
-    timeout: Duration,
-    verification_code: Option<&str>,
-) -> Result<String, String> {
-    let path = format!(
-        "/api/local-connectors/relay/{}/remote-connections/command",
-        urlencoding::encode(connection.local_connector_device_id.as_str())
-    );
-    let timeout_ms = timeout.as_millis().clamp(1_000, 600_000) as u64;
-    let response = connector_post_json_with_timeout::<Value, _>(
-        path.as_str(),
-        &json!({
-            "workspace_id": connection.local_connector_workspace_id,
-            "connection": remote_connection_execution_payload(connection),
-            "command": command,
-            "timeout_ms": timeout_ms,
-            "verification_code": verification_code,
-        }),
-        timeout.saturating_add(Duration::from_secs(10)),
-    )
-    .await
-    .map_err(connector_remote_execution_error)?;
-    response
-        .get("output")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| "Local Connector 远程命令响应缺少 output".to_string())
-}
-
 pub(crate) async fn close_remote_terminal_via_connector(
     connection: &RemoteConnection,
 ) -> Result<Value, (StatusCode, Json<Value>)> {
@@ -183,23 +152,6 @@ pub(crate) fn remote_connection_execution_payload(connection: &RemoteConnection)
         "jump_certificate_path": connection.jump_certificate_path,
         "jump_password": connection.jump_password,
     })
-}
-
-pub(crate) fn connector_remote_execution_error(error: (StatusCode, Json<Value>)) -> String {
-    let (_, Json(value)) = error;
-    if value.get("code").and_then(Value::as_str) == Some("second_factor_required") {
-        let prompt = value
-            .get("challenge_prompt")
-            .and_then(Value::as_str)
-            .unwrap_or("请输入验证码 / OTP");
-        return format!("__CHATOS_SECOND_FACTOR_REQUIRED__:{prompt}");
-    }
-    value
-        .get("error")
-        .and_then(Value::as_str)
-        .or_else(|| value.get("detail").and_then(Value::as_str))
-        .unwrap_or("Local Connector 远程执行失败")
-        .to_string()
 }
 
 async fn list_devices(

@@ -74,7 +74,6 @@ async fn cloned_store_coordinates_cancel_and_terminal_transition() {
     let writer = RuntimeInvocationStore::memory();
     let reader = writer.clone();
     writer.register(record()).await.unwrap();
-    assert!(writer.mark_waiting_for_user("invocation-1").await.unwrap());
     let cancelled = reader
         .request_cancel_by_request("session-1", "\"request-1\"")
         .await
@@ -343,37 +342,6 @@ async fn atomic_quota_rejects_excess_calls_and_terminal_state_releases_capacity(
 }
 
 #[tokio::test]
-async fn waiting_for_user_keeps_quota_reserved_until_completion() {
-    let store = RuntimeInvocationStore::memory_with_quota(
-        RuntimeInvocationQuotaLimits::new(1, 1, 1, 1).unwrap(),
-    );
-    let first = record();
-    store.register(first.clone()).await.unwrap();
-    assert!(store
-        .mark_waiting_for_user(first.invocation_id.as_str())
-        .await
-        .unwrap());
-
-    let mut second = record();
-    second.invocation_id = "invocation-waiting-quota-2".to_string();
-    second.session_id = "session-waiting-quota-2".to_string();
-    second.request_id_key = "\"request-waiting-quota-2\"".to_string();
-    assert!(matches!(
-        store.register(second.clone()).await,
-        Err(RuntimeInvocationRegisterError::CapacityExhausted { .. })
-    ));
-
-    assert!(store
-        .complete(
-            first.invocation_id.as_str(),
-            serde_json::json!({"answer": "yes"})
-        )
-        .await
-        .unwrap());
-    store.register(second).await.unwrap();
-}
-
-#[tokio::test]
 #[ignore = "requires CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL"]
 async fn mongodb_store_coordinates_cancellation_across_service_instances() {
     let database_url = std::env::var("CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL")
@@ -592,13 +560,6 @@ async fn stats_summarize_memory_store_by_status() {
         status: RuntimeInvocationStatus::Running,
         ..record()
     };
-    let waiting = RuntimeInvocationRecord {
-        invocation_id: "invocation-stats-waiting".to_string(),
-        session_id: "session-stats-waiting".to_string(),
-        request_id_key: "\"request-stats-waiting\"".to_string(),
-        status: RuntimeInvocationStatus::Running,
-        ..record()
-    };
     let terminal = RuntimeInvocationRecord {
         invocation_id: "invocation-stats-terminal".to_string(),
         session_id: "session-stats-terminal".to_string(),
@@ -610,11 +571,6 @@ async fn stats_summarize_memory_store_by_status() {
 
     store.register(queued).await.unwrap();
     store.register(running).await.unwrap();
-    store.register(waiting).await.unwrap();
-    assert!(store
-        .mark_waiting_for_user("invocation-stats-waiting")
-        .await
-        .unwrap());
     let mut terminal_ready = terminal.clone();
     terminal_ready.status = RuntimeInvocationStatus::Running;
     terminal_ready.completed_at_unix_ms = None;
@@ -626,17 +582,16 @@ async fn stats_summarize_memory_store_by_status() {
 
     let stats = store.stats().await.unwrap();
     assert_eq!(stats.backend, "memory");
-    assert_eq!(stats.total_active, 3);
+    assert_eq!(stats.total_active, 2);
     assert_eq!(stats.queued, 1);
     assert_eq!(stats.running, 1);
-    assert_eq!(stats.waiting_for_user, 1);
     assert_eq!(stats.cancel_requested, 0);
     assert_eq!(stats.terminal, 1);
     assert_eq!(stats.duration.completed_count, 1);
 }
 
 #[tokio::test]
-async fn restart_recovery_requeues_queued_and_preserves_waiting_user_invocations() {
+async fn restart_recovery_preserves_a_queued_invocation_with_its_batch() {
     let store = RuntimeInvocationStore::memory();
     let mut queued = record();
     queued.invocation_id = "invocation-recovery-queued".to_string();
@@ -645,20 +600,9 @@ async fn restart_recovery_requeues_queued_and_preserves_waiting_user_invocations
     queued.started_at_unix_ms = None;
     store.register(queued.clone()).await.unwrap();
 
-    let mut waiting = record();
-    waiting.invocation_id = "invocation-recovery-waiting".to_string();
-    waiting.request_id_key = "\"request-recovery-waiting\"".to_string();
-    store.register(waiting.clone()).await.unwrap();
-    store
-        .mark_waiting_for_user(waiting.invocation_id.as_str())
-        .await
-        .unwrap();
-    waiting.status = RuntimeInvocationStatus::WaitingForUser;
-
     assert!(!store.recover_after_restart(&queued, true).await.unwrap());
-    assert!(!store.recover_after_restart(&waiting, true).await.unwrap());
     let active = store.list_active(10).await.unwrap();
-    assert_eq!(active.len(), 2);
+    assert_eq!(active.len(), 1);
 }
 
 #[tokio::test]

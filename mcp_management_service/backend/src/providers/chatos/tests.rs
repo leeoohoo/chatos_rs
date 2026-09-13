@@ -52,8 +52,6 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
         reqwest::Client::new(),
         format!("http://{address}"),
         Duration::from_secs(5),
-        Duration::from_secs(60),
-        Duration::from_secs(120),
         Some("chatos-provider-secret".to_string()),
         1024 * 1024,
     )
@@ -62,12 +60,9 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
     let outcome = provider
         .call_tool(
             &bound_snapshot,
-            &route(SystemMcpKey::AskUser, CHATOS_PROVIDER_REF.to_string()),
-            "prompt_choices",
-            json!({
-                "title": "Continue?",
-                "options": [{"label": "Yes", "value": "yes"}]
-            }),
+            &route(SystemMcpKey::Notepad, CHATOS_PROVIDER_REF.to_string()),
+            "create_note",
+            json!({"title": "Gateway note", "content": "bound to owner"}),
             "invocation-1",
         )
         .await
@@ -80,7 +75,7 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
         .expect("captured request")
         .clone()
         .expect("request was captured");
-    assert_eq!(system_key, SystemMcpKey::AskUser.as_str());
+    assert_eq!(system_key, SystemMcpKey::Notepad.as_str());
     assert_eq!(headers["x-chatos-caller"], CALLER_SERVICE);
     assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
     assert_eq!(
@@ -109,31 +104,6 @@ async fn provider_signs_request_and_forwards_chatos_session_binding() {
         CHATOS_MCP_SCOPE,
     )
     .expect("valid signed token");
-    assert_eq!(body["params"]["name"], "prompt_choices");
-    assert!(body["params"]["arguments"].get("conversation_id").is_none());
-    assert!(body["params"]["arguments"]
-        .get("conversation_turn_id")
-        .is_none());
-
-    let outcome = provider
-        .call_tool(
-            &bound_snapshot,
-            &route(SystemMcpKey::Notepad, CHATOS_PROVIDER_REF.to_string()),
-            "create_note",
-            json!({"title": "Gateway note", "content": "bound to owner"}),
-            "invocation-notepad",
-        )
-        .await
-        .expect("notepad provider call");
-    assert_eq!(outcome.result["content"][0]["text"], "ok");
-    let (system_key, headers, body) = captured
-        .0
-        .lock()
-        .expect("captured notepad request")
-        .clone()
-        .expect("notepad request was captured");
-    assert_eq!(system_key, SystemMcpKey::Notepad.as_str());
-    assert_eq!(headers["x-mcp-management-owner-user-id"], "user-1");
     assert_eq!(body["params"]["name"], "create_note");
     assert!(body["params"]["arguments"].get("user_id").is_none());
     assert!(body["params"]["arguments"].get("owner_user_id").is_none());
@@ -195,14 +165,12 @@ fn provider_only_supports_chatos_owned_routes() {
         reqwest::Client::new(),
         "http://127.0.0.1:3997",
         Duration::from_secs(5),
-        Duration::from_secs(60),
-        Duration::from_secs(120),
         Some("secret".to_string()),
         1024,
     )
     .expect("provider");
     let ask_user = route(SystemMcpKey::AskUser, CHATOS_PROVIDER_REF.to_string());
-    assert!(provider.supports(&ask_user));
+    assert!(!provider.supports(&ask_user));
     assert!(provider.supports(&route(
         SystemMcpKey::AgentBuilder,
         CHATOS_PROVIDER_REF.to_string(),
@@ -215,10 +183,10 @@ fn provider_only_supports_chatos_owned_routes() {
         SystemMcpKey::MemoryPluginReader,
         memory_provider_ref("contact-agent-1"),
     )));
-    let mut wrong_owner = ask_user.clone();
+    let mut wrong_owner = route(SystemMcpKey::AgentBuilder, CHATOS_PROVIDER_REF.to_string());
     wrong_owner.provider_ref = Some("task-runner".to_string());
     assert!(!provider.supports(&wrong_owner));
-    let mut wrong_kind = ask_user;
+    let mut wrong_kind = route(SystemMcpKey::Notepad, CHATOS_PROVIDER_REF.to_string());
     wrong_kind.provider_kind = McpProviderKind::LocalConnector;
     assert!(!provider.supports(&wrong_kind));
 }

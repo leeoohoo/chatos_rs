@@ -278,7 +278,7 @@ mod tests {
                     "index": 0,
                     "id": "call_1",
                     "function": {
-                        "name": "task_runner_service_create_task",
+                        "name": "local_agent_create_task",
                         "arguments": arguments
                     }
                 }),

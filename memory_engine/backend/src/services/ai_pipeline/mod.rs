@@ -2,9 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod chunking;
-pub(crate) mod cloud_agent;
 mod input;
 mod overflow;
+pub(crate) mod summary_pipeline;
 #[cfg(test)]
 mod tests;
 mod types;

@@ -6,7 +6,9 @@ use crate::db::Db;
 use crate::models::{now_rfc3339, RunSubjectMemoryJobRequest, UpsertSubjectMemoryRequest};
 use crate::repositories::subject_memories;
 
-use super::super::builders::build_subject_memory_from_summaries;
+use super::super::builders::{
+    build_subject_memory_from_summaries, subject_memory_generation_lease,
+};
 use super::super::render::{
     build_memory_metadata, decorate_generated_text, digest_from_ids,
     summary_to_subject_memory_block,
@@ -66,6 +68,7 @@ pub(crate) async fn process_level0_selection(
         .iter()
         .map(summary_to_subject_memory_block)
         .collect::<Vec<_>>();
+    let lease = subject_memory_generation_lease(req, scope_lock_owner);
     let build = match build_subject_memory_from_summaries(
         config,
         db,
@@ -74,15 +77,7 @@ pub(crate) async fn process_level0_selection(
         selected_texts.as_slice(),
         settings.token_limit,
         settings.target_summary_tokens,
-        job_run_id,
-        serde_json::json!({
-            "resume_kind": "subject_memory_job",
-            "job_run_id": job_run_id,
-            "request": req,
-            "from_scope_runner": from_scope_runner,
-            "scope_lock_owner": scope_lock_owner,
-            "scope_key": req.scope_key,
-        }),
+        lease.as_ref(),
     )
     .await
     {

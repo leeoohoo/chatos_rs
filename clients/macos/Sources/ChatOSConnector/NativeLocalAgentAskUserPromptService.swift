@@ -19,8 +19,7 @@ extension NativeLocalAgentAskUserPromptError: LocalizedError {
 }
 
 /// Native Ask User service backed only by the account Local Agent Host and
-/// the typed event state. No server Task Runner or Cloud Agent endpoint is
-/// consulted.
+/// the typed event state. It never delegates prompt state to a server runtime.
 public struct NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
     private let accountSession: any NativeLocalAgentAccountSessionAccess
     private let state: any LocalAgentAskUserStateStoring

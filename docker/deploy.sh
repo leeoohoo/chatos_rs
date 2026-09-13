@@ -21,7 +21,6 @@ LOCAL_BUILD_SERVICES=(
   plugin-management-backend
   local-connector-service-backend
   mcp-management-service-backend
-  task-runner-backend
   chatos-backend
   official-website-backend
   admin-console-frontend
@@ -275,7 +274,6 @@ CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_cent
 CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET|change_me_config_center_memory_engine_signing_secret
 CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET|change_me_config_center_official_website_signing_secret
 CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_plugin_management_signing_secret
-CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET|change_me_config_center_task_runner_signing_secret
 CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_user_service_signing_secret
 EOF
 
@@ -304,7 +302,6 @@ ensure_config_center_mtls_material() {
     memory-engine.identity.pem \
     official-website.identity.pem \
     plugin-management-service.identity.pem \
-    task-runner.identity.pem \
     user-service.identity.pem
   do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
@@ -333,7 +330,6 @@ ensure_config_center_mtls_material() {
     memory-engine.identity.pem \
     official-website.identity.pem \
     plugin-management-service.identity.pem \
-    task-runner.identity.pem \
     user-service.identity.pem
   do
     if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
@@ -362,7 +358,6 @@ ensure_mcp_management_mtls_material() {
   for required_file in \
     ca.crt server.crt server.key \
     chatos.identity.pem \
-    task-runner.identity.pem \
     configuration-center.identity.pem
   do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
@@ -387,7 +382,6 @@ ensure_mcp_management_mtls_material() {
   fi
   for required_file in \
     chatos.identity.pem \
-    task-runner.identity.pem \
     configuration-center.identity.pem
   do
     if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
@@ -397,60 +391,6 @@ ensure_mcp_management_mtls_material() {
     fi
     if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
       echo "[ERROR] MCP Management client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-ensure_task_runner_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value TASK_RUNNER_MTLS_DIR ./secrets/task-runner-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    chatos.identity.pem \
-    mcp-management-service.identity.pem \
-    user-service.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-task-runner-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] Task Runner mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] Task Runner server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  for required_file in \
-    chatos.identity.pem \
-    mcp-management-service.identity.pem \
-    user-service.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] Task Runner client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] Task Runner client identity has no readable private key: $required_file" >&2
       return 1
     fi
   done
@@ -469,7 +409,6 @@ ensure_chatos_mtls_material() {
 
   for required_file in \
     ca.crt server.crt server.key \
-    task-runner.identity.pem \
     mcp-management-service.identity.pem
   do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
@@ -496,7 +435,7 @@ ensure_chatos_mtls_material() {
     echo "[ERROR] ChatOS server key is unreadable" >&2
     return 1
   fi
-  for required_file in task-runner.identity.pem mcp-management-service.identity.pem
+  for required_file in mcp-management-service.identity.pem
   do
     if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
       "$resolved_dir/$required_file" >/dev/null; then
@@ -524,7 +463,6 @@ ensure_local_connector_mtls_material() {
   for required_file in \
     ca.crt server.crt server.key \
     chatos-backend.identity.pem \
-    task-runner.identity.pem \
     mcp-management-service.identity.pem
   do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
@@ -553,7 +491,6 @@ ensure_local_connector_mtls_material() {
   fi
   for required_file in \
     chatos-backend.identity.pem \
-    task-runner.identity.pem \
     mcp-management-service.identity.pem
   do
     if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
@@ -582,7 +519,6 @@ ensure_user_service_mtls_material() {
   for required_file in \
     ca.crt server.crt server.key \
     chatos-backend.identity.pem \
-    task-runner.identity.pem \
     memory-engine.identity.pem
   do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
@@ -611,7 +547,6 @@ ensure_user_service_mtls_material() {
   fi
   for required_file in \
     chatos-backend.identity.pem \
-    task-runner.identity.pem \
     memory-engine.identity.pem
   do
     if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
@@ -630,7 +565,6 @@ validate_runtime_material() {
   validate_production_secrets
   ensure_config_center_mtls_material
   ensure_mcp_management_mtls_material
-  ensure_task_runner_mtls_material
   ensure_chatos_mtls_material
   ensure_local_connector_mtls_material
   ensure_user_service_mtls_material
@@ -652,7 +586,6 @@ ensure_plugin_management_mtls_material() {
   for required_file in \
     ca.crt server.crt server.key \
     chatos-backend.identity.pem \
-    task-runner.identity.pem \
     local-connector-service.identity.pem \
     memory-engine.identity.pem \
     mcp-management-service.identity.pem
@@ -683,7 +616,6 @@ ensure_plugin_management_mtls_material() {
   fi
   for required_file in \
     chatos-backend.identity.pem \
-    task-runner.identity.pem \
     local-connector-service.identity.pem \
     memory-engine.identity.pem \
     mcp-management-service.identity.pem
@@ -715,7 +647,6 @@ ensure_memory_engine_mtls_material() {
     ca.crt server.crt server.key \
     chatos-backend.identity.pem \
     configuration-center.identity.pem \
-    task-runner.identity.pem \
     user-service.identity.pem
   do
     if [[ ! -s "$resolved_dir/$required_file" ]]; then
@@ -741,7 +672,6 @@ ensure_memory_engine_mtls_material() {
   for required_file in \
     chatos-backend.identity.pem \
     configuration-center.identity.pem \
-    task-runner.identity.pem \
     user-service.identity.pem
   do
     if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \

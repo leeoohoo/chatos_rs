@@ -6,7 +6,7 @@ use crate::db::Db;
 use crate::models::{
     EngineJobRun, EngineThread, FinishEngineJobRunRequest, RunThreadSummaryResponse,
 };
-use crate::repositories::{control_plane as cp_repo, records, summaries, threads};
+use crate::repositories::{records, summaries, threads};
 
 use super::super::builders::build_summary_text;
 use super::super::render::decorate_generated_text;
@@ -14,13 +14,10 @@ use super::super::selectors::{
     mark_oversized_records_as_summarized, select_pending_records_for_summary,
 };
 use super::super::settings::load_summary_job_settings;
-use super::super::{
-    PendingRecordSelection, SummaryJobSettings, DEFAULT_PENDING_RECORD_SCAN_LIMIT,
-    MAX_THREAD_SUMMARY_TARGET_TOKENS,
-};
+use super::super::{PendingRecordSelection, SummaryJobSettings, DEFAULT_PENDING_RECORD_SCAN_LIMIT};
 use super::job::{
     create_thread_summary_job_run, done_metadata, failed_metadata, finish_thread_summary_job_run,
-    noop_metadata, FrozenThreadSummarySelection, THREAD_DIRECT_TRIGGER,
+    noop_metadata, THREAD_DIRECT_TRIGGER,
 };
 
 #[derive(Debug, Clone)]
@@ -121,8 +118,7 @@ pub(crate) async fn run_thread_summary_with_thread(
     let tenant_id = thread.tenant_id.clone();
     let source_id = thread.source_id.clone();
     let thread_id = thread.id.clone();
-    let mut ctx = load_thread_summary_execution_context_for_thread(db, thread).await?;
-    ctx.settings.cloud_resume_kind = Some(trigger_type.to_string());
+    let ctx = load_thread_summary_execution_context_for_thread(db, thread).await?;
     if !ctx.should_run() {
         return Ok(noop_response(thread_id.as_str()));
     }
@@ -342,138 +338,6 @@ pub(crate) async fn execute_existing_summary_job(
     .await
 }
 
-pub(crate) async fn resume_cloud_summary_job(
-    config: &AppConfig,
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    job_run_id: &str,
-) -> Result<RunThreadSummaryResponse, String> {
-    let job_run = cp_repo::get_job_run_by_id(db, job_run_id)
-        .await?
-        .ok_or_else(|| format!("summary job run not found: {job_run_id}"))?;
-    validate_summary_job_scope(&job_run, tenant_id, source_id, thread_id)?;
-    if job_run.status == "done" {
-        return Ok(completed_job_response(thread_id, &job_run));
-    }
-    if job_run.status != "running" {
-        return Err(job_run
-            .error_message
-            .clone()
-            .unwrap_or_else(|| format!("summary job is not resumable: {}", job_run.status)));
-    }
-
-    let thread = threads::get_thread_by_id(db, tenant_id, source_id, thread_id)
-        .await?
-        .ok_or_else(|| "thread not found".to_string())?;
-    let frozen = FrozenThreadSummarySelection::from_metadata(job_run.metadata.as_ref())?;
-    let selected = records::list_records_by_ids(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        frozen.selected_record_ids.as_slice(),
-    )
-    .await?;
-    let oversized = records::list_records_by_ids(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        frozen.oversized_record_ids.as_slice(),
-    )
-    .await?;
-    let ctx = ThreadSummaryExecutionContext {
-        thread,
-        settings: SummaryJobSettings {
-            token_limit: metadata_i64(job_run.metadata.as_ref(), "policy_token_limit")
-                .ok_or_else(|| "summary job metadata policy_token_limit is missing".to_string())?,
-            target_summary_tokens: Some(
-                metadata_i64(job_run.metadata.as_ref(), "policy_target_summary_tokens")
-                    .ok_or_else(|| {
-                        "summary job metadata policy_target_summary_tokens is missing".to_string()
-                    })?
-                    .clamp(128, MAX_THREAD_SUMMARY_TARGET_TOKENS),
-            ),
-            cloud_owner_entity_id: Some(job_run_id.to_string()),
-            cloud_resume_kind: Some(job_run.trigger_type.clone()),
-        },
-        pending_before_count: metadata_i64(job_run.metadata.as_ref(), "pending_before_count")
-            .unwrap_or_else(|| (selected.len() + oversized.len()) as i64),
-        selection: PendingRecordSelection {
-            selected,
-            oversized,
-            selected_token_count: frozen.selected_token_count,
-            oversized_token_count: frozen.oversized_token_count,
-        },
-    };
-    execute_prepared_thread_summary_job(
-        config, db, tenant_id, source_id, thread_id, job_run_id, ctx,
-    )
-    .await
-}
-
-pub(crate) async fn fail_cloud_summary_job(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    job_run_id: &str,
-    error: String,
-) -> Result<(), String> {
-    let Some(job_run) = cp_repo::get_job_run_by_id(db, job_run_id).await? else {
-        return Ok(());
-    };
-    validate_summary_job_scope(&job_run, tenant_id, source_id, thread_id)?;
-    if job_run.status != "running" {
-        return Ok(());
-    }
-
-    let frozen = FrozenThreadSummarySelection::from_metadata(job_run.metadata.as_ref())?;
-    let pending_before_count = metadata_i64(job_run.metadata.as_ref(), "pending_before_count")
-        .unwrap_or_else(|| {
-            (frozen.selected_record_ids.len() + frozen.oversized_record_ids.len()) as i64
-        });
-    let skipped_count = frozen.oversized_record_ids.len();
-    let _ = records::release_records_from_summary(db, tenant_id, source_id, thread_id, job_run_id)
-        .await;
-    finish_thread_summary_job_run(
-        db,
-        job_run_id,
-        FinishEngineJobRunRequest {
-            status: "failed".to_string(),
-            input_count: frozen.selected_record_ids.len() as i64,
-            output_count: 0,
-            processed_count: skipped_count as i64,
-            success_count: skipped_count as i64,
-            error_count: frozen.selected_record_ids.len() as i64,
-            metadata: Some(failed_metadata(
-                pending_before_count,
-                Some(frozen.selected_record_ids.len()),
-                Some(frozen.selected_token_count),
-                skipped_count,
-                Some(pending_before_count.saturating_sub(skipped_count as i64)),
-                skipped_count as i64,
-                0,
-            )),
-            error_message: Some(error),
-        },
-    )
-    .await;
-    threads::release_summary_slot(
-        db,
-        tenant_id,
-        source_id,
-        thread_id,
-        job_run_id,
-        skipped_count as i64,
-        frozen.oversized_token_count,
-    )
-    .await?;
-    Ok(())
-}
-
 pub(crate) async fn execute_prepared_thread_summary_job(
     config: &AppConfig,
     db: &Db,
@@ -489,7 +353,7 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         pending_before_count,
         selection,
     } = ctx;
-    settings.cloud_owner_entity_id = Some(job_run_id.to_string());
+    settings.job_run_id = Some(job_run_id.to_string());
 
     let mut processed_count = 0_i64;
     let output_count = 0_i64;
@@ -553,9 +417,6 @@ pub(crate) async fn execute_prepared_thread_summary_job(
         .await
         {
             Ok(build) => build,
-            Err(err) if err == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
-                return Err(err);
-            }
             Err(err) => {
                 finish_thread_summary_job_run(
                     db,
@@ -756,9 +617,6 @@ pub(crate) async fn execute_prepared_thread_summary_job(
     .await;
 
     if let Err(err) = &result {
-        if err == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED {
-            return result;
-        }
         finish_thread_summary_job_run(
             db,
             job_run_id,
@@ -800,43 +658,4 @@ fn noop_response(thread_id: &str) -> RunThreadSummaryResponse {
         summary_id: None,
         source_record_count: 0,
     }
-}
-
-fn validate_summary_job_scope(
-    job_run: &EngineJobRun,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-) -> Result<(), String> {
-    if job_run.job_type != "summary"
-        || job_run.tenant_id.as_deref() != Some(tenant_id)
-        || job_run.source_id.as_deref() != Some(source_id)
-        || job_run.thread_id.as_deref() != Some(thread_id)
-    {
-        return Err("summary job scope does not match its Cloud Agent callback".to_string());
-    }
-    Ok(())
-}
-
-fn completed_job_response(thread_id: &str, job_run: &EngineJobRun) -> RunThreadSummaryResponse {
-    let summary_id = job_run
-        .metadata
-        .as_ref()
-        .and_then(|value| value.get("generated_summary_id"))
-        .and_then(|value| value.as_str())
-        .map(ToOwned::to_owned);
-    RunThreadSummaryResponse {
-        thread_id: thread_id.to_string(),
-        generated: summary_id.is_some(),
-        summary_id,
-        source_record_count: metadata_i64(job_run.metadata.as_ref(), "selected_count")
-            .unwrap_or(0)
-            .max(0) as usize,
-    }
-}
-
-fn metadata_i64(metadata: Option<&serde_json::Value>, key: &str) -> Option<i64> {
-    metadata
-        .and_then(|value| value.get(key))
-        .and_then(|value| value.as_i64())
 }

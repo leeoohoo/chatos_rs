@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn internal_routes_have_operation_specific_scopes() {
         assert_eq!(
-            internal_request_scope(&Method::GET, "/internal/config/v1/snapshots/task-runner"),
+            internal_request_scope(&Method::GET, "/internal/config/v1/snapshots/chatos-backend"),
             Some(CONFIG_SNAPSHOT_READ_SCOPE)
         );
         assert_eq!(
@@ -324,7 +324,10 @@ mod tests {
             Some(CONFIG_INSTANCE_HEARTBEAT_SCOPE)
         );
         assert_eq!(
-            internal_request_scope(&Method::POST, "/internal/config/v1/snapshots/task-runner"),
+            internal_request_scope(
+                &Method::POST,
+                "/internal/config/v1/snapshots/chatos-backend"
+            ),
             None
         );
     }
@@ -333,8 +336,8 @@ mod tests {
     fn caller_keys_are_isolated_and_legacy_static_headers_are_rejected() {
         let secrets = BTreeMap::from([
             (
-                "task-runner".to_string(),
-                "task-runner-config-center-test-secret".to_string(),
+                "local-connector-service".to_string(),
+                "local-connector-config-center-test-secret".to_string(),
             ),
             (
                 "chatos-backend".to_string(),
@@ -342,8 +345,8 @@ mod tests {
             ),
         ]);
         let token = issue_internal_service_token(
-            secrets["task-runner"].as_str(),
-            "task-runner",
+            secrets["local-connector-service"].as_str(),
+            "local-connector-service",
             CONFIG_CENTER_AUDIENCE,
             CONFIG_SNAPSHOT_READ_SCOPE,
             60,
@@ -352,15 +355,15 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             CONFIG_CENTER_CALLER_HEADER,
-            HeaderValue::from_static("task-runner"),
+            HeaderValue::from_static("local-connector-service"),
         );
         headers.insert(
             CONFIG_CENTER_TOKEN_HEADER,
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
         let claims = authenticate_internal_request(&headers, &secrets, CONFIG_SNAPSHOT_READ_SCOPE)
-            .expect("authenticate task runner");
-        assert_eq!(claims.caller, "task-runner");
+            .expect("authenticate local connector");
+        assert_eq!(claims.caller, "local-connector-service");
 
         headers.insert(
             CONFIG_CENTER_CALLER_HEADER,
@@ -373,7 +376,7 @@ mod tests {
         let mut legacy_headers = HeaderMap::new();
         legacy_headers.insert(
             "x-config-center-internal-secret",
-            HeaderValue::from_static("task-runner-config-center-test-secret"),
+            HeaderValue::from_static("local-connector-config-center-test-secret"),
         );
         assert!(authenticate_internal_request(
             &legacy_headers,
@@ -386,12 +389,12 @@ mod tests {
     #[test]
     fn operation_scope_cannot_be_reused() {
         let secrets = BTreeMap::from([(
-            "task-runner".to_string(),
-            "task-runner-config-center-test-secret".to_string(),
+            "chatos-backend".to_string(),
+            "chatos-config-center-test-secret".to_string(),
         )]);
         let token = issue_internal_service_token(
-            secrets["task-runner"].as_str(),
-            "task-runner",
+            secrets["chatos-backend"].as_str(),
+            "chatos-backend",
             CONFIG_CENTER_AUDIENCE,
             CONFIG_SNAPSHOT_READ_SCOPE,
             60,
@@ -400,7 +403,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             CONFIG_CENTER_CALLER_HEADER,
-            HeaderValue::from_static("task-runner"),
+            HeaderValue::from_static("chatos-backend"),
         );
         headers.insert(
             CONFIG_CENTER_TOKEN_HEADER,
@@ -415,23 +418,29 @@ mod tests {
     #[test]
     fn authenticated_caller_must_match_snapshot_path_and_heartbeat_body() {
         assert!(
-            require_matching_service_identity("task-runner", "task-runner", "snapshot").is_ok()
+            require_matching_service_identity("chatos-backend", "chatos-backend", "snapshot")
+                .is_ok()
         );
-        assert!(
-            require_matching_service_identity("task-runner", "chatos-backend", "snapshot").is_err()
-        );
-        assert!(
-            require_matching_service_identity("task-runner", "chatos-backend", "heartbeat")
-                .is_err()
-        );
+        assert!(require_matching_service_identity(
+            "chatos-backend",
+            "local-connector-service",
+            "snapshot",
+        )
+        .is_err());
+        assert!(require_matching_service_identity(
+            "chatos-backend",
+            "local-connector-service",
+            "heartbeat",
+        )
+        .is_err());
     }
 
     #[test]
     fn internal_audit_uses_verified_trace_scope_and_resource_identity() {
         let claims = InternalServiceTokenClaims {
-            iss: "task-runner".to_string(),
-            sub: "task-runner".to_string(),
-            caller: "task-runner".to_string(),
+            iss: "chatos-backend".to_string(),
+            sub: "chatos-backend".to_string(),
+            caller: "chatos-backend".to_string(),
             aud: CONFIG_CENTER_AUDIENCE.to_string(),
             scope: CONFIG_SNAPSHOT_READ_SCOPE.to_string(),
             trace_id: Uuid::new_v4().to_string(),
@@ -443,8 +452,8 @@ mod tests {
             &claims,
             ConfigCenterInternalResourceAudit {
                 resource_type: "config_snapshot",
-                resource_id: "local/task-runner",
-                resource_name: Some("task-runner"),
+                resource_id: "local/chatos-backend",
+                resource_name: Some("chatos-backend"),
                 action: "read",
                 outcome: "accepted",
             },
@@ -453,7 +462,7 @@ mod tests {
         assert!(event.validate().is_ok());
         assert_eq!(event.trace_id, claims.trace_id);
         assert_eq!(event.scope, CONFIG_SNAPSHOT_READ_SCOPE);
-        assert_eq!(event.resource_id, "local/task-runner");
+        assert_eq!(event.resource_id, "local/chatos-backend");
     }
 
     #[test]

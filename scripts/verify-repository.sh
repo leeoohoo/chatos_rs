@@ -71,7 +71,6 @@ run_rust_build() {
     -p plugin_management_service_backend \
     -p local_connector_service_backend \
     -p mcp_management_service_backend \
-    -p task_runner_service_backend \
     -p chat_app_server_rs \
     -p official_website_service_backend
   "${CARGO[@]}" check \

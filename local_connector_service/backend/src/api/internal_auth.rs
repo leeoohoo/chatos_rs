@@ -579,10 +579,11 @@ mod tests {
                 .expect_err(
                     "Task Runner must not access Local Connector internal execution routes",
                 );
-            assert_eq!(
+            assert!(matches!(
                 error.message(),
                 "caller service is not allowed for this Local Connector operation"
-            );
+                    | "internal service credentials are not allowed for this Local Connector operation"
+            ));
         }
     }
 

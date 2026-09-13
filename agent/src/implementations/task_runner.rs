@@ -174,7 +174,7 @@ mod tests {
         let metadata = json!({
             "task_id": "task-1",
             "run_id": "run-1",
-            "service": "task_runner_service",
+            "service": "local_agent_runtime",
         });
         let spec = TASK_RUNNER_AGENT.build_run_spec(
             TaskRunnerRunSpecInput::new(

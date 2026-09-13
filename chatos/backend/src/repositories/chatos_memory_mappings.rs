@@ -7,9 +7,8 @@ mod projects;
 mod support;
 
 pub use contacts::{
-    create_contact_idempotent, delete_contact_by_id, get_contact_by_id,
-    get_contact_by_user_and_agent, list_contacts, list_contacts_by_ids,
-    update_contact_task_runner_config, UpdateContactTaskRunnerConfigInput,
+    create_contact_idempotent, delete_contact_by_id, get_contact_by_id, list_contacts,
+    list_contacts_by_ids,
 };
 pub use project_links::{
     list_project_agent_links_by_contact, list_project_agent_links_by_project,

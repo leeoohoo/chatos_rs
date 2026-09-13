@@ -547,10 +547,6 @@ pub async fn verify(
             username: principal.username,
             display_name: principal.display_name,
             role: principal.role,
-            agent_account_id: principal.agent_account_id,
-            owner_user_id: principal.owner_user_id,
-            owner_username: principal.owner_username,
-            owner_display_name: principal.owner_display_name,
             scopes: principal.scopes,
         },
     }))
@@ -596,10 +592,6 @@ fn current_auth_user(
         username: Some(username),
         display_name: Some(display_name),
         role: Some(role),
-        agent_account_id: None,
-        owner_user_id: None,
-        owner_username: None,
-        owner_display_name: None,
         scopes: vec!["user_service".to_string()],
     }
     .auth_user()

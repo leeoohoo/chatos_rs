@@ -6,7 +6,7 @@
 
 ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作台。它不只回答问题，还能围绕项目读取上下文、拆解需求、执行后台任务，调用本机文件、Git、终端和插件，并把执行过程、权限请求与最终结果完整呈现给用户。
 
-云端负责对话、任务、记忆与能力编排；原生客户端和 Local Connector 负责在用户明确授权的设备与工作区内执行操作。两者共同组成一条可以检查、干预、停止和追踪的长期协作工作流。
+原生客户端负责对话与任务执行；服务端只保留账号、模型配置与网关、Memory Engine、插件元数据和配置发布。Local Agent 只在用户明确授权的设备与工作区内执行操作，并把过程完整呈现为可检查、干预、停止和追踪的长期协作工作流。
 
 ## 产品界面
 
@@ -21,7 +21,7 @@ ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作
 ## 现在的项目是什么
 
 - **原生桌面客户端：** macOS 使用 SwiftUI，Windows 使用 WinUI，两端独立实现。已经退役的 Electron 客户端不再是产品运行时。
-- **云端业务编排：** 对话、任务、智能体、配置、插件元数据和记忆由服务端统一管理。
+- **收敛的服务端能力：** 账号、模型配置、记忆、插件元数据和发布配置由服务端管理；对话与任务 Agent Loop 均在客户端本地运行。
 - **设备侧能力执行：** 每个项目绑定一个明确授权的本机工作区。文件、Git、命令、本地 MCP、插件应用和设备权限通过原生客户端内置的 Local Connector 执行。
 - **可观察的后台任务：** 复杂需求可以进入可恢复的任务生命周期，持续保留进度、日志、工具调用、审批、重试和最终结果。
 - **长期项目上下文：** 会话摘要、项目事实和角色记忆可以跨会话继续使用。
@@ -35,23 +35,20 @@ ChatOS 不会把设备侧操作静默切换到服务端文件系统或另一台�
 flowchart LR
     U[用户] --> C[macOS / Windows 原生客户端]
     C --> G[APISIX 统一网关]
-    G --> S[云端业务服务]
-    S --> T[Task Runner 与 Worker]
+    G --> S[账号与模型网关服务]
     S --> M[Memory Engine]
-    S --> P[Plugin / MCP Management]
-    T --> L[Local Connector Service]
-    P --> L
-    L --> N[原生 Local Connector]
-    N --> W[已授权工作区]
-    N --> X[Git / 终端 / 本地 MCP / 插件应用]
+    S --> P[插件与配置服务]
+    C --> A[本地主聊天 / Task Runner Agent]
+    A --> W[已授权工作区]
+    A --> X[Git / 终端 / 本地 MCP / 插件应用]
     S --> H[Harness 仓库与集成平面]
 ```
 
 这条边界是当前架构的核心：
 
-- 云端服务是账号与任务数据的事实来源。
-- 原生客户端是项目的唯一权威，并负责本机凭据、工作区授权和设备能力。
-- Local Connector 主动建立出站连接，只开放用户授权的工作区和能力。
+- 服务端是账号、模型配置、记忆与插件元数据的事实来源。
+- 原生客户端是对话、任务、运行记录和项目的唯一权威，并负责本机凭据、工作区授权和设备能力。
+- Local Agent 只开放用户授权的工作区和能力。
 - Harness 负责仓库、同步、CI 与集成，不是项目文件或命令执行的回退环境。
 
 ## 产品能力
@@ -94,7 +91,6 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | `clients/macos` | Swift 6.2 / SwiftUI 原生客户端与 macOS Local Connector。 |
 | `clients/windows` | .NET 8 / WinUI 3 原生客户端、Windows Local Connector、Network Guard 与安装器。 |
 | `chatos/backend` | ChatOS 主 API 与对话编排服务。 |
-| `task_runner_service/backend` | 后台任务 API、Worker、Scheduler 与工具运行时。 |
 | `memory_engine/backend` | 会话摘要与分层项目/主题记忆。 |
 | `mcp_management_service/backend` | MCP 能力物化、路由与运行会话。 |
 | `plugin_management_service/backend` | 插件目录、版本、安装包与运行能力元数据。 |
@@ -152,7 +148,7 @@ make dev
 只重建部分 Compose 服务：
 
 ```bash
-make docker-rebuild SERVICES="chatos-backend task-runner-backend"
+make docker-rebuild SERVICES="chatos-backend memory-engine-backend"
 ```
 
 需要更快地调试后端与管理前端时，可以使用宿主机开发栈：

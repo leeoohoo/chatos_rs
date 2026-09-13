@@ -10,16 +10,6 @@ pub struct ChatosContact {
     pub user_id: String,
     pub agent_id: String,
     pub agent_name_snapshot: Option<String>,
-    #[serde(default)]
-    pub task_runner_enabled: bool,
-    #[serde(default)]
-    pub task_runner_base_url: Option<String>,
-    #[serde(default)]
-    pub task_runner_agent_account_id: Option<String>,
-    #[serde(default)]
-    pub task_runner_username: Option<String>,
-    #[serde(default, skip_serializing)]
-    pub task_runner_password: Option<String>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -38,11 +28,6 @@ impl ChatosContact {
             user_id,
             agent_id,
             agent_name_snapshot,
-            task_runner_enabled: false,
-            task_runner_base_url: None,
-            task_runner_agent_account_id: None,
-            task_runner_username: None,
-            task_runner_password: None,
             status,
             created_at: now.clone(),
             updated_at: now,

@@ -3,7 +3,6 @@
 
 mod ai;
 mod api;
-mod cloud_agent_queue;
 mod config;
 mod db;
 mod internal_tls;
@@ -69,12 +68,6 @@ async fn main() -> Result<(), String> {
         &pressure_snapshot,
         config.worker_summary_concurrency,
     )?;
-    let cloud_agent_store = chatos_cloud_agent_runtime::CloudAgentStateStore::connect_to_database(
-        config.mongodb_uri.as_str(),
-        config.mongodb_database.as_str(),
-    )
-    .await?;
-
     let state = Arc::new(AppState {
         pool,
         config: config.clone(),
@@ -82,7 +75,6 @@ async fn main() -> Result<(), String> {
         runtime_stats: Arc::new(MemoryEngineRuntimeStats::default()),
         rabbitmq_queue_inspector,
         pressure: pressure::MemoryEnginePressureState::new(pressure_policy),
-        cloud_agent_store,
     });
     pressure::start_config_watcher(state.clone(), pressure_config_client.clone());
     let service_id = std::env::var("CHATOS_SERVICE_ID")
@@ -98,7 +90,6 @@ async fn main() -> Result<(), String> {
     );
 
     if config.worker_enabled {
-        cloud_agent_queue::start(state.clone());
         summary_queue::start(state.clone());
         rollup_queue::start(state.clone());
         subject_memory_queue::start(state.clone());

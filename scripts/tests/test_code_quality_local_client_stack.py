@@ -44,9 +44,6 @@ class LocalClientStackContractTests(unittest.TestCase):
             "chatos-backend",
         }
         removed = {
-            "task-runner-backend",
-            "task-runner-worker",
-            "task-runner-scheduler",
             "local-connector-service-backend",
             "mcp-management-service-backend",
             "official-website-backend",
@@ -77,16 +74,6 @@ class LocalClientStackContractTests(unittest.TestCase):
             capture_output=True,
         )
         self.assertIn("ChatOS 3.0.2 local-client backend stack status", completed.stdout)
-
-    def test_common_cleanup_recognizes_every_removed_host_binary(self) -> None:
-        support = (ROOT / "scripts" / "local-dev-stack" / "support.sh").read_text()
-        for binary in (
-            "task_runner_service_backend",
-            "local_connector_service_backend",
-            "mcp_management_service_backend",
-            "official_website_service_backend",
-        ):
-            self.assertGreaterEqual(support.count(f'"{binary}"'), 2)
 
     def test_gateway_exposes_the_native_local_agent_model_surface(self) -> None:
         gateway = (ROOT / "docker" / "apisix" / "apisix.yaml").read_text()

@@ -315,7 +315,6 @@ pub struct CloseRuntimeSessionResponse {
 pub enum RuntimeInvocationStatus {
     Queued,
     Running,
-    WaitingForUser,
     CancelRequested,
     Completed,
     Failed,

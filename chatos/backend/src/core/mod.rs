@@ -2,16 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub mod ai_model_config;
-pub mod ai_settings;
 pub mod application_access;
 pub mod auth;
-pub mod builtin_mcp_prompt;
 pub mod chat_context;
 pub mod chat_runtime;
-pub mod chat_stream;
 pub mod internal_context_locale;
-pub mod mcp_runtime;
-pub mod mcp_tools;
 pub mod messages;
 pub mod mongo_cursor;
 pub mod mongo_query;
@@ -25,12 +20,10 @@ pub mod secrets;
 pub mod session_access;
 pub mod session_project_scope;
 pub mod system_context_access;
-pub mod task_runner_callback_display;
 pub mod terminal_access;
 pub mod time;
 pub mod tool_call;
 pub mod trace_context;
-pub mod turn_runtime_snapshot;
 pub mod update_fields;
 pub mod user_scope;
 pub mod user_visible_path;

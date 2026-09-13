@@ -43,13 +43,10 @@ fn system_agent_keys_match_registry_keys() {
 
 #[test]
 fn system_mcp_keys_are_stable_and_complete() {
-    assert_eq!(SystemMcpKey::ALL.len(), 13);
+    assert_eq!(SystemMcpKey::ALL.len(), 12);
     assert!("task_manager".parse::<SystemMcpKey>().is_err());
     assert_eq!(SystemMcpKey::TaskProcessLog.as_str(), "task_process_log");
-    assert_eq!(
-        "task_runner_service".parse::<SystemMcpKey>(),
-        Ok(SystemMcpKey::TaskRunnerService)
-    );
+    assert!("task_runner_service".parse::<SystemMcpKey>().is_err());
     assert_eq!(
         "task_process_log".parse::<SystemMcpKey>(),
         Ok(SystemMcpKey::TaskProcessLog)

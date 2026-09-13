@@ -183,10 +183,6 @@ impl ObjectStorageService {
         self.config.max_upload_bytes
     }
 
-    pub fn max_read_bytes(&self) -> u64 {
-        self.config.max_read_bytes
-    }
-
     pub fn bucket(&self) -> &str {
         self.config.bucket.as_str()
     }

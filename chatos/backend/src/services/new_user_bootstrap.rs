@@ -13,10 +13,9 @@ use crate::modules::conversation_runtime::sessions::{
 use crate::services::{access_token_scope, chatos_agents, chatos_memory_mappings, chatos_sessions};
 
 const DEFAULT_AGENT_NAME: &str = "叽咕狸";
-const DEFAULT_AGENT_DESCRIPTION: &str =
-    "新用户默认助手，帮助你快速开始对话、整理需求和使用 Task Runner。";
+const DEFAULT_AGENT_DESCRIPTION: &str = "新用户默认助手，帮助你快速开始对话、整理需求和推进工作。";
 const DEFAULT_AGENT_CATEGORY: &str = "assistant";
-const DEFAULT_AGENT_ROLE_DEFINITION: &str = "你叫叽咕狸，是用户进入 Chat OS 后默认可用的智能体。优先帮助用户快速开始对话、整理需求、拆解任务，并在需要时引导使用项目、工具和 Task Runner 能力。回答保持直接、清晰、可执行。";
+const DEFAULT_AGENT_ROLE_DEFINITION: &str = "你叫叽咕狸，是用户进入 Chat OS 后默认可用的智能体。优先帮助用户快速开始对话、整理需求、拆解任务，并在需要时引导使用项目和工具。回答保持直接、清晰、可执行。";
 const DEFAULT_STARTER_SESSION_TITLE: &str = "和叽咕狸开始对话";
 
 #[derive(Debug, Clone)]
@@ -30,7 +29,6 @@ pub struct NewUserBootstrapInput {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct NewUserBootstrapReport {
     pub created_default_agent: bool,
-    pub provisioned_task_runner_agent_account: bool,
     pub created_default_contact: bool,
     pub created_starter_session: bool,
 }
@@ -59,19 +57,7 @@ async fn bootstrap_new_user_defaults_inner(
 ) -> Result<NewUserBootstrapReport, String> {
     let mut report = NewUserBootstrapReport::default();
 
-    let mut agent = ensure_default_agent(&context, &mut report).await?;
-    if !has_shared_user_service_agent_account(&agent) {
-        let Some(updated) =
-            chatos_agents::ensure_task_runner_agent_account(agent.id.as_str()).await?
-        else {
-            return Err(format!(
-                "default agent disappeared while provisioning task runner account: {}",
-                agent.id
-            ));
-        };
-        report.provisioned_task_runner_agent_account = true;
-        agent = updated;
-    }
+    let agent = ensure_default_agent(&context, &mut report).await?;
 
     let contact = ensure_default_contact(&context, &agent, &mut report).await?;
     if should_create_starter_session(context.user_id.as_str()).await? {
@@ -104,7 +90,6 @@ async fn ensure_default_agent(
         description: Some(default_agent_description(context)),
         category: Some(DEFAULT_AGENT_CATEGORY.to_string()),
         role_definition: DEFAULT_AGENT_ROLE_DEFINITION.to_string(),
-        auto_provision_task_runner_account: Some(true),
         plugin_sources: None,
         skills: None,
         skill_ids: None,
@@ -115,12 +100,7 @@ async fn ensure_default_agent(
     .await?;
 
     report.created_default_agent = true;
-    report.provisioned_task_runner_agent_account = has_shared_user_service_agent_account(&created);
     Ok(created)
-}
-
-fn has_shared_user_service_agent_account(agent: &ChatosAgentDto) -> bool {
-    normalize_non_empty(agent.task_runner_agent_account_id.clone()).is_some()
 }
 
 async fn ensure_default_contact(
@@ -206,8 +186,8 @@ fn build_starter_session_metadata(agent: &ChatosAgentDto, contact: &MemoryContac
 mod tests {
     use super::{
         build_starter_session_metadata, default_agent_description, find_default_agent,
-        has_shared_user_service_agent_account, BootstrapContext, ChatosAgentDto, MemoryContactDto,
-        DEFAULT_AGENT_DESCRIPTION, DEFAULT_AGENT_NAME,
+        BootstrapContext, ChatosAgentDto, MemoryContactDto, DEFAULT_AGENT_DESCRIPTION,
+        DEFAULT_AGENT_NAME,
     };
     use serde_json::json;
 
@@ -219,7 +199,6 @@ mod tests {
             description: None,
             category: None,
             role_definition: "role".to_string(),
-            task_runner_agent_account_id: None,
             plugin_sources: Vec::new(),
             skills: Vec::new(),
             skill_ids: Vec::new(),
@@ -237,11 +216,6 @@ mod tests {
             user_id: "user_1".to_string(),
             agent_id: "agent_1".to_string(),
             agent_name_snapshot: Some(DEFAULT_AGENT_NAME.to_string()),
-            task_runner_enabled: true,
-            task_runner_base_url: Some("http://127.0.0.1:39090".to_string()),
-            task_runner_agent_account_id: Some("agent_account_1".to_string()),
-            task_runner_username: None,
-            task_runner_has_password: false,
             status: "active".to_string(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
@@ -294,14 +268,5 @@ mod tests {
                 }
             })
         );
-    }
-
-    #[test]
-    fn default_agent_reuses_the_task_runner_user_service_account() {
-        let mut agent = sample_agent(DEFAULT_AGENT_NAME);
-        assert!(!has_shared_user_service_agent_account(&agent));
-
-        agent.task_runner_agent_account_id = Some("agent_account_1".to_string());
-        assert!(has_shared_user_service_agent_account(&agent));
     }
 }

@@ -9,10 +9,3 @@ pub enum SystemMcpBackend {
     ServiceDynamic,
     HostAdapter,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SystemMcpHost {
-    Chatos,
-    TaskRunner,
-    LocalConnector,
-}

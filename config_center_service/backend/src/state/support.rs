@@ -6,8 +6,7 @@ use crate::catalog::{
     CHATOS_BACKEND_PORT_CONFIG_KEY, CHATOS_CORS_ORIGINS_CONFIG_KEY, CHATOS_DATABASE_URL_CONFIG_KEY,
     CHATOS_HOST_CONFIG_KEY, CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY,
     CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY, CHATOS_LEGACY_AUTH_MONGODB_DATABASE_CONFIG_KEY,
-    CHATOS_LOG_MAX_FILES_CONFIG_KEY, CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY,
-    CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY, CHATOS_MONGODB_DATABASE_CONFIG_KEY,
+    CHATOS_LOG_MAX_FILES_CONFIG_KEY, CHATOS_MONGODB_DATABASE_CONFIG_KEY,
     CHATOS_NODE_ENV_CONFIG_KEY, LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY,
@@ -89,138 +88,7 @@ use crate::catalog::{
     PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY, TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
 };
-
-pub(super) fn migrate_agent_iteration_values(
-    values: &mut BTreeMap<String, Value>,
-    insert_default: bool,
-) -> bool {
-    migrate_agent_iteration_values_with_fallback(
-        values,
-        json!(chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS),
-        insert_default,
-    )
-}
-
-pub(super) fn migrate_agent_iteration_values_with_fallback(
-    values: &mut BTreeMap<String, Value>,
-    fallback: Value,
-    insert_default: bool,
-) -> bool {
-    let current = values
-        .get(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY)
-        .cloned();
-    let legacy = LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS
-        .iter()
-        .find_map(|key| values.get(*key).cloned());
-    let selected = current.or(legacy).or(insert_default.then_some(fallback));
-    let mut changed = false;
-    for key in LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS {
-        changed |= values.remove(*key).is_some();
-    }
-    if let Some(selected) = selected {
-        if values.get(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY) != Some(&selected) {
-            values.insert(
-                chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-                selected,
-            );
-            changed = true;
-        }
-    }
-    changed
-}
-
-pub(super) fn migrate_agent_iteration_changed_keys(keys: &mut Vec<String>) -> bool {
-    let had_legacy = keys
-        .iter()
-        .any(|key| LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS.contains(&key.as_str()));
-    if !had_legacy {
-        return false;
-    }
-    keys.retain(|key| !LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS.contains(&key.as_str()));
-    if !keys
-        .iter()
-        .any(|key| key == chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY)
-    {
-        keys.push(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string());
-    }
-    keys.sort();
-    true
-}
-
-pub(super) fn ensure_task_runner_iteration_value(
-    values: &mut BTreeMap<String, Value>,
-    fallback: Value,
-) -> bool {
-    if values.contains_key(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY) {
-        return false;
-    }
-    let selected = values
-        .get(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY)
-        .cloned()
-        .unwrap_or(fallback);
-    values.insert(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(), selected);
-    true
-}
-
-pub(super) fn ensure_task_runner_queue_mode_value(
-    values: &mut BTreeMap<String, Value>,
-    key: &str,
-    fallback: Value,
-) -> bool {
-    let should_replace = match values.get(key).and_then(Value::as_str) {
-        None => true,
-        Some(value) => value.trim().eq_ignore_ascii_case("inline"),
-    };
-    if !should_replace {
-        return false;
-    }
-    if values.get(key) == Some(&fallback) {
-        return false;
-    }
-    values.insert(key.to_string(), fallback);
-    true
-}
-
-pub(super) fn migrate_task_runner_queue_mode_draft(
-    values: &mut BTreeMap<String, Value>,
-    key: &str,
-) -> bool {
-    let is_legacy_inline = values
-        .get(key)
-        .and_then(Value::as_str)
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("inline"));
-    if !is_legacy_inline {
-        return false;
-    }
-    values.insert(key.to_string(), json!("rabbitmq"));
-    true
-}
-
-pub(super) fn task_runner_service_default_values(
-    definitions: &[ConfigDefinitionRecord],
-) -> BTreeMap<String, Value> {
-    const CLIENT_RUNTIME_KEYS: &[&str] = &[
-        TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
-        TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
-        TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
-        TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
-        TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
-        TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
-    ];
-    definitions
-        .iter()
-        .filter(|definition| {
-            (definition.scope == "service"
-                && definition.service_name.as_deref() == Some("task-runner"))
-                || (definition.scope == "shared"
-                    && CLIENT_RUNTIME_KEYS.contains(&definition.key.as_str()))
-        })
-        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
-        .collect()
-}
 
 pub(super) const MCP_MANAGEMENT_RUNTIME_CONFIG_KEYS: &[&str] = &[
     MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY,
@@ -248,7 +116,6 @@ pub(super) const MCP_MANAGEMENT_RUNTIME_CONFIG_KEYS: &[&str] = &[
     MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
     MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY,
     MCP_MANAGEMENT_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-    MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
     MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
     MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
     MCP_MANAGEMENT_HOST_CONFIG_KEY,
@@ -262,14 +129,9 @@ pub(super) const MCP_MANAGEMENT_RUNTIME_CONFIG_KEYS: &[&str] = &[
     MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS_CONFIG_KEY,
     MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY,
     MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY,
-    MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS_CONFIG_KEY,
-    MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS_CONFIG_KEY,
-    MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS_CONFIG_KEY,
-    MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS_CONFIG_KEY,
     MCP_MANAGEMENT_PROVIDER_RESPONSE_LIMIT_BYTES_CONFIG_KEY,
     MCP_MANAGEMENT_PUBLIC_BASE_URL_CONFIG_KEY,
     MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
-    MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL_CONFIG_KEY,
     MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY,
     MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
 ];
@@ -335,43 +197,6 @@ pub(super) fn local_connector_service_runtime_default_values(
         })
         .map(|definition| (definition.key.clone(), definition.default_value.clone()))
         .collect()
-}
-
-pub(super) fn ensure_task_runner_runtime_values(
-    values: &mut BTreeMap<String, Value>,
-    defaults: &BTreeMap<String, Value>,
-) -> Vec<String> {
-    let mut changed_keys = Vec::new();
-    for (key, fallback) in defaults {
-        let changed = if key == TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY {
-            ensure_task_runner_iteration_value(values, fallback.clone())
-        } else if [
-            TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
-            TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
-        ]
-        .contains(&key.as_str())
-        {
-            ensure_task_runner_queue_mode_value(values, key, fallback.clone())
-        } else if key == TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY {
-            ensure_root_vhost_rabbitmq_url(values, key, fallback)
-        } else if [
-            TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-        ]
-        .contains(&key.as_str())
-        {
-            ensure_https_url_value(values, key, fallback)
-        } else if values.contains_key(key) {
-            false
-        } else {
-            values.insert(key.clone(), fallback.clone());
-            true
-        };
-        if changed {
-            changed_keys.push(key.clone());
-        }
-    }
-    changed_keys
 }
 
 pub(super) fn ensure_mcp_management_runtime_values(
@@ -614,27 +439,19 @@ pub(super) const INTERNAL_REQUEST_SECURITY_CONFIG_KEYS: &[&str] = &[
     LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
     MCP_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
     MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
     PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
     PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
     PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
-    CHATOS_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
     CHATOS_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-    CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
     CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
-    MEMORY_ENGINE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
-    TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
-    TASK_RUNNER_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
-    TASK_RUNNER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-    TASK_RUNNER_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     USER_SERVICE_JWT_SECRET_CONFIG_KEY,
     USER_SERVICE_PREVIOUS_SECRET_KEYS_CONFIG_KEY,
     USER_SERVICE_SECRET_KEY_CONFIG_KEY,
@@ -674,7 +491,6 @@ pub(super) fn plugin_management_service_runtime_default_values(
                 PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-                PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY,
@@ -797,14 +613,9 @@ pub(super) fn chatos_service_default_values(
                 CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
                 CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
                 CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-                CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-                CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY,
-                CHATOS_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
-                CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS_CONFIG_KEY,
                 CHATOS_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
                 CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
                 CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-                CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
                 CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
                 CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
                 CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
@@ -829,13 +640,9 @@ pub(super) fn chatos_service_default_values(
                 CHATOS_AUTH_ACCESS_TOKEN_TTL_SECONDS_CONFIG_KEY,
                 CHATOS_LOG_MAX_FILES_CONFIG_KEY,
                 CHATOS_CORS_ORIGINS_CONFIG_KEY,
-                CHATOS_PLUGIN_UI_PARENT_ORIGIN_CONFIG_KEY,
-                CHATOS_PLUGIN_UI_RESOURCE_ORIGIN_CONFIG_KEY,
                 CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS_CONFIG_KEY,
                 CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS_CONFIG_KEY,
                 CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS_CONFIG_KEY,
-                CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY,
-                CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY,
             ]
             .contains(&definition.key.as_str())
         })
@@ -958,11 +765,7 @@ pub(super) fn ensure_chatos_runtime_values(
 ) -> Vec<String> {
     let mut changed_keys = Vec::new();
     for (key, fallback) in defaults {
-        if key == CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY {
-            if ensure_root_vhost_rabbitmq_url(values, key, fallback) {
-                changed_keys.push(key.clone());
-            }
-        } else if key == CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY {
+        if key == CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY {
             if ensure_service_url_value(
                 values,
                 key,
@@ -1205,7 +1008,6 @@ pub(super) fn changed_keys(
 pub(super) fn known_services(definitions: &[ConfigDefinitionRecord]) -> BTreeSet<String> {
     let mut services = [
         "chatos-backend",
-        "task-runner",
         "user-service",
         "plugin-management-service",
         "local-connector-service",

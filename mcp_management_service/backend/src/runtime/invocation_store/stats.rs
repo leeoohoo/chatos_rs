@@ -62,7 +62,6 @@ pub(super) fn summarize_runtime_invocations(
         total_active: 0,
         queued: 0,
         running: 0,
-        waiting_for_user: 0,
         cancel_requested: 0,
         terminal: 0,
         registration: RuntimeInvocationRegistrationStats::default(),
@@ -80,10 +79,6 @@ pub(super) fn summarize_runtime_invocations(
             }
             RuntimeInvocationStatus::Running => {
                 stats.running = stats.running.saturating_add(1);
-                stats.total_active = stats.total_active.saturating_add(1);
-            }
-            RuntimeInvocationStatus::WaitingForUser => {
-                stats.waiting_for_user = stats.waiting_for_user.saturating_add(1);
                 stats.total_active = stats.total_active.saturating_add(1);
             }
             RuntimeInvocationStatus::CancelRequested => {
@@ -164,13 +159,6 @@ pub(super) async fn aggregate_runtime_invocation_stats(
                         "running": {
                             "$sum": { "$cond": [
                                 { "$eq": ["$status", RuntimeInvocationStatus::Running.as_str()] },
-                                1,
-                                0,
-                            ] }
-                        },
-                        "waiting_for_user": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$status", RuntimeInvocationStatus::WaitingForUser.as_str()] },
                                 1,
                                 0,
                             ] }
@@ -285,7 +273,6 @@ pub(super) async fn aggregate_runtime_invocation_stats(
             total_active: 0,
             queued: 0,
             running: 0,
-            waiting_for_user: 0,
             cancel_requested: 0,
             terminal: 0,
             registration: RuntimeInvocationRegistrationStats::default(),
@@ -302,7 +289,6 @@ pub(super) async fn aggregate_runtime_invocation_stats(
         total_active: runtime_stat_count(&document, "total_active"),
         queued: runtime_stat_count(&document, "queued"),
         running: runtime_stat_count(&document, "running"),
-        waiting_for_user: runtime_stat_count(&document, "waiting_for_user"),
         cancel_requested: runtime_stat_count(&document, "cancel_requested"),
         terminal: runtime_stat_count(&document, "terminal"),
         registration: RuntimeInvocationRegistrationStats::default(),

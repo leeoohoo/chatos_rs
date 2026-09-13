@@ -115,8 +115,6 @@ pub(super) async fn update_session_runtime_settings(
                 Some(next.session_id.as_str()),
                 Some(auth.user_id.as_str()),
                 "gpt-4o",
-                None,
-                true,
             )
             .await
             {

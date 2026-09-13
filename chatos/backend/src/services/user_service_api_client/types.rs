@@ -49,25 +49,6 @@ pub struct UserServiceVerifyResponse {
     pub principal: UserServiceVerifiedPrincipal,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct UserServiceAgentAccountSummary {
-    pub id: String,
-    pub username: String,
-    pub display_name: String,
-    pub owner_user_id: String,
-    pub owner_username: String,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CreateUserServiceAgentAccountRequest {
-    pub username: String,
-    pub display_name: Option<String>,
-    pub password: String,
-    pub owner_user_id: Option<String>,
-    pub enabled: Option<bool>,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserServiceModelConfigRecord {
     pub id: String,

@@ -26,7 +26,6 @@ const MAX_MEMORY_INVOCATIONS: usize = 8_192;
 pub enum RuntimeInvocationStatus {
     Queued,
     Running,
-    WaitingForUser,
     CancelRequested,
     Completed,
     Failed,
@@ -39,7 +38,6 @@ impl RuntimeInvocationStatus {
         match self {
             Self::Queued => "queued",
             Self::Running => "running",
-            Self::WaitingForUser => "waiting_for_user",
             Self::CancelRequested => "cancel_requested",
             Self::Completed => "completed",
             Self::Failed => "failed",
@@ -139,7 +137,6 @@ pub struct RuntimeInvocationStoreStats {
     pub total_active: usize,
     pub queued: usize,
     pub running: usize,
-    pub waiting_for_user: usize,
     pub cancel_requested: usize,
     pub terminal: usize,
     pub registration: RuntimeInvocationRegistrationStats,
@@ -366,7 +363,6 @@ impl RuntimeInvocationStore {
                             value.status,
                             RuntimeInvocationStatus::Queued
                                 | RuntimeInvocationStatus::Running
-                                | RuntimeInvocationStatus::WaitingForUser
                                 | RuntimeInvocationStatus::CancelRequested
                         )
                 });
@@ -382,7 +378,6 @@ impl RuntimeInvocationStore {
                             value.status,
                             RuntimeInvocationStatus::Queued
                                 | RuntimeInvocationStatus::Running
-                                | RuntimeInvocationStatus::WaitingForUser
                                 | RuntimeInvocationStatus::CancelRequested
                         )
                 }) {
@@ -566,7 +561,6 @@ fn active_runtime_invocation_statuses() -> &'static [RuntimeInvocationStatus] {
     &[
         RuntimeInvocationStatus::Queued,
         RuntimeInvocationStatus::Running,
-        RuntimeInvocationStatus::WaitingForUser,
         RuntimeInvocationStatus::CancelRequested,
     ]
 }

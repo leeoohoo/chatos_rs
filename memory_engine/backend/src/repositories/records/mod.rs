@@ -8,7 +8,6 @@ mod status;
 mod writes;
 
 pub(crate) use common::estimate_pending_record_tokens;
-pub(crate) use queries::list_records_by_ids;
 #[allow(unused_imports)]
 pub use queries::{
     count_records, get_record_by_id, list_compact_turn_slices, list_context_records,

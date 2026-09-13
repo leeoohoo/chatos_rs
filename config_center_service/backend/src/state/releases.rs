@@ -308,20 +308,6 @@ impl AppState {
                 .unwrap_or(&definition.default_value);
             validate_definition(definition, value, &mut errors);
         }
-        let single = values
-            .get(TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY)
-            .and_then(Value::as_i64);
-        let total = values
-            .get(TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY)
-            .and_then(Value::as_i64);
-        if let (Some(single), Some(total)) = (single, total) {
-            if total < single {
-                errors.push(
-                    "task_runner.ai.tool_results_total_max_chars must be greater than or equal to task_runner.ai.tool_result_max_chars"
-                        .to_string(),
-                );
-            }
-        }
         let elevated = values
             .get(MEMORY_ENGINE_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY)
             .and_then(Value::as_i64);
@@ -365,10 +351,7 @@ impl AppState {
                 ));
             }
         }
-        for key in [
-            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-        ] {
+        for key in [MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY] {
             let is_https = values
                 .get(key)
                 .and_then(Value::as_str)
@@ -396,7 +379,6 @@ impl AppState {
         for key in [
             CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
         ] {
             let is_https = values
                 .get(key)
@@ -405,21 +387,6 @@ impl AppState {
             if !is_https {
                 errors.push(format!(
                     "{key} must use https:// because Memory Engine internal APIs require mTLS"
-                ));
-            }
-        }
-        for key in [
-            CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY,
-            MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL_CONFIG_KEY,
-            USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-        ] {
-            let is_https = values
-                .get(key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.trim().starts_with("https://"));
-            if !is_https {
-                errors.push(format!(
-                    "{key} must use https:// because Task Runner internal APIs require mTLS"
                 ));
             }
         }
@@ -433,20 +400,6 @@ impl AppState {
         if public_port.is_some() && public_port == internal_mtls_port {
             errors.push(
                 "mcp_management.runtime.internal_mtls_port must differ from mcp_management.runtime.port"
-                    .to_string(),
-            );
-        }
-        let task_runner_public_port = values
-            .get(TASK_RUNNER_PORT_CONFIG_KEY)
-            .and_then(Value::as_i64);
-        let task_runner_internal_mtls_port = values
-            .get(TASK_RUNNER_INTERNAL_MTLS_PORT_CONFIG_KEY)
-            .and_then(Value::as_i64);
-        if task_runner_public_port.is_some()
-            && task_runner_public_port == task_runner_internal_mtls_port
-        {
-            errors.push(
-                "task_runner.runtime.internal_mtls_port must differ from task_runner.runtime.port"
                     .to_string(),
             );
         }
@@ -549,10 +502,7 @@ pub(super) fn validate_chatos_mtls_invariants(
     values: &BTreeMap<String, Value>,
     errors: &mut Vec<String>,
 ) {
-    for key in [
-        TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
-        MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY,
-    ] {
+    for key in [MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY] {
         let is_https = values
             .get(key)
             .and_then(Value::as_str)

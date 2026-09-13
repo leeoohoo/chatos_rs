@@ -2,18 +2,23 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde_json::json;
+use tokio::sync::OnceCell;
 use tracing::info;
 
 use crate::ai::AiClient;
 use crate::config::AppConfig;
 use crate::db::Db;
 use crate::models::{EngineJobPolicy, EngineModelProfile};
+use crate::services::memory_ai_job::MemoryAiJobKind;
 use crate::services::summary::RollupSettings;
-use chatos_agent::MemoryEngineAgent;
-
-use super::model_runtime_resolver::{
-    resolve_memory_summary_model_runtime, resolve_model_runtime_by_id,
+use chatos_plugin_management_sdk::{
+    required_agent_prompt_vendor, validate_agent_prompt_checksum, PluginManagementClient,
+    PluginManagementClientConfig, ResolveAgentPromptRequest, ResolvedAgentPrompt,
 };
+
+use super::model_runtime_resolver::resolve_memory_summary_model_runtime;
+
+static PLUGIN_MANAGEMENT_CLIENT: OnceCell<PluginManagementClient> = OnceCell::const_new();
 
 pub struct ManagedMemoryAgentRuntime {
     pub ai: AiClient,
@@ -41,39 +46,22 @@ pub async fn build_ai_client_for_job(
     AiClient::new_with_profile(config, Some(&profile))
 }
 
-pub(crate) async fn build_ai_client_for_profile_id(
-    config: &AppConfig,
-    _db: &Db,
-    profile_id: &str,
-    owner_user_id: &str,
-) -> Result<AiClient, String> {
-    if profile_id == "memory_engine_default" {
-        return Err("legacy Memory Engine default model is no longer supported".to_string());
-    }
-    let profile = resolve_model_runtime_by_id(config, owner_user_id, profile_id).await?;
-    AiClient::new_with_profile(config, Some(&profile))
-}
-
 pub async fn build_managed_memory_agent_runtime(
     config: &AppConfig,
     _db: &Db,
-    agent: &MemoryEngineAgent,
+    job: MemoryAiJobKind,
     owner_user_id: &str,
 ) -> Result<ManagedMemoryAgentRuntime, String> {
-    let profile =
-        get_effective_model_profile_for_job(config, agent.job_type(), owner_user_id).await?;
+    let profile = get_effective_model_profile_for_job(config, job.job_type(), owner_user_id).await?;
     let model_provider = profile.provider.trim();
-    let prompt = agent
-        .resolve_prompt(model_provider)
-        .await
-        .map_err(|error| error.to_string())?;
+    let prompt = resolve_memory_job_prompt(job, model_provider).await?;
     let ai = AiClient::new_with_profile(config, Some(&profile))?;
     info!(
         agent_key = prompt.agent_key.as_str(),
         vendor = prompt.vendor.as_str(),
         revision = prompt.revision,
-        job_type = agent.job_type(),
-        "resolved managed Memory Engine Agent Prompt"
+        job_type = job.job_type(),
+        "resolved managed Memory Engine model prompt"
     );
     Ok(ManagedMemoryAgentRuntime {
         ai,
@@ -84,6 +72,41 @@ pub async fn build_managed_memory_agent_runtime(
     })
 }
 
+async fn resolve_memory_job_prompt(
+    job: MemoryAiJobKind,
+    model_provider: &str,
+) -> Result<ResolvedAgentPrompt, String> {
+    let agent_key = job.prompt_key();
+    let vendor = required_agent_prompt_vendor(None, model_provider)
+        .map_err(|error| format!("resolve prompt vendor for {} failed: {error}", agent_key.as_str()))?;
+    let client = PLUGIN_MANAGEMENT_CLIENT
+        .get_or_try_init(|| async {
+            let config = PluginManagementClientConfig::from_env("memory-engine").await?;
+            PluginManagementClient::new(config).map_err(|error| error.to_string())
+        })
+        .await?;
+    let prompt = client
+        .resolve_agent_prompt_for_service(&ResolveAgentPromptRequest {
+            agent_key,
+            vendor,
+            profile: None,
+        })
+        .await
+        .map_err(|error| {
+            format!(
+                "resolve published prompt for {} and vendor {vendor} failed: {error}",
+                agent_key.as_str()
+            )
+        })?;
+    if !validate_agent_prompt_checksum(prompt.content.as_str(), prompt.checksum.as_str()) {
+        return Err(format!(
+            "published prompt checksum is invalid for {} and vendor {vendor}",
+            agent_key.as_str()
+        ));
+    }
+    Ok(prompt)
+}
+
 pub fn build_rollup_settings_from_policy(policy: &EngineJobPolicy) -> RollupSettings {
     RollupSettings {
         token_limit: policy.token_limit.unwrap_or(6000).max(500),
@@ -91,9 +114,7 @@ pub fn build_rollup_settings_from_policy(policy: &EngineJobPolicy) -> RollupSett
         count_limit: policy.count_limit.unwrap_or(0).max(0),
         keep_level0_count: policy.keep_level0_count.unwrap_or(5).max(0),
         max_level: policy.max_level.unwrap_or(4).max(1),
-        cloud_owner_entity_id: None,
-        cloud_source_id: None,
-        cloud_thread_id: None,
+        job_run_id: None,
     }
 }
 

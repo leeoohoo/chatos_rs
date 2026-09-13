@@ -56,8 +56,6 @@ BUDGETS=(
 PLANNED_BUDGETS=(
   "user_service/backend/src/api/models.rs:700"
   "chatos/backend/src/api/configs/ai_model.rs:700"
-  "admin_console/src/modules/task-runner/i18n/messages/enUS.ts:1200"
-  "admin_console/src/modules/task-runner/i18n/messages/zhCN.ts:1200"
 )
 
 failures=0

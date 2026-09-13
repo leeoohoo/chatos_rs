@@ -141,8 +141,8 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let ca_pem = std::fs::read(material_dir.join("ca.crt")).expect("read CA");
-        let identity_pem = std::fs::read(material_dir.join("task-runner.identity.pem"))
-            .expect("read client identity");
+        let identity_pem =
+            std::fs::read(material_dir.join("chatos.identity.pem")).expect("read client identity");
         let trusted_client = reqwest::Client::builder()
             .use_rustls_tls()
             .add_root_certificate(reqwest::Certificate::from_pem(&ca_pem).expect("parse CA"))
@@ -165,7 +165,7 @@ mod tests {
         assert!(no_identity_client.get(url.as_str()).send().await.is_err());
 
         let wrong_ca_pem = std::fs::read(wrong_material_dir.join("ca.crt")).expect("read wrong CA");
-        let wrong_identity_pem = std::fs::read(wrong_material_dir.join("task-runner.identity.pem"))
+        let wrong_identity_pem = std::fs::read(wrong_material_dir.join("chatos.identity.pem"))
             .expect("read wrong client identity");
         let wrong_ca_client = reqwest::Client::builder()
             .use_rustls_tls()

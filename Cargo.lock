@@ -194,18 +194,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "argon2"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072"
-dependencies = [
- "base64ct",
- "blake2",
- "cpufeatures 0.2.17",
- "password-hash",
-]
-
-[[package]]
 name = "asn1-rs"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -592,15 +580,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blake2"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
-dependencies = [
- "digest 0.10.7",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -786,14 +765,10 @@ dependencies = [
  "bytes",
  "chatos_agent",
  "chatos_ai_runtime",
- "chatos_cloud_agent_protocol",
- "chatos_cloud_agent_runtime",
  "chatos_config_sdk",
  "chatos_local_agent_protocol",
  "chatos_local_workspace",
  "chatos_mcp",
- "chatos_mcp_gateway",
- "chatos_mcp_management_sdk",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
  "chatos_plugin_management_sdk",
@@ -846,10 +821,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chatos_ai_runtime",
- "chatos_config_sdk",
  "chatos_mcp_runtime",
  "chatos_plugin_management_sdk",
- "serde",
  "serde_json",
  "tokio",
 ]
@@ -919,36 +892,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "zeroize",
-]
-
-[[package]]
-name = "chatos_cloud_agent_protocol"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "chatos_cloud_agent_runtime"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chatos_ai_runtime",
- "chatos_cloud_agent_protocol",
- "chatos_mcp_runtime",
- "chatos_mcp_service",
- "chrono",
- "futures-util",
- "lapin",
- "mongodb",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -1075,15 +1018,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "chatos_mcp_gateway"
-version = "0.1.0"
-dependencies = [
- "chatos_mcp_management_sdk",
- "chatos_mcp_runtime",
- "serde_json",
 ]
 
 [[package]]
@@ -1346,7 +1280,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-server",
- "chatos_agent",
  "chatos_config_sdk",
  "chatos_queue_observability",
  "chatos_service_runtime",
@@ -3093,7 +3026,6 @@ dependencies = [
  "axum",
  "axum-server",
  "base64 0.22.1",
- "chatos_agent",
  "chatos_config_sdk",
  "chatos_mcp_management_sdk",
  "chatos_plugin_management_sdk",
@@ -3735,17 +3667,6 @@ dependencies = [
  "redox_syscall 0.5.18",
  "smallvec",
  "windows-link",
-]
-
-[[package]]
-name = "password-hash"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
-dependencies = [
- "base64ct",
- "rand_core 0.6.4",
- "subtle",
 ]
 
 [[package]]
@@ -5410,58 +5331,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "task_runner_service_backend"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "async-trait",
- "axum",
- "axum-server",
- "chatos_agent",
- "chatos_ai_runtime",
- "chatos_cloud_agent_protocol",
- "chatos_cloud_agent_runtime",
- "chatos_config_sdk",
- "chatos_mcp",
- "chatos_mcp_gateway",
- "chatos_mcp_management_sdk",
- "chatos_mcp_runtime",
- "chatos_mcp_service",
- "chatos_plugin_management_sdk",
- "chatos_queue_observability",
- "chatos_service_runtime",
- "chatos_terminal_runtime",
- "chrono",
- "futures-util",
- "hex",
- "lapin",
- "libc",
- "memory_engine_sdk",
- "mongodb",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "parking_lot",
- "rand 0.10.2",
- "reqwest",
- "rustls 0.23.43",
- "rustls-pemfile 2.2.0",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower",
- "tower-http 0.7.0",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "tcp-stream"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5658,7 +5527,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]

@@ -5,8 +5,6 @@ export const ADMIN_AUTH_CHANGED_EVENT = 'chatos-admin-auth-changed';
 
 const LEGACY_TOKEN_KEYS = [
   'user_service_auth_token',
-  'task_runner_auth_token',
-  'task_runner_service_auth_token',
   'plugin_management_auth_token',
   'plugin_management_service_auth_token',
   'memory_engine_auth_token',

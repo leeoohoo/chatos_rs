@@ -73,21 +73,6 @@ pub async fn upsert_message(message: &Message) -> Result<Message, String> {
     Ok(saved)
 }
 
-pub async fn upsert_message_in_session(
-    session: &Session,
-    message: &Message,
-) -> Result<Message, String> {
-    if message.session_id != session.id {
-        return Err(format!(
-            "message session mismatch: message={} session={}",
-            message.session_id, session.id
-        ));
-    }
-    let saved = chatos_memory_engine::upsert_chatos_message(session, message).await?;
-    sync_project_agent_link_after_user_message(session, &saved).await;
-    Ok(saved)
-}
-
 pub async fn sync_turn_runtime_snapshot(
     session_id: &str,
     turn_id: &str,
@@ -168,21 +153,6 @@ pub async fn get_message_by_id_for_user(
     user_id: &str,
 ) -> Result<Option<Message>, String> {
     chatos_memory_engine::get_chatos_message_by_id_for_tenant(message_id, user_id).await
-}
-
-pub async fn get_message_by_id_in_session(
-    session: &Session,
-    message_id: &str,
-) -> Result<Option<Message>, String> {
-    chatos_memory_engine::get_chatos_message_by_id_in_session(session, message_id).await
-}
-
-pub async fn get_message_by_id_in_session_including_hidden(
-    session: &Session,
-    message_id: &str,
-) -> Result<Option<Message>, String> {
-    chatos_memory_engine::get_chatos_message_by_id_in_session_including_hidden(session, message_id)
-        .await
 }
 
 pub async fn delete_message(message_id: &str) -> Result<bool, String> {

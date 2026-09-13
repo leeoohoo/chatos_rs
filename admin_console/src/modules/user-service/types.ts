@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 export type UserRole = 'super_admin' | 'user';
-export type PrincipalType = 'human_user' | 'agent_account';
+export type PrincipalType = 'human_user';
 
 export interface AuthUser {
   id: string;
@@ -35,7 +35,6 @@ export interface UserSummaryRecord {
   created_at: string;
   updated_at: string;
   last_login_at?: string | null;
-  agent_count: number;
   harness_provisioning?: HarnessProvisioningSummaryRecord | null;
 }
 
@@ -102,37 +101,6 @@ export interface UpdateUserPayload {
 }
 
 export interface ProvisionHarnessPayload {
-  password: string;
-}
-
-export interface AgentAccountListItem {
-  id: string;
-  username: string;
-  display_name: string;
-  owner_user_id: string;
-  owner_username: string;
-  owner_display_name: string;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-  last_login_at?: string | null;
-}
-
-export interface CreateAgentAccountPayload {
-  username: string;
-  display_name?: string;
-  password: string;
-  owner_user_id?: string;
-  enabled?: boolean;
-}
-
-export interface UpdateAgentAccountPayload {
-  display_name?: string;
-  owner_user_id?: string;
-  enabled?: boolean;
-}
-
-export interface ResetAgentPasswordPayload {
   password: string;
 }
 
@@ -300,8 +268,6 @@ export interface SystemConfigResponse {
   service: string;
   issuer: string;
   user_service_audience: string;
-  task_runner_audience: string;
   database_url: string;
   user_access_ttl_seconds: number;
-  task_runner_access_ttl_seconds: number;
 }

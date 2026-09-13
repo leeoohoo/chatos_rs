@@ -88,12 +88,6 @@ pub fn site_manifest(config: &AppConfig) -> SiteManifest {
                 capability: "把线程、消息、摘要、主题记忆和上下文组装从主聊天中解耦。",
             },
             ServiceInfo {
-                name: "task_runner_service",
-                directory: "task_runner_service/",
-                role: "异步执行链路",
-                capability: "让复杂任务排队、执行、复核、回调，并保留可观察运行记录。",
-            },
-            ServiceInfo {
                 name: "user_service",
                 directory: "user_service/",
                 role: "统一身份与模型配置",

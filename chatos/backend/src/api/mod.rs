@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, OriginalUri};
 use axum::http::{
     header::{HeaderName, HOST, UPGRADE},
-    Method, Request, StatusCode,
+    Request, StatusCode,
 };
 use axum::middleware;
 use axum::response::IntoResponse;
@@ -29,13 +29,10 @@ use crate::services::access_token_scope;
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
-pub mod agent_chat;
 pub mod agents;
 pub mod applications;
-pub mod ask_user_prompts;
 pub mod attachments;
 pub mod auth;
-pub(crate) mod chat_stream_common;
 pub mod code_nav;
 pub mod configs;
 pub mod contacts;
@@ -49,18 +46,14 @@ pub mod local_connectors;
 pub mod mcp_management;
 pub mod memory_compat;
 pub mod memory_mappings;
-pub mod message_task_runner;
 pub mod messages;
 pub(crate) mod metrics;
 pub mod model_gateway;
 pub mod notepad;
-pub mod pet_activities;
 pub mod realtime;
 pub mod remote_connections;
 pub mod sessions;
 pub mod system_contexts;
-pub mod task_manager;
-pub mod task_runner_plugins;
 pub mod terminals;
 mod trace_context;
 pub mod user_settings;
@@ -124,9 +117,6 @@ pub fn public_router() -> Result<Router, String> {
         .fallback(fallback_404)
         .layer(cors)
         .layer(DefaultBodyLimit::max(request_body_limit))
-        .layer(middleware::from_fn(
-            enforce_plugin_ui_resource_origin_namespace,
-        ))
         .layer(middleware::from_fn(log_server_error_requests))
         .layer(middleware::from_fn(metrics::observe_public_http))
         .layer(middleware::from_fn(trace_context::accept_remote_parent))
@@ -180,96 +170,6 @@ async fn log_server_error_requests(request: Request<Body>, next: middleware::Nex
         );
     }
     response
-}
-
-async fn enforce_plugin_ui_resource_origin_namespace(
-    request: Request<Body>,
-    next: middleware::Next,
-) -> Response {
-    let Ok(config) = Config::try_get() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    let request_host = request
-        .headers()
-        .get(HOST)
-        .and_then(|value| value.to_str().ok());
-    let resource_request = config
-        .plugin_ui_resource_origin
-        .as_deref()
-        .is_some_and(|origin| {
-            request_host.is_some_and(|host| request_host_matches_origin(host, origin))
-                && request
-                    .uri()
-                    .path()
-                    .starts_with("/api/plugin-ui/workbench/")
-        });
-    let allowed = plugin_ui_resource_namespace_allowed(
-        config.plugin_ui_resource_origin.as_deref(),
-        request.method(),
-        request.uri().path(),
-        request_host,
-    );
-    if !allowed {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let mut response = next.run(request).await;
-    if resource_request {
-        remove_plugin_ui_resource_cors_headers(response.headers_mut());
-    }
-    response
-}
-
-fn remove_plugin_ui_resource_cors_headers(headers: &mut axum::http::HeaderMap) {
-    for header in [
-        "access-control-allow-origin",
-        "access-control-allow-credentials",
-        "access-control-expose-headers",
-        "access-control-allow-headers",
-        "access-control-allow-methods",
-        "access-control-max-age",
-    ] {
-        headers.remove(header);
-    }
-}
-
-fn plugin_ui_resource_namespace_allowed(
-    resource_origin: Option<&str>,
-    method: &Method,
-    path: &str,
-    request_host: Option<&str>,
-) -> bool {
-    let Some(resource_origin) = resource_origin else {
-        return true;
-    };
-    let resource_host =
-        request_host.is_some_and(|host| request_host_matches_origin(host, resource_origin));
-    let resource_path = path.starts_with("/api/plugin-ui/workbench/");
-    if resource_host {
-        resource_path && (method == Method::GET || method == Method::HEAD)
-    } else {
-        !resource_path
-    }
-}
-
-fn request_host_matches_origin(request_host: &str, origin: &str) -> bool {
-    let Ok(origin) = url::Url::parse(origin) else {
-        return false;
-    };
-    let Ok(authority) = request_host.parse::<axum::http::uri::Authority>() else {
-        return false;
-    };
-    if !authority
-        .host()
-        .eq_ignore_ascii_case(origin.host_str().unwrap_or_default())
-    {
-        return false;
-    }
-    match origin.port() {
-        Some(expected) => authority.port_u16() == Some(expected),
-        None => {
-            authority.port_u16().is_none() || authority.port_u16() == origin.port_or_known_default()
-        }
-    }
 }
 
 fn default_request_body_limit_bytes() -> usize {
@@ -355,7 +255,7 @@ fn matched_route(req: &Request<Body>) -> &str {
 }
 
 fn sanitize_request_uri(uri: &axum::http::Uri) -> String {
-    let path = sanitize_sensitive_path(uri.path());
+    let path = uri.path().to_string();
     let Some(query) = uri.query() else {
         return path;
     };
@@ -385,24 +285,6 @@ fn sanitize_request_uri(uri: &axum::http::Uri) -> String {
     } else {
         format!("{path}?{sanitized_query}")
     }
-}
-
-fn sanitize_sensitive_path(path: &str) -> String {
-    path.split('/')
-        .map(|segment| {
-            if segment.len() == 68
-                && segment.starts_with("pui_")
-                && segment[4..]
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-            {
-                "[redacted]"
-            } else {
-                segment
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 async fn require_auth(
@@ -467,14 +349,12 @@ fn is_websocket_upgrade(req: &Request<Body>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        internal_router, plugin_ui_resource_namespace_allowed,
-        remove_plugin_ui_resource_cors_headers, sanitize_request_uri, websocket_auth_from_query,
-        WebSocketQueryAuth,
+        internal_router, sanitize_request_uri, websocket_auth_from_query, WebSocketQueryAuth,
     };
     use crate::core::auth::{AuthHeaderError, AuthUser};
     use crate::core::websocket_ticket::issue_websocket_ticket;
     use axum::body::Body;
-    use axum::http::{header::UPGRADE, HeaderMap, HeaderValue, Method, Request, Uri};
+    use axum::http::{header::UPGRADE, Request, Uri};
     use tower::ServiceExt;
 
     fn websocket_request(uri: &str) -> Request<Body> {
@@ -501,71 +381,6 @@ mod tests {
             sanitize_request_uri(&uri),
             "/api/realtime/ws?ws_ticket=[redacted]&access_token=[redacted]&verification_code=[redacted]&plain=value"
         );
-    }
-
-    #[test]
-    fn sanitize_request_uri_redacts_plugin_ui_workbench_session_paths() {
-        let session_id = format!("pui_{}", "a".repeat(64));
-        let uri: Uri = format!("/api/plugin-ui/workbench/{session_id}/ui/index.html?plain=value")
-            .parse()
-            .expect("parse uri");
-        assert_eq!(
-            sanitize_request_uri(&uri),
-            "/api/plugin-ui/workbench/[redacted]/ui/index.html?plain=value"
-        );
-    }
-
-    #[test]
-    fn plugin_ui_resource_origin_is_an_exact_get_only_namespace() {
-        let origin = Some("https://plugin-ui.example.com");
-        assert!(plugin_ui_resource_namespace_allowed(
-            origin,
-            &Method::GET,
-            "/api/plugin-ui/workbench/pui_session/ui/index.html",
-            Some("plugin-ui.example.com"),
-        ));
-        assert!(plugin_ui_resource_namespace_allowed(
-            origin,
-            &Method::HEAD,
-            "/api/plugin-ui/workbench/pui_session/ui/app.js",
-            Some("plugin-ui.example.com:443"),
-        ));
-        assert!(!plugin_ui_resource_namespace_allowed(
-            origin,
-            &Method::POST,
-            "/api/plugin-ui/workbench/pui_session/ui/index.html",
-            Some("plugin-ui.example.com"),
-        ));
-        assert!(!plugin_ui_resource_namespace_allowed(
-            origin,
-            &Method::GET,
-            "/api/sessions",
-            Some("plugin-ui.example.com"),
-        ));
-        assert!(!plugin_ui_resource_namespace_allowed(
-            origin,
-            &Method::GET,
-            "/api/plugin-ui/workbench/pui_session/ui/index.html",
-            Some("app.example.com"),
-        ));
-        assert!(plugin_ui_resource_namespace_allowed(
-            None,
-            &Method::GET,
-            "/api/plugin-ui/workbench/pui_session/ui/index.html",
-            Some("app.example.com"),
-        ));
-
-        let mut headers = HeaderMap::new();
-        headers.insert("access-control-allow-origin", HeaderValue::from_static("*"));
-        headers.insert(
-            "access-control-allow-credentials",
-            HeaderValue::from_static("true"),
-        );
-        headers.insert("content-type", HeaderValue::from_static("text/html"));
-        remove_plugin_ui_resource_cors_headers(&mut headers);
-        assert!(!headers.contains_key("access-control-allow-origin"));
-        assert!(!headers.contains_key("access-control-allow-credentials"));
-        assert_eq!(headers["content-type"], "text/html");
     }
 
     #[test]

@@ -21,8 +21,8 @@ RABBITMQ_DEFAULT_VHOST=/
 RABBITMQ_AMQP_VHOST=%2f
 VALKEY_PASSWORD=change_me_valkey_password
 
-# Cross-service model runtime lookup. ChatOS Cloud Agent workers use this
-# caller-specific secret together with mTLS; never reuse a user access token.
+# Cross-service model runtime lookup. ChatOS backend uses this caller-specific
+# secret together with mTLS; never reuse a user access token.
 CHATOS_USER_SERVICE_INTERNAL_API_SECRET=change_me_chatos_user_service_secret
 
 # Configuration Center caller bootstrap secrets. Use distinct random values in
@@ -33,7 +33,6 @@ CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET=change_me_config_cent
 CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET=change_me_config_center_memory_engine_signing_secret
 CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET=change_me_config_center_official_website_signing_secret
 CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_plugin_management_signing_secret
-CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET=change_me_config_center_task_runner_signing_secret
 CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_user_service_signing_secret
 
 # Configuration Center mTLS material is provisioned outside Git.
@@ -43,7 +42,6 @@ CHATOS_MTLS_DIR=./secrets/chatos-mtls
 LOCAL_CONNECTOR_MTLS_DIR=./secrets/local-connector-mtls
 USER_SERVICE_MTLS_DIR=./secrets/user-service-mtls
 PLUGIN_MANAGEMENT_MTLS_DIR=./secrets/plugin-management-mtls
-TASK_RUNNER_MTLS_DIR=./secrets/task-runner-mtls
 
 # Harness is infrastructure and must be available before project execution.
 HARNESS_IMAGE=harness/harness:latest

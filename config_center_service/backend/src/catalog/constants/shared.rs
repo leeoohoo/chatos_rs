@@ -1,13 +1,10 @@
 pub const USER_PREFERENCE_CONFIG_KEYS: &[&str] =
     &["shared.ui.locale", "shared.ai.internal_context_locale"];
-pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &[
-    "chatos.ai.max_iterations",
-    "task_runner.execution.max_iterations",
-];
 pub const RETIRED_CONFIG_KEYS: &[&str] = &[
+    "agent.runtime.max_iterations",
+    "chatos.ai.max_iterations",
     "chatos.ui.local_project_creation_enabled",
     "local_connector.relay.sandbox_image_request_timeout_ms",
-    "local_connector.security.task_runner_internal_api_secret",
     "mcp_management.async_tool.local_queue_buffer",
     "mcp_management.async_tool.result_outbox_batch_size",
     "mcp_management.async_tool.result_outbox_reconcile_ms",
@@ -50,27 +47,6 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "sandbox_manager.security.require_auth",
     "sandbox_manager.security.require_signed_internal_requests",
     "sandbox_manager.security.system_client_max_lease_ttl_seconds",
-    "sandbox_manager.security.task_runner_internal_api_secret",
-    "task_runner.cache.plugin_cloud_bundle_max_bytes",
-    "task_runner.cache.plugin_cloud_bundle_max_entries",
-    "task_runner.downstream.local_connector_internal_api_secret",
-    "task_runner.downstream.local_connector_service_base_url",
-    "task_runner.downstream.local_connector_service_request_timeout_ms",
-    "task_runner.downstream.plugin_connector_discovery_timeout_ms",
-    "task_runner.downstream.plugin_hook_relay_timeout_ms",
-    "task_runner.downstream.plugin_relay_timeout_ms",
-    "task_runner.downstream.sandbox_manager_base_url",
-    "task_runner.downstream.sandbox_manager_internal_api_secret",
-    "task_runner.execution.environment_mode",
-    "task_runner.queue.run_dispatch_mode",
-    "task_runner.queue.run_dispatch_outbox_batch_size",
-    "task_runner.queue.run_dispatch_outbox_reconcile_ms",
-    "task_runner.queue.run_dispatch_queue",
-    "task_runner.queue.run_dispatch_retry_delay_ms",
-    "task_runner.queue.run_dispatch_retry_queue",
-    "task_runner.sandbox.enabled",
-    "task_runner.sandbox.lease_ttl_seconds",
-    "task_runner.sandbox.manager_base_url",
     "user_service.downstream.memory_engine_base_url",
 ];
 pub const PLATFORM_PRESSURE_LEVEL_CONFIG_KEY: &str = "platform.pressure.level";

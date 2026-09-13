@@ -41,31 +41,6 @@ struct InvocationReadyEvent {
 struct InvocationTerminalEvent {
     event_id: String,
     invocation_id: String,
-    prompt_id: Option<String>,
-}
-
-pub(super) async fn publish_invocation_terminal_event(
-    channel: &Channel,
-    topology: &AsyncToolDispatchTopology,
-    invocation_id: &str,
-    prompt_id: Option<&str>,
-) -> Result<(), AsyncToolEnqueueError> {
-    let event = InvocationTerminalEvent {
-        event_id: prompt_id
-            .map(|prompt_id| format!("mcp_prompt_terminal_{prompt_id}"))
-            .unwrap_or_else(|| format!("mcp_invocation_terminal_{invocation_id}")),
-        invocation_id: invocation_id.to_string(),
-        prompt_id: prompt_id.map(ToOwned::to_owned),
-    };
-    let payload = serde_json::to_vec(&event)
-        .map_err(|error| AsyncToolEnqueueError::Unavailable(error.to_string()))?;
-    publish_payload(
-        channel,
-        topology.rabbitmq_exchange.as_deref().unwrap_or_default(),
-        terminal_queue_name(topology).as_str(),
-        payload.as_slice(),
-    )
-    .await
 }
 
 fn invocation_queue_name(topology: &AsyncToolDispatchTopology) -> String {
@@ -490,18 +465,11 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
                     let outcome =
                         match serde_json::from_slice::<InvocationTerminalEvent>(&delivery.data) {
                             Ok(event) => {
-                                if let Some(prompt_id) = event.prompt_id.as_deref() {
-                                    crate::api::mcp::resolve_waiting_user_tool_invocation(
-                                        &state, prompt_id,
-                                    )
-                                    .await
-                                } else {
-                                    crate::api::mcp::resume_terminal_tool_batch_invocation(
-                                        &state,
-                                        event.invocation_id.as_str(),
-                                    )
-                                    .await
-                                }
+                                crate::api::mcp::resume_terminal_tool_batch_invocation(
+                                    &state,
+                                    event.invocation_id.as_str(),
+                                )
+                                .await
                             }
                             Err(error) => {
                                 Err(format!("invalid invocation-terminal event: {error}"))
@@ -576,9 +544,9 @@ fn live_batch_watchdog_action(status: RuntimeInvocationStatus) -> LiveBatchWatch
         | RuntimeInvocationStatus::Failed
         | RuntimeInvocationStatus::Cancelled
         | RuntimeInvocationStatus::UnknownExecutionState => LiveBatchWatchdogAction::ResumeTerminal,
-        RuntimeInvocationStatus::Running
-        | RuntimeInvocationStatus::WaitingForUser
-        | RuntimeInvocationStatus::CancelRequested => LiveBatchWatchdogAction::None,
+        RuntimeInvocationStatus::Running | RuntimeInvocationStatus::CancelRequested => {
+            LiveBatchWatchdogAction::None
+        }
     }
 }
 
@@ -725,7 +693,6 @@ async fn reconcile_orphan_invocations(state: &AppState) -> Result<(), String> {
                     .await?;
                 }
             }
-            RuntimeInvocationStatus::WaitingForUser => {}
             RuntimeInvocationStatus::Completed
             | RuntimeInvocationStatus::Failed
             | RuntimeInvocationStatus::Cancelled
@@ -797,7 +764,6 @@ mod invocation_terminal_tests {
         for status in [
             RuntimeInvocationStatus::Queued,
             RuntimeInvocationStatus::Running,
-            RuntimeInvocationStatus::WaitingForUser,
             RuntimeInvocationStatus::CancelRequested,
         ] {
             assert!(!is_recoverable_terminal_invocation_status(status));
@@ -823,7 +789,6 @@ mod invocation_terminal_tests {
         }
         for status in [
             RuntimeInvocationStatus::Running,
-            RuntimeInvocationStatus::WaitingForUser,
             RuntimeInvocationStatus::CancelRequested,
         ] {
             assert_eq!(

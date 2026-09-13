@@ -24,9 +24,7 @@ pub struct RollupSettings {
     pub count_limit: i64,
     pub keep_level0_count: i64,
     pub max_level: i64,
-    pub(crate) cloud_owner_entity_id: Option<String>,
-    pub(crate) cloud_source_id: Option<String>,
-    pub(crate) cloud_thread_id: Option<String>,
+    pub(crate) job_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,15 +48,13 @@ pub(crate) struct PreparedThreadRollup {
     pub(crate) level: i64,
     pub(crate) selected: Vec<EngineSummary>,
     pub(crate) trigger_reason: &'static str,
-    pub(crate) cloud_job_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct SummaryJobSettings {
     pub(crate) token_limit: i64,
     pub(crate) target_summary_tokens: Option<i64>,
-    pub(crate) cloud_owner_entity_id: Option<String>,
-    pub(crate) cloud_resume_kind: Option<String>,
+    pub(crate) job_run_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,10 +86,8 @@ pub(crate) use rollup::{
     SCHEDULER_TRIGGER,
 };
 pub use thread_repair::run_thread_repair_summary;
-pub(crate) use thread_repair::run_thread_repair_summary_job as resume_thread_repair_summary;
 pub use thread_summary::run_thread_summary;
 pub(crate) use thread_summary::run_thread_summary_with_thread;
-pub(crate) use thread_summary::{fail_cloud_summary_job, resume_cloud_summary_job};
 
 #[cfg(test)]
 mod tests {

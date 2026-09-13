@@ -76,9 +76,6 @@ image_for_service() {
     local-connector-service-backend)
       printf '%s/chatos-rs-local-connector-service-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
-    task-runner-backend)
-      printf '%s/chatos-rs-task-runner-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
-      ;;
     chatos-backend)
       printf '%s/chatos-rs-chatos-backend:%s\n' "$IMAGE_NAMESPACE" "$IMAGE_TAG"
       ;;
@@ -118,7 +115,6 @@ require_harness_ci_images() {
     "$IMAGE_NAMESPACE/chatos-rs-memory-engine-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-plugin-management-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-local-connector-service-backend:$IMAGE_TAG"
-    "$IMAGE_NAMESPACE/chatos-rs-task-runner-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-chatos-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-official-website-backend:$IMAGE_TAG"
     "$IMAGE_NAMESPACE/chatos-rs-admin-console-frontend:$IMAGE_TAG"

@@ -14,10 +14,10 @@ use uuid::Uuid;
 use crate::auth::{hash_password, normalize_display_name, normalize_username};
 use crate::config::AppConfig;
 use crate::models::{
-    AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, InviteCodePublicRecord,
-    InviteCodeRecord, LocalConnectorAuthTicketRecord, RegistrationEmailCodeRecord,
-    UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord, UserOptionRecord,
-    UserRecord, UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
+    HarnessProvisioningRecord, InviteCodePublicRecord, InviteCodeRecord,
+    LocalConnectorAuthTicketRecord, RegistrationEmailCodeRecord, UserModelConfigRecord,
+    UserModelProviderRecord, UserModelSettingsRecord, UserOptionRecord, UserRecord,
+    UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
 };
 
 mod model_configs;
@@ -25,7 +25,6 @@ mod model_configs;
 #[derive(Clone)]
 pub struct AppStore {
     users: Collection<UserRecord>,
-    agent_accounts: Collection<AgentAccountRecord>,
     revoked_tokens: Collection<RevokedTokenRecord>,
     user_model_configs: Collection<UserModelConfigRecord>,
     user_model_providers: Collection<UserModelProviderRecord>,
@@ -44,18 +43,10 @@ struct RevokedTokenRecord {
     expires_at_unix: i64,
 }
 
-#[derive(Debug, Deserialize)]
-struct OwnerAgentCount {
-    #[serde(rename = "_id")]
-    owner_user_id: String,
-    count: i64,
-}
-
 impl AppStore {
     pub fn new(db: Database) -> Self {
         Self {
             users: db.collection("users"),
-            agent_accounts: db.collection("agent_accounts"),
             revoked_tokens: db.collection("revoked_tokens"),
             user_model_configs: db.collection("user_model_configs"),
             user_model_providers: db.collection("user_model_providers"),
@@ -70,12 +61,7 @@ impl AppStore {
     pub async fn initialize(&self) -> Result<(), String> {
         self.create_unique_index(&self.users, "id").await?;
         self.create_unique_index(&self.users, "username").await?;
-        self.create_unique_index(&self.agent_accounts, "id").await?;
-        self.create_unique_index(&self.agent_accounts, "username")
-            .await?;
         self.create_unique_index(&self.revoked_tokens, "jti")
-            .await?;
-        self.create_index(&self.agent_accounts, "owner_user_id")
             .await?;
         self.create_unique_index(&self.user_model_configs, "id")
             .await?;
@@ -269,15 +255,11 @@ impl AppStore {
             return Ok(Vec::new());
         }
         let user_ids = users.iter().map(|user| user.id.clone()).collect::<Vec<_>>();
-        let (mut agent_counts, mut harness_by_user) = tokio::try_join!(
-            self.agent_counts_for_user_ids(&user_ids),
-            self.harness_by_user_ids(&user_ids),
-        )?;
+        let mut harness_by_user = self.harness_by_user_ids(&user_ids).await?;
 
         Ok(users
             .into_iter()
             .map(|user| UserSummaryRecord {
-                agent_count: agent_counts.remove(&user.id).unwrap_or(0),
                 harness_provisioning: harness_by_user.remove(&user.id).map(Into::into),
                 id: user.id,
                 username: user.username,
@@ -289,33 +271,6 @@ impl AppStore {
                 last_login_at: user.last_login_at,
             })
             .collect())
-    }
-
-    async fn agent_counts_for_user_ids(
-        &self,
-        user_ids: &[String],
-    ) -> Result<HashMap<String, i64>, String> {
-        let agent_count_documents: Vec<mongodb::bson::Document> = self
-            .agent_accounts
-            .aggregate(
-                vec![
-                    doc! { "$match": { "owner_user_id": { "$in": user_ids.to_vec() } } },
-                    doc! { "$group": { "_id": "$owner_user_id", "count": { "$sum": 1_i64 } } },
-                ],
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())?;
-        let mut agent_counts = HashMap::with_capacity(agent_count_documents.len());
-        for document in agent_count_documents {
-            let count: OwnerAgentCount =
-                mongodb::bson::from_document(document).map_err(|err| err.to_string())?;
-            agent_counts.insert(count.owner_user_id, count.count);
-        }
-        Ok(agent_counts)
     }
 
     async fn harness_by_user_ids(
@@ -347,7 +302,6 @@ impl AppStore {
         &self,
         user: UserRecord,
     ) -> Result<UserSummaryRecord, String> {
-        let agent_count = self.count_agents_by_owner(user.id.as_str()).await?;
         let harness_provisioning = self
             .find_harness_provisioning_by_user_id(user.id.as_str())
             .await?
@@ -361,7 +315,6 @@ impl AppStore {
             created_at: user.created_at,
             updated_at: user.updated_at,
             last_login_at: user.last_login_at,
-            agent_count,
             harness_provisioning,
         })
     }
@@ -408,113 +361,6 @@ impl AppStore {
         i64::try_from(count).map_err(|err| err.to_string())
     }
 
-    pub async fn list_agent_accounts(&self) -> Result<Vec<AgentAccountListItem>, String> {
-        self.list_agent_accounts_inner(None).await
-    }
-
-    pub async fn list_agent_accounts_by_owner(
-        &self,
-        owner_user_id: &str,
-    ) -> Result<Vec<AgentAccountListItem>, String> {
-        self.list_agent_accounts_inner(Some(owner_user_id)).await
-    }
-
-    async fn list_agent_accounts_inner(
-        &self,
-        owner_user_id: Option<&str>,
-    ) -> Result<Vec<AgentAccountListItem>, String> {
-        let filter = owner_user_id.map(|owner| doc! { "owner_user_id": owner });
-        let options = FindOptions::builder()
-            .sort(doc! { "updated_at": -1, "created_at": -1 })
-            .build();
-        let agents: Vec<AgentAccountRecord> = self
-            .agent_accounts
-            .find(filter, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())?;
-
-        let owner_ids = agents
-            .iter()
-            .map(|agent| agent.owner_user_id.clone())
-            .collect::<Vec<_>>();
-        let owners = self
-            .list_user_options(Some(&owner_ids))
-            .await?
-            .into_iter()
-            .map(|owner| (owner.id.clone(), owner))
-            .collect::<HashMap<_, _>>();
-
-        let mut items = Vec::with_capacity(agents.len());
-        for agent in agents {
-            let Some(owner) = owners.get(agent.owner_user_id.as_str()) else {
-                continue;
-            };
-            items.push(AgentAccountListItem {
-                id: agent.id,
-                username: agent.username,
-                display_name: agent.display_name,
-                owner_user_id: agent.owner_user_id,
-                owner_username: owner.username.clone(),
-                owner_display_name: owner.display_name.clone(),
-                enabled: agent.enabled,
-                created_at: agent.created_at,
-                updated_at: agent.updated_at,
-                last_login_at: agent.last_login_at,
-            });
-        }
-        Ok(items)
-    }
-
-    pub async fn find_agent_by_id(&self, id: &str) -> Result<Option<AgentAccountRecord>, String> {
-        self.agent_accounts
-            .find_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn find_agent_by_username(
-        &self,
-        username: &str,
-    ) -> Result<Option<AgentAccountRecord>, String> {
-        self.agent_accounts
-            .find_one(doc! { "username": username }, None)
-            .await
-            .map_err(|err| err.to_string())
-    }
-
-    pub async fn insert_agent_record(&self, agent: &AgentAccountRecord) -> Result<(), String> {
-        self.agent_accounts
-            .insert_one(agent, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn update_agent_record(&self, agent: &AgentAccountRecord) -> Result<(), String> {
-        let update = to_set_document(agent)?;
-        self.agent_accounts
-            .update_one(doc! { "id": &agent.id }, update, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    pub async fn touch_agent_last_login(&self, id: &str) -> Result<(), String> {
-        let now = now_rfc3339();
-        self.agent_accounts
-            .update_one(
-                doc! { "id": id },
-                doc! { "$set": { "last_login_at": &now, "updated_at": &now } },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
     pub async fn revoke_token(
         &self,
         jti: &str,
@@ -557,15 +403,6 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
-    }
-
-    pub async fn count_agents_by_owner(&self, owner_user_id: &str) -> Result<i64, String> {
-        let count = self
-            .agent_accounts
-            .count_documents(doc! { "owner_user_id": owner_user_id }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        i64::try_from(count).map_err(|err| err.to_string())
     }
 
     pub async fn username_exists_elsewhere(

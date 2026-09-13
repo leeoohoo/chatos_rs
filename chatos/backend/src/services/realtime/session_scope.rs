@@ -6,7 +6,6 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::core::validation::normalize_non_empty_str;
-use crate::services::chatos_sessions;
 
 use super::types::RealtimeEventEnvelope;
 
@@ -59,42 +58,6 @@ pub struct RealtimeErrorMessage {
 #[derive(Debug, Clone, Default)]
 pub struct RealtimeSubscriptionSet {
     topics: HashSet<RealtimeTopic>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ConversationRealtimeScope {
-    pub user_id: Option<String>,
-    pub project_id: Option<String>,
-}
-
-pub async fn resolve_conversation_scope(
-    conversation_id: &str,
-) -> Result<ConversationRealtimeScope, String> {
-    let conversation_id = normalize_non_empty_str(conversation_id)
-        .ok_or_else(|| "conversation_id is required".to_string())?
-        .to_string();
-
-    let session = chatos_sessions::get_session_by_id(conversation_id.as_str())
-        .await
-        .map_err(|err| {
-            format!(
-                "load conversation {} from chatos session store failed: {}",
-                conversation_id, err
-            )
-        })?;
-
-    Ok(ConversationRealtimeScope {
-        user_id: session
-            .as_ref()
-            .and_then(|value| value.user_id.as_deref())
-            .and_then(normalize_non_empty_str)
-            .map(|value| value.to_string()),
-        project_id: session
-            .as_ref()
-            .and_then(|value| value.project_id.as_deref())
-            .and_then(normalize_non_empty_str)
-            .map(|value| value.to_string()),
-    })
 }
 
 impl RealtimeSubscriptionSet {
@@ -242,11 +205,9 @@ fn topics_for_envelope(envelope: &RealtimeEventEnvelope) -> Vec<RealtimeTopic> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::{RealtimeSubscriptionSet, RealtimeTopic, RealtimeTopicScope};
     use crate::services::realtime::types::{
-        ChatStreamRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
+        RealtimeEventEnvelope, RealtimeEventPayload, SessionsUpdatedRealtimePayload,
     };
 
     #[test]
@@ -265,13 +226,11 @@ mod tests {
             user_id: "user-1".to_string(),
             conversation_id: Some("conversation-1".to_string()),
             project_id: Some("project-1".to_string()),
-            payload: RealtimeEventPayload::ChatStream(ChatStreamRealtimePayload {
-                conversation_id: "conversation-1".to_string(),
-                conversation_turn_id: Some("turn-1".to_string()),
+            payload: RealtimeEventPayload::SessionsUpdated(SessionsUpdatedRealtimePayload {
+                reason: "test".to_string(),
+                session_id: Some("conversation-1".to_string()),
                 project_id: Some("project-1".to_string()),
-                user_message_id: None,
-                stream_type: "start".to_string(),
-                raw: json!({"type": "start"}),
+                session: None,
             }),
             ts: "2026-08-28T00:00:00Z".to_string(),
         };

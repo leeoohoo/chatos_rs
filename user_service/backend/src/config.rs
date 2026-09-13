@@ -20,14 +20,11 @@ pub struct AppConfig {
     pub jwt_secret: String,
     pub jwt_issuer: String,
     pub user_service_audience: String,
-    pub task_runner_audience: String,
     pub user_access_ttl_seconds: i64,
-    pub task_runner_access_ttl_seconds: i64,
     pub super_admin_username: String,
     pub super_admin_password: String,
     pub super_admin_display_name: String,
     pub memory_engine_internal_api_secret: Option<String>,
-    pub task_runner_internal_api_secret: Option<String>,
     pub downstream_request_timeout_ms: i64,
     pub harness_provisioning_enabled: bool,
     pub harness_base_url: Option<String>,
@@ -97,12 +94,8 @@ impl AppConfig {
             jwt_secret: require_config_center_secret("USER_SERVICE_JWT_SECRET")?,
             jwt_issuer: require_config_center_text("USER_SERVICE_JWT_ISSUER")?,
             user_service_audience: require_config_center_text("USER_SERVICE_USER_AUDIENCE")?,
-            task_runner_audience: require_config_center_text("USER_SERVICE_TASK_RUNNER_AUDIENCE")?,
             user_access_ttl_seconds: require_config_center_i64(
                 "USER_SERVICE_USER_ACCESS_TTL_SECONDS",
-            )?,
-            task_runner_access_ttl_seconds: require_config_center_i64(
-                "USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS",
             )?,
             super_admin_username: require_config_center_text("USER_SERVICE_SUPER_ADMIN_USERNAME")?,
             super_admin_password: require_config_center_secret(
@@ -114,9 +107,6 @@ impl AppConfig {
             memory_engine_internal_api_secret: Some(require_config_center_secret(
                 "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
             )?),
-            task_runner_internal_api_secret: optional_config_center_text(
-                "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
-            ),
             downstream_request_timeout_ms: require_config_center_i64(
                 "USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS",
             )?
@@ -190,11 +180,6 @@ impl AppConfig {
             "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
             config.chatos_internal_api_secret.as_deref(),
             &["change_me_chatos_user_service_secret"],
-        )?;
-        validate_production_secret(
-            "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
-            config.task_runner_internal_api_secret.as_deref(),
-            &["change_me_user_service_task_runner_secret"],
         )?;
         if config.harness_provisioning_enabled
             && config

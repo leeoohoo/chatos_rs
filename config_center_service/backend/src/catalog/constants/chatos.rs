@@ -15,21 +15,12 @@ pub const CHATOS_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "chatos.security.user_service_internal_api_secret";
 pub const CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "chatos.downstream.user_service_request_timeout_ms";
-pub const CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY: &str = "chatos.downstream.task_runner_base_url";
-pub const CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY: &str =
-    "chatos.downstream.task_runner_internal_base_url";
-pub const CHATOS_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "chatos.downstream.task_runner_internal_api_secret";
-pub const CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "chatos.downstream.task_runner_request_timeout_ms";
 pub const CHATOS_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "chatos.downstream.mcp_management_internal_api_secret";
 pub const CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "chatos.downstream.plugin_management_internal_api_secret";
 pub const CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "chatos.downstream.local_connector_service_base_url";
-pub const CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "chatos.downstream.local_connector_internal_api_secret";
 pub const CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "chatos.downstream.local_connector_service_request_timeout_ms";
 pub const CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
@@ -65,11 +56,7 @@ pub const CHATOS_OTLP_ENDPOINT_CONFIG_KEY: &str = "chatos.observability.otlp_end
 pub const CHATOS_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
     "chatos.observability.trace_sample_ratio";
 pub const CHATOS_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str = "chatos.observability.export_timeout_ms";
-pub const CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY: &str = "chatos.mcp.result_rabbitmq_url";
-pub const CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY: &str = "chatos.mcp.result_queue_prefix";
 pub const CHATOS_CORS_ORIGINS_CONFIG_KEY: &str = "chatos.http.cors_origins";
-pub const CHATOS_PLUGIN_UI_PARENT_ORIGIN_CONFIG_KEY: &str = "chatos.plugin_ui.parent_origin";
-pub const CHATOS_PLUGIN_UI_RESOURCE_ORIGIN_CONFIG_KEY: &str = "chatos.plugin_ui.resource_origin";
 pub const CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS_CONFIG_KEY: &str =
     "chatos.memory_engine.active_summary_trigger_timeout_ms";
 pub const CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS_CONFIG_KEY: &str =

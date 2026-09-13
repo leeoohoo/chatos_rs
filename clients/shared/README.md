@@ -19,4 +19,4 @@ They must not implement Agent loops, Task Graph projection, retry semantics, con
 
 ## Legacy dependency rule
 
-Code under `clients/shared` may call the retained server APIs through explicit clients, but it must not depend on Cloud Agent or Task Runner Service implementations. Dependencies on top-level legacy crates are temporary removal blockers and must be eliminated before `3.0.2` is complete. No new dependency from `clients/shared` to a legacy execution crate may be added.
+Code under `clients/shared` may call retained server APIs through explicit client contracts. The server Cloud Agent, Task Runner Service, and all direct dependencies from `clients/shared` to top-level legacy execution crates have been removed; they must not be restored. New shared runtime, host, storage, protocol, projection, and provider code belongs under `clients/shared`, while platform directories contain only UI and operating-system adapters.

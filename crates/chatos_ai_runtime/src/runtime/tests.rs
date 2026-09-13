@@ -1472,7 +1472,7 @@ fn tool_result(
 ) -> ToolResult {
     ToolResult {
         tool_call_id: "call_1".to_string(),
-        name: "task_runner_service_list_tasks".to_string(),
+        name: "local_agent_list_tasks".to_string(),
         success,
         is_error,
         is_stream,

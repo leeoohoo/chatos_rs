@@ -9,7 +9,6 @@ OLD_FRONTEND_DIRS = (
     "user_service/frontend",
     "memory_engine/frontend",
     "plugin_management_service/frontend",
-    "task_runner_service/frontend",
 )
 
 OLD_FRONTEND_SERVICES = (
@@ -17,7 +16,6 @@ OLD_FRONTEND_SERVICES = (
     "user-service-frontend",
     "memory-engine-frontend",
     "plugin-management-frontend",
-    "task-runner-frontend",
 )
 
 
@@ -38,7 +36,6 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         config = (ROOT / "docker/apisix/apisix.yaml").read_text()
         for service in (
             "user-service",
-            "task-runner",
             "plugin-management",
             "memory-engine",
             "config-center",
@@ -48,8 +45,8 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn("uri-blocker: *block_internal_api", config)
         self.assertIn("hosts: &admin_hosts", config)
         self.assertIn("hosts: *admin_hosts", config)
-        self.assertIn("admin/(?:user-service|task-runner", config)
-        self.assertIn("(?:chatos|user|plugin|plugins|task|memory|local)", config)
+        self.assertIn("admin/(?:user-service|plugin-management", config)
+        self.assertIn("(?:chatos|user|plugin|plugins|memory|local)", config)
         self.assertNotIn("project.jgoool.com", config)
         self.assertNotIn("project-management", config)
         self.assertIn("(?:api/)?internal(?:/|\\\\?|$)", config)

@@ -2,14 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import type {
-  AgentAccountListItem,
-  CreateAgentAccountPayload,
   CreateInviteCodePayload,
   CreateInviteCodeResponse,
   CreateUserPayload,
   CurrentUserResponse,
   HealthResponse,
-  ResetAgentPasswordPayload,
   SystemConfigResponse,
   CreateUserModelConfigPayload,
   CreateUserModelProviderPayload,
@@ -17,7 +14,6 @@ import type {
   UpdateUserModelConfigPayload,
   UpdateUserModelProviderPayload,
   UpdateUserModelSettingsPayload,
-  UpdateAgentAccountPayload,
   UpdateUserPayload,
   UserModelConfigRecord,
   UserModelProviderRecord,
@@ -115,17 +111,6 @@ export const api = {
     request<UserSummaryRecord>(`/api/users/${id}/harness-provisioning/retry`, {
       method: 'POST',
     }),
-  listAgentAccounts: () => request<AgentAccountListItem[]>('/api/agent-accounts'),
-  createAgentAccount: (payload: CreateAgentAccountPayload) =>
-    request<AgentAccountListItem>('/api/agent-accounts', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  updateAgentAccount: (id: string, payload: UpdateAgentAccountPayload) =>
-    request<AgentAccountListItem>(`/api/agent-accounts/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
   listModelConfigs: (userId?: string) =>
     request<UserModelConfigRecord[]>(
       `/api/model-configs${userId ? `?user_id=${encodeURIComponent(userId)}` : ''}`,
@@ -176,11 +161,6 @@ export const api = {
   updateModelSettings: (payload: UpdateUserModelSettingsPayload) =>
     request<UserModelSettingsRecord>('/api/model-configs/settings', {
       method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
-  resetAgentPassword: (id: string, payload: ResetAgentPasswordPayload) =>
-    request<void>(`/api/agent-accounts/${id}/reset-password`, {
-      method: 'POST',
       body: JSON.stringify(payload),
     }),
 };

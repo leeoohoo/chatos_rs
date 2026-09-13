@@ -25,7 +25,6 @@ const RUNTIME_SESSIONS_READ_SCOPE: &str = "runtime.sessions.read";
 const RUNTIME_SESSIONS_CLOSE_SCOPE: &str = "runtime.sessions.close";
 const RUNTIME_SESSION_TERMINAL_STATUS_HEADER: &str = "x-mcp-management-terminal-status";
 const RUNTIME_INVOCATIONS_READ_SCOPE: &str = "runtime.invocations.read";
-const RUNTIME_INVOCATIONS_RESOLVE_USER_SCOPE: &str = "runtime.invocations.resolve_user";
 
 #[derive(Clone)]
 pub struct McpManagementClient {
@@ -283,28 +282,6 @@ impl McpManagementClient {
             .send()
             .await?;
         parse_response(response).await
-    }
-
-    pub async fn notify_waiting_user_resolved(
-        &self,
-        prompt_id: &str,
-    ) -> Result<(), McpManagementClientError> {
-        let url = format!(
-            "{}/api/internal/runtime/invocations/waiting-user/{}/resolved",
-            self.config.base_url,
-            urlencoding::encode(prompt_id.trim())
-        );
-        let response = self
-            .internal_request(Method::POST, url, RUNTIME_INVOCATIONS_RESOLVE_USER_SCOPE)?
-            .send()
-            .await?;
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            parse_response::<serde_json::Value>(response)
-                .await
-                .map(|_| ())
-        }
     }
 
     fn internal_request(

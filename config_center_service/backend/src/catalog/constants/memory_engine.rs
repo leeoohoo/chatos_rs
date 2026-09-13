@@ -10,8 +10,6 @@ pub const CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &s
     "configuration_center.downstream.mcp_management_internal_api_secret";
 pub const MEMORY_ENGINE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.security.chatos_internal_api_secret";
-pub const MEMORY_ENGINE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "memory_engine.security.task_runner_internal_api_secret";
 pub const MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "memory_engine.security.user_service_internal_api_secret";
 pub const MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY: &str =

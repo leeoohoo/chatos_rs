@@ -344,7 +344,7 @@ mod tests {
     #[test]
     fn internal_request_sends_only_signed_identity_headers() {
         let secret = "a-long-plugin-management-test-secret";
-        let caller_service = "task-runner";
+        let caller_service = "memory-engine";
         let client = PluginManagementClient::new(
             PluginManagementClientConfig::new(
                 "http://plugin-management.test",

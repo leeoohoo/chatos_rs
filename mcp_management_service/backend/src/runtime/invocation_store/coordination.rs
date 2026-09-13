@@ -245,9 +245,7 @@ impl RuntimeInvocationStore {
                 if let Some(record) = record {
                     if matches!(
                         record.status,
-                        RuntimeInvocationStatus::Queued
-                            | RuntimeInvocationStatus::Running
-                            | RuntimeInvocationStatus::WaitingForUser
+                        RuntimeInvocationStatus::Queued | RuntimeInvocationStatus::Running
                     ) {
                         record.status = RuntimeInvocationStatus::CancelRequested;
                     }
@@ -263,7 +261,6 @@ impl RuntimeInvocationStore {
                         "$in": [
                             RuntimeInvocationStatus::Queued.as_str(),
                             RuntimeInvocationStatus::Running.as_str(),
-                            RuntimeInvocationStatus::WaitingForUser.as_str(),
                         ]
                     },
                 );

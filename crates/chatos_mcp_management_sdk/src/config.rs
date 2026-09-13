@@ -73,7 +73,6 @@ fn required_bootstrap_env(key: &str) -> Result<String, String> {
 fn caller_secret_env_key(caller_service: &str) -> Option<&'static str> {
     match caller_service {
         "chatos" => Some("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"),
-        "task-runner" => Some("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"),
         _ => None,
     }
 }
@@ -92,10 +91,7 @@ mod tests {
             caller_secret_env_key("chatos"),
             Some("MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET")
         );
-        assert_eq!(
-            caller_secret_env_key("task-runner"),
-            Some("MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET")
-        );
+        assert_eq!(caller_secret_env_key("task-runner"), None);
         assert_eq!(caller_secret_env_key("unknown"), None);
     }
 }

@@ -31,7 +31,6 @@ import type {
 
 const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
   'chatos-backend': { label: 'Chat OS', order: 10 },
-  'task-runner': { label: 'Task Runner', order: 20 },
   'mcp-management-service': { label: 'MCP 管理', order: 30 },
   'memory-engine': { label: 'Memory Engine', order: 40 },
   'user-service': { label: '用户服务', order: 70 },
@@ -50,7 +49,6 @@ function configAreaKey(definition: ConfigDefinition) {
   }
   const categoryRoot = definition.category.split('/')[0]?.trim().toLowerCase();
   if (categoryRoot === 'chat os') return 'chatos-backend';
-  if (categoryRoot === 'task runner') return 'task-runner';
   if (categoryRoot === 'mcp management') return 'mcp-management-service';
   if (categoryRoot === 'memory engine') return 'memory-engine';
   if (categoryRoot === 'user service') return 'user-service';
@@ -379,7 +377,6 @@ export function ConfigEditor({ environment }: { environment: string }) {
             <Select
               options={[
                 'chatos-backend',
-                'task-runner',
                 'user-service',
                 'plugin-management-service',
                 'local-connector-service',

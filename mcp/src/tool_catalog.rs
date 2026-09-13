@@ -35,7 +35,6 @@ pub fn system_mcp_tool_catalog(key: SystemMcpKey) -> Result<SystemMcpToolCatalog
         SystemMcpKey::TaskProcessLog => {
             crate::system_tool_catalog::task_process_log_tool_definitions()
         }
-        SystemMcpKey::TaskRunnerService => return Ok(SystemMcpToolCatalog::Dynamic),
         _ => {
             return Err(format!(
                 "system MCP {} has no tool catalog source",

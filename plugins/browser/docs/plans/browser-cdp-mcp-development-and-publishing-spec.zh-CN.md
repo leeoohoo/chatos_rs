@@ -1,5 +1,7 @@
 # Browser CDP MCP 开发、发布与安装规范
 
+> 历史归档：本文涉及的服务端 Task Runner / Cloud Agent 执行路径已在 3.0.2 删除。Browser Plugin 现由客户端本地 Agent Runtime 调用；旧服务端执行描述不再是现行实现要求。
+
 本文定义 Chatos Browser CDP MCP 的开发边界、参考实现、运行架构、权限模型、npm 交付格式、Marketplace 发布流程和端到端验收标准。目标产物必须能够像 Open Computer Use 一样，以签名 npm Release 发布到 Chatos Plugin Marketplace，由 Local Connector Client 下载、验证、安装并作为本地 stdio MCP 启动。
 
 本文是 Browser CDP Plugin 的实施基线。实现不得以 Chatos 内置 BrowserTools、直接 MCP 配置、运行时 `npx @latest`、ZIP 包或未安装 fallback 作为生产执行路径。

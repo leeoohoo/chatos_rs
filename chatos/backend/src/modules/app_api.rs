@@ -12,9 +12,7 @@ pub fn public_routes() -> Router {
 }
 
 pub fn internal_routes() -> Router {
-    Router::new()
-        .merge(crate::api::agent_chat::internal_router())
-        .merge(crate::api::mcp_management::router())
+    Router::new().merge(crate::api::mcp_management::router())
 }
 
 pub fn protected_routes() -> Router {
@@ -36,10 +34,7 @@ mod tests {
 
     #[tokio::test]
     async fn public_router_does_not_register_internal_service_routes() {
-        for path in [
-            "/api/agent/chat/task-runner/callback",
-            "/internal/mcp-management/mcp/ask_user",
-        ] {
+        for path in ["/internal/mcp-management/mcp/ask_user"] {
             let response = public_routes()
                 .oneshot(
                     Request::post(path)
@@ -54,10 +49,7 @@ mod tests {
 
     #[tokio::test]
     async fn internal_router_registers_internal_service_routes() {
-        for path in [
-            "/api/agent/chat/task-runner/callback",
-            "/internal/mcp-management/mcp/ask_user",
-        ] {
+        for path in ["/internal/mcp-management/mcp/ask_user"] {
             let response = internal_routes()
                 .oneshot(
                     Request::post(path)

@@ -7,7 +7,6 @@ use tokio::signal;
 use tracing::{error, info, warn};
 
 mod api;
-mod builtin;
 mod config;
 mod core;
 mod db;
@@ -18,16 +17,6 @@ mod modules;
 mod repositories;
 mod services;
 mod utils;
-
-pub mod shared_runtime;
-
-#[cfg(feature = "test-support")]
-pub use api::message_task_runner::{
-    prepare_plugin_artifact_relay_request_for_test,
-    validate_plugin_artifact_list_response_for_test,
-    validate_plugin_artifact_read_response_for_test,
-    validate_plugin_artifact_write_response_for_test, PreparedPluginArtifactRelayRequest,
-};
 
 use internal_tls::{load_internal_mtls_config, ChatosInternalTlsConfig};
 

@@ -15,10 +15,8 @@ use crate::services::text_normalization::{
     resolve_visible_user_ids,
 };
 
-mod provisioning;
 mod runtime;
 
-use provisioning::provision_task_runner_agent_account;
 use runtime::build_agent_runtime_context;
 
 pub async fn list_agents(
@@ -56,7 +54,7 @@ pub async fn create_agent(payload: &CreateChatosAgentRequest) -> Result<ChatosAg
         payload.default_skill_ids.as_deref(),
     )?;
 
-    let mut agent = Agent::new(
+    let agent = Agent::new(
         user_id,
         name,
         normalize_optional_text(payload.description.as_deref()),
@@ -69,29 +67,8 @@ pub async fn create_agent(payload: &CreateChatosAgentRequest) -> Result<ChatosAg
         payload.project_policy.clone(),
         payload.enabled.unwrap_or(true),
     );
-    if payload.auto_provision_task_runner_account.unwrap_or(false) {
-        agent.task_runner_agent_account_id =
-            Some(provision_task_runner_agent_account(&agent).await?);
-    }
     agents_repo::create_agent(&agent).await?;
     Ok(agent_to_dto(agent))
-}
-
-pub async fn ensure_task_runner_agent_account(
-    agent_id: &str,
-) -> Result<Option<ChatosAgentDto>, String> {
-    let Some(mut agent) = agents_repo::get_agent_by_id(agent_id).await? else {
-        return Ok(None);
-    };
-    if normalize_optional_text(agent.task_runner_agent_account_id.as_deref()).is_some() {
-        return Ok(Some(agent_to_dto(agent)));
-    }
-
-    let account_id = provision_task_runner_agent_account(&agent).await?;
-    agent.task_runner_agent_account_id = Some(account_id);
-    agent.updated_at = crate::core::time::now_rfc3339();
-    agents_repo::update_agent(&agent).await?;
-    Ok(Some(agent_to_dto(agent)))
 }
 
 pub async fn update_agent(
@@ -137,7 +114,6 @@ pub async fn update_agent(
         category: payload.category.clone().or(existing.category),
         role_definition: normalize_optional_text(payload.role_definition.as_deref())
             .unwrap_or(existing.role_definition),
-        task_runner_agent_account_id: existing.task_runner_agent_account_id,
         plugin_sources,
         skills: normalized.skills,
         skill_ids,
@@ -188,7 +164,6 @@ fn agent_to_dto(agent: Agent) -> ChatosAgentDto {
         description: agent.description,
         category: agent.category,
         role_definition: agent.role_definition,
-        task_runner_agent_account_id: agent.task_runner_agent_account_id,
         plugin_sources: agent.plugin_sources,
         skills: dto_skills_from_agent(agent.skills.as_slice()),
         skill_ids: agent.skill_ids,

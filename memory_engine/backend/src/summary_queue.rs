@@ -258,12 +258,6 @@ async fn handle_delivery(
             .ack(BasicAckOptions::default())
             .await
             .map_err(|err| err.to_string()),
-        Err(error) if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|err| err.to_string())
-        }
         Err(error) => {
             let event = envelope.as_outbox();
             let _ =
@@ -370,11 +364,6 @@ async fn process_summary_event(
     .await;
     match run_result {
         Ok(_) => {}
-        Err(error) if error.contains("summary slot already occupied") => {
-            return Err(
-                crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED.to_string(),
-            );
-        }
         Err(error) => return Err(error),
     }
     threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;

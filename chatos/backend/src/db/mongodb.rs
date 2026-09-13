@@ -54,9 +54,6 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "chatos_contacts",
         "chatos_memory_projects",
         "chatos_project_agent_links",
-        "task_manager_tasks",
-        "ask_user_prompt_requests",
-        "pet_activity_inbox",
         "system_contexts",
         "applications",
         "terminals",
@@ -284,96 +281,6 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                         .unique(true)
                         .build(),
                 )
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("task_manager_tasks")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "conversation_id": 1, "conversation_turn_id": 1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("task_manager_tasks")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "conversation_id": 1, "created_at": -1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("task_manager_tasks")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "conversation_turn_id": 1, "created_at": -1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("ask_user_prompt_requests")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "conversation_id": 1, "status": 1, "updated_at": -1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("pet_activity_inbox")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! {
-                    "user_id": 1,
-                    "activity_key": 1,
-                    "activity_version": 1,
-                })
-                .options(
-                    mongodb::options::IndexOptions::builder()
-                        .unique(true)
-                        .build(),
-                )
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("pet_activity_inbox")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "user_id": 1, "inbox_status": 1, "occurred_at": -1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("pet_activity_inbox")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "user_id": 1, "updated_at": -1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("ask_user_prompt_requests")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "conversation_turn_id": 1, "created_at": -1 })
-                .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("ask_user_prompt_requests")
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "source": 1, "external_prompt_id": 1 })
                 .build(),
             None,
         )

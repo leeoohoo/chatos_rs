@@ -98,29 +98,33 @@ mod tests {
     fn token_is_bound_to_caller_and_scope() {
         let mut config = test_config();
         config.internal_api_secrets.insert(
-            "task-runner".to_string(),
-            "a-long-task-runner-memory-secret".to_string(),
+            "chatos-backend".to_string(),
+            "a-long-chatos-memory-secret".to_string(),
         );
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-task-runner-memory-secret",
-            "task-runner",
+            "a-long-chatos-memory-secret",
+            "chatos-backend",
             TOKEN_AUDIENCE,
             DATA_SCOPE,
             60,
         )
         .expect("issue token");
         let mut headers = HeaderMap::new();
-        headers.insert("x-memory-caller", HeaderValue::from_static("task-runner"));
+        headers.insert(
+            "x-memory-caller",
+            HeaderValue::from_static("chatos-backend"),
+        );
         headers.insert(
             "x-memory-internal-token",
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
-        let claims = require_internal_request(&config, &headers, DATA_SCOPE, &["task-runner"])
+        let claims = require_internal_request(&config, &headers, DATA_SCOPE, &["chatos-backend"])
             .expect("valid token")
             .expect("signed identity");
-        assert_eq!(claims.caller, "task-runner");
+        assert_eq!(claims.caller, "chatos-backend");
         assert!(
-            require_internal_request(&config, &headers, OPERATOR_SCOPE, &["task-runner"]).is_err()
+            require_internal_request(&config, &headers, OPERATOR_SCOPE, &["chatos-backend"])
+                .is_err()
         );
     }
 

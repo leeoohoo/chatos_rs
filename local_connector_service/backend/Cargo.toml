@@ -12,7 +12,6 @@ test-support = []
 [dependencies]
 axum = { version = "0.8", features = ["json", "ws"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
-chatos_agent = { path = "../../agent", default-features = false, features = ["managed-config"] }
 chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }

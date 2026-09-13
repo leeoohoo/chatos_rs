@@ -10,7 +10,6 @@ mod sessions;
 mod snapshots;
 mod types;
 
-pub(crate) use self::client::apply_data_auth;
 pub(crate) use self::mappers::engine_record_to_message;
 pub use self::mapping::CHATOS_COMPAT_SOURCE_ID;
 pub use self::memories::{
@@ -24,11 +23,10 @@ pub use self::sessions::{
     archive_chatos_session, compose_chatos_context, create_chatos_session,
     delete_all_chatos_messages, delete_chatos_message_by_id,
     delete_chatos_message_by_id_for_tenant, delete_chatos_summary, get_chatos_message_by_id,
-    get_chatos_message_by_id_for_tenant, get_chatos_message_by_id_in_session,
-    get_chatos_message_by_id_in_session_including_hidden, get_chatos_session,
-    get_chatos_turn_process_records, list_chatos_compact_turns, list_chatos_messages,
-    list_chatos_messages_including_hidden, list_chatos_sessions, list_chatos_sessions_by_agent,
-    list_chatos_summaries, sync_chatos_session, update_chatos_session, upsert_chatos_message,
+    get_chatos_message_by_id_for_tenant, get_chatos_session, get_chatos_turn_process_records,
+    list_chatos_compact_turns, list_chatos_messages, list_chatos_messages_including_hidden,
+    list_chatos_sessions, list_chatos_sessions_by_agent, list_chatos_summaries,
+    sync_chatos_session, update_chatos_session, upsert_chatos_message,
 };
 pub use self::snapshots::{
     get_chatos_turn_runtime_snapshot_by_turn, get_latest_chatos_turn_runtime_snapshot,
@@ -42,25 +40,6 @@ pub use self::types::{
 use self::memories::register_subject_memory_scopes;
 
 const CHATOS_TURN_RUNTIME_SNAPSHOT_TYPE: &str = "turn_runtime";
-
-pub async fn resolve_chatos_memory_scope(
-    session_id: &str,
-) -> Result<Option<chatos_ai_runtime::MemoryScope>, String> {
-    let Some(session) = crate::services::chatos_sessions::get_session_by_id(session_id).await?
-    else {
-        return Ok(None);
-    };
-    let mapping = mapping::build_thread_mapping(&session)?;
-    Ok(Some(
-        chatos_ai_runtime::MemoryScope::thread(
-            mapping.tenant_id,
-            CHATOS_COMPAT_SOURCE_ID,
-            mapping.thread_id,
-        )
-        .with_subject_id(mapping.subject_id)
-        .with_related_subject_ids(mapping.related_subject_ids),
-    ))
-}
 
 fn normalize_non_empty(value: Option<&str>) -> Option<String> {
     value

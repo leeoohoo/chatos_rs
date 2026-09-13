@@ -7,7 +7,6 @@ pub mod auth_users;
 pub mod chatos_memory_mappings;
 pub mod db;
 pub mod memory_skills;
-pub mod pet_activity_inbox;
 pub mod remote_connections;
 pub mod session_runtime_settings;
 pub mod system_contexts;

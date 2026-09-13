@@ -22,12 +22,8 @@ pub const USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY: &str =
     "user_service.bootstrap.super_admin_display_name";
 pub const USER_SERVICE_JWT_ISSUER_CONFIG_KEY: &str = "user_service.auth.jwt_issuer";
 pub const USER_SERVICE_USER_AUDIENCE_CONFIG_KEY: &str = "user_service.auth.user_audience";
-pub const USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY: &str =
-    "user_service.auth.task_runner_audience";
 pub const USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY: &str =
     "user_service.auth.user_access_ttl_seconds";
-pub const USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY: &str =
-    "user_service.auth.task_runner_access_ttl_seconds";
 pub const USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY: &str =
     "user_service.registration.code_ttl_seconds";
 pub const USER_SERVICE_REGISTER_CODE_RESEND_SECONDS_CONFIG_KEY: &str =
@@ -42,10 +38,6 @@ pub const USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS_CONFIG_KEY: &str =
     "user_service.login.failure_window_seconds";
 pub const USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY: &str =
     "user_service.login.lockout_seconds";
-pub const USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY: &str =
-    "user_service.downstream.task_runner_base_url";
-pub const USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "user_service.downstream.task_runner_internal_api_secret";
 pub const USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "user_service.downstream.request_timeout_ms";
 pub const USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY: &str =
@@ -68,17 +60,13 @@ pub const USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY: &str = "user_service.smtp.ema
 pub const USER_SERVICE_RUNTIME_CONFIG_KEYS: &[&str] = &[
     USER_SERVICE_PORT_CONFIG_KEY,
     USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
-    USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-    USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
     USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY,
     USER_SERVICE_SUPER_ADMIN_PASSWORD_CONFIG_KEY,
     USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
     USER_SERVICE_JWT_ISSUER_CONFIG_KEY,
     USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
-    USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY,
     USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY,
-    USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY,
     USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY,
     USER_SERVICE_REGISTER_CODE_RESEND_SECONDS_CONFIG_KEY,
     USER_SERVICE_REGISTER_CODE_HOURLY_LIMIT_CONFIG_KEY,

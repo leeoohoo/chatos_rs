@@ -26,7 +26,6 @@ impl RuntimeInvocationStore {
         let missing_batch = !durable_batch_exists;
         match record.status {
             RuntimeInvocationStatus::Queued if !missing_batch => Ok(false),
-            RuntimeInvocationStatus::WaitingForUser if !missing_batch => Ok(false),
             RuntimeInvocationStatus::Queued => {
                 self.fail(
                     record.invocation_id.as_str(),
@@ -35,7 +34,7 @@ impl RuntimeInvocationStore {
                 )
                 .await
             }
-            RuntimeInvocationStatus::Running | RuntimeInvocationStatus::WaitingForUser => {
+            RuntimeInvocationStatus::Running => {
                 let message = if missing_batch {
                     MISSING_BATCH_MESSAGE
                 } else {
@@ -103,24 +102,12 @@ impl RuntimeInvocationStore {
         .await
     }
 
-    pub async fn mark_waiting_for_user(&self, invocation_id: &str) -> Result<bool, String> {
-        self.transition_status(
-            invocation_id,
-            &[RuntimeInvocationStatus::Running],
-            RuntimeInvocationStatus::WaitingForUser,
-        )
-        .await
-    }
-
     pub async fn complete(&self, invocation_id: &str, result: Value) -> Result<bool, String> {
         if terminal_process_wait_timed_out(&result) {
             return self
                 .transition_terminal(
                     invocation_id,
-                    &[
-                        RuntimeInvocationStatus::Running,
-                        RuntimeInvocationStatus::WaitingForUser,
-                    ],
+                    &[RuntimeInvocationStatus::Running],
                     RuntimeInvocationStatus::Failed,
                     Some(result),
                     Some(MCP_ERROR_INTERNAL),
@@ -130,10 +117,7 @@ impl RuntimeInvocationStore {
         }
         self.transition_terminal(
             invocation_id,
-            &[
-                RuntimeInvocationStatus::Running,
-                RuntimeInvocationStatus::WaitingForUser,
-            ],
+            &[RuntimeInvocationStatus::Running],
             RuntimeInvocationStatus::Completed,
             Some(result),
             None,
@@ -153,7 +137,6 @@ impl RuntimeInvocationStore {
             &[
                 RuntimeInvocationStatus::Queued,
                 RuntimeInvocationStatus::Running,
-                RuntimeInvocationStatus::WaitingForUser,
             ],
             RuntimeInvocationStatus::Failed,
             None,
@@ -376,7 +359,6 @@ fn terminal_file_modification_outcome(
         RuntimeInvocationStatus::Failed => error_message.map(classify_file_modification_error),
         RuntimeInvocationStatus::Queued
         | RuntimeInvocationStatus::Running
-        | RuntimeInvocationStatus::WaitingForUser
         | RuntimeInvocationStatus::CancelRequested
         | RuntimeInvocationStatus::Cancelled
         | RuntimeInvocationStatus::UnknownExecutionState => None,

@@ -11,8 +11,6 @@ impl ChatosProvider {
         http: reqwest::Client,
         base_url: impl Into<String>,
         request_timeout: std::time::Duration,
-        ask_user_request_timeout: std::time::Duration,
-        _browser_request_timeout: std::time::Duration,
         internal_secret: Option<String>,
         response_limit_bytes: usize,
     ) -> Result<Self, String> {
@@ -29,7 +27,6 @@ impl ChatosProvider {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
             request_timeout,
-            ask_user_request_timeout,
             response_limit_bytes,
         })
     }
@@ -41,7 +38,7 @@ impl ChatosProvider {
         }
         system_mcp_descriptor_by_resource_id(route.resource_id.as_str()).is_some_and(|descriptor| {
             match descriptor.key {
-                SystemMcpKey::AgentBuilder | SystemMcpKey::AskUser | SystemMcpKey::Notepad => {
+                SystemMcpKey::AgentBuilder | SystemMcpKey::Notepad => {
                     route.provider_ref.as_deref() == Some(CHATOS_PROVIDER_REF)
                 }
                 SystemMcpKey::MemorySkillReader

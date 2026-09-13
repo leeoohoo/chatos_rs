@@ -29,5 +29,12 @@ pub async fn run_text_prompt(
 }
 
 pub fn parse_json_loose(raw: &str) -> Option<Value> {
-    chatos_mcp_runtime::parse_json_loose(raw)
+    let trimmed = raw.trim();
+    serde_json::from_str(trimmed).ok().or_else(|| {
+        let start = trimmed.find(['{', '['])?;
+        let end = trimmed.rfind(['}', ']'])?;
+        (start <= end)
+            .then(|| &trimmed[start..=end])
+            .and_then(|candidate| serde_json::from_str(candidate).ok())
+    })
 }

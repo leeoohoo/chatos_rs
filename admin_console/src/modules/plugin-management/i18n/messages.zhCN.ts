@@ -464,7 +464,6 @@ export const zhCNMessages: Record<string, string> = {
   'builtin.MemoryCommandReader': '记忆命令读取器',
   'builtin.MemoryPluginReader': '记忆插件读取器',
   'mcpName.local_connector_approval': '命令审批决策',
-  'mcpName.task_runner_service': 'Task Runner 任务控制',
   'agentKey.chatos_conversation_agent': 'Chat OS 普通对话智能体',
   'agentKey.task_runner_run_phase': 'Task Runner 执行任务智能体',
   'agentKey.local_connector_command_approval_agent': '命令审批智能体',

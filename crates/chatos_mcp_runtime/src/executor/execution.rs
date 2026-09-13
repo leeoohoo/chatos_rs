@@ -19,9 +19,6 @@ use crate::types::{
 
 use super::McpExecutor;
 
-const TASK_RUNNER_MCP_SERVER_NAME: &str = "task_runner_service";
-const MCP_MANAGEMENT_SERVER_NAME: &str = "mcp_management";
-
 impl McpExecutor {
     pub async fn execute_tools_stream(
         &self,
@@ -29,11 +26,6 @@ impl McpExecutor {
         context: ToolCallContext,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
-        if self.is_mcp_management_command(tool_calls) {
-            return self
-                .execute_mcp_management_batch(tool_calls, context, on_tool_result)
-                .await;
-        }
         if self.tool_lifecycle_hook.is_none() && self.should_parallelize_tool_batch(tool_calls) {
             return self
                 .execute_tools_parallel(tool_calls, context, on_tool_result)
@@ -67,47 +59,6 @@ impl McpExecutor {
         .await
     }
 
-    fn is_mcp_management_command(&self, tool_calls: &[Value]) -> bool {
-        if tool_calls.is_empty() {
-            return false;
-        }
-        let mut has_mcp_management_tool = false;
-        for tool_call in tool_calls {
-            let Some(name) = crate::tool_call::extract_tool_call_name(tool_call) else {
-                continue;
-            };
-            let Some(name) = self.resolve_tool_name(name) else {
-                continue;
-            };
-            let Some(info) = self.tool_metadata.get(name) else {
-                continue;
-            };
-            if info.server_name != MCP_MANAGEMENT_SERVER_NAME
-                || info.server_type != "http"
-                || info.server_async_result_transport
-                    != crate::types::McpAsyncResultTransport::RabbitMq
-            {
-                return false;
-            }
-            has_mcp_management_tool = true;
-        }
-        has_mcp_management_tool
-    }
-
-    async fn execute_mcp_management_batch(
-        &self,
-        tool_calls: &[Value],
-        context: ToolCallContext,
-        on_tool_result: Option<ToolResultCallback>,
-    ) -> Vec<ToolResult> {
-        batch_error_results(
-            tool_calls,
-            &context,
-            on_tool_result.as_ref(),
-            "Managed MCP tool calls must be produced by the Cloud Agent event consumer",
-            true,
-        )
-    }
     async fn execute_tools_parallel(
         &self,
         tool_calls: &[Value],
@@ -176,7 +127,7 @@ impl McpExecutor {
             match info.server_type.as_str() {
                 "http" => {
                     let url = info.server_url.clone().ok_or("missing server url")?;
-                    let headers = http_tool_call_headers(info, &context).await?;
+                    let headers = http_tool_call_headers(info).await?;
                     let result = jsonrpc_http_tool_call_cancellable_with_client(
                         url.as_str(),
                         headers.as_ref(),
@@ -254,37 +205,6 @@ impl McpExecutor {
     }
 }
 
-fn batch_error_results(
-    tool_calls: &[Value],
-    context: &ToolCallContext,
-    on_tool_result: Option<&ToolResultCallback>,
-    message: &str,
-    fatal_error: bool,
-) -> Vec<ToolResult> {
-    tool_calls
-        .iter()
-        .map(|tool_call| {
-            let result = crate::execution::tool_result_error(
-                crate::tool_call::extract_tool_call_id(tool_call)
-                    .unwrap_or("")
-                    .to_string(),
-                crate::tool_call::extract_tool_call_name(tool_call)
-                    .unwrap_or("unknown")
-                    .to_string(),
-                context.conversation_turn_id.clone(),
-                format!("工具执行失败: {message}"),
-                fatal_error,
-            );
-            if let Some(callback) = on_tool_result {
-                if context.is_active() {
-                    callback(&result);
-                }
-            }
-            result
-        })
-        .collect()
-}
-
 fn sha256_json(value: &impl serde::Serialize) -> Result<String, ToolCallError> {
     serde_json::to_vec(value)
         .map(|bytes| hex::encode(Sha256::digest(bytes)))
@@ -323,28 +243,12 @@ fn unavailable_tool_reason(unavailable_tools: &[Value], full_tool_name: &str) ->
 }
 async fn http_tool_call_headers(
     info: &ToolInfo,
-    context: &ToolCallContext,
 ) -> Result<Option<HashMap<String, String>>, String> {
     let mut headers = info.server_headers.clone().unwrap_or_default();
     if let Some(provider) = info.server_header_provider.as_ref() {
         crate::types::extend_headers_case_insensitive(&mut headers, provider.headers().await?);
     }
-    if info.server_name == TASK_RUNNER_MCP_SERVER_NAME {
-        if let Some(session_id) = normalized_context_value(context.conversation_id.as_deref()) {
-            headers.insert("X-Chatos-Session-Id".to_string(), session_id.clone());
-            headers.insert("X-Chatos-Conversation-Id".to_string(), session_id);
-        }
-        if let Some(turn_id) = normalized_context_value(context.conversation_turn_id.as_deref()) {
-            headers.insert("X-Chatos-Turn-Id".to_string(), turn_id);
-        }
-    }
     Ok((!headers.is_empty()).then_some(headers))
-}
-fn normalized_context_value(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 #[cfg(test)]

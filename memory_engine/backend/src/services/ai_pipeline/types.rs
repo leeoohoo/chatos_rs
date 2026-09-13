@@ -6,7 +6,7 @@ pub(crate) const MAX_OVERFLOW_RETRIES: usize = 4;
 pub(crate) const MAX_MERGE_ROUNDS: usize = 16;
 pub(crate) const MIN_MERGE_TARGET_TOKENS: i64 = 256;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SummaryBuildResult {
     pub text: String,
     pub chunk_count: usize,

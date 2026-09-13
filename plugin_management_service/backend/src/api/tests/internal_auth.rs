@@ -69,7 +69,7 @@ async fn internal_capability_resolver_requires_secret() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("task-runner"),
+        HeaderValue::from_static("mcp-management-service"),
     );
 
     let err = resolve_agent_capabilities_internal(
@@ -92,7 +92,7 @@ async fn internal_capability_resolver_rejects_wrong_signed_token() {
     let state = test_state_with_secret(Some("internal-secret")).await;
     let token = chatos_service_runtime::issue_internal_service_token(
         "wrong-secret",
-        "task-runner",
+        "mcp-management-service",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -101,7 +101,7 @@ async fn internal_capability_resolver_rejects_wrong_signed_token() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("task-runner"),
+        HeaderValue::from_static("mcp-management-service"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
@@ -123,10 +123,10 @@ async fn internal_capability_resolver_rejects_wrong_signed_token() {
 #[tokio::test]
 async fn internal_secret_is_bound_to_declared_caller_service() {
     let mut state = test_state_with_secret(Some("legacy-secret")).await;
-    state
-        .config
-        .internal_api_secrets
-        .insert("task-runner".to_string(), "task-runner-secret".to_string());
+    state.config.internal_api_secrets.insert(
+        "mcp-management-service".to_string(),
+        "mcp-management-secret".to_string(),
+    );
     state.config.internal_api_secrets.insert(
         "chatos-backend".to_string(),
         "chatos-backend-secret".to_string(),
@@ -134,11 +134,11 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("task-runner"),
+        HeaderValue::from_static("mcp-management-service"),
     );
     let chatos_token = chatos_service_runtime::issue_internal_service_token(
         "chatos-backend-secret",
-        "task-runner",
+        "mcp-management-service",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -149,14 +149,18 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
         HeaderValue::from_str(chatos_token.as_str()).expect("token header"),
     );
 
-    let err =
-        require_internal_api_secret(&state, &headers, "task-runner", CAPABILITIES_RESOLVE_SCOPE)
-            .expect_err("another service secret must not authorize task-runner");
+    let err = require_internal_api_secret(
+        &state,
+        &headers,
+        "mcp-management-service",
+        CAPABILITIES_RESOLVE_SCOPE,
+    )
+    .expect_err("another service secret must not authorize MCP Management");
     assert_eq!(err.status, StatusCode::UNAUTHORIZED);
 
-    let task_runner_token = chatos_service_runtime::issue_internal_service_token(
-        "task-runner-secret",
-        "task-runner",
+    let caller_token = chatos_service_runtime::issue_internal_service_token(
+        "mcp-management-secret",
+        "mcp-management-service",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -164,10 +168,15 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
     .expect("issue caller token");
     headers.insert(
         "x-plugin-management-internal-token",
-        HeaderValue::from_str(task_runner_token.as_str()).expect("token header"),
+        HeaderValue::from_str(caller_token.as_str()).expect("token header"),
     );
-    require_internal_api_secret(&state, &headers, "task-runner", CAPABILITIES_RESOLVE_SCOPE)
-        .expect("matching caller secret should authorize");
+    require_internal_api_secret(
+        &state,
+        &headers,
+        "mcp-management-service",
+        CAPABILITIES_RESOLVE_SCOPE,
+    )
+    .expect("matching caller secret should authorize");
 }
 
 #[tokio::test]
@@ -176,7 +185,7 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
     state.config.require_signed_internal_requests = true;
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
-        "task-runner",
+        "mcp-management-service",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -185,22 +194,30 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("task-runner"),
+        HeaderValue::from_static("mcp-management-service"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
         HeaderValue::from_str(token.as_str()).expect("token header"),
     );
 
-    let identity =
-        require_internal_api_secret(&state, &headers, "task-runner", CAPABILITIES_RESOLVE_SCOPE)
-            .expect("matching signed token should authorize");
-    assert_eq!(identity.caller_service, "task-runner");
+    let identity = require_internal_api_secret(
+        &state,
+        &headers,
+        "mcp-management-service",
+        CAPABILITIES_RESOLVE_SCOPE,
+    )
+    .expect("matching signed token should authorize");
+    assert_eq!(identity.caller_service, "mcp-management-service");
     assert_eq!(identity.scope, CAPABILITIES_RESOLVE_SCOPE);
     uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("signed trace id");
-    let err =
-        require_internal_api_secret(&state, &headers, "task-runner", PLUGIN_INSTALL_MANAGE_SCOPE)
-            .expect_err("scope mismatch must be rejected");
+    let err = require_internal_api_secret(
+        &state,
+        &headers,
+        "mcp-management-service",
+        PLUGIN_INSTALL_MANAGE_SCOPE,
+    )
+    .expect_err("scope mismatch must be rejected");
     assert_eq!(err.status, StatusCode::UNAUTHORIZED);
 
     headers.remove("x-plugin-management-internal-token");
@@ -208,9 +225,13 @@ async fn signed_internal_token_binds_caller_audience_scope_and_expiry() {
         "x-plugin-management-internal-secret",
         HeaderValue::from_static("a-long-internal-test-secret"),
     );
-    let err =
-        require_internal_api_secret(&state, &headers, "task-runner", CAPABILITIES_RESOLVE_SCOPE)
-            .expect_err("production-style config must reject legacy-only auth");
+    let err = require_internal_api_secret(
+        &state,
+        &headers,
+        "mcp-management-service",
+        CAPABILITIES_RESOLVE_SCOPE,
+    )
+    .expect_err("production-style config must reject legacy-only auth");
     assert_eq!(
         err.message,
         "signed plugin management internal API token is required"
@@ -223,7 +244,7 @@ async fn system_stats_accepts_valid_scoped_signed_token() {
     state.config.require_signed_internal_requests = true;
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
-        "task-runner",
+        "mcp-management-service",
         INTERNAL_TOKEN_AUDIENCE,
         SYSTEM_STATS_READ_SCOPE,
         60,
@@ -232,7 +253,7 @@ async fn system_stats_accepts_valid_scoped_signed_token() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("task-runner"),
+        HeaderValue::from_static("mcp-management-service"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
@@ -285,7 +306,7 @@ async fn system_stats_rejects_token_with_wrong_scope() {
     state.config.require_signed_internal_requests = true;
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
-        "task-runner",
+        "mcp-management-service",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -294,7 +315,7 @@ async fn system_stats_rejects_token_with_wrong_scope() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("task-runner"),
+        HeaderValue::from_static("mcp-management-service"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
@@ -373,7 +394,7 @@ async fn system_stats_redacts_rabbitmq_inspection_failures() {
     .expect("create invalid RabbitMQ queue inspector");
     let token = chatos_service_runtime::issue_internal_service_token(
         "a-long-internal-test-secret",
-        "task-runner",
+        "mcp-management-service",
         INTERNAL_TOKEN_AUDIENCE,
         SYSTEM_STATS_READ_SCOPE,
         60,
@@ -382,7 +403,7 @@ async fn system_stats_redacts_rabbitmq_inspection_failures() {
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("task-runner"),
+        HeaderValue::from_static("mcp-management-service"),
     );
     headers.insert(
         "x-plugin-management-internal-token",
@@ -491,7 +512,7 @@ fn runtime_request(owner_user_id: &str) -> RuntimeCapabilitiesRequest {
 fn internal_headers() -> HeaderMap {
     let token = chatos_service_runtime::issue_internal_service_token(
         "internal-secret",
-        "task-runner",
+        "mcp-management-service",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
         60,
@@ -504,7 +525,7 @@ fn internal_headers() -> HeaderMap {
     );
     headers.insert(
         "x-plugin-management-caller-service",
-        HeaderValue::from_static("task-runner"),
+        HeaderValue::from_static("mcp-management-service"),
     );
     headers
 }
@@ -549,7 +570,6 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             mongodb_database: "plugin_management_api_unit_test".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_secs(1),
-            task_runner_base_url: "http://127.0.0.1:39090".to_string(),
             cors_origins: vec!["http://127.0.0.1:39261".to_string()],
             internal_api_secrets,
             require_signed_internal_requests: true,

@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 use crate::core::internal_context_locale::InternalContextLocale;
-use crate::modules::conversation_runtime::user_context::load_runtime_user_context;
+use crate::modules::conversation_runtime::user_context::resolve_runtime_internal_context_locale;
 use crate::services::system_context_ai::{
     evaluate_draft, generate_draft, optimize_draft, EvaluateDraftInput, GenerateDraftInput,
     OptimizeDraftInput, PromptRuntimeOverrides, SystemContextAiError,
@@ -92,7 +92,5 @@ pub async fn evaluate_system_context_draft_usecase(
 }
 
 async fn resolve_user_locale(user_id: Option<String>) -> InternalContextLocale {
-    load_runtime_user_context(user_id, "")
-        .await
-        .internal_context_locale
+    resolve_runtime_internal_context_locale(user_id, "").await
 }

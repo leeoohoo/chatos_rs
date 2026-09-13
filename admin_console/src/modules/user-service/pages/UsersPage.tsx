@@ -226,11 +226,6 @@ export function UsersPage() {
       ),
     },
     {
-      title: 'Agent 数量',
-      dataIndex: 'agent_count',
-      width: 120,
-    },
-    {
       title: 'Harness',
       dataIndex: 'harness_provisioning',
       width: 190,

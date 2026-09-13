@@ -39,7 +39,6 @@ pub struct RuntimeToolBatchRecord {
     pub next_call_index: usize,
     pub items: Vec<Option<McpToolCallResultItem>>,
     pub invocation_ids: Vec<String>,
-    pub waiting_user_prompt_ids: Vec<Option<String>>,
     pub pending_event: Option<RuntimeToolBatchPendingEvent>,
     pub revision: i64,
     pub created_at_unix_ms: i64,
@@ -137,10 +136,6 @@ impl RuntimeToolBatchStore {
             (
                 "runtime_tool_batch_invocation",
                 doc! { "invocation_ids": 1, "expires_at_unix": 1 },
-            ),
-            (
-                "runtime_tool_batch_waiting_user_prompt",
-                doc! { "waiting_user_prompt_ids": 1, "expires_at_unix": 1 },
             ),
         ] {
             collection
@@ -257,59 +252,6 @@ impl RuntimeToolBatchStore {
             Ok(true)
         })
         .await
-    }
-
-    pub async fn mark_waiting_for_user(
-        &self,
-        batch_id: &str,
-        call_index: usize,
-        prompt_id: String,
-    ) -> Result<RuntimeToolBatchRecord, String> {
-        self.mutate(batch_id, move |record| {
-            if call_index >= record.waiting_user_prompt_ids.len()
-                || record.next_call_index != call_index
-            {
-                return Err("Runtime Tool Batch waiting-user call_index is invalid".to_string());
-            }
-            if let Some(existing) = record.waiting_user_prompt_ids[call_index].as_ref() {
-                if existing != &prompt_id {
-                    return Err(
-                        "Runtime Tool Batch waiting-user prompt conflicts with persisted prompt"
-                            .to_string(),
-                    );
-                }
-                return Ok(false);
-            }
-            record.waiting_user_prompt_ids[call_index] = Some(prompt_id.clone());
-            Ok(true)
-        })
-        .await
-    }
-
-    pub async fn find_by_waiting_user_prompt(
-        &self,
-        prompt_id: &str,
-    ) -> Result<Option<RuntimeToolBatchRecord>, String> {
-        match self.backend.as_ref() {
-            RuntimeToolBatchStoreBackend::Memory(records) => Ok(records
-                .read()
-                .await
-                .values()
-                .find(|record| {
-                    record
-                        .waiting_user_prompt_ids
-                        .iter()
-                        .flatten()
-                        .any(|id| id == prompt_id)
-                })
-                .cloned()),
-            RuntimeToolBatchStoreBackend::Mongo(collection) => collection
-                .find_one(doc! { "waiting_user_prompt_ids": prompt_id }, None)
-                .await
-                .map_err(|error| {
-                    format!("load Runtime Tool Batch by waiting-user prompt failed: {error}")
-                }),
-        }
     }
 
     pub async fn ensure_result_pending(
@@ -540,7 +482,7 @@ mod tests {
 
     fn command(call_count: usize) -> McpToolCallCommand {
         McpToolCallCommand {
-            owner_service: "task_runner_service".to_string(),
+            owner_service: "local_agent_runtime".to_string(),
             agent_run_id: "agent-run-1".to_string(),
             agent_key: "task_runner_run_phase".to_string(),
             ordering_lane_key: "task-run-1".to_string(),
@@ -549,7 +491,7 @@ mod tests {
             source_step_seq: 1,
             batch_id: "batch-1".to_string(),
             mcp_runtime_session_ref: "session-1".to_string(),
-            result_routing_key: "task_runner.cloud_agent".to_string(),
+            result_routing_key: "local_agent.tool_result".to_string(),
             calls: (0..call_count)
                 .map(|call_index| McpToolCallCommandItem {
                     invocation_id: format!("batch-1:{call_index}"),
@@ -577,7 +519,6 @@ mod tests {
                 .iter()
                 .map(|call| call.invocation_id.clone())
                 .collect(),
-            waiting_user_prompt_ids: vec![None; call_count],
             command,
             status: RuntimeToolBatchStatus::Active,
             next_call_index: 0,
@@ -681,33 +622,6 @@ mod tests {
             .record_terminal_item("batch-1", 0, conflict)
             .await
             .is_err());
-    }
-
-    #[tokio::test]
-    async fn waiting_user_prompt_can_resume_the_owning_batch() {
-        let store = RuntimeToolBatchStore::memory();
-        store
-            .insert_or_get(record(2, vec![None, None]))
-            .await
-            .expect("insert batch");
-        store
-            .mark_waiting_for_user("batch-1", 0, "prompt-1".to_string())
-            .await
-            .expect("mark waiting user");
-        let batch = store
-            .find_by_waiting_user_prompt("prompt-1")
-            .await
-            .expect("lookup batch")
-            .expect("batch exists");
-        assert_eq!(batch.next_call_index, 0);
-        let batch = store
-            .record_terminal_item("batch-1", 0, result_item(0))
-            .await
-            .expect("resume resolved prompt");
-        assert_eq!(
-            batch.pending_event,
-            Some(RuntimeToolBatchPendingEvent::InvocationReady { call_index: 1 })
-        );
     }
 
     #[tokio::test]

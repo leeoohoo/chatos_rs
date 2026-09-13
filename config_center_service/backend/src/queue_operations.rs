@@ -15,9 +15,7 @@ mod managed_streams;
 mod replay_targets;
 
 use managed_streams::resolve_managed_streams;
-use replay_targets::{
-    archive_mcp_management, replay_memory_engine, replay_plugin_management, replay_task_runner,
-};
+use replay_targets::{archive_mcp_management, replay_memory_engine, replay_plugin_management};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct QueueOperationsResponse {
@@ -120,9 +118,7 @@ pub async fn replay(
     {
         return Err("environment, item_id and an 8..500 character reason are required".to_string());
     }
-    if matches!(service, "task-runner" | "plugin-management")
-        && !authorization.starts_with("Bearer ")
-    {
+    if service == "plugin-management" && !authorization.starts_with("Bearer ") {
         return Err("administrator bearer token is required for queue replay".to_string());
     }
     let release = state
@@ -132,17 +128,6 @@ pub async fn replay(
         .ok_or_else(|| format!("active configuration release not found for {environment}"))?;
     let operation_id = Uuid::new_v4().to_string();
     let replay = match (service, stream) {
-        ("task-runner", "run_post_process") => {
-            replay_task_runner(
-                state,
-                &release.values,
-                authorization,
-                operation_id.as_str(),
-                item_id,
-                reason,
-            )
-            .await?
-        }
         ("memory-engine", "summary" | "rollup" | "subject_memory") => {
             replay_memory_engine(
                 state,

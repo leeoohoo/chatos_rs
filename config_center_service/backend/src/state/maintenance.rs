@@ -2,11 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use crate::catalog::{
-    DEFAULT_LOCAL_RABBITMQ_URL, TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
-};
+use crate::catalog::DEFAULT_LOCAL_RABBITMQ_URL;
 
 impl AppState {
     pub(super) async fn audit(
@@ -167,183 +163,6 @@ impl AppState {
         tracing::info!(
             retired_key_count = RETIRED_CONFIG_KEYS.len(),
             "retired configuration has been removed from configuration center"
-        );
-        Ok(())
-    }
-
-    pub(super) async fn migrate_agent_max_iterations_config(&self) -> Result<(), String> {
-        use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
-
-        let mut values_by_release = BTreeMap::new();
-        for mut release in self.store.list_all_releases().await? {
-            let changed = migrate_agent_iteration_values(&mut release.values, true);
-            let keys_changed = migrate_agent_iteration_changed_keys(&mut release.changed_keys);
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                release
-                    .values
-                    .get(AGENT_MAX_ITERATIONS_CONFIG_KEY)
-                    .cloned()
-                    .unwrap_or_else(|| json!(DEFAULT_AGENT_MAX_ITERATIONS)),
-            );
-            if changed || keys_changed {
-                self.store.save_release(&release).await?;
-            }
-        }
-
-        let definitions = self.store.list_definitions().await?;
-        for mut snapshot in self.store.list_all_snapshots().await? {
-            let fallback = values_by_release
-                .get(&(snapshot.environment.clone(), snapshot.revision))
-                .cloned()
-                .unwrap_or_else(|| json!(DEFAULT_AGENT_MAX_ITERATIONS));
-            let changed =
-                migrate_agent_iteration_values_with_fallback(&mut snapshot.values, fallback, true);
-            let previous_env = snapshot.env.clone();
-            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
-                definition.scope == "shared"
-                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
-            });
-            if changed || snapshot.env != previous_env {
-                snapshot.checksum = checksum(&json!({
-                    "values": snapshot.values,
-                    "env": snapshot.env,
-                }))?;
-                self.store.save_snapshot(&snapshot).await?;
-            }
-        }
-
-        for mut draft in self.store.list_drafts().await? {
-            if migrate_agent_iteration_values(&mut draft.changes, false) {
-                draft.validation_status = "pending".to_string();
-                draft.validation_errors.clear();
-                draft.updated_at = Utc::now().to_rfc3339();
-                self.store.save_draft(&draft).await?;
-            }
-        }
-
-        for mut event in self.store.list_all_audit().await? {
-            if migrate_agent_iteration_changed_keys(&mut event.changed_keys) {
-                self.store.save_audit(&event).await?;
-            }
-        }
-
-        self.republish_active_releases_to_consul(&definitions, "consolidate Agent configuration")
-            .await?;
-
-        tracing::info!(
-            key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
-            "Agent max-iterations configuration is consolidated in configuration center"
-        );
-        Ok(())
-    }
-
-    pub(super) async fn migrate_task_runner_runtime_config(&self) -> Result<(), String> {
-        use chatos_agent::{AGENT_MAX_ITERATIONS_CONFIG_KEY, DEFAULT_AGENT_MAX_ITERATIONS};
-
-        let definitions = self.store.list_definitions().await?;
-        let task_runner_defaults = task_runner_service_default_values(&definitions);
-        let mut values_by_release = BTreeMap::new();
-        for mut release in self.store.list_all_releases().await? {
-            let mut release_defaults = task_runner_defaults.clone();
-            let selected_max_iterations = release
-                .values
-                .get(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY)
-                .cloned()
-                .or_else(|| release.values.get(AGENT_MAX_ITERATIONS_CONFIG_KEY).cloned())
-                .unwrap_or_else(|| json!(DEFAULT_AGENT_MAX_ITERATIONS));
-            release_defaults.insert(
-                TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-                selected_max_iterations,
-            );
-            let changed_keys =
-                ensure_task_runner_runtime_values(&mut release.values, &release_defaults);
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                release.values.clone(),
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
-
-        for snapshot in self.store.list_all_snapshots().await? {
-            let all_values = values_by_release
-                .get(&(snapshot.environment.clone(), snapshot.revision))
-                .ok_or_else(|| {
-                    format!(
-                        "release values are unavailable for snapshot {}/{} revision {}",
-                        snapshot.environment, snapshot.service_name, snapshot.revision
-                    )
-                })?;
-            let mut rebuilt = build_snapshot(
-                snapshot.environment.as_str(),
-                snapshot.service_name.as_str(),
-                snapshot.revision,
-                &definitions,
-                all_values,
-            )?;
-            rebuilt.generated_at = snapshot.generated_at.clone();
-            if rebuilt.values != snapshot.values
-                || rebuilt.env != snapshot.env
-                || rebuilt.checksum != snapshot.checksum
-            {
-                self.store.save_snapshot(&rebuilt).await?;
-            }
-        }
-
-        for mut draft in self.store.list_drafts().await? {
-            let changed = migrate_task_runner_queue_mode_draft(
-                &mut draft.changes,
-                TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
-            ) | migrate_task_runner_queue_mode_draft(
-                &mut draft.changes,
-                TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
-            ) | ensure_root_vhost_rabbitmq_url(
-                &mut draft.changes,
-                TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
-                task_runner_defaults
-                    .get(TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY)
-                    .unwrap_or(&json!(DEFAULT_LOCAL_RABBITMQ_URL)),
-            ) | migrate_https_url_draft(
-                &mut draft.changes,
-                TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-                task_runner_defaults
-                    .get(TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
-                    .ok_or_else(|| {
-                        "Task Runner Memory Engine HTTPS default is missing".to_string()
-                    })?,
-            ) | migrate_https_url_draft(
-                &mut draft.changes,
-                TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-                task_runner_defaults
-                    .get(TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
-                    .ok_or_else(|| {
-                        "Task Runner User Service HTTPS default is missing".to_string()
-                    })?,
-            );
-            if changed {
-                draft.validation_status = "pending".to_string();
-                draft.validation_errors.clear();
-                draft.updated_at = Utc::now().to_rfc3339();
-                self.store.save_draft(&draft).await?;
-            }
-        }
-
-        self.republish_active_releases_to_consul(
-            &definitions,
-            "add Task Runner runtime configuration",
-        )
-        .await?;
-
-        tracing::info!(
-            key = TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
-            fallback_key = AGENT_MAX_ITERATIONS_CONFIG_KEY,
-            callback_delivery_mode_key = TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
-            "Task Runner runtime configuration is present in configuration center releases and snapshots"
         );
         Ok(())
     }
@@ -713,7 +532,6 @@ impl AppState {
                 "mcp-management-service",
                 "plugin-management-service",
                 "memory-engine",
-                "task-runner",
                 "chatos-backend",
                 "user-service",
             ]
@@ -934,7 +752,6 @@ impl AppState {
 
         tracing::info!(
             internal_mtls_port_key = USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
-            task_runner_base_url_key = USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             harness_enabled_key = USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
             "User Service runtime configuration is present in configuration center releases and snapshots"
         );
@@ -1028,7 +845,6 @@ impl AppState {
 
         tracing::info!(
             user_service_base_url_key = PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
-            task_runner_base_url_key = PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             catalog_request_timeout_key = PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             shared_service_url_key = SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY,
             shared_internal_service_url_key =
@@ -1131,7 +947,6 @@ impl AppState {
         tracing::info!(
             user_service_base_url_key = CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
             user_service_internal_base_url_key = CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            task_runner_base_url_key = CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             memory_engine_base_url_key = CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
             "ChatOS runtime configuration is present in releases and snapshots"
         );

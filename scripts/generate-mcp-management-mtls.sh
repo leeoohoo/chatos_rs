@@ -14,7 +14,7 @@ if ! command -v openssl >/dev/null 2>&1; then
   exit 1
 fi
 
-CALLERS=(chatos task-runner configuration-center)
+CALLERS=(chatos configuration-center)
 
 material_is_current() {
   [[ -f "$OUTPUT_DIR/ca.crt" ]] || return 1

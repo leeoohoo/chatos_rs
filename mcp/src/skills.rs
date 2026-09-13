@@ -22,28 +22,11 @@ pub fn system_mcp_provider_skills(key: SystemMcpKey) -> Vec<SystemMcpProviderSki
     if key == SystemMcpKey::TaskManager {
         return Vec::new();
     }
-    if key == SystemMcpKey::TaskRunnerService {
-        return vec![task_runner_provider_skill()];
-    }
     let descriptor = system_mcp_descriptor(key);
     if let Some(kind) = descriptor.embedded_kind {
         return builtin_provider_skills(kind, descriptor.display_name);
     }
     service_provider_skill(key).into_iter().collect()
-}
-
-pub fn task_runner_provider_skill() -> SystemMcpProviderSkill {
-    SystemMcpProviderSkill {
-        id: "task_runner_usage".to_string(),
-        name: "异步任务工具使用指南".to_string(),
-        description: "指导 AI 把当前用户和项目需求安排为可持续执行和回传结果的后台任务。"
-            .to_string(),
-        instructions: include_str!("../provider_skills/task-runner-service.md")
-            .trim()
-            .to_string(),
-        locale: None,
-        task_profiles: vec!["default".to_string()],
-    }
 }
 
 fn builtin_provider_skills(
@@ -112,10 +95,7 @@ mod tests {
 
     #[test]
     fn agent_facing_service_guidance_hides_execution_routing_internals() {
-        for key in [
-            SystemMcpKey::TaskRunnerService,
-            SystemMcpKey::TaskProcessLog,
-        ] {
+        for key in [SystemMcpKey::TaskProcessLog] {
             let guidance = system_mcp_provider_skills(key);
             assert!(!guidance.is_empty(), "service tool guidance");
             for guidance in guidance {
@@ -135,14 +115,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn task_runner_guidance_has_no_planning_mode_variant() {
-        let skills = system_mcp_provider_skills(SystemMcpKey::TaskRunnerService);
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].task_profiles, ["default"]);
-        assert!(!skills[0].instructions.contains("规划模式"));
-        assert!(skills[0].instructions.contains("wait_for_task_completion"));
     }
 }

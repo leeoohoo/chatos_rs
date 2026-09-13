@@ -6,7 +6,9 @@ use std::collections::{HashMap, HashSet};
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use chatos_agent::{is_chatos_callback_agent, is_task_runner_phase_agent, parse_system_agent_key};
+use chatos_agent::{
+    is_chatos_conversation_agent, is_task_runner_phase_agent, parse_system_agent_key,
+};
 use chatos_mcp::SystemMcpKey;
 use chatos_mcp_management_sdk::{
     CloseRuntimeSessionResponse, CreateRuntimeSessionRequest, McpProviderKind,
@@ -156,7 +158,6 @@ pub(super) async fn resolve_runtime_session(
                 context: project_context.clone(),
                 resources: materialized.resources,
             });
-    bind_agent_callback_routes(route_response.routes.as_mut_slice(), agent_key);
     bind_chatos_memory_routes(
         route_response.routes.as_mut_slice(),
         agent_key,
@@ -190,29 +191,6 @@ pub(super) async fn resolve_runtime_session(
             expires_at_unix,
         )
         .await;
-    let task_runner_tool_snapshots = state
-        .providers
-        .prepare_task_runner_routes(
-            route_response.routes.as_mut_slice(),
-            session_id.as_str(),
-            request.owner_user_id.trim(),
-            agent_key,
-            request.project_id.as_deref(),
-            request
-                .project_context
-                .as_ref()
-                .map(|authorization| &authorization.snapshot),
-            request.run_id.as_deref(),
-            request.turn_id.as_deref(),
-            request.task_id.as_deref(),
-            request.source_session_id.as_deref(),
-            request.source_user_message_id.as_deref(),
-            request.default_model_config_id.as_deref(),
-            request.default_remote_connection_id.as_deref(),
-            request.task_profile.as_deref(),
-            expires_at_unix,
-        )
-        .await;
     let (plugin_local_bindings, plugin_tool_snapshots) = state
         .providers
         .prepare_plugin_local_routes(
@@ -241,7 +219,6 @@ pub(super) async fn resolve_runtime_session(
     let cleanup_plugin_local_tool_component_bindings = plugin_local_tool_component_bindings.clone();
     let result = async {
         apply_live_tool_snapshots(&mut capabilities, chatos_tool_snapshots);
-        apply_live_tool_snapshots(&mut capabilities, task_runner_tool_snapshots);
         let (local_connector_mcp_bindings, local_connector_tool_snapshots) = state
             .providers
             .prepare_local_connector_mcp_routes(
@@ -1223,36 +1200,6 @@ fn validate_task_runner_provider_context(
         let resource_id = chatos_mcp::system_mcp_descriptor(system_key).resource_id;
         routes.iter().any(|route| route.resource_id == resource_id)
     };
-    let has_task_runner_ask_user_route = routes.iter().any(|route| {
-        route.resource_id == chatos_mcp::system_mcp_descriptor(SystemMcpKey::AskUser).resource_id
-            && route.provider_kind == McpProviderKind::InternalService
-            && route.provider_ref.as_deref() == Some("task-runner")
-    });
-    let has_chatos_ask_user_route = routes.iter().any(|route| {
-        route.resource_id == chatos_mcp::system_mcp_descriptor(SystemMcpKey::AskUser).resource_id
-            && route.provider_kind == McpProviderKind::InternalService
-            && route.provider_ref.as_deref() == Some("chatos")
-    });
-    if has_route(SystemMcpKey::TaskRunnerService) {
-        if !is_chatos_callback_agent(agent_key) {
-            return Err(ApiError::conflict(
-                "Task Runner Service MCP is only valid for ChatOS task planning Agents",
-            ));
-        }
-        for (field, value) in [
-            ("source_session_id", request.source_session_id.as_deref()),
-            (
-                "source_user_message_id",
-                request.source_user_message_id.as_deref(),
-            ),
-        ] {
-            if value.map(str::trim).is_none_or(|value| value.is_empty()) {
-                return Err(ApiError::conflict(format!(
-                    "Task Runner Service MCP requires {field}"
-                )));
-            }
-        }
-    }
     if has_route(SystemMcpKey::TaskProcessLog) {
         if !is_task_runner_phase_agent(agent_key) {
             return Err(ApiError::conflict(
@@ -1266,44 +1213,6 @@ fn validate_task_runner_provider_context(
             if value.map(str::trim).is_none_or(|value| value.is_empty()) {
                 return Err(ApiError::conflict(format!(
                     "Task Process Log MCP requires {field}"
-                )));
-            }
-        }
-    }
-    if has_task_runner_ask_user_route {
-        if !is_task_runner_phase_agent(agent_key) {
-            return Err(ApiError::conflict(
-                "Task Runner Ask User MCP is only valid for Task Runner phase Agents",
-            ));
-        }
-        for (field, value) in [
-            ("run_id", request.run_id.as_deref()),
-            ("task_id", request.task_id.as_deref()),
-        ] {
-            if value.map(str::trim).is_none_or(|value| value.is_empty()) {
-                return Err(ApiError::conflict(format!(
-                    "Task Runner Ask User MCP requires {field}"
-                )));
-            }
-        }
-    }
-    if has_chatos_ask_user_route {
-        if !is_chatos_callback_agent(agent_key) {
-            return Err(ApiError::conflict(
-                "ChatOS Ask User MCP is only valid for ChatOS conversation Agents",
-            ));
-        }
-        for (field, value) in [
-            ("turn_id", request.turn_id.as_deref()),
-            ("source_session_id", request.source_session_id.as_deref()),
-            (
-                "source_user_message_id",
-                request.source_user_message_id.as_deref(),
-            ),
-        ] {
-            if value.map(str::trim).is_none_or(|value| value.is_empty()) {
-                return Err(ApiError::conflict(format!(
-                    "ChatOS Ask User MCP requires {field}"
                 )));
             }
         }

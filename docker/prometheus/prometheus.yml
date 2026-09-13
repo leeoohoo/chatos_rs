@@ -39,10 +39,6 @@ scrape_configs:
     static_configs:
       - targets: ["mcp-management-service-backend:39280"]
 
-  - job_name: task-runner
-    static_configs:
-      - targets: ["task-runner-backend:39090"]
-
   - job_name: memory-engine
     static_configs:
       - targets: ["memory-engine-backend:7081"]

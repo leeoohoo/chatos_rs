@@ -2,16 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde::Serialize;
-use serde_json::Value;
 use std::ops::Deref;
 
 use crate::models::memory_mapping_types::MemoryContactDto;
-use crate::models::pet_activity_inbox::PetActivityInboxRecord;
 use crate::models::remote_connection::RemoteConnectionView;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::models::terminal::Terminal;
-use crate::services::task_manager::{TaskDraft, TaskRecord};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReviewRepairRealtimePayload {
@@ -97,55 +94,6 @@ pub struct TerminalListInvalidatedRealtimePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct TaskBoardRealtimePayload {
-    pub conversation_id: String,
-    pub conversation_turn_id: Option<String>,
-    pub review_id: Option<String>,
-    pub task_id: Option<String>,
-    pub action: String,
-    pub task: Option<TaskRecord>,
-    pub draft_tasks: Option<Vec<TaskDraft>>,
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AskUserPromptRealtimePayload {
-    pub conversation_id: String,
-    pub conversation_turn_id: Option<String>,
-    pub project_id: Option<String>,
-    pub prompt_id: String,
-    pub action: String,
-    pub status: Option<String>,
-    pub tool_call_id: Option<String>,
-    pub prompt_kind: Option<String>,
-    pub title: Option<String>,
-    pub message: Option<String>,
-    pub allow_cancel: Option<bool>,
-    pub timeout_ms: Option<u64>,
-    pub payload: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PetActivityInboxRealtimePayload {
-    pub action: String,
-    pub activity_id: String,
-    pub activity_key: String,
-    pub activity_version: String,
-    pub inbox_status: String,
-    pub activity: PetActivityInboxRecord,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ChatStreamRealtimePayload {
-    pub conversation_id: String,
-    pub conversation_turn_id: Option<String>,
-    pub project_id: Option<String>,
-    pub user_message_id: Option<String>,
-    pub stream_type: String,
-    pub raw: Value,
-}
-
-#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RealtimeEventPayload {
     ReviewRepair(ReviewRepairRealtimePayload),
@@ -156,10 +104,6 @@ pub enum RealtimeEventPayload {
     SessionsUpdated(SessionsUpdatedRealtimePayload),
     TerminalState(TerminalStateRealtimePayload),
     TerminalListInvalidated(TerminalListInvalidatedRealtimePayload),
-    TaskBoard(TaskBoardRealtimePayload),
-    AskUserPrompt(AskUserPromptRealtimePayload),
-    PetActivityInboxUpdated(PetActivityInboxRealtimePayload),
-    ChatStream(ChatStreamRealtimePayload),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,45 +131,5 @@ impl Deref for SequencedRealtimeEventEnvelope {
 
     fn deref(&self) -> &Self::Target {
         &self.envelope
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::{
-        ChatStreamRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload,
-        SequencedRealtimeEventEnvelope,
-    };
-
-    #[test]
-    fn sequenced_event_serializes_identity_at_top_level() {
-        let event = SequencedRealtimeEventEnvelope {
-            event_id: "event-1".to_string(),
-            event_sequence: 42,
-            envelope: RealtimeEventEnvelope {
-                message_type: "event",
-                event: "chat.completed",
-                user_id: "user-1".to_string(),
-                conversation_id: Some("conversation-1".to_string()),
-                project_id: None,
-                payload: RealtimeEventPayload::ChatStream(ChatStreamRealtimePayload {
-                    conversation_id: "conversation-1".to_string(),
-                    conversation_turn_id: Some("turn-1".to_string()),
-                    project_id: None,
-                    user_message_id: None,
-                    stream_type: "completed".to_string(),
-                    raw: json!({"type": "completed"}),
-                }),
-                ts: "2026-08-24T03:00:00Z".to_string(),
-            },
-        };
-
-        let value = serde_json::to_value(event).expect("serialize event");
-        assert_eq!(value["event_id"], "event-1");
-        assert_eq!(value["event_sequence"], 42);
-        assert_eq!(value["type"], "event");
-        assert_eq!(value["payload"]["kind"], "chat_stream");
     }
 }

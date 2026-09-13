@@ -43,24 +43,13 @@ pub struct Config {
     pub user_service_internal_http_client: reqwest::Client,
     pub user_service_internal_api_secret: Option<String>,
     pub user_service_request_timeout_ms: i64,
-    pub task_runner_base_url: String,
-    pub task_runner_internal_base_url: String,
-    pub task_runner_internal_api_secret: Option<String>,
-    pub task_runner_mtls_ca_cert_path: PathBuf,
-    pub task_runner_mtls_client_identity_path: PathBuf,
-    pub task_runner_request_timeout_ms: i64,
     pub mcp_management_internal_api_secret: Option<String>,
-    pub mcp_result_rabbitmq_url: String,
-    pub mcp_result_queue_prefix: String,
     pub local_connector_service_base_url: String,
     pub local_connector_http_client: reqwest::Client,
     pub local_connector_long_running_http_client: reqwest::Client,
     pub local_connector_mtls_ca_cert_path: PathBuf,
     pub local_connector_mtls_client_identity_path: PathBuf,
-    pub local_connector_internal_api_secret: Option<String>,
     pub local_connector_service_request_timeout_ms: i64,
-    pub plugin_ui_parent_origin: Option<String>,
-    pub plugin_ui_resource_origin: Option<String>,
     pub memory_engine_base_url: String,
     pub memory_engine_http_client: reqwest::Client,
     pub memory_engine_operator_token: Option<String>,
@@ -68,7 +57,6 @@ pub struct Config {
     pub memory_engine_active_summary_trigger_timeout_ms: i64,
     pub memory_engine_active_summary_poll_interval_ms: i64,
     pub memory_engine_active_summary_poll_timeout_ms: i64,
-    pub task_runner_callback_secret: Option<String>,
 }
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
@@ -157,38 +145,15 @@ impl Config {
         let user_service_internal_api_secret = Some(require_config_center_value(
             "CHATOS_USER_SERVICE_INTERNAL_API_SECRET",
         )?);
-        let task_runner_base_url = require_config_center_value("CHATOS_TASK_RUNNER_BASE_URL")?;
-        let task_runner_internal_base_url =
-            require_config_center_value("CHATOS_TASK_RUNNER_INTERNAL_BASE_URL")?;
-        require_https_base_url(
-            "CHATOS_TASK_RUNNER_INTERNAL_BASE_URL",
-            task_runner_internal_base_url.as_str(),
-        )?;
-        let task_runner_internal_api_secret = Some(require_config_center_value(
-            "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET",
-        )?);
-        let task_runner_mtls_ca_cert_path =
-            require_bootstrap_path("TASK_RUNNER_MTLS_CA_CERT_PATH")?;
-        let task_runner_mtls_client_identity_path =
-            require_bootstrap_path("TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH")?;
-        let task_runner_request_timeout_ms =
-            require_config_center_i64("CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS")?.max(300);
         let mcp_management_internal_api_secret = Some(require_config_center_value(
             "MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
         )?);
-        let mcp_result_rabbitmq_url =
-            require_config_center_value("CHATOS_MCP_RESULT_RABBITMQ_URL")?;
-        let mcp_result_queue_prefix =
-            require_config_center_value("CHATOS_MCP_RESULT_QUEUE_PREFIX")?;
         let local_connector_service_base_url =
             require_config_center_value("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL")?;
         require_https_base_url(
             "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL",
             local_connector_service_base_url.as_str(),
         )?;
-        let local_connector_internal_api_secret = Some(require_config_center_value(
-            "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-        )?);
         let local_connector_service_request_timeout_ms =
             require_config_center_i64("CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS")?
                 .max(300);
@@ -209,20 +174,6 @@ impl Config {
                 local_connector_mtls_ca_cert_path.as_path(),
                 local_connector_mtls_client_identity_path.as_path(),
             )?;
-        let plugin_ui_parent_origin = normalize_plugin_ui_origin(
-            "CHATOS_PLUGIN_UI_PARENT_ORIGIN",
-            optional_config_center_text("CHATOS_PLUGIN_UI_PARENT_ORIGIN"),
-            normalized_env,
-        )?;
-        let plugin_ui_resource_origin = normalize_plugin_ui_origin(
-            "CHATOS_PLUGIN_UI_RESOURCE_ORIGIN",
-            optional_config_center_text("CHATOS_PLUGIN_UI_RESOURCE_ORIGIN"),
-            normalized_env,
-        )?;
-        validate_plugin_ui_origin_pair(
-            plugin_ui_parent_origin.as_deref(),
-            plugin_ui_resource_origin.as_deref(),
-        )?;
         let memory_engine_base_url = require_config_center_value("CHATOS_MEMORY_ENGINE_BASE_URL")?;
         require_https_base_url(
             "CHATOS_MEMORY_ENGINE_BASE_URL",
@@ -246,7 +197,6 @@ impl Config {
             require_config_center_i64("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS")?.max(1_000);
         let memory_engine_active_summary_poll_timeout_ms =
             require_config_center_i64("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS")?.max(10_000);
-        let task_runner_callback_secret = task_runner_internal_api_secret.clone();
         validate_production_secret(
             "AUTH_JWT_SECRET",
             Some(auth_jwt_secret.as_str()),
@@ -266,11 +216,6 @@ impl Config {
             &["change_me_chatos_user_service_secret"],
         )?;
         validate_production_secret(
-            "CHATOS_TASK_RUNNER_INTERNAL_API_SECRET",
-            task_runner_internal_api_secret.as_deref(),
-            &["change_me_chatos_task_runner_internal_secret"],
-        )?;
-        validate_production_secret(
             "MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
             mcp_management_internal_api_secret.as_deref(),
             &["change_me_mcp_management_chatos_secret"],
@@ -279,7 +224,6 @@ impl Config {
             normalized_env,
             port,
             host.as_str(),
-            task_runner_base_url.as_str(),
             local_connector_service_base_url.as_str(),
             memory_engine_base_url.as_str(),
         )?;
@@ -317,24 +261,13 @@ impl Config {
             user_service_internal_http_client,
             user_service_internal_api_secret,
             user_service_request_timeout_ms,
-            task_runner_base_url,
-            task_runner_internal_base_url,
-            task_runner_internal_api_secret,
-            task_runner_mtls_ca_cert_path,
-            task_runner_mtls_client_identity_path,
-            task_runner_request_timeout_ms,
             mcp_management_internal_api_secret,
-            mcp_result_rabbitmq_url,
-            mcp_result_queue_prefix,
             local_connector_service_base_url,
             local_connector_http_client,
             local_connector_long_running_http_client,
             local_connector_mtls_ca_cert_path,
             local_connector_mtls_client_identity_path,
-            local_connector_internal_api_secret,
             local_connector_service_request_timeout_ms,
-            plugin_ui_parent_origin,
-            plugin_ui_resource_origin,
             memory_engine_base_url,
             memory_engine_http_client,
             memory_engine_operator_token,
@@ -342,7 +275,6 @@ impl Config {
             memory_engine_active_summary_trigger_timeout_ms,
             memory_engine_active_summary_poll_interval_ms,
             memory_engine_active_summary_poll_timeout_ms,
-            task_runner_callback_secret,
         })
     }
 
@@ -369,7 +301,7 @@ impl Config {
         };
 
         tracing::info!(
-            "当前配置:\n  - NODE_ENV: {}\n  - BACKEND_PORT: {}\n  - HOST: {}\n  - OPENAI_BASE_URL: {}\n  - OPENAI_API_KEY: {}\n  - LOG_LEVEL: {}\n  - 摘要配置:\n    • SUMMARY_ENABLED: {}\n    • DYNAMIC_SUMMARY_ENABLED: {}\n    • SUMMARY_MESSAGE_LIMIT: {}\n    • SUMMARY_MAX_CONTEXT_TOKENS: {}\n    • SUMMARY_KEEP_LAST_N: {}\n    • SUMMARY_TARGET_TOKENS: {}\n    • SUMMARY_MERGE_TARGET_TOKENS: {}\n    • SUMMARY_TEMPERATURE: {}\n    • SUMMARY_COOLDOWN_SECONDS: {}\n    • SUMMARY_BISECT_ENABLED: {}\n    • SUMMARY_BISECT_MAX_DEPTH: {}\n    • SUMMARY_BISECT_MIN_MESSAGES: {}\n    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}\n  - 认证配置:\n    • AUTH_JWT_SECRET: {}\n    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}\n    • AUTH_COMPAT_SECRET: {}\n  - Runtime 配置:\n    • TASK_RUNNER_BASE_URL: {}\n    • CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS: {}\n    • LOCAL_CONNECTOR_SERVICE_BASE_URL: {}\n    • CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_BASE_URL: {}\n    • MEMORY_ENGINE_OPERATOR_TOKEN: {}\n    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
+            "当前配置:\n  - NODE_ENV: {}\n  - BACKEND_PORT: {}\n  - HOST: {}\n  - OPENAI_BASE_URL: {}\n  - OPENAI_API_KEY: {}\n  - LOG_LEVEL: {}\n  - 摘要配置:\n    • SUMMARY_ENABLED: {}\n    • DYNAMIC_SUMMARY_ENABLED: {}\n    • SUMMARY_MESSAGE_LIMIT: {}\n    • SUMMARY_MAX_CONTEXT_TOKENS: {}\n    • SUMMARY_KEEP_LAST_N: {}\n    • SUMMARY_TARGET_TOKENS: {}\n    • SUMMARY_MERGE_TARGET_TOKENS: {}\n    • SUMMARY_TEMPERATURE: {}\n    • SUMMARY_COOLDOWN_SECONDS: {}\n    • SUMMARY_BISECT_ENABLED: {}\n    • SUMMARY_BISECT_MAX_DEPTH: {}\n    • SUMMARY_BISECT_MIN_MESSAGES: {}\n    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}\n  - 认证配置:\n    • AUTH_JWT_SECRET: {}\n    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}\n    • AUTH_COMPAT_SECRET: {}\n  - Runtime 配置:\n    • LOCAL_CONNECTOR_SERVICE_BASE_URL: {}\n    • CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_BASE_URL: {}\n    • MEMORY_ENGINE_OPERATOR_TOKEN: {}\n    • MEMORY_ENGINE_REQUEST_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS: {}\n    • MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS: {}",
             self.node_env,
             self.port,
             self.host,
@@ -392,8 +324,6 @@ impl Config {
             auth_jwt_secret_status,
             self.auth_access_token_ttl_seconds,
             auth_compat_secret_status,
-            self.task_runner_base_url,
-            self.task_runner_request_timeout_ms,
             self.local_connector_service_base_url,
             self.local_connector_service_request_timeout_ms,
             self.memory_engine_base_url,
@@ -501,59 +431,10 @@ fn normalize_env(value: &str) -> Result<&'static str, String> {
     }
 }
 
-fn normalize_plugin_ui_origin(
-    key: &str,
-    value: Option<String>,
-    normalized_env: &str,
-) -> Result<Option<String>, String> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    if value.len() > 512 {
-        return Err(format!("{key} exceeds the 512-byte origin limit"));
-    }
-    let url = Url::parse(value.as_str()).map_err(|_| format!("{key} must be a valid origin"))?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || !matches!(url.path(), "" | "/")
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(format!(
-            "{key} must contain only an http(s) scheme and authority"
-        ));
-    }
-    if normalized_env == "production" && url.scheme() != "https" {
-        return Err(format!("{key} must use https in production"));
-    }
-    Ok(Some(url.origin().ascii_serialization()))
-}
-
-fn validate_plugin_ui_origin_pair(
-    parent_origin: Option<&str>,
-    resource_origin: Option<&str>,
-) -> Result<(), String> {
-    match (parent_origin, resource_origin) {
-        (None, None) => Ok(()),
-        (Some(parent), Some(resource)) if parent != resource => Ok(()),
-        (Some(_), Some(_)) => Err(
-            "CHATOS_PLUGIN_UI_PARENT_ORIGIN and CHATOS_PLUGIN_UI_RESOURCE_ORIGIN must be different"
-                .to_string(),
-        ),
-        _ => Err(
-            "CHATOS_PLUGIN_UI_PARENT_ORIGIN and CHATOS_PLUGIN_UI_RESOURCE_ORIGIN must be configured together"
-                .to_string(),
-        ),
-    }
-}
-
 fn validate_config(
     _normalized_env: &str,
     port: u16,
     host: &str,
-    task_runner_base_url: &str,
     local_connector_service_base_url: &str,
     memory_engine_base_url: &str,
 ) -> Result<(), String> {
@@ -562,9 +443,6 @@ fn validate_config(
     }
     if host.trim().is_empty() {
         return Err("HOST must not be empty".to_string());
-    }
-    if task_runner_base_url.trim().is_empty() {
-        return Err("TASK_RUNNER_BASE_URL must not be empty".to_string());
     }
     if local_connector_service_base_url.trim().is_empty() {
         return Err("LOCAL_CONNECTOR_SERVICE_BASE_URL must not be empty".to_string());
@@ -580,9 +458,7 @@ fn validate_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        normalize_env, normalize_plugin_ui_origin, validate_config, validate_plugin_ui_origin_pair,
-    };
+    use super::{normalize_env, validate_config};
 
     #[test]
     fn normalize_env_maps_prod_alias() {
@@ -598,7 +474,6 @@ mod tests {
             "development",
             0,
             "0.0.0.0",
-            "http://127.0.0.1:39090",
             "http://127.0.0.1:39230",
             "http://127.0.0.1:7081/api/memory-engine/v1",
         )
@@ -612,7 +487,6 @@ mod tests {
             "production",
             3997,
             "0.0.0.0",
-            "http://127.0.0.1:39090",
             "http://127.0.0.1:39230",
             "memory-engine.internal",
         )
@@ -626,48 +500,9 @@ mod tests {
             "production",
             3997,
             "0.0.0.0",
-            "https://task-runner.example.com",
             "https://local-connector.example.com",
             "https://memory.example.com/api/memory-engine/v1",
         )
         .expect("valid production config");
-    }
-
-    #[test]
-    fn plugin_ui_origins_are_https_origin_only_and_distinct_in_production() {
-        assert_eq!(
-            normalize_plugin_ui_origin(
-                "CHATOS_PLUGIN_UI_RESOURCE_ORIGIN",
-                Some("https://plugin-ui.example.com/".to_string()),
-                "production",
-            )
-            .expect("valid resource origin")
-            .as_deref(),
-            Some("https://plugin-ui.example.com")
-        );
-        for invalid in [
-            "http://plugin-ui.example.com",
-            "https://user@plugin-ui.example.com",
-            "https://plugin-ui.example.com/assets",
-            "https://plugin-ui.example.com/?token=secret",
-        ] {
-            assert!(normalize_plugin_ui_origin(
-                "CHATOS_PLUGIN_UI_RESOURCE_ORIGIN",
-                Some(invalid.to_string()),
-                "production",
-            )
-            .is_err());
-        }
-        assert!(validate_plugin_ui_origin_pair(
-            Some("https://app.example.com"),
-            Some("https://plugin-ui.example.com"),
-        )
-        .is_ok());
-        assert!(validate_plugin_ui_origin_pair(
-            Some("https://app.example.com"),
-            Some("https://app.example.com"),
-        )
-        .is_err());
-        assert!(validate_plugin_ui_origin_pair(Some("https://app.example.com"), None).is_err());
     }
 }

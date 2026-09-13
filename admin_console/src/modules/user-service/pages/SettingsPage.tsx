@@ -29,7 +29,7 @@ export function SettingsPage() {
         type="info"
         showIcon
         message="当前实现说明"
-        description="这版用户微服务负责统一用户、Agent 账号和共享模型配置。Task Runner 的短期访问凭证由 chatos 后端按需自动换取，用户不需要手动生成。"
+        description="这版用户微服务负责统一用户、Agent 账号和共享模型配置。"
       />
 
       <Card title="当前登录用户">
@@ -52,17 +52,11 @@ export function SettingsPage() {
             <Descriptions.Item label="User Audience">
               {systemConfigQuery.data.user_service_audience}
             </Descriptions.Item>
-            <Descriptions.Item label="Task Runner Audience">
-              {systemConfigQuery.data.task_runner_audience}
-            </Descriptions.Item>
             <Descriptions.Item label="Database URL">
               {systemConfigQuery.data.database_url}
             </Descriptions.Item>
             <Descriptions.Item label="User Access TTL">
               {systemConfigQuery.data.user_access_ttl_seconds}s
-            </Descriptions.Item>
-            <Descriptions.Item label="Task Runner Access TTL">
-              {systemConfigQuery.data.task_runner_access_ttl_seconds}s
             </Descriptions.Item>
           </Descriptions>
         ) : null}

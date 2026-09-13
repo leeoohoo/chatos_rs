@@ -12,9 +12,6 @@ BACKEND_SERVICE_NAMES=(
   plugin-management-backend
   local-connector-service-backend
   mcp-management-service-backend
-  task-runner-backend
-  task-runner-worker
-  task-runner-scheduler
   chatos-backend
   official-website-backend
 )

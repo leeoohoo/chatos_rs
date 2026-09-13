@@ -23,7 +23,6 @@ struct UserServiceVerifiedPrincipal {
     username: Option<String>,
     display_name: Option<String>,
     role: Option<String>,
-    owner_user_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,7 +77,7 @@ fn current_user_from_principal(
     principal: UserServiceVerifiedPrincipal,
 ) -> Result<CurrentUser, String> {
     let principal_type = principal.principal_type.trim().to_string();
-    if principal_type != "human_user" && principal_type != "agent_account" {
+    if principal_type != "human_user" {
         return Err("unsupported principal type for local connector service".to_string());
     }
     let user_id = principal
@@ -95,6 +94,6 @@ fn current_user_from_principal(
             .role
             .and_then(normalize_text)
             .unwrap_or_else(|| "user".to_string()),
-        owner_user_id: principal.owner_user_id.and_then(normalize_text),
+        owner_user_id: None,
     })
 }

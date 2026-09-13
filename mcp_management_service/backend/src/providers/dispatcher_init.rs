@@ -4,13 +4,11 @@
 use super::{
     ChatosProvider, ChatosProviderConfig, LocalConnectorProvider, PluginComponentProvider,
     PluginLocalProvider, PluginRouteDispatcher, ProviderDispatcher, ProviderRuntimeConfig,
-    TaskRunnerProvider, TaskRunnerProviderConfig,
 };
 use std::sync::Arc;
 
 impl ProviderDispatcher {
     pub(crate) fn new(
-        task_runner: TaskRunnerProviderConfig,
         chatos: ChatosProviderConfig,
         local_connector_http: reqwest::Client,
         local_connector_service_base_url: impl Into<String>,
@@ -44,20 +42,10 @@ impl ProviderDispatcher {
                 runtime.response_limit_bytes,
             )?,
             plugins: PluginRouteDispatcher::new(plugin_local, plugin_components),
-            task_runner: TaskRunnerProvider::new(
-                task_runner.http,
-                task_runner.base_url,
-                task_runner.request_timeout,
-                task_runner.ask_user_request_timeout,
-                task_runner.internal_secret,
-                runtime.response_limit_bytes,
-            )?,
             chatos: ChatosProvider::new(
                 chatos.http,
                 chatos.base_url,
                 chatos.request_timeout,
-                chatos.ask_user_request_timeout,
-                chatos.browser_request_timeout,
                 chatos.internal_secret,
                 runtime.response_limit_bytes,
             )?,

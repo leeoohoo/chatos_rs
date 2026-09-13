@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn provider_prompt_selects_only_the_program_task_profile() {
-        let mut task_runner = resolved_mcp("task-runner", "task_runner_service", true, true);
+        let mut task_runner = resolved_mcp("local-agent", "local_agent_runtime", true, true);
         task_runner.resource.metadata.extra.insert(
             PROVIDER_SKILLS_METADATA_KEY.to_string(),
             json!([
@@ -433,7 +433,7 @@ mod tests {
 
         let ordinary = capabilities
             .compose_provider_skills_prompt_for_task_profile(
-                ["task_runner_service"],
+                ["local_agent_runtime"],
                 Some("zh-CN"),
                 None,
             )
@@ -443,7 +443,7 @@ mod tests {
 
         let planning = capabilities
             .compose_provider_skills_prompt_for_task_profile(
-                ["task_runner_service"],
+                ["local_agent_runtime"],
                 Some("zh-CN"),
                 Some("chatos_plan"),
             )

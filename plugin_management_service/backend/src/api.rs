@@ -115,7 +115,6 @@ use system::{get_system_stats, prometheus_metrics};
 
 const ALLOWED_INTERNAL_CALLER_SERVICES: &[&str] = &[
     "chatos-backend",
-    "task-runner",
     "local-connector-service",
     "memory-engine",
     "mcp-management-service",

@@ -70,15 +70,6 @@ fn every_system_mcp_has_provider_skills() {
 }
 
 #[test]
-fn task_runner_provider_skills_have_no_planning_variant() {
-    let skills = provider_skills_for_system_mcp(CHATOS_TASK_RUNNER_MCP_RESOURCE_ID)
-        .and_then(|value| value.as_array().cloned())
-        .expect("task runner provider skills");
-    assert_eq!(skills.len(), 1);
-    assert_eq!(skills[0]["task_profiles"], serde_json::json!(["default"]));
-}
-
-#[test]
 fn planning_agents_are_retired_without_replacement() {
     assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_plan_agent"));
     assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_planning_agent"));
@@ -101,14 +92,6 @@ fn retired_system_agents_are_unique_and_disjoint_from_the_runtime_catalog() {
 
     assert_eq!(retired.len(), RETIRED_SYSTEM_AGENT_KEYS.len());
     assert!(retired.is_disjoint(&current));
-}
-
-#[test]
-fn only_the_conversation_agent_can_delegate_generic_task_runner_work() {
-    assert_eq!(
-        CHATOS_TASK_RUNNER_AGENT_KEYS,
-        [CHATOS_CONVERSATION_AGENT_KEY]
-    );
 }
 
 #[test]
@@ -165,14 +148,6 @@ fn local_command_approval_agent_is_registered_with_a_local_only_tool_plane() {
 }
 
 #[test]
-fn chatos_uses_the_task_runner_service_mcp_entry() {
-    let descriptor = chatos_mcp::system_mcp_descriptor(
-        chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
-    );
-    assert_eq!(descriptor.server_name, "task_runner_service");
-}
-
-#[test]
 fn seeded_system_mcp_records_use_the_unified_runtime_kind() {
     for descriptor in chatos_mcp::system_mcp_catalog() {
         let record = system_mcp_record(descriptor, "admin", "now").expect("system MCP record");
@@ -186,72 +161,6 @@ fn seeded_system_mcp_records_use_the_unified_runtime_kind() {
 }
 
 #[test]
-fn chatos_conversation_requires_task_runner_service() {
-    let spec = (
-        "chatos_conversation_agent",
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        true,
-    );
-    assert_eq!(spec.0, "chatos_conversation_agent");
-    assert_eq!(spec.1, "system_mcp_chatos_task_runner");
-    assert!(spec.2);
-    assert!(chatos_mcp::system_mcp_descriptor(
-        chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
-    )
-    .supports_implementation_host(chatos_mcp::SystemMcpHost::LocalConnector));
-}
-
-#[test]
-fn chatos_task_runner_tool_policies_are_split_by_task_profile() {
-    assert!(!CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST.contains(&"create_tasks_with_prerequisites"));
-}
-
-#[test]
-fn seeded_binding_matching_preserves_task_runner_condition_variants() {
-    let default_binding = AgentBindingRecord {
-        id: "binding-default".to_string(),
-        agent_key: CHATOS_CONVERSATION_AGENT_KEY.to_string(),
-        binding_scope: BINDING_SCOPE_SYSTEM_REQUIRED.to_string(),
-        owner_user_id: None,
-        resource_kind: RESOURCE_KIND_MCP.to_string(),
-        resource_id: CHATOS_TASK_RUNNER_MCP_RESOURCE_ID.to_string(),
-        enabled: true,
-        required: true,
-        priority: 10,
-        conditions: BindingConditions::default(),
-        component_allowlist: Vec::new(),
-        tool_allowlist: CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST
-            .iter()
-            .map(|value| value.to_string())
-            .collect(),
-        tool_blocklist: Vec::new(),
-        created_by: "system".to_string(),
-        updated_by: "system".to_string(),
-        created_at: "now".to_string(),
-        updated_at: "now".to_string(),
-    };
-    let async_conditions = BindingConditions {
-        schedule_mode: Some("contact_async".to_string()),
-        ..BindingConditions::default()
-    };
-
-    assert!(binding_matches_seed_variant(
-        &default_binding,
-        BINDING_SCOPE_SYSTEM_REQUIRED,
-        RESOURCE_KIND_MCP,
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        &BindingConditions::default(),
-    ));
-    assert!(!binding_matches_seed_variant(
-        &default_binding,
-        BINDING_SCOPE_SYSTEM_REQUIRED,
-        RESOURCE_KIND_MCP,
-        CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-        &async_conditions,
-    ));
-}
-
-#[test]
 fn task_process_log_is_a_seeded_task_runner_system_mcp() {
     let descriptor = chatos_mcp::system_mcp_descriptor(
         chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog,
@@ -259,9 +168,6 @@ fn task_process_log_is_a_seeded_task_runner_system_mcp() {
 
     assert_eq!(descriptor.resource_id, TASK_PROCESS_LOG_MCP_RESOURCE_ID);
     assert_eq!(descriptor.server_name, "task_run_process");
-    assert!(descriptor.supports_implementation_host(chatos_mcp::SystemMcpHost::TaskRunner));
-    assert!(descriptor.supports_implementation_host(chatos_mcp::SystemMcpHost::LocalConnector));
-
     let record = system_mcp_record(descriptor, "admin", "now").expect("system MCP record");
     assert_eq!(record.runtime.kind, RUNTIME_KIND_SYSTEM);
     assert_eq!(

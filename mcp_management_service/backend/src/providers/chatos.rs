@@ -5,14 +5,13 @@ use std::time::Duration;
 
 use crate::runtime::RuntimeSessionSnapshot;
 
-use super::{ProviderCallError, ProviderWaitingForUser};
+use super::ProviderCallError;
 
 mod init;
 mod memory;
 mod prepare;
 mod request_builder;
 mod runtime_calls;
-mod waiting_user;
 use memory::is_memory_reader;
 pub(crate) use memory::memory_provider_ref;
 
@@ -64,7 +63,6 @@ pub(super) struct ChatosProvider {
     base_url: String,
     internal_secret: Option<String>,
     request_timeout: Duration,
-    ask_user_request_timeout: Duration,
     response_limit_bytes: usize,
 }
 

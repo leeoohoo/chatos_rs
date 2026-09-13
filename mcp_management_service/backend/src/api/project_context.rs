@@ -15,7 +15,7 @@ pub(super) async fn authorize_project_context(
         require_internal_request_identity(&state.config, &headers, "project-context.authorize")?;
     identity.require_signed_trace_id()?;
     identity.require_owner(&request.owner_user_id)?;
-    if !matches!(identity.caller.as_str(), "chatos" | "task-runner") {
+    if identity.caller != "chatos" {
         return Err(ApiError::forbidden(
             "caller may not authorize client project snapshots",
         ));
@@ -186,48 +186,39 @@ mod tests {
     #[tokio::test]
     async fn authorizes_client_snapshot_over_owner_bound_local_connector_hop() {
         let (router, upstream) = fixture("valid").await;
-        for caller in ["task-runner", "chatos"] {
-            let expected = snapshot();
-            let response = router
-                .clone()
-                .oneshot(request(
-                    caller,
-                    SCOPE,
-                    Some("alice"),
-                    "alice",
-                    expected.clone(),
-                ))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
-            let result: ProjectContextAuthorization = serde_json::from_slice(&body).unwrap();
-            result.validate_expected("alice", &expected).unwrap();
-            assert_eq!(result.workspace_fingerprint, "workspace-binding-v1");
-        }
-        assert_eq!(upstream.calls.load(Ordering::SeqCst), 2);
+        let expected = snapshot();
+        let response = router
+            .oneshot(request(
+                "chatos",
+                SCOPE,
+                Some("alice"),
+                "alice",
+                expected.clone(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
+        let result: ProjectContextAuthorization = serde_json::from_slice(&body).unwrap();
+        result.validate_expected("alice", &expected).unwrap();
+        assert_eq!(result.workspace_fingerprint, "workspace-binding-v1");
+        assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn rejects_missing_or_mismatched_signed_owner_scope_and_caller_before_upstream() {
         let (router, upstream) = fixture("valid").await;
         for (caller, scope, owner, requested, status) in [
+            ("chatos", SCOPE, None, "alice", StatusCode::UNAUTHORIZED),
             (
-                "task-runner",
-                SCOPE,
-                None,
-                "alice",
-                StatusCode::UNAUTHORIZED,
-            ),
-            (
-                "task-runner",
+                "chatos",
                 SCOPE,
                 Some("alice"),
                 "bob",
                 StatusCode::UNAUTHORIZED,
             ),
             (
-                "task-runner",
+                "chatos",
                 "catalog.read",
                 Some("alice"),
                 "alice",
@@ -257,13 +248,7 @@ mod tests {
         let mut invalid = snapshot();
         invalid.execution_target.relative_root = "../private".into();
         let response = router
-            .oneshot(request(
-                "task-runner",
-                SCOPE,
-                Some("alice"),
-                "alice",
-                invalid,
-            ))
+            .oneshot(request("chatos", SCOPE, Some("alice"), "alice", invalid))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -275,13 +260,7 @@ mod tests {
         for mode in ["owner", "snapshot", "binding", "denied", "oversized"] {
             let (router, upstream) = fixture(mode).await;
             let response = router
-                .oneshot(request(
-                    "task-runner",
-                    SCOPE,
-                    Some("alice"),
-                    "alice",
-                    snapshot(),
-                ))
+                .oneshot(request("chatos", SCOPE, Some("alice"), "alice", snapshot()))
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::BAD_GATEWAY, "{mode}");

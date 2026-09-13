@@ -22,7 +22,7 @@ class LocalDevLogRotationTests(unittest.TestCase):
     def test_rotation_preserves_the_previous_log(self) -> None:
         support = ROOT / "scripts/local-dev-stack/support.sh"
         with tempfile.TemporaryDirectory() as directory:
-            log = Path(directory) / "task-runner.log"
+            log = Path(directory) / "memory-engine.log"
             log.write_text("failure evidence\n")
 
             subprocess.run(

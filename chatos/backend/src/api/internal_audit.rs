@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use axum::http::StatusCode;
 use chatos_mcp_service::{JsonRpcResponse, MCP_ERROR_INTERNAL};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,16 +33,6 @@ pub(crate) fn record_chatos_internal_resource_access(
             error = error.as_str(),
             "ChatOS internal resource audit validation failed"
         );
-    }
-}
-
-pub(crate) fn http_outcome(status: StatusCode) -> &'static str {
-    if status.is_success() {
-        "accepted"
-    } else if status.is_server_error() {
-        "failed"
-    } else {
-        "rejected"
     }
 }
 
@@ -91,9 +80,9 @@ mod tests {
 
     fn identity() -> ChatosInternalRequestIdentity {
         ChatosInternalRequestIdentity {
-            caller_service: "task-runner".to_string(),
+            caller_service: "mcp-management-service".to_string(),
             audience_service: "chatos-backend".to_string(),
-            scope: "task-runner.callback".to_string(),
+            scope: "mcp.tools.call".to_string(),
             trace_id: Uuid::new_v4().to_string(),
         }
     }
@@ -106,10 +95,10 @@ mod tests {
             ChatosInternalResourceAudit {
                 represented_user_id: Some("user-1"),
                 project_id: Some("project-1"),
-                resource_type: "task_runner_task",
-                resource_id: "task-1",
-                resource_name: Some("task.completed"),
-                action: "callback",
+                resource_type: "system_mcp_tool",
+                resource_id: "session-1/notepad/write_note",
+                resource_name: Some("write_note"),
+                action: "call",
                 outcome: "accepted",
             },
         );
@@ -122,9 +111,6 @@ mod tests {
 
     #[test]
     fn outcomes_distinguish_business_rejection_from_internal_failure() {
-        assert_eq!(http_outcome(StatusCode::OK), "accepted");
-        assert_eq!(http_outcome(StatusCode::BAD_REQUEST), "rejected");
-        assert_eq!(http_outcome(StatusCode::INTERNAL_SERVER_ERROR), "failed");
         assert_eq!(
             jsonrpc_outcome(&jsonrpc_ok(Value::Null, json!({}))),
             "accepted"

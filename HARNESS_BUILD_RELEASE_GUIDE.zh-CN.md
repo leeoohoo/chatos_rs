@@ -31,7 +31,6 @@ user-service-backend
 memory-engine-backend
 plugin-management-backend
 local-connector-service-backend
-task-runner-backend
 chatos-backend
 official-website-backend
 admin-console-frontend

@@ -2,21 +2,12 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::catalog::{
-    CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY,
     CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY,
     CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
     CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY,
     MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
 };
-
-#[derive(Debug, Deserialize)]
-struct TaskRunnerReplayResponse {
-    operation_id: String,
-    run_id: String,
-    event_enqueued: bool,
-    dead_letter_archived: bool,
-}
 
 #[derive(Debug, Deserialize)]
 struct MemoryEngineReplayResponse {
@@ -45,59 +36,6 @@ struct McpManagementArchiveResponse {
     operation_id: String,
     invocation_id: String,
     dead_letter_archived: bool,
-}
-
-pub(super) async fn replay_task_runner(
-    state: &AppState,
-    values: &BTreeMap<String, Value>,
-    authorization: &str,
-    operation_id: &str,
-    item_id: &str,
-    reason: &str,
-) -> Result<QueueReplayResponse, String> {
-    let base_url = required_text(values, CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY)?;
-    let response = state
-        .http_client()
-        .post(format!(
-            "{}/api/queue-operations/run-post-process/replay",
-            base_url.trim_end_matches('/')
-        ))
-        .header("authorization", authorization)
-        .json(&json!({
-            "operation_id": operation_id,
-            "run_id": item_id,
-            "reason": reason,
-        }))
-        .send()
-        .await
-        .map_err(|err| format!("Task Runner replay request failed: {err}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Task Runner rejected queue replay with {status}: {}",
-            detail.chars().take(500).collect::<String>()
-        ));
-    }
-    let task_replay = response
-        .json::<TaskRunnerReplayResponse>()
-        .await
-        .map_err(|err| format!("decode Task Runner replay response failed: {err}"))?;
-    if task_replay.operation_id != operation_id || task_replay.run_id != item_id {
-        return Err("Task Runner replay response identity mismatch".to_string());
-    }
-    Ok(QueueReplayResponse {
-        operation_id: operation_id.to_string(),
-        service: "task-runner".to_string(),
-        stream: "run_post_process".to_string(),
-        item_id: item_id.to_string(),
-        tenant_id: None,
-        source_id: None,
-        version: None,
-        event_type: None,
-        event_enqueued: task_replay.event_enqueued,
-        dead_letter_archived: task_replay.dead_letter_archived,
-    })
 }
 
 #[allow(clippy::too_many_arguments)]

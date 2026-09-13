@@ -22,14 +22,13 @@ mod plugin_routes;
 mod plugin_routes_prepare;
 #[path = "plugin_routes/runtime.rs"]
 mod plugin_routes_runtime;
-mod task_runner;
 
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
 pub(in crate::providers) use call_types::decode_jsonrpc_response;
-pub use call_types::{ProviderCallError, ProviderCallOutcome, ProviderWaitingForUser};
+pub use call_types::{ProviderCallError, ProviderCallOutcome};
 pub(super) use cancel_response::decode_cancel_notification_response;
 pub(crate) use chatos::memory_provider_ref as chatos_memory_provider_ref;
 use chatos::ChatosProvider;
@@ -37,23 +36,12 @@ use local_connector::LocalConnectorProvider;
 use plugin_components::PluginComponentProvider;
 use plugin_local::PluginLocalProvider;
 use plugin_routes::PluginRouteDispatcher;
-use task_runner::TaskRunnerProvider;
-
-pub struct TaskRunnerProviderConfig {
-    pub http: reqwest::Client,
-    pub base_url: String,
-    pub internal_secret: Option<String>,
-    pub request_timeout: Duration,
-    pub ask_user_request_timeout: Duration,
-}
 
 pub struct ChatosProviderConfig {
     pub http: reqwest::Client,
     pub base_url: String,
     pub internal_secret: Option<String>,
     pub request_timeout: Duration,
-    pub ask_user_request_timeout: Duration,
-    pub browser_request_timeout: Duration,
 }
 
 pub struct ProviderRuntimeConfig {
@@ -73,7 +61,6 @@ pub enum ProviderCancelOutcome {
 pub struct ProviderDispatcher {
     local_connector: LocalConnectorProvider,
     plugins: PluginRouteDispatcher,
-    task_runner: TaskRunnerProvider,
     chatos: ChatosProvider,
 }
 

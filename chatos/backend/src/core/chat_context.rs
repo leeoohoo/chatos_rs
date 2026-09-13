@@ -1,27 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::repositories::system_contexts;
-use crate::services::access_token_scope;
 use crate::services::chatos_sessions;
-use crate::services::session_title::maybe_rename_session_title;
-
-pub fn maybe_spawn_session_title_rename(
-    enabled: bool,
-    session_id: &str,
-    content: &str,
-    max_len: usize,
-) {
-    if !enabled || session_id.is_empty() || content.is_empty() {
-        return;
-    }
-
-    let sid = session_id.to_string();
-    let text = content.to_string();
-    access_token_scope::spawn_with_current_access_token(async move {
-        let _ = maybe_rename_session_title(&sid, &text, max_len).await;
-    });
-}
 
 pub async fn resolve_effective_user_id(
     explicit_user_id: Option<String>,
@@ -33,27 +13,6 @@ pub async fn resolve_effective_user_id(
 
     match chatos_sessions::get_session_by_id(session_id).await {
         Ok(Some(session)) => session.user_id,
-        _ => None,
-    }
-}
-
-pub async fn resolve_system_prompt(
-    explicit_prompt: Option<String>,
-    use_active_system_context: bool,
-    user_id: Option<String>,
-) -> Option<String> {
-    if explicit_prompt.is_some() {
-        return explicit_prompt;
-    }
-
-    if !use_active_system_context {
-        return None;
-    }
-
-    let uid = user_id?;
-
-    match system_contexts::get_active_system_context(&uid).await {
-        Ok(Some(ctx)) => ctx.content,
         _ => None,
     }
 }

@@ -56,16 +56,6 @@ impl ContextualTurnRunner {
         &self.runtime
     }
 
-    pub async fn persist_external_tool_results(
-        &self,
-        runtime_options: &AiRuntimeOptions,
-        tool_results: &[chatos_mcp_runtime::ToolResult],
-    ) -> Result<(), String> {
-        self.runtime
-            .persist_external_tool_results(runtime_options, tool_results)
-            .await
-    }
-
     pub fn with_context_overflow_recovery(
         mut self,
         context_overflow_recovery: Option<MemoryContextOverflowRecovery>,

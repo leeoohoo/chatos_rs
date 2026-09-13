@@ -167,7 +167,6 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
               width: 110,
               render: (_, stream) => {
                 const supported =
-                  (stream.service === 'task-runner' && stream.stream === 'run_post_process') ||
                   (
                     stream.service === 'memory-engine' &&
                     ['summary', 'rollup', 'subject_memory'].includes(stream.stream)
@@ -287,7 +286,7 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
 }
 
 function queueReplayItemPlaceholder(stream: QueueOperationsStream | null) {
-  if (!stream || stream.service === 'task-runner') return 'Run ID';
+  if (!stream) return 'Item ID';
   if (stream.service === 'mcp-management') return 'Invocation ID';
   if (stream.service === 'plugin-management') return 'Marketplace ID';
   if (stream.stream === 'summary') return 'Thread ID';

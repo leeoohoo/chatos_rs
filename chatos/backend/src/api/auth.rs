@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::http::{HeaderMap, StatusCode};
-use axum::{routing::get, routing::post, Json, Router};
+use axum::{routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;
@@ -97,7 +97,6 @@ pub fn protected_router() -> Router {
             post(issue_local_connector_ticket),
         )
         .route("/api/auth/bootstrap-defaults", post(bootstrap_defaults))
-        .route("/api/auth/agent-accounts", get(list_agent_accounts))
 }
 
 async fn issue_local_connector_ticket(
@@ -197,33 +196,6 @@ async fn issue_ws_ticket(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Jso
             })),
         ),
         Err(err) => err.into_response(),
-    }
-}
-
-async fn list_agent_accounts(_auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
-    let base_url = match required_user_service_base_url() {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
-    let access_token = match access_token_from_headers(&headers) {
-        Ok(token) => token,
-        Err(err) => return err.into_response(),
-    };
-    match user_service_api_client::list_agent_accounts(
-        base_url.as_str(),
-        access_token.as_str(),
-        Config::get().user_service_request_timeout_ms,
-    )
-    .await
-    {
-        Ok(items) => (StatusCode::OK, Json(json!(items))),
-        Err(err) => (
-            proxy_status_from_user_service_error(err.as_str()),
-            Json(json!({
-                "error": "load agent accounts via user_service failed",
-                "detail": err
-            })),
-        ),
     }
 }
 

@@ -1,5 +1,7 @@
 # ChatOS Browser MCP 平台迁移与客户端改造请求
 
+> 历史归档：本文所述服务端 Task Runner / Cloud Agent 执行面已在 3.0.2 删除。保留本文仅用于迁移决策追溯，现行执行入口是客户端本地 Agent Runtime。
+
 文档状态：技术沟通提案
 目标读者：ChatOS Plugin Management、MCP Management、Task Runner、Local Connector Client 团队
 提案方：Browser CDP MCP 项目

@@ -36,9 +36,6 @@ BASELINE: dict[str, dict[str, str]] = {
     "crates/chatos_ai_runtime/Cargo.toml": {
         "axum": "0.8",
     },
-    "crates/chatos_cloud_agent_runtime/Cargo.toml": {
-        "mongodb": "2.8",
-    },
     "crates/chatos_mcp_runtime/Cargo.toml": {
         "axum": "0.8",
     },
@@ -65,11 +62,6 @@ BASELINE: dict[str, dict[str, str]] = {
         "tower-http": "0.7",
     },
     "plugin_management_service/backend/Cargo.toml": {
-        "axum": "0.8",
-        "tower-http": "0.7",
-        "mongodb": "2.8",
-    },
-    "task_runner_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
         "mongodb": "2.8",

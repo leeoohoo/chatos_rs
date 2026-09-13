@@ -321,15 +321,6 @@ fn render_prometheus_metrics() -> String {
         METRICS.remote_terminal_websockets.load(Ordering::Relaxed),
     );
 
-    body.push_str(
-        "# HELP chatos_conversation_turns_active Active conversation turns managed by ChatOS.\n\
-# TYPE chatos_conversation_turns_active gauge\n",
-    );
-    let _ = writeln!(
-        body,
-        "chatos_conversation_turns_active{{service=\"chatos-backend\"}} {}",
-        crate::services::runtime_guidance_manager::runtime_guidance_manager().active_turn_count()
-    );
     body
 }
 

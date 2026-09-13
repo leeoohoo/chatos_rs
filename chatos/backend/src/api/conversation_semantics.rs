@@ -1,26 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::{Map, Value};
-
-const CONVERSATION_SCOPE_KEYS: &[&str] = &["conversation_id", "conversationId"];
-
-fn read_non_empty_text(map: &Map<String, Value>, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        map.get(*key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    })
-}
-
-pub fn extract_conversation_scope_id(value: &Value) -> Option<String> {
-    match value {
-        Value::Object(map) => read_non_empty_text(map, CONVERSATION_SCOPE_KEYS),
-        _ => None,
-    }
-}
+use serde_json::Value;
 
 pub fn rewrite_session_keys_to_conversation(value: Value) -> Value {
     fn walk(value: Value) -> Value {

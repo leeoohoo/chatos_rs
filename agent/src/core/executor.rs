@@ -11,7 +11,8 @@ use chatos_ai_runtime::{
 use serde_json::Value;
 
 use super::{AgentError, SystemAgentDefinition};
-use crate::DEFAULT_AGENT_MAX_ITERATIONS;
+
+const DEFAULT_AGENT_MAX_ITERATIONS: usize = 600;
 
 #[derive(Clone)]
 pub struct AgentTurnMemory {

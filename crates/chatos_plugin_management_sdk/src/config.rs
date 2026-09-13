@@ -117,7 +117,6 @@ fn required_bootstrap_path(key: &str) -> Result<std::path::PathBuf, String> {
 fn caller_secret_env_key(caller_service: &str) -> Option<&'static str> {
     match caller_service {
         "chatos-backend" => Some("PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"),
-        "task-runner" => Some("PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"),
         "local-connector-service" => {
             Some("PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET")
         }
@@ -137,10 +136,7 @@ mod tests {
             caller_secret_env_key("chatos-backend"),
             Some("PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET")
         );
-        assert_eq!(
-            caller_secret_env_key("task-runner"),
-            Some("PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET")
-        );
+        assert_eq!(caller_secret_env_key("task-runner"), None);
         assert_eq!(
             caller_secret_env_key("local-connector-service"),
             Some("PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET")

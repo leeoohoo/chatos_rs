@@ -27,7 +27,6 @@ use super::internal_auth::{
     require_internal_request, scope_for_memory_path, ADMIN_SCOPE, DATA_SCOPE, SOURCE_SCOPE,
 };
 
-const PRINCIPAL_TYPE_AGENT_ACCOUNT: &str = "agent_account";
 const PRINCIPAL_TYPE_HUMAN_USER: &str = "human_user";
 const USER_ROLE_SUPER_ADMIN: &str = "super_admin";
 
@@ -36,7 +35,6 @@ struct UserServiceVerifiedPrincipal {
     principal_type: String,
     user_id: Option<String>,
     role: Option<String>,
-    owner_user_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,7 +47,6 @@ pub struct MemoryPrincipal {
     pub principal_type: String,
     pub user_id: Option<String>,
     pub role: Option<String>,
-    pub owner_user_id: Option<String>,
 }
 
 impl From<UserServiceVerifiedPrincipal> for MemoryPrincipal {
@@ -58,19 +55,13 @@ impl From<UserServiceVerifiedPrincipal> for MemoryPrincipal {
             principal_type: value.principal_type,
             user_id: value.user_id,
             role: value.role,
-            owner_user_id: value.owner_user_id,
         }
     }
 }
 
 impl MemoryPrincipal {
     pub fn effective_owner_user_id(&self) -> Option<&str> {
-        if self.principal_type == PRINCIPAL_TYPE_AGENT_ACCOUNT {
-            return normalize_optional(self.owner_user_id.as_deref())
-                .or_else(|| normalize_optional(self.user_id.as_deref()));
-        }
         normalize_optional(self.user_id.as_deref())
-            .or_else(|| normalize_optional(self.owner_user_id.as_deref()))
     }
 
     pub fn is_super_admin(&self) -> bool {
@@ -205,9 +196,9 @@ pub async fn require_memory_auth(
 ) -> Result<Response, (StatusCode, String)> {
     let required_scope = scope_for_memory_path(request.uri().path());
     let allowed_callers: &[&str] = match required_scope {
-        SOURCE_SCOPE => &["chatos-backend", "task-runner"],
+        SOURCE_SCOPE => &["chatos-backend"],
         ADMIN_SCOPE => &[],
-        DATA_SCOPE => &["chatos-backend", "task-runner"],
+        DATA_SCOPE => &["chatos-backend"],
         _ => &[],
     };
     if let Some(claims) = require_internal_request(
@@ -321,14 +312,11 @@ async fn verify_user_service_principal(
                     format!("parse user_service verify response failed: {err}"),
                 )
             })?;
-    match payload.principal.principal_type.as_str() {
-        PRINCIPAL_TYPE_HUMAN_USER | PRINCIPAL_TYPE_AGENT_ACCOUNT => {}
-        _ => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                "memory_engine requires a human user or agent account token".to_string(),
-            ));
-        }
+    if payload.principal.principal_type != PRINCIPAL_TYPE_HUMAN_USER {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "memory_engine requires a human user token".to_string(),
+        ));
     }
     Ok(MemoryPrincipal::from(payload.principal))
 }
@@ -341,20 +329,18 @@ mod tests {
     fn principal(
         principal_type: &str,
         user_id: Option<&str>,
-        owner_user_id: Option<&str>,
         role: Option<&str>,
     ) -> MemoryPrincipal {
         MemoryPrincipal {
             principal_type: principal_type.to_string(),
             user_id: user_id.map(ToOwned::to_owned),
             role: role.map(ToOwned::to_owned),
-            owner_user_id: owner_user_id.map(ToOwned::to_owned),
         }
     }
 
     #[test]
-    fn agent_scope_uses_owner_user_id() {
-        let auth = MemoryAuthContext::User(principal("agent_account", None, Some("user_a"), None));
+    fn user_scope_uses_user_id() {
+        let auth = MemoryAuthContext::User(principal("human_user", Some("user_a"), None));
         assert!(auth.ensure_tenant_scope("user_a").is_ok());
         let err = auth
             .ensure_tenant_scope("user_b")

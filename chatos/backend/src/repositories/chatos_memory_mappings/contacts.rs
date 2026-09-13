@@ -5,21 +5,10 @@ use futures::TryStreamExt;
 use mongodb::bson::{doc, Document};
 use mongodb::options::FindOptions;
 
-use crate::core::values::optional_string_bson;
 use crate::models::memory_mapping::ChatosContact;
 use crate::repositories::db::with_db;
 
 use super::support::normalize_optional_text;
-
-#[derive(Debug, Clone)]
-pub struct UpdateContactTaskRunnerConfigInput {
-    pub enabled: bool,
-    pub base_url: Option<String>,
-    pub agent_account_id: Option<String>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub clear_password: bool,
-}
 
 pub async fn list_contacts(
     user_id: &str,
@@ -169,71 +158,6 @@ pub async fn create_contact_idempotent(
                     Err(err.to_string())
                 }
             }
-        })
-    })
-    .await
-}
-
-pub async fn update_contact_task_runner_config(
-    contact_id: &str,
-    input: UpdateContactTaskRunnerConfigInput,
-) -> Result<Option<ChatosContact>, String> {
-    let Some(existing) = get_contact_by_id(contact_id).await? else {
-        return Ok(None);
-    };
-    let updated_at = crate::core::time::now_rfc3339();
-    let base_url = normalize_optional_text(input.base_url.as_deref());
-    let agent_account_id = normalize_optional_text(input.agent_account_id.as_deref());
-    let username = normalize_optional_text(input.username.as_deref());
-    let password = match normalize_optional_text(input.password.as_deref()) {
-        Some(value) => Some(value),
-        None if input.clear_password => None,
-        None => existing.task_runner_password.clone(),
-    };
-    let enabled = input.enabled
-        && base_url.is_some()
-        && (agent_account_id.is_some() || (username.is_some() && password.is_some()));
-
-    with_db(|db| {
-        let contact_id = contact_id.to_string();
-        let base_url = base_url.clone();
-        let agent_account_id = agent_account_id.clone();
-        let username = username.clone();
-        let password = password.clone();
-        let updated_at = updated_at.clone();
-        Box::pin(async move {
-            let mut set_doc = doc! {
-                "task_runner_enabled": enabled,
-                "updated_at": &updated_at,
-            };
-            set_doc.insert(
-                "task_runner_base_url",
-                optional_string_bson(base_url.clone()),
-            );
-            set_doc.insert(
-                "task_runner_agent_account_id",
-                optional_string_bson(agent_account_id.clone()),
-            );
-            set_doc.insert(
-                "task_runner_username",
-                optional_string_bson(username.clone()),
-            );
-            set_doc.insert(
-                "task_runner_password",
-                optional_string_bson(password.clone()),
-            );
-            let result = db
-                .collection::<Document>("chatos_contacts")
-                .update_one(doc! { "id": &contact_id }, doc! { "$set": set_doc }, None)
-                .await
-                .map_err(|e| e.to_string())?;
-            if result.matched_count == 0 {
-                return Ok(None);
-            }
-            db.collection::<ChatosContact>("chatos_contacts")
-                .find_one(doc! { "id": &contact_id }, None)
-                .await
-                .map_err(|e| e.to_string())
         })
     })
     .await

@@ -3,19 +3,6 @@ use super::*;
 pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
     vec![
         secret_definition(
-            PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
-            "Task Runner Internal Secret",
-            "Plugin Management 调用 Task Runner 内部接口时使用的共享密钥",
-            "Plugin Management / Downstream Security",
-            "service",
-            Some("plugin-management-service"),
-            json!("change_me_plugin_management_task_runner_secret"),
-            "restart_required",
-            &["PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"],
-            361,
-            now,
-        ),
-        secret_definition(
             PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
             "Chatos Internal Secret",
             "Plugin Management 校验来自 Chatos Backend 的内部签名请求时使用的专用密钥",
@@ -116,23 +103,6 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS"],
             370,
-            now,
-        ),
-        definition(
-            PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-            "Task Runner Base URL",
-            "Plugin Management 调用 Task Runner 时使用的基础地址",
-            "Plugin Management / Downstream",
-            "service",
-            Some("plugin-management-service"),
-            "string",
-            json!("http://127.0.0.1:39090"),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL"],
-            371,
             now,
         ),
         definition(

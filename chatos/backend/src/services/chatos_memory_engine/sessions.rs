@@ -418,34 +418,6 @@ pub async fn get_chatos_message_by_id_for_tenant(
     Ok(message.filter(|message| !message_is_hidden(message)))
 }
 
-pub async fn get_chatos_message_by_id_in_session(
-    session: &Session,
-    message_id: &str,
-) -> Result<Option<Message>, String> {
-    Ok(
-        get_chatos_message_by_id_in_session_including_hidden(session, message_id)
-            .await?
-            .filter(|message| !message_is_hidden(message)),
-    )
-}
-
-pub async fn get_chatos_message_by_id_in_session_including_hidden(
-    session: &Session,
-    message_id: &str,
-) -> Result<Option<Message>, String> {
-    let mapping = build_thread_mapping(session)?;
-    let client = build_client()?;
-    let message = client
-        .get_record(
-            message_id,
-            Some(mapping.tenant_id.as_str()),
-            Some(mapping.thread_id.as_str()),
-        )
-        .await?
-        .map(engine_record_to_message);
-    Ok(message)
-}
-
 pub async fn upsert_chatos_message(
     session: &Session,
     message: &Message,

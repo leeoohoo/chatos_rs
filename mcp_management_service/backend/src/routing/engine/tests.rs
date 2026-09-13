@@ -115,11 +115,7 @@ fn external_http_is_local_and_internal_services_remain_managed() {
 
     let managed = resolve_one(
         context(WorkspaceProviderKind::None),
-        resource(
-            McpRouteResourceKind::System,
-            Some("task_runner_service"),
-            true,
-        ),
+        resource(McpRouteResourceKind::System, Some("agent_builder"), true),
     );
     assert_eq!(managed.provider_kind, McpProviderKind::InternalService);
 }

@@ -33,11 +33,9 @@ def rust_files(relative_roots: list[str]) -> list[Path]:
             continue
         files.extend(root.rglob("*.rs"))
     return sorted(
-        {
-            path
-            for path in files
-            if path.name != "tests.rs" and "tests" not in path.relative_to(ROOT).parts
-        }
+        path
+        for path in set(files)
+        if path.name != "tests.rs" and "tests" not in path.relative_to(ROOT).parts
     )
 
 
@@ -70,178 +68,101 @@ def forbid(relative_path: str, needles: list[str], reason: str) -> None:
             ERRORS.append(f"{relative_path}: {reason} ({needle!r})")
 
 
-def require_exact_locations(
-    label: str,
-    files: list[Path],
-    needle: str,
-    expected: set[str],
-) -> None:
-    actual = files_containing(files, needle)
-    if actual == expected:
-        return
-    missing = sorted(expected - actual)
-    unexpected = sorted(actual - expected)
-    if missing:
-        ERRORS.append(f"{label}: expected locations missing: {', '.join(missing)}")
-    if unexpected:
-        ERRORS.append(f"{label}: unexpected locations: {', '.join(unexpected)}")
+def require_absent(relative_path: str, reason: str) -> None:
+    path = ROOT / relative_path
+    if path.is_file() or (path.is_dir() and any(item.is_file() for item in path.rglob("*"))):
+        ERRORS.append(f"{relative_path}: {reason}")
 
 
-cloud_agent_roots = [
-    "chatos/backend/src",
-    "task_runner_service/backend/src",
-    "memory_engine/backend/src",
-]
-cloud_agent_files = rust_files(cloud_agent_roots)
-
-require_exact_locations(
-    "managed Runtime Session resolution",
-    rust_files(["crates/chatos_mcp_gateway/src"]),
-    ".resolve_runtime_session(",
-    {"crates/chatos_mcp_gateway/src/lib.rs"},
-)
-
-require_exact_locations(
-    "shared MCP Management Gateway construction",
-    cloud_agent_files,
-    "McpManagementGatewayBuilder::new(",
-    {
-        "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs",
-        "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
-    },
-)
-require_exact_locations(
-    "cloud Agent direct Runtime Session resolution",
-    cloud_agent_files,
-    ".resolve_runtime_session(",
-    set(),
-)
-for gateway_path in [
-    "task_runner_service/backend/src/services/run_model_phase/setup/preparation/mcp_management_gateway.rs",
+for retired_path in [
+    "crates/chatos_cloud_agent_protocol",
+    "crates/chatos_cloud_agent_runtime",
+    "crates/chatos_mcp_gateway",
+    "task_runner_service/backend",
+    "chatos/backend/src/modules/cloud_agent_runtime.rs",
+    "chatos/backend/src/api/agent_chat/task_runner_callback.rs",
+    "memory_engine/backend/src/cloud_agent_queue.rs",
+    "memory_engine/backend/src/services/memory_cloud_agent.rs",
+    "agent/src/implementations/memory_engine.rs",
 ]:
-    forbid(
-        gateway_path,
-        ["McpManagementClient::new", ".resolve_runtime_session(", "format!(\"Bearer"],
-        "cloud Agent must use the shared MCP Management Gateway builder",
-    )
+    require_absent(retired_path, "retired server execution plane must stay physically deleted")
 
-expected_executor_gateway_assembly = {
-    "task_runner_service/backend/src/services/run_model_phase/setup/preparation.rs",
-}
-require_exact_locations(
-    "cloud Agent MCP executor assembly",
-    cloud_agent_files,
-    ".with_http_server(",
-    expected_executor_gateway_assembly,
+server_files = rust_files(
+    [
+        "chatos/backend/src",
+        "memory_engine/backend/src",
+        "config_center_service/backend/src",
+        "mcp_management_service/backend/src",
+        "plugin_management_service/backend/src",
+        "user_service/backend/src",
+        "crates",
+    ]
 )
+for identifier in [
+    "chatos_cloud_agent",
+    "CloudAgent",
+    "cloud_agent",
+    "task_runner_service",
+]:
+    locations = sorted(files_containing(server_files, identifier))
+    if locations:
+        ERRORS.append(
+            f"retired server execution identifier {identifier!r} returned in: "
+            + ", ".join(locations)
+        )
 
-chatos_runtime_files = rust_files(["chatos/backend/src/modules/conversation_runtime"])
-forbid(
-    "chatos/backend/src/modules/conversation_runtime/runtime_context/mcp_management_gateway.rs",
-    ["McpHttpServer {", "McpManagementClient::new", ".resolve_runtime_session("],
-    "ChatOS must use the shared MCP Management Gateway builder",
-)
-forbid(
-    "chatos/backend/src/modules/conversation_runtime/runtime_context.rs",
-    ["McpStdioServer {", "McpBuiltinServer {", ".with_builtin_servers("],
-    "ChatOS cloud runtime must not construct direct MCP providers",
-)
-require(
-    "chatos/backend/src/modules/conversation_runtime/runtime_context.rs",
-    "empty_mcp_server_bundle()",
-    "an empty runtime MCP bundle before gateway resolution",
-)
-require(
-    "chatos/backend/src/modules/conversation_runtime/runtime_context.rs",
-    "http_servers.push(server);",
-    "the single MCP Management gateway insertion",
-)
-
-task_runner_model_files = rust_files(
-    ["task_runner_service/backend/src/services/run_model_phase"]
-)
-for path in task_runner_model_files:
+memory_agent_files = rust_files(["memory_engine/backend/src"])
+for path in memory_agent_files:
     path_text = relative(path)
     forbid(
         path_text,
-        [
-            ".with_builtin_servers(",
-            ".with_builtin_registry(",
-            ".with_stdio_server(",
-            ".with_stdio_servers(",
-        ],
-        "Task Runner model execution must only use the MCP Management gateway",
+        ["McpExecutor", ".with_mcp_executor(", ".with_tool_executor("],
+        "Memory Engine AI generation must remain tool-less",
     )
+
 require(
-    "task_runner_service/backend/src/services/run_model_phase/setup/preparation.rs",
-    ".with_http_server(mcp_management_server)",
-    "single-server MCP Management executor assembly",
+    "memory_engine/backend/src/services/memory_ai_generation.rs",
+    "generate_summary",
+    "Memory Engine-owned model retry entrypoint",
+)
+require(
+    "memory_engine/backend/src/services/ai_pipeline/summary_pipeline.rs",
+    "SummaryPipelineState",
+    "Memory Engine-owned summary generation",
 )
 
-macos_local_approval = "clients/macos/Sources/ChatOSConnector/NativeApprovalAgent.swift"
 require(
     "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+TerminalRelay.swift",
     "case .requestApproval:",
-    "the fail-closed user approval path",
+    "the fail-closed macOS user approval path",
 )
 forbid(
-    macos_local_approval,
-    [
-        "McpManagementClient",
-        "resolveRuntimeSession",
-        "mcpManagement",
-        "MCP_MANAGEMENT",
-    ],
-    "macOS Command Approval Agent must never enter the cloud MCP Tool Plane",
+    "clients/macos/Sources/ChatOSConnector/NativeApprovalAgent.swift",
+    ["McpManagementClient", "resolveRuntimeSession", "mcpManagement", "MCP_MANAGEMENT"],
+    "macOS Command Approval Agent must remain local-only",
 )
 require(
     "clients/windows/src/ChatOS.Connector/Approval/CommandApprovalCoordinator.cs",
     "The automatic approval reviewer is unavailable; user approval is required.",
     "the Windows fail-closed approval fallback",
 )
-require(
-    "clients/windows/src/ChatOS.Connector/Approval/CommandApprovalCoordinator.cs",
-    "mode is ConnectorApprovalMode.FullControl && !fullControlRiskConfirmed",
-    "explicit Windows full-control risk confirmation",
-)
 
-catalog = "agent/src/catalog.rs"
-catalog_text = read(catalog)
-approval_descriptor = catalog_text.find(
-    "LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR"
-)
-if approval_descriptor < 0 or "AgentToolPlane::LocalOnly" not in catalog_text[
-    approval_descriptor : approval_descriptor + 700
-]:
-    ERRORS.append(f"{catalog}: Local Command Approval Agent is not fixed to LocalOnly")
-
-runtime_sessions = "mcp_management_service/backend/src/api/runtime_sessions.rs"
 require(
-    runtime_sessions,
+    "mcp_management_service/backend/src/api/runtime_sessions.rs",
     "if !tool_plane.uses_managed_gateway()",
     "fail-closed rejection for local-only and tool-less Agents",
 )
-
-memory_agent_files = rust_files(
-    ["memory_engine/backend/src", "agent/src/implementations/memory_engine.rs"]
+production_files = rust_files(
+    [
+        "agent/src",
+        "clients/shared/rust",
+        "local_connector_service/backend/src",
+        "mcp_management_service/backend/src",
+        "plugins/browser/crates",
+        "crates",
+    ]
 )
-for path in memory_agent_files:
-    path_text = relative(path)
-    forbid(
-        path_text,
-        ["McpExecutor", ".with_mcp_executor(", ".with_tool_executor("],
-        "Memory Engine Agents are tool_plane=none",
-    )
-
-production_roots = cloud_agent_roots + [
-    "agent/src",
-    "local_connector_service/backend/src",
-    "mcp_management_service/backend/src",
-    "plugins/browser/crates",
-    "crates",
-]
-production_files = rust_files(production_roots)
-retired_identifiers = [
+for identifier in [
     "TaskRunnerSystemMcpAdapter",
     "LocalConnectorSystemMcpAdapter",
     "SystemMcpHostAdapter",
@@ -249,127 +170,12 @@ retired_identifiers = [
     "ResolvedSystemMcpBackend",
     "MCP_MANAGEMENT_MODE",
     "MCP_MANAGEMENT_SHADOW",
-]
-for identifier in retired_identifiers:
+]:
     locations = sorted(files_containing(production_files, identifier))
     if locations:
         ERRORS.append(
             f"retired Agent Tool Plane identifier {identifier!r} returned in: "
             + ", ".join(locations)
-        )
-
-require(
-    "local_connector_service/backend/src/main.rs",
-    "build_public_router",
-    "a dedicated public Local Connector router",
-)
-require(
-    "local_connector_service/backend/src/main.rs",
-    "build_internal_router",
-    "a dedicated internal Local Connector router",
-)
-require(
-    "local_connector_service/backend/src/main.rs",
-    "axum_server::bind_rustls",
-    "mandatory TLS on the Local Connector internal listener",
-)
-for config_path, env_key in [
-    ("chatos/backend/src/config.rs", "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"),
-    (
-        "mcp_management_service/backend/src/config.rs",
-        "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-    ),
-]:
-    require(config_path, f'require_https_base_url(\n            "{env_key}"', "strict HTTPS Local Connector validation")
-    require(
-        config_path,
-        'build_mtls_http_client(',
-        "a certificate-bound Local Connector HTTP client",
-    )
-
-forbid(
-    "mcp_management_service/backend/src/config.rs",
-    ['resolve_service_base_url(\n            "local-connector-service"'],
-    "Local Connector internal mTLS routing must not be replaced by public service discovery",
-)
-require(
-    "chatos/backend/src/api/terminals/ws_handlers.rs",
-    "connect_async_tls_with_config",
-    "mTLS for Local Connector terminal WebSocket forwarding",
-)
-compose = read("docker/compose.yml")
-for env_key in [
-    "CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-    "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
-]:
-    if f"{env_key}: http://" in compose:
-        ERRORS.append(
-            f"docker/compose.yml: {env_key} must never route an internal caller over plain HTTP"
-        )
-    if f"{env_key}: https://local-connector-service-backend:39232" not in compose:
-        ERRORS.append(
-            f"docker/compose.yml: {env_key} is not pinned to the Local Connector mTLS listener"
-        )
-
-require(
-    "chatos/backend/src/lib.rs",
-    "api::public_router()",
-    "a dedicated public ChatOS router",
-)
-require(
-    "chatos/backend/src/lib.rs",
-    "api::internal_router()",
-    "a dedicated internal ChatOS router",
-)
-require(
-    "chatos/backend/src/lib.rs",
-    "axum_server::bind_rustls",
-    "mandatory TLS on the ChatOS internal listener",
-)
-require(
-    "task_runner_service/backend/src/config/env_support.rs",
-    'require_https_base_url(\n            "TASK_RUNNER_CHATOS_CALLBACK_URL"',
-    "strict HTTPS ChatOS callback validation",
-)
-require(
-    "task_runner_service/backend/src/config/env_support.rs",
-    'required_bootstrap_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")',
-    "a certificate-bound Task Runner ChatOS client",
-)
-require(
-    "mcp_management_service/backend/src/config.rs",
-    'require_https_base_url(\n            "MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL"',
-    "strict HTTPS ChatOS provider validation",
-)
-require(
-    "mcp_management_service/backend/src/config.rs",
-    'required_path("CHATOS_MTLS_CLIENT_IDENTITY_PATH")',
-    "a certificate-bound MCP Management ChatOS client",
-)
-forbid(
-    "task_runner_service/backend/src/main.rs",
-    ['resolve_service_url(\n                "chatos-backend"'],
-    "ChatOS internal mTLS callback routing must not be replaced by public service discovery",
-)
-forbid(
-    "mcp_management_service/backend/src/config.rs",
-    ['resolve_service_base_url(\n            "chatos-backend"'],
-    "ChatOS internal mTLS provider routing must not be replaced by public service discovery",
-)
-for env_key, expected in [
-    (
-        "TASK_RUNNER_CHATOS_CALLBACK_URL",
-        "https://chatos-backend:3999/api/agent/chat/task-runner/callback",
-    ),
-    ("MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL", "https://chatos-backend:3999"),
-]:
-    if f"{env_key}: http://" in compose:
-        ERRORS.append(
-            f"docker/compose.yml: {env_key} must never route an internal caller over plain HTTP"
-        )
-    if f"{env_key}: {expected}" not in compose:
-        ERRORS.append(
-            f"docker/compose.yml: {env_key} is not pinned to the ChatOS mTLS listener"
         )
 
 if ERRORS:

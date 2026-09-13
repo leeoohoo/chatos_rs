@@ -6,7 +6,7 @@ English · [简体中文](./README.zh-CN.md)
 
 ChatOS is a native desktop workspace that lets AI keep working inside real projects. It goes beyond answering questions: it can read project context, break down requirements, execute background tasks, use local files, Git, terminals, and plugins, and present the full execution process, permission requests, and results to the user.
 
-The cloud coordinates conversations, tasks, memory, and capabilities. Native clients and the Local Connector execute operations only on explicitly authorized devices and workspaces. Together they provide a long-running workflow that users can inspect, guide, stop, and audit.
+Native clients own conversations and task execution. Server-side services are limited to accounts, model configuration and gateway access, memory, plugin metadata, and configuration publication. Local agents execute only inside explicitly authorized devices and workspaces, producing a workflow users can inspect, guide, stop, and audit.
 
 ## Product interfaces
 
@@ -21,7 +21,7 @@ The cloud coordinates conversations, tasks, memory, and capabilities. Native cli
 ## What the project is today
 
 - **Native desktop clients:** independent SwiftUI and WinUI applications for macOS and Windows. The retired Electron client is no longer the product runtime.
-- **Cloud orchestration:** conversations, tasks, agents, configuration, plugin metadata, and memory are managed by server-side services.
+- **Focused server services:** accounts, model configuration, memory, plugin metadata, and published configuration remain server-managed; conversation and task Agent loops run locally.
 - **Device-side execution:** every project binds an explicitly authorized local workspace. Files, Git, commands, local MCP servers, plugin applications, and device permissions execute through the Local Connector built into the native client.
 - **Observable background work:** complex requests can become resumable tasks with progress, logs, tool calls, approvals, retries, and final results.
 - **Long-term project context:** conversation summaries, project facts, and role-specific memory can be reused across sessions.
@@ -35,23 +35,20 @@ ChatOS does not silently move a device-scoped operation to a server filesystem o
 flowchart LR
     U[User] --> C[Native macOS / Windows client]
     C --> G[APISIX API gateway]
-    G --> S[Cloud business services]
-    S --> T[Task Runner and workers]
+    G --> S[Account / model gateway services]
     S --> M[Memory Engine]
-    S --> P[Plugin / MCP management]
-    T --> L[Local Connector service]
-    P --> L
-    L --> N[Native Local Connector]
-    N --> W[Authorized workspace]
-    N --> X[Git / terminal / local MCP / plugin apps]
+    S --> P[Plugin / configuration services]
+    C --> A[Local Main Chat / Task Runner agents]
+    A --> W[Authorized workspace]
+    A --> X[Git / terminal / local MCP / plugin apps]
     S --> H[Harness repository and integration plane]
 ```
 
 The boundary is intentional:
 
-- Cloud services are authoritative for account and task data.
-- The native client is authoritative for projects, local credentials, workspace authorization, and device capabilities.
-- Local Connector uses outbound connectivity and exposes only the workspace and capabilities the user authorized.
+- Server services are authoritative for accounts, model configuration, memory, and plugin metadata.
+- The native client is authoritative for conversations, tasks, runs, projects, local credentials, workspace authorization, and device capabilities.
+- The local agent runtime exposes only the workspace and capabilities the user authorized.
 - Harness manages repositories, synchronization, CI, and integrations; it is not a fallback project filesystem or command executor.
 
 ## Product areas
@@ -94,7 +91,6 @@ Plugins can combine MCP servers, skills, permission declarations, managed artifa
 | `clients/macos` | Swift 6.2 / SwiftUI native client and macOS Local Connector. |
 | `clients/windows` | .NET 8 / WinUI 3 native client, Windows Local Connector, Network Guard, and installer. |
 | `chatos/backend` | Main ChatOS API and conversation orchestration service. |
-| `task_runner_service/backend` | Background task API, workers, scheduler, and tool runtime. |
 | `memory_engine/backend` | Conversation summaries and layered project/subject memory. |
 | `mcp_management_service/backend` | MCP capability materialization, routing, and runtime sessions. |
 | `plugin_management_service/backend` | Plugin catalog, releases, packages, and runtime capability metadata. |
@@ -139,8 +135,7 @@ Plugin Management, and Config Center):
 ./scripts/local-client-stack.sh status
 ```
 
-This profile deliberately does not start the remote Task Runner, server-side MCP
-orchestration, Local Connector cloud execution, admin console, or website.
+This profile starts the complete server dependency set required by the local-agent client. The retired remote Task Runner execution plane is not part of the repository or deployment.
 - Harness: <http://localhost:3000>
 - Grafana: <http://localhost:3001>
 
@@ -164,7 +159,7 @@ make dev
 To rebuild only selected Compose services:
 
 ```bash
-make docker-rebuild SERVICES="chatos-backend task-runner-backend"
+make docker-rebuild SERVICES="chatos-backend memory-engine-backend"
 ```
 
 For faster host-side backend and administration frontend development:

@@ -3,8 +3,8 @@
 
 use axum::extract::State;
 use axum::{Extension, Json};
-use chatos_agent::ManagedRuntimeConfigBundle;
 
+use crate::managed_config::ManagedRuntimeConfigBundle;
 use crate::models::CurrentUser;
 use crate::state::AppState;
 

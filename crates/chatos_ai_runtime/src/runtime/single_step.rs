@@ -281,11 +281,10 @@ pub(super) async fn execute_once(
     }
 
     if response.content.trim().is_empty() {
-        // A cloud-agent continuation is persisted and executed by a later queue
-        // delivery, so the in-process guard used by `run_turn` cannot protect
-        // this path.  Treat a second consecutive empty final response as a
-        // terminal provider failure instead of creating an unbounded chain of
-        // `empty_final_response_followup` events.
+        // Single-step callers may persist a continuation between invocations,
+        // so the in-process guard used by `run_turn` cannot protect this path.
+        // Treat a second consecutive empty final response as a terminal
+        // provider failure instead of creating an unbounded continuation chain.
         if reason == "empty_final_response_followup" {
             return Ok(AiSingleStepOutcome::Failed {
                 error: "模型在补充追问后仍返回空结果，已停止任务以避免无限重试".to_string(),

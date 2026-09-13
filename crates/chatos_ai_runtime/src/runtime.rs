@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+#[cfg(feature = "local-agent-loop")]
 use chatos_mcp_runtime::ToolResult;
 #[cfg(feature = "local-agent-loop")]
 use tracing::info;
@@ -28,6 +29,7 @@ use crate::request_retry::is_previous_response_id_unsupported_error;
 use crate::tool_call::tool_calls_value_has_items;
 #[cfg(feature = "local-agent-loop")]
 use crate::tool_runtime::append_tool_results_with_budget;
+#[cfg(feature = "local-agent-loop")]
 use crate::traits::SaveToolRecordInput;
 use crate::traits::{
     MemoryRecordWriter, ModelRequest, SaveAssistantRecordInput, SaveRecordInput, ToolExecutor,
@@ -69,6 +71,7 @@ use self::input_items::{
 #[cfg(feature = "local-agent-loop")]
 use self::model_request::dispatch_model_request;
 use self::persistence::normalized_option;
+#[cfg(feature = "local-agent-loop")]
 use self::persistence::should_persist_tool_result;
 #[cfg(feature = "local-agent-loop")]
 use self::request_error::{handle_model_request_error, ModelRequestErrorAction};
@@ -148,19 +151,8 @@ impl AiRuntime {
         writer.save_record(input).await
     }
 
-    /// Persists a tool batch executed by an external event-driven MCP service.
-    /// The local approval Agent still uses the in-process loop; cloud Agents
-    /// call this after the aggregate MCP result arrives.
-    pub async fn persist_external_tool_results(
-        &self,
-        options: &AiRuntimeOptions,
-        tool_results: &[ToolResult],
-    ) -> Result<(), String> {
-        self.save_tool_records(options, tool_results).await
-    }
-
-    /// Executes one model request and returns any tool work or retry as data.
-    /// Cloud consumers persist that outcome and end the current MQ delivery.
+    /// Executes one model request and returns any tool work or retry as data to
+    /// the local durable Agent scheduler.
     pub async fn execute_once(
         &self,
         request: AiSingleStepRequest,
@@ -783,6 +775,7 @@ impl AiRuntime {
             .await
     }
 
+    #[cfg(feature = "local-agent-loop")]
     async fn save_tool_records(
         &self,
         options: &AiRuntimeOptions,

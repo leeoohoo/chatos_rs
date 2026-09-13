@@ -464,7 +464,6 @@ export const enUSMessages: Record<string, string> = {
   'builtin.MemoryCommandReader': 'Memory Command Reader',
   'builtin.MemoryPluginReader': 'Memory Plugin Reader',
   'mcpName.local_connector_approval': 'Command Approval Decision',
-  'mcpName.task_runner_service': 'Task Runner Task Control',
   'agentKey.chatos_conversation_agent': 'Chat OS Conversation Agent',
   'agentKey.task_runner_run_phase': 'Task Runner Execution Agent',
   'agentKey.local_connector_command_approval_agent': 'Command Approval Agent',

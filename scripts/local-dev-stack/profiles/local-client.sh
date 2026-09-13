@@ -28,7 +28,6 @@ export CHATOS_LOCAL_DEV_HARNESS_PROVISIONING_ENABLED=false
 stack_after_start() {
   local item forbidden_name forbidden_port forbidden_pid
   local forbidden_services=(
-    "task-runner-backend|39090"
     "local-connector-service-backend|39230"
     "mcp-management-service-backend|39280"
     "official-website-backend|39250"
@@ -63,7 +62,7 @@ Memory Engine:            http://127.0.0.1:${MEMORY_ENGINE_PORT:-7081}
 Plugin Management:        http://127.0.0.1:${PLUGIN_MANAGEMENT_SERVICE_PORT:-39260}
 Model Gateway/API shell:  http://127.0.0.1:${BACKEND_PORT:-3997}
 
-Remote Task Runner, MCP orchestration, Local Connector cloud execution,
+MCP orchestration, Local Connector cloud execution,
 admin/website services and frontends are not started by this profile.
 
 Status:  $STACK_COMMAND status

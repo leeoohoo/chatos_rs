@@ -74,43 +74,6 @@ pub(super) async fn resolve_memory_summary_model_runtime(
     ))
 }
 
-pub(super) async fn resolve_model_runtime_by_id(
-    config: &AppConfig,
-    owner_user_id: &str,
-    model_config_id: &str,
-) -> Result<EngineModelProfile, String> {
-    let owner_user_id = required_owner_user_id(owner_user_id)?;
-    let model_config_id = model_config_id.trim();
-    if model_config_id.is_empty() {
-        return Err("model_config_id is required".to_string());
-    }
-    let settings: UserModelSettings = request_user_service_json(
-        config,
-        MODEL_SETTINGS_READ_SCOPE,
-        format!(
-            "/api/internal/users/{}/model-settings",
-            urlencoding::encode(owner_user_id)
-        )
-        .as_str(),
-    )
-    .await?;
-    let runtime = load_model_runtime(config, owner_user_id, model_config_id).await?;
-    let is_memory_summary_default = settings
-        .memory_summary_model_config_id
-        .as_deref()
-        .is_some_and(|selected| selected.trim() == model_config_id);
-    let thinking_level = if is_memory_summary_default {
-        settings.memory_summary_thinking_level
-    } else {
-        None
-    };
-    Ok(runtime.into_profile(
-        thinking_level,
-        normalize_retries(settings.model_request_max_retries),
-        is_memory_summary_default,
-    ))
-}
-
 async fn load_model_runtime(
     config: &AppConfig,
     owner_user_id: &str,

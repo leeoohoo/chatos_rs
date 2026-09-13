@@ -39,7 +39,6 @@ pub(crate) async fn load_summary_job_settings(
                     .clamp(128, MAX_THREAD_SUMMARY_TARGET_TOKENS),
             )
         },
-        cloud_owner_entity_id: None,
-        cloud_resume_kind: None,
+        job_run_id: None,
     })
 }

@@ -8,9 +8,7 @@ use super::ProviderDispatcher;
 impl ProviderDispatcher {
     pub fn supports(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
-            McpProviderKind::InternalService => {
-                self.task_runner.supports(route) || self.chatos.supports(route)
-            }
+            McpProviderKind::InternalService => self.chatos.supports(route),
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::Embedded => false,
             McpProviderKind::PluginLocal => self.plugins.supports(route),
@@ -20,9 +18,7 @@ impl ProviderDispatcher {
 
     pub fn supports_cancellation(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
-            McpProviderKind::InternalService => {
-                self.task_runner.supports(route) || self.chatos.supports(route)
-            }
+            McpProviderKind::InternalService => self.chatos.supports(route),
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::PluginLocal => self.plugins.supports_cancellation(route),
             _ => false,

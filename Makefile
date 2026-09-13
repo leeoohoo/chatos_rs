@@ -7,7 +7,7 @@ SHELL := /bin/bash
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs
 .PHONY: build build-rust build-frontends build-macos-client build-windows-client build-browser-plugin build-computer-use-plugin build-document-plugin build-plugins
 .PHONY: test smoke smoke-repo smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
-.PHONY: test-chat-app-server test-user-service test-task-runner-service test-local-connector-service test-mcp-management-service test-memory-engine
+.PHONY: test-chat-app-server test-user-service test-local-connector-service test-mcp-management-service test-memory-engine
 .PHONY: test-macos-client test-windows-client test-browser-plugin test-computer-use-plugin test-document-plugin test-plugins
 .PHONY: type-check-admin-console
 
@@ -20,7 +20,7 @@ help:
 	@echo "  make docker-up              # pull/start the prebuilt Docker stack"
 	@echo "  make docker-fast            # start/reconcile existing Docker images without pulling"
 	@echo "  make docker-dev             # build/start Docker images from local source"
-	@echo "  make docker-rebuild         # rebuild selected services: SERVICES=\"task-runner-backend\""
+	@echo "  make docker-rebuild         # rebuild selected services: SERVICES=\"chatos-backend\""
 	@echo "  make docker-restart         # recreate the prebuilt Docker stack"
 	@echo "  make docker-restart-fast    # recreate existing Docker images without pulling"
 	@echo "  make docker-restart-dev     # recreate with local image builds"
@@ -129,7 +129,7 @@ build-document-plugin:
 
 build-plugins: build-browser-plugin build-computer-use-plugin build-document-plugin
 
-test: smoke test-chat-app-server test-user-service test-task-runner-service test-local-connector-service test-mcp-management-service test-memory-engine
+test: smoke test-chat-app-server test-user-service test-local-connector-service test-mcp-management-service test-memory-engine
 
 smoke: smoke-repo
 
@@ -163,9 +163,6 @@ test-chat-app-server:
 
 test-user-service:
 	@cd user_service/backend && cargo test -q
-
-test-task-runner-service:
-	@cargo test -p task_runner_service_backend -q
 
 test-local-connector-service:
 	@cargo test -p local_connector_service_backend -q

@@ -12,7 +12,7 @@ use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::Value;
 use uuid::Uuid;
 
-use chatos_agent::RemoteControlTrustConfigBundle;
+use crate::managed_config::RemoteControlTrustConfigBundle;
 
 use crate::managed_config::PlatformRelaySigningConfig;
 use crate::relay::RelayRequest;

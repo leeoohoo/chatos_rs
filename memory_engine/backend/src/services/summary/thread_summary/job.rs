@@ -36,6 +36,7 @@ impl FrozenThreadSummarySelection {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn from_metadata(metadata: Option<&serde_json::Value>) -> Result<Self, String> {
         let frozen = metadata
             .and_then(|value| value.get("frozen_selection"))

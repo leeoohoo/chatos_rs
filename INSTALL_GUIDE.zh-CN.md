@@ -78,11 +78,11 @@ make docker-fast
 本地只改了某个服务时，不要全量 `dev`，直接重建对应 Compose service：
 
 ```bash
-docker/deploy.sh rebuild task-runner-backend
+docker/deploy.sh rebuild memory-engine-backend
 docker/deploy.sh rebuild chatos-backend
 docker/deploy.sh build-services
 # 或
-make docker-rebuild SERVICES="task-runner-backend"
+make docker-rebuild SERVICES="memory-engine-backend"
 ```
 
 部署脚本默认会在成功更新镜像后自动清理 `<none>:<none>` dangling 镜像。如果调试时需要保留这些镜像，可以在 `docker/bootstrap.conf` 里设置：
@@ -96,11 +96,11 @@ CHATOS_DOCKER_PRUNE_DANGLING_IMAGES=false
 ```bash
 docker/deploy.sh ps
 docker/deploy.sh logs
-docker/deploy.sh logs task-runner-backend
+docker/deploy.sh logs memory-engine-backend
 docker/deploy.sh restart
 docker/deploy.sh fast
 docker/deploy.sh dev
-docker/deploy.sh rebuild task-runner-backend
+docker/deploy.sh rebuild memory-engine-backend
 docker/deploy.sh build
 docker/deploy.sh clean-images
 docker/deploy.sh down

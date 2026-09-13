@@ -5,9 +5,6 @@ use chatos_mcp::{
     system_mcp_descriptor_for_record, system_mcp_provider_skills, system_mcp_tool_catalog,
     SystemMcpToolCatalog,
 };
-use chatos_service_runtime::http_body::{read_response_json_limited, JSON_BODY_LIMIT_BYTES};
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::config::AppConfig;
@@ -19,20 +16,12 @@ pub(crate) struct LiveMcpDescriptor {
     pub tools: Vec<Value>,
 }
 
-#[derive(Debug, Deserialize)]
-struct TaskRunnerProviderDescriptor {
-    #[serde(default)]
-    skills: Vec<McpProviderSkill>,
-    #[serde(default)]
-    tools: Vec<Value>,
-}
-
 pub(crate) async fn live_mcp_descriptor(
-    config: &AppConfig,
+    _config: &AppConfig,
     record: &McpRecord,
 ) -> Result<Option<LiveMcpDescriptor>, String> {
     if system_mcp_descriptor_for_record(record).is_some() {
-        return live_system_mcp_descriptor(config, record).await.map(Some);
+        return live_system_mcp_descriptor(record).await.map(Some);
     }
     match record.runtime.kind.as_str() {
         // External MCP runtimes are executed and inspected only by the Local
@@ -43,15 +32,9 @@ pub(crate) async fn live_mcp_descriptor(
     }
 }
 
-async fn live_system_mcp_descriptor(
-    config: &AppConfig,
-    record: &McpRecord,
-) -> Result<LiveMcpDescriptor, String> {
+async fn live_system_mcp_descriptor(record: &McpRecord) -> Result<LiveMcpDescriptor, String> {
     let descriptor = system_mcp_descriptor_for_record(record)
         .ok_or_else(|| format!("unknown system MCP: {}", record.id))?;
-    if descriptor.key == chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService {
-        return fetch_task_runner_descriptor(config).await;
-    }
     let tools = match system_mcp_tool_catalog(descriptor.key)? {
         SystemMcpToolCatalog::Static(tools) => tools,
         SystemMcpToolCatalog::Dynamic => Vec::new(),
@@ -62,33 +45,6 @@ async fn live_system_mcp_descriptor(
         .collect::<Result<Vec<McpProviderSkill>, _>>()
         .map_err(|error| format!("decode system MCP provider skills failed: {error}"))?;
     Ok(LiveMcpDescriptor { skills, tools })
-}
-
-async fn fetch_task_runner_descriptor(config: &AppConfig) -> Result<LiveMcpDescriptor, String> {
-    let url = format!(
-        "{}/api/mcp/provider-descriptor",
-        config.task_runner_base_url.trim_end_matches('/')
-    );
-    let response = build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
-        .map_err(|err| format!("build Task Runner descriptor client failed: {err}"))?
-        .get(url)
-        .send()
-        .await
-        .map_err(|err| format!("load Task Runner MCP descriptor failed: {err}"))?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "load Task Runner MCP descriptor returned HTTP {}",
-            response.status()
-        ));
-    }
-    let descriptor =
-        read_response_json_limited::<TaskRunnerProviderDescriptor>(response, JSON_BODY_LIMIT_BYTES)
-            .await
-            .map_err(|err| format!("decode Task Runner MCP descriptor failed: {err}"))?;
-    Ok(LiveMcpDescriptor {
-        skills: descriptor.skills,
-        tools: descriptor.tools,
-    })
 }
 
 #[cfg(test)]

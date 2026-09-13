@@ -7,7 +7,7 @@ use crate::models::{now_rfc3339, RunSubjectMemoryJobRequest, UpsertSubjectMemory
 use crate::repositories::subject_memories;
 use crate::services::ai_pipeline::{estimate_tokens_text, SummaryBuildResult};
 
-use super::super::builders::build_subject_memory_rollup;
+use super::super::builders::{build_subject_memory_rollup, subject_memory_generation_lease};
 use super::super::render::{
     build_memory_metadata, decorate_generated_text, digest_from_ids, subject_memory_to_rollup_block,
 };
@@ -94,6 +94,7 @@ pub(crate) async fn process_rollup_selection(
             overflow_retry_count: 0,
         }
     } else {
+        let lease = subject_memory_generation_lease(req, scope_lock_owner);
         match build_subject_memory_rollup(
             config,
             db,
@@ -104,15 +105,7 @@ pub(crate) async fn process_rollup_selection(
             settings.target_summary_tokens,
             level,
             target_level,
-            job_run_id,
-            serde_json::json!({
-                "resume_kind": "subject_memory_job",
-                "job_run_id": job_run_id,
-                "request": req,
-                "from_scope_runner": from_scope_runner,
-                "scope_lock_owner": scope_lock_owner,
-                "scope_key": req.scope_key,
-            }),
+            lease.as_ref(),
         )
         .await
         {

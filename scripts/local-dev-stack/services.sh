@@ -55,9 +55,6 @@ start_backend() {
     if mcp_management_identity="$(mcp_management_client_identity_path "$service_name")"; then
       export MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH="$mcp_management_identity"
     fi
-    if task_runner_identity="$(task_runner_client_identity_path "$service_name")"; then
-      export TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH="$task_runner_identity"
-    fi
     if memory_engine_identity="$(memory_engine_client_identity_path "$service_name")"; then
       export MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH="$memory_engine_identity"
     fi
@@ -116,10 +113,6 @@ ensure_config_center_mtls_material() {
 
 ensure_mcp_management_mtls_material() {
   "$ROOT_DIR/scripts/generate-mcp-management-mtls.sh" "$MCP_MANAGEMENT_MTLS_DIR"
-}
-
-ensure_task_runner_mtls_material() {
-  "$ROOT_DIR/scripts/generate-task-runner-mtls.sh" "$TASK_RUNNER_MTLS_DIR"
 }
 
 ensure_chatos_mtls_material() {
@@ -228,14 +221,11 @@ valkey_password = os.environ.get("VALKEY_PASSWORD", "change_me_valkey_password")
 valkey_port = os.environ.get("VALKEY_PORT", "6379")
 valkey_url = f"redis://:{valkey_password}@127.0.0.1:{valkey_port}/0"
 desired.update({
-    "task_runner.queue.callback_delivery_mode": "rabbitmq",
-    "task_runner.queue.rabbitmq_url": rabbitmq_url,
-    "task_runner.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "user_service.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "mcp_management.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "mcp_management.async_tool.dispatch_mode": "rabbitmq",
     "mcp_management.async_tool.rabbitmq_url": rabbitmq_url,
-    "mcp_management.security.allowed_internal_callers": "chatos,task-runner,configuration-center",
+    "mcp_management.security.allowed_internal_callers": "chatos,configuration-center",
     "local_connector.coordination.valkey_url": valkey_url,
     "chatos.observability.otlp_endpoint": "http://127.0.0.1:4317",
 })
@@ -516,50 +506,6 @@ PY
   echo "[INFO] published local connector managed relay trust settings to configuration center"
 }
 
-ensure_managed_queue_consumers() {
-  local timeout_seconds="${CHATOS_LOCAL_DEV_QUEUE_TIMEOUT_SECONDS:-60}"
-  local elapsed=0
-  local queue_table
-  local rabbitmq_container="${COMPOSE_PROJECT_NAME}-rabbitmq-1"
-  local -a required_queues=(
-    "mcp_management.async.dispatch"
-    "cloud_agent.task_runner.runtime"
-    "task_runner.run.post_process"
-    "task_runner.callback.delivery"
-  )
-
-  while (( elapsed < timeout_seconds )); do
-    queue_table="$(
-      docker exec "$rabbitmq_container" \
-        rabbitmqctl -q list_queues name consumers 2>/dev/null || true
-    )"
-    if python3 - "$queue_table" "${required_queues[@]}" <<'PY'
-import sys
-
-rows = {}
-for line in sys.argv[1].splitlines():
-    parts = line.split("\t")
-    if len(parts) == 2:
-        try:
-            rows[parts[0]] = int(parts[1])
-        except ValueError:
-            pass
-missing = [name for name in sys.argv[2:] if rows.get(name, 0) < 1]
-raise SystemExit(0 if not missing else 1)
-PY
-    then
-      echo "[OK] RabbitMQ managed queues have active consumers"
-      return 0
-    fi
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
-
-  echo "[ERROR] RabbitMQ managed queues did not acquire consumers within ${timeout_seconds}s" >&2
-  printf '%s\n' "$queue_table" >&2
-  return 1
-}
-
 ensure_frontend_dependencies() {
   local app_dir="$1"
   local app_path="$ROOT_DIR/$app_dir"
@@ -639,7 +585,6 @@ start_all() {
   ensure_dirs
   ensure_config_center_mtls_material
   ensure_mcp_management_mtls_material
-  ensure_task_runner_mtls_material
   ensure_chatos_mtls_material
   ensure_local_connector_mtls_material
   ensure_user_service_mtls_material
@@ -673,9 +618,6 @@ start_all() {
         echo "[INFO] restarting user-service-backend after managed configuration publication"
         start_backend "$name" "$service_name" "$package" "$health_path" "$port" "$bin" "$env_overrides"
       fi
-    fi
-    if [[ "$name" == "task-runner-scheduler" ]]; then
-      ensure_managed_queue_consumers
     fi
   done
   if stack_has_frontends; then

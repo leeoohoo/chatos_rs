@@ -91,7 +91,6 @@ pub(crate) async fn prepare_thread_rollup(
         level,
         selected,
         trigger_reason,
-        cloud_job_run_id: None,
     }))
 }
 
@@ -113,7 +112,6 @@ pub(crate) async fn run_prepared_thread_rollup(
         level,
         selected,
         trigger_reason,
-        cloud_job_run_id,
     } = prepared;
     if prepared_thread_id != thread.id {
         return Err("prepared rollup thread_id mismatch".to_string());
@@ -122,25 +120,17 @@ pub(crate) async fn run_prepared_thread_rollup(
         return Ok(empty_rollup_result());
     };
 
-    let job_run = if let Some(job_run_id) = cloud_job_run_id {
-        crate::repositories::control_plane::get_job_run_by_id(db, job_run_id.as_str())
-            .await?
-            .ok_or_else(|| format!("rollup job run not found: {job_run_id}"))?
-    } else {
-        create_rollup_job_run(
-            db,
-            tenant_id,
-            source_id,
-            thread.id.as_str(),
-            thread.subject_id.as_str(),
-            trigger_type,
-        )
-        .await?
-    };
+    let job_run = create_rollup_job_run(
+        db,
+        tenant_id,
+        source_id,
+        thread.id.as_str(),
+        thread.subject_id.as_str(),
+        trigger_type,
+    )
+    .await?;
     let mut settings = settings.clone();
-    settings.cloud_owner_entity_id = Some(job_run.id.clone());
-    settings.cloud_source_id = Some(source_id.to_string());
-    settings.cloud_thread_id = Some(thread_id.to_string());
+    settings.job_run_id = Some(job_run.id.clone());
     let Some(_locked_thread) = threads::try_acquire_rollup_slot(
         db,
         tenant_id,
@@ -417,9 +407,6 @@ pub(crate) async fn run_prepared_thread_rollup(
     .await;
 
     if let Err(err) = &result {
-        if err == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED {
-            return result;
-        }
         finish_rollup_job_run(
             db,
             job_run.id.as_str(),

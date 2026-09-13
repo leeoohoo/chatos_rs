@@ -396,8 +396,6 @@ pub async fn resolve_model_runtime_for_request(
     session_id: Option<&str>,
     user_id: Option<&str>,
     default_model: &str,
-    request_reasoning_enabled: Option<bool>,
-    respect_model_flags: bool,
 ) -> Result<ResolvedChatModelConfig, String> {
     let cfg = Config::try_get()?;
 
@@ -451,8 +449,6 @@ pub async fn resolve_model_runtime_for_request(
         default_model,
         &cfg.openai_api_key,
         &cfg.openai_base_url,
-        request_reasoning_enabled,
-        respect_model_flags,
     );
     resolved.model_config_id = Some(profile.id.clone());
     Ok(resolved)

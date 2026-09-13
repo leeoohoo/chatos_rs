@@ -10,9 +10,6 @@ ALL_DOCKER_APP_SERVICES=(
   plugin-management-backend
   local-connector-service-backend
   mcp-management-service-backend
-  task-runner-backend
-  task-runner-worker
-  task-runner-scheduler
   chatos-backend
   official-website-backend
   admin-console-frontend
@@ -41,15 +38,6 @@ stack_service_definition() {
       ;;
     mcp-management-service-backend)
       printf '%s\n' "mcp-management-service-backend|mcp-management-service|mcp_management_service/backend/Cargo.toml|/health|39280|mcp_management_service_backend|-"
-      ;;
-    task-runner-backend)
-      printf '%s\n' "task-runner-backend|task-runner|task_runner_service/backend/Cargo.toml|/api/health|39090|task_runner_service_backend|TASK_RUNNER_ROLE=api TASK_RUNNER_WORKER_ID=task-runner-api-local"
-      ;;
-    task-runner-worker)
-      printf '%s\n' "task-runner-worker|task-runner|task_runner_service/backend/Cargo.toml|-|-|task_runner_service_backend|TASK_RUNNER_ROLE=worker TASK_RUNNER_WORKER_ID=task-runner-worker-local"
-      ;;
-    task-runner-scheduler)
-      printf '%s\n' "task-runner-scheduler|task-runner|task_runner_service/backend/Cargo.toml|-|-|task_runner_service_backend|TASK_RUNNER_ROLE=scheduler TASK_RUNNER_WORKER_ID=task-runner-scheduler-local"
       ;;
     chatos-backend)
       printf '%s\n' "chatos-backend|chatos-backend|chatos/backend/Cargo.toml|/health|3997|chat_app_server_rs|-"

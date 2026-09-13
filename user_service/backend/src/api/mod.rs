@@ -13,19 +13,17 @@ use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use crate::auth::{
-    bearer_token_from_headers, decode_any_user_service_token, unauthorized, CurrentPrincipal,
+    bearer_token_from_headers, decode_user_service_token, unauthorized, CurrentPrincipal,
 };
-use crate::models::{PRINCIPAL_TYPE_AGENT_ACCOUNT, PRINCIPAL_TYPE_HUMAN_USER};
+use crate::models::PRINCIPAL_TYPE_HUMAN_USER;
 use crate::state::AppState;
 
-mod agents;
 mod auth;
 mod internal_auth;
 mod internal_models;
 mod invite_codes;
 mod models;
 mod system;
-mod token_exchange;
 mod users;
 
 fn protected_api(state: AppState) -> Router<AppState> {
@@ -61,18 +59,6 @@ fn protected_api(state: AppState) -> Router<AppState> {
             post(users::retry_harness_provisioning),
         )
         .route(
-            "/api/agent-accounts",
-            get(agents::list_agent_accounts).post(agents::create_agent_account),
-        )
-        .route(
-            "/api/agent-accounts/{id}",
-            patch(agents::update_agent_account),
-        )
-        .route(
-            "/api/agent-accounts/{id}/reset-password",
-            post(agents::reset_agent_password),
-        )
-        .route(
             "/api/model-configs",
             get(models::list_model_configs).post(models::create_model_config),
         )
@@ -103,14 +89,6 @@ fn protected_api(state: AppState) -> Router<AppState> {
         .route(
             "/api/model-configs/{id}/refresh",
             post(models::refresh_model_config_provider_models),
-        )
-        .route(
-            "/api/token/exchange/task-runner",
-            post(token_exchange::exchange_task_runner_token),
-        )
-        .route(
-            "/api/token/exchange/agent",
-            post(token_exchange::exchange_task_runner_token),
         )
         .route("/api/system/config", get(system::get_system_config))
         .route_layer(middleware::from_fn_with_state(state, require_auth))
@@ -146,14 +124,6 @@ pub fn build_internal_router(state: AppState) -> Router {
             .route(
                 "/api/internal/users/{user_id}/model-settings",
                 get(internal_models::get_user_model_settings),
-            )
-            .route(
-                "/api/internal/task-runner/model-configs",
-                get(internal_models::list_task_model_configs),
-            )
-            .route(
-                "/api/internal/task-runner/model-configs/{model_config_id}",
-                get(internal_models::get_task_model_config),
             )
             .with_state(state),
         "internal",
@@ -206,7 +176,7 @@ pub async fn require_auth(
     }
 
     let token = bearer_token_from_headers(request.headers()).map_err(|err| unauthorized(&err))?;
-    let claims = decode_any_user_service_token(token.as_str(), &state.config)
+    let claims = decode_user_service_token(token.as_str(), &state.config)
         .map_err(|_| unauthorized("invalid or expired token"))?;
     if state
         .store
@@ -247,39 +217,6 @@ async fn refresh_principal_identity(
             principal.username = Some(user.username);
             principal.display_name = Some(user.display_name);
             principal.role = Some(user.role);
-            Ok(())
-        }
-        PRINCIPAL_TYPE_AGENT_ACCOUNT => {
-            let Some(agent_account_id) = principal.agent_account_id.as_deref() else {
-                return Err(unauthorized("token missing agent identity"));
-            };
-            let Some(agent) = state
-                .store
-                .find_agent_by_id(agent_account_id)
-                .await
-                .map_err(internal_error)?
-            else {
-                return Err(unauthorized("agent account not found"));
-            };
-            if !agent.enabled {
-                return Err(unauthorized("agent account has been disabled"));
-            }
-            let Some(owner) = state
-                .store
-                .find_user_by_id(agent.owner_user_id.as_str())
-                .await
-                .map_err(internal_error)?
-            else {
-                return Err(unauthorized("agent owner not found"));
-            };
-            if !owner.enabled {
-                return Err(unauthorized("agent owner has been disabled"));
-            }
-            principal.username = Some(agent.username);
-            principal.display_name = Some(agent.display_name);
-            principal.owner_user_id = Some(owner.id);
-            principal.owner_username = Some(owner.username);
-            principal.owner_display_name = Some(owner.display_name);
             Ok(())
         }
         _ => Err(unauthorized("unsupported principal type")),
@@ -341,16 +278,13 @@ mod tests {
             jwt_secret: "test-secret".to_string(),
             jwt_issuer: "user_service".to_string(),
             user_service_audience: "user_service".to_string(),
-            task_runner_audience: "task_runner".to_string(),
             user_access_ttl_seconds: 3600,
-            task_runner_access_ttl_seconds: 3600,
             super_admin_username: "admin".to_string(),
             super_admin_password: "password".to_string(),
             super_admin_display_name: "Admin".to_string(),
             memory_engine_internal_api_secret: Some(
                 "test-memory-engine-user-service-secret".to_string(),
             ),
-            task_runner_internal_api_secret: None,
             downstream_request_timeout_ms: 5000,
             harness_provisioning_enabled: false,
             harness_base_url: None,

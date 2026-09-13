@@ -19,7 +19,7 @@ mod system_mcps;
 
 use agent_bindings::seed_agent_bindings;
 #[cfg(test)]
-use agent_bindings::{binding_matches_seed_variant, task_runner_run_phase_optional_builtin_kinds};
+use agent_bindings::task_runner_run_phase_optional_builtin_kinds;
 pub(crate) use agent_prompts::agent_prompt_profiles_for_agent;
 use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 #[cfg(test)]
@@ -33,16 +33,8 @@ use system_mcps::{
 use system_mcps::{builtin_resource_id, remove_retired_system_mcps, seed_system_mcps};
 
 pub use chatos_plugin_management_sdk::{
-    CHATOS_TASK_RUNNER_MCP_RESOURCE_ID, LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID,
-    TASK_PROCESS_LOG_MCP_RESOURCE_ID,
+    LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID, TASK_PROCESS_LOG_MCP_RESOURCE_ID,
 };
-const CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST: &[&str] = &[
-    "list_tasks",
-    "get_task",
-    "get_task_stats",
-    "create_task",
-    "wait_for_task_completion",
-];
 const CHATOS_CONVERSATION_AGENT_KEY: &str = SystemAgentKey::ChatosConversationAgent.as_str();
 const TASK_RUNNER_RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
 const LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY: &str =
@@ -62,7 +54,6 @@ const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "local_connector_client_agent",
     "memory_engine_context_agent",
 ];
-const CHATOS_TASK_RUNNER_AGENT_KEYS: &[&str] = &[CHATOS_CONVERSATION_AGENT_KEY];
 const TASK_RUNNER_PHASE_AGENT_KEYS: &[&str] = &[TASK_RUNNER_RUN_AGENT_KEY];
 pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
     remove_retired_system_agents(store).await?;

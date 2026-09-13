@@ -16,7 +16,6 @@ use super::job::{run_subject_memory_job_internal, subject_memory_job_has_work};
 
 enum ScopeExecutionOutcome {
     Success(RunSubjectMemoryJobResponse),
-    Deferred,
     Failed {
         tenant_id: String,
         source_id: String,
@@ -122,12 +121,6 @@ async fn run_registered_subject_memory_scopes_internal(
                         completed_result: Some(result),
                     },
                 },
-                Err(error)
-                    if error
-                        == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED =>
-                {
-                    ScopeExecutionOutcome::Deferred
-                }
                 Err(error) => ScopeExecutionOutcome::Failed {
                     tenant_id,
                     source_id,
@@ -144,7 +137,6 @@ async fn run_registered_subject_memory_scopes_internal(
 
     for outcome in execution_results {
         match outcome {
-            ScopeExecutionOutcome::Deferred => {}
             ScopeExecutionOutcome::Success(result) => {
                 if result.generated_memories > 0 {
                     out.generated_scopes += 1;

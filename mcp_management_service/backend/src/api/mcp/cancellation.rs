@@ -177,7 +177,6 @@ pub(super) fn cancel_response_status(record: &RuntimeInvocationRecord) -> &'stat
     match record.status {
         RuntimeInvocationStatus::Queued
         | RuntimeInvocationStatus::Running
-        | RuntimeInvocationStatus::WaitingForUser
         | RuntimeInvocationStatus::CancelRequested => {
             if record.mutation_may_have_started && !record.cancel_supported {
                 "unknown_execution_state"
