@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 
 const targets = [
   ['memory-engine', 'http://127.0.0.1:4178'],
-  ['task-runner', 'http://127.0.0.1:39091'],
 ];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

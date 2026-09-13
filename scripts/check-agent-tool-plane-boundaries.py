@@ -99,6 +99,8 @@ for retired_path in [
     "crates/chatos_model_transport/src/tool_runtime",
     "crates/chatos_model_transport/src/tool_runtime.rs",
     "mcp/provider_skills/task-runner-service.md",
+    ".harness/pipelines/images/image-task-runner-backend.yml",
+    "official_website_service/frontend/public/showcase/task-runner.png",
 ]:
     require_absent(retired_path, "retired server execution plane must stay physically deleted")
 
@@ -165,6 +167,17 @@ forbid(
     ["task_runner_service_backend", "backend-task-runner"],
     "retired Task Runner Service must not return to CI",
 )
+forbid(
+    "official_website_service/frontend/scripts/capture-showcase.mjs",
+    ["task-runner", "39091"],
+    "the website showcase capture must not target the retired Task Runner service",
+)
+for readme in ["README.md", "README.zh-CN.md"]:
+    forbid(
+        readme,
+        ["showcase/task-runner.png"],
+        "the repository overview must not publish a retired Task Runner service screenshot",
+    )
 for website_source in [
     "official_website_service/backend/src/service_status.rs",
     "official_website_service/backend/src/site_manifest.rs",

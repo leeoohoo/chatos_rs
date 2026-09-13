@@ -12,8 +12,6 @@ Native clients own conversations and task execution. Server-side services are li
 
 ![ChatOS native desktop client preview](./official_website_service/frontend/public/showcase/chatos-main.png)
 
-![ChatOS Task Runner interface](./official_website_service/frontend/public/showcase/task-runner.png)
-
 | Long-term memory | Sandbox and execution isolation |
 | --- | --- |
 | ![ChatOS Memory Engine interface](./official_website_service/frontend/public/showcase/memory-engine.png) | ![ChatOS sandbox management interface](./official_website_service/frontend/public/showcase/sandbox-manager.png) |

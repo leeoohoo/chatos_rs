@@ -12,8 +12,6 @@ ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作
 
 ![ChatOS 原生桌面客户端视觉预览](./official_website_service/frontend/public/showcase/chatos-main.png)
 
-![ChatOS Task Runner 界面](./official_website_service/frontend/public/showcase/task-runner.png)
-
 | 长期记忆 | 沙箱与执行隔离 |
 | --- | --- |
 | ![ChatOS Memory Engine 界面](./official_website_service/frontend/public/showcase/memory-engine.png) | ![ChatOS 沙箱管理界面](./official_website_service/frontend/public/showcase/sandbox-manager.png) |
