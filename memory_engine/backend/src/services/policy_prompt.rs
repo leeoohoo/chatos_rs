@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::models::{
     EngineJobPolicy, GenerateJobPolicyPromptRequest, GenerateJobPolicyPromptResponse,
 };
-use crate::services::control_plane;
+use crate::services::memory_model_runtime;
 use crate::state::AppState;
 
 const POLICY_PROMPT_GENERATOR_SYSTEM_PROMPT: &str = "You generate bilingual prompt templates for a memory engine configuration UI. Return valid JSON only, with exactly two top-level string fields: prompt_zh and prompt_en. Both prompts must preserve the same intent and should be ready to use as direct task instructions for another model. Avoid markdown fences, explanations, or extra keys.";
@@ -31,9 +31,7 @@ pub async fn generate_job_policy_prompt(
 
     let policy =
         crate::repositories::control_plane::get_effective_job_policy(&state.pool, job_type).await?;
-    let ai_client =
-        control_plane::build_ai_client_for_job(&state.config, &state.pool, job_type, owner_user_id)
-            .await?;
+    let ai_client = memory_model_runtime::build_ai_client(&state.config, owner_user_id).await?;
     let guidance = build_prompt_generation_input(&policy, prompt_field, user_input);
     let raw = ai_client
         .generate_text(

@@ -100,9 +100,8 @@ pub(crate) async fn generate_summary(
     spec: SummaryPipelineSpec,
     lease: Option<&SummaryGenerationLease>,
 ) -> Result<crate::services::ai_pipeline::SummaryBuildResult, String> {
-    let runtime = crate::services::control_plane::build_managed_memory_agent_runtime(
+    let runtime = crate::services::memory_model_runtime::build_memory_model_job_runtime(
         config,
-        db,
         job,
         owner_user_id,
     )

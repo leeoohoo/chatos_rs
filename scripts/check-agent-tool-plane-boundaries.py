@@ -145,6 +145,11 @@ require(
     "Memory Engine-owned model retry entrypoint",
 )
 require(
+    "memory_engine/backend/src/services/memory_model_runtime.rs",
+    "MemoryModelJobRuntime",
+    "Memory Engine-owned tool-free model job boundary",
+)
+require(
     "memory_engine/backend/src/services/ai_pipeline/summary_pipeline.rs",
     "SummaryPipelineState",
     "Memory Engine-owned summary generation",
@@ -154,6 +159,13 @@ forbid(
     ["chatos_ai_runtime", "chatos_model_transport", "chatos_agent"],
     "Memory Engine must own its tool-less AI request policy instead of importing an Agent runtime",
 )
+for path in memory_agent_files:
+    path_text = relative(path)
+    forbid(
+        path_text,
+        ["ManagedMemoryAgentRuntime", "build_managed_memory_agent_runtime"],
+        "Memory Engine must not restore the retired managed Agent runtime abstraction",
+    )
 forbid(
     "crates/chatos_model_transport/Cargo.toml",
     ["local-agent-loop", "chatos_mcp_runtime", "memory_engine_sdk"],
