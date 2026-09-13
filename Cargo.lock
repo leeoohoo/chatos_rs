@@ -763,13 +763,13 @@ dependencies = [
  "axum-server",
  "base64 0.22.1",
  "bytes",
- "chatos_ai_runtime",
  "chatos_config_sdk",
  "chatos_local_agent_protocol",
  "chatos_local_workspace",
  "chatos_mcp",
  "chatos_mcp_runtime",
  "chatos_mcp_service",
+ "chatos_model_transport",
  "chatos_plugin_management_sdk",
  "chatos_service_runtime",
  "chrono",
@@ -825,22 +825,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "chatos_ai_runtime"
-version = "0.1.0"
-dependencies = [
- "axum",
- "bytes",
- "chatos_service_runtime",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -1058,6 +1042,22 @@ dependencies = [
  "tokio",
  "urlencoding",
  "zeroize",
+]
+
+[[package]]
+name = "chatos_model_transport"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "chatos_service_runtime",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -3829,10 +3829,10 @@ dependencies = [
  "axum",
  "axum-server",
  "base64 0.22.1",
- "chatos_ai_runtime",
  "chatos_config_sdk",
  "chatos_mcp",
  "chatos_mcp_runtime",
+ "chatos_model_transport",
  "chatos_plugin_management_sdk",
  "chatos_queue_observability",
  "chatos_service_runtime",

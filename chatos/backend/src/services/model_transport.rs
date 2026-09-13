@@ -5,10 +5,10 @@ use serde_json::Value;
 
 use crate::core::ai_model_config::ResolvedChatModelConfig;
 
-pub fn shared_model_runtime_config_from_resolved(
+pub fn model_transport_config_from_resolved(
     resolved: &ResolvedChatModelConfig,
-) -> chatos_ai_runtime::ModelRuntimeConfig {
-    chatos_ai_runtime::ModelRuntimeConfig::openai_compatible(
+) -> chatos_model_transport::ModelRuntimeConfig {
+    chatos_model_transport::ModelRuntimeConfig::openai_compatible(
         resolved.base_url.clone(),
         resolved.api_key.clone(),
         resolved.model.clone(),
@@ -22,13 +22,13 @@ pub fn shared_model_runtime_config_from_resolved(
     .with_max_transient_retries(Some(resolved.model_request_max_retries))
 }
 
-pub async fn resolve_shared_model_runtime_config_for_request(
+pub async fn resolve_model_transport_config_for_request(
     requested_model_config_id: Option<&str>,
     request_model_cfg: Option<&Value>,
     session_id: Option<&str>,
     user_id: Option<&str>,
     default_model: &str,
-) -> Result<chatos_ai_runtime::ModelRuntimeConfig, String> {
+) -> Result<chatos_model_transport::ModelRuntimeConfig, String> {
     let resolved = crate::services::model_runtime_resolver::resolve_model_runtime_for_request(
         requested_model_config_id,
         request_model_cfg,
@@ -37,5 +37,5 @@ pub async fn resolve_shared_model_runtime_config_for_request(
         default_model,
     )
     .await?;
-    Ok(shared_model_runtime_config_from_resolved(&resolved))
+    Ok(model_transport_config_from_resolved(&resolved))
 }

@@ -177,7 +177,7 @@ pub fn extract_message_tool_calls_for_display(message: &Message) -> Vec<Value> {
 
 #[cfg(test)]
 pub fn select_preferred_text<'a>(content: &'a str, reasoning: Option<&'a str>) -> Option<&'a str> {
-    chatos_ai_runtime::select_preferred_response_text(content, reasoning)
+    chatos_model_transport::select_preferred_response_text(content, reasoning)
 }
 
 pub async fn create_message_and_maybe_rename(message: Message) -> Result<Message, String> {

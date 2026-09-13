@@ -3,11 +3,11 @@
 
 use serde_json::{json, Value};
 
-use chatos_ai_runtime as shared_ai_runtime;
+use chatos_model_transport as model_transport;
 
 #[derive(Debug, Clone)]
 pub struct PromptRunnerRuntime {
-    pub config: shared_ai_runtime::ModelRuntimeConfig,
+    pub config: model_transport::ModelRuntimeConfig,
 }
 
 impl PromptRunnerRuntime {
@@ -17,15 +17,14 @@ impl PromptRunnerRuntime {
         model_cfg: &Value,
         default_model: &str,
     ) -> Result<Self, String> {
-        let config =
-            crate::services::shared_ai_runtime::resolve_shared_model_runtime_config_for_request(
-                model_config_id.as_deref(),
-                Some(model_cfg),
-                None,
-                user_id.as_deref(),
-                default_model,
-            )
-            .await?;
+        let config = crate::services::model_transport::resolve_model_transport_config_for_request(
+            model_config_id.as_deref(),
+            Some(model_cfg),
+            None,
+            user_id.as_deref(),
+            default_model,
+        )
+        .await?;
 
         Ok(Self { config })
     }
@@ -103,19 +102,19 @@ async fn run_with_responses(
     max_tokens: Option<i64>,
     _purpose: &str,
 ) -> Result<String, String> {
-    let handler = shared_ai_runtime::AiRequestHandler::new();
-    let response = shared_ai_runtime::run_compatible_prompt_with(
+    let handler = model_transport::AiRequestHandler::new();
+    let response = model_transport::run_compatible_prompt_with(
         &handler,
         &runtime.config,
         user_prompt,
-        shared_ai_runtime::SimplePromptOptions {
+        model_transport::SimplePromptOptions {
             system_prompt: Some(system_prompt.to_string()),
             temperature: Some(runtime.temperature()),
             max_output_tokens: max_tokens,
-            callbacks: shared_ai_runtime::StreamCallbacks::default(),
+            callbacks: model_transport::StreamCallbacks::default(),
             ..Default::default()
         },
-        shared_ai_runtime::build_responses_text_input,
+        model_transport::build_responses_text_input,
     )
     .await?;
 
@@ -123,7 +122,7 @@ async fn run_with_responses(
 }
 
 fn select_response_text(content: String, reasoning: Option<String>) -> String {
-    shared_ai_runtime::select_preferred_response_text(content.as_str(), reasoning.as_deref())
+    model_transport::select_preferred_response_text(content.as_str(), reasoning.as_deref())
         .map(|value| value.to_string())
         .unwrap_or_default()
 }

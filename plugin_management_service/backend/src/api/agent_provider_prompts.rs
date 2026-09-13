@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
-use chatos_ai_runtime::{
+use chatos_model_transport::{
     build_responses_text_input, run_compatible_prompt_with, select_preferred_response_text,
     AiRequestHandler, SimplePromptOptions,
 };

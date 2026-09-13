@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-pub use chatos_ai_runtime::model_config::{
+pub use chatos_model_transport::model_config::{
     default_base_url_for_provider, normalize_provider, normalize_thinking_level,
     supported_thinking_levels,
 };
 
 #[cfg(test)]
-pub use chatos_ai_runtime::model_config::reasoning_effort_for_provider;
+pub use chatos_model_transport::model_config::reasoning_effort_for_provider;
 
 #[cfg(test)]
 pub fn thinking_mode_for_provider(
     provider: Option<&str>,
     level: Option<&str>,
 ) -> Option<&'static str> {
-    chatos_ai_runtime::model_config::thinking_mode_for_provider(provider, level)
+    chatos_model_transport::model_config::thinking_mode_for_provider(provider, level)
 }
 
 #[cfg(test)]

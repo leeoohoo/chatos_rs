@@ -87,7 +87,7 @@ pub fn resolve_chat_model_config(
         .get("model_request_max_retries")
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES);
+        .unwrap_or(chatos_model_transport::DEFAULT_MODEL_REQUEST_MAX_RETRIES);
 
     ResolvedChatModelConfig {
         model_config_id: None,

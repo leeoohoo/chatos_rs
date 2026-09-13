@@ -33,7 +33,13 @@ BASELINE: dict[str, dict[str, str]] = {
         "tower-http": "0.7",
         "mongodb": "2.8",
     },
-    "crates/chatos_ai_runtime/Cargo.toml": {
+    "clients/shared/rust/chatos_local_agent_runtime/Cargo.toml": {
+        "axum": "0.8",
+    },
+    "clients/shared/rust/chatos_memory_client/Cargo.toml": {
+        "axum": "0.8",
+    },
+    "crates/chatos_model_transport/Cargo.toml": {
         "axum": "0.8",
     },
     "crates/chatos_mcp_runtime/Cargo.toml": {

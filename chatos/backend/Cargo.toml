@@ -55,7 +55,7 @@ aes-gcm = "0.11"
 # Database
 mongodb = { version = "2.8", features = ["tokio-runtime"] }
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
-chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
+chatos_model_transport = { path = "../../crates/chatos_model_transport" }
 chatos_mcp = { path = "../../mcp" }
 chatos_mcp_service = { path = "../../crates/chatos_mcp_service" }
 chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }

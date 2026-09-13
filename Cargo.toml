@@ -5,7 +5,7 @@
 members = [
   "mcp",
   "chatos/backend",
-  "crates/chatos_ai_runtime",
+  "crates/chatos_model_transport",
   "crates/chatos_internal_auth",
   "crates/chatos_remote_runtime",
   "crates/chatos_sandbox_contract",

@@ -122,7 +122,7 @@ pub(in crate::api) async fn load_admin_model_runtime(
     .with_max_transient_retries(Some(
         model_settings
             .model_request_max_retries
-            .unwrap_or(chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES),
+            .unwrap_or(chatos_model_transport::DEFAULT_MODEL_REQUEST_MAX_RETRIES),
     ));
     Ok(AdminModelRuntime {
         model_config_id,

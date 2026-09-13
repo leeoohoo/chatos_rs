@@ -101,7 +101,7 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
 }
 
 public struct AgentContextPolicy: Codable, Equatable, Sendable {
-    /// These defaults intentionally match `chatos_ai_runtime` so Task Runner and native
+    /// These defaults intentionally match `chatos_model_transport` so Task Runner and native
     /// Agents use the same soft/hard budget semantics. Users can override them for a model.
     public var windowTokens = 250_000
     public var outputReserveTokens = 30_000
@@ -143,7 +143,7 @@ public enum AgentContextError: LocalizedError, Sendable {
 }
 
 public enum AgentContextBudget {
-    /// Mirrors `chatos_ai_runtime::estimated_json_tokens`: serialize the complete model-input
+    /// Mirrors `chatos_model_transport::estimated_json_tokens`: serialize the complete model-input
     /// payload and use four JSON bytes per estimated token. This remains an estimate, but the
     /// returned unit is tokens rather than raw UTF-8 bytes.
     public static func estimate(messages: [AgentMessage], tools: [AgentToolDefinition]) throws -> Int {

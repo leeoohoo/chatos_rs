@@ -76,6 +76,7 @@ def require_absent(relative_path: str, reason: str) -> None:
 
 for retired_path in [
     "agent",
+    "crates/chatos_ai_runtime",
     "crates/chatos_cloud_agent_protocol",
     "crates/chatos_cloud_agent_runtime",
     "crates/chatos_mcp_gateway",
@@ -88,15 +89,15 @@ for retired_path in [
     "agent/src/core",
     "agent/src/implementations",
     ".task_runner",
-    "crates/chatos_ai_runtime/src/builder.rs",
-    "crates/chatos_ai_runtime/src/memory_context",
-    "crates/chatos_ai_runtime/src/memory_context.rs",
-    "crates/chatos_ai_runtime/src/runtime",
-    "crates/chatos_ai_runtime/src/runtime.rs",
-    "crates/chatos_ai_runtime/src/task",
-    "crates/chatos_ai_runtime/src/task.rs",
-    "crates/chatos_ai_runtime/src/tool_runtime",
-    "crates/chatos_ai_runtime/src/tool_runtime.rs",
+    "crates/chatos_model_transport/src/builder.rs",
+    "crates/chatos_model_transport/src/memory_context",
+    "crates/chatos_model_transport/src/memory_context.rs",
+    "crates/chatos_model_transport/src/runtime",
+    "crates/chatos_model_transport/src/runtime.rs",
+    "crates/chatos_model_transport/src/task",
+    "crates/chatos_model_transport/src/task.rs",
+    "crates/chatos_model_transport/src/tool_runtime",
+    "crates/chatos_model_transport/src/tool_runtime.rs",
     "mcp/provider_skills/task-runner-service.md",
 ]:
     require_absent(retired_path, "retired server execution plane must stay physically deleted")
@@ -146,11 +147,11 @@ require(
 )
 forbid(
     "memory_engine/backend/Cargo.toml",
-    ["chatos_ai_runtime", "chatos_agent"],
+    ["chatos_ai_runtime", "chatos_model_transport", "chatos_agent"],
     "Memory Engine must own its tool-less AI request policy instead of importing an Agent runtime",
 )
 forbid(
-    "crates/chatos_ai_runtime/Cargo.toml",
+    "crates/chatos_model_transport/Cargo.toml",
     ["local-agent-loop", "chatos_mcp_runtime", "memory_engine_sdk"],
     "server model transport must not regain an Agent loop, tool runtime, or Memory Engine client",
 )

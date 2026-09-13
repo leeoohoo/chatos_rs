@@ -204,13 +204,13 @@ pub(crate) async fn resolve_model_request_max_retries(
     user_id: Option<&str>,
 ) -> usize {
     let Some(user_id) = user_id else {
-        return chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
+        return chatos_model_transport::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
     };
     let Some(base_url) = configured_user_service_base_url(cfg) else {
-        return chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
+        return chatos_model_transport::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
     };
     let Some(access_token) = access_token_scope::get_current_access_token() else {
-        return chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
+        return chatos_model_transport::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
     };
     match user_service_api_client::get_model_settings(
         base_url.as_str(),
@@ -221,14 +221,14 @@ pub(crate) async fn resolve_model_request_max_retries(
     .await
     {
         Ok(settings) => usize::try_from(settings.model_request_max_retries)
-            .unwrap_or(chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES),
+            .unwrap_or(chatos_model_transport::DEFAULT_MODEL_REQUEST_MAX_RETRIES),
         Err(err) => {
             warn!(
                 user_id,
                 error = err.as_str(),
                 "load model request retry setting failed; using default"
             );
-            chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES
+            chatos_model_transport::DEFAULT_MODEL_REQUEST_MAX_RETRIES
         }
     }
 }

@@ -2,7 +2,7 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 [package]
-name = "chatos_ai_runtime"
+name = "chatos_model_transport"
 version = "0.1.0"
 edition = "2021"
 

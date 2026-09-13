@@ -11,17 +11,17 @@ use axum::response::sse::{Event, KeepAlive};
 use axum::response::Sse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chatos_ai_runtime::request_payload::{
-    build_chat_completions_request_payload, build_responses_request_payload,
-    responses_input_token_count_payload,
-};
-use chatos_ai_runtime::{
-    AiRequestHandler, AiRequestOptions, AiResponse, AiTransport, StreamCallbacks,
-};
 use chatos_local_agent_protocol::{
     ModelGatewayRequest, ModelGatewayStreamEnvelope, ModelGatewayStreamEvent, ModelGatewayTerminal,
     ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
     ModelRuntimeDescriptor, MAX_MODEL_GATEWAY_JSON_BYTES,
+};
+use chatos_model_transport::request_payload::{
+    build_chat_completions_request_payload, build_responses_request_payload,
+    responses_input_token_count_payload,
+};
+use chatos_model_transport::{
+    AiRequestHandler, AiRequestOptions, AiResponse, AiTransport, StreamCallbacks,
 };
 use futures::Stream;
 use serde_json::{json, Value};
@@ -840,11 +840,11 @@ mod tests {
     use axum::extract::State;
     use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
     use axum::routing::post;
-    use chatos_ai_runtime::AiResponse;
     use chatos_local_agent_protocol::{
         ContextStrategy, ModelGatewayParameters, ModelGatewayRequest, ModelGatewayStreamEvent,
         ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelProtocol,
     };
+    use chatos_model_transport::AiResponse;
     use serde_json::json;
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
