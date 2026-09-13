@@ -28,7 +28,7 @@ let package = Package(
         ),
         .target(
             name: "ChatOSConnector",
-            dependencies: ["ChatOSCore", "ChatOSAgentRuntime", "ChatOSMacSecurity"],
+            dependencies: ["ChatOSCore", "ChatOSMacSecurity"],
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("AppKit"),

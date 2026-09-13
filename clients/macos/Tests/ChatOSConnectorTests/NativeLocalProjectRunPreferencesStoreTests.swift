@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 @testable import ChatOSConnector
-import ChatOSAgentRuntime
+import ChatOSCore
 import ChatOSCore
 import Foundation
 import Testing
