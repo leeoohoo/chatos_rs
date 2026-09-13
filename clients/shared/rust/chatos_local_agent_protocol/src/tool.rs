@@ -11,6 +11,7 @@ use crate::{require_bounded_json, require_digest, require_identifier, ProtocolEr
 #[serde(rename_all = "snake_case")]
 pub enum ToolEffect {
     Read,
+    DraftWrite,
     IdempotentWrite,
     Write,
     Billable,
@@ -19,7 +20,7 @@ pub enum ToolEffect {
 
 impl ToolEffect {
     pub const fn requires_approval(self) -> bool {
-        !matches!(self, Self::Read)
+        !matches!(self, Self::Read | Self::DraftWrite)
     }
 
     pub const fn requires_durable_start(self) -> bool {
@@ -27,7 +28,7 @@ impl ToolEffect {
     }
 
     pub const fn can_replay_after_started(self) -> bool {
-        matches!(self, Self::Read | Self::IdempotentWrite)
+        matches!(self, Self::Read | Self::DraftWrite | Self::IdempotentWrite)
     }
 }
 

@@ -4,8 +4,10 @@
 mod approval;
 mod main_chat;
 mod shared;
+mod story;
 mod task_runner;
 
 pub use approval::*;
 pub use main_chat::*;
+pub use story::*;
 pub use task_runner::*;

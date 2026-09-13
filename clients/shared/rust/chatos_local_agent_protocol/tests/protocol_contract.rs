@@ -423,6 +423,9 @@ fn shared_v26_memory_sync_status_is_bound_to_one_run() {
 fn tool_effects_define_the_exact_durable_replay_boundary() {
     assert!(!ToolEffect::Read.requires_durable_start());
     assert!(ToolEffect::Read.can_replay_after_started());
+    assert!(!ToolEffect::DraftWrite.requires_approval());
+    assert!(ToolEffect::DraftWrite.requires_durable_start());
+    assert!(ToolEffect::DraftWrite.can_replay_after_started());
     assert!(ToolEffect::IdempotentWrite.requires_durable_start());
     assert!(ToolEffect::IdempotentWrite.can_replay_after_started());
     for effect in [
