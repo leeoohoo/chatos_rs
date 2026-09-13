@@ -1,5 +1,5 @@
 {
-  "protocol_version": 20,
+  "protocol_version": 21,
   "request_id": "request-put-media-1",
   "owner_user_id": "user-1",
   "command": {

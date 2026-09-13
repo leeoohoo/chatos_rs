@@ -665,6 +665,77 @@ public actor NativeLocalAgentIPCClient {
         }
     }
 
+    public func notepadRecord(id: String) async throws -> LocalAgentNotepadSnapshot {
+        let response = try await send(.getNotepad(recordID: id))
+        guard case let .notepad(record) = response else {
+            throw unexpected("notepad", response)
+        }
+        return record
+    }
+
+    public func notepadRecords() async throws -> [LocalAgentNotepadSnapshot] {
+        var records: [LocalAgentNotepadSnapshot] = []
+        var cursor: String?
+        repeat {
+            let response = try await send(.listNotepad(cursor: cursor, limit: 500))
+            guard case let .notepadRecords(page, nextCursor) = response else {
+                throw unexpected("notepad_records", response)
+            }
+            records.append(contentsOf: page)
+            if let nextCursor, nextCursor == cursor {
+                throw NativeLocalAgentIPCError.invalidResponse
+            }
+            cursor = nextCursor
+        } while cursor != nil
+        return records.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.recordID < $1.recordID
+        }
+    }
+
+    public func putNotepadRecord(
+        id: String,
+        expectedRevision: UInt64?,
+        draft: LocalAgentNotepadDraft
+    ) async throws -> LocalAgentNotepadSnapshot {
+        let response = try await send(.putNotepad(
+            recordID: id,
+            expectedRevision: expectedRevision,
+            draft: draft
+        ))
+        guard case let .notepad(record) = response else {
+            throw unexpected("notepad", response)
+        }
+        return record
+    }
+
+    public func deleteNotepadRecord(id: String, expectedRevision: UInt64) async throws {
+        let response = try await send(.deleteNotepad(
+            recordID: id,
+            expectedRevision: expectedRevision
+        ))
+        guard case .success = response else {
+            throw unexpected("success", response)
+        }
+    }
+
+    public func renameNotepadFolder(_ folder: String, replacement: String) async throws {
+        let response = try await send(.renameNotepadFolder(
+            folder: folder,
+            replacement: replacement
+        ))
+        guard case .success = response else {
+            throw unexpected("success", response)
+        }
+    }
+
+    public func deleteNotepadFolder(_ folder: String, recursive: Bool) async throws {
+        let response = try await send(.deleteNotepadFolder(folder: folder, recursive: recursive))
+        guard case .success = response else {
+            throw unexpected("success", response)
+        }
+    }
+
     public func taskGraph(
         sourceThreadID: String,
         sourceTurnID: String
@@ -786,6 +857,8 @@ private extension LocalAgentResponse {
         case .mediaMutation: "media_mutation"
         case .story: "story"
         case .storyRecords: "story_records"
+        case .notepad: "notepad"
+        case .notepadRecords: "notepad_records"
         case .events: "events"
         case .uiEventCursor: "ui_event_cursor"
         case .storageProfile: "storage_profile"

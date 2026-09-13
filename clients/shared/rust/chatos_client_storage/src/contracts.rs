@@ -192,10 +192,18 @@ pub struct StoryRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NotepadRecord {
     pub metadata: RecordMetadata,
-    pub project_id: Option<String>,
+    pub kind: NotepadRecordKind,
+    pub folder: String,
     pub title: String,
     pub content: String,
-    pub state: Value,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotepadRecordKind {
+    Folder,
+    Note,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

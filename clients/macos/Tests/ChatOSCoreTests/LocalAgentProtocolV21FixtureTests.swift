@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v20 fixtures")
-struct LocalAgentProtocolV20FixtureTests {
+@Suite("Shared Local Agent protocol v21 fixtures")
+struct LocalAgentProtocolV21FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV20FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 20)
+        #expect(localAgentProtocolVersion == 21)
         #expect(encoded == fixture)
     }
 
@@ -167,6 +167,47 @@ struct LocalAgentProtocolV20FixtureTests {
         #expect(records.first?.ownerUserID == "user-1")
         #expect(records.first?.draft.projectID == projectID)
         #expect(records.first?.draft.kind == .project)
+        #expect(nextCursor == nil)
+    }
+
+    @Test("encodes and decodes owner-scoped Notepad records")
+    func notepadState() throws {
+        let recordID = "note:00000000-0000-4000-8000-000000000021"
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-notepad-put-1",
+            ownerUserID: "user-1",
+            command: .putNotepad(
+                recordID: recordID,
+                expectedRevision: nil,
+                draft: .init(
+                    kind: .note,
+                    folder: "design/research",
+                    title: "Visual direction",
+                    content: "Use a cinematic layout.",
+                    tags: ["design", "reference"]
+                )
+            )
+        )
+        let encoded = try JSONSerialization.jsonObject(
+            with: LocalAgentProtocolJSON.encoder().encode(request)
+        ) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("notepad_put_request.json"))
+        ) as? NSDictionary
+        #expect(encoded == fixture)
+
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("notepad_records_response.json"))
+        )
+        guard case let .notepadRecords(records, nextCursor) = reply.response else {
+            Issue.record("Expected a Notepad records response")
+            return
+        }
+        #expect(records.first?.recordID == recordID)
+        #expect(records.first?.ownerUserID == "user-1")
+        #expect(records.first?.draft.kind == .note)
         #expect(nextCursor == nil)
     }
 
@@ -330,7 +371,7 @@ struct LocalAgentProtocolV20FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v20")
+            .appendingPathComponent("shared/fixtures/local_agent/v21")
             .appendingPathComponent(name)
     }
 }

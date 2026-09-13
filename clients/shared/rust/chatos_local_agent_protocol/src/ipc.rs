@@ -13,14 +13,16 @@ use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
     ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
     ClipboardMutationResult, CreateProjectCommand, DeleteClipboardCommand, DeleteMediaCommand,
-    DeleteStoryCommand, ExportClientDataCommand, GetClipboardCommand, GetMediaCommand,
-    GetProjectCommand, GetStoryCommand, ImportClientDataCommand,
-    InstallProjectPluginCapabilityCommand, ListClipboardCommand, ListMediaCommand,
-    ListProjectsCommand, ListStoriesCommand, LocalAgentRun, LocalClipboardSnapshot,
-    LocalMediaSnapshot, LocalProjectSnapshot, LocalStorySnapshot, MediaMutationResult,
-    PostgresConnectionTestCommand, PostgresConnectionTestResult, ProtocolError, PutMediaCommand,
-    PutStoryCommand, RemoveProjectPluginCapabilityCommand, SetClipboardPinnedCommand,
-    StoreClipboardCommand, ToolExecution, UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    DeleteNotepadCommand, DeleteNotepadFolderCommand, DeleteStoryCommand, ExportClientDataCommand,
+    GetClipboardCommand, GetMediaCommand, GetNotepadCommand, GetProjectCommand, GetStoryCommand,
+    ImportClientDataCommand, InstallProjectPluginCapabilityCommand, ListClipboardCommand,
+    ListMediaCommand, ListNotepadCommand, ListProjectsCommand, ListStoriesCommand, LocalAgentRun,
+    LocalClipboardSnapshot, LocalMediaSnapshot, LocalNotepadSnapshot, LocalProjectSnapshot,
+    LocalStorySnapshot, MediaMutationResult, PostgresConnectionTestCommand,
+    PostgresConnectionTestResult, ProtocolError, PutMediaCommand, PutNotepadCommand,
+    PutStoryCommand, RemoveProjectPluginCapabilityCommand, RenameNotepadFolderCommand,
+    SetClipboardPinnedCommand, StoreClipboardCommand, ToolExecution, UpdateProjectCommand,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -104,6 +106,12 @@ pub enum LocalAgentCommand {
     ListStories(ListStoriesCommand),
     PutStory(PutStoryCommand),
     DeleteStory(DeleteStoryCommand),
+    GetNotepad(GetNotepadCommand),
+    ListNotepad(ListNotepadCommand),
+    PutNotepad(PutNotepadCommand),
+    DeleteNotepad(DeleteNotepadCommand),
+    RenameNotepadFolder(RenameNotepadFolderCommand),
+    DeleteNotepadFolder(DeleteNotepadFolderCommand),
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -155,6 +163,12 @@ impl LocalAgentCommand {
             Self::ListStories(command) => command.validate(),
             Self::PutStory(command) => command.validate(),
             Self::DeleteStory(command) => command.validate(),
+            Self::GetNotepad(command) => command.validate(),
+            Self::ListNotepad(command) => command.validate(),
+            Self::PutNotepad(command) => command.validate(),
+            Self::DeleteNotepad(command) => command.validate(),
+            Self::RenameNotepadFolder(command) => command.validate(),
+            Self::DeleteNotepadFolder(command) => command.validate(),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -968,6 +982,11 @@ pub enum LocalAgentIpcResponse {
         records: Vec<LocalStorySnapshot>,
         next_cursor: Option<String>,
     },
+    Notepad(LocalNotepadSnapshot),
+    NotepadRecords {
+        records: Vec<LocalNotepadSnapshot>,
+        next_cursor: Option<String>,
+    },
     Events {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
@@ -1066,6 +1085,19 @@ impl LocalAgentIpcResponse {
                 }
                 if let Some(cursor) = next_cursor {
                     require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
+            Self::Notepad(record) => record.validate(),
+            Self::NotepadRecords {
+                records,
+                next_cursor,
+            } => {
+                if let Some(cursor) = next_cursor {
+                    require_identifier("cursor", cursor)?;
+                }
+                for record in records {
+                    record.validate()?;
                 }
                 Ok(())
             }

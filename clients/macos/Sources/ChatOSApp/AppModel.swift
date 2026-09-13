@@ -116,7 +116,7 @@ final class AppModel: ObservableObject {
     let projectCodeNavigationService: NativeProjectCodeNavigationService
     let projectGitService: NativeProjectGitService
     let projectRunService: NativeProjectRunService
-    let notepadService: ChatOSNotepadService
+    let notepadService: NativeLocalNotepadService
     private let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
     private var conversationCache: [String: ConversationSessionViewModel] = [:]
     private var workspaceLoadGeneration: Int64 = 0
@@ -232,7 +232,7 @@ final class AppModel: ObservableObject {
         self.projectFilesystemService = NativeProjectFilesystemService(connector: localConnectorService)
         self.projectCodeNavigationService = NativeProjectCodeNavigationService(connector: localConnectorService)
         self.projectGitService = NativeProjectGitService(connector: localConnectorService)
-        self.notepadService = ChatOSNotepadService(client: apiClient)
+        self.notepadService = NativeLocalNotepadService(accountSession: localAgentAccountSession)
         self.userLanguagePreferencesService = ChatOSUserLanguagePreferencesService(client: apiClient)
         self.projectRunService = NativeProjectRunService(
             connector: localConnectorService,

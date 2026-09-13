@@ -1,21 +1,17 @@
 {
-  "protocol_version": 20,
+  "protocol_version": 21,
   "request_id": "request-create-project-1",
-  "response": {
-    "type": "project",
+  "owner_user_id": "user-1",
+  "command": {
+    "type": "create_project",
     "payload": {
       "project_id": "project-1",
-      "owner_user_id": "user-1",
       "draft": {
         "name": "Website Studio",
         "description": "Visual website design",
         "workspace_id": "workspace-1",
         "relative_root": "apps/studio"
-      },
-      "revision": 1,
-      "status": "active",
-      "created_at": "2026-09-13T01:00:00Z",
-      "updated_at": "2026-09-13T01:00:00Z"
+      }
     }
   }
 }

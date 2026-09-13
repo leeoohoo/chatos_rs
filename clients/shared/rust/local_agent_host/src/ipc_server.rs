@@ -11,14 +11,14 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessageRole, GetClipboardCommand, GetMediaCommand, GetProjectCommand, GetRunDetailCommand,
-    GetStoryCommand, GetTaskGraphCommand, GetTaskRunDetailCommand, ListClipboardCommand,
-    ListMediaCommand, ListProjectsCommand, ListStoriesCommand, LocalAgentCommand,
-    LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse,
-    LocalAgentRun, LocalAgentRunDetail, LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode,
-    LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection, LocalAgentTaskRunDetail,
-    LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    AgentMessageRole, GetClipboardCommand, GetMediaCommand, GetNotepadCommand, GetProjectCommand,
+    GetRunDetailCommand, GetStoryCommand, GetTaskGraphCommand, GetTaskRunDetailCommand,
+    ListClipboardCommand, ListMediaCommand, ListNotepadCommand, ListProjectsCommand,
+    ListStoriesCommand, LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply,
+    LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail,
+    LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot,
+    LocalAgentTaskProjection, LocalAgentTaskRunDetail, LocalAgentTaskRunSummary,
+    LocalAgentTaskSnapshot, MainChatRunBinding, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
 use chrono::Utc;
@@ -352,6 +352,37 @@ impl LocalAgentIpcServer {
                     .and_then(|()| {
                         operation.response.ok_or(StorageError::Transaction {
                             reason: "story list transaction returned no page".to_string(),
+                        })
+                    })
+            }
+            LocalAgentCommand::GetNotepad(command) => {
+                let mut operation = GetNotepadOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage.transaction(&mut operation).await.map(|()| {
+                    operation
+                        .response
+                        .unwrap_or(LocalAgentIpcResponse::Error(LocalAgentIpcError {
+                            code: "notepad_not_found".to_string(),
+                            message: "Notepad record was not found".to_string(),
+                            retryable: false,
+                        }))
+                })
+            }
+            LocalAgentCommand::ListNotepad(command) => {
+                let mut operation = ListNotepadOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| {
+                        operation.response.ok_or(StorageError::Transaction {
+                            reason: "notepad list transaction returned no page".to_string(),
                         })
                     })
             }
@@ -700,6 +731,65 @@ struct ListStoriesOperation {
     scope: RecordScope,
     command: ListStoriesCommand,
     response: Option<LocalAgentIpcResponse>,
+}
+
+struct GetNotepadOperation {
+    scope: RecordScope,
+    command: GetNotepadCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetNotepadOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.response = repositories
+            .notepad()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: self.command.record_id.clone(),
+            })
+            .await?
+            .map(crate::notepad_snapshot)
+            .transpose()?
+            .map(LocalAgentIpcResponse::Notepad);
+        Ok(())
+    }
+}
+
+struct ListNotepadOperation {
+    scope: RecordScope,
+    command: ListNotepadCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for ListNotepadOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let page = repositories
+            .notepad()
+            .list(&ListQuery {
+                scope: self.scope.clone(),
+                cursor: self.command.cursor.clone(),
+                limit: self.command.limit,
+            })
+            .await?;
+        let records = page
+            .records
+            .into_iter()
+            .map(crate::notepad_snapshot)
+            .collect::<StorageResult<Vec<_>>>()?;
+        self.response = Some(LocalAgentIpcResponse::NotepadRecords {
+            records,
+            next_cursor: page.next_cursor,
+        });
+        Ok(())
+    }
 }
 
 #[async_trait]

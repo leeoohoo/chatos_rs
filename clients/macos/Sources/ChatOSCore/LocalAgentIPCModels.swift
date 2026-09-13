@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 20
+public let localAgentProtocolVersion: UInt32 = 21
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -499,6 +499,58 @@ public struct LocalAgentStorySnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public enum LocalAgentNotepadKind: String, Codable, Equatable, Sendable {
+    case folder
+    case note
+}
+
+public struct LocalAgentNotepadDraft: Codable, Equatable, Sendable {
+    public var kind: LocalAgentNotepadKind
+    public var folder: String
+    public var title: String
+    public var content: String
+    public var tags: [String]
+
+    public init(
+        kind: LocalAgentNotepadKind,
+        folder: String,
+        title: String,
+        content: String,
+        tags: [String]
+    ) {
+        self.kind = kind
+        self.folder = folder
+        self.title = title
+        self.content = content
+        self.tags = tags
+    }
+}
+
+public struct LocalAgentNotepadSnapshot: Codable, Equatable, Sendable {
+    public var recordID: String
+    public var ownerUserID: String
+    public var draft: LocalAgentNotepadDraft
+    public var revision: UInt64
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        recordID: String,
+        ownerUserID: String,
+        draft: LocalAgentNotepadDraft,
+        revision: UInt64,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.recordID = recordID
+        self.ownerUserID = ownerUserID
+        self.draft = draft
+        self.revision = revision
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 public enum LocalAgentCommand: Equatable, Sendable {
     case updateAccessToken(String)
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
@@ -544,6 +596,12 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case listStories(cursor: String?, limit: UInt32)
     case putStory(recordID: String, expectedRevision: UInt64?, draft: LocalAgentStoryDraft)
     case deleteStory(recordID: String, expectedRevision: UInt64)
+    case getNotepad(recordID: String)
+    case listNotepad(cursor: String?, limit: UInt32)
+    case putNotepad(recordID: String, expectedRevision: UInt64?, draft: LocalAgentNotepadDraft)
+    case deleteNotepad(recordID: String, expectedRevision: UInt64)
+    case renameNotepadFolder(folder: String, replacement: String)
+    case deleteNotepadFolder(folder: String, recursive: Bool)
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -638,6 +696,24 @@ extension LocalAgentCommand: Encodable {
     private struct DeleteStoryPayload: Encodable {
         let recordID: String
         let expectedRevision: UInt64
+    }
+    private struct NotepadPayload: Encodable { let recordID: String }
+    private struct PutNotepadPayload: Encodable {
+        let recordID: String
+        let expectedRevision: UInt64?
+        let draft: LocalAgentNotepadDraft
+    }
+    private struct DeleteNotepadPayload: Encodable {
+        let recordID: String
+        let expectedRevision: UInt64
+    }
+    private struct RenameNotepadFolderPayload: Encodable {
+        let folder: String
+        let replacement: String
+    }
+    private struct DeleteNotepadFolderPayload: Encodable {
+        let folder: String
+        let recursive: Bool
     }
     private struct EventsPayload: Encodable {
         let afterSeq: UInt64
@@ -859,6 +935,40 @@ extension LocalAgentCommand: Encodable {
             try container.encode("delete_story", forKey: .type)
             try container.encode(
                 DeleteStoryPayload(recordID: recordID, expectedRevision: expectedRevision),
+                forKey: .payload
+            )
+        case let .getNotepad(recordID):
+            try container.encode("get_notepad", forKey: .type)
+            try container.encode(NotepadPayload(recordID: recordID), forKey: .payload)
+        case let .listNotepad(cursor, limit):
+            try container.encode("list_notepad", forKey: .type)
+            try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
+        case let .putNotepad(recordID, expectedRevision, draft):
+            try container.encode("put_notepad", forKey: .type)
+            try container.encode(
+                PutNotepadPayload(
+                    recordID: recordID,
+                    expectedRevision: expectedRevision,
+                    draft: draft
+                ),
+                forKey: .payload
+            )
+        case let .deleteNotepad(recordID, expectedRevision):
+            try container.encode("delete_notepad", forKey: .type)
+            try container.encode(
+                DeleteNotepadPayload(recordID: recordID, expectedRevision: expectedRevision),
+                forKey: .payload
+            )
+        case let .renameNotepadFolder(folder, replacement):
+            try container.encode("rename_notepad_folder", forKey: .type)
+            try container.encode(
+                RenameNotepadFolderPayload(folder: folder, replacement: replacement),
+                forKey: .payload
+            )
+        case let .deleteNotepadFolder(folder, recursive):
+            try container.encode("delete_notepad_folder", forKey: .type)
+            try container.encode(
+                DeleteNotepadFolderPayload(folder: folder, recursive: recursive),
                 forKey: .payload
             )
         case let .subscribeRunEvents(afterSequence, limit):
@@ -1592,6 +1702,8 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case mediaMutation(LocalAgentMediaMutationResult)
     case story(LocalAgentStorySnapshot)
     case storyRecords([LocalAgentStorySnapshot], nextCursor: String?)
+    case notepad(LocalAgentNotepadSnapshot)
+    case notepadRecords([LocalAgentNotepadSnapshot], nextCursor: String?)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -1630,6 +1742,10 @@ extension LocalAgentResponse: Decodable {
     }
     private struct StoryRecords: Decodable {
         let records: [LocalAgentStorySnapshot]
+        let nextCursor: String?
+    }
+    private struct NotepadRecords: Decodable {
+        let records: [LocalAgentNotepadSnapshot]
         let nextCursor: String?
     }
     private struct Events: Decodable {
@@ -1705,6 +1821,13 @@ extension LocalAgentResponse: Decodable {
         case "story_records":
             let value = try container.decode(StoryRecords.self, forKey: .payload)
             self = .storyRecords(value.records, nextCursor: value.nextCursor)
+        case "notepad":
+            self = .notepad(
+                try container.decode(LocalAgentNotepadSnapshot.self, forKey: .payload)
+            )
+        case "notepad_records":
+            let value = try container.decode(NotepadRecords.self, forKey: .payload)
+            self = .notepadRecords(value.records, nextCursor: value.nextCursor)
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)

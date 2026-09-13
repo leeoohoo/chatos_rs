@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 19;
+    public const uint Version = 21;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 

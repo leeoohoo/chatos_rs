@@ -14,7 +14,7 @@ use crate::{
     LocalAgentIpcServerError, LocalAgentMemorySyncWorker, LocalAgentMemorySyncWorkerError,
     LocalAgentMemorySyncWorkerExit, LocalAgentStorageIpcExecutor, LocalAgentStoragePlatform,
     LocalAgentWorkerExit, LocalCapabilityIpcExecutor, LocalClipboardIpcExecutor,
-    LocalMediaIpcExecutor, LocalProjectIpcExecutor, LocalStoryIpcExecutor,
+    LocalMediaIpcExecutor, LocalNotepadIpcExecutor, LocalProjectIpcExecutor, LocalStoryIpcExecutor,
     RegisteredLocalCapabilityRuntime, StoredLocalCapabilityLoader,
 };
 
@@ -267,6 +267,13 @@ pub fn build_local_agent_ipc_server(
             device_id.clone(),
             media_executor,
         ));
+    let notepad_executor: Arc<dyn LocalAgentIpcMutationExecutor> =
+        Arc::new(LocalNotepadIpcExecutor::new(
+            storage.clone(),
+            scope.clone(),
+            device_id.clone(),
+            story_executor,
+        ));
     let capability_executor: Arc<dyn LocalAgentIpcMutationExecutor> =
         Arc::new(LocalCapabilityIpcExecutor::new(
             storage.clone(),
@@ -274,7 +281,7 @@ pub fn build_local_agent_ipc_server(
             device_id,
             capability_loader,
             capability_registry,
-            story_executor,
+            notepad_executor,
         ));
     let control_executor: Arc<dyn LocalAgentIpcMutationExecutor> = Arc::new(
         LocalAgentHostControlExecutor::new(host.clone(), capability_executor),

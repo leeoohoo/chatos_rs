@@ -3,10 +3,11 @@
 
 use async_trait::async_trait;
 use chatos_client_storage::{
-    export_storage_archive, import_storage_archive, ClientStorage, NotepadRecord, PutRecord,
-    RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile, SqliteClientStorage,
-    StorageEncryptionKey, StorageResult, StorageTransaction, StoryRecord, StoryRecordKind,
-    TerminalHistoryRecord, TransactionRepositories,
+    export_storage_archive, import_storage_archive, ClientStorage, NotepadRecord,
+    NotepadRecordKind, PutRecord, RecordMetadata, RecordScope, SecretReference,
+    SqliteBootstrapProfile, SqliteClientStorage, StorageEncryptionKey, StorageResult,
+    StorageTransaction, StoryRecord, StoryRecordKind, TerminalHistoryRecord,
+    TransactionRepositories,
 };
 use chrono::Utc;
 
@@ -53,10 +54,11 @@ impl StorageTransaction for SeedContent {
             .put(PutRecord {
                 record: NotepadRecord {
                     metadata: metadata("note-1"),
-                    project_id: Some("project-1".to_string()),
+                    kind: NotepadRecordKind::Note,
+                    folder: "design".to_string(),
                     title: "Visual direction".to_string(),
                     content: "Use a cinematic layout.".to_string(),
-                    state: serde_json::json!({"pinned": true}),
+                    tags: vec!["pinned".to_string()],
                 },
                 expected_revision: None,
             })
