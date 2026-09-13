@@ -172,7 +172,7 @@ final class AppModel: ObservableObject {
         let localConnectorService = NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: RuntimeConfiguration.localConnectorCloudBaseURL,
-                stateURL: RuntimeConfiguration.nativeConnectorStateURL
+                supportRootURL: RuntimeConfiguration.nativeConnectorSupportRootURL
             ),
             ticketProvider: connectorTicketProvider,
             routeStore: connectorRouteStore,

@@ -26,9 +26,9 @@ extension NativeLocalConnectorService {
     }
 
     private func processWorkspaceRelay(_ request: NativeRelayRequest) async throws -> NativeRelayResponse {
-        guard let ownerUserID = state.user?.id,
-              let deviceID = state.deviceID,
-              let workspace = state.workspaces.first(where: { $0.id == request.workspaceID }) else {
+        guard let ownerUserID = pairingState.user?.id,
+              let deviceID = pairingState.deviceID,
+              let workspace = pairingState.workspaces.first(where: { $0.id == request.workspaceID }) else {
             throw NativeWorkspaceRelayError.invalidContext
         }
         let runtime = try await managedRuntimeConfig()

@@ -14,17 +14,16 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
         try Data("categoryApi.list()\n".utf8)
             .write(to: root.appendingPathComponent("consumer.ts"))
 
-        let stateURL = root.appendingPathComponent("connector-state.json")
-        var state = NativeConnectorPersistentState.empty
-        state.deviceID = "device"
-        state.workspaces = [
+        var pairingState = NativeConnectorPairingState.empty
+        pairingState.deviceID = "device"
+        pairingState.workspaces = [
             .init(id: "workspace", alias: "test", absoluteRoot: root.path, fingerprint: "test"),
         ]
-        try NativeConnectorStateStore(stateURL: stateURL).save(state)
         let connector = NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
-                stateURL: stateURL
+                supportRootURL: root.appendingPathComponent("support", isDirectory: true),
+                testingPairingState: pairingState
             ),
             ticketProvider: NavigationTicketProvider(),
             accountSession: UnavailableLocalAgentAccountSession(),

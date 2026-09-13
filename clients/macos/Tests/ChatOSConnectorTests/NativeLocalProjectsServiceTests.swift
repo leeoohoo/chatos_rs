@@ -4,28 +4,40 @@ import Foundation
 import XCTest
 
 final class NativeLocalProjectsServiceTests: XCTestCase {
-    private func context() throws -> Context {
+    private func context() async throws -> Context {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("local-projects-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("repo"), withIntermediateDirectories: true)
-        let stateURL = root.appendingPathComponent("connector.json")
-        var state = NativeConnectorPersistentState.empty
-        state.user = .init(id: "alice", username: "alice", displayName: nil, role: "user")
-        state.deviceID = "device"
-        state.workspaces = [
+        try Data("not a directory".utf8).write(to: root.appendingPathComponent("connector.json"))
+        var pairingState = NativeConnectorPairingState.empty
+        pairingState.user = .init(id: "alice", username: "alice", displayName: nil, role: "user")
+        pairingState.deviceID = "device"
+        pairingState.deviceName = "Test Mac"
+        pairingState.workspaces = [
             .init(id: "ws", alias: "workspace", absoluteRoot: root.path, fingerprint: "fingerprint"),
             .init(id: "root-ws", alias: "root", absoluteRoot: "/", fingerprint: "root-fingerprint"),
         ]
-        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        pairingState.gatewayConnectionEnabled = true
+        let transport = ProjectRunPreferencesTransport()
+        try await transport.seedClientSetting(
+            ownerUserID: "alice",
+            key: "local_connector.pairing",
+            value: pairingState
+        )
         let settingsClient = try NativeLocalAgentIPCClient(
             ownerUserID: "alice",
-            transport: ProjectRunPreferencesTransport()
+            transport: transport
         )
+        let accountSession = ProjectRunPreferencesAccountSession(client: settingsClient)
         let connector = NativeLocalConnectorService(
-            configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
+            configuration: .init(
+                gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
+                supportRootURL: root.appendingPathComponent("support", isDirectory: true)
+            ),
             ticketProvider: NoNetworkTicketProvider(),
-            accountSession: ProjectRunPreferencesAccountSession(client: settingsClient),
+            accountSession: accountSession,
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
+        try await connector.activateClientStorage(ownerUserID: "alice")
         let client = ProjectClient(ownerUserID: "alice")
         return Context(
             root: root,
@@ -39,12 +51,13 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
                     return client
                 }
             ),
-            client: client
+            client: client,
+            accountSession: accountSession
         )
     }
 
     func testCreatesOfflineWithoutGitContactOrActivationAndPersists() async throws {
-        let context = try context()
+        let context = try await context()
         defer { try? FileManager.default.removeItem(at: context.root) }
         let project = try await context.service.createWorkspaceProject(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "repo"))
         XCTAssertEqual(project.rootPath, "local://connector/device/ws/repo")
@@ -55,7 +68,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     }
 
     func testSignedOutSuspensionPreservesPersistentProjectAccessState() async throws {
-        let context = try context()
+        let context = try await context()
         defer { try? FileManager.default.removeItem(at: context.root) }
         let project = try await context.service.createWorkspaceProject(
             ownerUserID: "alice",
@@ -64,9 +77,8 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
 
         await context.connector.suspendForSignedOut()
 
-        let persisted = try NativeConnectorStateStore(
-            stateURL: context.root.appendingPathComponent("connector.json")
-        ).load()
+        let store = NativeConnectorPairingStateStore(accountSession: context.accountSession)
+        let persisted = try await store.activate(ownerUserID: "alice")
         XCTAssertEqual(persisted.user?.id, "alice")
         XCTAssertEqual(persisted.deviceID, "device")
         XCTAssertEqual(persisted.workspaces.map(\.id), ["ws", "root-ws"])
@@ -77,15 +89,15 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     }
 
     func testDisconnectOnlyBlocksServerAccessAndPreservesAllLocalState() async throws {
-        let context = try context()
+        let context = try await context()
         defer { try? FileManager.default.removeItem(at: context.root) }
-        let stateURL = context.root.appendingPathComponent("connector.json")
-        let before = try NativeConnectorStateStore(stateURL: stateURL).load()
-        try await context.connector.activateClientStorage(ownerUserID: "alice")
+        let beforeStore = NativeConnectorPairingStateStore(accountSession: context.accountSession)
+        let before = try await beforeStore.activate(ownerUserID: "alice")
 
         let status = try await context.connector.disconnect()
 
-        let after = try NativeConnectorStateStore(stateURL: stateURL).load()
+        let afterStore = NativeConnectorPairingStateStore(accountSession: context.accountSession)
+        let after = try await afterStore.activate(ownerUserID: "alice")
         XCTAssertEqual(after.user, before.user)
         XCTAssertEqual(after.deviceID, before.deviceID)
         XCTAssertEqual(after.deviceName, before.deviceName)
@@ -97,7 +109,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     }
 
     func testWrongAccountMissingDirectoryAndFileRootCannotCreateProjects() async throws {
-        let context = try context()
+        let context = try await context()
         defer { try? FileManager.default.removeItem(at: context.root) }
         for (owner, path) in [("bob", "repo"), ("alice", "missing"), ("alice", "connector.json")] {
             do {
@@ -110,7 +122,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     }
 
     func testSymlinkEscapeIsRejectedBeforePersistence() async throws {
-        let context = try context()
+        let context = try await context()
         defer { try? FileManager.default.removeItem(at: context.root) }
         try FileManager.default.createSymbolicLink(at: context.root.appendingPathComponent("escape"), withDestinationURL: context.root.deletingLastPathComponent())
         do {
@@ -120,7 +132,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     }
 
     func testPluginContextUsesLocalNameAndBindingAndDeletionCannotFallback() async throws {
-        let context = try context()
+        let context = try await context()
         defer { try? FileManager.default.removeItem(at: context.root) }
         let project = try await context.service.createWorkspaceProject(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "repo"))
         try await context.service.rename(ownerUserID: "alice", id: project.id, name: "Renamed", expectedRevision: 1)
@@ -137,7 +149,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     }
 
     func testRetiredWorkspaceIDRebindsThroughCurrentAuthorizationAndUpdatesRegistry() async throws {
-        let context = try context()
+        let context = try await context()
         defer { try? FileManager.default.removeItem(at: context.root) }
         let relativeRoot = context.root.appendingPathComponent("repo").path.dropFirst().description
         let record = await context.client.seed(
@@ -174,17 +186,19 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root.appendingPathComponent("repo"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("other/repo"), withIntermediateDirectories: true)
-        let stateURL = root.appendingPathComponent("connector.json")
-        var state = NativeConnectorPersistentState.empty
-        state.user = .init(id: "alice", username: "alice", displayName: nil, role: "user")
-        state.deviceID = "device"
-        state.workspaces = [
+        var pairingState = NativeConnectorPairingState.empty
+        pairingState.user = .init(id: "alice", username: "alice", displayName: nil, role: "user")
+        pairingState.deviceID = "device"
+        pairingState.workspaces = [
             .init(id: "root", alias: "root", absoluteRoot: root.path, fingerprint: "root-fingerprint"),
             .init(id: "other", alias: "other", absoluteRoot: root.appendingPathComponent("other").path, fingerprint: "other-fingerprint"),
         ]
-        try NativeConnectorStateStore(stateURL: stateURL).save(state)
         let connector = NativeLocalConnectorService(
-            configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
+            configuration: .init(
+                gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
+                supportRootURL: root.appendingPathComponent("support", isDirectory: true),
+                testingPairingState: pairingState
+            ),
             ticketProvider: NoNetworkTicketProvider(),
             accountSession: UnavailableLocalAgentAccountSession(),
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
@@ -201,7 +215,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     }
 
     func testPluginLaunchRejectsAccountChangeBeforePreparingRuntime() async throws {
-        let context = try context()
+        let context = try await context()
         defer { try? FileManager.default.removeItem(at: context.root) }
         do {
             _ = try await context.connector.launchPluginApplication(pluginID: "not-installed", componentKey: "main",
@@ -215,6 +229,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         let connector: NativeLocalConnectorService
         let service: NativeLocalProjectsService
         let client: ProjectClient
+        let accountSession: ProjectRunPreferencesAccountSession
     }
     private struct NoNetworkTicketProvider: LocalConnectorPairingTicketProviding {
         func issueLocalConnectorPairingTicket() async throws -> String { throw URLError(.notConnectedToInternet) }

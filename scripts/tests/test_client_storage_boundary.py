@@ -43,7 +43,7 @@ class ClientStorageBoundaryTests(unittest.TestCase):
 
     def test_native_connector_secrets_do_not_regress_to_plaintext_files(self) -> None:
         source = (
-            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorCredentials.swift"
         ).read_text(errors="replace")
         self.assertNotIn('appendingPathComponent("Secrets"', source)
         self.assertNotIn("posixPermissions", source)
@@ -70,7 +70,7 @@ class ClientStorageBoundaryTests(unittest.TestCase):
 
     def test_macos_terminal_history_uses_selected_client_storage_provider(self) -> None:
         persistent_state = (
-            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorCredentials.swift"
         ).read_text(errors="replace")
         terminal_store = (
             ROOT / "clients/macos/Sources/ChatOSConnector/NativeTerminalHistoryStore.swift"
@@ -86,7 +86,7 @@ class ClientStorageBoundaryTests(unittest.TestCase):
 
     def test_macos_connector_runtime_preferences_use_client_settings_repository(self) -> None:
         persistent_state = (
-            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorCredentials.swift"
         ).read_text(errors="replace")
         runtime_store = (
             ROOT
@@ -116,7 +116,7 @@ class ClientStorageBoundaryTests(unittest.TestCase):
 
     def test_macos_connector_approval_state_uses_selected_client_storage_provider(self) -> None:
         persistent_state = (
-            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorCredentials.swift"
         ).read_text(errors="replace")
         approval_store = (
             ROOT
@@ -145,7 +145,7 @@ class ClientStorageBoundaryTests(unittest.TestCase):
 
     def test_macos_installed_plugins_use_plugin_state_repository(self) -> None:
         persistent_state = (
-            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorCredentials.swift"
         ).read_text(errors="replace")
         plugin_store = (
             ROOT / "clients/macos/Sources/ChatOSConnector/NativePluginStateStore.swift"
@@ -166,6 +166,39 @@ class ClientStorageBoundaryTests(unittest.TestCase):
         self.assertIn("client.deleteInstalledPlugin", plugin_store)
         self.assertNotIn("UserDefaults", plugin_store)
         self.assertNotIn("state.json", connector_plugins)
+
+    def test_macos_connector_pairing_uses_selected_client_storage_provider(self) -> None:
+        credentials = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorCredentials.swift"
+        ).read_text(errors="replace")
+        pairing_store = (
+            ROOT
+            / "clients/macos/Sources/ChatOSConnector/NativeConnectorPairingStateStore.swift"
+        ).read_text(errors="replace")
+        connector = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService.swift"
+        ).read_text(errors="replace")
+        runtime_configuration = (
+            ROOT
+            / "clients/macos/Sources/ChatOSApp/Infrastructure/RuntimeConfiguration.swift"
+        ).read_text(errors="replace")
+        combined_sources = "\n".join(
+            path.read_text(errors="replace")
+            for path in (ROOT / "clients/macos/Sources").rglob("*.swift")
+        )
+        self.assertNotIn("NativeConnectorPersistentState", combined_sources)
+        self.assertNotIn("NativeConnectorStateStore", combined_sources)
+        self.assertNotIn('appendingPathComponent("state.json"', combined_sources)
+        self.assertNotIn("stateURL", runtime_configuration)
+        self.assertNotIn("FileManager", pairing_store)
+        self.assertNotIn("UserDefaults", pairing_store)
+        self.assertIn(
+            "NativeLocalClientSettingStore<NativeConnectorPairingState>",
+            pairing_store,
+        )
+        self.assertIn("pairingStateStore.activate", connector)
+        self.assertIn("pairingStateStore.save", connector)
+        self.assertNotIn("Codable", credentials)
 
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()

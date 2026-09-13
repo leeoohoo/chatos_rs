@@ -107,17 +107,16 @@ final class NativeProjectGitServiceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("chatos-git-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let stateURL = root.appendingPathComponent("connector-state.json")
-        var state = NativeConnectorPersistentState.empty
-        state.deviceID = "device"
-        state.workspaces = [
+        var pairingState = NativeConnectorPairingState.empty
+        pairingState.deviceID = "device"
+        pairingState.workspaces = [
             .init(id: "workspace", alias: "test", absoluteRoot: root.path, fingerprint: "test"),
         ]
-        try NativeConnectorStateStore(stateURL: stateURL).save(state)
         let connector = NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
-                stateURL: stateURL
+                supportRootURL: root.appendingPathComponent("support", isDirectory: true),
+                testingPairingState: pairingState
             ),
             ticketProvider: GitTicketProvider(),
             accountSession: UnavailableLocalAgentAccountSession(),

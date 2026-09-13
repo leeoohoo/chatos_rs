@@ -26,9 +26,9 @@ extension NativeLocalConnectorService {
         guard request.type == "terminal_exec_request" else {
             throw NativeTerminalRelayError.unsupportedRequest
         }
-        guard let ownerUserID = state.user?.id,
-              let deviceID = state.deviceID,
-              let workspace = state.workspaces.first(where: { $0.id == request.workspaceID }) else {
+        guard let ownerUserID = pairingState.user?.id,
+              let deviceID = pairingState.deviceID,
+              let workspace = pairingState.workspaces.first(where: { $0.id == request.workspaceID }) else {
             throw NativeTerminalRelayError.invalidContext
         }
         let runtime = try await managedRuntimeConfig()
@@ -375,7 +375,7 @@ extension NativeLocalConnectorService {
         workspace: LocalConnectorWorkspace,
         source: String
     ) async throws {
-        guard let ownerUserID = state.user?.id else { throw NativeTerminalRelayError.invalidContext }
+        guard let ownerUserID = pairingState.user?.id else { throw NativeTerminalRelayError.invalidContext }
         try await terminalHistoryStore.append(
             ownerUserID: ownerUserID,
             entry: .init(

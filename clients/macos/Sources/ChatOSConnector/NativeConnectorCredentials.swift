@@ -1,38 +1,5 @@
-import ChatOSCore
 import CryptoKit
 import Foundation
-
-struct NativeConnectorPersistentState: Codable, Sendable {
-    var user: LocalConnectorUser?
-    var deviceID: String?
-    var deviceName: String?
-    var workspaces: [LocalConnectorWorkspace] = []
-    /// `false` means the user explicitly blocked server-to-client calls.
-    var gatewayConnectionEnabled: Bool?
-    static let empty = NativeConnectorPersistentState()
-}
-
-struct NativeConnectorStateStore: Sendable {
-    let stateURL: URL
-
-    func load() throws -> NativeConnectorPersistentState {
-        guard FileManager.default.fileExists(atPath: stateURL.path) else { return .empty }
-        return try JSONDecoder().decode(
-            NativeConnectorPersistentState.self,
-            from: Data(contentsOf: stateURL)
-        )
-    }
-
-    func save(_ state: NativeConnectorPersistentState) throws {
-        try FileManager.default.createDirectory(
-            at: stateURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(state).write(to: stateURL, options: .atomic)
-    }
-}
 
 protocol NativeConnectorSecretStoring: Sendable {
     func load(account: String) throws -> Data?

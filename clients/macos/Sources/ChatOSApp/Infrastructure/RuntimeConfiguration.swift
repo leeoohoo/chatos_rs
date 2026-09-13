@@ -22,7 +22,7 @@ enum RuntimeConfiguration {
             ?? URL(string: "http://127.0.0.1:39230")!
     }
 
-    static var nativeConnectorStateURL: URL {
+    static var nativeConnectorSupportRootURL: URL {
         let root = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -30,7 +30,6 @@ enum RuntimeConfiguration {
         return root
             .appendingPathComponent("ChatOSSwift", isDirectory: true)
             .appendingPathComponent("NativeConnector", isDirectory: true)
-            .appendingPathComponent("state.json", isDirectory: false)
     }
 
     static func localAgentBootstrapSettings(

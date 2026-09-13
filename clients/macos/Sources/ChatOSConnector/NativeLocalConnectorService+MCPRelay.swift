@@ -25,9 +25,9 @@ extension NativeLocalConnectorService {
 
     private func processMCPRelay(_ request: NativeRelayRequest) async throws -> NativeRelayResponse {
         guard request.type == "mcp",
-              let ownerUserID = state.user?.id,
-              let deviceID = state.deviceID,
-              let workspace = state.workspaces.first(where: { $0.id == request.workspaceID }) else {
+              let ownerUserID = pairingState.user?.id,
+              let deviceID = pairingState.deviceID,
+              let workspace = pairingState.workspaces.first(where: { $0.id == request.workspaceID }) else {
             throw NativeMCPRelayError.invalidContext
         }
         let runtime = try await managedRuntimeConfig()

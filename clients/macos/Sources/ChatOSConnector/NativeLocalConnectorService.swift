@@ -6,16 +6,27 @@ import OSLog
 
 public struct NativeConnectorConfiguration: Sendable {
     public var gatewayBaseURL: URL
-    public var stateURL: URL
+    public var supportRootURL: URL
+    let initialPairingState: NativeConnectorPairingState
 
-    public init(gatewayBaseURL: URL, stateURL: URL) {
+    public init(gatewayBaseURL: URL, supportRootURL: URL) {
         self.gatewayBaseURL = gatewayBaseURL
-        self.stateURL = stateURL
+        self.supportRootURL = supportRootURL
+        self.initialPairingState = .empty
+    }
+
+    init(
+        gatewayBaseURL: URL,
+        supportRootURL: URL,
+        testingPairingState: NativeConnectorPairingState
+    ) {
+        self.gatewayBaseURL = gatewayBaseURL
+        self.supportRootURL = supportRootURL
+        self.initialPairingState = testingPairingState
     }
 }
 
 public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalConnectorApprovalStreaming {
-    private static let accessTokenAccount = "gateway-access-token-v1"
     private static let logger = Logger(
         subsystem: "com.chatos.swift-client",
         category: "NativeLocalConnector"
@@ -24,7 +35,6 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     private let configuration: NativeConnectorConfiguration
     private let ticketProvider: any LocalConnectorPairingTicketProviding
     let gateway: NativeConnectorGateway
-    let stateStore: NativeConnectorStateStore
     let routeStore: NativeConnectorRouteStore
     let pluginInstaller: NativePluginInstaller
     let mcpCodeWriteStore = NativeMCPCodeWriteStore()
@@ -38,10 +48,11 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let runtimePreferencesStore: NativeConnectorRuntimePreferencesStore
     let approvalStore: NativeConnectorApprovalStore
     let pluginStateStore: NativePluginStateStore
+    let pairingStateStore: NativeConnectorPairingStateStore
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
-    var state: NativeConnectorPersistentState
+    var pairingState: NativeConnectorPairingState
     private var activeClientStorageOwnerID: String?
     private var cachedAccessToken: String?
     private var hasLoadedAccessToken = false
@@ -82,7 +93,6 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         self.configuration = configuration
         self.ticketProvider = ticketProvider
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
-        self.stateStore = NativeConnectorStateStore(stateURL: configuration.stateURL)
         self.routeStore = routeStore
         self.terminalHistoryStore = NativeTerminalHistoryStore(accountSession: accountSession)
         self.runtimePreferencesStore = NativeConnectorRuntimePreferencesStore(
@@ -90,25 +100,24 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         )
         self.approvalStore = NativeConnectorApprovalStore(accountSession: accountSession)
         self.pluginStateStore = NativePluginStateStore(accountSession: accountSession)
+        self.pairingStateStore = NativeConnectorPairingStateStore(accountSession: accountSession)
         self.agentRuntimeSettings = agentRuntimeSettings
         self.pluginInstaller = NativePluginInstaller(
-            rootURL: configuration.stateURL
-                .deletingLastPathComponent()
+            rootURL: configuration.supportRootURL
                 .appendingPathComponent("Plugins", isDirectory: true)
         )
-        self.pluginRuntimeRootURL = configuration.stateURL
-            .deletingLastPathComponent()
+        self.pluginRuntimeRootURL = configuration.supportRootURL
             .appendingPathComponent("PluginRuntime", isDirectory: true)
         self.remoteConnectionRuntime = remoteConnectionRuntime
-        self.state = (try? stateStore.load()) ?? .empty
+        self.pairingState = configuration.initialPairingState
         self.routeStore.replace(
-            deviceID: self.state.deviceID,
-            workspaceID: self.state.workspaces.first?.id
+            deviceID: self.pairingState.deviceID,
+            workspaceID: self.pairingState.workspaces.first?.id
         )
     }
 
     public func fetchStatus() async throws -> LocalConnectorStatus {
-        if state.deviceID != nil, state.gatewayConnectionEnabled != false, !gatewayConnected {
+        if pairingState.deviceID != nil, pairingState.gatewayConnectionEnabled != false, !gatewayConnected {
             try? await connectGateway()
         }
         return try await statusSnapshot()
@@ -116,12 +125,23 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     public func activateClientStorage(ownerUserID: String) async throws {
         activeClientStorageOwnerID = nil
+        pairingState = .empty
+        routeStore.replace(deviceID: nil, workspaceID: nil)
+        cachedAccessToken = nil
+        hasLoadedAccessToken = false
         do {
+            let loadedPairingState = try await pairingStateStore.activate(ownerUserID: ownerUserID)
             _ = try await runtimePreferencesStore.activate(ownerUserID: ownerUserID)
             _ = try await approvalStore.activate(ownerUserID: ownerUserID)
             try await pluginStateStore.activate(ownerUserID: ownerUserID)
+            pairingState = loadedPairingState
+            routeStore.replace(
+                deviceID: loadedPairingState.deviceID,
+                workspaceID: loadedPairingState.workspaces.first?.id
+            )
             activeClientStorageOwnerID = ownerUserID
         } catch {
+            await pairingStateStore.deactivate()
             await runtimePreferencesStore.deactivate()
             await approvalStore.deactivate()
             await pluginStateStore.deactivate()
@@ -130,7 +150,15 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func deactivateClientStorage() async {
+        await stopServerAccess()
+        await pluginApplicationRuntime.stopAll()
+        await browserExtensionPairingRuntime.stop()
         activeClientStorageOwnerID = nil
+        pairingState = .empty
+        routeStore.replace(deviceID: nil, workspaceID: nil)
+        cachedAccessToken = nil
+        hasLoadedAccessToken = false
+        await pairingStateStore.deactivate()
         await runtimePreferencesStore.deactivate()
         await approvalStore.deactivate()
         await pluginStateStore.deactivate()
@@ -139,9 +167,16 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {
         invalidateManagedRuntimeConfig()
         let resolvedName = deviceName?.trimmedNonEmpty ?? Host.current().localizedName ?? "Mac"
+        let ownerUserID = try activeClientStorageOwnerUserID()
         let ticket = try await ticketProvider.issueLocalConnectorPairingTicket()
         let login = try await gateway.exchange(ticket: ticket, deviceName: resolvedName)
-        try secretStore.save(Data(login.token.utf8), account: Self.accessTokenAccount)
+        guard login.user.id == ownerUserID else {
+            throw NativeConnectorPairingStateStoreError.accountMismatch
+        }
+        try secretStore.save(
+            Data(login.token.utf8),
+            account: Self.accessTokenAccount(ownerUserID: ownerUserID)
+        )
         cachedAccessToken = login.token
         hasLoadedAccessToken = true
         let identity = try deviceIdentity()
@@ -155,13 +190,16 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             deviceID: device.id,
             publicKey: identity.publicKey
         )
-        state.user = login.user.domainModel
-        state.deviceID = device.id
-        state.deviceName = resolvedName
-        state.workspaces = [workspace]
+        var next = NativeConnectorPairingState(
+            user: login.user.domainModel,
+            deviceID: device.id,
+            deviceName: resolvedName,
+            workspaces: [workspace],
+            gatewayConnectionEnabled: true
+        )
+        next = try await pairingStateStore.save(ownerUserID: ownerUserID, value: next)
+        pairingState = next
         routeStore.replace(deviceID: device.id, workspaceID: workspace.id)
-        state.gatewayConnectionEnabled = true
-        try stateStore.save(state)
         try await connectGateway()
         try? await Task.sleep(for: .milliseconds(200))
         return try await statusSnapshot()
@@ -174,19 +212,23 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func resumeServerAccess() async throws -> LocalConnectorStatus {
-        guard state.deviceID != nil else { throw NativeConnectorError.notPaired }
-        state.gatewayConnectionEnabled = true
-        try stateStore.save(state)
+        guard pairingState.deviceID != nil else { throw NativeConnectorError.notPaired }
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        var next = pairingState
+        next.gatewayConnectionEnabled = true
+        pairingState = try await pairingStateStore.save(ownerUserID: ownerUserID, value: next)
         try await connectGateway()
         return try await statusSnapshot()
     }
 
     public func disconnect() async throws -> LocalConnectorStatus {
+        let ownerUserID = try activeClientStorageOwnerUserID()
         let token = try? accessToken()
-        state.gatewayConnectionEnabled = false
+        var next = pairingState
+        next.gatewayConnectionEnabled = false
+        pairingState = try await pairingStateStore.save(ownerUserID: ownerUserID, value: next)
         await stopServerAccess()
-        try stateStore.save(state)
-        if let deviceID = state.deviceID, let token {
+        if let deviceID = pairingState.deviceID, let token {
             try? await gateway.disconnectDevice(token: token, id: deviceID)
         }
         return try await statusSnapshot()
@@ -200,7 +242,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func prepareForSystemSleep() async {
-        guard state.deviceID != nil else { return }
+        guard pairingState.deviceID != nil else { return }
         isSystemSleeping = true
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -210,7 +252,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func recoverGatewayConnection(forceReconnect: Bool = false) async {
-        guard state.deviceID != nil, state.gatewayConnectionEnabled != false else { return }
+        guard pairingState.deviceID != nil, pairingState.gatewayConnectionEnabled != false else { return }
         isSystemSleeping = false
         shouldMaintainGatewayConnection = true
         if forceReconnect {
@@ -251,7 +293,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         commandLine: String,
         cwd: String?
     ) async throws -> LocalConnectorTerminalResult {
-        guard let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else {
+        guard let workspace = pairingState.workspaces.first(where: { $0.id == workspaceID }) else {
             throw NativeConnectorError.workspaceUnavailable
         }
         let result = try NativeTerminalExecutor.execute(
@@ -260,7 +302,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             cwd: cwd ?? workspace.absoluteRoot,
             workspace: workspace
         )
-        guard let ownerUserID = state.user?.id else { throw NativeConnectorError.notPaired }
+        guard let ownerUserID = pairingState.user?.id else { throw NativeConnectorError.notPaired }
         try await terminalHistoryStore.append(
             ownerUserID: ownerUserID,
             entry: .init(
@@ -281,12 +323,12 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func fetchCommandHistory(limit: Int) async throws -> [LocalConnectorCommandHistoryEntry] {
-        guard let ownerUserID = state.user?.id else { throw NativeConnectorError.notPaired }
+        guard let ownerUserID = pairingState.user?.id else { throw NativeConnectorError.notPaired }
         return try await terminalHistoryStore.list(ownerUserID: ownerUserID, limit: limit)
     }
 
     public func clearCommandHistory() async throws {
-        guard let ownerUserID = state.user?.id else { throw NativeConnectorError.notPaired }
+        guard let ownerUserID = pairingState.user?.id else { throw NativeConnectorError.notPaired }
         try await terminalHistoryStore.clear(ownerUserID: ownerUserID)
     }
 
@@ -462,16 +504,16 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     private func statusSnapshot() async throws -> LocalConnectorStatus {
         let preferences = try await runtimePreferences()
         return .init(
-            configured: state.deviceID != nil && (try? accessToken()) != nil,
+            configured: pairingState.deviceID != nil && (try? accessToken()) != nil,
             connectorRunning: gatewayConnected,
             developerMode: preferences.developerMode,
             cloudBaseURL: configuration.gatewayBaseURL.absoluteString,
             userServiceBaseURL: configuration.gatewayBaseURL.absoluteString,
-            deviceID: state.deviceID,
-            deviceName: state.deviceName,
-            user: state.user,
-            defaultWorkspaceID: state.workspaces.first?.id,
-            workspaces: state.workspaces
+            deviceID: pairingState.deviceID,
+            deviceName: pairingState.deviceName,
+            user: pairingState.user,
+            defaultWorkspaceID: pairingState.workspaces.first?.id,
+            workspaces: pairingState.workspaces
         )
     }
 
@@ -563,7 +605,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     private func openGatewayConnection() async throws {
         invalidateManagedRuntimeConfig()
         let token = try requireAccessToken()
-        guard let deviceID = state.deviceID else { throw NativeConnectorError.notPaired }
+        guard let deviceID = pairingState.deviceID else { throw NativeConnectorError.notPaired }
         let identity = try deviceIdentity()
         let path = "/api/local-connectors/devices/\(deviceID)/connect"
         let base = configuration.gatewayBaseURL.absoluteString
@@ -721,7 +763,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     private func scheduleGatewayReconnect() {
         guard shouldMaintainGatewayConnection,
               !isSystemSleeping,
-              state.deviceID != nil,
+              pairingState.deviceID != nil,
               webSocket == nil,
               gatewayConnectionCleanupCount == 0,
               reconnectTask == nil else {
@@ -737,7 +779,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             reconnectTask = nil
             if shouldMaintainGatewayConnection,
                !isSystemSleeping,
-               state.deviceID != nil,
+               pairingState.deviceID != nil,
                webSocket == nil {
                 scheduleGatewayReconnect()
             }
@@ -745,7 +787,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         while !Task.isCancelled,
               shouldMaintainGatewayConnection,
               !isSystemSleeping,
-              state.deviceID != nil,
+              pairingState.deviceID != nil,
               webSocket == nil {
             let delay = Self.gatewayReconnectDelaySeconds(
                 afterFailedAttempts: gatewayReconnectFailureCount
@@ -787,8 +829,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     func sendPluginInstallationStatus() async throws {
         guard let socket = webSocket,
-              let ownerUserID = state.user?.id,
-              let deviceID = state.deviceID else {
+              let ownerUserID = pairingState.user?.id,
+              let deviceID = pairingState.deviceID else {
             return
         }
         let installations = try await pluginStateStore.installations(ownerUserID: ownerUserID)
@@ -837,7 +879,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             if gatewayConnectionCleanupCount == 0,
                shouldMaintainGatewayConnection,
                !isSystemSleeping,
-               state.deviceID != nil,
+               pairingState.deviceID != nil,
                webSocket == nil {
                 scheduleGatewayReconnect()
             }
@@ -888,7 +930,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     private func accessToken() throws -> String? {
         if hasLoadedAccessToken { return cachedAccessToken }
-        guard let data = try secretStore.load(account: Self.accessTokenAccount) else {
+        let ownerUserID = try activeClientStorageOwnerUserID()
+        guard let data = try secretStore.load(
+            account: Self.accessTokenAccount(ownerUserID: ownerUserID)
+        ) else {
             cachedAccessToken = nil
             hasLoadedAccessToken = true
             return nil
@@ -896,6 +941,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         cachedAccessToken = String(data: data, encoding: .utf8)?.trimmedNonEmpty
         hasLoadedAccessToken = true
         return cachedAccessToken
+    }
+
+    private static func accessTokenAccount(ownerUserID: String) -> String {
+        "gateway-access-token-v1:\(ownerUserID)"
     }
 
     func requireAccessToken() throws -> String {

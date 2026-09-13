@@ -59,7 +59,7 @@ extension NativeLocalConnectorService {
         } else {
             resolvedPath = nil
         }
-        guard let deviceID = state.deviceID else {
+        guard let deviceID = pairingState.deviceID else {
             throw NativeConnectorError.notPaired
         }
         return try await pluginApplicationRuntime.launch(
@@ -194,7 +194,7 @@ extension NativeLocalConnectorService {
         let installation = try await pluginStateStore.installations(ownerUserID: ownerUserID)[pluginID]
         guard installation?.enabled == true,
               let record = installation?.record,
-              let deviceID = state.deviceID else {
+              let deviceID = pairingState.deviceID else {
             throw NativeConnectorError.browserExtensionPairing("Browser CDP 尚未安装或设备尚未配对")
         }
         let manifest = try installedPluginManifest(record: record)
@@ -222,7 +222,7 @@ extension NativeLocalConnectorService {
             ownerUserID: ownerUserID,
             pluginID: pluginID
         ),
-              let deviceID = state.deviceID else {
+              let deviceID = pairingState.deviceID else {
             return false
         }
         let manifest = try installedPluginManifest(record: record)
@@ -263,7 +263,7 @@ extension NativeLocalConnectorService {
     public func updatePluginEnabled(id: String, enabled: Bool) async throws {
         let ownerUserID = try activeClientStorageOwnerUserID()
         let token = try requireAccessToken()
-        guard let deviceID = state.deviceID else { throw NativeConnectorError.notPaired }
+        guard let deviceID = pairingState.deviceID else { throw NativeConnectorError.notPaired }
         try await gateway.updatePluginPreference(
             token: token,
             pluginID: id,

@@ -391,13 +391,13 @@ public struct AccountLocalProjectCreator: LocalProjectCreating {
 
 extension NativeLocalConnectorService {
     public func localProjectDeviceID(ownerUserID: String) throws -> String? {
-        guard state.user?.id == ownerUserID else {
+        guard pairingState.user?.id == ownerUserID else {
             throw ProjectRegistryError.storage("本机工作区不属于当前账户，请重新配对。")
         }
-        if let deviceID = state.deviceID {
+        if let deviceID = pairingState.deviceID {
             try ProjectRegistryValidation.routeIdentifier(deviceID, field: "deviceID")
         }
-        return state.deviceID
+        return pairingState.deviceID
     }
 
     func validateLocalProjectDirectory(
@@ -406,7 +406,7 @@ extension NativeLocalConnectorService {
     ) throws -> ProjectDirectoryBinding {
         try draft.validate()
         _ = try localProjectDeviceID(ownerUserID: ownerUserID)
-        guard let workspace = state.workspaces.first(where: { $0.id == draft.workspaceID }) else {
+        guard let workspace = pairingState.workspaces.first(where: { $0.id == draft.workspaceID }) else {
             throw NativeConnectorError.workspaceUnavailable
         }
         let url = try NativeWorkspaceFilesystem(workspace: workspace).resolveExistingURL(

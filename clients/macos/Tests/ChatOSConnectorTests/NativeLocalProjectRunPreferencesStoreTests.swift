@@ -268,6 +268,18 @@ actor ProjectRunPreferencesTransport: LocalAgentFrameTransport {
     private var settings: [String: StoredSetting] = [:]
     private var recordedRequests: [Data] = []
 
+    func seedClientSetting<Value: Encodable & Sendable>(
+        ownerUserID: String,
+        key: String,
+        value: Value
+    ) throws {
+        let data = try JSONEncoder().encode(value)
+        settings["\(ownerUserID):\(key)"] = StoredSetting(
+            value: try JSONSerialization.jsonObject(with: data),
+            revision: 1
+        )
+    }
+
     func exchange(_ request: Data) async throws -> Data {
         recordedRequests.append(request)
         let object = try Self.dictionary(JSONSerialization.jsonObject(with: request))
@@ -275,8 +287,6 @@ actor ProjectRunPreferencesTransport: LocalAgentFrameTransport {
         let command = try Self.dictionary(object["command"])
         let type = try Self.string(command["type"])
         let payload = try Self.dictionary(command["payload"])
-        let key = try Self.string(payload["key"])
-        let storageKey = "\(owner):\(key)"
         let response: [String: Any]
 
         if type == "put_client_setting",
@@ -287,6 +297,8 @@ actor ProjectRunPreferencesTransport: LocalAgentFrameTransport {
 
         switch type {
         case "get_client_setting":
+            let key = try Self.string(payload["key"])
+            let storageKey = "\(owner):\(key)"
             if let setting = settings[storageKey] {
                 response = Self.settingResponse(
                     owner: owner,
@@ -298,6 +310,8 @@ actor ProjectRunPreferencesTransport: LocalAgentFrameTransport {
                 response = Self.notFoundResponse()
             }
         case "put_client_setting":
+            let key = try Self.string(payload["key"])
+            let storageKey = "\(owner):\(key)"
             let expected = (payload["expected_revision"] as? NSNumber)?.uint64Value
             let current = settings[storageKey]
             guard current?.revision == expected else {
@@ -320,6 +334,11 @@ actor ProjectRunPreferencesTransport: LocalAgentFrameTransport {
                 value: value,
                 revision: revision
             )
+        case "list_installed_plugins":
+            response = [
+                "type": "installed_plugin_records",
+                "payload": ["records": [], "next_cursor": NSNull()],
+            ]
         default:
             throw ProjectRunPreferencesTestError.unexpectedCommand(type)
         }

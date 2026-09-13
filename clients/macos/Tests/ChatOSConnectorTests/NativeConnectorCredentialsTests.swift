@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import ChatOSConnector
 
-struct NativeConnectorStateStoreTests {
+struct NativeConnectorCredentialsTests {
     @Test
     func pluginUpdateStateUsesInstalledReleaseVersionAndArtifact() {
         let installed = NativeInstalledPluginRecord(
@@ -86,12 +86,17 @@ struct NativeConnectorStateStoreTests {
     }
 
     @Test
-    func stateRoundTripsOnlyConnectorPairingState() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = NativeConnectorStateStore(stateURL: directory.appendingPathComponent("state.json"))
-        var state = NativeConnectorPersistentState.empty
+    func pairingStateUsesTheSelectedClientStorageProvider() async throws {
+        let transport = ProjectRunPreferencesTransport()
+        let client = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: transport
+        )
+        let accountSession = ProjectRunPreferencesAccountSession(client: client)
+        let store = NativeConnectorPairingStateStore(accountSession: accountSession)
+        _ = try await store.activate(ownerUserID: "user-1")
+        var state = NativeConnectorPairingState.empty
+        state.user = .init(id: "user-1", username: "tester", displayName: nil, role: "user")
         state.deviceID = "device-1"
         state.deviceName = "Test Mac"
         state.gatewayConnectionEnabled = false
@@ -99,31 +104,48 @@ struct NativeConnectorStateStoreTests {
             .init(id: "workspace-1", alias: "Project", absoluteRoot: "/tmp/project", fingerprint: "abc")
         ]
 
-        try store.save(state)
-        let restored = try store.load()
+        _ = try await store.save(ownerUserID: "user-1", value: state)
+        let restarted = NativeConnectorPairingStateStore(accountSession: accountSession)
+        let restored = try await restarted.activate(ownerUserID: "user-1")
 
         #expect(restored.deviceID == "device-1")
         #expect(restored.deviceName == "Test Mac")
         #expect(restored.gatewayConnectionEnabled == false)
         #expect(restored.workspaces.first?.absoluteRoot == "/tmp/project")
 
-        let encoded = try #require(
-            JSONSerialization.jsonObject(with: Data(contentsOf: store.stateURL))
-                as? [String: Any]
-        )
-        #expect(encoded["developerMode"] == nil)
-        #expect(encoded["sandboxEnabled"] == nil)
-        #expect(encoded["permissionProfileID"] == nil)
-        #expect(encoded["approvalPolicy"] == nil)
-        #expect(encoded["approvalReviewer"] == nil)
-        #expect(encoded["networkAccess"] == nil)
-        #expect(encoded["approvalMode"] == nil)
-        #expect(encoded["commandApprovalModelConfigID"] == nil)
-        #expect(encoded["commandApprovalThinkingLevel"] == nil)
-        #expect(encoded["approvalHistory"] == nil)
-        #expect(encoded["policyRevision"] == nil)
-        #expect(encoded["installedPluginIDs"] == nil)
-        #expect(encoded["installedPluginRecords"] == nil)
-        #expect(encoded["pluginPreferences"] == nil)
+        let requests = await transport.requests()
+        #expect(requests.contains { request in
+            guard let object = try? JSONSerialization.jsonObject(with: request) as? [String: Any],
+                  let command = object["command"] as? [String: Any]
+            else { return false }
+            return command["type"] as? String == "put_client_setting"
+        })
     }
+
+    @Test
+    func legacyStateJSONIsNeverRead() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(#"{"deviceID":"legacy-device","gatewayConnectionEnabled":true}"#.utf8)
+            .write(to: root.appendingPathComponent("state.json"))
+
+        let connector = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
+                supportRootURL: root
+            ),
+            ticketProvider: LegacyStateTicketProvider(),
+            accountSession: UnavailableLocalAgentAccountSession(),
+            agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
+        )
+
+        let state = await connector.pairingState
+        #expect(state == .empty)
+    }
+}
+
+private struct LegacyStateTicketProvider: LocalConnectorPairingTicketProviding {
+    func issueLocalConnectorPairingTicket() async throws -> String { "unused" }
 }

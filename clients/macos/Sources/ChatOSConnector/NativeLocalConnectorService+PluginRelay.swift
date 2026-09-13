@@ -41,13 +41,13 @@ extension NativeLocalConnectorService {
     private func processPluginRelay(_ request: NativeRelayRequest) async throws -> NativeRelayResponse {
         guard ["plugin_prepare_request", "plugin_execute_request", "plugin_cancel_request"]
             .contains(request.type),
-              let ownerUserID = state.user?.id,
-              let deviceID = state.deviceID else {
+              let ownerUserID = pairingState.user?.id,
+              let deviceID = pairingState.deviceID else {
             throw NativePluginRuntimeError.invalidRequest("Plugin Relay 与当前设备或工作区不匹配")
         }
         let scope = try NativePluginRelayScope.resolve(
             workspaceID: request.workspaceID,
-            workspaces: state.workspaces
+            workspaces: pairingState.workspaces
         )
         let runtime = try await managedRuntimeConfig()
         try NativeRelayVerifier().verify(
@@ -85,7 +85,7 @@ extension NativeLocalConnectorService {
         let blocklist = Set(try body.optionalStringArray("tool_blocklist"))
         try scope.validate(permissionSnapshot: permissionSnapshot)
         let projectRoot = try scope.projectRoot(for: request)
-        guard let ownerUserID = state.user?.id, let deviceID = state.deviceID else {
+        guard let ownerUserID = pairingState.user?.id, let deviceID = pairingState.deviceID else {
             throw NativePluginRuntimeError.invalidRequest("Plugin Relay 的设备身份已失效")
         }
         let record = try await enabledPluginRecord(pluginID: pluginID)
@@ -353,7 +353,7 @@ extension NativeLocalConnectorService {
             arguments: toolArguments,
             timeout: .milliseconds(policy.timeoutMilliseconds)
         )
-        guard let ownerUserID = state.user?.id, let deviceID = state.deviceID else {
+        guard let ownerUserID = pairingState.user?.id, let deviceID = pairingState.deviceID else {
             throw NativePluginRuntimeError.invalidRequest("Plugin Relay 的设备身份已失效")
         }
         let registeredResult = try await pluginRuntimeStore.registerArtifacts(

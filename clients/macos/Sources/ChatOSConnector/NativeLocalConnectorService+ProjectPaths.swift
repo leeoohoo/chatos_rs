@@ -31,11 +31,11 @@ extension NativeLocalConnectorService {
             guard parts.count >= 2 else { throw NativeConnectorError.workspaceUnavailable }
             let deviceID = parts[0]
             let workspaceID = parts[1]
-            guard deviceID == state.deviceID else {
+            guard deviceID == pairingState.deviceID else {
                 throw NativeConnectorError.workspaceUnavailable
             }
             let relative = parts.dropFirst(2).joined(separator: "/")
-            guard let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else {
+            guard let workspace = pairingState.workspaces.first(where: { $0.id == workspaceID }) else {
                 return try resolveReauthorizedProjectPath(relativePath: relative)
             }
             let filesystem = NativeWorkspaceFilesystem(workspace: workspace)
@@ -50,7 +50,7 @@ extension NativeLocalConnectorService {
         }
 
         let candidate = URL(fileURLWithPath: value).standardizedFileURL.resolvingSymlinksInPath()
-        guard let workspace = state.workspaces.first(where: { workspace in
+        guard let workspace = pairingState.workspaces.first(where: { workspace in
             let root = URL(fileURLWithPath: workspace.absoluteRoot).standardizedFileURL.resolvingSymlinksInPath()
             let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
             return candidate.path == root.path || candidate.path.hasPrefix(prefix)
@@ -72,9 +72,9 @@ extension NativeLocalConnectorService {
     /// workspace grant ID. Every candidate is resolved through a current grant and an
     /// existing directory. Distinct physical matches fail closed instead of guessing.
     func resolveReauthorizedProjectPath(relativePath: String) throws -> NativeResolvedProjectPath {
-        guard let deviceID = state.deviceID else { throw NativeConnectorError.workspaceUnavailable }
+        guard let deviceID = pairingState.deviceID else { throw NativeConnectorError.workspaceUnavailable }
         var candidatesByPath: [String: [NativeResolvedProjectPath]] = [:]
-        for workspace in state.workspaces where
+        for workspace in pairingState.workspaces where
             URL(fileURLWithPath: workspace.absoluteRoot).standardizedFileURL.resolvingSymlinksInPath().path == "/" {
             let filesystem = NativeWorkspaceFilesystem(workspace: workspace)
             guard let url = try? filesystem.resolveExistingURL(relativePath.isEmpty ? "." : relativePath),
