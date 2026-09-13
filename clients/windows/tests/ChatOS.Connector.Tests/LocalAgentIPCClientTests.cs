@@ -54,6 +54,36 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
+    public async Task EncodesApprovalReviewWithoutProviderCredentials()
+    {
+        var transport = new RecordingTransport(request => Reply(request, """
+            {"type":"accepted","payload":{"operation_id":"operation-1"}}
+            """));
+        var client = new WindowsLocalAgentIPCClient("user-1", transport);
+
+        await client.AcceptAsync(LocalAgentCommand.CreateApprovalReview(
+            new LocalAgentCreateApprovalReview(
+                "approval-1",
+                "model-1",
+                "shell",
+                "workspace",
+                "git status --short",
+                "Read repository status",
+                "low",
+                null,
+                "low")));
+
+        using var request = JsonDocument.Parse(transport.Request!);
+        var command = request.RootElement.GetProperty("command");
+        Assert.Equal("create_approval_review", command.GetProperty("type").GetString());
+        var payload = command.GetProperty("payload");
+        Assert.Equal("approval-1", payload.GetProperty("review_id").GetString());
+        Assert.Equal("model-1", payload.GetProperty("model_config_id").GetString());
+        Assert.False(payload.TryGetProperty("api_key", out _));
+        Assert.False(payload.TryGetProperty("base_url", out _));
+    }
+
+    [Fact]
     public async Task EncodesToolApprovalWithExactRunAndInvocationIdentity()
     {
         using var expectedRequest = JsonDocument.Parse(
@@ -106,7 +136,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesTheSharedV25RetryTaskAndTaskSnapshotFixtures()
+    public async Task UsesTheSharedV26RetryTaskAndTaskSnapshotFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("retry_task_request.json")));
@@ -121,7 +151,7 @@ public sealed class LocalAgentIPCClientTests
             "Preserve the approved visual hierarchy.")));
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
-        Assert.Equal(25u, LocalAgentProtocol.Version);
+        Assert.Equal(26u, LocalAgentProtocol.Version);
         Assert.True(JsonDeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));
@@ -141,7 +171,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesSharedV25ApprovalHistoryFixtures()
+    public async Task UsesSharedV26ApprovalHistoryFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("approval_history_append_request.json")));
@@ -182,7 +212,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesSharedV25InstalledPluginFixtures()
+    public async Task UsesSharedV26InstalledPluginFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("installed_plugin_put_request.json")));
@@ -504,7 +534,7 @@ public sealed class LocalAgentIPCClientTests
             "shared",
             "fixtures",
             "local_agent",
-            "v25",
+            "v26",
             name));
 
     private static bool JsonDeepEquals(JsonElement expected, JsonElement actual) =>

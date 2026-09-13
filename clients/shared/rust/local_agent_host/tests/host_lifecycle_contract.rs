@@ -26,15 +26,15 @@ use chatos_local_agent_host::{
     StoredTaskRunnerContextProvider,
 };
 use chatos_local_agent_protocol::{
-    AnswerUserQuestionCommand, ContextStrategy, CreateMainChatTurnCommand, CreateTaskCommand,
-    FrozenSnapshot, LocalAgentCommand, LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType,
-    LocalAgentIpcError, LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun,
-    LocalAgentRunStatus, LocalAgentUiEvent, LocalAgentUiEventPayload, ModelGatewayRequest,
-    ModelGatewayTerminal, ModelGatewayTerminalSource, ModelGatewayTerminalStatus,
-    ModelGatewayTokenCount, ModelProtocol, ModelRuntimeDescriptor, ModelStepCompletion,
-    ModelStepResult, ModelStreamDeltaKind, RetryTaskCommand, RunControlCommand,
-    ToolApprovalCommand, ToolApprovalDecision, ToolEffect, ToolExecutionStatus,
-    UserInteractionAnswer, LOCAL_AGENT_PROTOCOL_VERSION,
+    AnswerUserQuestionCommand, ContextStrategy, CreateApprovalReviewCommand,
+    CreateMainChatTurnCommand, CreateTaskCommand, FrozenSnapshot, LocalAgentCommand,
+    LocalAgentEvent, LocalAgentEventStatus, LocalAgentEventType, LocalAgentIpcError,
+    LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunStatus,
+    LocalAgentUiEvent, LocalAgentUiEventPayload, ModelGatewayRequest, ModelGatewayTerminal,
+    ModelGatewayTerminalSource, ModelGatewayTerminalStatus, ModelGatewayTokenCount, ModelProtocol,
+    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ModelStreamDeltaKind,
+    RetryTaskCommand, RunControlCommand, ToolApprovalCommand, ToolApprovalDecision, ToolEffect,
+    ToolExecutionStatus, UserInteractionAnswer, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{
     CompletedAssistantMessage, DurableProviderContextCommit, DurableTaskState, LocalAgentProfile,
@@ -49,6 +49,8 @@ use tokio_util::sync::CancellationToken;
 struct Profile;
 
 struct TaskProfile;
+
+struct ApprovalProfile;
 
 #[async_trait]
 impl LocalAgentProfile for Profile {
@@ -115,6 +117,28 @@ impl LocalAgentProfile for TaskProfile {
         Ok(ModelStepResult::Final(
             serde_json::json!({"text": output.content}),
         ))
+    }
+}
+
+#[async_trait]
+impl LocalAgentProfile for ApprovalProfile {
+    fn profile_key(&self) -> &'static str {
+        "approval_review"
+    }
+
+    async fn prepare_model_step(
+        &self,
+        run: &LocalAgentRun,
+    ) -> Result<LocalAgentProfileStep, String> {
+        Profile.prepare_model_step(run).await
+    }
+
+    async fn interpret_completed_output(
+        &self,
+        _run: &LocalAgentRun,
+        _output: &ModelGatewayOutput,
+    ) -> Result<ModelStepResult, String> {
+        unreachable!("creation contract does not execute the approval profile")
     }
 }
 
@@ -1718,6 +1742,7 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
     let profiles = LocalAgentProfileRegistry::new([
         Arc::new(Profile) as Arc<dyn LocalAgentProfile>,
         Arc::new(TaskProfile) as Arc<dyn LocalAgentProfile>,
+        Arc::new(ApprovalProfile) as Arc<dyn LocalAgentProfile>,
     ])
     .unwrap();
     let (host, _) = LocalAgentHost::start(
@@ -1771,6 +1796,29 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
     let repeated_main = server.handle_request(main_request).await.response;
     assert_eq!(first_main, repeated_main);
 
+    let approval_request = LocalAgentIpcRequest {
+        protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+        request_id: "ipc-approval-1".to_string(),
+        owner_user_id: "user-1".to_string(),
+        command: LocalAgentCommand::CreateApprovalReview(Box::new(CreateApprovalReviewCommand {
+            review_id: "approval-created-1".to_string(),
+            model_config_id: "model-approval".to_string(),
+            source: "shell".to_string(),
+            cwd: "workspace".to_string(),
+            operation: "git status --short".to_string(),
+            requested_permissions_description: Some("Read repository status".to_string()),
+            risk_level: "low".to_string(),
+            risk_reason: None,
+            reasoning_effort: Some("low".to_string()),
+        })),
+    };
+    let first_approval = server
+        .handle_request(approval_request.clone())
+        .await
+        .response;
+    let repeated_approval = server.handle_request(approval_request).await.response;
+    assert_eq!(first_approval, repeated_approval);
+
     let task_request = LocalAgentIpcRequest {
         protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
         request_id: "ipc-task-1".to_string(),
@@ -1804,10 +1852,17 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
     };
     assert_eq!(run.profile_key, "task_runner");
     assert_eq!(run.owner_entity_id, "task-created-1");
+    let LocalAgentIpcResponse::RunCreated { run, .. } = first_approval else {
+        panic!("approval creation must return its durable Run");
+    };
+    assert_eq!(run.profile_key, "approval_review");
+    assert_eq!(run.owner_entity_id, "approval-created-1");
+    assert_eq!(run.model_config_id, "model-approval");
+    assert_eq!(run.project_id, None);
 
     {
         let descriptor_calls = gateway.calls.lock().unwrap();
-        assert_eq!(descriptor_calls.len(), 2);
+        assert_eq!(descriptor_calls.len(), 3);
         assert!(descriptor_calls
             .iter()
             .all(|(token, _)| token == "private-access-token"));
@@ -1815,10 +1870,10 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
 
     let mut state = ReadCreationState::default();
     storage.transaction(&mut state).await.unwrap();
-    assert_eq!(state.runs.len(), 2);
+    assert_eq!(state.runs.len(), 3);
     assert_eq!(state.tasks.len(), 1);
-    assert_eq!(state.message_count, 2);
-    assert_eq!(state.outbox_count, 2);
+    assert_eq!(state.message_count, 3);
+    assert_eq!(state.outbox_count, 3);
     let main = state
         .runs
         .iter()
@@ -1869,9 +1924,9 @@ async fn typed_ipc_creates_main_chat_and_task_work_atomically_and_idempotently()
 
     let mut retried_state = ReadCreationState::default();
     storage.transaction(&mut retried_state).await.unwrap();
-    assert_eq!(retried_state.runs.len(), 3);
-    assert_eq!(retried_state.message_count, 3);
-    assert_eq!(retried_state.outbox_count, 3);
+    assert_eq!(retried_state.runs.len(), 4);
+    assert_eq!(retried_state.message_count, 4);
+    assert_eq!(retried_state.outbox_count, 4);
     assert_eq!(
         retried_state.tasks[0].state["current_run_id"],
         retried.run_id

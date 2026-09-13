@@ -47,6 +47,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let terminalHistoryStore: NativeTerminalHistoryStore
     let runtimePreferencesStore: NativeConnectorRuntimePreferencesStore
     let approvalStore: NativeConnectorApprovalStore
+    let accountSession: any NativeLocalAgentAccountSessionAccess
     let pluginStateStore: NativePluginStateStore
     let pairingStateStore: NativeConnectorPairingStateStore
     let pluginRuntimeRootURL: URL
@@ -99,6 +100,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             accountSession: accountSession
         )
         self.approvalStore = NativeConnectorApprovalStore(accountSession: accountSession)
+        self.accountSession = accountSession
         self.pluginStateStore = NativePluginStateStore(accountSession: accountSession)
         self.pairingStateStore = NativeConnectorPairingStateStore(accountSession: accountSession)
         self.agentRuntimeSettings = agentRuntimeSettings

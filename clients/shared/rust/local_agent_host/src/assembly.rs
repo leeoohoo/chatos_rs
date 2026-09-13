@@ -4,7 +4,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chatos_agent_profiles::{MainChatAgentProfile, TaskRunnerAgentProfile};
+use chatos_agent_profiles::{
+    ApprovalReviewAgentProfile, MainChatAgentProfile, TaskRunnerAgentProfile,
+};
 use chatos_client_storage::{
     ClientStorage, ClientStorageFactory, RecordScope, StorageError, StorageSecretResolver,
 };
@@ -25,8 +27,9 @@ use crate::{
     LocalAgentIpcServerError, LocalAgentMemorySyncWorker, LocalAgentProfileRegistry,
     LocalAgentStoragePlatform, LocalAttachmentGrantResolver, LocalCapabilityPlatform,
     ProviderContextEncryptionKey, RegisteredLocalCapabilityRuntime,
-    StandardLocalAgentContextRuntime, StoredLocalCapabilityLoader, StoredLocalTaskCreationPlanner,
-    StoredMainChatContextProvider, StoredTaskRunnerContextProvider,
+    StandardLocalAgentContextRuntime, StoredApprovalReviewContextProvider,
+    StoredLocalCapabilityLoader, StoredLocalTaskCreationPlanner, StoredMainChatContextProvider,
+    StoredTaskRunnerContextProvider,
 };
 
 const MEMORY_ENGINE_TIMEOUT: Duration = Duration::from_secs(180);
@@ -190,9 +193,14 @@ pub async fn assemble_local_agent_host(
         scope.clone(),
         attachment_resolver,
     ));
+    let approval_context = Arc::new(StoredApprovalReviewContextProvider::new(
+        storage.clone(),
+        scope.clone(),
+    ));
     let profiles = LocalAgentProfileRegistry::new([
         Arc::new(MainChatAgentProfile::new(main_context)) as Arc<dyn LocalAgentProfile>,
         Arc::new(TaskRunnerAgentProfile::new(task_context)) as Arc<dyn LocalAgentProfile>,
+        Arc::new(ApprovalReviewAgentProfile::new(approval_context)) as Arc<dyn LocalAgentProfile>,
     ])
     .map_err(|error| LocalAgentHostAssemblyError::Profiles(error.to_string()))?;
     let task_planner = Arc::new(StoredLocalTaskCreationPlanner::new(

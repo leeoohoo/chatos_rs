@@ -5,7 +5,9 @@ use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
 use chatos_agent_profiles::{
-    MainChatCapabilitySnapshot, MainChatProjectSnapshot, MainChatPromptSnapshot,
+    ApprovalReviewInput, MainChatCapabilitySnapshot, MainChatProjectSnapshot,
+    MainChatPromptSnapshot, APPROVAL_CAPABILITY_SNAPSHOT_REF, APPROVAL_PROFILE_KEY,
+    APPROVAL_PROMPT_REVISION,
 };
 use chatos_client_storage::{
     AgentEventStateRecord, AgentRunStateRecord, ClientStorage, RecordQuery, RecordScope,
@@ -13,10 +15,10 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    CreateMainChatTurnCommand, CreateTaskCommand, FrozenSnapshot, LocalAgentCommand,
-    LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse, ModelRuntimeDescriptor,
-    ModelStepCompletion, ModelStepResult, ModelStreamDeltaKind, ModelStreamUiEvent, ProtocolError,
-    RetryTaskCommand, ToolApprovalCommand, ToolEffect,
+    CreateApprovalReviewCommand, CreateMainChatTurnCommand, CreateTaskCommand, FrozenSnapshot,
+    LocalAgentCommand, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
+    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ModelStreamDeltaKind,
+    ModelStreamUiEvent, ProtocolError, RetryTaskCommand, ToolApprovalCommand, ToolEffect,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, append_model_stream_event, begin_model_step_execution,
@@ -233,6 +235,8 @@ pub enum LocalAgentHostError {
     InvalidConfiguration(&'static str),
     #[error("invalid Main Chat frozen context: {0}")]
     InvalidMainChatContext(String),
+    #[error("invalid approval review frozen context: {0}")]
+    InvalidApprovalReviewContext(String),
     #[error(transparent)]
     Storage(#[from] StorageError),
     #[error(transparent)]
@@ -493,6 +497,77 @@ impl LocalAgentHost {
                     message_source: "main_chat".to_string(),
                 }),
                 initial_attachments,
+            },
+            now,
+        )
+        .await
+    }
+
+    pub async fn create_approval_review(
+        &self,
+        request_id: &str,
+        command: CreateApprovalReviewCommand,
+        session: &LocalAgentExecutionSession,
+        now: DateTime<Utc>,
+    ) -> Result<CreatedLocalAgentRun, LocalAgentHostError> {
+        command.validate()?;
+        self.profiles.require(APPROVAL_PROFILE_KEY)?;
+        let run_id = stable_host_id(
+            "approval-review-run",
+            &[
+                self.scope.owner_user_id.as_str(),
+                command.review_id.as_str(),
+            ],
+        );
+        let descriptor = self
+            .descriptor_for_creation(&run_id, &command.model_config_id, session)
+            .await?;
+        let input = ApprovalReviewInput {
+            review_id: command.review_id.clone(),
+            source: command.source,
+            cwd: command.cwd,
+            operation: command.operation,
+            requested_permissions_description: command.requested_permissions_description,
+            risk_level: command.risk_level,
+            risk_reason: command.risk_reason,
+            reasoning_effort: command.reasoning_effort,
+        };
+        input
+            .validate()
+            .map_err(LocalAgentHostError::InvalidApprovalReviewContext)?;
+        let prompt = input.user_prompt();
+        let structured_payload = serde_json::to_value(json!({
+            "type": "approval_review",
+            "request": input,
+        }))
+        .map_err(|error| LocalAgentHostError::InvalidApprovalReviewContext(error.to_string()))?;
+        let message_id = stable_host_id(
+            "approval-review-message",
+            &[
+                self.scope.owner_user_id.as_str(),
+                command.review_id.as_str(),
+            ],
+        );
+        self.create_run(
+            LocalAgentHostRunRequest {
+                run_id,
+                profile_key: APPROVAL_PROFILE_KEY.to_string(),
+                owner_entity_type: "approval".to_string(),
+                owner_entity_id: command.review_id.clone(),
+                project_id: None,
+                model_runtime_snapshot: descriptor,
+                prompt_revision: APPROVAL_PROMPT_REVISION.to_string(),
+                capability_snapshot_ref: APPROVAL_CAPABILITY_SNAPSHOT_REF.to_string(),
+                causation_id: request_id.to_string(),
+                deadline_at: None,
+                initial_message: Some(InitialRunMessage {
+                    record_id: message_id,
+                    turn_id: command.review_id,
+                    content: Some(prompt),
+                    structured_payload: Some(structured_payload),
+                    message_source: "approval_review".to_string(),
+                }),
+                initial_attachments: Vec::new(),
             },
             now,
         )
@@ -1605,6 +1680,17 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostCreationExecutor {
                 let created = self
                     .host
                     .create_main_chat_turn(request_id, *command, &self.session, Utc::now())
+                    .await
+                    .map_err(run_creation_ipc_error)?;
+                Ok(LocalAgentIpcResponse::RunCreated {
+                    operation_id: created.start_event.event.event_id,
+                    run: Box::new(created.run_record.run),
+                })
+            }
+            LocalAgentCommand::CreateApprovalReview(command) => {
+                let created = self
+                    .host
+                    .create_approval_review(request_id, *command, &self.session, Utc::now())
                     .await
                     .map_err(run_creation_ipc_error)?;
                 Ok(LocalAgentIpcResponse::RunCreated {

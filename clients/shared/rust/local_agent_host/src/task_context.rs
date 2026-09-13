@@ -17,12 +17,11 @@ use chatos_local_agent_protocol::{
 };
 use chatos_local_agent_runtime::DurableTaskState;
 
+use crate::profile_context_support::{input_reduction_threshold, MAXIMUM_SUMMARY_ATTEMPTS};
 use crate::{
     attachment_locators, interaction_answer_text, resolve_attachments, user_message_item,
     LocalAttachmentResolver, StoredUserInteractionAnswerPayload,
 };
-
-const MAXIMUM_SUMMARY_ATTEMPTS: u8 = 8;
 
 pub struct StoredTaskRunnerContextProvider {
     storage: std::sync::Arc<dyn ClientStorage>,
@@ -389,14 +388,4 @@ fn tool_receipt(record: ToolExecutionStateRecord) -> Option<TaskRunnerToolReceip
         verification,
         summary,
     })
-}
-
-fn input_reduction_threshold(run: &LocalAgentRun) -> Result<u64, String> {
-    let context = run.model_runtime_snapshot.context_window_tokens;
-    let output = u64::from(run.model_runtime_snapshot.maximum_output_tokens);
-    let usable = context
-        .checked_sub(output)
-        .filter(|value| *value > 0)
-        .ok_or_else(|| "model descriptor has no usable input context".to_string())?;
-    Ok(usable.saturating_mul(4) / 5)
 }

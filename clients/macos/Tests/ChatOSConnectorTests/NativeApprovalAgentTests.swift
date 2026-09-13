@@ -1,88 +1,119 @@
-import ChatOSAgentRuntime
-import Foundation
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+import ChatOSCore
 import XCTest
 @testable import ChatOSConnector
 
 final class NativeApprovalAgentTests: XCTestCase {
-    func testSharedLoopCanInspectBeyondEightRoundsBeforeDeciding() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("approval-agent-tests-\(UUID())")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try Data((1...12).map { "line \($0)" }.joined(separator: "\n").utf8).write(to: root.appendingPathComponent("sample.txt"))
-        let model = ApprovalTestModel(finishAt: 11)
-        let result = await agent().evaluate(
-            request: request(root),
-            modelClient: model,
-            policy: .init()
+    func testApprovalUsesTypedLocalHostCommandAndObservesTerminalRun() async {
+        let probe = ApprovalReviewProbe()
+        let agent = NativeApprovalAgent(
+            createReview: { owner, command in
+                await probe.record(owner: owner, command: command)
+                return Self.run(status: .queued)
+            },
+            loadRun: { _, _ in
+                Self.run(
+                    status: .succeeded,
+                    terminalOutcome: .object([
+                        "kind": .string("approval_decision"),
+                        "decision": .string("approve"),
+                        "reason": .string("范围受控"),
+                        "remember_allow": .bool(true),
+                    ])
+                )
+            },
+            pollingInterval: .zero,
+            maximumWait: .seconds(1)
         )
-        XCTAssertEqual(result, .approve(reason: "checked", rememberAllow: false))
-        let calls = await model.calls
-        XCTAssertEqual(calls, 11)
-        let toolNames = await model.toolNames
-        XCTAssertEqual(Set(toolNames), Set(["read_file_raw", "read_file_range", "list_dir", "search_text", "approval_decision"]))
+        let decision = await agent.evaluate(
+            request: request(),
+            ownerUserID: "user-1",
+            modelConfigID: "model-1",
+            thinkingLevel: "low"
+        )
+        XCTAssertEqual(decision, .approve(reason: "范围受控", rememberAllow: true))
+        let captured = await probe.captured()
+        XCTAssertEqual(captured?.owner, "user-1")
+        XCTAssertEqual(captured?.command.reviewID, "approval-1")
+        XCTAssertEqual(captured?.command.modelConfigID, "model-1")
+        XCTAssertEqual(captured?.command.operation, "git status --short")
+        XCTAssertEqual(captured?.command.reasoningEffort, "low")
     }
 
-    func testExhaustedBudgetAndUnavailableModelAskHuman() async throws {
-        var policy = AgentRunPolicy(); policy.maximumModelCalls = 1
-        for fail in [false, true] {
-            let model = ApprovalTestModel(finishAt: 2, fail: fail)
-            let result = await agent().evaluate(
-                request: request(FileManager.default.temporaryDirectory),
-                modelClient: model,
-                policy: policy
+    func testInvalidOrFailedHostResultNeverApproves() async {
+        for run in [
+            Self.run(status: .failed, terminalOutcome: .object(["reason": .string("失败")])),
+            Self.run(status: .succeeded, terminalOutcome: .object(["kind": .string("other")])),
+        ] {
+            let agent = NativeApprovalAgent(
+                createReview: { _, _ in run },
+                loadRun: { _, _ in XCTFail("terminal Run must not be polled"); return run },
+                pollingInterval: .zero,
+                maximumWait: .seconds(1)
             )
-            guard case .askUser = result else { return XCTFail("Errors and limits must never grant approval") }
+            guard case .askUser = await agent.evaluate(
+                request: request(),
+                ownerUserID: "user-1",
+                modelConfigID: "model-1",
+                thinkingLevel: nil
+            ) else {
+                return XCTFail("invalid and failed approval runs must ask the user")
+            }
         }
     }
 
-    func testInvalidTerminalDecisionDoesNotApprove() async throws {
-        var policy = AgentRunPolicy(); policy.maximumModelCalls = 1
-        let result = await agent().evaluate(request: request(FileManager.default.temporaryDirectory),
-            modelClient: ApprovalTestModel(finishAt: 1, invalidDecision: true), policy: policy)
-        guard case .askUser = result else { return XCTFail("Invalid decision cannot approve") }
+    private func request() -> NativeApprovalAgentRequest {
+        .init(
+            reviewID: "approval-1",
+            command: "git",
+            arguments: ["status", "--short"],
+            cwd: "workspace",
+            source: "shell",
+            riskLevel: "low",
+            riskReason: nil,
+            requestedPermissionsDescription: "读取工作区状态"
+        )
     }
 
-    func testReadToolStillRejectsTraversalAndAbsolutePaths() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("approval-path-tests-\(UUID())")
-        let inside = root.appendingPathComponent("project")
-        try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let outside = root.appendingPathComponent("outside.txt")
-        try Data("private-outside-content".utf8).write(to: outside)
-        for path in ["../outside.txt", outside.path] {
-            let result = NativeApprovalAgentTools().execute(name: "read_file_raw", arguments: ["path": path], projectRoot: inside)
-            XCTAssertTrue(result.hasPrefix("工具执行失败："))
-            XCTAssertFalse(result.contains("private-outside-content"))
-        }
-    }
-
-    private func request(_ root: URL) -> NativeApprovalAgentRequest {
-        .init(command: "read", arguments: ["sample.txt"], cwd: ".", source: "test", projectRoot: root,
-              riskLevel: "low", riskReason: nil, requestedPermissionsDescription: nil)
-    }
-
-    private func agent() -> NativeApprovalAgent {
-        NativeApprovalAgent(settingsStore: AgentRuntimePreferencesTestProvider())
+    private static func run(
+        status: LocalAgentRunStatus,
+        terminalOutcome: LocalAgentJSONValue? = nil
+    ) -> LocalAgentRunSnapshot {
+        .init(
+            runID: "run-1",
+            profileKey: "approval_review",
+            ownerUserID: "user-1",
+            ownerEntityType: "approval",
+            ownerEntityID: "approval-1",
+            projectID: nil,
+            status: status,
+            version: 1,
+            stepSeq: 0,
+            iteration: 0,
+            retryCount: 0,
+            modelConfigID: "model-1",
+            modelConfigRevision: 1,
+            modelRuntimeSnapshot: .object([:]),
+            contextStrategy: "provider_native",
+            promptRevision: "approval-review-v1",
+            capabilitySnapshotRef: "approval-decision-v1",
+            terminalOutcome: terminalOutcome,
+            createdAt: "2026-09-14T00:00:00Z",
+            updatedAt: "2026-09-14T00:00:00Z"
+        )
     }
 }
 
-private actor ApprovalTestModel: AgentModelClient {
-    let finishAt: Int
-    let fail: Bool
-    let invalidDecision: Bool
-    var calls = 0
-    var toolNames: [String] = []
-    init(finishAt: Int, fail: Bool = false, invalidDecision: Bool = false) {
-        self.finishAt = finishAt; self.fail = fail; self.invalidDecision = invalidDecision
+private actor ApprovalReviewProbe {
+    private var value: (owner: String, command: LocalAgentCreateApprovalReview)?
+
+    func record(owner: String, command: LocalAgentCreateApprovalReview) {
+        value = (owner, command)
     }
-    func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) throws -> AgentMessage {
-        calls += 1; toolNames = tools.map(\.name)
-        if fail { throw AgentRuntimeError.provider(401) }
-        if calls == finishAt {
-            return .init(role: .assistant, toolCalls: [.init(id: "decision", name: "approval_decision",
-                arguments: invalidDecision ? #"{"decision":"approve","reason":""}"# : #"{"decision":"approve","reason":"checked","remember_allow":false}"#)])
-        }
-        return .init(role: .assistant, toolCalls: [.init(id: "read-\(calls)", name: "read_file_range",
-            arguments: "{\"path\":\"sample.txt\",\"start_line\":\(calls),\"end_line\":\(calls)}")])
+
+    func captured() -> (owner: String, command: LocalAgentCreateApprovalReview)? {
+        value
     }
 }

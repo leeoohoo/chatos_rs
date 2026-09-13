@@ -229,8 +229,33 @@ require(
 )
 forbid(
     "clients/macos/Sources/ChatOSConnector/NativeApprovalAgent.swift",
-    ["McpManagementClient", "resolveRuntimeSession", "mcpManagement", "MCP_MANAGEMENT"],
-    "macOS Command Approval Agent must remain local-only",
+    [
+        "McpManagementClient",
+        "resolveRuntimeSession",
+        "mcpManagement",
+        "MCP_MANAGEMENT",
+        "AgentRuntime().run",
+        "AgentChatModelClient",
+        "GatewayModelConfigDTO",
+        "apiKey",
+        "baseURL",
+    ],
+    "macOS Command Approval observer must not regain a model, tool, or secret runtime",
+)
+forbid(
+    "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+TerminalRelay.swift",
+    ["includeSecret: true", "include_secret=true"],
+    "macOS approval production path must not request provider secrets",
+)
+require(
+    "clients/shared/rust/chatos_local_agent_protocol/src/ipc.rs",
+    "CreateApprovalReview(Box<CreateApprovalReviewCommand>)",
+    "typed approval Run creation without provider configuration fields",
+)
+require(
+    "clients/shared/rust/chatos_agent_profiles/src/approval.rs",
+    'pub const APPROVAL_DECISION_TOOL: &str = "approval_decision"',
+    "shared approval profile terminal decision boundary",
 )
 require(
     "clients/windows/src/ChatOS.Connector/Approval/CommandApprovalCoordinator.cs",

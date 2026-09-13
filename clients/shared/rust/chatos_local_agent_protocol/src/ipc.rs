@@ -10,11 +10,11 @@ use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
-    AppendApprovalHistoryCommand, AppendTerminalHistoryCommand, ApplyStorageProfileCommand,
-    ClientDataTransferResult, ClientStorageProfileDescriptor, ClipboardMutationResult,
-    CreateProjectCommand, DeleteClientSettingCommand, DeleteClipboardCommand,
-    DeleteInstalledPluginCommand, DeleteMediaCommand, DeleteNotepadCommand,
+    require_bounded_json, require_digest, require_identifier, require_nonempty_bounded_text,
+    AgentMessage, AgentMessageRole, AppendApprovalHistoryCommand, AppendTerminalHistoryCommand,
+    ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
+    ClipboardMutationResult, CreateProjectCommand, DeleteClientSettingCommand,
+    DeleteClipboardCommand, DeleteInstalledPluginCommand, DeleteMediaCommand, DeleteNotepadCommand,
     DeleteNotepadFolderCommand, DeleteStoryCommand, DeleteTerminalHistoryCommand,
     ExportClientDataCommand, GetClientSettingCommand, GetClipboardCommand, GetMediaCommand,
     GetNotepadCommand, GetProjectCommand, GetStoryCommand, ImportClientDataCommand,
@@ -79,6 +79,7 @@ fn validate_protocol_version(protocol_version: u32) -> Result<(), ProtocolError>
 pub enum LocalAgentCommand {
     UpdateAccessToken(UpdateAccessTokenCommand),
     CreateMainChatTurn(Box<CreateMainChatTurnCommand>),
+    CreateApprovalReview(Box<CreateApprovalReviewCommand>),
     CreateTask(Box<CreateTaskCommand>),
     RetryTask(RetryTaskCommand),
     PauseRun(RunControlCommand),
@@ -146,6 +147,7 @@ impl LocalAgentCommand {
         match self {
             Self::UpdateAccessToken(command) => command.validate(),
             Self::CreateMainChatTurn(command) => command.validate(),
+            Self::CreateApprovalReview(command) => command.validate(),
             Self::CreateTask(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),
             Self::PauseRun(command) | Self::ResumeRun(command) | Self::CancelRun(command) => {
@@ -336,6 +338,53 @@ fn validate_page(cursor: Option<&str>, limit: u32) -> Result<(), ProtocolError> 
         });
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CreateApprovalReviewCommand {
+    pub review_id: String,
+    pub model_config_id: String,
+    pub source: String,
+    pub cwd: String,
+    pub operation: String,
+    pub requested_permissions_description: Option<String>,
+    pub risk_level: String,
+    pub risk_reason: Option<String>,
+    pub reasoning_effort: Option<String>,
+}
+
+impl CreateApprovalReviewCommand {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        require_identifier("review_id", &self.review_id)?;
+        require_identifier("model_config_id", &self.model_config_id)?;
+        require_nonempty_bounded_text("approval source", &self.source, 1_024)?;
+        require_nonempty_bounded_text("approval cwd", &self.cwd, 4_096)?;
+        require_nonempty_bounded_text("approval operation", &self.operation, 32 * 1_024)?;
+        require_nonempty_bounded_text("approval risk level", &self.risk_level, 128)?;
+        for (field, value, maximum) in [
+            (
+                "requested permissions description",
+                self.requested_permissions_description.as_deref(),
+                8 * 1_024,
+            ),
+            (
+                "approval risk reason",
+                self.risk_reason.as_deref(),
+                8 * 1_024,
+            ),
+            (
+                "approval reasoning effort",
+                self.reasoning_effort.as_deref(),
+                128,
+            ),
+        ] {
+            if let Some(value) = value {
+                require_nonempty_bounded_text(field, value, maximum)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 
 const MAX_RESOLVED_ATTACHMENT_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_TOTAL_RESOLVED_ATTACHMENT_BYTES: u64 = 6 * 1024 * 1024;
-const MAXIMUM_SUMMARY_ATTEMPTS: u8 = 8;
+use crate::profile_context_support::{input_reduction_threshold, MAXIMUM_SUMMARY_ATTEMPTS};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalAttachmentLocator {
@@ -569,14 +569,4 @@ pub(crate) fn user_message_item(
         return Err("Local Agent user message has no model input".to_string());
     }
     Ok(json!({"type": "message", "role": "user", "content": content}))
-}
-
-fn input_reduction_threshold(run: &LocalAgentRun) -> Result<u64, String> {
-    let context = run.model_runtime_snapshot.context_window_tokens;
-    let output = u64::from(run.model_runtime_snapshot.maximum_output_tokens);
-    let usable = context
-        .checked_sub(output)
-        .filter(|value| *value > 0)
-        .ok_or_else(|| "model descriptor has no usable input context".to_string())?;
-    Ok(usable.saturating_mul(4) / 5)
 }

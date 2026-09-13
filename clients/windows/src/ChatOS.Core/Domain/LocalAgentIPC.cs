@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 25;
+    public const uint Version = 26;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -33,6 +33,17 @@ public sealed record LocalAgentCreateMainChatTurn(
     LocalAgentFrozenSnapshot? ProjectSnapshot,
     string? Content,
     IReadOnlyList<LocalAgentAttachmentReference> Attachments);
+
+public sealed record LocalAgentCreateApprovalReview(
+    string ReviewId,
+    string ModelConfigId,
+    string Source,
+    string Cwd,
+    string Operation,
+    string? RequestedPermissionsDescription,
+    string RiskLevel,
+    string? RiskReason,
+    string? ReasoningEffort);
 
 public sealed record LocalAgentCreateTask(
     string TaskId,
@@ -152,6 +163,9 @@ public sealed record LocalAgentCommand
 
     public static LocalAgentCommand CreateMainChatTurn(LocalAgentCreateMainChatTurn value) =>
         new("create_main_chat_turn", value);
+
+    public static LocalAgentCommand CreateApprovalReview(LocalAgentCreateApprovalReview value) =>
+        new("create_approval_review", value);
 
     public static LocalAgentCommand CreateTask(LocalAgentCreateTask value) => new("create_task", value);
     public static LocalAgentCommand RetryTask(LocalAgentRetryTask value) => new("retry_task", value);

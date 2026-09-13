@@ -1,4 +1,7 @@
-import ChatOSAgentRuntime
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+import ChatOSCore
 import Foundation
 
 enum NativeApprovalDecision: Sendable, Equatable {
@@ -8,200 +11,135 @@ enum NativeApprovalDecision: Sendable, Equatable {
 }
 
 struct NativeApprovalAgentRequest: Sendable {
+    var reviewID: String
     var command: String
     var arguments: [String]
     var cwd: String
     var source: String
-    var projectRoot: URL
     var riskLevel: String
     var riskReason: String?
     var requestedPermissionsDescription: String?
 }
 
+/// Thin UI observer for the shared Rust approval profile. It never receives
+/// model credentials, calls a provider, executes tools, or owns an Agent loop.
 struct NativeApprovalAgent: Sendable {
-    private let tools = NativeApprovalAgentTools()
-    private let settingsStore: any AgentRuntimePreferencesProviding
+    typealias CreateReview = @Sendable (
+        _ ownerUserID: String,
+        _ command: LocalAgentCreateApprovalReview
+    ) async throws -> LocalAgentRunSnapshot
+    typealias LoadRun = @Sendable (
+        _ ownerUserID: String,
+        _ runID: String
+    ) async throws -> LocalAgentRunSnapshot
 
-    init(settingsStore: any AgentRuntimePreferencesProviding) {
-        self.settingsStore = settingsStore
+    private let createReview: CreateReview
+    private let loadRun: LoadRun
+    private let pollingInterval: Duration
+    private let maximumWait: Duration
+
+    init(accountSession: any NativeLocalAgentAccountSessionAccess) {
+        self.init(
+            createReview: { ownerUserID, command in
+                let client = try await accountSession.client(accountID: ownerUserID)
+                return try await client.createApprovalReview(command).run
+            },
+            loadRun: { ownerUserID, runID in
+                let client = try await accountSession.client(accountID: ownerUserID)
+                return try await client.run(id: runID)
+            }
+        )
+    }
+
+    init(
+        createReview: @escaping CreateReview,
+        loadRun: @escaping LoadRun,
+        pollingInterval: Duration = .milliseconds(500),
+        maximumWait: Duration = .seconds(900)
+    ) {
+        self.createReview = createReview
+        self.loadRun = loadRun
+        self.pollingInterval = pollingInterval
+        self.maximumWait = maximumWait
     }
 
     func evaluate(
         request: NativeApprovalAgentRequest,
         ownerUserID: String,
-        model: GatewayModelConfigDTO,
+        modelConfigID: String,
         thinkingLevel: String?
     ) async -> NativeApprovalDecision {
         do {
-            let policy = try await settingsStore.load(ownerUserID: ownerUserID).effective(.approval)
-            guard model.enabled != false,
-                  let apiKey = model.apiKey?.trimmedNonEmpty,
-                  let baseURLText = model.baseURL?.trimmedNonEmpty,
-                  let baseURL = URL(string: baseURLText), !model.model.isEmpty else {
-                throw NativeApprovalAgentError.invalidModelConfiguration
-            }
-            let reserve = (policy.context ?? .init()).outputReserveTokens
-            let client = try AgentChatModelClient(baseURL: baseURL, model: model.model, apiKey: apiKey,
-                thinking: thinkingLevel, maximumOutputTokens: min(max(1, model.maxOutputTokens ?? 1_200), reserve),
-                temperature: model.temperature ?? 0)
-            return await evaluate(request: request, modelClient: client, policy: policy)
+            let created = try await createReview(
+                ownerUserID,
+                LocalAgentCreateApprovalReview(
+                    reviewID: request.reviewID,
+                    modelConfigID: modelConfigID,
+                    source: request.source,
+                    cwd: request.cwd,
+                    operation: ([request.command] + request.arguments).joined(separator: " "),
+                    requestedPermissionsDescription: request.requestedPermissionsDescription,
+                    riskLevel: request.riskLevel,
+                    riskReason: request.riskReason,
+                    reasoningEffort: thinkingLevel
+                )
+            )
+            return try await waitForDecision(
+                ownerUserID: ownerUserID,
+                initial: created
+            )
+        } catch is CancellationError {
+            return .askUser(reason: "本机审批已取消，已转交人工确认。")
         } catch {
             return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
         }
     }
 
-    /// Shared loop, separate read-only registry. No automatic cloud memory upload of local files.
-    func evaluate(request: NativeApprovalAgentRequest, modelClient: any AgentModelClient,
-                  policy: AgentRunPolicy) async -> NativeApprovalDecision {
-        do {
-            let definitions = try Self.toolSchemas.map { schema -> AgentToolDefinition in
-                guard let function = schema["function"] as? [String: Any],
-                      let name = function["name"] as? String,
-                      let description = function["description"] as? String,
-                      let parameters = function["parameters"] as? [String: Any] else {
-                    throw NativeApprovalAgentError.invalidToolArguments
-                }
-                return .init(name: name, description: description,
-                    schema: try JSONSerialization.data(withJSONObject: parameters),
-                    effect: name == "approval_decision" ? .terminal : .readOnly)
+    private func waitForDecision(
+        ownerUserID: String,
+        initial: LocalAgentRunSnapshot
+    ) async throws -> NativeApprovalDecision {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: maximumWait)
+        var run = initial
+        while true {
+            if run.status == .succeeded {
+                return Self.decision(from: run.terminalOutcome)
             }
-            let checkpoint = AgentRunCheckpoint(scope: "approval:\(UUID())", messages: [
-                .init(role: .system, content: Self.systemPrompt),
-                .init(role: .user, content: prompt(for: request)),
-            ])
-            let result = try await AgentRuntime().run(checkpoint: checkpoint, scope: checkpoint.scope, policy: policy,
-                model: modelClient, tools: definitions, execute: { call in
-                    let arguments = try decodeArguments(call.arguments)
-                    if call.name == "approval_decision" {
-                        _ = try decision(from: arguments)
-                        return .init(call.arguments)
-                    }
-                    let output = tools.execute(name: call.name, arguments: arguments, projectRoot: request.projectRoot)
-                    return output.hasPrefix("工具执行失败：") ? .failure(output) : .init(output)
-                })
-            guard result.status == .completed, let output = result.result else {
-                return .askUser(reason: result.stopReason ?? "本机审批 Agent 未形成有效结论，已转交人工确认。")
+            if run.status == .failed || run.status == .cancelled {
+                let reason = run.terminalOutcome?.stringValue(forKey: "reason")
+                    ?? "本机审批 Agent 未形成有效结论，已转交人工确认。"
+                return .askUser(reason: reason)
             }
-            return try decision(from: decodeArguments(output))
-        } catch {
-            return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
+            if run.status == .needsReview || run.status == .paused {
+                return .askUser(reason: "本机审批需要人工确认。")
+            }
+            guard clock.now < deadline else {
+                return .askUser(reason: "本机审批等待超过 15 分钟，已转交人工确认。")
+            }
+            try Task.checkCancellation()
+            try await clock.sleep(for: pollingInterval)
+            run = try await loadRun(ownerUserID, run.runID)
         }
     }
 
-    private func decodeArguments(_ text: String) throws -> [String: Any] {
-        guard let data = text.data(using: .utf8),
-              let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw NativeApprovalAgentError.invalidToolArguments
-        }
-        return value
-    }
-
-    private func decision(from arguments: [String: Any]) throws -> NativeApprovalDecision {
-        guard let rawDecision = arguments["decision"] as? String,
-              let reason = (arguments["reason"] as? String)?.trimmedNonEmpty else {
-            throw NativeApprovalAgentError.invalidDecision
+    static func decision(from outcome: LocalAgentJSONValue?) -> NativeApprovalDecision {
+        guard outcome?.stringValue(forKey: "kind") == "approval_decision",
+              let rawDecision = outcome?.stringValue(forKey: "decision"),
+              let reason = outcome?.stringValue(forKey: "reason")?.trimmedNonEmpty
+        else {
+            return .askUser(reason: "本机审批 Agent 返回了无效结论，已转交人工确认。")
         }
         switch rawDecision {
         case "approve":
-            return .approve(reason: reason, rememberAllow: arguments["remember_allow"] as? Bool ?? false)
+            let remember = outcome?.objectValue?["remember_allow"]?.boolValue ?? false
+            return .approve(reason: reason, rememberAllow: remember)
         case "deny":
             return .deny(reason: reason)
         case "ask_user":
             return .askUser(reason: reason)
         default:
-            throw NativeApprovalAgentError.invalidDecision
-        }
-    }
-
-    private func prompt(for request: NativeApprovalAgentRequest) -> String {
-        """
-        请审核下面这次本机操作。它可能是 shell 命令，也可能是 Browser CDP、Computer Use 或其他本机 Plugin 操作。必要时先使用只读工具检查项目，再调用 approval_decision。
-
-        - source: \(request.source)
-        - cwd: \(request.cwd)
-        - operation: \(([request.command] + request.arguments).joined(separator: " "))
-        - requested_permissions: \(request.requestedPermissionsDescription ?? "null")
-        - static_risk_level: \(request.riskLevel)
-        - static_risk_reason: \(request.riskReason ?? "无")
-
-        规则：
-        1. 只判断这一次请求，不要执行命令，也不要修改文件。
-        2. 信息不足、路径不明确、请求范围过大或存在不可逆风险时，必须 ask_user。
-        3. deny 用于明确恶意、越权或与用户目标冲突的操作。
-        4. approve 只用于意图清晰、范围受控且与当前项目任务一致的操作。
-        5. Browser CDP、Computer Use 和其他 Plugin 操作不是 shell 命令，不要因为项目中找不到同名文件而拒绝或追问。ChatOS 生成的 browser_session_id、tab_id、cdp_session_id 等不透明标识属于正常会话边界，应结合工具名、参数摘要和权限说明判断。
-        """
-    }
-
-    private static let systemPrompt = """
-    你是 ChatOS 运行在用户 Mac 上的本机操作审批 Agent，负责审核 shell 命令、Browser CDP、Computer Use 和其他本机 Plugin 操作。你只能使用提供的只读项目工具进行核对，最终必须调用 approval_decision。你不得把普通文字回答当作审批结论，不得执行命令、写文件或访问项目根目录之外的路径。无法可靠判断时必须 ask_user。
-    """
-
-    private static var toolSchemas: [[String: Any]] { [
-        functionTool("read_file_raw", "读取项目内 UTF-8 文本文件。", [
-            "type": "object", "properties": ["path": ["type": "string"]], "required": ["path"],
-        ]),
-        functionTool("read_file_range", "读取文本文件的指定行范围。", [
-            "type": "object",
-            "properties": [
-                "path": ["type": "string"],
-                "start_line": ["type": "integer", "minimum": 1],
-                "end_line": ["type": "integer", "minimum": 1],
-            ],
-            "required": ["path", "start_line", "end_line"],
-        ]),
-        functionTool("list_dir", "列出项目内目录。", [
-            "type": "object", "properties": ["path": ["type": "string"]], "required": ["path"],
-        ]),
-        functionTool("search_text", "在项目文本文件中搜索固定文本。", [
-            "type": "object",
-            "properties": [
-                "query": ["type": "string"],
-                "path": ["type": "string"],
-            ],
-            "required": ["query"],
-        ]),
-        functionTool("approval_decision", "提交唯一且最终的审批结论。", [
-            "type": "object",
-            "properties": [
-                "decision": ["type": "string", "enum": ["approve", "deny", "ask_user"]],
-                "reason": ["type": "string"],
-                "remember_allow": ["type": "boolean"],
-            ],
-            "required": ["decision", "reason"],
-        ]),
-    ] }
-
-    private static func functionTool(
-        _ name: String,
-        _ description: String,
-        _ parameters: [String: Any]
-    ) -> [String: Any] {
-        [
-            "type": "function",
-            "function": [
-                "name": name,
-                "description": description,
-                "parameters": parameters,
-            ],
-        ]
-    }
-}
-
-private enum NativeApprovalAgentError: LocalizedError {
-    case invalidModelConfiguration
-    case invalidResponse
-    case invalidToolArguments
-    case invalidDecision
-    case upstream(Int, String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidModelConfiguration: "审批模型配置缺少 Base URL、模型名或 API Key"
-        case .invalidResponse: "审批模型返回格式无效"
-        case .invalidToolArguments: "审批模型返回了无效工具参数"
-        case .invalidDecision: "审批模型没有返回有效审批结论"
-        case let .upstream(status, detail): "审批模型请求失败（HTTP \(status)）：\(detail.prefix(400))"
+            return .askUser(reason: "本机审批 Agent 返回了未知结论，已转交人工确认。")
         }
     }
 }

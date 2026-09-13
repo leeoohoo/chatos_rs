@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 25
+public let localAgentProtocolVersion: UInt32 = 26
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -149,6 +149,40 @@ public struct LocalAgentCreateMainChatTurn: Codable, Equatable, Sendable {
         self.projectSnapshot = projectSnapshot
         self.content = content
         self.attachments = attachments
+    }
+}
+
+public struct LocalAgentCreateApprovalReview: Codable, Equatable, Sendable {
+    public var reviewID: String
+    public var modelConfigID: String
+    public var source: String
+    public var cwd: String
+    public var operation: String
+    public var requestedPermissionsDescription: String?
+    public var riskLevel: String
+    public var riskReason: String?
+    public var reasoningEffort: String?
+
+    public init(
+        reviewID: String,
+        modelConfigID: String,
+        source: String,
+        cwd: String,
+        operation: String,
+        requestedPermissionsDescription: String?,
+        riskLevel: String,
+        riskReason: String?,
+        reasoningEffort: String?
+    ) {
+        self.reviewID = reviewID
+        self.modelConfigID = modelConfigID
+        self.source = source
+        self.cwd = cwd
+        self.operation = operation
+        self.requestedPermissionsDescription = requestedPermissionsDescription
+        self.riskLevel = riskLevel
+        self.riskReason = riskReason
+        self.reasoningEffort = reasoningEffort
     }
 }
 
@@ -723,6 +757,7 @@ public struct LocalAgentInstalledPluginSnapshot: Codable, Equatable, Sendable {
 public enum LocalAgentCommand: Equatable, Sendable {
     case updateAccessToken(String)
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
+    case createApprovalReview(LocalAgentCreateApprovalReview)
     case createTask(LocalAgentCreateTask)
     case retryTask(LocalAgentRetryTask)
     case pauseRun(runID: String, expectedVersion: UInt64)
@@ -976,6 +1011,9 @@ extension LocalAgentCommand: Encodable {
             try container.encode(AccessTokenPayload(accessToken: accessToken), forKey: .payload)
         case let .createMainChatTurn(payload):
             try container.encode("create_main_chat_turn", forKey: .type)
+            try container.encode(payload, forKey: .payload)
+        case let .createApprovalReview(payload):
+            try container.encode("create_approval_review", forKey: .type)
             try container.encode(payload, forKey: .payload)
         case let .createTask(payload):
             try container.encode("create_task", forKey: .type)

@@ -374,6 +374,16 @@ public actor NativeLocalAgentIPCClient {
         return (operationID, run)
     }
 
+    public func createApprovalReview(
+        _ command: LocalAgentCreateApprovalReview
+    ) async throws -> (operationID: String, run: LocalAgentRunSnapshot) {
+        let response = try await send(.createApprovalReview(command))
+        guard case let .runCreated(operationID, run) = response else {
+            throw unexpected("run_created", response)
+        }
+        return (operationID, run)
+    }
+
     public func createTask(
         _ command: LocalAgentCreateTask
     ) async throws -> (operationID: String, run: LocalAgentRunSnapshot) {

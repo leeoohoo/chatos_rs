@@ -178,54 +178,24 @@ extension NativeLocalConnectorService {
                     approvalScopeKey: approvalScopeKey
                 )
             }
-            do {
-                let token = try requireAccessToken()
-                async let model = gateway.modelConfig(token: token, id: modelID, includeSecret: true)
-                let decision = await NativeApprovalAgent(
-                    settingsStore: agentRuntimeSettings
-                ).evaluate(
+            let decision = await NativeApprovalAgent(
+                accountSession: accountSession
+            ).evaluate(
                     request: .init(
+                        reviewID: requestID,
                         command: command,
                         arguments: arguments,
                         cwd: displayPath(cwd, relativeTo: projectRoot),
                         source: source,
-                        projectRoot: projectRoot,
                         riskLevel: risk.level,
                         riskReason: risk.reason,
                         requestedPermissionsDescription: requestedPermissionsDescription
                     ),
                     ownerUserID: ownerUserID,
-                    model: try await model,
+                    modelConfigID: modelID,
                     thinkingLevel: preferences.commandApprovalThinkingLevel
                 )
-                if case let .askUser(reason) = decision {
-                    return await requestUserApproval(
-                        requestID: requestID,
-                        command: command,
-                        arguments: arguments,
-                        cwd: cwd,
-                        source: source,
-                        risk: risk,
-                        reason: reason,
-                        approvalScopeKey: approvalScopeKey
-                    )
-                }
-                let persisted = await persistImmediateApprovalDecision(
-                    requestID: requestID,
-                    command: command,
-                    arguments: arguments,
-                    cwd: cwd,
-                    source: source,
-                    risk: risk,
-                    mode: .autoApproval,
-                    reviewer: .ai,
-                    decision: decision
-                )
-                if case .approve(_, true) = persisted, let approvalScopeKey {
-                    sessionApprovalAllowlist.insert(approvalScopeKey)
-                }
-                return persisted
-            } catch {
+            if case let .askUser(reason) = decision {
                 return await requestUserApproval(
                     requestID: requestID,
                     command: command,
@@ -233,10 +203,25 @@ extension NativeLocalConnectorService {
                     cwd: cwd,
                     source: source,
                     risk: risk,
-                    reason: "本机审批 Agent 不可用：\(error.localizedDescription)",
+                    reason: reason,
                     approvalScopeKey: approvalScopeKey
                 )
             }
+            let persisted = await persistImmediateApprovalDecision(
+                requestID: requestID,
+                command: command,
+                arguments: arguments,
+                cwd: cwd,
+                source: source,
+                risk: risk,
+                mode: .autoApproval,
+                reviewer: .ai,
+                decision: decision
+            )
+            if case .approve(_, true) = persisted, let approvalScopeKey {
+                sessionApprovalAllowlist.insert(approvalScopeKey)
+            }
+            return persisted
         }
     }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod approval_context;
 mod approval_history_ipc;
 mod assembly;
 mod attachment_grants;
@@ -28,6 +29,7 @@ mod platform_credentials;
 mod platform_storage;
 mod plugin_state_ipc;
 mod process;
+mod profile_context_support;
 mod profile_registry;
 mod project_ipc;
 mod storage_ipc;
@@ -38,6 +40,7 @@ mod terminal_history_ipc;
 mod tool_runtime;
 mod worker;
 
+pub use approval_context::*;
 pub use approval_history_ipc::*;
 pub use assembly::*;
 pub use attachment_grants::*;

@@ -136,6 +136,34 @@ struct NativeLocalAgentIPCClientTests {
         #expect(created.run.ownerEntityID == "thread-1")
     }
 
+    @Test("creates an approval Run without provider credentials on the wire")
+    func createsApprovalReviewRun() async throws {
+        let transport = RecordingLocalAgentTransport(responseType: "run_created")
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+
+        _ = try await client.createApprovalReview(LocalAgentCreateApprovalReview(
+            reviewID: "approval-1",
+            modelConfigID: "model-1",
+            source: "shell",
+            cwd: "workspace",
+            operation: "git status --short",
+            requestedPermissionsDescription: "Read repository status",
+            riskLevel: "low",
+            riskReason: nil,
+            reasoningEffort: "low"
+        ))
+
+        let request = try #require(await transport.lastRequest())
+        let object = try #require(JSONSerialization.jsonObject(with: request) as? [String: Any])
+        let command = try #require(object["command"] as? [String: Any])
+        #expect(command["type"] as? String == "create_approval_review")
+        let approval = try #require(command["payload"] as? [String: Any])
+        #expect(approval["review_id"] as? String == "approval-1")
+        #expect(approval["model_config_id"] as? String == "model-1")
+        #expect(approval["api_key"] == nil)
+        #expect(approval["base_url"] == nil)
+    }
+
     @Test("queries a bounded generic Run detail for restart recovery")
     func queriesRunDetail() async throws {
         let transport = RecordingLocalAgentTransport(responseType: "run_detail")
@@ -377,7 +405,7 @@ struct NativeLocalAgentIPCClientTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v25")
+            .appendingPathComponent("shared/fixtures/local_agent/v26")
             .appendingPathComponent(name)
     }
 }
