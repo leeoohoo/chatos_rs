@@ -1058,6 +1058,15 @@ final class AppModel: ObservableObject {
         return try await localAgentAccountSession.client(accountID: authenticatedUserID)
     }
 
+    func clipboardHistoryStorageContext() async throws -> ClipboardHistoryStorageContext {
+        guard let ownerUserID = authenticatedUserID else {
+            throw ClipboardHistoryStoreError.storageUnavailable
+        }
+        let client = try await localAgentAccountSession.client(accountID: ownerUserID)
+        guard authenticatedUserID == ownerUserID else { throw CancellationError() }
+        return ClipboardHistoryStorageContext(ownerUserID: ownerUserID, client: client)
+    }
+
     private func loadLanguagePreferences() {
         guard let expectedUserID = authenticatedUserID else { return }
         isLanguagePreferencesLoading = true

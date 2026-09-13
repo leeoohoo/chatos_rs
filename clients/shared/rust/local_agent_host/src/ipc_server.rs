@@ -11,12 +11,12 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    AgentMessageRole, GetProjectCommand, GetRunDetailCommand, GetTaskGraphCommand,
-    GetTaskRunDetailCommand, ListProjectsCommand, LocalAgentCommand, LocalAgentIpcError,
-    LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun,
-    LocalAgentRunDetail, LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode,
-    LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection, LocalAgentTaskRunDetail,
-    LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
+    AgentMessageRole, GetClipboardCommand, GetProjectCommand, GetRunDetailCommand,
+    GetTaskGraphCommand, GetTaskRunDetailCommand, ListClipboardCommand, ListProjectsCommand,
+    LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest,
+    LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail, LocalAgentRunTimelineEvent,
+    LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection,
+    LocalAgentTaskRunDetail, LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
     LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
@@ -261,6 +261,37 @@ impl LocalAgentIpcServer {
                         })
                     })
             }
+            LocalAgentCommand::GetClipboard(command) => {
+                let mut operation = GetClipboardOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage.transaction(&mut operation).await.map(|()| {
+                    operation
+                        .response
+                        .unwrap_or(LocalAgentIpcResponse::Error(LocalAgentIpcError {
+                            code: "clipboard_not_found".to_string(),
+                            message: "Clipboard entry was not found".to_string(),
+                            retryable: false,
+                        }))
+                })
+            }
+            LocalAgentCommand::ListClipboard(command) => {
+                let mut operation = ListClipboardOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| {
+                        operation.response.ok_or(StorageError::Transaction {
+                            reason: "clipboard list transaction returned no page".to_string(),
+                        })
+                    })
+            }
             LocalAgentCommand::GetTaskGraph(command) => {
                 let mut operation = GetTaskGraphOperation {
                     scope: self.scope.clone(),
@@ -482,6 +513,67 @@ struct ListProjectsOperation {
     scope: RecordScope,
     command: ListProjectsCommand,
     response: Option<LocalAgentIpcResponse>,
+}
+
+struct GetClipboardOperation {
+    scope: RecordScope,
+    command: GetClipboardCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetClipboardOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.response = repositories
+            .clipboard()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: self.command.entry_id.clone(),
+            })
+            .await?
+            .filter(|record| record.payload_reference.is_some())
+            .map(crate::clipboard_snapshot)
+            .transpose()?
+            .map(LocalAgentIpcResponse::Clipboard);
+        Ok(())
+    }
+}
+
+struct ListClipboardOperation {
+    scope: RecordScope,
+    command: ListClipboardCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for ListClipboardOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let page = repositories
+            .clipboard()
+            .list(&ListQuery {
+                scope: self.scope.clone(),
+                cursor: self.command.cursor.clone(),
+                limit: self.command.limit,
+            })
+            .await?;
+        let entries = page
+            .records
+            .into_iter()
+            .filter(|record| record.payload_reference.is_some())
+            .map(crate::clipboard_snapshot)
+            .collect::<StorageResult<Vec<_>>>()?;
+        self.response = Some(LocalAgentIpcResponse::ClipboardRecords {
+            entries,
+            next_cursor: page.next_cursor,
+        });
+        Ok(())
+    }
 }
 
 #[async_trait]

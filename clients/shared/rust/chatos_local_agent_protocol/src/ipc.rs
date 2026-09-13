@@ -12,10 +12,12 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
     ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
-    CreateProjectCommand, ExportClientDataCommand, GetProjectCommand, ImportClientDataCommand,
-    InstallProjectPluginCapabilityCommand, ListProjectsCommand, LocalAgentRun,
-    LocalProjectSnapshot, PostgresConnectionTestCommand, PostgresConnectionTestResult,
-    ProtocolError, RemoveProjectPluginCapabilityCommand, ToolExecution, UpdateProjectCommand,
+    ClipboardMutationResult, CreateProjectCommand, DeleteClipboardCommand, ExportClientDataCommand,
+    GetClipboardCommand, GetProjectCommand, ImportClientDataCommand,
+    InstallProjectPluginCapabilityCommand, ListClipboardCommand, ListProjectsCommand,
+    LocalAgentRun, LocalClipboardSnapshot, LocalProjectSnapshot, PostgresConnectionTestCommand,
+    PostgresConnectionTestResult, ProtocolError, RemoveProjectPluginCapabilityCommand,
+    SetClipboardPinnedCommand, StoreClipboardCommand, ToolExecution, UpdateProjectCommand,
     LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
@@ -87,6 +89,11 @@ pub enum LocalAgentCommand {
     ListProjects(ListProjectsCommand),
     CreateProject(CreateProjectCommand),
     UpdateProject(UpdateProjectCommand),
+    GetClipboard(GetClipboardCommand),
+    ListClipboard(ListClipboardCommand),
+    StoreClipboard(StoreClipboardCommand),
+    SetClipboardPinned(SetClipboardPinnedCommand),
+    DeleteClipboard(DeleteClipboardCommand),
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -125,6 +132,11 @@ impl LocalAgentCommand {
             Self::ListProjects(command) => command.validate(),
             Self::CreateProject(command) => command.validate(),
             Self::UpdateProject(command) => command.validate(),
+            Self::GetClipboard(command) => command.validate(),
+            Self::ListClipboard(command) => command.validate(),
+            Self::StoreClipboard(command) => command.validate(),
+            Self::SetClipboardPinned(command) => command.validate(),
+            Self::DeleteClipboard(command) => command.validate(),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -921,6 +933,12 @@ pub enum LocalAgentIpcResponse {
         projects: Vec<LocalProjectSnapshot>,
         next_cursor: Option<String>,
     },
+    Clipboard(LocalClipboardSnapshot),
+    ClipboardRecords {
+        entries: Vec<LocalClipboardSnapshot>,
+        next_cursor: Option<String>,
+    },
+    ClipboardMutation(ClipboardMutationResult),
     Events {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
@@ -981,6 +999,20 @@ impl LocalAgentIpcResponse {
                 }
                 Ok(())
             }
+            Self::Clipboard(entry) => entry.validate(),
+            Self::ClipboardRecords {
+                entries,
+                next_cursor,
+            } => {
+                for entry in entries {
+                    entry.validate()?;
+                }
+                if let Some(cursor) = next_cursor {
+                    require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
+            Self::ClipboardMutation(result) => result.validate(),
             Self::Events {
                 events, next_seq, ..
             } => {

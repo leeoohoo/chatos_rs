@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v17 fixtures")
-struct LocalAgentProtocolV17FixtureTests {
+@Suite("Shared Local Agent protocol v18 fixtures")
+struct LocalAgentProtocolV18FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,8 +32,49 @@ struct LocalAgentProtocolV17FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 17)
+        #expect(localAgentProtocolVersion == 18)
         #expect(encoded == fixture)
+    }
+
+    @Test("encodes Clipboard metadata without transporting payload bytes")
+    func clipboardMetadata() throws {
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-store-clipboard-1",
+            ownerUserID: "user-1",
+            command: .storeClipboard(
+                entryID: "00000000-0000-4000-8000-000000000001",
+                draft: .init(
+                    kind: .text,
+                    mimeType: "text/plain",
+                    contentHash: "sha256:" + String(repeating: "a", count: 64),
+                    textPreview: "Clipboard preview",
+                    sourceBundleID: "com.example.editor",
+                    payloadReference: "Payloads/c6c289e49e9c05b2145860387b73bcb18df43fb09a1e4a4a9713c76c88bb541b/00000000-0000-4000-8000-000000000001.txt",
+                    byteCount: 17,
+                    pasteboardType: nil
+                )
+            )
+        )
+        let encodedData = try LocalAgentProtocolJSON.encoder().encode(request)
+        let encoded = try JSONSerialization.jsonObject(with: encodedData) as? NSDictionary
+        let fixtureData = try Data(contentsOf: fixtureURL("clipboard_store_request.json"))
+        let fixture = try JSONSerialization.jsonObject(with: fixtureData) as? NSDictionary
+        #expect(encoded == fixture)
+        #expect(String(decoding: encodedData, as: UTF8.self).contains("Clipboard preview"))
+        #expect(!String(decoding: encodedData, as: UTF8.self).contains("hello clipboard"))
+
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("clipboard_mutation_response.json"))
+        )
+        guard case let .clipboardMutation(result) = reply.response else {
+            Issue.record("Expected a Clipboard mutation response")
+            return
+        }
+        #expect(result.entry?.ownerUserID == "user-1")
+        #expect(result.entry?.revision == 1)
+        #expect(result.discardedPayloadReferences.isEmpty)
     }
 
     @Test("encodes and decodes owner-scoped Project CRUD")
@@ -196,7 +237,7 @@ struct LocalAgentProtocolV17FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v17")
+            .appendingPathComponent("shared/fixtures/local_agent/v18")
             .appendingPathComponent(name)
     }
 }

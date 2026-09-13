@@ -1,0 +1,20 @@
+{
+  "protocol_version": 18,
+  "request_id": "request-store-clipboard-1",
+  "owner_user_id": "user-1",
+  "command": {
+    "type": "store_clipboard",
+    "payload": {
+      "entry_id": "00000000-0000-4000-8000-000000000001",
+      "draft": {
+        "kind": "text",
+        "mime_type": "text/plain",
+        "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "text_preview": "Clipboard preview",
+        "source_bundle_id": "com.example.editor",
+        "payload_reference": "Payloads/c6c289e49e9c05b2145860387b73bcb18df43fb09a1e4a4a9713c76c88bb541b/00000000-0000-4000-8000-000000000001.txt",
+        "byte_count": 17
+      }
+    }
+  }
+}

@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 17
+public let localAgentProtocolVersion: UInt32 = 18
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -274,6 +274,82 @@ public struct LocalAgentProjectSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public enum LocalAgentClipboardKind: String, Codable, Equatable, Sendable {
+    case text, url, files, image
+}
+
+public struct LocalAgentClipboardDraft: Codable, Equatable, Sendable {
+    public var kind: LocalAgentClipboardKind
+    public var mimeType: String
+    public var contentHash: String
+    public var textPreview: String?
+    public var sourceBundleID: String?
+    public var payloadReference: String
+    public var byteCount: UInt64
+    public var pasteboardType: String?
+
+    public init(
+        kind: LocalAgentClipboardKind,
+        mimeType: String,
+        contentHash: String,
+        textPreview: String?,
+        sourceBundleID: String?,
+        payloadReference: String,
+        byteCount: UInt64,
+        pasteboardType: String?
+    ) {
+        self.kind = kind
+        self.mimeType = mimeType
+        self.contentHash = contentHash
+        self.textPreview = textPreview
+        self.sourceBundleID = sourceBundleID
+        self.payloadReference = payloadReference
+        self.byteCount = byteCount
+        self.pasteboardType = pasteboardType
+    }
+}
+
+public struct LocalAgentClipboardSnapshot: Codable, Equatable, Sendable {
+    public var entryID: String
+    public var ownerUserID: String
+    public var draft: LocalAgentClipboardDraft
+    public var revision: UInt64
+    public var isPinned: Bool
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        entryID: String,
+        ownerUserID: String,
+        draft: LocalAgentClipboardDraft,
+        revision: UInt64,
+        isPinned: Bool,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.entryID = entryID
+        self.ownerUserID = ownerUserID
+        self.draft = draft
+        self.revision = revision
+        self.isPinned = isPinned
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct LocalAgentClipboardMutationResult: Codable, Equatable, Sendable {
+    public var entry: LocalAgentClipboardSnapshot?
+    public var discardedPayloadReferences: [String]
+
+    public init(
+        entry: LocalAgentClipboardSnapshot?,
+        discardedPayloadReferences: [String]
+    ) {
+        self.entry = entry
+        self.discardedPayloadReferences = discardedPayloadReferences
+    }
+}
+
 public enum LocalAgentCommand: Equatable, Sendable {
     case updateAccessToken(String)
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
@@ -306,6 +382,11 @@ public enum LocalAgentCommand: Equatable, Sendable {
         draft: LocalAgentProjectDraft,
         status: LocalAgentProjectStatus
     )
+    case getClipboard(entryID: String)
+    case listClipboard(cursor: String?, limit: UInt32)
+    case storeClipboard(entryID: String, draft: LocalAgentClipboardDraft)
+    case setClipboardPinned(entryID: String, expectedRevision: UInt64, isPinned: Bool)
+    case deleteClipboard(entryID: String, expectedRevision: UInt64)
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -366,6 +447,20 @@ extension LocalAgentCommand: Encodable {
         let expectedRevision: UInt64
         let draft: LocalAgentProjectDraft
         let status: LocalAgentProjectStatus
+    }
+    private struct ClipboardPayload: Encodable { let entryID: String }
+    private struct StoreClipboardPayload: Encodable {
+        let entryID: String
+        let draft: LocalAgentClipboardDraft
+    }
+    private struct SetClipboardPinnedPayload: Encodable {
+        let entryID: String
+        let expectedRevision: UInt64
+        let isPinned: Bool
+    }
+    private struct DeleteClipboardPayload: Encodable {
+        let entryID: String
+        let expectedRevision: UInt64
     }
     private struct EventsPayload: Encodable {
         let afterSeq: UInt64
@@ -515,6 +610,34 @@ extension LocalAgentCommand: Encodable {
                     draft: draft,
                     status: status
                 ),
+                forKey: .payload
+            )
+        case let .getClipboard(entryID):
+            try container.encode("get_clipboard", forKey: .type)
+            try container.encode(ClipboardPayload(entryID: entryID), forKey: .payload)
+        case let .listClipboard(cursor, limit):
+            try container.encode("list_clipboard", forKey: .type)
+            try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
+        case let .storeClipboard(entryID, draft):
+            try container.encode("store_clipboard", forKey: .type)
+            try container.encode(
+                StoreClipboardPayload(entryID: entryID, draft: draft),
+                forKey: .payload
+            )
+        case let .setClipboardPinned(entryID, expectedRevision, isPinned):
+            try container.encode("set_clipboard_pinned", forKey: .type)
+            try container.encode(
+                SetClipboardPinnedPayload(
+                    entryID: entryID,
+                    expectedRevision: expectedRevision,
+                    isPinned: isPinned
+                ),
+                forKey: .payload
+            )
+        case let .deleteClipboard(entryID, expectedRevision):
+            try container.encode("delete_clipboard", forKey: .type)
+            try container.encode(
+                DeleteClipboardPayload(entryID: entryID, expectedRevision: expectedRevision),
                 forKey: .payload
             )
         case let .subscribeRunEvents(afterSequence, limit):
@@ -1240,6 +1363,9 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case tasks([LocalAgentTaskSnapshot], nextCursor: String?)
     case project(LocalAgentProjectSnapshot)
     case projects([LocalAgentProjectSnapshot], nextCursor: String?)
+    case clipboard(LocalAgentClipboardSnapshot)
+    case clipboardRecords([LocalAgentClipboardSnapshot], nextCursor: String?)
+    case clipboardMutation(LocalAgentClipboardMutationResult)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -1266,6 +1392,10 @@ extension LocalAgentResponse: Decodable {
     }
     private struct Projects: Decodable {
         let projects: [LocalAgentProjectSnapshot]
+        let nextCursor: String?
+    }
+    private struct ClipboardRecords: Decodable {
+        let entries: [LocalAgentClipboardSnapshot]
         let nextCursor: String?
     }
     private struct Events: Decodable {
@@ -1312,6 +1442,17 @@ extension LocalAgentResponse: Decodable {
         case "projects":
             let value = try container.decode(Projects.self, forKey: .payload)
             self = .projects(value.projects, nextCursor: value.nextCursor)
+        case "clipboard":
+            self = .clipboard(
+                try container.decode(LocalAgentClipboardSnapshot.self, forKey: .payload)
+            )
+        case "clipboard_records":
+            let value = try container.decode(ClipboardRecords.self, forKey: .payload)
+            self = .clipboardRecords(value.entries, nextCursor: value.nextCursor)
+        case "clipboard_mutation":
+            self = .clipboardMutation(
+                try container.decode(LocalAgentClipboardMutationResult.self, forKey: .payload)
+            )
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)

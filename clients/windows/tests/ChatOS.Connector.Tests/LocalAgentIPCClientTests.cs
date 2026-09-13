@@ -121,7 +121,7 @@ public sealed class LocalAgentIPCClientTests
             "Preserve the approved visual hierarchy.")));
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
-        Assert.Equal(16u, LocalAgentProtocol.Version);
+        Assert.Equal(18u, LocalAgentProtocol.Version);
         Assert.True(JsonDeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));

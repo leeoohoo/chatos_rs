@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "entries": [
-    {"path":"clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/Clipboard/ClipboardHistoryStore.swift","platform":"macos","access_kind":"direct_database_driver","target":"ClipboardRepository","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/LocalStateDatabase.cs","platform":"windows","access_kind":"direct_database_driver","target":"Local Agent Host IPC","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteAppPreferencesStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"ClientSettingsRepository","status":"pending"},
     {"path":"clients/windows/src/ChatOS.Connector/Persistence/SqliteConnectorApprovalStore.cs","platform":"windows","access_kind":"direct_database_driver","target":"AgentRepository","status":"pending"},

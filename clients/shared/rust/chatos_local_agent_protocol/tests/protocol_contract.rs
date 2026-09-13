@@ -16,30 +16,34 @@ use chatos_local_agent_protocol::{
 };
 use chrono::Utc;
 
-const RETRY_TASK_REQUEST_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/retry_task_request.json");
-const TOOL_APPROVAL_REQUEST_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/tool_approval_request.json");
-const RUN_CONTROL_REQUEST_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/run_control_request.json");
-const TASK_SNAPSHOT_RESPONSE_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/task_snapshot_response.json");
-const TASK_GRAPH_RESPONSE_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/task_graph_response.json");
-const TASK_RUN_DETAIL_RESPONSE_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/task_run_detail_response.json");
-const RUN_DETAIL_RESPONSE_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/run_detail_response.json");
-const MEMORY_SYNC_EVENT_RESPONSE_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/memory_sync_event_response.json");
-const PROJECT_CREATE_REQUEST_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/project_create_request.json");
-const PROJECT_RESPONSE_V17: &str =
-    include_str!("../../../fixtures/local_agent/v17/project_response.json");
+const RETRY_TASK_REQUEST_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/retry_task_request.json");
+const TOOL_APPROVAL_REQUEST_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/tool_approval_request.json");
+const RUN_CONTROL_REQUEST_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/run_control_request.json");
+const TASK_SNAPSHOT_RESPONSE_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/task_snapshot_response.json");
+const TASK_GRAPH_RESPONSE_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/task_graph_response.json");
+const TASK_RUN_DETAIL_RESPONSE_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/task_run_detail_response.json");
+const RUN_DETAIL_RESPONSE_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/run_detail_response.json");
+const MEMORY_SYNC_EVENT_RESPONSE_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/memory_sync_event_response.json");
+const PROJECT_CREATE_REQUEST_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/project_create_request.json");
+const PROJECT_RESPONSE_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/project_response.json");
+const CLIPBOARD_STORE_REQUEST_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/clipboard_store_request.json");
+const CLIPBOARD_MUTATION_RESPONSE_V18: &str =
+    include_str!("../../../fixtures/local_agent/v18/clipboard_mutation_response.json");
 
 #[test]
-fn shared_v17_project_crud_freezes_owner_project_and_revision() {
-    let request: LocalAgentIpcRequest = serde_json::from_str(PROJECT_CREATE_REQUEST_V17).unwrap();
+fn shared_v18_project_crud_freezes_owner_project_and_revision() {
+    let request: LocalAgentIpcRequest = serde_json::from_str(PROJECT_CREATE_REQUEST_V18).unwrap();
     request.validate().unwrap();
     let LocalAgentCommand::CreateProject(command) = request.command else {
         panic!("fixture must contain create_project");
@@ -47,7 +51,7 @@ fn shared_v17_project_crud_freezes_owner_project_and_revision() {
     assert_eq!(command.project_id, "project-1");
     assert_eq!(command.draft.workspace_id, "workspace-1");
 
-    let reply: LocalAgentIpcReply = serde_json::from_str(PROJECT_RESPONSE_V17).unwrap();
+    let reply: LocalAgentIpcReply = serde_json::from_str(PROJECT_RESPONSE_V18).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::Project(project) = reply.response else {
         panic!("fixture must contain a project response");
@@ -58,8 +62,27 @@ fn shared_v17_project_crud_freezes_owner_project_and_revision() {
 }
 
 #[test]
-fn shared_v17_retry_task_request_is_the_authoritative_native_contract() {
-    let request: LocalAgentIpcRequest = serde_json::from_str(RETRY_TASK_REQUEST_V17).unwrap();
+fn shared_v18_clipboard_contract_transports_metadata_without_payload_bytes() {
+    let request: LocalAgentIpcRequest = serde_json::from_str(CLIPBOARD_STORE_REQUEST_V18).unwrap();
+    request.validate().unwrap();
+    let LocalAgentCommand::StoreClipboard(command) = request.command else {
+        panic!("fixture must contain store_clipboard");
+    };
+    assert_eq!(command.draft.byte_count, 17);
+    assert!(command.draft.payload_reference.starts_with("Payloads/"));
+
+    let reply: LocalAgentIpcReply = serde_json::from_str(CLIPBOARD_MUTATION_RESPONSE_V18).unwrap();
+    reply.validate().unwrap();
+    let LocalAgentIpcResponse::ClipboardMutation(result) = reply.response else {
+        panic!("fixture must contain a clipboard mutation response");
+    };
+    assert_eq!(result.entry.unwrap().owner_user_id, "user-1");
+    assert!(result.discarded_payload_references.is_empty());
+}
+
+#[test]
+fn shared_v18_retry_task_request_is_the_authoritative_native_contract() {
+    let request: LocalAgentIpcRequest = serde_json::from_str(RETRY_TASK_REQUEST_V18).unwrap();
     request.validate().unwrap();
     assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
     let LocalAgentCommand::RetryTask(command) = request.command else {
@@ -70,8 +93,8 @@ fn shared_v17_retry_task_request_is_the_authoritative_native_contract() {
 }
 
 #[test]
-fn shared_v17_tool_approval_binds_run_and_invocation() {
-    let request: LocalAgentIpcRequest = serde_json::from_str(TOOL_APPROVAL_REQUEST_V17).unwrap();
+fn shared_v18_tool_approval_binds_run_and_invocation() {
+    let request: LocalAgentIpcRequest = serde_json::from_str(TOOL_APPROVAL_REQUEST_V18).unwrap();
     request.validate().unwrap();
     assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
     let LocalAgentCommand::DecideToolApproval(command) = request.command else {
@@ -83,8 +106,8 @@ fn shared_v17_tool_approval_binds_run_and_invocation() {
 }
 
 #[test]
-fn shared_v17_run_control_binds_the_observed_run_version() {
-    let request: LocalAgentIpcRequest = serde_json::from_str(RUN_CONTROL_REQUEST_V17).unwrap();
+fn shared_v18_run_control_binds_the_observed_run_version() {
+    let request: LocalAgentIpcRequest = serde_json::from_str(RUN_CONTROL_REQUEST_V18).unwrap();
     request.validate().unwrap();
     assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
     assert_eq!(
@@ -97,8 +120,8 @@ fn shared_v17_run_control_binds_the_observed_run_version() {
 }
 
 #[test]
-fn shared_v17_task_snapshot_response_preserves_initial_current_and_all_runs() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_SNAPSHOT_RESPONSE_V17).unwrap();
+fn shared_v18_task_snapshot_response_preserves_initial_current_and_all_runs() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_SNAPSHOT_RESPONSE_V18).unwrap();
     reply.validate().unwrap();
     assert_eq!(reply.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
     let LocalAgentIpcResponse::Task(task) = reply.response else {
@@ -110,8 +133,8 @@ fn shared_v17_task_snapshot_response_preserves_initial_current_and_all_runs() {
 }
 
 #[test]
-fn shared_v17_task_graph_is_a_valid_owner_scoped_projection() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_GRAPH_RESPONSE_V17).unwrap();
+fn shared_v18_task_graph_is_a_valid_owner_scoped_projection() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_GRAPH_RESPONSE_V18).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::TaskGraph(graph) = reply.response else {
         panic!("fixture must contain a Task Graph response");
@@ -122,8 +145,8 @@ fn shared_v17_task_graph_is_a_valid_owner_scoped_projection() {
 }
 
 #[test]
-fn shared_v17_task_run_detail_preserves_result_and_event_page() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_RUN_DETAIL_RESPONSE_V17).unwrap();
+fn shared_v18_task_run_detail_preserves_result_and_event_page() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(TASK_RUN_DETAIL_RESPONSE_V18).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::TaskRunDetail(detail) = reply.response else {
         panic!("fixture must contain a Task Run detail response");
@@ -137,8 +160,8 @@ fn shared_v17_task_run_detail_preserves_result_and_event_page() {
 }
 
 #[test]
-fn shared_v17_run_detail_preserves_restart_snapshot_watermark() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(RUN_DETAIL_RESPONSE_V17).unwrap();
+fn shared_v18_run_detail_preserves_restart_snapshot_watermark() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(RUN_DETAIL_RESPONSE_V18).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::RunDetail(detail) = reply.response else {
         panic!("fixture must contain a generic Run detail response");
@@ -149,8 +172,8 @@ fn shared_v17_run_detail_preserves_restart_snapshot_watermark() {
 }
 
 #[test]
-fn shared_v17_memory_sync_status_is_bound_to_one_run() {
-    let reply: LocalAgentIpcReply = serde_json::from_str(MEMORY_SYNC_EVENT_RESPONSE_V17).unwrap();
+fn shared_v18_memory_sync_status_is_bound_to_one_run() {
+    let reply: LocalAgentIpcReply = serde_json::from_str(MEMORY_SYNC_EVENT_RESPONSE_V18).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::Events { events, .. } = reply.response else {
         panic!("fixture must contain an event page");

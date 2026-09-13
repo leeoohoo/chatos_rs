@@ -486,6 +486,74 @@ public actor NativeLocalAgentIPCClient {
         return project
     }
 
+    public func clipboardEntry(id: String) async throws -> LocalAgentClipboardSnapshot {
+        let response = try await send(.getClipboard(entryID: id))
+        guard case let .clipboard(entry) = response else {
+            throw unexpected("clipboard", response)
+        }
+        return entry
+    }
+
+    public func clipboardEntries() async throws -> [LocalAgentClipboardSnapshot] {
+        var entries: [LocalAgentClipboardSnapshot] = []
+        var cursor: String?
+        repeat {
+            let response = try await send(.listClipboard(cursor: cursor, limit: 500))
+            guard case let .clipboardRecords(page, nextCursor) = response else {
+                throw unexpected("clipboard_records", response)
+            }
+            entries.append(contentsOf: page)
+            if let nextCursor, nextCursor == cursor {
+                throw NativeLocalAgentIPCError.invalidResponse
+            }
+            cursor = nextCursor
+        } while cursor != nil
+        return entries.sorted {
+            if $0.isPinned != $1.isPinned { return $0.isPinned }
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.entryID < $1.entryID
+        }
+    }
+
+    public func storeClipboardEntry(
+        id: String,
+        draft: LocalAgentClipboardDraft
+    ) async throws -> LocalAgentClipboardMutationResult {
+        try await clipboardMutation(.storeClipboard(entryID: id, draft: draft))
+    }
+
+    public func setClipboardEntryPinned(
+        id: String,
+        expectedRevision: UInt64,
+        isPinned: Bool
+    ) async throws -> LocalAgentClipboardMutationResult {
+        try await clipboardMutation(.setClipboardPinned(
+            entryID: id,
+            expectedRevision: expectedRevision,
+            isPinned: isPinned
+        ))
+    }
+
+    public func deleteClipboardEntry(
+        id: String,
+        expectedRevision: UInt64
+    ) async throws -> LocalAgentClipboardMutationResult {
+        try await clipboardMutation(.deleteClipboard(
+            entryID: id,
+            expectedRevision: expectedRevision
+        ))
+    }
+
+    private func clipboardMutation(
+        _ command: LocalAgentCommand
+    ) async throws -> LocalAgentClipboardMutationResult {
+        let response = try await send(command)
+        guard case let .clipboardMutation(result) = response else {
+            throw unexpected("clipboard_mutation", response)
+        }
+        return result
+    }
+
     public func taskGraph(
         sourceThreadID: String,
         sourceTurnID: String
@@ -599,6 +667,9 @@ private extension LocalAgentResponse {
         case .tasks: "tasks"
         case .project: "project"
         case .projects: "projects"
+        case .clipboard: "clipboard"
+        case .clipboardRecords: "clipboard_records"
+        case .clipboardMutation: "clipboard_mutation"
         case .events: "events"
         case .uiEventCursor: "ui_event_cursor"
         case .storageProfile: "storage_profile"

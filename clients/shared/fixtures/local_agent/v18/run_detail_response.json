@@ -1,5 +1,5 @@
 {
-  "protocol_version": 17,
+  "protocol_version": 18,
   "request_id": "request-run-detail-1",
   "response": {
     "type": "run_detail",

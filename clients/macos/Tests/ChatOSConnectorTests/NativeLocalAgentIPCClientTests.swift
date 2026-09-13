@@ -278,6 +278,34 @@ struct NativeLocalAgentIPCClientTests {
         #expect(capability["schema_version"] as? Int == 2)
     }
 
+    @Test("stores Clipboard metadata without sending local payload bytes")
+    func storesClipboardMetadata() async throws {
+        let transport = try FixtureLocalAgentTransport(
+            fixture: fixtureURL("clipboard_mutation_response.json")
+        )
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+        let result = try await client.storeClipboardEntry(
+            id: "00000000-0000-4000-8000-000000000001",
+            draft: .init(
+                kind: .text,
+                mimeType: "text/plain",
+                contentHash: "sha256:" + String(repeating: "a", count: 64),
+                textPreview: "Clipboard preview",
+                sourceBundleID: "com.example.editor",
+                payloadReference: "Payloads/c6c289e49e9c05b2145860387b73bcb18df43fb09a1e4a4a9713c76c88bb541b/00000000-0000-4000-8000-000000000001.txt",
+                byteCount: 17,
+                pasteboardType: nil
+            )
+        )
+
+        #expect(result.entry?.revision == 1)
+        let request = try #require(await transport.request())
+        let encoded = String(decoding: request, as: UTF8.self)
+        #expect(encoded.contains("store_clipboard"))
+        #expect(encoded.contains("payload_reference"))
+        #expect(!encoded.contains("hello clipboard"))
+    }
+
     @Test("rejects a response correlated to another request")
     func rejectsRequestMismatch() async throws {
         let transport = RecordingLocalAgentTransport(
@@ -297,7 +325,7 @@ struct NativeLocalAgentIPCClientTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v17")
+            .appendingPathComponent("shared/fixtures/local_agent/v18")
             .appendingPathComponent(name)
     }
 }

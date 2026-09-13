@@ -144,7 +144,7 @@ final class ClipboardHistoryMonitor {
         var input = Data(prefix.utf8)
         input.append(0)
         input.append(data)
-        return SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
+        return "sha256:" + SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
     }
 }
 

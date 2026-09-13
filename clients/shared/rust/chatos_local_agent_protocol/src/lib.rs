@@ -5,6 +5,7 @@
 //! Local Agent Host. This crate contains no model, database, queue, or tool
 //! execution implementation.
 
+mod clipboard_ipc;
 mod context;
 mod event;
 mod ipc;
@@ -16,6 +17,7 @@ mod run;
 mod storage_ipc;
 mod tool;
 
+pub use clipboard_ipc::*;
 pub use context::*;
 pub use event::*;
 pub use ipc::*;
@@ -27,7 +29,7 @@ pub use run::*;
 pub use storage_ipc::*;
 pub use tool::*;
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 17;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 18;
 pub const MAX_BOUNDED_JSON_BYTES: usize = 64 * 1024;
 pub const MAX_PLUGIN_CAPABILITY_JSON_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_ENCRYPTED_CONTEXT_BYTES: usize = 128 * 1024;

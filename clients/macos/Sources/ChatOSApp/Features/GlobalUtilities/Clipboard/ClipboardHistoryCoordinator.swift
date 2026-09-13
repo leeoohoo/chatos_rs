@@ -14,7 +14,10 @@ final class ClipboardHistoryCoordinator {
 
     init(model: AppModel) {
         self.model = model
-        let store = ClipboardHistoryStore()
+        let store = ClipboardHistoryStore(contextProvider: { @MainActor [weak model] in
+            guard let model else { throw ClipboardHistoryStoreError.storageUnavailable }
+            return try await model.clipboardHistoryStorageContext()
+        })
         self.store = store
         self.monitor = ClipboardHistoryMonitor(store: store)
         self.viewModel = ClipboardHistoryViewModel(store: store)

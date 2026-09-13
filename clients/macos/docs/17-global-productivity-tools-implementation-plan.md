@@ -539,19 +539,15 @@ struct ClipboardHistoryEntry {
 }
 ```
 
-使用 SQLite 持久化元数据，开启 WAL。数据库位置：
-
-```text
-~/Library/Application Support/ChatOS/ClipboardHistory/clipboard.sqlite
-```
-
-大图片和复杂 payload 单独存放在同目录的 `Payloads/`，数据库只保存相对路径和摘要，避免数据库快速膨胀。
+元数据只通过 Local Agent Host 的类型化 IPC 写入当前 Client Storage Provider，
+因此会跟随用户选择的 SQLite 或 PostgreSQL；Swift 不直接打开数据库，也不存在独立
+`clipboard.sqlite`。大图片和复杂 payload 保存在账户隔离的
+`ClipboardHistoryV2/Payloads/<owner-hash>/`，Provider 只保存相对引用、摘要和可查询元数据。
 
 默认保留策略：
 
 - 最多 500 条。
 - 最长 30 天。
-- Payload 总量最多 500 MB。
 - pinned 项不受条数和时间清理影响，但仍显示总空间占用。
 
 新增：
