@@ -1,22 +1,9 @@
 import Foundation
 import XCTest
 @testable import ChatOSAgentRuntime
+import ChatOSCore
 
 final class AgentRuntimeTests: XCTestCase {
-    func testDefaultBudgetIs600() throws {
-        let settings = AgentRuntimePreferences()
-        XCTAssertEqual(settings.effective(.story).maximumModelCalls, 600)
-        XCTAssertEqual(settings.effective(.approval).maximumModelCalls, 600)
-        XCTAssertEqual(settings.global.maximumRequestRetries, 5)
-        let context = try XCTUnwrap(settings.global.context ?? AgentContextPolicy())
-        XCTAssertEqual(context.windowTokens, 250_000)
-        XCTAssertEqual(context.outputReserveTokens, 30_000)
-        XCTAssertEqual(context.compactionThresholdTokens, 220_000)
-        XCTAssertEqual(context.maximumCompactionPasses, 8)
-        XCTAssertEqual(context.summaryPollSeconds, 10)
-        try settings.validate()
-    }
-
     func testContextEstimateReturnsApproximateTokensRatherThanRawBytes() throws {
         let messages = [AgentMessage(role: .user, content: String(repeating: "x", count: 4_000))]
         let estimate = try AgentContextBudget.estimate(messages: messages, tools: [])

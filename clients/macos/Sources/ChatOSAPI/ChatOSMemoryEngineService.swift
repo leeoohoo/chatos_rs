@@ -1,4 +1,5 @@
 import ChatOSAgentRuntime
+import ChatOSCore
 import Foundation
 
 /// Uses the existing authenticated gateway, not a model provider URL or internal service secret.

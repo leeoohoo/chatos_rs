@@ -16,7 +16,7 @@ let package = Package(
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
     ],
     targets: [
-        .target(name: "ChatOSAgentRuntime"),
+        .target(name: "ChatOSAgentRuntime", dependencies: ["ChatOSCore"]),
         .target(name: "ChatOSCore"),
         .target(
             name: "ChatOSMacSecurity",
@@ -57,7 +57,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ChatOSAgentRuntimeTests",
-            dependencies: ["ChatOSAgentRuntime"]
+            dependencies: ["ChatOSAgentRuntime", "ChatOSCore"]
         ),
         .testTarget(
             name: "ChatOSCoreTests",

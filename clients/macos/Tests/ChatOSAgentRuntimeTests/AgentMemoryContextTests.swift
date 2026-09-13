@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import ChatOSAgentRuntime
+import ChatOSCore
 
 final class AgentMemoryContextTests: XCTestCase {
     func test600CallsKeepModelInputBoundedAndAuditHistoryComplete() async throws {

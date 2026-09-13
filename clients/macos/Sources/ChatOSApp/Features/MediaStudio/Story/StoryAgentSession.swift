@@ -1,4 +1,5 @@
 import ChatOSAgentRuntime
+import ChatOSCore
 import Foundation
 
 /// A single planning transaction. Draft mutations and domain receipts are stored together.

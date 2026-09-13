@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import ChatOSAgentRuntime
+import ChatOSCore
 
 final class AgentLoopSafetyTests: XCTestCase {
     func testErrorResultsAreReturnedWithOriginalIDsThenModelCanRepair() async throws {
@@ -70,17 +71,6 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(retryEvents.count, 5)
         XCTAssertTrue(retryEvents.last?.detail.contains("5 / 5") == true)
         XCTAssertTrue(retryEvents.last?.detail.contains("16 秒") == true)
-    }
-
-    func testSettingsValidateOverridesAndWindowBudget() throws {
-        var preferences = AgentRuntimePreferences()
-        preferences.approvalMaximumCalls = 77; preferences.storyMaximumCalls = 800
-        preferences.global.context = .init()
-        try preferences.validate()
-        XCTAssertEqual(preferences.effective(.approval).maximumModelCalls, 77)
-        XCTAssertEqual(preferences.effective(.story).maximumModelCalls, 800)
-        preferences.global.context!.outputReserveTokens = preferences.global.context!.windowTokens
-        XCTAssertThrowsError(try preferences.validate())
     }
 
     func testRepeatedIdenticalToolWorkPausesInsteadOfUsing600Calls() async throws {

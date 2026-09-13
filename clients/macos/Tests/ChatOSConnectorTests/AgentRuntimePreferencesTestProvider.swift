@@ -1,4 +1,4 @@
-import ChatOSAgentRuntime
+import ChatOSCore
 
 struct AgentRuntimePreferencesTestProvider: AgentRuntimePreferencesProviding {
     var preferences = AgentRuntimePreferences()

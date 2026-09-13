@@ -1,4 +1,4 @@
-import ChatOSAgentRuntime
+import ChatOSCore
 
 actor AppAgentRuntimePreferencesTestProvider: AgentRuntimePreferencesProviding {
     private var preferences: AgentRuntimePreferences

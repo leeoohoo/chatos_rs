@@ -1,4 +1,5 @@
 import CryptoKit
+import ChatOSCore
 import Foundation
 
 /// Identifiers are chosen by the application, never by an AI tool argument.
@@ -97,28 +98,6 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
     public var compactions = 0
     public init(scope: AgentMemoryScope, pinnedMessageCount: Int, recordEpoch: Date = Date()) {
         self.scope = scope; self.pinnedMessageCount = pinnedMessageCount; self.recordEpoch = recordEpoch
-    }
-}
-
-public struct AgentContextPolicy: Codable, Equatable, Sendable {
-    /// These defaults intentionally match `chatos_model_transport` so Task Runner and native
-    /// Agents use the same soft/hard budget semantics. Users can override them for a model.
-    public var windowTokens = 250_000
-    public var outputReserveTokens = 30_000
-    public var compactionThresholdTokens = 220_000
-    public var maximumCompactionPasses = 8
-    public var summaryTimeoutSeconds = 120
-    public var summaryPollSeconds = 10
-    public init() {}
-    /// Same distinction as Task Runner: the reserve defines the proactive compaction point;
-    /// the model window itself remains the hard failure limit.
-    public var reservedInputLimit: Int { windowTokens - outputReserveTokens }
-    public var hardInputLimit: Int { windowTokens }
-    public func validate() throws {
-        guard (2_048...2_000_000).contains(windowTokens), (256..<windowTokens).contains(outputReserveTokens),
-              (512...reservedInputLimit).contains(compactionThresholdTokens),
-              (1...16).contains(maximumCompactionPasses), (5...1_800).contains(summaryTimeoutSeconds),
-              (1...30).contains(summaryPollSeconds) else { throw AgentRuntimeError.invalidPolicy }
     }
 }
 

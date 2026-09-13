@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import ChatOSAgentRuntime
+import ChatOSCore
 
 /// Account-scoped Agent preferences backed only by the selected Client Storage
 /// Provider. Missing records use current defaults; unavailable storage fails

@@ -1,4 +1,4 @@
-import ChatOSAgentRuntime
+import ChatOSCore
 import ChatOSConnector
 import SwiftUI
 
@@ -124,7 +124,9 @@ struct AgentRuntimeSettingsView: View {
                   .summaryTimeout: "\(context.summaryTimeoutSeconds)", .summaryPoll: "\(context.summaryPollSeconds)"]
     }
     private func number(_ field: Field) throws -> Int {
-        guard let value = Int((values[field] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) else { throw AgentRuntimeError.invalidPolicy }
+        guard let value = Int((values[field] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw LocalAgentRuntimePreferencesError.invalidPolicy
+        }
         return value
     }
     private func optionalNumber(_ field: Field) throws -> Int? {

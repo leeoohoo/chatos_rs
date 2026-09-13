@@ -1,3 +1,4 @@
+import ChatOSCore
 import Foundation
 
 public struct AgentToolCall: Codable, Equatable, Sendable {
@@ -37,40 +38,6 @@ public struct AgentToolOutcome: Codable, Equatable, Sendable {
         self.content = content; self.madeProgress = madeProgress; self.isError = isError
     }
     public static func failure(_ message: String) -> Self { .init(message, madeProgress: false, isError: true) }
-}
-
-public struct AgentRunPolicy: Codable, Equatable, Sendable {
-    public var maximumModelCalls = 600
-    public var requestTimeoutSeconds = 180
-    public var runTimeoutSeconds = 7_200
-    public var maximumRequestRetries = 5
-    public var maximumNoProgressRounds = 8
-    public var context: AgentContextPolicy? = nil
-    public init() {}
-    public func validate() throws {
-        guard (1...10_000).contains(maximumModelCalls), (5...1_800).contains(requestTimeoutSeconds),
-              (10...86_400).contains(runTimeoutSeconds), (0...10).contains(maximumRequestRetries),
-              (1...100).contains(maximumNoProgressRounds) else { throw AgentRuntimeError.invalidPolicy }
-        try (context ?? AgentContextPolicy()).validate()
-    }
-}
-
-public struct AgentRuntimePreferences: Codable, Equatable, Sendable {
-    public var global = AgentRunPolicy()
-    public var approvalMaximumCalls: Int?
-    public var storyMaximumCalls: Int?
-    public init() {}
-    public enum Profile { case approval, story }
-    public func effective(_ profile: Profile) -> AgentRunPolicy {
-        var policy = global
-        if let value = profile == .approval ? approvalMaximumCalls : storyMaximumCalls { policy.maximumModelCalls = value }
-        return policy
-    }
-    public func validate() throws { try global.validate(); try effective(.approval).validate(); try effective(.story).validate() }
-}
-
-public protocol AgentRuntimePreferencesProviding: Sendable {
-    func load(ownerUserID: String) async throws -> AgentRuntimePreferences
 }
 
 public struct AgentRunCheckpoint: Codable, Equatable, Sendable {

@@ -1,3 +1,4 @@
+import ChatOSCore
 import Foundation
 
 public struct AgentPreparedContext: Sendable {
