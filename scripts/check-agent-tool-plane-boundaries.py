@@ -87,6 +87,15 @@ for retired_path in [
     "agent/src/core",
     "agent/src/implementations",
     ".task_runner",
+    "crates/chatos_ai_runtime/src/builder.rs",
+    "crates/chatos_ai_runtime/src/memory_context",
+    "crates/chatos_ai_runtime/src/memory_context.rs",
+    "crates/chatos_ai_runtime/src/runtime",
+    "crates/chatos_ai_runtime/src/runtime.rs",
+    "crates/chatos_ai_runtime/src/task",
+    "crates/chatos_ai_runtime/src/task.rs",
+    "crates/chatos_ai_runtime/src/tool_runtime",
+    "crates/chatos_ai_runtime/src/tool_runtime.rs",
 ]:
     require_absent(retired_path, "retired server execution plane must stay physically deleted")
 
@@ -137,6 +146,11 @@ forbid(
     "memory_engine/backend/Cargo.toml",
     ["chatos_ai_runtime", "chatos_agent"],
     "Memory Engine must own its tool-less AI request policy instead of importing an Agent runtime",
+)
+forbid(
+    "crates/chatos_ai_runtime/Cargo.toml",
+    ["local-agent-loop", "chatos_mcp_runtime", "memory_engine_sdk"],
+    "server model transport must not regain an Agent loop, tool runtime, or Memory Engine client",
 )
 forbid(
     ".github/workflows/docker-images.yml",

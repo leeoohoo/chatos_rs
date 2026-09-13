@@ -4,8 +4,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use chatos_mcp_runtime::ToolCallerModelRuntime;
-
 pub const DEFAULT_MODEL_REQUEST_MAX_RETRIES: usize = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -36,12 +34,6 @@ impl JsonSchemaOutputFormat {
         self.description = Some(description.into());
         self
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuntimeMessage {
-    pub role: String,
-    pub content: Value,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -177,28 +169,6 @@ impl ModelRuntimeConfig {
             output_format: self.output_format.clone(),
         }
     }
-
-    pub fn to_tool_caller_model_runtime(&self) -> ToolCallerModelRuntime {
-        let supports_responses = crate::model_config::effective_responses_support(
-            self.provider.as_str(),
-            self.base_url.as_str(),
-            self.supports_responses,
-        );
-        ToolCallerModelRuntime::openai_compatible(
-            self.base_url.clone(),
-            self.api_key.clone(),
-            self.model.clone(),
-            self.provider.clone(),
-        )
-        .with_responses_support(supports_responses)
-        .with_images_support(self.supports_images)
-        .with_thinking_level(self.thinking_level.clone())
-        .with_temperature(self.temperature)
-        .with_instructions(self.instructions.clone())
-        .with_max_output_tokens(self.max_output_tokens)
-        .with_request_body_limit_bytes(self.request_body_limit_bytes)
-        .with_max_transient_retries(self.max_transient_retries)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -328,27 +298,4 @@ impl ModelRequest {
         self.output_format = output_format;
         self
     }
-}
-
-#[derive(Clone, Default)]
-pub struct RuntimeCallbacks {
-    pub on_chunk: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
-    pub on_thinking: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
-    pub on_tools_start: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    pub on_tools_stream: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    pub on_tools_end: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    pub on_turn_phase: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    pub on_runtime_guidance_applied: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    pub on_context_summarized_start: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    pub on_context_summarized_stream: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    pub on_context_summarized_end: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    /// Called with the logical model input before a provider payload is built.
-    pub on_before_model_input: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    /// Legacy payload observer. Receives the provider payload plus runtime debug metadata.
-    pub on_before_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    /// Called with the exact provider payload immediately before it is sent.
-    pub on_before_send_model_request: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    /// Receives a bounded operational summary after the provider request has
-    /// either parsed or failed. It must never contain raw model input/output.
-    pub on_model_response: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
 }

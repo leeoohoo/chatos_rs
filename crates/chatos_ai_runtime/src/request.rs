@@ -88,13 +88,6 @@ impl AiRequestHandler {
         self.read_timeout.map(|value| value.as_secs())
     }
 
-    #[cfg(feature = "local-agent-loop")]
-    pub(crate) fn isolated_retry_handler(&self) -> Self {
-        self.read_timeout
-            .map(Self::new_with_read_timeout)
-            .unwrap_or_else(Self::new)
-    }
-
     pub async fn count_responses_input_tokens(
         &self,
         base_url: &str,
