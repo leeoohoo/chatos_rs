@@ -13,7 +13,7 @@ public sealed class MessageTaskGraphViewModelTests
     public async Task OpensGraphBySourceIdentityAndAllowsCurrentAndHistoricalRuns()
     {
         var service = new LocalTaskServiceDouble();
-        using var viewModel = new MessageTaskGraphViewModel(service, new ImmediateUiDispatcher());
+        using var viewModel = new MessageTaskGraphViewModel(service, service, new ImmediateUiDispatcher());
 
         await viewModel.OpenAsync(new MessageTaskGraphRequest(
             "thread-1", "turn-1", "task-1", "run-2"));
@@ -33,7 +33,7 @@ public sealed class MessageTaskGraphViewModelTests
     public async Task RetryCreatesNewCurrentRunAndPreservesProjectAndHistory()
     {
         var service = new LocalTaskServiceDouble(currentStatus: LocalAgentRunStatus.Failed);
-        using var viewModel = new MessageTaskGraphViewModel(service, new ImmediateUiDispatcher());
+        using var viewModel = new MessageTaskGraphViewModel(service, service, new ImmediateUiDispatcher());
         await viewModel.OpenAsync(new MessageTaskGraphRequest(
             "thread-1", "turn-1", "task-1", "run-2"));
         viewModel.RetryInstruction = "use the recovered compiler";
@@ -51,7 +51,7 @@ public sealed class MessageTaskGraphViewModelTests
     public async Task CancelUsesExactCurrentRunAndVersion()
     {
         var service = new LocalTaskServiceDouble();
-        using var viewModel = new MessageTaskGraphViewModel(service, new ImmediateUiDispatcher());
+        using var viewModel = new MessageTaskGraphViewModel(service, service, new ImmediateUiDispatcher());
         await viewModel.OpenAsync(new MessageTaskGraphRequest(
             "thread-1", "turn-1", "task-1", "run-2"));
 
@@ -64,7 +64,7 @@ public sealed class MessageTaskGraphViewModelTests
     public async Task AccountProjectionClearImmediatelyClosesAndDropsTaskData()
     {
         var service = new LocalTaskServiceDouble();
-        using var viewModel = new MessageTaskGraphViewModel(service, new ImmediateUiDispatcher());
+        using var viewModel = new MessageTaskGraphViewModel(service, service, new ImmediateUiDispatcher());
         await viewModel.OpenAsync(new MessageTaskGraphRequest(
             "thread-1", "turn-1", "task-1", "run-2"));
 
@@ -77,7 +77,24 @@ public sealed class MessageTaskGraphViewModelTests
         Assert.Null(viewModel.RunDetail);
     }
 
-    private sealed class LocalTaskServiceDouble : ILocalAgentTaskService
+    [Fact]
+    public async Task NeedsReviewTaskShowsReasonAndResumesThroughUnifiedRunControl()
+    {
+        var service = new LocalTaskServiceDouble(LocalAgentRunStatus.NeedsReview);
+        using var viewModel = new MessageTaskGraphViewModel(
+            service, service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync(new MessageTaskGraphRequest(
+            "thread-1", "turn-1", "task-1", "run-2"));
+
+        Assert.True(viewModel.CanResume);
+        Assert.Contains("无法确认", viewModel.ReviewReason);
+
+        await viewModel.ResumeRunCommand.ExecuteAsync(null);
+
+        Assert.Equal(("run-2", "thread-1", "resume"), service.RunControlRequest);
+    }
+
+    private sealed class LocalTaskServiceDouble : ILocalAgentTaskService, ILocalAgentRunControlService
     {
         private readonly DateTimeOffset _now = DateTimeOffset.Parse("2026-09-13T00:00:00Z");
         private LocalAgentTaskSnapshot _task;
@@ -97,6 +114,11 @@ public sealed class MessageTaskGraphViewModelTests
         public (string ThreadId, string TurnId)? GraphSource { get; private set; }
         public (string TaskId, string RunId, string? Instruction)? RetryRequest { get; private set; }
         public (string TaskId, string RunId, ulong Version)? CancelRequest { get; private set; }
+        public (string RunId, string ConversationId, string Action)? RunControlRequest
+        {
+            get;
+            private set;
+        }
 
         public void ClearAccountProjection() => AccountProjectionCleared?.Invoke(this, EventArgs.Empty);
 
@@ -160,6 +182,44 @@ public sealed class MessageTaskGraphViewModelTests
             CancellationToken cancellationToken = default)
         {
             CancelRequest = (taskId, runId, expectedVersion);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<LocalAgentRunControlState>> FetchRunControlsAsync(
+            string conversationId, CancellationToken cancellationToken = default)
+        {
+            var run = _runs[_task.CurrentRunId];
+            var terminal = run.Status is LocalAgentRunStatus.Succeeded
+                or LocalAgentRunStatus.Failed or LocalAgentRunStatus.Cancelled;
+            IReadOnlyList<LocalAgentRunControlState> result = terminal
+                ? []
+                : [new LocalAgentRunControlState(run.RunId, run.Version, conversationId,
+                    _task.SourceTurnId, run.Status, run.Iteration, run.RetryCount,
+                    run.Status == LocalAgentRunStatus.NeedsReview
+                        ? "review_unknown_tool_outcome" : null,
+                    run.Status == LocalAgentRunStatus.NeedsReview
+                        ? "工具执行结果无法确认，请复核后继续。" : null,
+                    _now)];
+            return Task.FromResult(result);
+        }
+
+        public Task PauseRunAsync(string runId, string conversationId,
+            CancellationToken cancellationToken = default)
+        {
+            RunControlRequest = (runId, conversationId, "pause");
+            return Task.CompletedTask;
+        }
+        public Task ResumeRunAsync(string runId, string conversationId,
+            CancellationToken cancellationToken = default)
+        {
+            RunControlRequest = (runId, conversationId, "resume");
+            return Task.CompletedTask;
+        }
+        public Task CancelRunAsync(string runId, string conversationId,
+            CancellationToken cancellationToken = default)
+        {
+            RunControlRequest = (runId, conversationId, "cancel");
+            CancelRequest = (_task.TaskId, runId, _runs[runId].Version);
             return Task.CompletedTask;
         }
 

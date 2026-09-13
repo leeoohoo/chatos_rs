@@ -67,7 +67,7 @@ public sealed class ConversationSessionViewModelTests
     }
 
     [Fact]
-    public async Task StopUsesExactThreadTurnRunAndObservedVersion()
+    public async Task StopUsesTheUnifiedAuthoritativeRunControl()
     {
         var services = new TestServices();
         services.Turns.Add(services.Turn("turn-running", LocalAgentRunStatus.WaitingToolResult, 19,
@@ -77,7 +77,7 @@ public sealed class ConversationSessionViewModelTests
 
         await viewModel.StopCommand.ExecuteAsync(null);
 
-        Assert.Equal(("thread-1", "turn-running", "run-turn-running", (ulong)19), services.CancelledRun);
+        Assert.Equal(("run-turn-running", "thread-1", "cancel"), services.RunControlAction);
     }
 
     [Fact]
@@ -165,6 +165,40 @@ public sealed class ConversationSessionViewModelTests
             ("invoke-1", "thread-1", LocalAgentToolApprovalDecision.Approve),
             services.ToolDecision);
         Assert.Empty(viewModel.PendingToolApprovals);
+    }
+
+    [Fact]
+    public async Task NeedsReviewRunPublishesReasonAndResumeAction()
+    {
+        var services = new TestServices();
+        services.RunControlStates.Add(services.RunControl(LocalAgentRunStatus.NeedsReview));
+        using var viewModel = services.CreateViewModel();
+        await viewModel.OpenAsync(ProjectScope, "Website");
+
+        var control = Assert.Single(viewModel.RunControls);
+        Assert.True(control.RequiresAttention);
+        Assert.True(control.CanResume);
+        Assert.Contains("无法确认", control.Detail);
+
+        await control.ResumeCommand.ExecuteAsync(null);
+
+        Assert.Equal(("run-control", "thread-1", "resume"), services.RunControlAction);
+        Assert.Empty(viewModel.RunControls);
+    }
+
+    [Fact]
+    public async Task ProjectionClearImmediatelyDropsRunControls()
+    {
+        var services = new TestServices();
+        services.RunControlStates.Add(services.RunControl(LocalAgentRunStatus.ModelRunning));
+        using var viewModel = services.CreateViewModel();
+        await viewModel.OpenAsync(ProjectScope, "Website");
+        Assert.Single(viewModel.RunControls);
+
+        services.PublishProjectionCleared();
+
+        await WaitUntilAsync(() => !viewModel.IsOpen);
+        Assert.Empty(viewModel.RunControls);
     }
 
     [Fact]
@@ -317,7 +351,8 @@ public sealed class ConversationSessionViewModelTests
         ILocalAgentMainChatService,
         IConversationRuntimeSettingsService,
         IAskUserPromptService,
-        ILocalAgentToolApprovalService
+        ILocalAgentToolApprovalService,
+        ILocalAgentRunControlService
     {
         private readonly DateTimeOffset _now = DateTimeOffset.Parse("2026-09-13T00:00:00Z");
 
@@ -327,6 +362,7 @@ public sealed class ConversationSessionViewModelTests
         public List<LocalAgentCreateConversationTurn> CreatedTurns { get; } = [];
         public List<AskUserPrompt> Prompts { get; } = [];
         public List<LocalAgentToolApprovalRequest> ToolApprovals { get; } = [];
+        public List<LocalAgentRunControlState> RunControlStates { get; } = [];
         public Exception? CreateError { get; init; }
         public TaskCompletionSource<LocalAgentRunCreatedResponse>? PendingCreate { get; init; }
         public Func<string, CancellationToken, Task<IReadOnlyList<AskUserPrompt>>>? PromptFetcher
@@ -341,15 +377,19 @@ public sealed class ConversationSessionViewModelTests
             init;
         }
         public string SnapshotAccountId { get; init; } = "account-1";
-        public (string ThreadId, string TurnId, string RunId, ulong Version)? CancelledRun { get; private set; }
         public (string PromptId, string ConversationId)? SubmittedPrompt { get; private set; }
         public (string InvocationId, string ConversationId, LocalAgentToolApprovalDecision Decision)?
             ToolDecision { get; private set; }
+        public (string RunId, string ConversationId, string Action)? RunControlAction
+        {
+            get;
+            private set;
+        }
         public List<string> PromptFetches { get; } = [];
         public List<string> ToolApprovalFetches { get; } = [];
 
         public ConversationSessionViewModel CreateViewModel() =>
-            new(this, this, this, this, new ImmediateUiDispatcher());
+            new(this, this, this, this, this, new ImmediateUiDispatcher());
 
         public void PublishProjectionChanged() => ProjectionChanged?.Invoke(this, EventArgs.Empty);
         public void PublishProjectionCleared() => ProjectionCleared?.Invoke(this, EventArgs.Empty);
@@ -368,13 +408,6 @@ public sealed class ConversationSessionViewModelTests
                 command.Content ?? string.Empty, null);
             Turns.Add(turn);
             return Task.FromResult(new LocalAgentRunCreatedResponse("operation-1", turn.Run));
-        }
-
-        public Task CancelTurnAsync(string threadId, string turnId, string runId,
-            ulong expectedVersion, CancellationToken cancellationToken = default)
-        {
-            CancelledRun = (threadId, turnId, runId, expectedVersion);
-            return Task.CompletedTask;
         }
 
         public Task<ConversationRuntimeSettings> FetchAsync(
@@ -443,6 +476,38 @@ public sealed class ConversationSessionViewModelTests
                 value.InvocationId == invocationId && value.ConversationId == conversationId);
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<LocalAgentRunControlState>> FetchRunControlsAsync(
+            string conversationId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<LocalAgentRunControlState>>(RunControlStates
+                .Where(value => value.ConversationId == conversationId).ToArray());
+
+        public Task PauseRunAsync(string runId, string conversationId,
+            CancellationToken cancellationToken = default) =>
+            CompleteRunControlAsync(runId, conversationId, "pause");
+        public Task ResumeRunAsync(string runId, string conversationId,
+            CancellationToken cancellationToken = default) =>
+            CompleteRunControlAsync(runId, conversationId, "resume");
+        public Task CancelRunAsync(string runId, string conversationId,
+            CancellationToken cancellationToken = default) =>
+            CompleteRunControlAsync(runId, conversationId, "cancel");
+
+        private Task CompleteRunControlAsync(string runId, string conversationId, string action)
+        {
+            RunControlAction = (runId, conversationId, action);
+            RunControlStates.RemoveAll(value => value.RunId == runId
+                && value.ConversationId == conversationId);
+            return Task.CompletedTask;
+        }
+
+        public LocalAgentRunControlState RunControl(LocalAgentRunStatus status) => new(
+            "run-control", 7, "thread-1", "turn-1", status, 3, 1,
+            status == LocalAgentRunStatus.NeedsReview ? "review_unknown_tool_outcome" : null,
+            status == LocalAgentRunStatus.NeedsReview
+                ? "工具执行结果无法确认。继续前请核对外部结果。"
+                : null,
+            _now);
 
         public LocalAgentToolApprovalRequest ToolApproval(
             string invocationId,

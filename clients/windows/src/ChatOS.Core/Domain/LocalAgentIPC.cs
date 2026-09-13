@@ -71,6 +71,27 @@ public sealed record LocalAgentToolApprovalRequest(
     LocalAgentToolEffect Effect,
     string ArgumentsDigest);
 
+public sealed record LocalAgentRunControlState(
+    string RunId,
+    ulong RunVersion,
+    string ConversationId,
+    string TurnId,
+    LocalAgentRunStatus Status,
+    uint Iteration,
+    uint RetryCount,
+    string? InteractionKind,
+    string? ReviewReason,
+    DateTimeOffset UpdatedAt)
+{
+    public bool IsTerminal => Status is LocalAgentRunStatus.Succeeded
+        or LocalAgentRunStatus.Failed or LocalAgentRunStatus.Cancelled;
+    public bool CanPause => !IsTerminal && Status is not LocalAgentRunStatus.Paused
+        and not LocalAgentRunStatus.NeedsReview;
+    public bool CanResume => Status == LocalAgentRunStatus.NeedsReview
+        || Status == LocalAgentRunStatus.Paused && InteractionKind != "ask_user";
+    public bool CanCancel => !IsTerminal;
+}
+
 /// <summary>
 /// Exact representation of Rust's internally tagged LocalAgentCommand enum.
 /// The factories prevent callers from accidentally creating a type/payload mismatch.

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using ChatOS.Connector.LocalAgent;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
@@ -11,11 +10,6 @@ public sealed class WindowsLocalAgentMainChatServiceTests
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-09-13T00:00:00Z");
     private static readonly LocalAgentConversationScope Scope =
         new("account-1", "thread-1", "project-1", "agent-1");
-    private static readonly JsonSerializerOptions CommandJsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) },
-    };
 
     [Fact]
     public async Task CreateFreezesAuthorityStagesAttachmentAndPublishesCompleteRunBeforeReturning()
@@ -138,26 +132,6 @@ public sealed class WindowsLocalAgentMainChatServiceTests
         await Assert.ThrowsAsync<InvalidDataException>(() => service.GetConversationAsync("thread-1"));
     }
 
-    [Fact]
-    public async Task CancelUsesExactProjectedRunAndVersion()
-    {
-        var recovered = Recovered(Run("run-1", LocalAgentRunStatus.ModelRunning, 11),
-            "turn-1", "message-1");
-        var store = new WindowsLocalAgentProjectionStore();
-        await store.ReplaceAsync(new WindowsLocalAgentProjectionSnapshot(
-            "account-1", new Dictionary<string, WindowsLocalAgentRecoveredRun> { ["run-1"] = recovered },
-            new Dictionary<string, LocalAgentTaskSnapshot>(), 0, 0));
-        var client = new MainChatClient(recovered.Run);
-        using var service = CreateService(store, new MainChatAccountSession(client));
-
-        await service.CancelTurnAsync("thread-1", "turn-1", "run-1", 11);
-
-        var payload = JsonSerializer.SerializeToElement(client.AcceptedCommand, CommandJsonOptions)
-            .GetProperty("payload");
-        Assert.Equal("run-1", payload.GetProperty("run_id").GetString());
-        Assert.Equal((ulong)11, payload.GetProperty("expected_version").GetUInt64());
-    }
-
     private static WindowsLocalAgentMainChatService CreateService(
         IWindowsLocalAgentProjectionStore store,
         IWindowsLocalAgentAccountSession session) => new(
@@ -201,7 +175,6 @@ public sealed class WindowsLocalAgentMainChatServiceTests
     private sealed class MainChatClient(LocalAgentRunSnapshot createdRun) : LocalAgentIPCClientStub
     {
         public LocalAgentCreateMainChatTurn? CreateCommand { get; private set; }
-        public LocalAgentCommand? AcceptedCommand { get; private set; }
         public Exception? CreateError { get; init; }
 
         public override Task<LocalAgentRunCreatedResponse> CreateMainChatTurnAsync(
@@ -231,12 +204,6 @@ public sealed class WindowsLocalAgentMainChatServiceTests
                 createdRun.RunId, createdRun.OwnerEntityId, turnId, messageId, message));
         }
 
-        public override Task<string> AcceptAsync(
-            LocalAgentCommand command, CancellationToken cancellationToken = default)
-        {
-            AcceptedCommand = command;
-            return Task.FromResult("operation-cancel");
-        }
     }
 
     private sealed class MainChatAccountSession(ILocalAgentIPCClient client)

@@ -57,7 +57,7 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
         _shell = new(_auth, _relations, _registry, _projects, _localAgent,
             _conversations, localControl,
             new ConversationSessionViewModel(
-                new EmptyMainChatService(), null!, null!, null!, dispatcher),
+                new EmptyMainChatService(), null!, null!, null!, null!, dispatcher),
             new ProjectFilesViewModel(null!, dispatcher), new ProjectGitViewModel(null!, dispatcher),
             new ProjectRunViewModel(null!, dispatcher),
             new RemoteConnectionsViewModel(remote, localControl, dispatcher), localization);
@@ -278,9 +278,6 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
             Task.FromResult(new LocalAgentConversationSnapshot("alice", threadId, []));
         public Task<LocalAgentRunCreatedResponse> CreateTurnAsync(
             LocalAgentCreateConversationTurn command, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-        public Task CancelTurnAsync(string threadId, string turnId, string runId,
-            ulong expectedVersion, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
 

@@ -185,38 +185,6 @@ public sealed class WindowsLocalAgentMainChatService : ILocalAgentMainChatServic
         return created;
     }
 
-    public async Task CancelTurnAsync(
-        string threadId,
-        string turnId,
-        string runId,
-        ulong expectedVersion,
-        CancellationToken cancellationToken = default)
-    {
-        RequireIdentity(threadId, nameof(threadId));
-        RequireIdentity(turnId, nameof(turnId));
-        RequireIdentity(runId, nameof(runId));
-        var projection = await RequireProjectionAsync(cancellationToken).ConfigureAwait(false);
-        if (!projection.Runs.TryGetValue(runId, out var recovered))
-        {
-            throw new KeyNotFoundException("The Local Agent Main Chat run was not found.");
-        }
-        var turn = ValidateAndProject(projection.AccountId, threadId, recovered, []);
-        if (!string.Equals(turn.Binding.TurnId, turnId, StringComparison.Ordinal)
-            || turn.Run.Version != expectedVersion)
-        {
-            throw new InvalidOperationException("The Main Chat run changed before cancellation.");
-        }
-        if (IsTerminal(turn.Run.Status))
-        {
-            throw new InvalidOperationException("A terminal Main Chat run cannot be cancelled.");
-        }
-        var client = await _accountSession.GetClientAsync(projection.AccountId, cancellationToken)
-            .ConfigureAwait(false);
-        _ = await client.AcceptAsync(
-            LocalAgentCommand.CancelRun(runId, expectedVersion),
-            cancellationToken).ConfigureAwait(false);
-    }
-
     public void Dispose()
     {
         _store.Changed -= OnProjectionChanged;

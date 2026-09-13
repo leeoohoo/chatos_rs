@@ -11,13 +11,16 @@ namespace ChatOS.Presentation.Tasks;
 public sealed partial class MessageTaskGraphViewModel : ObservableObject, IDisposable
 {
     private readonly ILocalAgentTaskService _service;
+    private readonly ILocalAgentRunControlService _runControls;
     private readonly IUiDispatcher _dispatcher;
     private CancellationTokenSource? _sessionCancellation;
     private long _generation;
 
-    public MessageTaskGraphViewModel(ILocalAgentTaskService service, IUiDispatcher dispatcher)
+    public MessageTaskGraphViewModel(ILocalAgentTaskService service,
+        ILocalAgentRunControlService runControls, IUiDispatcher dispatcher)
     {
         _service = service;
+        _runControls = runControls;
         _dispatcher = dispatcher;
         _service.AccountProjectionCleared += OnAccountProjectionCleared;
         Nodes.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
@@ -35,7 +38,10 @@ public sealed partial class MessageTaskGraphViewModel : ObservableObject, IDispo
         SelectedTask is { CurrentRunId: var currentRunId }
         && RunDetail is { Run.Run: var run }
         && string.Equals(currentRunId, run.RunId, StringComparison.Ordinal)
-        && !IsTerminal(run.Status);
+        && SelectedRunControl?.CanCancel == true;
+    public bool CanPause => SelectedRunControl?.CanPause == true;
+    public bool CanResume => SelectedRunControl?.CanResume == true;
+    public string? ReviewReason => SelectedRunControl?.ReviewReason;
     public bool CanRetry =>
         SelectedTask is { CurrentRunId: var currentRunId }
         && RunDetail is { Run.Run: var run }
@@ -65,6 +71,12 @@ public sealed partial class MessageTaskGraphViewModel : ObservableObject, IDispo
     private LocalAgentTaskRunDetail? _runDetail;
 
     [ObservableProperty] private LocalAgentTaskRunChoiceViewModel? _selectedRun;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanCancel))]
+    [NotifyPropertyChangedFor(nameof(CanPause))]
+    [NotifyPropertyChangedFor(nameof(CanResume))]
+    [NotifyPropertyChangedFor(nameof(ReviewReason))]
+    private LocalAgentRunControlState? _selectedRunControl;
     [ObservableProperty] private uint _eventsTotal;
     [ObservableProperty] private bool _eventsHasMore;
     [ObservableProperty] private string _retryInstruction = string.Empty;
@@ -215,11 +227,28 @@ public sealed partial class MessageTaskGraphViewModel : ObservableObject, IDispo
         if (!CanCancel || RunDetail is not { Run.Run: var run }) return Task.CompletedTask;
         return ApplyActionAsync(async token =>
         {
-            await _service.CancelCurrentRunAsync(
-                RunDetail!.Task.TaskId,
-                run.RunId,
-                run.Version,
-                token).ConfigureAwait(false);
+            await _runControls.CancelRunAsync(run.RunId, SourceThreadId!, token)
+                .ConfigureAwait(false);
+            await RefreshAsync().ConfigureAwait(false);
+        });
+    }
+
+    [RelayCommand]
+    private Task PauseRunAsync() => ApplyRunControlAsync(CanPause,
+        (runId, threadId, token) => _runControls.PauseRunAsync(runId, threadId, token));
+
+    [RelayCommand]
+    private Task ResumeRunAsync() => ApplyRunControlAsync(CanResume,
+        (runId, threadId, token) => _runControls.ResumeRunAsync(runId, threadId, token));
+
+    private Task ApplyRunControlAsync(bool allowed,
+        Func<string, string, CancellationToken, Task> action)
+    {
+        if (!allowed || SelectedRunControl is not { } control || SourceThreadId is null)
+            return Task.CompletedTask;
+        return ApplyActionAsync(async token =>
+        {
+            await action(control.RunId, SourceThreadId, token).ConfigureAwait(false);
             await RefreshAsync().ConfigureAwait(false);
         });
     }
@@ -347,11 +376,14 @@ public sealed partial class MessageTaskGraphViewModel : ObservableObject, IDispo
             40,
             0,
             cancellationToken).ConfigureAwait(false);
+        var controls = await _runControls.FetchRunControlsAsync(
+            task.SourceThreadId, cancellationToken).ConfigureAwait(false);
         await _dispatcher.InvokeAsync(() =>
         {
             if (generation != _generation || SelectedTask?.TaskId != task.TaskId) return;
             SelectedTask = detail.Task;
             RunDetail = detail;
+            SelectedRunControl = controls.SingleOrDefault(value => value.RunId == runId);
             RunEvents.Clear();
             foreach (var item in detail.Events) RunEvents.Add(item);
             EventsTotal = detail.EventsTotal;
@@ -404,6 +436,7 @@ public sealed partial class MessageTaskGraphViewModel : ObservableObject, IDispo
         SelectedTask = null;
         SelectedRun = null;
         RunDetail = null;
+        SelectedRunControl = null;
         EventsTotal = 0;
         EventsHasMore = false;
         RetryInstruction = string.Empty;

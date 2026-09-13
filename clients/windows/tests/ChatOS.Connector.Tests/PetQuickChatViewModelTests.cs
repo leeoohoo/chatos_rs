@@ -77,6 +77,7 @@ public sealed class PetQuickChatViewModelTests
         null!,
         null!,
         null!,
+        null!,
         dispatcher);
 
     private sealed class EmptyMainChatService : ILocalAgentMainChatService
@@ -88,9 +89,6 @@ public sealed class PetQuickChatViewModelTests
             Task.FromResult(new LocalAgentConversationSnapshot("account", threadId, []));
         public Task<LocalAgentRunCreatedResponse> CreateTurnAsync(
             LocalAgentCreateConversationTurn command, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-        public Task CancelTurnAsync(string threadId, string turnId, string runId,
-            ulong expectedVersion, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
 

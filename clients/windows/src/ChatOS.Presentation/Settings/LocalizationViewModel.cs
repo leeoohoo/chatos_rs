@@ -227,6 +227,8 @@ public sealed class LocalizationViewModel : ObservableObject
     public string ExecutionProcess => Text("执行过程", "Execution process");
     public string LoadEarlierProcess => Text("加载更早过程", "Load earlier events");
     public string TaskActions => Text("任务操作", "Task actions");
+    public string PauseRun => Text("暂停 Run", "Pause run");
+    public string ReviewAndResume => Text("确认复核并继续", "Review and resume");
     public string OptionalCancelReason => Text("取消原因（可选）", "Cancellation reason (optional)");
     public string CancelTask => Text("取消任务", "Cancel task");
     public string OptionalRetryInstruction => Text("重试补充说明（可选）", "Retry instructions (optional)");

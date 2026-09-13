@@ -212,6 +212,39 @@
 
         <StackPanel Grid.Row="3">
             <ScrollViewer
+                MaxHeight="220"
+                VerticalScrollBarVisibility="Auto"
+                Visibility="{x:Bind ViewModel.HasRunControls, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ItemsControl Margin="20,0,20,8" ItemsSource="{x:Bind ViewModel.RunControls}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="chat:LocalAgentRunControlViewModel">
+                            <Border Margin="0,3" Padding="13" Style="{StaticResource ChatOSCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{x:Bind StatusLabel}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <TextBlock Text="{x:Bind Detail}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Text="{x:Bind RunId}" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    </Grid>
+                                    <TextBlock Text="{x:Bind ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                    <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="7">
+                                        <Button Command="{x:Bind PauseCommand}" Content="{x:Bind PauseLabel}" Visibility="{x:Bind CanPause, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Button Command="{x:Bind CancelCommand}" Content="{x:Bind CancelLabel}" Visibility="{x:Bind CanCancel, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Button Command="{x:Bind ResumeCommand}" Content="{x:Bind ResumeLabel}" Style="{StaticResource ChatOSPrimaryButtonStyle}" Visibility="{x:Bind CanResume, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <ScrollViewer
                 MaxHeight="260"
                 VerticalScrollBarVisibility="Auto"
                 Visibility="{x:Bind ViewModel.HasPendingToolApprovals, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -566,6 +599,9 @@
                                 <Border Style="{StaticResource ChatOSCardStyle}">
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="{x:Bind Localization.TaskActions, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                        <TextBlock Text="{x:Bind TaskGraph.ReviewReason, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" Visibility="{x:Bind TaskGraph.ReviewReason, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <Button Command="{x:Bind TaskGraph.PauseRunCommand}" Content="{x:Bind Localization.PauseRun, Mode=OneWay}" IsEnabled="{x:Bind TaskGraph.CanPause, Mode=OneWay}" />
+                                        <Button Command="{x:Bind TaskGraph.ResumeRunCommand}" Content="{x:Bind Localization.ReviewAndResume, Mode=OneWay}" IsEnabled="{x:Bind TaskGraph.CanResume, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                                         <Button Command="{x:Bind TaskGraph.CancelTaskCommand}" Content="{x:Bind Localization.CancelTask, Mode=OneWay}" IsEnabled="{x:Bind TaskGraph.CanCancel, Mode=OneWay}" />
                                         <TextBox PlaceholderText="{x:Bind Localization.OptionalRetryInstruction, Mode=OneWay}" Text="{x:Bind TaskGraph.RetryInstruction, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         <Button Command="{x:Bind TaskGraph.RetryRunCommand}" Content="{x:Bind Localization.RetryRun, Mode=OneWay}" IsEnabled="{x:Bind TaskGraph.CanRetry, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />

@@ -22,10 +22,4 @@ public interface ILocalAgentMainChatService
         LocalAgentCreateConversationTurn command,
         CancellationToken cancellationToken = default);
 
-    Task CancelTurnAsync(
-        string threadId,
-        string turnId,
-        string runId,
-        ulong expectedVersion,
-        CancellationToken cancellationToken = default);
 }
