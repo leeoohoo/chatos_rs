@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 import Foundation
+import OSLog
 
 public enum NativeLocalAgentHostState: Equatable, Sendable {
     case stopped
@@ -16,6 +17,10 @@ public actor NativeLocalAgentHostSupervisor {
         -> NativeLocalAgentHostLaunchConfiguration
 
     private let launcher: NativeLocalAgentHostProcessLauncher
+    private static let logger = Logger(
+        subsystem: "com.chatos.swift-client",
+        category: "LocalAgentHost"
+    )
     private let restartDelays: [Duration]
     private var desiredAccountID: String?
     private var configurationProvider: ConfigurationProvider?
@@ -147,7 +152,11 @@ public actor NativeLocalAgentHostSupervisor {
         else { return }
         process = nil
         monitor = nil
-        var lastReason = failureReason(exit.cause)
+        Self.logger.error(
+            "Local Agent Host exited unexpectedly: status=\(exit.status, privacy: .public) detail=\(exit.detail, privacy: .public)"
+        )
+        let exitReason = failureReason(exit)
+        var lastReason = exitReason
         for (offset, delay) in restartDelays.enumerated() {
             let attempt = restartCount + offset + 1
             publishState(.restarting(
@@ -167,7 +176,7 @@ public actor NativeLocalAgentHostSupervisor {
             } catch is CancellationError {
                 return
             } catch {
-                lastReason = sanitizedReason(error)
+                lastReason = "\(exitReason)；重启失败：\(sanitizedReason(error))"
             }
         }
         guard desiredAccountID == accountID, generation == expectedGeneration else { return }
@@ -193,12 +202,12 @@ public actor NativeLocalAgentHostSupervisor {
         return "本地 Agent Host 启动失败"
     }
 
-    private func failureReason(_ cause: NativeLocalAgentHostExitCause) -> String {
-        switch cause {
+    private func failureReason(_ exit: NativeLocalAgentHostExit) -> String {
+        switch exit.cause {
         case .storageUnavailable:
-            "本地 Agent 存储不可用"
+            "本地 Agent 存储不可用：\(exit.detail)"
         case let .unexpected(status):
-            "Host 意外退出（状态码 \(status)）"
+            "Host 意外退出（状态码 \(status)）：\(exit.detail)"
         }
     }
 

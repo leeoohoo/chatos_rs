@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v15 fixtures")
-struct LocalAgentProtocolV15FixtureTests {
+@Suite("Shared Local Agent protocol v16 fixtures")
+struct LocalAgentProtocolV16FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV15FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 15)
+        #expect(localAgentProtocolVersion == 16)
         #expect(encoded == fixture)
     }
 
@@ -159,7 +159,7 @@ struct LocalAgentProtocolV15FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v15")
+            .appendingPathComponent("shared/fixtures/local_agent/v16")
             .appendingPathComponent(name)
     }
 }

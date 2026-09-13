@@ -85,6 +85,11 @@ public protocol NativeLocalAgentAccountSessionAccess: Sendable {
 public actor NativeLocalAgentAccountSession {
     public typealias SettingsProvider = @Sendable (String) async throws
         -> NativeLocalAgentHostBootstrapSettings
+    typealias AccessTokenUpdater = @Sendable (
+        _ accountID: String,
+        _ clientEndpoint: String,
+        _ accessToken: String
+    ) async throws -> Void
 
     public static let deviceIDReference = "device-id"
     public static let sqliteEncryptionKeyReference = "sqlite-encryption-key"
@@ -93,6 +98,7 @@ public actor NativeLocalAgentAccountSession {
     private let supervisor: any NativeLocalAgentHostSupervising
     private let builder: any NativeLocalAgentHostConfigurationBuilding
     private let randomBytes: @Sendable (Int) throws -> Data
+    private let accessTokenUpdater: AccessTokenUpdater
     private var activeAccountID: String?
     private var activeSettings: NativeLocalAgentHostBootstrapSettings?
     private let attachmentStager = NativeLocalAgentAttachmentStager()
@@ -102,18 +108,21 @@ public actor NativeLocalAgentAccountSession {
         self.supervisor = try NativeLocalAgentHostSupervisor()
         self.builder = NativeLocalAgentHostBootstrapBuilder()
         self.randomBytes = SelfSecureRandom.bytes(count:)
+        self.accessTokenUpdater = Self.updateRunningHostAccessToken
     }
 
     init(
         credentials: any NativeLocalAgentCredentialAccess,
         supervisor: any NativeLocalAgentHostSupervising,
         builder: any NativeLocalAgentHostConfigurationBuilding,
-        randomBytes: @escaping @Sendable (Int) throws -> Data
+        randomBytes: @escaping @Sendable (Int) throws -> Data,
+        accessTokenUpdater: AccessTokenUpdater? = nil
     ) {
         self.credentials = credentials
         self.supervisor = supervisor
         self.builder = builder
         self.randomBytes = randomBytes
+        self.accessTokenUpdater = accessTokenUpdater ?? Self.updateRunningHostAccessToken
     }
 
     public func login(
@@ -187,13 +196,14 @@ public actor NativeLocalAgentAccountSession {
         }
     }
 
-    /// Replaces an account token by restarting the Host so no process keeps
-    /// using the superseded token in memory. Durable Runs resume from storage.
+    /// Replaces the account token through the protected local IPC channel.
+    /// The Host keeps its PID and current Step; in-flight requests finish with
+    /// their zeroizing snapshot and subsequent requests use the new token.
     public func updateAccessToken(accountID: String, accessToken: String) async throws {
         guard activeAccountID == accountID else {
             throw NativeLocalAgentAccountSessionError.accountMismatch
         }
-        guard let activeSettings else {
+        guard activeSettings != nil else {
             throw NativeLocalAgentAccountSessionError.inactive
         }
         guard Self.validSecret(accessToken) else {
@@ -204,22 +214,17 @@ public actor NativeLocalAgentAccountSession {
             accountID: accountID,
             reference: NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference
         )
-        let builder = self.builder
-        let credentials = self.credentials
         do {
-            try await supervisor.start(accountID: accountID) {
-                let values = try await Self.loadCredentialValues(
-                    from: credentials,
-                    accountID: accountID,
-                    storage: activeSettings.storage
-                )
-                return try await builder.makeConfiguration(
-                    settings: activeSettings,
-                    credentialValues: values
-                )
+            guard case let .running(runningAccountID, _, endpoint, _) = await supervisor.state(),
+                  runningAccountID == accountID
+            else {
+                throw NativeLocalAgentAccountSessionError.hostUnavailable
             }
-            _ = try await client(accountID: accountID)
+            try await accessTokenUpdater(accountID, endpoint, accessToken)
         } catch {
+            // A failed credential handoff must not leave a live Host using the
+            // superseded token while Keychain already contains the new one.
+            await supervisor.logout()
             try? await credentials.delete(
                 accountID: accountID,
                 reference: NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference
@@ -228,6 +233,19 @@ public actor NativeLocalAgentAccountSession {
             self.activeSettings = nil
             throw error
         }
+    }
+
+    private static func updateRunningHostAccessToken(
+        accountID: String,
+        clientEndpoint: String,
+        accessToken: String
+    ) async throws {
+        let transport = try NativeLocalAgentUnixTransport(socketPath: clientEndpoint)
+        let client = try NativeLocalAgentIPCClient(
+            ownerUserID: accountID,
+            transport: transport
+        )
+        try await client.updateAccessToken(accessToken)
     }
 
     public func logout() async {

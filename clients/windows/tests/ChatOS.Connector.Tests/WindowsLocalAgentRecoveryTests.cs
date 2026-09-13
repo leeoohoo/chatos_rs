@@ -148,6 +148,49 @@ public sealed class WindowsLocalAgentRecoveryTests
     }
 
     [Fact]
+    public async Task ClientRuntimeRotatesTokenWithoutRestartingRecoveryEventsOrProjection()
+    {
+        var calls = new List<string>();
+        var account = new RuntimeAccountSession(calls);
+        var recovery = new RuntimeRecovery(calls);
+        var events = new RuntimeEventHub(calls);
+        var store = new RecordingProjectionStore(calls);
+        var runtime = new WindowsLocalAgentClientRuntime(account, recovery, events, store);
+
+        await runtime.UpdateAccessTokenAsync("user-1");
+
+        Assert.Equal(["account.token"], calls);
+        Assert.Equal(0, events.StartCount);
+        Assert.Equal(0, events.StopCount);
+        Assert.Equal(0, store.ResetCount);
+        Assert.Equal(0, recovery.Attempts);
+        Assert.Equal(0, account.LogoutCount);
+    }
+
+    [Fact]
+    public async Task ClientRuntimeFailsClosedWhenTokenHandoffFails()
+    {
+        var calls = new List<string>();
+        var account = new RuntimeAccountSession(calls)
+        {
+            TokenUpdateError = new IOException("token handoff failed"),
+        };
+        var recovery = new RuntimeRecovery(calls);
+        var events = new RuntimeEventHub(calls);
+        var store = new RecordingProjectionStore(calls);
+        var runtime = new WindowsLocalAgentClientRuntime(account, recovery, events, store);
+
+        await Assert.ThrowsAsync<IOException>(() => runtime.UpdateAccessTokenAsync("user-1"));
+
+        Assert.Equal(
+            ["account.token", "events.stop", "store.reset", "account.logout"],
+            calls);
+        Assert.Equal(1, events.StopCount);
+        Assert.Equal(1, store.ResetCount);
+        Assert.Equal(1, account.LogoutCount);
+    }
+
+    [Fact]
     public async Task ClientRuntimeRetriesWholeRecoveryOnReplacementEndpoint()
     {
         var calls = new List<string>();
@@ -309,6 +352,8 @@ public sealed class WindowsLocalAgentRecoveryTests
 
     private abstract class StubClient : ILocalAgentIPCClient
     {
+        public virtual Task UpdateAccessTokenAsync(string accessToken,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public virtual Task<LocalAgentResponse> SendAsync(LocalAgentCommand command,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public virtual Task<string> AcceptAsync(LocalAgentCommand command,
@@ -351,10 +396,17 @@ public sealed class WindowsLocalAgentRecoveryTests
     private sealed class RuntimeAccountSession(List<string> calls) : IWindowsLocalAgentAccountSession
     {
         public int LogoutCount { get; private set; }
+        public Exception? TokenUpdateError { get; init; }
         public Task ActivateAsync(string accountId, CancellationToken cancellationToken = default)
         { calls.Add("account.activate"); return Task.CompletedTask; }
         public Task UpdateAccessTokenAsync(string accountId,
-            CancellationToken cancellationToken = default) => Task.CompletedTask;
+            CancellationToken cancellationToken = default)
+        {
+            calls.Add("account.token");
+            return TokenUpdateError is null
+                ? Task.CompletedTask
+                : Task.FromException(TokenUpdateError);
+        }
         public Task LogoutAsync()
         { calls.Add("account.logout"); LogoutCount++; return Task.CompletedTask; }
         public Task<ILocalAgentIPCClient> GetClientAsync(string accountId,
@@ -424,10 +476,12 @@ public sealed class WindowsLocalAgentRecoveryTests
 
     private sealed class RuntimeRecovery(List<string> calls) : IWindowsLocalAgentStartupRecovery
     {
+        public int Attempts { get; private set; }
         public Exception? Error { get; init; }
         public Task RestoreAsync(string accountId, ILocalAgentIPCClient client,
             CancellationToken cancellationToken = default)
         {
+            Attempts++;
             calls.Add("recovery.restore");
             return Error is null ? Task.CompletedTask : Task.FromException(Error);
         }
@@ -436,16 +490,18 @@ public sealed class WindowsLocalAgentRecoveryTests
     private sealed class RuntimeEventHub(List<string> calls) : IWindowsLocalAgentEventHub
     {
         public int StartCount { get; private set; }
+        public int StopCount { get; private set; }
         public Task StartAsync(string accountId, CancellationToken cancellationToken = default)
         { calls.Add("events.start"); StartCount++; return Task.CompletedTask; }
         public Task StopAsync()
-        { calls.Add("events.stop"); return Task.CompletedTask; }
+        { calls.Add("events.stop"); StopCount++; return Task.CompletedTask; }
         public Task<WindowsLocalAgentEventDrainResult> DrainAvailableAsync(string accountId,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class RecordingProjectionStore(List<string> calls) : IWindowsLocalAgentProjectionStore
     {
+        public int ResetCount { get; private set; }
         public event EventHandler<WindowsLocalAgentProjectionSnapshot>? Changed
         {
             add { }
@@ -469,6 +525,6 @@ public sealed class WindowsLocalAgentRecoveryTests
         public Task<WindowsLocalAgentProjectionSnapshot?> GetAsync(
             CancellationToken cancellationToken = default) => Task.FromResult<WindowsLocalAgentProjectionSnapshot?>(null);
         public Task ResetAsync(CancellationToken cancellationToken = default)
-        { calls.Add("store.reset"); return Task.CompletedTask; }
+        { calls.Add("store.reset"); ResetCount++; return Task.CompletedTask; }
     }
 }

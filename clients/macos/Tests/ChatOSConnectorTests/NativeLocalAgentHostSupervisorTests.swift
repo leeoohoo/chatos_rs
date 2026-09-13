@@ -97,11 +97,47 @@ struct NativeLocalAgentHostSupervisorTests {
 
         await supervisor.logout()
     }
+
+    @Test("preserves redacted crash diagnostics when every restart launch fails")
+    func reportsPostReadyCrashDetail() async throws {
+        let fixture = try RestartingHostFixture()
+        let supervisor = try NativeLocalAgentHostSupervisor(
+            launcher: NativeLocalAgentHostProcessLauncher(testingIdentityVerifier: { _ in }),
+            restartDelays: [.zero]
+        )
+        let launches = LaunchCounter()
+
+        try await supervisor.start(accountID: "user-1") {
+            let attempt = await launches.increment()
+            guard attempt == 1 else {
+                throw NativeLocalAgentHostLaunchError.processLaunchFailed("restart refused")
+            }
+            return try fixture.configuration()
+        }
+        try await waitUntil {
+            if case .failed = await supervisor.state() { return true }
+            return false
+        }
+
+        guard case let .failed(_, reason) = await supervisor.state() else {
+            Issue.record("Expected the Host supervisor to publish a terminal failure")
+            return
+        }
+        #expect(reason.contains("worker crashed"))
+        #expect(reason.contains("[REDACTED]"))
+        #expect(reason.contains("restart refused"))
+        #expect(!reason.contains("secret-token"))
+        #expect(!reason.contains("gateway.example.test"))
+    }
 }
 
 private actor LaunchCounter {
     private(set) var value = 0
-    func increment() { value += 1 }
+    @discardableResult
+    func increment() -> Int {
+        value += 1
+        return value
+    }
 }
 
 private struct RestartingHostFixture: Sendable {
@@ -143,6 +179,8 @@ private struct RestartingHostFixture: Sendable {
         sys.stdout.buffer.write(struct.pack('>I', len(body)) + body)
         sys.stdout.buffer.flush()
         if not always_wait and count == 0:
+            sys.stderr.write('worker crashed access_token=secret-token https://gateway.example.test/private\\n')
+            sys.stderr.flush()
             sys.exit(\(firstExitStatus))
         signal.pause()
         """

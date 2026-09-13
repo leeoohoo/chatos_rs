@@ -251,13 +251,20 @@ public actor NativeLocalAgentIPCClient {
 
     public func send(_ command: LocalAgentCommand) async throws -> LocalAgentResponse {
         let requestID = UUID().uuidString.lowercased()
+        let containsSensitivePayload = command.containsSensitivePayload
         let request = Request(
             protocolVersion: localAgentProtocolVersion,
             requestID: requestID,
             ownerUserID: ownerUserID,
             command: command
         )
-        let replyData = try await transport.exchange(try encoder.encode(request))
+        var requestData = try encoder.encode(request)
+        defer {
+            if containsSensitivePayload {
+                requestData.resetBytes(in: 0..<requestData.count)
+            }
+        }
+        let replyData = try await transport.exchange(requestData)
         let reply: LocalAgentIPCReply
         do {
             reply = try decoder.decode(LocalAgentIPCReply.self, from: replyData)
@@ -285,6 +292,13 @@ public actor NativeLocalAgentIPCClient {
             throw unexpected("accepted", response)
         }
         return operationID
+    }
+
+    public func updateAccessToken(_ accessToken: String) async throws {
+        let response = try await send(.updateAccessToken(accessToken))
+        guard case .success = response else {
+            throw unexpected("success", response)
+        }
     }
 
     public func createMainChatTurn(

@@ -11,18 +11,20 @@ use chatos_client_storage::{
     StorageEncryptionKey, StorageResult, StorageTransaction, TaskRecord, TransactionRepositories,
 };
 use chatos_local_agent_host::{
-    LocalAgentIpcMutationExecutor, LocalAgentIpcServer, LocalAgentIpcServerError,
+    LocalAgentExecutionSession, LocalAgentHostCredentialExecutor, LocalAgentIpcMutationExecutor,
+    LocalAgentIpcServer, LocalAgentIpcServerError,
 };
 use chatos_local_agent_protocol::{
     AgentMessage, AgentMessageRole, ContextStrategy, FrozenSnapshot, GetRunDetailCommand,
     GetTaskGraphCommand, GetTaskRunDetailCommand, LocalAgentCommand, LocalAgentHostState,
     LocalAgentHostUiStatus, LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest,
     LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunStatus, LocalAgentUiEventPayload,
-    MemorySyncStatus, MessageMode, ModelProtocol, ModelRuntimeDescriptor,
+    MemorySyncStatus, MessageMode, ModelProtocol, ModelRuntimeDescriptor, UpdateAccessTokenCommand,
     LOCAL_AGENT_PROTOCOL_VERSION,
 };
-use chatos_local_agent_runtime::DurableTaskState;
+use chatos_local_agent_runtime::{DurableTaskState, ModelGatewayCallbacks};
 use chrono::Utc;
+use tokio_util::sync::CancellationToken;
 
 fn scope() -> RecordScope {
     RecordScope {
@@ -515,6 +517,38 @@ async fn mutation_commands_use_the_typed_executor() {
         .await;
     assert!(matches!(reply.response, LocalAgentIpcResponse::Success));
     assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn access_token_update_is_process_local_and_bypasses_durable_mutations() {
+    let durable_executor = Arc::new(RecordingMutationExecutor {
+        calls: AtomicUsize::new(0),
+    });
+    let session = LocalAgentExecutionSession::new(
+        "old-token",
+        ModelGatewayCallbacks::default(),
+        CancellationToken::new(),
+    )
+    .unwrap();
+    let credential_executor =
+        LocalAgentHostCredentialExecutor::new(session.clone(), durable_executor.clone());
+    let in_flight = session.access_token_snapshot().unwrap();
+
+    let response = credential_executor
+        .execute_mutation(
+            "request-token-update",
+            LocalAgentCommand::UpdateAccessToken(UpdateAccessTokenCommand::new("new-token")),
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(response, LocalAgentIpcResponse::Success));
+    assert_eq!(in_flight.as_str(), "old-token");
+    assert_eq!(
+        session.access_token_snapshot().unwrap().as_str(),
+        "new-token"
+    );
+    assert_eq!(durable_executor.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

@@ -10,6 +10,25 @@ namespace ChatOS.Connector.Tests;
 public sealed class LocalAgentIPCClientTests
 {
     [Fact]
+    public async Task AccessTokenUpdateUsesExactSensitiveCommandAndClearsTheTransportBuffer()
+    {
+        var transport = new RecordingTransport(request => Reply(request, """
+            {"type":"success"}
+            """));
+        var client = new WindowsLocalAgentIPCClient("user-1", transport);
+
+        await client.UpdateAccessTokenAsync("rotated-token");
+
+        using var copiedRequest = JsonDocument.Parse(transport.CopiedRequest!);
+        var command = copiedRequest.RootElement.GetProperty("command");
+        Assert.Equal("update_access_token", command.GetProperty("type").GetString());
+        Assert.Equal(
+            "rotated-token",
+            command.GetProperty("payload").GetProperty("access_token").GetString());
+        Assert.True(transport.Request!.All(value => value == 0));
+    }
+
+    [Fact]
     public async Task EncodesRustTaggedCommandsAndPluralIdFields()
     {
         var transport = new RecordingTransport(request => Reply(request, """
@@ -87,7 +106,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesTheSharedV15RetryTaskAndTaskSnapshotFixtures()
+    public async Task UsesTheSharedV16RetryTaskAndTaskSnapshotFixtures()
     {
         using var expectedRequest = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("retry_task_request.json")));
@@ -102,7 +121,7 @@ public sealed class LocalAgentIPCClientTests
             "Preserve the approved visual hierarchy.")));
 
         using var actualRequest = JsonDocument.Parse(requestTransport.Request!);
-        Assert.Equal(15u, LocalAgentProtocol.Version);
+        Assert.Equal(16u, LocalAgentProtocol.Version);
         Assert.True(JsonDeepEquals(
             expectedRequest.RootElement.GetProperty("command"),
             actualRequest.RootElement.GetProperty("command")));
@@ -145,7 +164,7 @@ public sealed class LocalAgentIPCClientTests
     }
 
     [Fact]
-    public async Task UsesSharedV15TaskGraphAndRunDetailProjections()
+    public async Task UsesSharedV16TaskGraphAndRunDetailProjections()
     {
         using var graphFixture = JsonDocument.Parse(
             await File.ReadAllBytesAsync(Fixture("task_graph_response.json")));
@@ -404,7 +423,7 @@ public sealed class LocalAgentIPCClientTests
             "shared",
             "fixtures",
             "local_agent",
-            "v15",
+            "v16",
             name));
 
     private static bool JsonDeepEquals(JsonElement expected, JsonElement actual) =>
@@ -426,6 +445,7 @@ public sealed class LocalAgentIPCClientTests
     private sealed class RecordingTransport(Func<byte[], byte[]> reply) : ILocalAgentFrameTransport
     {
         public byte[]? Request { get; private set; }
+        public byte[]? CopiedRequest { get; private set; }
 
         public Task<byte[]> ExchangeAsync(
             byte[] request,
@@ -433,6 +453,7 @@ public sealed class LocalAgentIPCClientTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             Request = request;
+            CopiedRequest = request.ToArray();
             return Task.FromResult(reply(request));
         }
     }

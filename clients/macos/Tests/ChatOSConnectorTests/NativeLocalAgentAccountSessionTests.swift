@@ -301,15 +301,23 @@ struct NativeLocalAgentAccountSessionTests {
         )
     }
 
-    @Test("rotating a token restarts the durable Host with the same account settings")
-    func tokenRotationRestartsHost() async throws {
+    @Test("rotating a token updates the running Host without changing its PID")
+    func tokenRotationKeepsHostRunning() async throws {
         let credentials = InMemoryLocalAgentCredentials()
         let supervisor = FakeLocalAgentSupervisor()
+        let updates = AccessTokenUpdateRecorder()
         let session = NativeLocalAgentAccountSession(
             credentials: credentials,
             supervisor: supervisor,
             builder: FakeLocalAgentBuilder(),
-            randomBytes: { Data(repeating: 0x66, count: $0) }
+            randomBytes: { Data(repeating: 0x66, count: $0) },
+            accessTokenUpdater: { accountID, endpoint, accessToken in
+                await updates.record(
+                    accountID: accountID,
+                    endpoint: endpoint,
+                    accessToken: accessToken
+                )
+            }
         )
         try await session.login(
             accountID: "user-1",
@@ -317,15 +325,57 @@ struct NativeLocalAgentAccountSessionTests {
             settingsProvider: { self.settings(accountID: "user-1", deviceID: $0) }
         )
 
+        let stateBefore = await supervisor.currentState()
         try await session.updateAccessToken(accountID: "user-1", accessToken: "second-token")
+        let stateAfter = await supervisor.currentState()
 
-        #expect(await supervisor.startedAccounts() == ["user-1", "user-1"])
+        #expect(await supervisor.startedAccounts() == ["user-1"])
+        #expect(stateBefore == stateAfter)
+        #expect(await updates.values().count == 1)
+        #expect(await updates.values().first?.accountID == "user-1")
+        #expect(await updates.values().first?.accessToken == "second-token")
         #expect(
             await credentials.value(
                 accountID: "user-1",
                 reference: NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference
             ) == Data("second-token".utf8)
         )
+    }
+
+    @Test("a failed token handoff stops the Host and clears the active session")
+    func tokenRotationFailureFailsClosed() async throws {
+        let credentials = InMemoryLocalAgentCredentials()
+        let supervisor = FakeLocalAgentSupervisor()
+        let session = NativeLocalAgentAccountSession(
+            credentials: credentials,
+            supervisor: supervisor,
+            builder: FakeLocalAgentBuilder(),
+            randomBytes: { Data(repeating: 0x66, count: $0) },
+            accessTokenUpdater: { _, _, _ in throw TokenUpdateFailure.rejected }
+        )
+        try await session.login(
+            accountID: "user-1",
+            accessToken: "first-token",
+            settingsProvider: { self.settings(accountID: "user-1", deviceID: $0) }
+        )
+
+        await #expect(throws: TokenUpdateFailure.rejected) {
+            try await session.updateAccessToken(
+                accountID: "user-1",
+                accessToken: "second-token"
+            )
+        }
+
+        #expect(await supervisor.currentState() == .stopped)
+        #expect(
+            await credentials.value(
+                accountID: "user-1",
+                reference: NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference
+            ) == nil
+        )
+        await #expect(throws: NativeLocalAgentAccountSessionError.inactive) {
+            _ = try await session.client(accountID: "user-1")
+        }
     }
 
     private func settings(
@@ -348,6 +398,30 @@ struct NativeLocalAgentAccountSessionTests {
             )
         )
     }
+}
+
+private enum TokenUpdateFailure: Error, Equatable {
+    case rejected
+}
+
+private actor AccessTokenUpdateRecorder {
+    struct Value: Sendable {
+        let accountID: String
+        let endpoint: String
+        let accessToken: String
+    }
+
+    private var recorded: [Value] = []
+
+    func record(accountID: String, endpoint: String, accessToken: String) {
+        recorded.append(Value(
+            accountID: accountID,
+            endpoint: endpoint,
+            accessToken: accessToken
+        ))
+    }
+
+    func values() -> [Value] { recorded }
 }
 
 private actor InMemoryLocalAgentCredentials: NativeLocalAgentCredentialAccess {

@@ -1,5 +1,5 @@
 {
-  "protocol_version": 15,
+  "protocol_version": 16,
   "request_id": "request-task-run-detail-1",
   "response": {
     "type": "task_run_detail",

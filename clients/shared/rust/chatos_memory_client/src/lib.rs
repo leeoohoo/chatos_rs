@@ -8,6 +8,7 @@
 //! administration, internal-service authentication, discovery, and implicit
 //! retry behavior do not belong in a native client.
 
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use chatos_client_http::{
@@ -17,8 +18,70 @@ use chatos_client_http::{
 use reqwest::{Method, RequestBuilder};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use zeroize::Zeroizing;
 
 const RESPONSE_BODY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
+const MAXIMUM_BEARER_TOKEN_BYTES: usize = 64 * 1024;
+
+/// Process-local bearer credential shared by every client that belongs to one
+/// authenticated native account. Each request obtains a short-lived,
+/// zeroizing snapshot before its first await. Rotating the source therefore
+/// never cancels an in-flight request, while every later request observes the
+/// replacement credential.
+#[derive(Clone)]
+pub struct RotatingBearerToken {
+    value: Arc<RwLock<Zeroizing<String>>>,
+}
+
+impl RotatingBearerToken {
+    pub fn new(value: impl Into<String>) -> Result<Self, String> {
+        Ok(Self {
+            value: Arc::new(RwLock::new(validate_bearer_token(value.into())?)),
+        })
+    }
+
+    pub fn snapshot(&self) -> Result<Zeroizing<String>, String> {
+        let value = self
+            .value
+            .read()
+            .map_err(|_| "bearer token lock is unavailable".to_string())?;
+        Ok(Zeroizing::new(value.to_string()))
+    }
+
+    pub fn rotate(&self, value: impl Into<String>) -> Result<(), String> {
+        self.rotate_zeroizing(Zeroizing::new(value.into()))
+    }
+
+    pub fn rotate_zeroizing(&self, value: Zeroizing<String>) -> Result<(), String> {
+        let mut replacement = validate_bearer_token(value.to_string())?;
+        let mut current = self
+            .value
+            .write()
+            .map_err(|_| "bearer token lock is unavailable".to_string())?;
+        std::mem::swap(&mut *current, &mut replacement);
+        // replacement now owns the superseded token and zeroizes it at the
+        // end of this scope. Existing request snapshots remain valid until
+        // those requests complete, then zeroize themselves independently.
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for RotatingBearerToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RotatingBearerToken([REDACTED])")
+    }
+}
+
+fn validate_bearer_token(value: String) -> Result<Zeroizing<String>, String> {
+    if value.is_empty()
+        || value.trim() != value
+        || value.len() > MAXIMUM_BEARER_TOKEN_BYTES
+        || value.chars().any(char::is_control)
+    {
+        return Err("bearer_token is invalid".to_string());
+    }
+    Ok(Zeroizing::new(value))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ComposeContextPolicy {
@@ -133,7 +196,7 @@ pub struct MemoryEngineClient {
     http: reqwest::Client,
     base_url: String,
     source_id: String,
-    bearer_token: String,
+    bearer_token: RotatingBearerToken,
 }
 
 impl std::fmt::Debug for MemoryEngineClient {
@@ -158,7 +221,8 @@ impl MemoryEngineClient {
             .timeout(timeout)
             .build()
             .map_err(|error| format!("Memory Engine HTTP client could not be created: {error}"))?;
-        Self::new_with_http_client(base_url, source_id, bearer_token, http)
+        let bearer_token = RotatingBearerToken::new(bearer_token)?;
+        Self::new_with_http_client_and_token(base_url, source_id, bearer_token, http)
     }
 
     pub fn new_with_http_client(
@@ -167,9 +231,33 @@ impl MemoryEngineClient {
         bearer_token: impl Into<String>,
         http: reqwest::Client,
     ) -> Result<Self, String> {
+        let bearer_token = RotatingBearerToken::new(bearer_token)?;
+        Self::new_with_http_client_and_token(base_url, source_id, bearer_token, http)
+    }
+
+    pub fn new_with_token(
+        base_url: impl Into<String>,
+        timeout: Duration,
+        source_id: impl Into<String>,
+        bearer_token: RotatingBearerToken,
+    ) -> Result<Self, String> {
+        let http = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|error| format!("Memory Engine HTTP client could not be created: {error}"))?;
+        Self::new_with_http_client_and_token(base_url, source_id, bearer_token, http)
+    }
+
+    pub fn new_with_http_client_and_token(
+        base_url: impl Into<String>,
+        source_id: impl Into<String>,
+        bearer_token: RotatingBearerToken,
+        http: reqwest::Client,
+    ) -> Result<Self, String> {
         let base_url = normalize_base_url(base_url.into())?;
         let source_id = require_credential("source_id", source_id.into())?;
-        let bearer_token = require_credential("bearer_token", bearer_token.into())?;
+        // Fail construction if the shared source was poisoned or invalidated.
+        drop(bearer_token.snapshot()?);
         Ok(Self {
             http,
             base_url,
@@ -304,10 +392,11 @@ impl MemoryEngineClient {
         B: Serialize + ?Sized,
     {
         let url = format!("{}{}", self.base_url, path);
+        let bearer_token = self.bearer_token.snapshot()?;
         let request = self
             .http
             .request(method.clone(), url.as_str())
-            .bearer_auth(self.bearer_token.as_str());
+            .bearer_auth(bearer_token.as_str());
         let request = apply_json_body(request, body);
         let response = request.send().await.map_err(|error| {
             format!(
@@ -386,7 +475,16 @@ fn default_pending() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_base_url;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use axum::{extract::State, http::HeaderMap, routing::post, Json, Router};
+    use serde_json::json;
+    use tokio::sync::Semaphore;
+
+    use super::{
+        normalize_base_url, ComposeContextRequest, MemoryEngineClient, RotatingBearerToken,
+    };
 
     #[test]
     fn base_url_has_one_memory_api_prefix() {
@@ -398,5 +496,114 @@ mod tests {
             normalize_base_url("https://memory.example/api/memory-engine/v1/".to_string()).unwrap(),
             "https://memory.example/api/memory-engine/v1"
         );
+    }
+
+    #[test]
+    fn rotating_token_preserves_in_flight_snapshots_and_updates_every_clone() {
+        let source = RotatingBearerToken::new("old-token").unwrap();
+        let shared_clone = source.clone();
+        let in_flight = source.snapshot().unwrap();
+
+        source.rotate("new-token").unwrap();
+
+        assert_eq!(in_flight.as_str(), "old-token");
+        assert_eq!(shared_clone.snapshot().unwrap().as_str(), "new-token");
+        assert!(!format!("{source:?}").contains("new-token"));
+        assert!(format!("{source:?}").contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn rotating_token_rejects_invalid_replacements_without_changing_the_source() {
+        let source = RotatingBearerToken::new("valid-token").unwrap();
+
+        assert!(source.rotate(" invalid").is_err());
+        assert_eq!(source.snapshot().unwrap().as_str(), "valid-token");
+        assert!(RotatingBearerToken::new("").is_err());
+        assert!(RotatingBearerToken::new("x".repeat(64 * 1024 + 1)).is_err());
+    }
+
+    #[derive(Clone)]
+    struct AuthorizationProbe {
+        observed: Arc<Mutex<Vec<String>>>,
+        first_seen: Arc<Semaphore>,
+        release_first: Arc<Semaphore>,
+    }
+
+    async fn compose_probe(
+        State(probe): State<AuthorizationProbe>,
+        headers: HeaderMap,
+    ) -> Json<serde_json::Value> {
+        let authorization = headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let request_index = {
+            let mut observed = probe.observed.lock().unwrap();
+            let index = observed.len();
+            observed.push(authorization);
+            index
+        };
+        if request_index == 0 {
+            probe.first_seen.add_permits(1);
+            probe.release_first.acquire().await.unwrap().forget();
+        }
+        Json(json!({
+            "thread_id": "thread-1",
+            "blocks": [],
+            "recent_records": [],
+            "meta": {"summary_count": 0, "recent_record_count": 0}
+        }))
+    }
+
+    #[tokio::test]
+    async fn in_flight_memory_request_finishes_with_old_token_and_next_request_uses_new_token() {
+        let probe = AuthorizationProbe {
+            observed: Arc::new(Mutex::new(Vec::new())),
+            first_seen: Arc::new(Semaphore::new(0)),
+            release_first: Arc::new(Semaphore::new(0)),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = Router::new()
+            .route("/api/memory-engine/v1/context/compose", post(compose_probe))
+            .with_state(probe.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let token = RotatingBearerToken::new("old-token").unwrap();
+        let client = MemoryEngineClient::new_with_token(
+            format!("http://{address}"),
+            Duration::from_secs(5),
+            "native-client",
+            token.clone(),
+        )
+        .unwrap();
+        let request = ComposeContextRequest {
+            tenant_id: "user-1".to_string(),
+            subject_id: None,
+            related_subject_ids: None,
+            thread_id: "thread-1".to_string(),
+            policy: None,
+        };
+
+        let first_client = client.clone();
+        let first_request = request.clone();
+        let first = tokio::spawn(async move { first_client.compose_context(&first_request).await });
+        probe.first_seen.acquire().await.unwrap().forget();
+        token.rotate("new-token").unwrap();
+
+        client.compose_context(&request).await.unwrap();
+        probe.release_first.add_permits(1);
+        first.await.unwrap().unwrap();
+
+        assert_eq!(
+            *probe.observed.lock().unwrap(),
+            [
+                "Bearer old-token".to_string(),
+                "Bearer new-token".to_string()
+            ]
+        );
+        server.abort();
     }
 }

@@ -12,7 +12,7 @@ use chatos_local_agent_runtime::{
     HttpModelGatewayClient, LocalAgentProfile, MemoryEngineContextAdapter, MemorySyncPolicy,
     MemorySynchronizer, ModelGatewayCallbacks,
 };
-use chatos_memory_client::MemoryEngineClient;
+use chatos_memory_client::{MemoryEngineClient, RotatingBearerToken};
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
@@ -146,11 +146,13 @@ pub async fn assemble_local_agent_host(
         HttpModelGatewayClient::new(request.model_gateway_base_url.as_str())
             .map_err(|error| LocalAgentHostAssemblyError::ModelGateway(error.to_string()))?,
     );
-    let memory_client = MemoryEngineClient::new(
+    let access_token = RotatingBearerToken::new(credentials.model_access_token.to_string())
+        .map_err(LocalAgentHostAssemblyError::MemoryEngine)?;
+    let memory_client = MemoryEngineClient::new_with_token(
         request.memory_engine_base_url.clone(),
         MEMORY_ENGINE_TIMEOUT,
         request.memory_source_id.clone(),
-        credentials.model_access_token.to_string(),
+        access_token.clone(),
     )
     .map_err(LocalAgentHostAssemblyError::MemoryEngine)?;
     let memory_context = MemoryEngineContextAdapter::new(
@@ -219,8 +221,8 @@ pub async fn assemble_local_agent_host(
     .map_err(|error| LocalAgentHostAssemblyError::Host(error.to_string()))?;
     let host = Arc::new(host);
     let host_cancellation = CancellationToken::new();
-    let session = LocalAgentExecutionSession::new(
-        credentials.model_access_token.to_string(),
+    let session = LocalAgentExecutionSession::with_access_token(
+        access_token,
         ModelGatewayCallbacks::default(),
         host_cancellation,
     )

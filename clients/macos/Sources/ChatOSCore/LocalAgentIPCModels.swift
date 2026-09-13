@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 15
+public let localAgentProtocolVersion: UInt32 = 16
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -229,6 +229,7 @@ public enum LocalAgentToolApprovalDecision: String, Codable, Equatable, Sendable
 }
 
 public enum LocalAgentCommand: Equatable, Sendable {
+    case updateAccessToken(String)
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
     case createTask(LocalAgentCreateTask)
     case retryTask(LocalAgentRetryTask)
@@ -270,6 +271,7 @@ public enum LocalAgentCommand: Equatable, Sendable {
 extension LocalAgentCommand: Encodable {
     private enum CodingKeys: String, CodingKey { case type, payload }
     private struct RunPayload: Encodable { let runID: String }
+    private struct AccessTokenPayload: Encodable { let accessToken: String }
     private struct RunControlPayload: Encodable {
         let runID: String
         let expectedVersion: UInt64
@@ -339,6 +341,9 @@ extension LocalAgentCommand: Encodable {
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case let .updateAccessToken(accessToken):
+            try container.encode("update_access_token", forKey: .type)
+            try container.encode(AccessTokenPayload(accessToken: accessToken), forKey: .payload)
         case let .createMainChatTurn(payload):
             try container.encode("create_main_chat_turn", forKey: .type)
             try container.encode(payload, forKey: .payload)
@@ -458,6 +463,11 @@ extension LocalAgentCommand: Encodable {
                 forKey: .payload
             )
         }
+    }
+
+    public var containsSensitivePayload: Bool {
+        if case .updateAccessToken = self { return true }
+        return false
     }
 
     private func encodeRun(

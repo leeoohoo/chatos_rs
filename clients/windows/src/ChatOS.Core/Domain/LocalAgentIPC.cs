@@ -5,7 +5,7 @@ namespace ChatOS.Core.Domain;
 
 public static class LocalAgentProtocol
 {
-    public const uint Version = 15;
+    public const uint Version = 16;
     public const int MaximumFrameBytes = 8 * 1024 * 1024;
 }
 
@@ -103,11 +103,21 @@ public sealed record LocalAgentCommand
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public object? Payload { get; }
 
-    private LocalAgentCommand(string type, object? payload)
+    [JsonIgnore]
+    public bool ContainsSensitivePayload { get; }
+
+    private LocalAgentCommand(string type, object? payload, bool containsSensitivePayload = false)
     {
         Type = type;
         Payload = payload;
+        ContainsSensitivePayload = containsSensitivePayload;
     }
+
+    public static LocalAgentCommand UpdateAccessToken(string accessToken) =>
+        new(
+            "update_access_token",
+            new AccessTokenPayload(accessToken),
+            containsSensitivePayload: true);
 
     public static LocalAgentCommand CreateMainChatTurn(LocalAgentCreateMainChatTurn value) =>
         new("create_main_chat_turn", value);
@@ -222,6 +232,7 @@ public sealed record LocalAgentCommand
         ulong expectedVersion) =>
         new(type, new RunControlPayload(runId, expectedVersion));
 
+    private sealed record AccessTokenPayload(string AccessToken);
     private sealed record RunPayload(string RunId);
     private sealed record RunControlPayload(string RunId, ulong ExpectedVersion);
     private sealed record RunDetailPayload(string RunId, uint EventLimit, uint EventOffset);

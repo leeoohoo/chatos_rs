@@ -9,11 +9,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     LocalAgentExecutionSession, LocalAgentHost, LocalAgentHostControlExecutor,
-    LocalAgentHostCreationExecutor, LocalAgentHostError, LocalAgentHostWorker,
-    LocalAgentIpcMutationExecutor, LocalAgentIpcServer, LocalAgentIpcServerError,
-    LocalAgentMemorySyncWorker, LocalAgentMemorySyncWorkerError, LocalAgentMemorySyncWorkerExit,
-    LocalAgentStorageIpcExecutor, LocalAgentStoragePlatform, LocalAgentWorkerExit,
-    LocalCapabilityIpcExecutor, RegisteredLocalCapabilityRuntime, StoredLocalCapabilityLoader,
+    LocalAgentHostCreationExecutor, LocalAgentHostCredentialExecutor, LocalAgentHostError,
+    LocalAgentHostWorker, LocalAgentIpcMutationExecutor, LocalAgentIpcServer,
+    LocalAgentIpcServerError, LocalAgentMemorySyncWorker, LocalAgentMemorySyncWorkerError,
+    LocalAgentMemorySyncWorkerExit, LocalAgentStorageIpcExecutor, LocalAgentStoragePlatform,
+    LocalAgentWorkerExit, LocalCapabilityIpcExecutor, RegisteredLocalCapabilityRuntime,
+    StoredLocalCapabilityLoader,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -250,11 +251,14 @@ pub fn build_local_agent_ipc_server(
         LocalAgentHostControlExecutor::new(host.clone(), capability_executor),
     );
     let creation_executor: Arc<dyn LocalAgentIpcMutationExecutor> = Arc::new(
-        LocalAgentHostCreationExecutor::new(host, session, control_executor),
+        LocalAgentHostCreationExecutor::new(host, session.clone(), control_executor),
+    );
+    let credential_executor: Arc<dyn LocalAgentIpcMutationExecutor> = Arc::new(
+        LocalAgentHostCredentialExecutor::new(session, creation_executor),
     );
     Ok(Arc::new(LocalAgentIpcServer::new(
         storage,
         scope,
-        creation_executor,
+        credential_executor,
     )?))
 }

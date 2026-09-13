@@ -80,15 +80,14 @@ public sealed class WindowsLocalAgentClientRuntime : IWindowsLocalAgentClientRun
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await _eventHub.StopAsync().ConfigureAwait(false);
             try
             {
                 await _accountSession.UpdateAccessTokenAsync(accountId, cancellationToken)
                     .ConfigureAwait(false);
-                await RestoreAndStartAsync(accountId, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
+                await _eventHub.StopAsync().ConfigureAwait(false);
                 await _store.ResetAsync().ConfigureAwait(false);
                 await _accountSession.LogoutAsync().ConfigureAwait(false);
                 throw;

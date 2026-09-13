@@ -8,6 +8,24 @@ import Testing
 
 @Suite("Native local Agent IPC client")
 struct NativeLocalAgentIPCClientTests {
+    @Test("encodes a process-local access token update as one exact command")
+    func encodesAccessTokenUpdate() async throws {
+        let transport = RecordingLocalAgentTransport(responseType: "success")
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+
+        try await client.updateAccessToken("rotated-token")
+
+        let request = try #require(await transport.lastRequest())
+        let object = try #require(
+            JSONSerialization.jsonObject(with: request) as? [String: Any]
+        )
+        let command = try #require(object["command"] as? [String: Any])
+        #expect(command["type"] as? String == "update_access_token")
+        let payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload.count == 1)
+        #expect(payload["access_token"] as? String == "rotated-token")
+    }
+
     @Test("encodes the Rust tagged command and preserves plural ID fields")
     func encodesTaggedCommand() async throws {
         let transport = RecordingLocalAgentTransport(responseType: "accepted")
@@ -279,7 +297,7 @@ struct NativeLocalAgentIPCClientTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v15")
+            .appendingPathComponent("shared/fixtures/local_agent/v16")
             .appendingPathComponent(name)
     }
 }

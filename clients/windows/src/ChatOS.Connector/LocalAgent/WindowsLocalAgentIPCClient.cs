@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ChatOS.Core.Abstractions;
@@ -62,8 +63,19 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
             _ownerUserId,
             command);
         var requestBytes = JsonSerializer.SerializeToUtf8Bytes(request, JsonOptions);
-        var responseBytes = await _transport.ExchangeAsync(requestBytes, cancellationToken)
-            .ConfigureAwait(false);
+        byte[] responseBytes;
+        try
+        {
+            responseBytes = await _transport.ExchangeAsync(requestBytes, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (command.ContainsSensitivePayload)
+            {
+                CryptographicOperations.ZeroMemory(requestBytes);
+            }
+        }
 
         ReplyEnvelope reply;
         try
@@ -92,6 +104,19 @@ public sealed class WindowsLocalAgentIPCClient : ILocalAgentIPCClient
             throw new LocalAgentRejectedException(rejected.Error);
         }
         return response;
+    }
+
+    public async Task UpdateAccessTokenAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            LocalAgentCommand.UpdateAccessToken(accessToken),
+            cancellationToken).ConfigureAwait(false);
+        if (response is not LocalAgentSuccessResponse)
+        {
+            throw Unexpected("success", response.Type);
+        }
     }
 
     public async Task<string> AcceptAsync(

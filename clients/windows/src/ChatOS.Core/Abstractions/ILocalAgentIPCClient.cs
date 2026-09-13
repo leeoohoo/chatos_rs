@@ -9,6 +9,10 @@ public interface ILocalAgentIPCClientFactory
 
 public interface ILocalAgentIPCClient
 {
+    Task UpdateAccessTokenAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default);
+
     Task<LocalAgentResponse> SendAsync(
         LocalAgentCommand command,
         CancellationToken cancellationToken = default);

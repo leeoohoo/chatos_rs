@@ -2,7 +2,6 @@ using ChatOS.Api.Http;
 using ChatOS.Connector.LocalAgent;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
-using System.Reflection;
 
 namespace ChatOS.Connector.Tests;
 
@@ -31,19 +30,24 @@ public sealed class WindowsLocalAgentAccountSessionTests
     }
 
     [Fact]
-    public async Task TokenUpdateRestartsTheHostWithTheNewCredential()
+    public async Task TokenUpdateKeepsTheRunningHostAndRotatesItsInMemoryCredential()
     {
         var fixture = new SessionFixture();
         await using var session = fixture.Create();
         await session.ActivateAsync("user-1");
+        var before = fixture.Supervisor.State;
         fixture.Tokens.Token = "rotated-token";
 
         await session.UpdateAccessTokenAsync("user-1");
 
-        Assert.Equal(["user-1", "user-1"], fixture.Supervisor.StartedAccounts);
+        var after = fixture.Supervisor.State;
+        Assert.Equal(["user-1"], fixture.Supervisor.StartedAccounts);
+        Assert.Equal(before.ProcessId, after.ProcessId);
+        Assert.Equal(before.ClientEndpoint, after.ClientEndpoint);
+        Assert.Equal(["rotated-token"], fixture.ClientFactory.AccessTokenUpdates);
         Assert.Equal("rotated-token", fixture.Credentials.String("user-1",
             WindowsLocalAgentHostBootstrapBuilder.ModelAccessTokenReference));
-        Assert.Equal(1, fixture.Supervisor.StopCount);
+        Assert.Equal(0, fixture.Supervisor.StopCount);
     }
 
     [Fact]
@@ -280,16 +284,24 @@ public sealed class WindowsLocalAgentAccountSessionTests
     private sealed class RecordingClientFactory : ILocalAgentIPCClientFactory
     {
         public List<string> Endpoints { get; } = [];
+        public List<string> AccessTokenUpdates { get; } = [];
         public ILocalAgentIPCClient Create(string ownerUserId, string pipeName)
         {
             Endpoints.Add(pipeName);
-            return DispatchProxy.Create<ILocalAgentIPCClient, NoopClientProxy>();
+            return new RecordingClient(AccessTokenUpdates);
         }
     }
 
-    private class NoopClientProxy : DispatchProxy
+    private sealed class RecordingClient(List<string> accessTokenUpdates)
+        : LocalAgentIPCClientStub
     {
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) =>
-            throw new NotSupportedException(targetMethod?.Name);
+        public override Task UpdateAccessTokenAsync(
+            string accessToken,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            accessTokenUpdates.Add(accessToken);
+            return Task.CompletedTask;
+        }
     }
 }

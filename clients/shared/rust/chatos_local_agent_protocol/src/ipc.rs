@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
@@ -63,6 +64,7 @@ fn validate_protocol_version(protocol_version: u32) -> Result<(), ProtocolError>
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum LocalAgentCommand {
+    UpdateAccessToken(UpdateAccessTokenCommand),
     CreateMainChatTurn(Box<CreateMainChatTurnCommand>),
     CreateTask(Box<CreateTaskCommand>),
     RetryTask(RetryTaskCommand),
@@ -94,6 +96,7 @@ pub enum LocalAgentCommand {
 impl LocalAgentCommand {
     pub fn validate(&self) -> Result<(), ProtocolError> {
         match self {
+            Self::UpdateAccessToken(command) => command.validate(),
             Self::CreateMainChatTurn(command) => command.validate(),
             Self::CreateTask(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),
@@ -131,6 +134,66 @@ impl LocalAgentCommand {
             Self::InstallProjectPluginCapability(command) => command.validate(),
             Self::RemoveProjectPluginCapability(command) => command.validate(),
         }
+    }
+}
+
+/// Process-local credential update transported only over the authenticated
+/// native IPC channel. Debug output is permanently redacted, and the decoded
+/// JSON string is zeroized when this value leaves scope.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateAccessTokenCommand {
+    access_token: String,
+}
+
+impl UpdateAccessTokenCommand {
+    pub fn new(access_token: impl Into<String>) -> Self {
+        Self {
+            access_token: access_token.into(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if self.access_token.is_empty()
+            || self.access_token.trim() != self.access_token
+            || self.access_token.len() > 64 * 1024
+            || self.access_token.chars().any(char::is_control)
+        {
+            return Err(ProtocolError::InvalidState {
+                reason: "access token update is invalid",
+            });
+        }
+        Ok(())
+    }
+
+    pub fn into_access_token(mut self) -> Zeroizing<String> {
+        Zeroizing::new(std::mem::take(&mut self.access_token))
+    }
+}
+
+impl Clone for UpdateAccessTokenCommand {
+    fn clone(&self) -> Self {
+        Self::new(self.access_token.clone())
+    }
+}
+
+impl std::fmt::Debug for UpdateAccessTokenCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("UpdateAccessTokenCommand([REDACTED])")
+    }
+}
+
+impl PartialEq for UpdateAccessTokenCommand {
+    fn eq(&self, other: &Self) -> bool {
+        self.access_token == other.access_token
+    }
+}
+
+impl Eq for UpdateAccessTokenCommand {}
+
+impl Drop for UpdateAccessTokenCommand {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
     }
 }
 
@@ -1174,6 +1237,40 @@ mod tests {
         assert_eq!(value["type"], "pause_run");
         assert_eq!(value["payload"]["run_id"], "run-1");
         assert_eq!(value["payload"]["expected_version"], 7);
+    }
+
+    #[test]
+    fn access_token_update_has_one_exact_redacted_sensitive_payload() {
+        let secret = "rotated-secret-value";
+        let command = LocalAgentCommand::UpdateAccessToken(UpdateAccessTokenCommand::new(secret));
+        command.validate().unwrap();
+
+        let value = serde_json::to_value(&command).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "type": "update_access_token",
+                "payload": {"access_token": secret}
+            })
+        );
+        assert!(!format!("{command:?}").contains(secret));
+        assert!(format!("{command:?}").contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn access_token_update_rejects_invalid_secrets() {
+        for invalid in ["", " token", "token ", "token\nvalue"] {
+            let command = UpdateAccessTokenCommand::new(invalid);
+            assert!(matches!(
+                command.validate(),
+                Err(ProtocolError::InvalidState { .. })
+            ));
+        }
+        let oversized = UpdateAccessTokenCommand::new("x".repeat(64 * 1024 + 1));
+        assert!(matches!(
+            oversized.validate(),
+            Err(ProtocolError::InvalidState { .. })
+        ));
     }
 
     #[test]

@@ -15,6 +15,7 @@ public enum NativeLocalAgentHostExitCause: Equatable, Sendable {
 public struct NativeLocalAgentHostExit: Equatable, Sendable {
     public let status: Int32
     public let cause: NativeLocalAgentHostExitCause
+    public let detail: String
 }
 
 public enum NativeLocalAgentHostLaunchError: Error, Equatable, Sendable {
@@ -200,11 +201,13 @@ public final class NativeLocalAgentHostProcess: @unchecked Sendable {
 
     public func waitForExit() async -> NativeLocalAgentHostExit {
         let status = await exitTask.value
+        let detail = await standardErrorCollector.finish()
         return NativeLocalAgentHostExit(
             status: status,
             cause: status == localAgentHostStorageUnavailableExitStatus
                 ? .storageUnavailable
-                : .unexpected(status: status)
+                : .unexpected(status: status),
+            detail: detail
         )
     }
 }
@@ -437,7 +440,7 @@ private final class NativeProcessExitObserver: @unchecked Sendable {
 }
 
 private final class BoundedStandardErrorCollector: @unchecked Sendable {
-    private static let byteLimit = 2_048
+    fileprivate static let byteLimit = 2_048
     private let reader: Task<Data, Never>
 
     init(handle: FileHandle) {
@@ -469,8 +472,42 @@ private final class BoundedStandardErrorCollector: @unchecked Sendable {
         let normalized = printable
             .split(whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
-        return normalized.isEmpty ? "Host 未返回诊断信息" : normalized
+        let sanitized = sanitizeHostDiagnostic(normalized)
+        return sanitized.isEmpty ? "Host 未返回诊断信息" : sanitized
     }
+}
+
+private func sanitizeHostDiagnostic(_ value: String) -> String {
+    var sanitized = value
+    let patterns: [(String, String)] = [
+        (
+            #"(?i)\b(?:authorization|x-access-token|access[_-]?token|token|password|passwd|pwd)\s*[:=]\s*[^\s,;]+"#,
+            "credential=[REDACTED]"
+        ),
+        (
+            #"(?i)\b(?:https?|postgres(?:ql)?)://[^\s]+"#,
+            "[REDACTED_URL]"
+        ),
+    ]
+    for (pattern, replacement) in patterns {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+        let range = NSRange(sanitized.startIndex..., in: sanitized)
+        sanitized = expression.stringByReplacingMatches(
+            in: sanitized,
+            range: range,
+            withTemplate: replacement
+        )
+    }
+    var result = ""
+    result.reserveCapacity(min(sanitized.utf8.count, BoundedStandardErrorCollector.byteLimit))
+    var byteCount = 0
+    for character in sanitized {
+        let characterBytes = String(character).utf8.count
+        guard byteCount + characterBytes <= BoundedStandardErrorCollector.byteLimit else { break }
+        result.append(character)
+        byteCount += characterBytes
+    }
+    return result
 }
 
 private func waitForNativeProcessExit(_ process: Process, timeout: Duration) async -> Bool {

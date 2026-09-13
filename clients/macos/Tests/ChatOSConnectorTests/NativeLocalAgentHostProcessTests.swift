@@ -85,6 +85,23 @@ struct NativeLocalAgentHostProcessTests {
             Issue.record("Unexpected launch error: \(error)")
         }
     }
+
+    @Test("captures bounded redacted diagnostics after a ready Host crashes")
+    func diagnosesPostReadyExit() async throws {
+        let fixture = try HostFixture(mode: "ready-stderr-exit")
+        let process = try await testHostLauncher().launch(fixture.configuration())
+
+        let exit = await process.waitForExit()
+
+        #expect(exit.status == 43)
+        #expect(exit.cause == .unexpected(status: 43))
+        #expect(exit.detail.contains("runtime failed"))
+        #expect(exit.detail.contains("[REDACTED]"))
+        #expect(!exit.detail.contains("secret-token"))
+        #expect(!exit.detail.contains("gateway.example.test"))
+        #expect(exit.detail.utf8.count <= 2_048)
+        #expect(!exit.detail.contains("\n"))
+    }
 }
 
 private func testHostLauncher() -> NativeLocalAgentHostProcessLauncher {
@@ -130,6 +147,10 @@ private struct HostFixture {
         body = json.dumps(ready, separators=(',', ':')).encode()
         sys.stdout.buffer.write(struct.pack('>I', len(body)) + body)
         sys.stdout.buffer.flush()
+        if mode == 'ready-stderr-exit':
+            sys.stderr.write('runtime failed access_token=secret-token https://gateway.example.test/private?token=secret-token\\n' + ('x' * 4096))
+            sys.stderr.flush()
+            sys.exit(43)
         if mode == 'ignore-term':
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.pause()

@@ -141,15 +141,15 @@ public sealed class WindowsLocalAgentAccountSession : IWindowsLocalAgentAccountS
                     WindowsLocalAgentAccountSessionFailure.AccountMismatch,
                     "The Local Agent account does not match the authenticated account.");
             }
-            var settings = _activeSettings ?? throw Error(
+            _ = _activeSettings ?? throw Error(
                 WindowsLocalAgentAccountSessionFailure.Inactive,
                 "The Local Agent account session is inactive.");
             await SaveAccessTokenAsync(accountId, token, cancellationToken).ConfigureAwait(false);
             try
             {
-                await StartSupervisorAsync(accountId, settings, cancellationToken)
+                var client = await CreateClientAsync(accountId, cancellationToken)
                     .ConfigureAwait(false);
-                _ = await CreateClientAsync(accountId, cancellationToken).ConfigureAwait(false);
+                await client.UpdateAccessTokenAsync(token, cancellationToken).ConfigureAwait(false);
             }
             catch
             {

@@ -5,6 +5,8 @@ namespace ChatOS.Connector.Tests;
 
 internal abstract class LocalAgentIPCClientStub : ILocalAgentIPCClient
 {
+    public virtual Task UpdateAccessTokenAsync(string accessToken,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public virtual Task<LocalAgentResponse> SendAsync(LocalAgentCommand command,
         CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public virtual Task<string> AcceptAsync(LocalAgentCommand command,

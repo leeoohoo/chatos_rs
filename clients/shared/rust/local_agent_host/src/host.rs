@@ -130,7 +130,7 @@ pub trait LocalTaskCreationPlanner: Send + Sync {
 
 #[derive(Clone)]
 pub struct LocalAgentExecutionSession {
-    access_token: Arc<Zeroizing<String>>,
+    access_token: chatos_memory_client::RotatingBearerToken,
     callbacks: ModelGatewayCallbacks,
     cancellation: CancellationToken,
 }
@@ -141,15 +141,41 @@ impl LocalAgentExecutionSession {
         callbacks: ModelGatewayCallbacks,
         cancellation: CancellationToken,
     ) -> Result<Self, LocalAgentHostError> {
-        let access_token = access_token.into();
-        if access_token.trim().is_empty() || access_token.trim() != access_token {
-            return Err(LocalAgentHostError::InvalidModelAccessToken);
-        }
+        let access_token = chatos_memory_client::RotatingBearerToken::new(access_token)
+            .map_err(|_| LocalAgentHostError::InvalidModelAccessToken)?;
+        Self::with_access_token(access_token, callbacks, cancellation)
+    }
+
+    pub fn with_access_token(
+        access_token: chatos_memory_client::RotatingBearerToken,
+        callbacks: ModelGatewayCallbacks,
+        cancellation: CancellationToken,
+    ) -> Result<Self, LocalAgentHostError> {
+        drop(
+            access_token
+                .snapshot()
+                .map_err(|_| LocalAgentHostError::InvalidModelAccessToken)?,
+        );
         Ok(Self {
-            access_token: Arc::new(Zeroizing::new(access_token)),
+            access_token,
             callbacks,
             cancellation,
         })
+    }
+
+    pub fn access_token_snapshot(&self) -> Result<Zeroizing<String>, LocalAgentHostError> {
+        self.access_token
+            .snapshot()
+            .map_err(|_| LocalAgentHostError::InvalidModelAccessToken)
+    }
+
+    pub fn update_access_token(
+        &self,
+        access_token: Zeroizing<String>,
+    ) -> Result<(), LocalAgentHostError> {
+        self.access_token
+            .rotate_zeroizing(access_token)
+            .map_err(|_| LocalAgentHostError::InvalidModelAccessToken)
     }
 
     pub fn cancel(&self) {
@@ -605,7 +631,7 @@ impl LocalAgentHost {
         Ok(self
             .gateway
             .descriptor(
-                session.access_token.as_str(),
+                session.access_token_snapshot()?.as_str(),
                 model_config_id,
                 session.cancellation.clone(),
             )
@@ -1060,17 +1086,19 @@ impl LocalAgentHost {
         now: DateTime<Utc>,
     ) -> Result<ProcessedClaimedEvent, LocalAgentHostError> {
         match claimed.event.event_type {
-            LocalAgentEventType::ModelStepRequested => self
-                .execute_claimed_model_step(
+            LocalAgentEventType::ModelStepRequested => {
+                let access_token = session.access_token_snapshot()?;
+                self.execute_claimed_model_step(
                     claimed,
-                    session.access_token.as_str(),
+                    access_token.as_str(),
                     session.callbacks.clone(),
                     session.cancellation.clone(),
                     now,
                 )
                 .await
                 .map(Box::new)
-                .map(ProcessedClaimedEvent::ModelCompletionScheduled),
+                .map(ProcessedClaimedEvent::ModelCompletionScheduled)
+            }
             LocalAgentEventType::ToolBatchRequested => {
                 match self.execute_claimed_tool_batch(claimed, session, now).await {
                     Ok(committed) => Ok(ProcessedClaimedEvent::ReductionCommitted(Box::new(
@@ -1508,6 +1536,45 @@ pub struct LocalAgentHostCreationExecutor {
     host: Arc<LocalAgentHost>,
     session: LocalAgentExecutionSession,
     next: Arc<dyn LocalAgentIpcMutationExecutor>,
+}
+
+/// Replaces the one account bearer credential used by model and Memory Engine
+/// requests. The command is intentionally process-local: it is never written
+/// to Agent storage, UI events, diagnostics, or Memory Engine records.
+pub struct LocalAgentHostCredentialExecutor {
+    session: LocalAgentExecutionSession,
+    next: Arc<dyn LocalAgentIpcMutationExecutor>,
+}
+
+impl LocalAgentHostCredentialExecutor {
+    pub fn new(
+        session: LocalAgentExecutionSession,
+        next: Arc<dyn LocalAgentIpcMutationExecutor>,
+    ) -> Self {
+        Self { session, next }
+    }
+}
+
+#[async_trait]
+impl LocalAgentIpcMutationExecutor for LocalAgentHostCredentialExecutor {
+    async fn execute_mutation(
+        &self,
+        request_id: &str,
+        command: LocalAgentCommand,
+    ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError> {
+        match command {
+            LocalAgentCommand::UpdateAccessToken(command) => self
+                .session
+                .update_access_token(command.into_access_token())
+                .map(|()| LocalAgentIpcResponse::Success)
+                .map_err(|error| LocalAgentIpcError {
+                    code: "access_token_update_rejected".to_string(),
+                    message: error.to_string(),
+                    retryable: false,
+                }),
+            other => self.next.execute_mutation(request_id, other).await,
+        }
+    }
 }
 
 impl LocalAgentHostCreationExecutor {
