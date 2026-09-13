@@ -2,7 +2,10 @@ using ChatOS.Core.Domain;
 
 namespace ChatOS.Connector.LocalAgent;
 
-internal sealed record WindowsLocalAgentRunSource(string ThreadId, string TurnId);
+internal sealed record WindowsLocalAgentRunSource(
+    string ThreadId,
+    string TurnId,
+    LocalAgentTaskSnapshot? Task);
 
 /// <summary>
 /// The single Windows mapping from a durable Run to its immutable Main Chat
@@ -23,7 +26,7 @@ internal static class WindowsLocalAgentRunSourceResolver
             var binding = recovered.MainChatBinding
                 ?? throw new InvalidDataException("The Main Chat run has no source binding.");
             WindowsLocalAgentStartupRecovery.ValidateBinding(run, binding);
-            return new WindowsLocalAgentRunSource(binding.ThreadId, binding.TurnId);
+            return new WindowsLocalAgentRunSource(binding.ThreadId, binding.TurnId, null);
         }
         if (run.ProfileKey != "task_runner") return null;
         var tasks = projection.Tasks.Values.Where(task =>
@@ -36,6 +39,6 @@ internal static class WindowsLocalAgentRunSourceResolver
             || !string.Equals(task.ProjectId, run.ProjectId, StringComparison.Ordinal))
             throw new InvalidDataException("The Task run changed its frozen source identity.");
         if (!string.Equals(task.CurrentRunId, run.RunId, StringComparison.Ordinal)) return null;
-        return new WindowsLocalAgentRunSource(task.SourceThreadId, task.SourceTurnId);
+        return new WindowsLocalAgentRunSource(task.SourceThreadId, task.SourceTurnId, task);
     }
 }

@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
-using ChatOS.Core.State;
 using ChatOS.Presentation.Chat;
 using ChatOS.Presentation.Settings;
 using ChatOS.Presentation.Threading;
@@ -11,35 +10,30 @@ namespace ChatOS.Presentation.Pet;
 
 public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
 {
-    private readonly PetActivityCoordinator _coordinator;
-    private readonly IRealtimeClient _realtime;
-    private readonly IPetConversationControl _conversationCommands;
-    private readonly ILocalAgentTaskService _taskGraph;
+    private readonly ILocalAgentPetActivityService _activityService;
     private readonly IAskUserPromptService _askUser;
+    private readonly ILocalAgentToolApprovalService _toolApproval;
+    private readonly ILocalAgentRunControlService _runControl;
     private readonly LocalizationViewModel _localization;
     private readonly IUiDispatcher _dispatcher;
-    private readonly PetStateReducer _reducer = new();
     private readonly SemaphoreSlim _stateGate = new(1, 1);
     private CancellationTokenSource? _sessionCancellation;
-    private Task? _realtimeTask;
-    private long _generation;
 
     public PetOverlayViewModel(
-        PetActivityCoordinator coordinator,
-        IRealtimeClient realtime,
-        IPetConversationControl conversationCommands,
-        ILocalAgentTaskService taskGraph,
+        ILocalAgentPetActivityService activityService,
         IAskUserPromptService askUser,
+        ILocalAgentToolApprovalService toolApproval,
+        ILocalAgentRunControlService runControl,
         LocalizationViewModel localization,
         IUiDispatcher dispatcher)
     {
-        _coordinator = coordinator;
-        _realtime = realtime;
-        _conversationCommands = conversationCommands;
-        _taskGraph = taskGraph;
+        _activityService = activityService;
         _askUser = askUser;
+        _toolApproval = toolApproval;
+        _runControl = runControl;
         _localization = localization;
         _dispatcher = dispatcher;
+        _activityService.Changed += OnActivitiesChanged;
         _localization.PropertyChanged += OnLocalizationChanged;
     }
 
@@ -52,6 +46,10 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
     public bool HasSelectedActivity => SelectedActivity is not null;
 
     public bool HasActivePrompt => ActivePrompt is not null;
+
+    public bool HasActiveToolApproval => ActiveToolApproval is not null;
+
+    public bool HasActiveRunControl => ActiveRunControl is not null;
 
     public bool CanCancelSelected => SelectedActivity?.CanCancel == true;
 
@@ -90,6 +88,14 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
     private AskUserPromptViewModel? _activePrompt;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasActiveToolApproval))]
+    private LocalAgentToolApprovalViewModel? _activeToolApproval;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasActiveRunControl))]
+    private LocalAgentRunControlViewModel? _activeRunControl;
+
+    [ObservableProperty]
     private PetAnimationState _animationState = PetAnimationState.Idle;
 
     [ObservableProperty]
@@ -115,32 +121,34 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        Stop();
+        StopSession();
+        await ResetPresentationAsync(CancellationToken.None).ConfigureAwait(false);
         var session = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _sessionCancellation = session;
-        var generation = Interlocked.Increment(ref _generation);
         await RefreshAsync(session.Token).ConfigureAwait(false);
-        if (generation != _generation || session.IsCancellationRequested)
-        {
-            return;
-        }
-
-        _realtimeTask = ObserveRealtimeAsync(generation, session.Token);
     }
 
     public void Stop()
     {
-        Interlocked.Increment(ref _generation);
+        StopSession();
+        _ = ResetPresentationAsync(CancellationToken.None);
+    }
+
+    private void StopSession()
+    {
         var cancellation = Interlocked.Exchange(ref _sessionCancellation, null);
         cancellation?.Cancel();
         cancellation?.Dispose();
-        _realtimeTask = null;
-        _reducer.Clear();
-        _ = _dispatcher.InvokeAsync(() =>
+    }
+
+    private Task ResetPresentationAsync(CancellationToken cancellationToken) =>
+        _dispatcher.InvokeAsync(() =>
         {
             Activities.Clear();
             SelectedActivity = null;
             ActivePrompt = null;
+            ActiveToolApproval = null;
+            ActiveRunControl = null;
             IsExpanded = false;
             IsDetailOpen = false;
             AnimationState = PetAnimationState.Idle;
@@ -149,8 +157,7 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
             ErrorMessage = null;
             ActionMessage = null;
             OnPropertyChanged(nameof(HasActivities));
-        });
-    }
+        }, cancellationToken);
 
     public void ToggleExpanded()
     {
@@ -166,6 +173,8 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
         IsDetailOpen = false;
         SelectedActivity = null;
         ActivePrompt = null;
+        ActiveToolApproval = null;
+        ActiveRunControl = null;
         ErrorMessage = null;
     }
 
@@ -176,9 +185,8 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
             await _stateGate.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                await _coordinator.ReconcileAsync(_reducer, cancellationToken: token)
-                    .ConfigureAwait(false);
-                await PublishAsync(token).ConfigureAwait(false);
+                var activities = await _activityService.FetchAsync(token).ConfigureAwait(false);
+                await PublishAsync(activities, token).ConfigureAwait(false);
             }
             finally
             {
@@ -194,35 +202,82 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
         SelectedActivity = item;
         IsDetailOpen = true;
         ActivePrompt = null;
+        ActiveToolApproval = null;
+        ActiveRunControl = null;
         ErrorMessage = null;
-        if (item.Activity.Source != PetActivitySource.AskUserPrompt ||
-            item.Activity.Route.ConversationId is not { Length: > 0 } conversationId)
+        if (item.Activity.Route.ConversationId is not { Length: > 0 } conversationId)
         {
             return;
         }
 
-        await RunBusyAsync(async token =>
+        if (item.Activity.Source == PetActivitySource.AskUserPrompt)
         {
-            var prompts = await _askUser.FetchPromptsAsync(conversationId, cancellationToken: token)
-                .ConfigureAwait(false);
-            var prompt = prompts.FirstOrDefault(value =>
-                string.Equals(value.Id, item.Activity.Route.PromptId, StringComparison.Ordinal) ||
-                string.Equals(value.TurnId, item.Activity.Route.TurnId, StringComparison.Ordinal));
-            if (prompt is null || !prompt.IsPending)
+            await RunBusyAsync(async token =>
             {
-                throw new InvalidOperationException(_localization.Text(
-                    "这个提问已经处理或失效，正在刷新消息。",
-                    "This prompt was already handled or expired. Refreshing the inbox."));
-            }
+                var prompts = await _askUser.FetchPromptsAsync(
+                    conversationId, cancellationToken: token).ConfigureAwait(false);
+                var matches = prompts.Where(value =>
+                    string.Equals(value.Id, item.Activity.Route.PromptId, StringComparison.Ordinal))
+                    .ToArray();
+                if (matches.Length != 1 || !matches[0].IsPending)
+                    throw new InvalidOperationException(_localization.Text(
+                        "这个提问已经处理或失效，正在刷新消息。",
+                        "This prompt was already handled or expired. Refreshing the inbox."));
 
-            var promptViewModel = new AskUserPromptViewModel(
-                prompt,
-                _askUser,
-                () => CompletePromptAsync(item.Activity),
-                _localization);
-            await _dispatcher.InvokeAsync(() => ActivePrompt = promptViewModel, token)
-                .ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+                var promptViewModel = new AskUserPromptViewModel(
+                    matches[0], _askUser, CompleteAuthoritativeActionAsync, _localization);
+                await _dispatcher.InvokeAsync(() =>
+                {
+                    if (SelectedActivity?.Id == item.Id) ActivePrompt = promptViewModel;
+                }, token).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (item.Activity.Source == PetActivitySource.LocalAgentToolApproval
+            && item.Activity.Route.InvocationId is { Length: > 0 } invocationId)
+        {
+            await RunBusyAsync(async token =>
+            {
+                var approvals = await _toolApproval.FetchPendingAsync(conversationId, token)
+                    .ConfigureAwait(false);
+                var matches = approvals.Where(value =>
+                    value.InvocationId == invocationId
+                    && value.RunId == item.Activity.Route.RunId).ToArray();
+                if (matches.Length != 1)
+                    throw new InvalidOperationException(_localization.Text(
+                        "这个工具授权已经处理或失效，正在刷新消息。",
+                        "This tool approval was already handled or expired. Refreshing the inbox."));
+                var approvalViewModel = new LocalAgentToolApprovalViewModel(
+                    matches[0], _toolApproval, CompleteAuthoritativeActionAsync, _localization);
+                await _dispatcher.InvokeAsync(() =>
+                {
+                    if (SelectedActivity?.Id == item.Id)
+                        ActiveToolApproval = approvalViewModel;
+                }, token).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (item.Activity.Route.RunId is { Length: > 0 } runId && !item.IsTerminal)
+        {
+            await RunBusyAsync(async token =>
+            {
+                var controls = await _runControl.FetchRunControlsAsync(conversationId, token)
+                    .ConfigureAwait(false);
+                var matches = controls.Where(value => value.RunId == runId).ToArray();
+                if (matches.Length != 1)
+                    throw new InvalidOperationException(_localization.Text(
+                        "这个运行状态已经变化，正在刷新消息。",
+                        "This run state changed. Refreshing the inbox."));
+                var controlViewModel = new LocalAgentRunControlViewModel(
+                    matches[0], _runControl, CompleteAuthoritativeActionAsync, _localization);
+                await _dispatcher.InvokeAsync(() =>
+                {
+                    if (SelectedActivity?.Id == item.Id) ActiveRunControl = controlViewModel;
+                }, token).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public Task IgnoreAsync(
@@ -244,100 +299,27 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
 
         await RunBusyAsync(async token =>
         {
-            var activity = selected.Activity;
-            if (activity.Source == PetActivitySource.TaskRunner)
-            {
-                var taskId = activity.Route.TaskId;
-                var runId = activity.Route.RunId;
-                if (string.IsNullOrWhiteSpace(taskId) || string.IsNullOrWhiteSpace(runId))
-                {
-                    throw new InvalidOperationException(_localization.Text(
-                        "这个任务事件缺少精确的 Task 或 Run 标识，无法取消。",
-                        "This task activity is missing its exact Task or Run identity and cannot be cancelled."));
-                }
-                var detail = await _taskGraph.GetRunDetailAsync(
-                    taskId,
-                    runId,
-                    1,
-                    0,
-                    token).ConfigureAwait(false);
-                await _taskGraph.CancelCurrentRunAsync(
-                    taskId,
-                    runId,
-                    detail.Run.Run.Version,
-                    token).ConfigureAwait(false);
-            }
-            else if (activity.Route.ConversationId is { Length: > 0 } conversation)
-            {
-                await _conversationCommands.StopTurnAsync(
-                    conversation,
-                    activity.Route.TurnId,
-                    token).ConfigureAwait(false);
-            }
-            else
-            {
+            var route = selected.Activity.Route;
+            if (route.ConversationId is not { Length: > 0 } conversation
+                || route.RunId is not { Length: > 0 } runId)
                 throw new InvalidOperationException(_localization.Text(
-                    "这个运行中事件缺少可取消的任务标识。",
-                    "This running event does not include a cancellable task identity."));
-            }
+                    "这个活动缺少精确的会话或 Run 标识，无法取消。",
+                    "This activity is missing its exact conversation or Run identity."));
+            await _runControl.CancelRunAsync(runId, conversation, token).ConfigureAwait(false);
 
             await _dispatcher.InvokeAsync(() => ActionMessage = _localization.Text(
                 "已发送取消请求，本地运行状态确认后会自动更新。",
                 "Cancellation requested. The local run status will update after confirmation."), token)
                 .ConfigureAwait(false);
+            await RefreshAsync(token).ConfigureAwait(false);
         }, cancellationToken).ConfigureAwait(false);
     }
 
     public void Dispose()
     {
         Stop();
+        _activityService.Changed -= OnActivitiesChanged;
         _localization.PropertyChanged -= OnLocalizationChanged;
-        _stateGate.Dispose();
-    }
-
-    private async Task ObserveRealtimeAsync(long generation, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await foreach (var activityEvent in _realtime.StreamPetActivitiesAsync(cancellationToken)
-                .ConfigureAwait(false))
-            {
-                if (generation != _generation)
-                {
-                    return;
-                }
-
-                if (activityEvent is PetActivityEvent.Reconcile)
-                {
-                    await RefreshAsync(cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                await _stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    if (await _coordinator.ApplyRealtimeAsync(
-                            _reducer,
-                            activityEvent,
-                            cancellationToken: cancellationToken).ConfigureAwait(false))
-                    {
-                        await PublishAsync(cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                finally
-                {
-                    _stateGate.Release();
-                }
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception exception)
-        {
-            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message)
-                .ConfigureAwait(false);
-        }
     }
 
     private async Task ApplyDispositionAsync(
@@ -350,12 +332,10 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
             await _stateGate.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                await _coordinator.ApplyDispositionAsync(
-                    _reducer,
-                    activity,
-                    disposition,
-                    cancellationToken: token).ConfigureAwait(false);
-                await PublishAsync(token).ConfigureAwait(false);
+                await _activityService.SuppressAsync(activity, disposition, token)
+                    .ConfigureAwait(false);
+                var activities = await _activityService.FetchAsync(token).ConfigureAwait(false);
+                await PublishAsync(activities, token).ConfigureAwait(false);
             }
             finally
             {
@@ -366,21 +346,33 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task CompletePromptAsync(PetActivity activity)
+    private async Task CompleteAuthoritativeActionAsync()
     {
-        await ApplyDispositionAsync(activity, PetActivityDisposition.Handled, CancellationToken.None)
-            .ConfigureAwait(false);
+        await RefreshAsync(CancellationToken.None).ConfigureAwait(false);
     }
 
-    private Task PublishAsync(CancellationToken cancellationToken)
+    private Task PublishAsync(
+        IReadOnlyList<PetActivity> visible,
+        CancellationToken cancellationToken)
     {
-        var visible = _reducer.VisibleActivities();
-        var presentation = _reducer.Presentation();
+        var ordered = visible.OrderByDescending(activity => activity.PresentationPriority)
+            .ThenByDescending(activity => activity.UpdatedAt)
+            .ThenBy(activity => activity.Id, StringComparer.Ordinal)
+            .ToArray();
+        var primary = ordered.FirstOrDefault();
+        var presentation = primary is null
+            ? PetPresentation.Idle
+            : new PetPresentation(
+                primary.AnimationState,
+                primary,
+                ordered.Count(activity => activity.Kind is
+                    PetActivityKind.Working),
+                ordered.Count(activity => activity.RequiresAttention));
         var selectedId = SelectedActivity?.Activity.Id;
         return _dispatcher.InvokeAsync(() =>
         {
             Activities.Clear();
-            foreach (var activity in visible)
+            foreach (var activity in ordered)
             {
                 Activities.Add(new PetActivityItemViewModel(activity, _localization));
             }
@@ -392,6 +384,8 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
             {
                 IsDetailOpen = false;
                 ActivePrompt = null;
+                ActiveToolApproval = null;
+                ActiveRunControl = null;
             }
 
             AnimationState = presentation.AnimationState;
@@ -399,6 +393,13 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
             AttentionCount = presentation.AttentionCount;
             OnPropertyChanged(nameof(HasActivities));
         }, cancellationToken);
+    }
+
+    private void OnActivitiesChanged(object? sender, EventArgs args)
+    {
+        var session = _sessionCancellation;
+        if (session is null || session.IsCancellationRequested) return;
+        _ = RefreshAsync(session.Token);
     }
 
     private async Task RunBusyAsync(
@@ -460,12 +461,13 @@ public sealed partial class PetActivityItemViewModel : ObservableObject
     public bool RequiresAttention => Activity.RequiresAttention;
 
     public bool IsTerminal => Activity.Kind is PetActivityKind.Succeeded or
-        PetActivityKind.Failed or PetActivityKind.Blocked or PetActivityKind.Cancelled;
+        PetActivityKind.Failed or PetActivityKind.Cancelled;
 
-    public bool CanCancel => (Activity.Kind is PetActivityKind.Working or PetActivityKind.Reviewing) &&
-        (!string.IsNullOrWhiteSpace(Activity.Route.ConversationId) ||
-         (!string.IsNullOrWhiteSpace(Activity.Route.MessageId) &&
-          !string.IsNullOrWhiteSpace(Activity.Route.TaskId)));
+    public bool CanCancel => (Activity.Kind is
+        PetActivityKind.Working or PetActivityKind.NeedsReview or
+        PetActivityKind.WaitingForApproval)
+        && !string.IsNullOrWhiteSpace(Activity.Route.ConversationId)
+        && !string.IsNullOrWhiteSpace(Activity.Route.RunId);
 
     [ObservableProperty]
     private string _statusLabel = string.Empty;
@@ -481,21 +483,20 @@ public sealed partial class PetActivityItemViewModel : ObservableObject
         StatusLabel = Activity.Kind switch
         {
             PetActivityKind.Working => localization.Text("执行中", "Running"),
-            PetActivityKind.Reviewing => localization.Text("检查中", "Reviewing"),
             PetActivityKind.WaitingForApproval => localization.Text("等待审批", "Waiting for approval"),
             PetActivityKind.WaitingForUser => localization.Text("等待输入", "Waiting for input"),
+            PetActivityKind.NeedsReview => localization.Text("需要人工复核", "Needs review"),
             PetActivityKind.Succeeded => localization.Text("已完成", "Completed"),
             PetActivityKind.Failed => localization.Text("失败", "Failed"),
-            PetActivityKind.Blocked => localization.Text("已阻塞", "Blocked"),
             PetActivityKind.Cancelled => localization.Text("已取消", "Cancelled"),
             _ => Activity.Kind.ToString(),
         };
         SourceLabel = Activity.Source switch
         {
-            PetActivitySource.LocalApproval => localization.Text("本机审批", "Local approval"),
+            PetActivitySource.LocalAgentToolApproval =>
+                localization.Text("AI 工具授权", "AI tool approval"),
             PetActivitySource.AskUserPrompt => "Ask User",
             PetActivitySource.Chat => localization.Text("聊天", "Chat"),
-            PetActivitySource.TaskBoard => localization.Text("任务", "Task"),
             PetActivitySource.TaskRunner => localization.Text("任务执行", "Task run"),
             _ => Activity.Source.ToString(),
         };

@@ -277,6 +277,42 @@
                                 </StackPanel>
                             </Border>
 
+                            <Border
+                                Padding="12"
+                                Background="{StaticResource ChatOSProcessBackgroundBrush}"
+                                CornerRadius="10"
+                                Visibility="{x:Bind ViewModel.HasActiveToolApproval, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveToolApproval.Title, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveToolApproval.ToolName, Mode=OneWay}" FontFamily="Consolas" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveToolApproval.EffectLabel, Mode=OneWay}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveToolApproval.Explanation, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveToolApproval.DigestLabel, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveToolApproval.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="7">
+                                        <Button Command="{x:Bind ViewModel.ActiveToolApproval.RejectCommand, Mode=OneWay}" Content="{x:Bind ViewModel.ActiveToolApproval.RejectLabel, Mode=OneWay}" />
+                                        <Button Command="{x:Bind ViewModel.ActiveToolApproval.ApproveCommand, Mode=OneWay}" Content="{x:Bind ViewModel.ActiveToolApproval.ApproveLabel, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border
+                                Padding="12"
+                                Background="{StaticResource ChatOSProcessBackgroundBrush}"
+                                CornerRadius="10"
+                                Visibility="{x:Bind ViewModel.HasActiveRunControl, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveRunControl.StatusLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveRunControl.Detail, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                    <TextBlock Text="{x:Bind ViewModel.ActiveRunControl.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="7">
+                                        <Button Command="{x:Bind ViewModel.ActiveRunControl.PauseCommand, Mode=OneWay}" Content="{x:Bind ViewModel.ActiveRunControl.PauseLabel, Mode=OneWay}" Visibility="{x:Bind ViewModel.ActiveRunControl.CanPause, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Button Command="{x:Bind ViewModel.ActiveRunControl.CancelCommand, Mode=OneWay}" Content="{x:Bind ViewModel.ActiveRunControl.CancelLabel, Mode=OneWay}" Visibility="{x:Bind ViewModel.ActiveRunControl.CanCancel, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Button Command="{x:Bind ViewModel.ActiveRunControl.ResumeCommand, Mode=OneWay}" Content="{x:Bind ViewModel.ActiveRunControl.ResumeLabel, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" Visibility="{x:Bind ViewModel.ActiveRunControl.CanResume, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
                             <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                             <TextBlock Text="{x:Bind ViewModel.ActionMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                             <Grid ColumnSpacing="7">

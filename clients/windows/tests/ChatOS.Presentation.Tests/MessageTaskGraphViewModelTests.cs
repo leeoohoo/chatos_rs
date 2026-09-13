@@ -175,16 +175,6 @@ public sealed class MessageTaskGraphViewModelTests
             return Task.FromResult(new LocalAgentRunCreatedResponse("operation-3", run));
         }
 
-        public Task CancelCurrentRunAsync(
-            string taskId,
-            string runId,
-            ulong expectedVersion,
-            CancellationToken cancellationToken = default)
-        {
-            CancelRequest = (taskId, runId, expectedVersion);
-            return Task.CompletedTask;
-        }
-
         public Task<IReadOnlyList<LocalAgentRunControlState>> FetchRunControlsAsync(
             string conversationId, CancellationToken cancellationToken = default)
         {

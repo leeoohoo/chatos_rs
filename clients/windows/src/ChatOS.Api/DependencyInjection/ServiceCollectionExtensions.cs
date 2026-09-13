@@ -1,8 +1,6 @@
 using ChatOS.Api.Http;
-using ChatOS.Api.Pet;
 using ChatOS.Api.Authentication;
 using ChatOS.Api.Conversation;
-using ChatOS.Api.Realtime;
 using ChatOS.Api.Projects;
 using ChatOS.Api.Workspace;
 using ChatOS.Api.Notepad;
@@ -36,7 +34,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConversationRuntimeSettingsService, ConversationRuntimeSettingsService>();
         services.AddSingleton<ILocalAgentContactRuntimeContextService,
             LocalAgentContactRuntimeContextService>();
-        services.AddSingleton<IPetConversationControl, PetConversationControlService>();
         services.AddSingleton<WorkspaceService>();
         services.AddSingleton<IWorkspaceRelationsService>(provider => provider.GetRequiredService<WorkspaceService>());
         services.AddSingleton<IProjectConversationService, ProjectConversationService>();
@@ -44,9 +41,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectFilesystemService, ProjectFilesystemService>();
         services.AddSingleton<IProjectRunService, ProjectRunService>();
         services.AddSingleton<INotepadService, NotepadService>();
-        services.AddSingleton<IPetActivityInboxService, PetActivityInboxService>();
-        services.AddSingleton<WebSocketTicketService>();
-        services.AddSingleton<IRealtimeClient, ChatOSRealtimeClient>();
         return services;
     }
 }

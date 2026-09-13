@@ -43,7 +43,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IPetWindowPlacementStore, SqlitePetWindowPlacementStore>();
         services.AddSingleton<IPetFavoriteProjectsStore, SqlitePetFavoriteProjectsStore>();
         services.AddSingleton<PetFavoriteProjectsManager>();
-        services.AddSingleton<PetActivityCoordinator>();
         services.AddSingleton<ConnectorReconnectPolicy>();
         services.AddSingleton<ConnectorConnectionStateMachine>();
         services.AddSingleton<ConnectorPowerStateCoordinator>();
@@ -149,6 +148,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAskUserPromptService, WindowsLocalAgentAskUserPromptService>();
         services.AddSingleton<ILocalAgentToolApprovalService, WindowsLocalAgentToolApprovalService>();
         services.AddSingleton<ILocalAgentRunControlService, WindowsLocalAgentRunControlService>();
+        services.AddSingleton<ILocalAgentPetActivityService, WindowsLocalAgentPetActivityService>();
         services.AddSingleton<ILocalAgentMainChatService, WindowsLocalAgentMainChatService>();
         services.AddSingleton<ILocalAgentTaskService, WindowsLocalAgentTaskService>();
         services.AddSingleton<IControlledNetworkGuardClient>(provider =>

@@ -31,10 +31,4 @@ public interface ILocalAgentTaskService
         string expectedRunId,
         string? instruction,
         CancellationToken cancellationToken = default);
-
-    Task CancelCurrentRunAsync(
-        string taskId,
-        string runId,
-        ulong expectedVersion,
-        CancellationToken cancellationToken = default);
 }

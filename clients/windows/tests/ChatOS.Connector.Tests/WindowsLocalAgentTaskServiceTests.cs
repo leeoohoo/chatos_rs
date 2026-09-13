@@ -97,27 +97,6 @@ public sealed class WindowsLocalAgentTaskServiceTests
             service.RetryCurrentRunAsync("task-1", "run-1", null));
     }
 
-    [Fact]
-    public async Task CancelSendsExactCurrentRunAndExpectedVersion()
-    {
-        var run = Run("run-1", LocalAgentRunStatus.ModelRunning, 11);
-        var task = TaskSnapshot("run-1", ["run-1"]);
-        var client = new TaskClient(task, new Dictionary<string, LocalAgentRunSnapshot>
-        {
-            [run.RunId] = run,
-        });
-        var service = new WindowsLocalAgentTaskService(await StoreAsync(task, run),
-            new TaskAccountSession(client));
-
-        await service.CancelCurrentRunAsync("task-1", "run-1", 11);
-
-        var payload = JsonSerializer.SerializeToElement(client.AcceptedCommand, JsonOptions);
-        Assert.Equal("cancel_run", payload.GetProperty("type").GetString());
-        Assert.Equal("run-1", payload.GetProperty("payload").GetProperty("run_id").GetString());
-        Assert.Equal((ulong)11,
-            payload.GetProperty("payload").GetProperty("expected_version").GetUInt64());
-    }
-
     private static async Task<WindowsLocalAgentProjectionStore> StoreAsync(
         LocalAgentTaskSnapshot task,
         LocalAgentRunSnapshot run)

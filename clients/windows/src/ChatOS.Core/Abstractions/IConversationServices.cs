@@ -21,11 +21,3 @@ public interface IConversationRuntimeSettingsService
         bool enabled,
         CancellationToken cancellationToken = default);
 }
-
-public interface IPetConversationControl
-{
-    Task StopTurnAsync(
-        string conversationId,
-        string? turnId,
-        CancellationToken cancellationToken = default);
-}

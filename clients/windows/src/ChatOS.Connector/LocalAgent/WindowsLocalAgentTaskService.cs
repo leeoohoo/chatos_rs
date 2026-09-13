@@ -105,40 +105,6 @@ public sealed class WindowsLocalAgentTaskService : ILocalAgentTaskService, IDisp
         return response;
     }
 
-    public async Task CancelCurrentRunAsync(
-        string taskId,
-        string runId,
-        ulong expectedVersion,
-        CancellationToken cancellationToken = default)
-    {
-        RequireIdentifier(taskId, nameof(taskId));
-        RequireIdentifier(runId, nameof(runId));
-        var context = await ResolveContextAsync(cancellationToken).ConfigureAwait(false);
-        var detail = await context.Client.GetTaskRunDetailAsync(
-            taskId,
-            runId,
-            1,
-            0,
-            cancellationToken).ConfigureAwait(false);
-        ValidateDetail(context, detail, taskId, runId);
-        if (!string.Equals(detail.Task.CurrentRunId, runId, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("Only the current Local Agent task run can be cancelled.");
-        }
-        if (detail.Run.Run.Version != expectedVersion)
-        {
-            throw new InvalidOperationException("The Local Agent run changed before cancellation. Refresh and try again.");
-        }
-        if (IsTerminal(detail.Run.Run.Status))
-        {
-            throw new InvalidOperationException("A terminal Local Agent run cannot be cancelled.");
-        }
-
-        _ = await context.Client.AcceptAsync(
-            LocalAgentCommand.CancelRun(runId, expectedVersion),
-            cancellationToken).ConfigureAwait(false);
-    }
-
     public void Dispose() => _store.Cleared -= OnProjectionCleared;
 
     private async Task<OperationContext> ResolveContextAsync(CancellationToken cancellationToken)

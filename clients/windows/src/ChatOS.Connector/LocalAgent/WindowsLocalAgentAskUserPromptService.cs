@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 
@@ -23,16 +22,11 @@ public sealed class WindowsLocalAgentAskUserPromptService(
         var routes = PendingRoutes(projection, conversationId).ToArray();
         if (routes.Select(route => route.Prompt.Id).Distinct(StringComparer.Ordinal).Count()
             != routes.Length)
-        {
             throw new InvalidDataException(
                 "The Local Agent projection contains duplicate pending interaction identities.");
-        }
-        return routes
-            .OrderBy(route => route.Prompt.CreatedAt)
+        return routes.OrderBy(route => route.Prompt.CreatedAt)
             .ThenBy(route => route.Prompt.Id, StringComparer.Ordinal)
-            .TakeLast(limit)
-            .Select(route => route.Prompt)
-            .ToArray();
+            .TakeLast(limit).Select(route => route.Prompt).ToArray();
     }
 
     public async Task<AskUserPrompt> SubmitAsync(
@@ -105,85 +99,13 @@ public sealed class WindowsLocalAgentAskUserPromptService(
         WindowsLocalAgentProjectionSnapshot projection,
         string conversationId)
     {
-        foreach (var recovered in projection.Runs.Values)
+        foreach (var route in WindowsLocalAgentInteractionProjection.Routes(projection))
         {
-            var source = WindowsLocalAgentRunSourceResolver.Resolve(projection, recovered);
-            if (source is null
-                || !string.Equals(source.ThreadId, conversationId, StringComparison.Ordinal)) continue;
-            if (TryMapPrompt(recovered.Run, source.ThreadId, source.TurnId, out var prompt))
-                yield return new PendingRoute(recovered.Run, prompt);
+            if (!string.Equals(route.Source.ThreadId, conversationId, StringComparison.Ordinal))
+                continue;
+            if (WindowsLocalAgentInteractionProjection.TryAskUserPrompt(route, out var prompt))
+                yield return new PendingRoute(route.Run, prompt);
         }
-    }
-
-    private static bool TryMapPrompt(
-        LocalAgentRunSnapshot run,
-        string threadId,
-        string turnId,
-        out AskUserPrompt prompt)
-    {
-        prompt = null!;
-        if (run.Status != LocalAgentRunStatus.Paused
-            || run.PendingInteraction is not { ValueKind: JsonValueKind.Object } pending)
-            return false;
-        if (String(pending, "type") != "ask_user") return false;
-        var interactionId = RequiredString(pending, "interaction_id");
-        if (!pending.TryGetProperty("question", out var question)
-            || question.ValueKind != JsonValueKind.Object)
-            throw new InvalidDataException("The Local Agent question payload is invalid.");
-        var message = RequiredString(question, "prompt");
-        var options = RequiredArray(question, "options").EnumerateArray().Select(option =>
-        {
-            if (option.ValueKind != JsonValueKind.Object)
-                throw new InvalidDataException("The Local Agent question option is invalid.");
-            return new AskUserChoiceOption(
-                RequiredString(option, "option_id"),
-                RequiredString(option, "label"),
-                OptionalString(option, "description"));
-        }).ToArray();
-        if (options.Select(option => option.Value).Distinct(StringComparer.Ordinal).Count()
-            != options.Length)
-            throw new InvalidDataException("The Local Agent question contains duplicate options.");
-        var imageReferences = RequiredArray(question, "image_references")
-            .EnumerateArray().Select(value => value.ValueKind == JsonValueKind.String
-                ? ValidString(value.GetString(), "image reference")
-                : throw new InvalidDataException("The Local Agent image reference is invalid."))
-            .ToArray();
-        var details = question.TryGetProperty("details", out var detailsValue)
-            && detailsValue.ValueKind == JsonValueKind.Object ? detailsValue : default;
-        var title = details.ValueKind == JsonValueKind.Object
-            ? OptionalString(details, "title") ?? "需要你的确认"
-            : "需要你的确认";
-        var kind = details.ValueKind == JsonValueKind.Object
-            ? OptionalString(details, "kind") ?? "local_agent"
-            : "local_agent";
-        var allowsCancel = details.ValueKind != JsonValueKind.Object
-            || !details.TryGetProperty("allows_cancel", out var cancelValue)
-            || cancelValue.ValueKind == JsonValueKind.True;
-        var allowsMultiple = details.ValueKind == JsonValueKind.Object
-            && details.TryGetProperty("allows_multiple", out var multipleValue)
-            && multipleValue.ValueKind == JsonValueKind.True;
-        prompt = new AskUserPrompt(
-            interactionId,
-            threadId,
-            turnId,
-            null,
-            kind,
-            AskUserPromptStatus.Pending,
-            title,
-            message,
-            allowsCancel,
-            null,
-            options.Length == 0
-                ? [new AskUserField(
-                    "answer", "回复", null, "告诉 AI 你的决定或补充信息", string.Empty,
-                    true, true, false)]
-                : [],
-            options.Length == 0 ? null : new AskUserChoice(
-                allowsMultiple, options, [], 1, allowsMultiple ? options.Length : 1),
-            run.UpdatedAt,
-            run.UpdatedAt,
-            imageReferences);
-        return true;
     }
 
     private static LocalAgentUserAnswer BuildAnswer(
@@ -211,40 +133,12 @@ public sealed class WindowsLocalAgentAskUserPromptService(
                 throw new InvalidDataException("The Local Agent answer does not satisfy the question options.");
         }
         else if (selections.Count != 0)
-        {
-            throw new InvalidDataException("A free-text Local Agent question cannot accept option selections.");
-        }
+            throw new InvalidDataException(
+                "A free-text Local Agent question cannot accept option selections.");
         if (text is null && selections.Count == 0)
             throw new InvalidDataException("The Local Agent answer is empty.");
         return new LocalAgentUserAnswer(text, selections, []);
     }
-
-    private static JsonElement RequiredArray(JsonElement value, string property)
-    {
-        if (!value.TryGetProperty(property, out var item) || item.ValueKind != JsonValueKind.Array)
-            throw new InvalidDataException($"The Local Agent question {property} is invalid.");
-        return item;
-    }
-
-    private static string RequiredString(JsonElement value, string property) =>
-        value.TryGetProperty(property, out var item) && item.ValueKind == JsonValueKind.String
-            ? ValidString(item.GetString(), property)
-            : throw new InvalidDataException($"The Local Agent question {property} is invalid.");
-
-    private static string? OptionalString(JsonElement value, string property) =>
-        value.TryGetProperty(property, out var item) && item.ValueKind == JsonValueKind.String
-            ? item.GetString()?.Trim() is { Length: > 0 } result ? result : null
-            : null;
-
-    private static string? String(JsonElement value, string property) =>
-        value.TryGetProperty(property, out var item) && item.ValueKind == JsonValueKind.String
-            ? item.GetString()
-            : null;
-
-    private static string ValidString(string? value, string field) =>
-        !string.IsNullOrWhiteSpace(value) && value == value.Trim() && !value.Any(char.IsControl)
-            ? value
-            : throw new InvalidDataException($"The Local Agent question {field} is invalid.");
 
     private static void RequireIdentity(string value, string name)
     {

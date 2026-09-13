@@ -78,33 +78,13 @@ public sealed class WindowsLocalAgentToolApprovalService(
         WindowsLocalAgentProjectionSnapshot projection,
         string conversationId)
     {
-        foreach (var recovered in projection.Runs.Values)
+        foreach (var route in WindowsLocalAgentInteractionProjection.Routes(projection))
         {
-            var source = WindowsLocalAgentRunSourceResolver.Resolve(projection, recovered);
-            if (source is null
-                || !string.Equals(source.ThreadId, conversationId, StringComparison.Ordinal)) continue;
-            if (recovered.Run.Status is LocalAgentRunStatus.Succeeded
-                or LocalAgentRunStatus.Failed
-                or LocalAgentRunStatus.Cancelled) continue;
-            var detail = recovered.Detail
-                ?? throw new InvalidDataException("The Local Agent run has no authoritative detail.");
-            if (!WindowsLocalAgentRunSnapshotComparer.Same(recovered.Run, detail.Run))
-                throw new InvalidDataException(
-                    "The Local Agent run and tool detail projections are inconsistent.");
-            foreach (var tool in detail.Tools.Where(tool =>
-                         tool.Status == LocalAgentToolExecutionStatus.AwaitingApproval))
+            if (!string.Equals(route.Source.ThreadId, conversationId, StringComparison.Ordinal))
+                continue;
+            foreach (var request in WindowsLocalAgentInteractionProjection.ToolApprovals(route))
             {
-                if (!string.Equals(tool.RunId, recovered.Run.RunId, StringComparison.Ordinal))
-                    throw new InvalidDataException(
-                        "The Local Agent tool invocation changed its owning run.");
-                yield return new ApprovalRoute(recovered.Run, new LocalAgentToolApprovalRequest(
-                    tool.InvocationId,
-                    recovered.Run.RunId,
-                    source.ThreadId,
-                    source.TurnId,
-                    tool.ToolName,
-                    tool.Effect,
-                    tool.ArgumentsDigest));
+                yield return new ApprovalRoute(route.Run, request);
             }
         }
     }

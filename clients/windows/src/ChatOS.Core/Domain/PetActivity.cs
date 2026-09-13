@@ -2,39 +2,25 @@ namespace ChatOS.Core.Domain;
 
 public enum PetActivitySource
 {
-    LocalApproval,
+    LocalAgentToolApproval,
     AskUserPrompt,
     Chat,
-    TaskBoard,
     TaskRunner,
 }
 
 public enum PetActivityKind
 {
     Working,
-    Reviewing,
     WaitingForApproval,
     WaitingForUser,
+    NeedsReview,
     Succeeded,
     Failed,
-    Blocked,
     Cancelled,
-}
-
-public enum PetActivityInboxStatus
-{
-    Unread,
-    Displayed,
-    Acknowledged,
-    Ignored,
-    Handled,
-    Resolved,
-    Expired,
 }
 
 public enum PetActivityDisposition
 {
-    Acknowledged,
     Ignored,
     Handled,
 }
@@ -56,7 +42,8 @@ public sealed record PetActivityRoute(
     string? MessageId = null,
     string? PromptId = null,
     string? TaskId = null,
-    string? RunId = null);
+    string? RunId = null,
+    string? InvocationId = null);
 
 public sealed record PetActivity
 {
@@ -67,10 +54,6 @@ public sealed record PetActivity
         string title,
         string? detail = null,
         PetActivityRoute? route = null,
-        string? eventId = null,
-        long? eventSequence = null,
-        string? inboxId = null,
-        PetActivityInboxStatus? inboxStatus = null,
         string? activityVersion = null,
         DateTimeOffset? updatedAt = null,
         DateTimeOffset? expiresAt = null)
@@ -81,10 +64,6 @@ public sealed record PetActivity
         Title = title;
         Detail = detail;
         Route = route ?? new PetActivityRoute();
-        EventId = eventId;
-        EventSequence = eventSequence;
-        InboxId = inboxId;
-        InboxStatus = inboxStatus;
         ActivityVersion = activityVersion;
         UpdatedAt = updatedAt ?? DateTimeOffset.UtcNow;
         ExpiresAt = expiresAt;
@@ -102,14 +81,6 @@ public sealed record PetActivity
 
     public PetActivityRoute Route { get; init; }
 
-    public string? EventId { get; init; }
-
-    public long? EventSequence { get; init; }
-
-    public string? InboxId { get; init; }
-
-    public PetActivityInboxStatus? InboxStatus { get; init; }
-
     public string? ActivityVersion { get; init; }
 
     public DateTimeOffset UpdatedAt { get; init; }
@@ -119,15 +90,14 @@ public sealed record PetActivity
     public bool RequiresAttention => Kind is
         PetActivityKind.WaitingForApproval or
         PetActivityKind.WaitingForUser or
-        PetActivityKind.Failed or
-        PetActivityKind.Blocked;
+        PetActivityKind.NeedsReview or
+        PetActivityKind.Failed;
 
     public int PresentationPriority => Kind switch
     {
         PetActivityKind.WaitingForApproval or PetActivityKind.WaitingForUser => 500,
-        PetActivityKind.Failed or PetActivityKind.Blocked => 400,
+        PetActivityKind.Failed or PetActivityKind.NeedsReview => 400,
         PetActivityKind.Succeeded => 300,
-        PetActivityKind.Reviewing => 200,
         PetActivityKind.Working => 100,
         PetActivityKind.Cancelled => 50,
         _ => 0,
@@ -136,10 +106,10 @@ public sealed record PetActivity
     public PetAnimationState AnimationState => Kind switch
     {
         PetActivityKind.Working => PetAnimationState.Running,
-        PetActivityKind.Reviewing => PetAnimationState.Review,
+        PetActivityKind.NeedsReview => PetAnimationState.Review,
         PetActivityKind.WaitingForApproval or PetActivityKind.WaitingForUser => PetAnimationState.Waiting,
         PetActivityKind.Succeeded => PetAnimationState.Succeeded,
-        PetActivityKind.Failed or PetActivityKind.Blocked => PetAnimationState.Failed,
+        PetActivityKind.Failed => PetAnimationState.Failed,
         _ => PetAnimationState.Idle,
     };
 
@@ -147,21 +117,10 @@ public sealed record PetActivity
     {
         get
         {
-            var version = ActivityVersion ?? Route.RunId ?? Route.TurnId ?? EventId ?? "1";
+            var version = ActivityVersion ?? Route.RunId ?? Route.TurnId ?? "1";
             return $"{Source}|{Id}|{version}";
         }
     }
-}
-
-public abstract record PetActivityEvent
-{
-    public sealed record Upsert(PetActivity Activity) : PetActivityEvent;
-
-    public sealed record Remove(string Id) : PetActivityEvent;
-
-    public sealed record RemoveSource(PetActivitySource Source) : PetActivityEvent;
-
-    public sealed record Reconcile : PetActivityEvent;
 }
 
 public sealed record PetPresentation(
