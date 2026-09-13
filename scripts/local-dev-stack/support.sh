@@ -134,6 +134,7 @@ service_bins = {
     "mcp_management_service_backend",
     "task_runner_service_backend",
     "chat_app_server_rs",
+    "official_website_service_backend",
 }
 
 current = os.getpid()
@@ -185,9 +186,11 @@ service_bins = {
     "mcp_management_service_backend",
     "task_runner_service_backend",
     "chat_app_server_rs",
+    "official_website_service_backend",
 }
 frontend_markers = (
     "/admin_console/",
+    "/official_website_service/frontend/",
 )
 current = os.getpid()
 parent = os.getppid()
@@ -293,10 +296,12 @@ stop_conflicting_local_dev_services() {
 
 stop_managed_ports() {
   local item name unused port
-  for item in "${FRONTEND_SERVICES[@]}"; do
-    IFS='|' read -r name unused port <<<"$item"
-    stop_port_if_needed "$port" "$name"
-  done
+  if stack_has_frontends; then
+    for item in "${FRONTEND_SERVICES[@]}"; do
+      IFS='|' read -r name unused port <<<"$item"
+      stop_port_if_needed "$port" "$name"
+    done
+  fi
   for item in "${BACKEND_SERVICES[@]}"; do
     IFS='|' read -r name unused unused unused port unused <<<"$item"
     stop_port_if_needed "$port" "$name"
@@ -305,12 +310,14 @@ stop_managed_ports() {
 
 managed_ports_busy() {
   local item _name _unused port
-  for item in "${FRONTEND_SERVICES[@]}"; do
-    IFS='|' read -r _name _unused port <<<"$item"
-    if [[ -n "$(pids_for_port "$port")" ]]; then
-      return 0
-    fi
-  done
+  if stack_has_frontends; then
+    for item in "${FRONTEND_SERVICES[@]}"; do
+      IFS='|' read -r _name _unused port <<<"$item"
+      if [[ -n "$(pids_for_port "$port")" ]]; then
+        return 0
+      fi
+    done
+  fi
   for item in "${BACKEND_SERVICES[@]}"; do
     IFS='|' read -r _name _unused _unused _unused port _unused <<<"$item"
     if [[ -n "$(pids_for_port "$port")" ]]; then

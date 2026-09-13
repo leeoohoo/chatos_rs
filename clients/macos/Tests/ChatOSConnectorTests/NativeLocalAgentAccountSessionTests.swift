@@ -118,6 +118,57 @@ struct NativeLocalAgentAccountSessionTests {
         }
     }
 
+    @Test("login accepts server access tokens longer than an account identity")
+    func loginAcceptsLongServerToken() async throws {
+        let credentials = InMemoryLocalAgentCredentials()
+        let supervisor = FakeLocalAgentSupervisor()
+        let session = NativeLocalAgentAccountSession(
+            credentials: credentials,
+            supervisor: supervisor,
+            builder: FakeLocalAgentBuilder(),
+            randomBytes: { Data(repeating: 0x5a, count: $0) }
+        )
+        let accessToken = String(repeating: "t", count: 684)
+
+        try await session.login(
+            accountID: "user-1",
+            accessToken: accessToken,
+            settingsProvider: { self.settings(accountID: "user-1", deviceID: $0) }
+        )
+
+        #expect(await supervisor.startedAccounts() == ["user-1"])
+        #expect(
+            await credentials.value(
+                accountID: "user-1",
+                reference: NativeLocalAgentHostBootstrapBuilder.modelAccessTokenReference
+            ) == Data(accessToken.utf8)
+        )
+    }
+
+    @Test("login rejects malformed or oversized server access tokens")
+    func loginRejectsUnsafeServerTokens() async throws {
+        for accessToken in [
+            " token",
+            "token\n",
+            "token\u{0000}value",
+            String(repeating: "t", count: 64 * 1_024 + 1),
+        ] {
+            let session = NativeLocalAgentAccountSession(
+                credentials: InMemoryLocalAgentCredentials(),
+                supervisor: FakeLocalAgentSupervisor(),
+                builder: FakeLocalAgentBuilder(),
+                randomBytes: { Data(repeating: 0x5a, count: $0) }
+            )
+            await #expect(throws: NativeLocalAgentAccountSessionError.invalidAccessToken) {
+                try await session.login(
+                    accountID: "user-1",
+                    accessToken: accessToken,
+                    settingsProvider: { self.settings(accountID: "user-1", deviceID: $0) }
+                )
+            }
+        }
+    }
+
     @Test("logout stops Host and removes only the replaceable access token")
     func logoutPreservesEncryptionKeys() async throws {
         let credentials = InMemoryLocalAgentCredentials()

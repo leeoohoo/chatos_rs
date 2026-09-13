@@ -399,7 +399,10 @@ public actor NativeLocalAgentAccountSession {
     }
 
     private static func validSecret(_ value: String) -> Bool {
-        validIdentity(value) && value.utf8.count <= 64 * 1_024
+        !value.isEmpty
+            && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+            && value.utf8.count <= 64 * 1_024
+            && !value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
     }
 
     private static func validDeviceID(_ value: String) -> Bool {

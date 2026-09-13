@@ -601,9 +601,36 @@ start_frontend() {
   wait_for_port "$name" "$port" "${CHATOS_LOCAL_DEV_HEALTH_TIMEOUT_SECONDS:-120}"
 }
 
+stack_includes_infrastructure() {
+  local requested="$1"
+  local service
+  for service in "${INFRA_SERVICES[@]}"; do
+    if [[ "$service" == "$requested" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+stop_unselected_infrastructure() {
+  if [[ "${STACK_EXCLUSIVE_INFRA:-false}" != "true" ]]; then
+    return 0
+  fi
+
+  local service
+  local all_services=(consul mongodb minio rabbitmq valkey cadvisor prometheus alertmanager tempo grafana harness apisix-gateway)
+  for service in "${all_services[@]}"; do
+    if ! stack_includes_infrastructure "$service"; then
+      compose stop "$service" >/dev/null
+    fi
+  done
+}
+
 start_all() {
   need_cmd cargo
-  need_cmd npm
+  if stack_has_frontends; then
+    need_cmd npm
+  fi
   need_cmd curl
   need_cmd python3
   load_env_file "$ENV_FILE"
@@ -620,12 +647,15 @@ start_all() {
   ensure_plugin_management_mtls_material
   prepare_local_dev_apisix_config
   start_infra
+  stop_unselected_infrastructure
   wait_for_consul
   deregister_local_dev_services
   stop_docker_app_services
   cleanup_local_dev_processes
   deregister_local_dev_services
-  register_local_dev_harness_service
+  if stack_includes_infrastructure harness; then
+    register_local_dev_harness_service
+  fi
 
   local item name service_name package health_path port bin env_overrides app_dir
   for item in "${BACKEND_SERVICES[@]}"; do
@@ -648,11 +678,20 @@ start_all() {
       ensure_managed_queue_consumers
     fi
   done
-  for item in "${FRONTEND_SERVICES[@]}"; do
-    IFS='|' read -r name app_dir port <<<"$item"
-    start_frontend "$name" "$app_dir" "$port"
-  done
-  print_urls
+  if stack_has_frontends; then
+    for item in "${FRONTEND_SERVICES[@]}"; do
+      IFS='|' read -r name app_dir port <<<"$item"
+      start_frontend "$name" "$app_dir" "$port"
+    done
+  fi
+  if declare -F stack_after_start >/dev/null; then
+    stack_after_start
+  fi
+  if declare -F stack_print_urls >/dev/null; then
+    stack_print_urls
+  else
+    print_urls
+  fi
 }
 
 stop_all() {
@@ -662,11 +701,13 @@ stop_all() {
   ensure_dirs
   deregister_local_dev_services
   local item name unused port
-  for item in "${FRONTEND_SERVICES[@]}"; do
-    IFS='|' read -r name unused port <<<"$item"
-    stop_service_pid "$name"
-    stop_port_if_needed "$port" "$name"
-  done
+  if stack_has_frontends; then
+    for item in "${FRONTEND_SERVICES[@]}"; do
+      IFS='|' read -r name unused port <<<"$item"
+      stop_service_pid "$name"
+      stop_port_if_needed "$port" "$name"
+    done
+  fi
   for item in "${BACKEND_SERVICES[@]}"; do
     IFS='|' read -r name unused unused unused port unused unused <<<"$item"
     stop_service_pid "$name"
@@ -687,7 +728,7 @@ stop_all() {
 status_all() {
   ensure_dirs
   local item name port pid unused container_status
-  echo "[INFO] local dev stack status"
+  echo "[INFO] ${STACK_DISPLAY_NAME:-local dev stack} status"
   echo
   echo "Docker infrastructure (compose project: $COMPOSE_PROJECT_NAME)"
   for name in "${INFRA_SERVICES[@]}"; do
@@ -726,15 +767,17 @@ status_all() {
       printf '  %-36s port=%-5s not listening\n' "$name" "$port"
     fi
   done
-  for item in "${FRONTEND_SERVICES[@]}"; do
-    IFS='|' read -r name _ port <<<"$item"
-    pid="$(pid_for_port "$port")"
-    if [[ -n "$pid" ]]; then
-      printf '  %-36s port=%-5s running pid=%s\n' "$name" "$port" "$pid"
-    else
-      printf '  %-36s port=%-5s not listening\n' "$name" "$port"
-    fi
-  done
+  if stack_has_frontends; then
+    for item in "${FRONTEND_SERVICES[@]}"; do
+      IFS='|' read -r name _ port <<<"$item"
+      pid="$(pid_for_port "$port")"
+      if [[ -n "$pid" ]]; then
+        printf '  %-36s port=%-5s running pid=%s\n' "$name" "$port" "$pid"
+      else
+        printf '  %-36s port=%-5s not listening\n' "$name" "$port"
+      fi
+    done
+  fi
   echo
   echo "Logs: $LOG_DIR"
 }

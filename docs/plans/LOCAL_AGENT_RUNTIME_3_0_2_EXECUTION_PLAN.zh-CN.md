@@ -34,6 +34,14 @@
 8. 发现与最终架构冲突的历史实现时直接删除或替换，不新增适配器长期保留旧语义。
 9. macOS/Windows 共用的 Rust Runtime、Host、Storage、客户端契约、状态投影规范、黄金夹具和生成逻辑只能放在 `clients/shared`；顶层旧 `crates` 不能成为最终客户端边界，平台目录只保存 UI 与系统 API 适配。
 
+### 当前交付优先级
+
+macOS 是当前首要可运行交付面。阶段 4 的 Windows 原生发行验收保持未完成，
+但在继续 Windows 工作前，必须先保证 macOS 可以由一条明确命令启动最终架构
+需要的最小后台拓扑、构建并运行签名 App、启动内嵌 Local Agent Host，并完成
+登录后的 Main Chat/Task 原生冒烟验收。随后优先推进阶段 5、阶段 6 中的 macOS
+存储和旧 Swift Agent Runtime 删除；这不会缩减 Windows 最终等价目标。
+
 ## 4. 强制执行顺序
 
 ### 阶段 1：关闭 macOS Task 远程闭环
@@ -178,6 +186,10 @@
 - 2026-09-13：完成 Windows Pet 全本地闭环。新增唯一 `WindowsLocalAgentInteractionProjection`，Main Chat、Task、Ask User、Tool Approval、Run Control 与 Pet 共用同一套账户/来源/当前 Task Run 映射，不从窗口当前选择推断身份；Pet 直接从账户级 Local Agent Projection 生成 Main Chat、当前 Task、Ask User、Tool Approval、Needs Review 和终态活动，Route 精确保留冻结的 `project_id + thread_id + turn_id + message_id + task_id + run_id + interaction/invocation_id`。Projection 更新或清空会直接刷新/清空 Pet；历史 Task Run 不生成活动；重复 Run、Interaction 或 Invocation fail-closed。
 - Pet 的忽略/已处理只写本地、按 Run version 失效的 suppression；Ask User、Tool Approval 与 Needs Review 详情复用唯一原生交互服务，操作后重读 Host 权威投影；所有取消统一走 `ILocalAgentRunControlService`。删除远程 Pet Activity Inbox、Disposition API、Pet WebSocket/Decoder/Ticket、`IPetConversationControl`、`IRealtimeClient`、`PetActivityCoordinator`、旧 Realtime 领域状态及 Task Service 独立 Cancel 接口，不保留兼容、fallback 或双写。
 - Windows Pet 切片验证：`ChatOS.Connector.Tests` 393 项、`ChatOS.Presentation.Tests` 60 项、`ChatOS.Api.Tests` 23 项、`ChatOS.Core.Tests` 4 项、`ChatOS.NetworkGuard.Tests` 19 项全部通过；Pet XAML 通过 XML 结构校验，远程类型/注入静态搜索零残留。Desktop 的 Core/API/Connector/Presentation 均完成编译，随后只在 macOS 无法执行 Windows `XamlCompiler.exe` 的 code 126 平台边界停止，未冒充 Windows 原生验收。
-- 当前在制：阶段 4 的跨平台等价接入代码已收口，剩余 Windows runner 上的 WinUI、Named Pipe、DPAPI、Host 安装/升级/崩溃恢复和打包原生验收。
-- 下一切片：建立并执行 Windows 原生 runner 验收矩阵；任何原生失败必须回到相应实现修复后重跑，不允许以 macOS 编译或模拟测试替代。
+- 2026-09-13：按 macOS 首要可运行目标新增 `scripts/local-client-stack.sh`。公共 runner、服务目录和 profile 选择取代第二套复制编排；最小 profile 只启动 Config Center、User Service、Memory Engine API/Worker、Plugin Management、Model Gateway/API shell，以及 Consul、MongoDB、MinIO、RabbitMQ 和 APISIX。启动前停止全部仓库旧进程和未选基础设施，启动后 fail-closed 验证远程 Task Runner、MCP 调度、Local Connector 云端执行、官网及管理台端口均为空，并验证统一网关健康。macOS Debug App 打包审计缺失的两条本地化资源已补齐，App、内嵌 Rust Host 和签名链构建成功。
+- macOS 可运行验证：最小栈六个 Host 进程和五个基础设施容器实际运行，`/api/chatos/health` 经 APISIX 返回 200，六个禁用服务端口均无监听；工作区 `.build/ChatOS.app` 进程路径已确认。Swift 回归通过 XCTest 226 项及 Swift Testing 186 项/56 suites；本机随后锁屏，登录后的真实 Host/Main Chat/Task UI 冒烟仍待解锁后完成，不能用进程存活替代。
+- 2026-09-13：完成 macOS 登录后内嵌 Host 的真实启动修复。服务端签发的当前 Bearer Token 为 684 字节，旧实现错误复用最多 512 字符的账户身份校验，导致主客户端 `/auth/me` 与模型目录均返回 200 时 Local Agent 仍报告“登录凭据无效”；Token 校验现已独立为非空、无首尾空白、无控制字符且最大 64 KiB，并用 684 字节生产形态回归锁定。随后发现原账户目录生成的 Unix Socket 完整路径为 185 字节，超过 macOS `sockaddr_un.sun_path`；仅将临时 IPC 目录迁到当前用户私有的 `/tmp/chatos-la-<uid>/<32位账户哈希>/`，SQLite、附件授权和平台状态仍保留在账户级 Application Support 目录。Bootstrap 错误同时补齐可读本地化，不再显示无语义“错误 2”。
+- macOS Host 现场证据：工作区 Debug App 与内嵌 Host 签名链验证通过；只运行工作区 App 后，`chatos_local_agent_host` 成为其真实子进程，账户级加密 SQLite/WAL 已打开，短路径 Unix Socket 正在监听，Swift Event Hub 已通过 IPC 读取权威事件；UI 中“登录凭据无效”和“正在启动本地 Agent”状态均已消失。Token 本身通过本机 APISIX `/auth/me` 和模型目录双 200 验证且未输出。新增 Token 与 Runtime Configuration 定向测试 9 项通过；完整 Swift 回归首轮 231 项通过、2 项 Plugin Runtime 并发抖动，独立重跑该 Suite 42 项全部通过。
+- 当前在制：继续完成 macOS Main Chat 创建与 Task 创建的真实原生冒烟，再进入阶段 5 的 macOS 全业务 Storage Provider 迁移。阶段 4 的 Windows Host 打包和原生 runner 验收保持未完成，不得标记完成。
+- 下一切片：使用当前最小栈和已运行 Host 验证一轮 Main Chat 本地 Run、消息/事件落库与 Memory Sync，再验证由 Main Chat 创建的本地 Task；完成后对 macOS 全部 SQLite、JSON 和业务偏好写入做机器审计，选择首个跨 SQLite/PostgreSQL Repository 垂直迁移。
 - 完成状态：阶段 1、阶段 2、阶段 3 已达到完成门槛；阶段 4—8 尚未达到完整门槛。

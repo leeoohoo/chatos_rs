@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-STACK_PROFILE="full-development"
+STACK_PROFILE="local-client"
 STACK_COMMAND="$0"
 
 # shellcheck source=local-dev-stack/runner.sh

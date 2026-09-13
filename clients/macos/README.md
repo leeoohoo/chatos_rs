@@ -4,6 +4,18 @@ ChatOS 的正式原生 macOS 客户端。主工作区使用 SwiftUI 实现，不
 
 ## 运行
 
+先从仓库根目录启动 3.0.2 原生客户端所需的最小服务端拓扑：
+
+```bash
+./scripts/local-client-stack.sh up
+```
+
+该 profile 只运行 Config Center、User Service、Memory Engine、Plugin
+Management、无状态 Model Gateway/API shell 及其必要基础设施；不会启动远程
+Task Runner、服务端 MCP 调度、Local Connector 云端执行、管理台或官网。
+
+然后启动 macOS 客户端：
+
 ```bash
 swift run ChatOSSwift
 ```
@@ -23,9 +35,9 @@ open .build/ChatOS.app
 
 - 原生资源侧栏与项目四个工作区。
 - per-session 聊天状态、稳定 Turn 合并与正常消息输入框。
-- `ChatOSAPI` 独立传输层，已实现 compact history、WebSocket ticket 与会话 Realtime 订阅。
+- `ChatOSAPI` 独立传输层只负责用户、配置和非 Agent 服务端契约；Agent 对话、过程与恢复以本地 Host 为权威。
 - 原生登录页、启动 Token 校验与 macOS Keychain 安全存储。
-- Requirement 执行规划与实时任务 DAG。
+- 由共享 Rust Local Agent Host 持久化并推进 Main Chat、Task/Run、过程事件与任务图。
 - 跟随会话上下文的 Computer Use / Browser MCP 画中画容器。
 - 原生 Local Connector 管理、工作区授权、MCP/Skill/Plugin 目录与权限状态。
 - 支持带本地 HTTP Runtime 的原生插件应用，并按用户和项目隔离运行数据。

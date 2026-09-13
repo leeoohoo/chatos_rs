@@ -1,6 +1,7 @@
 import ChatOSAPI
 import ChatOSConnector
 import CryptoKit
+import Darwin
 import Foundation
 
 enum RuntimeConfiguration {
@@ -42,8 +43,7 @@ enum RuntimeConfiguration {
             executableURL: localAgentHostExecutableURL,
             accountID: accountID,
             deviceID: deviceID,
-            runtimeDirectory: accountDirectory
-                .appendingPathComponent("Runtime", isDirectory: true),
+            runtimeDirectory: localAgentRuntimeDirectory(accountID),
             attachmentGrantDirectory: accountDirectory
                 .appendingPathComponent("AttachmentGrants", isDirectory: true),
             platformStateDirectory: accountDirectory
@@ -131,6 +131,18 @@ enum RuntimeConfiguration {
     private static func accountDirectoryName(_ accountID: String) -> String {
         let digest = SHA256.hash(data: Data(accountID.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Unix-domain socket paths are limited to `sockaddr_un.sun_path` on macOS.
+    /// Keep only ephemeral process communication under a short, user-private
+    /// runtime path; durable account data remains in Application Support.
+    private static func localAgentRuntimeDirectory(_ accountID: String) -> URL {
+        URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("chatos-la-\(geteuid())", isDirectory: true)
+            .appendingPathComponent(
+                String(accountDirectoryName(accountID).prefix(32)),
+                isDirectory: true
+            )
     }
 }
 

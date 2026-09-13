@@ -340,3 +340,5 @@
 "选择 JSON 清单…" = "Choose JSON List…";
 "重命名本地项目" = "Rename Local Project";
 "项目保存在本机。Git 由本机管理，聊天可在创建后单独准备。" = "Projects are stored locally. Git is managed on this device, and chat can be set up separately after creation.";
+"没有可展示的本地过程" = "No Local Process to Show";
+"Local Host 尚未为这一轮记录模型、工具或人工交互事件。" = "The Local Host has not recorded any model, tool, or human-interaction events for this turn.";

@@ -129,6 +129,18 @@ The default deployment pulls prebuilt images. After startup:
 
 - Product website: <http://localhost:39251>
 - Unified API gateway: <http://localhost:9080>
+
+For the native 3.0.2 local-agent client, start only its required server-side
+dependencies (auth/model configuration, stateless Model Gateway, Memory Engine,
+Plugin Management, and Config Center):
+
+```bash
+./scripts/local-client-stack.sh up
+./scripts/local-client-stack.sh status
+```
+
+This profile deliberately does not start the remote Task Runner, server-side MCP
+orchestration, Local Connector cloud execution, admin console, or website.
 - Harness: <http://localhost:3000>
 - Grafana: <http://localhost:3001>
 

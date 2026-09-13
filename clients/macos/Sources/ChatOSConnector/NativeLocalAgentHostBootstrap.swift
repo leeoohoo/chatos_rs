@@ -11,6 +11,21 @@ public enum NativeLocalAgentHostBootstrapError: Error, Equatable, Sendable {
     case encodingFailed
 }
 
+extension NativeLocalAgentHostBootstrapError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .invalidConfiguration(field):
+            "本地 Agent Host 配置无效：\(field)"
+        case .privateDirectoryRequired:
+            "本地 Agent Host 运行目录必须是当前用户私有目录"
+        case .socketPathTooLong:
+            "本地 Agent Host IPC 地址超过 macOS 路径长度限制"
+        case .encodingFailed:
+            "本地 Agent Host 启动配置编码失败"
+        }
+    }
+}
+
 public enum NativeLocalAgentPostgresTLSMode: String, Codable, Sendable {
     case verifyFull = "verify_full"
 }
