@@ -68,6 +68,22 @@ class ClientStorageBoundaryTests(unittest.TestCase):
         self.assertNotIn("UserDefaults", source)
         self.assertNotIn("FileManager", source)
 
+    def test_macos_terminal_history_uses_selected_client_storage_provider(self) -> None:
+        persistent_state = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeConnectorStorage.swift"
+        ).read_text(errors="replace")
+        terminal_store = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeTerminalHistoryStore.swift"
+        ).read_text(errors="replace")
+        connector = (
+            ROOT / "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService.swift"
+        ).read_text(errors="replace")
+        self.assertNotIn("commandHistory", persistent_state)
+        self.assertNotIn("FileManager", terminal_store)
+        self.assertNotIn("UserDefaults", terminal_store)
+        self.assertIn("accountSession.client(accountID:", terminal_store)
+        self.assertIn("terminalHistoryStore.append", connector)
+
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()
         inventoried = {

@@ -19,6 +19,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         let connector = NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
             ticketProvider: NoNetworkTicketProvider(),
+            accountSession: UnavailableLocalAgentAccountSession(),
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
         let client = ProjectClient(ownerUserID: "alice")
@@ -180,6 +181,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         let connector = NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
             ticketProvider: NoNetworkTicketProvider(),
+            accountSession: UnavailableLocalAgentAccountSession(),
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
 

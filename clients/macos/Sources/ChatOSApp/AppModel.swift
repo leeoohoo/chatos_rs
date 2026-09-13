@@ -176,6 +176,7 @@ final class AppModel: ObservableObject {
             ),
             ticketProvider: connectorTicketProvider,
             routeStore: connectorRouteStore,
+            accountSession: localAgentAccountSession,
             agentRuntimeSettings: agentRuntimeSettings,
             remoteConnectionRuntime: remoteConnectionService
         )

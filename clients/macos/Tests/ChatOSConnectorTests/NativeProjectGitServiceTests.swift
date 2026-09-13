@@ -120,6 +120,7 @@ final class NativeProjectGitServiceTests: XCTestCase {
                 stateURL: stateURL
             ),
             ticketProvider: GitTicketProvider(),
+            accountSession: UnavailableLocalAgentAccountSession(),
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
         return GitTestContext(

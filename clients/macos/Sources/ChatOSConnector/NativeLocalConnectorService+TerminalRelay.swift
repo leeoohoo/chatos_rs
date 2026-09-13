@@ -105,7 +105,7 @@ extension NativeLocalConnectorService {
                 workspace: workspace
             )
         }.value
-        appendCommandHistory(
+        try await appendCommandHistory(
             result: result,
             display: ([command] + body.args).joined(separator: " "),
             workspace: workspace,
@@ -360,22 +360,24 @@ extension NativeLocalConnectorService {
         display: String,
         workspace: LocalConnectorWorkspace,
         source: String
-    ) {
-        state.commandHistory.insert(.init(
-            id: UUID().uuidString,
-            source: source,
-            workspaceAlias: workspace.alias,
-            cwd: result.cwd,
-            display: display,
-            status: result.success ? "completed" : "failed",
-            exitCode: result.exitCode,
-            stdoutPreview: String(result.stdout.prefix(2_000)),
-            stderrPreview: String(result.stderr.prefix(2_000)),
-            error: result.error,
-            startedAt: ISO8601DateFormatter().string(from: Date())
-        ), at: 0)
-        state.commandHistory = Array(state.commandHistory.prefix(1_000))
-        try? stateStore.save(state)
+    ) async throws {
+        guard let ownerUserID = state.user?.id else { throw NativeTerminalRelayError.invalidContext }
+        try await terminalHistoryStore.append(
+            ownerUserID: ownerUserID,
+            entry: .init(
+                id: UUID().uuidString,
+                source: source,
+                workspaceAlias: workspace.alias,
+                cwd: result.cwd,
+                display: display,
+                status: result.success ? "completed" : "failed",
+                exitCode: result.exitCode,
+                stdoutPreview: String(result.stdout.prefix(2_000)),
+                stderrPreview: String(result.stderr.prefix(2_000)),
+                error: result.error,
+                startedAt: ISO8601DateFormatter().string(from: Date())
+            )
+        )
     }
 
     private func terminalResponse(

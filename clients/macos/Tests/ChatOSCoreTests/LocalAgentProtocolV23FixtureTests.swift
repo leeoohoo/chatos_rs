@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v22 fixtures")
-struct LocalAgentProtocolV22FixtureTests {
+@Suite("Shared Local Agent protocol v23 fixtures")
+struct LocalAgentProtocolV23FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV22FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 22)
+        #expect(localAgentProtocolVersion == 23)
         #expect(encoded == fixture)
     }
 
@@ -257,6 +257,55 @@ struct LocalAgentProtocolV22FixtureTests {
         #expect(setting.revision == 3)
     }
 
+    @Test("encodes and decodes owner-scoped Terminal History")
+    func terminalHistoryState() throws {
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-terminal-history-1",
+            ownerUserID: "user-1",
+            command: .appendTerminalHistory(
+                recordID: "terminal:2026-09-14T10:00:00Z:1",
+                draft: .init(
+                    projectID: "project-1",
+                    terminalSessionID: "native-terminal",
+                    command: "cargo test",
+                    exitCode: 0,
+                    state: .object([
+                        "source": .string("native-terminal"),
+                        "workspace_alias": .string("workspace"),
+                        "cwd": .string("/workspace"),
+                        "display": .string("cargo test"),
+                        "status": .string("completed"),
+                        "stdout_preview": .string("ok"),
+                        "stderr_preview": .null,
+                        "error": .null,
+                        "started_at": .string("2026-09-14T10:00:00Z"),
+                    ])
+                )
+            )
+        )
+        let encoded = try JSONSerialization.jsonObject(
+            with: LocalAgentProtocolJSON.encoder().encode(request)
+        ) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("terminal_history_append_request.json"))
+        ) as? NSDictionary
+        #expect(encoded == fixture)
+
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("terminal_history_records_response.json"))
+        )
+        guard case let .terminalHistoryRecords(records, nextCursor) = reply.response else {
+            Issue.record("Expected Terminal History records")
+            return
+        }
+        #expect(records.first?.ownerUserID == "user-1")
+        #expect(records.first?.draft.terminalSessionID == "native-terminal")
+        #expect(records.first?.draft.exitCode == 0)
+        #expect(nextCursor == nil)
+    }
+
     @Test("encodes and decodes owner-scoped Project CRUD")
     func projectCRUD() throws {
         let request = Request(
@@ -417,7 +466,7 @@ struct LocalAgentProtocolV22FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v22")
+            .appendingPathComponent("shared/fixtures/local_agent/v23")
             .appendingPathComponent(name)
     }
 }

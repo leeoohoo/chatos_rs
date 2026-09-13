@@ -329,7 +329,7 @@ extension NativeLocalConnectorService {
                 command: command,
                 cwd: cwd.path
             ) {
-                appendCommandHistory(
+                try await appendCommandHistory(
                     result: historyResult,
                     display: command,
                     workspace: workspace,

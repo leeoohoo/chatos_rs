@@ -14,7 +14,6 @@ struct NativeConnectorPersistentState: Codable, Sendable {
     var commandApprovalModelConfigID: String?
     var commandApprovalThinkingLevel: String?
     var approvalHistory: [LocalConnectorApprovalHistoryEntry] = []
-    var commandHistory: [LocalConnectorCommandHistoryEntry] = []
     var sandboxEnabled = true
     var permissionProfileID = ":workspace-write"
     var approvalPolicy = "per_call"

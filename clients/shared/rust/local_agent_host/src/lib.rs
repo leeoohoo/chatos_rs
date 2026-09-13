@@ -32,6 +32,7 @@ mod storage_ipc;
 mod story_ipc;
 mod task_context;
 mod task_planner;
+mod terminal_history_ipc;
 mod tool_runtime;
 mod worker;
 
@@ -64,5 +65,6 @@ pub use storage_ipc::*;
 pub use story_ipc::*;
 pub use task_context::*;
 pub use task_planner::*;
+pub use terminal_history_ipc::*;
 pub use tool_runtime::*;
 pub use worker::*;

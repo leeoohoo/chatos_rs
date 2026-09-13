@@ -341,6 +341,23 @@ struct NativeLocalAgentIPCClientTests {
         #expect(!encoded.contains("base64"))
     }
 
+    @Test("lists Terminal History through the typed Host protocol")
+    func listsTerminalHistory() async throws {
+        let transport = try FixtureLocalAgentTransport(
+            fixture: fixtureURL("terminal_history_records_response.json")
+        )
+        let client = try NativeLocalAgentIPCClient(ownerUserID: "user-1", transport: transport)
+
+        let records = try await client.terminalHistoryRecords()
+
+        #expect(records.first?.recordID == "terminal:2026-09-14T10:00:00Z:1")
+        #expect(records.first?.draft.command == "cargo test")
+        let request = try #require(await transport.request())
+        let object = try #require(JSONSerialization.jsonObject(with: request) as? [String: Any])
+        let command = try #require(object["command"] as? [String: Any])
+        #expect(command["type"] as? String == "list_terminal_history")
+    }
+
     @Test("rejects a response correlated to another request")
     func rejectsRequestMismatch() async throws {
         let transport = RecordingLocalAgentTransport(
@@ -360,7 +377,7 @@ struct NativeLocalAgentIPCClientTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v22")
+            .appendingPathComponent("shared/fixtures/local_agent/v23")
             .appendingPathComponent(name)
     }
 }

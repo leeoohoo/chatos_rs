@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 22
+public let localAgentProtocolVersion: UInt32 = 23
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -551,6 +551,53 @@ public struct LocalAgentNotepadSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public struct LocalAgentTerminalHistoryDraft: Codable, Equatable, Sendable {
+    public var projectID: String?
+    public var terminalSessionID: String
+    public var command: String
+    public var exitCode: Int32?
+    public var state: LocalAgentJSONValue
+
+    public init(
+        projectID: String?,
+        terminalSessionID: String,
+        command: String,
+        exitCode: Int32?,
+        state: LocalAgentJSONValue
+    ) {
+        self.projectID = projectID
+        self.terminalSessionID = terminalSessionID
+        self.command = command
+        self.exitCode = exitCode
+        self.state = state
+    }
+}
+
+public struct LocalAgentTerminalHistorySnapshot: Codable, Equatable, Sendable {
+    public var recordID: String
+    public var ownerUserID: String
+    public var draft: LocalAgentTerminalHistoryDraft
+    public var revision: UInt64
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        recordID: String,
+        ownerUserID: String,
+        draft: LocalAgentTerminalHistoryDraft,
+        revision: UInt64,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.recordID = recordID
+        self.ownerUserID = ownerUserID
+        self.draft = draft
+        self.revision = revision
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct LocalAgentClientSettingSnapshot: Codable, Equatable, Sendable {
     public var key: String
     public var ownerUserID: String
@@ -630,6 +677,10 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case getClientSetting(key: String)
     case putClientSetting(key: String, expectedRevision: UInt64?, value: LocalAgentJSONValue)
     case deleteClientSetting(key: String, expectedRevision: UInt64)
+    case appendTerminalHistory(recordID: String, draft: LocalAgentTerminalHistoryDraft)
+    case listTerminalHistory(cursor: String?, limit: UInt32)
+    case deleteTerminalHistory(recordID: String, expectedRevision: UInt64)
+    case clearTerminalHistory
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -751,6 +802,14 @@ extension LocalAgentCommand: Encodable {
     }
     private struct DeleteClientSettingPayload: Encodable {
         let key: String
+        let expectedRevision: UInt64
+    }
+    private struct AppendTerminalHistoryPayload: Encodable {
+        let recordID: String
+        let draft: LocalAgentTerminalHistoryDraft
+    }
+    private struct DeleteTerminalHistoryPayload: Encodable {
+        let recordID: String
         let expectedRevision: UInt64
     }
     private struct EventsPayload: Encodable {
@@ -1028,6 +1087,26 @@ extension LocalAgentCommand: Encodable {
                 DeleteClientSettingPayload(key: key, expectedRevision: expectedRevision),
                 forKey: .payload
             )
+        case let .appendTerminalHistory(recordID, draft):
+            try container.encode("append_terminal_history", forKey: .type)
+            try container.encode(
+                AppendTerminalHistoryPayload(recordID: recordID, draft: draft),
+                forKey: .payload
+            )
+        case let .listTerminalHistory(cursor, limit):
+            try container.encode("list_terminal_history", forKey: .type)
+            try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
+        case let .deleteTerminalHistory(recordID, expectedRevision):
+            try container.encode("delete_terminal_history", forKey: .type)
+            try container.encode(
+                DeleteTerminalHistoryPayload(
+                    recordID: recordID,
+                    expectedRevision: expectedRevision
+                ),
+                forKey: .payload
+            )
+        case .clearTerminalHistory:
+            try container.encode("clear_terminal_history", forKey: .type)
         case let .subscribeRunEvents(afterSequence, limit):
             try container.encode("subscribe_run_events", forKey: .type)
             try container.encode(EventsPayload(afterSeq: afterSequence, limit: limit), forKey: .payload)
@@ -1762,6 +1841,8 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case notepad(LocalAgentNotepadSnapshot)
     case notepadRecords([LocalAgentNotepadSnapshot], nextCursor: String?)
     case clientSetting(LocalAgentClientSettingSnapshot)
+    case terminalHistory(LocalAgentTerminalHistorySnapshot)
+    case terminalHistoryRecords([LocalAgentTerminalHistorySnapshot], nextCursor: String?)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -1804,6 +1885,10 @@ extension LocalAgentResponse: Decodable {
     }
     private struct NotepadRecords: Decodable {
         let records: [LocalAgentNotepadSnapshot]
+        let nextCursor: String?
+    }
+    private struct TerminalHistoryRecords: Decodable {
+        let records: [LocalAgentTerminalHistorySnapshot]
         let nextCursor: String?
     }
     private struct Events: Decodable {
@@ -1890,6 +1975,13 @@ extension LocalAgentResponse: Decodable {
             self = .clientSetting(
                 try container.decode(LocalAgentClientSettingSnapshot.self, forKey: .payload)
             )
+        case "terminal_history":
+            self = .terminalHistory(
+                try container.decode(LocalAgentTerminalHistorySnapshot.self, forKey: .payload)
+            )
+        case "terminal_history_records":
+            let value = try container.decode(TerminalHistoryRecords.self, forKey: .payload)
+            self = .terminalHistoryRecords(value.records, nextCursor: value.nextCursor)
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)

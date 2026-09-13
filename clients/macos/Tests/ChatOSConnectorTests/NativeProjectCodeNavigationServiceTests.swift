@@ -27,6 +27,7 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
                 stateURL: stateURL
             ),
             ticketProvider: NavigationTicketProvider(),
+            accountSession: UnavailableLocalAgentAccountSession(),
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
         let service = NativeProjectCodeNavigationService(connector: connector)

@@ -770,6 +770,57 @@ public actor NativeLocalAgentIPCClient {
         }
     }
 
+    public func appendTerminalHistory(
+        recordID: String,
+        draft: LocalAgentTerminalHistoryDraft
+    ) async throws -> LocalAgentTerminalHistorySnapshot {
+        let response = try await send(.appendTerminalHistory(recordID: recordID, draft: draft))
+        guard case let .terminalHistory(record) = response else {
+            throw unexpected("terminal_history", response)
+        }
+        return record
+    }
+
+    public func terminalHistoryRecords() async throws -> [LocalAgentTerminalHistorySnapshot] {
+        var records: [LocalAgentTerminalHistorySnapshot] = []
+        var cursor: String?
+        repeat {
+            let response = try await send(.listTerminalHistory(cursor: cursor, limit: 500))
+            guard case let .terminalHistoryRecords(page, nextCursor) = response else {
+                throw unexpected("terminal_history_records", response)
+            }
+            records.append(contentsOf: page)
+            if let nextCursor, nextCursor == cursor {
+                throw NativeLocalAgentIPCError.invalidResponse
+            }
+            cursor = nextCursor
+        } while cursor != nil
+        return records.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.recordID > $1.recordID
+        }
+    }
+
+    public func deleteTerminalHistory(
+        recordID: String,
+        expectedRevision: UInt64
+    ) async throws {
+        let response = try await send(.deleteTerminalHistory(
+            recordID: recordID,
+            expectedRevision: expectedRevision
+        ))
+        guard case .success = response else {
+            throw unexpected("success", response)
+        }
+    }
+
+    public func clearTerminalHistory() async throws {
+        let response = try await send(.clearTerminalHistory)
+        guard case .success = response else {
+            throw unexpected("success", response)
+        }
+    }
+
     public func taskGraph(
         sourceThreadID: String,
         sourceTurnID: String
@@ -894,6 +945,8 @@ private extension LocalAgentResponse {
         case .notepad: "notepad"
         case .notepadRecords: "notepad_records"
         case .clientSetting: "client_setting"
+        case .terminalHistory: "terminal_history"
+        case .terminalHistoryRecords: "terminal_history_records"
         case .events: "events"
         case .uiEventCursor: "ui_event_cursor"
         case .storageProfile: "storage_profile"

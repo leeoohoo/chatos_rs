@@ -11,19 +11,20 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
-    ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
-    ClipboardMutationResult, CreateProjectCommand, DeleteClientSettingCommand,
-    DeleteClipboardCommand, DeleteMediaCommand, DeleteNotepadCommand, DeleteNotepadFolderCommand,
-    DeleteStoryCommand, ExportClientDataCommand, GetClientSettingCommand, GetClipboardCommand,
-    GetMediaCommand, GetNotepadCommand, GetProjectCommand, GetStoryCommand,
-    ImportClientDataCommand, InstallProjectPluginCapabilityCommand, ListClipboardCommand,
-    ListMediaCommand, ListNotepadCommand, ListProjectsCommand, ListStoriesCommand, LocalAgentRun,
-    LocalClientSettingSnapshot, LocalClipboardSnapshot, LocalMediaSnapshot, LocalNotepadSnapshot,
-    LocalProjectSnapshot, LocalStorySnapshot, MediaMutationResult, PostgresConnectionTestCommand,
-    PostgresConnectionTestResult, ProtocolError, PutClientSettingCommand, PutMediaCommand,
-    PutNotepadCommand, PutStoryCommand, RemoveProjectPluginCapabilityCommand,
-    RenameNotepadFolderCommand, SetClipboardPinnedCommand, StoreClipboardCommand, ToolExecution,
-    UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    AppendTerminalHistoryCommand, ApplyStorageProfileCommand, ClientDataTransferResult,
+    ClientStorageProfileDescriptor, ClipboardMutationResult, CreateProjectCommand,
+    DeleteClientSettingCommand, DeleteClipboardCommand, DeleteMediaCommand, DeleteNotepadCommand,
+    DeleteNotepadFolderCommand, DeleteStoryCommand, DeleteTerminalHistoryCommand,
+    ExportClientDataCommand, GetClientSettingCommand, GetClipboardCommand, GetMediaCommand,
+    GetNotepadCommand, GetProjectCommand, GetStoryCommand, ImportClientDataCommand,
+    InstallProjectPluginCapabilityCommand, ListClipboardCommand, ListMediaCommand,
+    ListNotepadCommand, ListProjectsCommand, ListStoriesCommand, ListTerminalHistoryCommand,
+    LocalAgentRun, LocalClientSettingSnapshot, LocalClipboardSnapshot, LocalMediaSnapshot,
+    LocalNotepadSnapshot, LocalProjectSnapshot, LocalStorySnapshot, LocalTerminalHistorySnapshot,
+    MediaMutationResult, PostgresConnectionTestCommand, PostgresConnectionTestResult,
+    ProtocolError, PutClientSettingCommand, PutMediaCommand, PutNotepadCommand, PutStoryCommand,
+    RemoveProjectPluginCapabilityCommand, RenameNotepadFolderCommand, SetClipboardPinnedCommand,
+    StoreClipboardCommand, ToolExecution, UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -116,6 +117,10 @@ pub enum LocalAgentCommand {
     GetClientSetting(GetClientSettingCommand),
     PutClientSetting(PutClientSettingCommand),
     DeleteClientSetting(DeleteClientSettingCommand),
+    AppendTerminalHistory(AppendTerminalHistoryCommand),
+    ListTerminalHistory(ListTerminalHistoryCommand),
+    DeleteTerminalHistory(DeleteTerminalHistoryCommand),
+    ClearTerminalHistory,
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -176,6 +181,10 @@ impl LocalAgentCommand {
             Self::GetClientSetting(command) => command.validate(),
             Self::PutClientSetting(command) => command.validate(),
             Self::DeleteClientSetting(command) => command.validate(),
+            Self::AppendTerminalHistory(command) => command.validate(),
+            Self::ListTerminalHistory(command) => command.validate(),
+            Self::DeleteTerminalHistory(command) => command.validate(),
+            Self::ClearTerminalHistory => Ok(()),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -995,6 +1004,11 @@ pub enum LocalAgentIpcResponse {
         next_cursor: Option<String>,
     },
     ClientSetting(LocalClientSettingSnapshot),
+    TerminalHistory(LocalTerminalHistorySnapshot),
+    TerminalHistoryRecords {
+        records: Vec<LocalTerminalHistorySnapshot>,
+        next_cursor: Option<String>,
+    },
     Events {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
@@ -1110,6 +1124,19 @@ impl LocalAgentIpcResponse {
                 Ok(())
             }
             Self::ClientSetting(setting) => setting.validate(),
+            Self::TerminalHistory(record) => record.validate(),
+            Self::TerminalHistoryRecords {
+                records,
+                next_cursor,
+            } => {
+                for record in records {
+                    record.validate()?;
+                }
+                if let Some(cursor) = next_cursor {
+                    require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
             Self::Events {
                 events, next_seq, ..
             } => {

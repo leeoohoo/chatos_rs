@@ -34,6 +34,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let pluginApplicationRuntime = NativePluginApplicationRuntime()
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let agentRuntimeSettings: any AgentRuntimePreferencesProviding
+    let terminalHistoryStore: NativeTerminalHistoryStore
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
@@ -70,6 +71,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         configuration: NativeConnectorConfiguration,
         ticketProvider: any LocalConnectorPairingTicketProviding,
         routeStore: NativeConnectorRouteStore = .init(),
+        accountSession: any NativeLocalAgentAccountSessionAccess,
         agentRuntimeSettings: any AgentRuntimePreferencesProviding,
         remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)? = nil
     ) {
@@ -78,6 +80,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
         self.stateStore = NativeConnectorStateStore(stateURL: configuration.stateURL)
         self.routeStore = routeStore
+        self.terminalHistoryStore = NativeTerminalHistoryStore(accountSession: accountSession)
         self.agentRuntimeSettings = agentRuntimeSettings
         self.pluginInstaller = NativePluginInstaller(
             rootURL: configuration.stateURL
@@ -222,9 +225,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             cwd: cwd ?? workspace.absoluteRoot,
             workspace: workspace
         )
-        let now = ISO8601DateFormatter().string(from: Date())
-        state.commandHistory.insert(
-            .init(
+        guard let ownerUserID = state.user?.id else { throw NativeConnectorError.notPaired }
+        try await terminalHistoryStore.append(
+            ownerUserID: ownerUserID,
+            entry: .init(
                 id: UUID().uuidString,
                 source: "native-terminal",
                 workspaceAlias: workspace.alias,
@@ -235,22 +239,20 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 stdoutPreview: result.stdout.prefixText(2_000),
                 stderrPreview: result.stderr.prefixText(2_000),
                 error: result.error,
-                startedAt: now
-            ),
-            at: 0
+                startedAt: ISO8601DateFormatter().string(from: Date())
+            )
         )
-        state.commandHistory = Array(state.commandHistory.prefix(1_000))
-        try stateStore.save(state)
         return result
     }
 
     public func fetchCommandHistory(limit: Int) async throws -> [LocalConnectorCommandHistoryEntry] {
-        Array(state.commandHistory.prefix(max(1, min(limit, 200))))
+        guard let ownerUserID = state.user?.id else { throw NativeConnectorError.notPaired }
+        return try await terminalHistoryStore.list(ownerUserID: ownerUserID, limit: limit)
     }
 
     public func clearCommandHistory() async throws {
-        state.commandHistory = []
-        try stateStore.save(state)
+        guard let ownerUserID = state.user?.id else { throw NativeConnectorError.notPaired }
+        try await terminalHistoryStore.clear(ownerUserID: ownerUserID)
     }
 
     public func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings {
