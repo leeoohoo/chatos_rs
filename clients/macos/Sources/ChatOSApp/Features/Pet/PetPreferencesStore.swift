@@ -1,51 +1,103 @@
+import ChatOSConnector
 import Foundation
+
+private struct PetPreferencesState: Codable, Equatable, Sendable {
+    var isEnabled = true
+    var size = 104.0
+    var showProcess = true
+    var showCompletions = true
+    var showAcrossSpaces = true
+    var favoriteProjectIDs: Set<String> = []
+}
 
 @MainActor
 final class PetPreferencesStore: ObservableObject {
-    private enum Key {
-        static let enabled = "ChatOS.pet.enabled"
-        static let size = "ChatOS.pet.size"
-        static let showProcess = "ChatOS.pet.showProcess"
-        static let showCompletions = "ChatOS.pet.showCompletions"
-        static let showAcrossSpaces = "ChatOS.pet.showAcrossSpaces"
-        static let favoriteProjectIDs = "ChatOS.pet.favorite-project-ids"
-    }
-
-    @Published var isEnabled: Bool {
-        didSet { defaults.set(isEnabled, forKey: Key.enabled) }
-    }
-    @Published var size: Double {
+    @Published var isEnabled = false { didSet { preferenceDidChange() } }
+    @Published var size = 104.0 {
         didSet {
             let normalized = min(180, max(72, size))
             if normalized != size {
                 size = normalized
             } else {
-                defaults.set(normalized, forKey: Key.size)
+                preferenceDidChange()
             }
         }
     }
-    @Published var showProcess: Bool {
-        didSet { defaults.set(showProcess, forKey: Key.showProcess) }
-    }
-    @Published var showCompletions: Bool {
-        didSet { defaults.set(showCompletions, forKey: Key.showCompletions) }
-    }
-    @Published var showAcrossSpaces: Bool {
-        didSet { defaults.set(showAcrossSpaces, forKey: Key.showAcrossSpaces) }
-    }
-    @Published private(set) var favoriteProjectIDs: Set<String>
+    @Published var showProcess = true { didSet { preferenceDidChange() } }
+    @Published var showCompletions = true { didSet { preferenceDidChange() } }
+    @Published var showAcrossSpaces = true { didSet { preferenceDidChange() } }
+    @Published private(set) var favoriteProjectIDs: Set<String> = []
     @Published private(set) var resetPositionRequestID = UUID()
+    @Published private(set) var isStorageReady = false
+    @Published private(set) var persistenceError: String?
 
-    private let defaults: UserDefaults
+    private let persistence: NativeLocalClientSettingStore<PetPreferencesState>
+    private var activeOwnerUserID: String?
+    private var persistedState = PetPreferencesState()
+    private var isApplyingState = false
+    private var mutation: UInt64 = 0
+    private var persistedMutation: UInt64 = 0
+    private var saveTask: Task<Void, Never>?
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        self.isEnabled = defaults.object(forKey: Key.enabled) as? Bool ?? true
-        self.size = defaults.object(forKey: Key.size) as? Double ?? 104
-        self.showProcess = defaults.object(forKey: Key.showProcess) as? Bool ?? true
-        self.showCompletions = defaults.object(forKey: Key.showCompletions) as? Bool ?? true
-        self.showAcrossSpaces = defaults.object(forKey: Key.showAcrossSpaces) as? Bool ?? true
-        self.favoriteProjectIDs = Set(defaults.stringArray(forKey: Key.favoriteProjectIDs) ?? [])
+    init(accountSession: any NativeLocalAgentAccountSessionAccess) {
+        do {
+            persistence = try NativeLocalClientSettingStore(
+                key: "pet.preferences",
+                accountSession: accountSession
+            )
+        } catch {
+            preconditionFailure("Pet preference storage key is invalid")
+        }
+    }
+
+    func activate(ownerUserID: String) async {
+        saveTask?.cancel()
+        activeOwnerUserID = ownerUserID
+        isStorageReady = false
+        persistenceError = nil
+        await persistence.reset()
+        do {
+            let state = try await persistence.load(
+                ownerUserID: ownerUserID,
+                defaultValue: PetPreferencesState()
+            )
+            guard activeOwnerUserID == ownerUserID else { return }
+            persistedState = state
+            persistedMutation = 0
+            mutation = 0
+            apply(state)
+            isStorageReady = true
+        } catch {
+            guard activeOwnerUserID == ownerUserID else { return }
+            applyInactiveState()
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    func retryLoading() {
+        guard let ownerUserID = activeOwnerUserID else { return }
+        Task { await activate(ownerUserID: ownerUserID) }
+    }
+
+    func flush() async {
+        saveTask?.cancel()
+        guard isStorageReady,
+              mutation > persistedMutation,
+              let ownerUserID = activeOwnerUserID else { return }
+        let next = currentState()
+        await persist(next, ownerUserID: ownerUserID, mutation: mutation)
+    }
+
+    func deactivate() async {
+        saveTask?.cancel()
+        saveTask = nil
+        activeOwnerUserID = nil
+        isStorageReady = false
+        persistenceError = nil
+        mutation = 0
+        persistedMutation = 0
+        applyInactiveState()
+        await persistence.reset()
     }
 
     func isFavorite(projectID: String) -> Bool {
@@ -60,10 +112,81 @@ final class PetPreferencesStore: ObservableObject {
         } else {
             favoriteProjectIDs.remove(normalizedID)
         }
-        defaults.set(favoriteProjectIDs.sorted(), forKey: Key.favoriteProjectIDs)
+        preferenceDidChange()
     }
 
     func requestPositionReset() {
         resetPositionRequestID = UUID()
+    }
+
+    private func preferenceDidChange() {
+        guard !isApplyingState, isStorageReady, let ownerUserID = activeOwnerUserID else {
+            return
+        }
+        mutation &+= 1
+        let expectedMutation = mutation
+        saveTask?.cancel()
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled, let self else { return }
+            let next = currentState()
+            await persist(next, ownerUserID: ownerUserID, mutation: expectedMutation)
+        }
+    }
+
+    private func persist(
+        _ state: PetPreferencesState,
+        ownerUserID: String,
+        mutation: UInt64
+    ) async {
+        do {
+            let committed = try await persistence.saveLatest(
+                ownerUserID: ownerUserID,
+                value: state,
+                mutation: mutation
+            )
+            guard activeOwnerUserID == ownerUserID else { return }
+            if committed, mutation >= persistedMutation {
+                persistedMutation = mutation
+                persistedState = state
+            }
+            if mutation == self.mutation {
+                persistenceError = nil
+            }
+        } catch {
+            guard activeOwnerUserID == ownerUserID, mutation == self.mutation else { return }
+            apply(persistedState)
+            isStorageReady = false
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    private func currentState() -> PetPreferencesState {
+        PetPreferencesState(
+            isEnabled: isEnabled,
+            size: size,
+            showProcess: showProcess,
+            showCompletions: showCompletions,
+            showAcrossSpaces: showAcrossSpaces,
+            favoriteProjectIDs: favoriteProjectIDs
+        )
+    }
+
+    private func apply(_ state: PetPreferencesState) {
+        isApplyingState = true
+        isEnabled = state.isEnabled
+        size = state.size
+        showProcess = state.showProcess
+        showCompletions = state.showCompletions
+        showAcrossSpaces = state.showAcrossSpaces
+        favoriteProjectIDs = state.favoriteProjectIDs
+        isApplyingState = false
+    }
+
+    private func applyInactiveState() {
+        var state = PetPreferencesState()
+        state.isEnabled = false
+        state.favoriteProjectIDs = []
+        apply(state)
     }
 }

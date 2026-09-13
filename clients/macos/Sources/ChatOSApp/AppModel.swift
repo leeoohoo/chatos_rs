@@ -76,10 +76,10 @@ final class AppModel: ObservableObject {
     let localConnectorControl: LocalConnectorControlCenterViewModel
     let mediaStudio: MediaStudioViewModel
     let visualSessionStore = VisualSessionPresentationStore()
-    let petPreferences = PetPreferencesStore()
+    let petPreferences: PetPreferencesStore
     let petDefaultFileHandlerPrompt = PetDefaultFileHandlerPromptController()
     let petOverlayStore = PetOverlayStore()
-    let globalUtilityPreferences = GlobalUtilityPreferencesStore()
+    let globalUtilityPreferences: GlobalUtilityPreferencesStore
     private(set) lazy var globalUtilityCoordinator = GlobalUtilityCoordinator(
         model: self,
         preferences: globalUtilityPreferences
@@ -201,6 +201,10 @@ final class AppModel: ObservableObject {
         self.authentication = AuthenticationViewModel(service: authenticationService)
         self.localConnectorControl = LocalConnectorControlCenterViewModel(
             service: localConnectorService
+        )
+        self.petPreferences = PetPreferencesStore(accountSession: localAgentAccountSession)
+        self.globalUtilityPreferences = GlobalUtilityPreferencesStore(
+            accountSession: localAgentAccountSession
         )
         let mediaHistoryStore = MediaStudioHistoryStore { ownerUserID in
             let client = try await localAgentAccountSession.client(accountID: ownerUserID)
@@ -819,6 +823,8 @@ final class AppModel: ObservableObject {
     }
 
     func prepareForApplicationTermination() async {
+        await petPreferences.flush()
+        await globalUtilityPreferences.flush()
         localAgentStateObservationTask?.cancel()
         localAgentStateObservationTask = nil
         localAgentLifecycleTask?.cancel()
@@ -873,6 +879,10 @@ final class AppModel: ObservableObject {
             let accountSession = localAgentAccountSession
             localAgentLifecycleTask = Task { [weak self] in
                 _ = await previousLifecycleTask?.result
+                await self?.petPreferences.flush()
+                await self?.globalUtilityPreferences.flush()
+                await self?.petPreferences.deactivate()
+                await self?.globalUtilityPreferences.deactivate()
                 if let hub = self?.localAgentEventHub {
                     self?.localAgentEventHub = nil
                     await hub.stop()
@@ -931,6 +941,10 @@ final class AppModel: ObservableObject {
                   workspaceAccountGeneration == generation
             else { return }
             do {
+                await petPreferences.flush()
+                await globalUtilityPreferences.flush()
+                await petPreferences.deactivate()
+                await globalUtilityPreferences.deactivate()
                 // A presentation Store is account-scoped even when server IDs
                 // happen to be globally unique. Clear it before binding the
                 // next Host so no optimistic or recovered state can cross users.
@@ -949,6 +963,8 @@ final class AppModel: ObservableObject {
                         )
                     }
                 )
+                await petPreferences.activate(ownerUserID: accountID)
+                await globalUtilityPreferences.activate(ownerUserID: accountID)
                 let startupRecovery = NativeLocalAgentStartupRecovery(
                     clientProvider: { try await accountSession.activeClient() },
                     stateProvider: { await accountSession.state() },

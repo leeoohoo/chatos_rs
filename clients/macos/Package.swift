@@ -53,7 +53,6 @@ let package = Package(
                 .linkedFramework("Carbon"),
                 .linkedFramework("Security"),
                 .linkedFramework("WebKit"),
-                .linkedLibrary("sqlite3"),
             ]
         ),
         .testTarget(

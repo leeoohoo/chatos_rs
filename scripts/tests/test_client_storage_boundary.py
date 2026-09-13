@@ -8,6 +8,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 AUDIT = ROOT / "clients/shared/rust/chatos_client_storage/audit/legacy_access.json"
+PROVIDER_OWNED_MACOS_PREFERENCES = (
+    "clients/macos/Sources/ChatOSApp/Features/Pet/PetPreferencesStore.swift",
+    "clients/macos/Sources/ChatOSApp/Features/GlobalUtilities/GlobalUtilityPreferencesStore.swift",
+)
 
 
 def load_audit() -> dict:
@@ -30,6 +34,11 @@ def direct_database_driver_files() -> set[str]:
 
 
 class ClientStorageBoundaryTests(unittest.TestCase):
+    def test_provider_owned_macos_preferences_do_not_regress_to_user_defaults(self) -> None:
+        for relative_path in PROVIDER_OWNED_MACOS_PREFERENCES:
+            source = (ROOT / relative_path).read_text(errors="replace")
+            self.assertNotIn("UserDefaults", source, relative_path)
+
     def test_every_direct_database_driver_is_in_the_migration_inventory(self) -> None:
         audit = load_audit()
         inventoried = {

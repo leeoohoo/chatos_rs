@@ -295,7 +295,7 @@ public actor NativeLocalAgentIPCClient {
         let command: LocalAgentCommand
     }
 
-    private let ownerUserID: String
+    public let ownerUserID: String
     private let transport: any LocalAgentFrameTransport
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder

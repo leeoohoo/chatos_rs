@@ -1,81 +1,103 @@
+import ChatOSConnector
 import ChatOSCore
 import Foundation
 
+private struct GlobalUtilityPreferencesState: Codable, Equatable, Sendable {
+    var isEnabled = false
+    var hasAcknowledgedShortcutConflicts = false
+    var screenshotEnabled = true
+    var recordingEnabled = true
+    var clipboardEnabled = true
+    var quickSearchEnabled = true
+    var hotKeys = Dictionary(uniqueKeysWithValues: GlobalUtilityAction.allCases.map {
+        ($0.rawValue, $0.defaultHotKey)
+    })
+}
+
 @MainActor
 final class GlobalUtilityPreferencesStore: ObservableObject {
-    private enum Key {
-        static let enabled = "ChatOS.globalUtilities.enabled"
-        static let acknowledgedShortcutConflicts =
-            "ChatOS.globalUtilities.acknowledgedShortcutConflicts"
-        static let screenshotEnabled = "ChatOS.globalUtilities.screenshot.enabled"
-        static let recordingEnabled = "ChatOS.globalUtilities.recording.enabled"
-        static let clipboardEnabled = "ChatOS.globalUtilities.clipboard.enabled"
-        static let quickSearchEnabled = "ChatOS.globalUtilities.quickSearch.enabled"
-        static let hotKeyPrefix = "ChatOS.globalUtilities.hotKey."
+    @Published var isEnabled = false { didSet { preferenceDidChange() } }
+    @Published var hasAcknowledgedShortcutConflicts = false {
+        didSet { preferenceDidChange() }
     }
-
-    @Published var isEnabled: Bool {
-        didSet {
-            defaults.set(isEnabled, forKey: Key.enabled)
-            configurationDidChange()
-        }
-    }
-
-    @Published var hasAcknowledgedShortcutConflicts: Bool {
-        didSet {
-            defaults.set(
-                hasAcknowledgedShortcutConflicts,
-                forKey: Key.acknowledgedShortcutConflicts
-            )
-        }
-    }
-
-    @Published var screenshotEnabled: Bool {
-        didSet {
-            defaults.set(screenshotEnabled, forKey: Key.screenshotEnabled)
-            configurationDidChange()
-        }
-    }
-
-    @Published var recordingEnabled: Bool {
-        didSet {
-            defaults.set(recordingEnabled, forKey: Key.recordingEnabled)
-            configurationDidChange()
-        }
-    }
-
-    @Published var clipboardEnabled: Bool {
-        didSet {
-            defaults.set(clipboardEnabled, forKey: Key.clipboardEnabled)
-            configurationDidChange()
-        }
-    }
-
-    @Published var quickSearchEnabled: Bool {
-        didSet {
-            defaults.set(quickSearchEnabled, forKey: Key.quickSearchEnabled)
-            configurationDidChange()
-        }
-    }
-
-    @Published private(set) var hotKeys: [GlobalUtilityAction: GlobalHotKey]
+    @Published var screenshotEnabled = true { didSet { preferenceDidChange() } }
+    @Published var recordingEnabled = true { didSet { preferenceDidChange() } }
+    @Published var clipboardEnabled = true { didSet { preferenceDidChange() } }
+    @Published var quickSearchEnabled = true { didSet { preferenceDidChange() } }
+    @Published private(set) var hotKeys = Dictionary(
+        uniqueKeysWithValues: GlobalUtilityAction.allCases.map { ($0, $0.defaultHotKey) }
+    )
     @Published private(set) var configurationRevision = UUID()
+    @Published private(set) var isStorageReady = false
+    @Published private(set) var persistenceError: String?
 
-    private let defaults: UserDefaults
+    private let persistence: NativeLocalClientSettingStore<GlobalUtilityPreferencesState>
+    private var activeOwnerUserID: String?
+    private var persistedState = GlobalUtilityPreferencesState()
+    private var isApplyingState = false
+    private var mutation: UInt64 = 0
+    private var persistedMutation: UInt64 = 0
+    private var saveTask: Task<Void, Never>?
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        self.isEnabled = defaults.object(forKey: Key.enabled) as? Bool ?? false
-        self.hasAcknowledgedShortcutConflicts = defaults.bool(
-            forKey: Key.acknowledgedShortcutConflicts
-        )
-        self.screenshotEnabled = defaults.object(forKey: Key.screenshotEnabled) as? Bool ?? true
-        self.recordingEnabled = defaults.object(forKey: Key.recordingEnabled) as? Bool ?? true
-        self.clipboardEnabled = defaults.object(forKey: Key.clipboardEnabled) as? Bool ?? true
-        self.quickSearchEnabled = defaults.object(forKey: Key.quickSearchEnabled) as? Bool ?? true
-        self.hotKeys = Dictionary(uniqueKeysWithValues: GlobalUtilityAction.allCases.map { action in
-            (action, Self.loadHotKey(action, defaults: defaults) ?? action.defaultHotKey)
-        })
+    init(accountSession: any NativeLocalAgentAccountSessionAccess) {
+        do {
+            persistence = try NativeLocalClientSettingStore(
+                key: "global_utilities.preferences",
+                accountSession: accountSession
+            )
+        } catch {
+            preconditionFailure("Global utility preference storage key is invalid")
+        }
+    }
+
+    func activate(ownerUserID: String) async {
+        saveTask?.cancel()
+        activeOwnerUserID = ownerUserID
+        isStorageReady = false
+        persistenceError = nil
+        await persistence.reset()
+        do {
+            let state = try await persistence.load(
+                ownerUserID: ownerUserID,
+                defaultValue: GlobalUtilityPreferencesState()
+            )
+            guard activeOwnerUserID == ownerUserID else { return }
+            persistedState = state
+            persistedMutation = 0
+            mutation = 0
+            apply(state)
+            isStorageReady = true
+        } catch {
+            guard activeOwnerUserID == ownerUserID else { return }
+            apply(GlobalUtilityPreferencesState())
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    func retryLoading() {
+        guard let ownerUserID = activeOwnerUserID else { return }
+        Task { await activate(ownerUserID: ownerUserID) }
+    }
+
+    func flush() async {
+        saveTask?.cancel()
+        guard isStorageReady,
+              mutation > persistedMutation,
+              let ownerUserID = activeOwnerUserID else { return }
+        let next = currentState()
+        await persist(next, ownerUserID: ownerUserID, mutation: mutation)
+    }
+
+    func deactivate() async {
+        saveTask?.cancel()
+        saveTask = nil
+        activeOwnerUserID = nil
+        isStorageReady = false
+        persistenceError = nil
+        mutation = 0
+        persistedMutation = 0
+        apply(GlobalUtilityPreferencesState())
+        await persistence.reset()
     }
 
     func hotKey(for action: GlobalUtilityAction) -> GlobalHotKey {
@@ -94,9 +116,6 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
     func setHotKey(_ hotKey: GlobalHotKey, for action: GlobalUtilityAction) {
         guard hotKey.isValid else { return }
         hotKeys[action] = hotKey
-        if let encoded = try? JSONEncoder().encode(hotKey) {
-            defaults.set(encoded, forKey: Self.hotKeyKey(action))
-        }
         configurationDidChange()
     }
 
@@ -110,32 +129,88 @@ final class GlobalUtilityPreferencesStore: ObservableObject {
     }
 
     func restoreDefaults() {
-        for action in GlobalUtilityAction.allCases {
-            defaults.removeObject(forKey: Self.hotKeyKey(action))
-        }
-        hotKeys = Dictionary(uniqueKeysWithValues: GlobalUtilityAction.allCases.map {
-            ($0, $0.defaultHotKey)
-        })
-        screenshotEnabled = true
-        recordingEnabled = true
-        clipboardEnabled = true
-        quickSearchEnabled = true
+        let acknowledgement = hasAcknowledgedShortcutConflicts
+        let enabled = isEnabled
+        var state = GlobalUtilityPreferencesState()
+        state.isEnabled = enabled
+        state.hasAcknowledgedShortcutConflicts = acknowledgement
+        apply(state)
         configurationDidChange()
     }
 
     private func configurationDidChange() {
         configurationRevision = UUID()
+        preferenceDidChange()
     }
 
-    private static func hotKeyKey(_ action: GlobalUtilityAction) -> String {
-        Key.hotKeyPrefix + action.rawValue
+    private func preferenceDidChange() {
+        guard !isApplyingState, isStorageReady, let ownerUserID = activeOwnerUserID else {
+            return
+        }
+        mutation &+= 1
+        let expectedMutation = mutation
+        saveTask?.cancel()
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled, let self else { return }
+            let next = currentState()
+            await persist(next, ownerUserID: ownerUserID, mutation: expectedMutation)
+        }
     }
 
-    private static func loadHotKey(
-        _ action: GlobalUtilityAction,
-        defaults: UserDefaults
-    ) -> GlobalHotKey? {
-        guard let data = defaults.data(forKey: hotKeyKey(action)) else { return nil }
-        return try? JSONDecoder().decode(GlobalHotKey.self, from: data)
+    private func persist(
+        _ state: GlobalUtilityPreferencesState,
+        ownerUserID: String,
+        mutation: UInt64
+    ) async {
+        do {
+            let committed = try await persistence.saveLatest(
+                ownerUserID: ownerUserID,
+                value: state,
+                mutation: mutation
+            )
+            guard activeOwnerUserID == ownerUserID else { return }
+            if committed, mutation >= persistedMutation {
+                persistedMutation = mutation
+                persistedState = state
+            }
+            if mutation == self.mutation {
+                persistenceError = nil
+            }
+        } catch {
+            guard activeOwnerUserID == ownerUserID, mutation == self.mutation else { return }
+            apply(persistedState)
+            isStorageReady = false
+            persistenceError = error.localizedDescription
+        }
+    }
+
+    private func currentState() -> GlobalUtilityPreferencesState {
+        GlobalUtilityPreferencesState(
+            isEnabled: isEnabled,
+            hasAcknowledgedShortcutConflicts: hasAcknowledgedShortcutConflicts,
+            screenshotEnabled: screenshotEnabled,
+            recordingEnabled: recordingEnabled,
+            clipboardEnabled: clipboardEnabled,
+            quickSearchEnabled: quickSearchEnabled,
+            hotKeys: Dictionary(uniqueKeysWithValues: GlobalUtilityAction.allCases.map {
+                ($0.rawValue, hotKey(for: $0))
+            })
+        )
+    }
+
+    private func apply(_ state: GlobalUtilityPreferencesState) {
+        isApplyingState = true
+        isEnabled = state.isEnabled
+        hasAcknowledgedShortcutConflicts = state.hasAcknowledgedShortcutConflicts
+        screenshotEnabled = state.screenshotEnabled
+        recordingEnabled = state.recordingEnabled
+        clipboardEnabled = state.clipboardEnabled
+        quickSearchEnabled = state.quickSearchEnabled
+        hotKeys = Dictionary(uniqueKeysWithValues: GlobalUtilityAction.allCases.map { action in
+            (action, state.hotKeys[action.rawValue] ?? action.defaultHotKey)
+        })
+        configurationRevision = UUID()
+        isApplyingState = false
     }
 }

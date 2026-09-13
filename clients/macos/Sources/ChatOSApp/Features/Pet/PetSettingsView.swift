@@ -6,9 +6,33 @@ struct PetSettingsView: View {
 
     var body: some View {
         SettingsGroupedPage {
+            if let error = preferences.persistenceError {
+                storageErrorCard(error)
+            }
             globalPetCard
+                .disabled(!preferences.isStorageReady)
             notificationsCard
+                .disabled(!preferences.isStorageReady)
             appearanceCard
+                .disabled(!preferences.isStorageReady)
+        }
+    }
+
+    private func storageErrorCard(_ error: String) -> some View {
+        LocalConnectorCard(
+            model.localized("设置存储不可用", english: "Settings Storage Unavailable"),
+            systemImage: "externaldrive.badge.exclamationmark"
+        ) {
+            HStack(spacing: 12) {
+                Text(error)
+                    .appFont(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                Spacer()
+                Button(model.localized("重试", english: "Retry")) {
+                    preferences.retryLoading()
+                }
+            }
         }
     }
 

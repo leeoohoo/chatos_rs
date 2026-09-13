@@ -11,8 +11,13 @@ struct GlobalUtilitiesSettingsView: View {
 
     var body: some View {
         SettingsGroupedPage {
+            if let error = preferences.persistenceError {
+                storageErrorCard(error)
+            }
             masterCard
+                .disabled(!preferences.isStorageReady)
             shortcutsCard
+                .disabled(!preferences.isStorageReady)
             privacyCard
         }
         .alert(
@@ -29,6 +34,24 @@ struct GlobalUtilitiesSettingsView: View {
                 "Control+A、Control+Q、Command+E 会覆盖部分应用的常用按键；Command+Space 通常被系统 Spotlight 占用，ChatOS 会在冲突时使用 Option+Space。你可以随时改键或关闭。",
                 english: "Control+A, Control+Q, and Command+E may override common shortcuts in other apps. Command+Space is usually owned by Spotlight, so ChatOS uses Option+Space when needed. You can rebind or disable them at any time."
             ))
+        }
+    }
+
+    private func storageErrorCard(_ error: String) -> some View {
+        LocalConnectorCard(
+            model.localized("设置存储不可用", english: "Settings Storage Unavailable"),
+            systemImage: "externaldrive.badge.exclamationmark"
+        ) {
+            HStack(spacing: 12) {
+                Text(error)
+                    .appFont(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                Spacer()
+                Button(model.localized("重试", english: "Retry")) {
+                    preferences.retryLoading()
+                }
+            }
         }
     }
 

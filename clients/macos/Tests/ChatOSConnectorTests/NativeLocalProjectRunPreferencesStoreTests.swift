@@ -8,6 +8,77 @@ import Testing
 
 @Suite("Native local Project Run preferences")
 struct NativeLocalProjectRunPreferencesStoreTests {
+    @Test("typed Client Setting store commits only the newest account-scoped mutation")
+    func typedStorePersistsWithoutAFileFallback() async throws {
+        let transport = ProjectRunPreferencesTransport()
+        let client = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-1",
+            transport: transport
+        )
+        let store = try NativeLocalClientSettingStore<TestClientPreference>(
+            key: "test.preferences",
+            accountSession: ProjectRunPreferencesAccountSession(client: client)
+        )
+
+        #expect(try await store.load(
+            ownerUserID: "user-1",
+            defaultValue: .init(enabled: false, label: "default")
+        ) == .init(enabled: false, label: "default"))
+        #expect(try await store.saveLatest(
+            ownerUserID: "user-1",
+            value: .init(enabled: true, label: "newest"),
+            mutation: 2
+        ))
+        #expect(try await !store.saveLatest(
+            ownerUserID: "user-1",
+            value: .init(enabled: false, label: "late-old-value"),
+            mutation: 1
+        ))
+
+        let olderWrite = Task {
+            try await store.saveLatest(
+                ownerUserID: "user-1",
+                value: .init(enabled: false, label: "concurrent-old"),
+                mutation: 3
+            )
+        }
+        try await Task.sleep(for: .milliseconds(5))
+        let newestWrite = Task {
+            try await store.saveLatest(
+                ownerUserID: "user-1",
+                value: .init(enabled: true, label: "concurrent-newest"),
+                mutation: 4
+            )
+        }
+        #expect(try await olderWrite.value)
+        #expect(try await newestWrite.value)
+
+        await store.reset()
+        #expect(try await store.load(
+            ownerUserID: "user-1",
+            defaultValue: .init(enabled: false, label: "unused")
+        ) == .init(enabled: true, label: "concurrent-newest"))
+    }
+
+    @Test("typed Client Setting store rejects a client bound to another account")
+    func typedStoreRejectsAccountMismatch() async throws {
+        let client = try NativeLocalAgentIPCClient(
+            ownerUserID: "user-2",
+            transport: ProjectRunPreferencesTransport()
+        )
+        let store = try NativeLocalClientSettingStore<TestClientPreference>(
+            key: "test.preferences",
+            accountSession: ProjectRunPreferencesAccountSession(client: client)
+        )
+
+        await #expect(throws: NativeLocalClientSettingStoreError.accountMismatch) {
+            try await store.load(
+                ownerUserID: "user-1",
+                defaultValue: .init(enabled: false, label: "default")
+            )
+        }
+    }
+
     @Test("creates, restores and revision-updates one account-scoped setting")
     func persistsThroughTheSharedClientSettingRepository() async throws {
         let transport = ProjectRunPreferencesTransport()
@@ -73,6 +144,11 @@ struct NativeLocalProjectRunPreferencesStoreTests {
     }
 }
 
+private struct TestClientPreference: Codable, Equatable, Sendable {
+    var enabled: Bool
+    var label: String
+}
+
 private struct ProjectRunPreferencesAccountSession: NativeLocalAgentAccountSessionAccess {
     let client: NativeLocalAgentIPCClient
 
@@ -107,6 +183,12 @@ private actor ProjectRunPreferencesTransport: LocalAgentFrameTransport {
         let key = try Self.string(payload["key"])
         let storageKey = "\(owner):\(key)"
         let response: [String: Any]
+
+        if type == "put_client_setting",
+           let value = payload["value"] as? [String: Any],
+           value["label"] as? String == "concurrent-old" {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
 
         switch type {
         case "get_client_setting":
