@@ -54,7 +54,7 @@ final class StoryStudioViewModel: ObservableObject {
     private var sourceDrafts: [UUID: SourceDraft] = [:]
 
     init(media: any MediaGenerationServicing, planner: (any StoryPlanningServicing)? = nil,
-         store: StoryProjectStore = StoryProjectStore(), agentServices: (any AgentServiceProviding)? = nil,
+         store: StoryProjectStore, agentServices: (any AgentServiceProviding)? = nil,
          agentSettings: AgentSettingsStore = .init()) {
         self.media = media; self.planner = planner; self.store = store
         self.agentServices = agentServices ?? (planner as? any AgentServiceProviding)

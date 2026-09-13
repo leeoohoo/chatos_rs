@@ -12,12 +12,13 @@ use chatos_client_storage::{
 };
 use chatos_local_agent_protocol::{
     AgentMessageRole, GetClipboardCommand, GetMediaCommand, GetProjectCommand, GetRunDetailCommand,
-    GetTaskGraphCommand, GetTaskRunDetailCommand, ListClipboardCommand, ListMediaCommand,
-    ListProjectsCommand, LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcReply,
-    LocalAgentIpcRequest, LocalAgentIpcResponse, LocalAgentRun, LocalAgentRunDetail,
-    LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode, LocalAgentTaskGraphSnapshot,
-    LocalAgentTaskProjection, LocalAgentTaskRunDetail, LocalAgentTaskRunSummary,
-    LocalAgentTaskSnapshot, MainChatRunBinding, LOCAL_AGENT_PROTOCOL_VERSION,
+    GetStoryCommand, GetTaskGraphCommand, GetTaskRunDetailCommand, ListClipboardCommand,
+    ListMediaCommand, ListProjectsCommand, ListStoriesCommand, LocalAgentCommand,
+    LocalAgentIpcError, LocalAgentIpcReply, LocalAgentIpcRequest, LocalAgentIpcResponse,
+    LocalAgentRun, LocalAgentRunDetail, LocalAgentRunTimelineEvent, LocalAgentTaskGraphNode,
+    LocalAgentTaskGraphSnapshot, LocalAgentTaskProjection, LocalAgentTaskRunDetail,
+    LocalAgentTaskRunSummary, LocalAgentTaskSnapshot, MainChatRunBinding,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::DurableTaskState;
 use chrono::Utc;
@@ -320,6 +321,37 @@ impl LocalAgentIpcServer {
                     .and_then(|()| {
                         operation.response.ok_or(StorageError::Transaction {
                             reason: "media list transaction returned no page".to_string(),
+                        })
+                    })
+            }
+            LocalAgentCommand::GetStory(command) => {
+                let mut operation = GetStoryOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage.transaction(&mut operation).await.map(|()| {
+                    operation
+                        .response
+                        .unwrap_or(LocalAgentIpcResponse::Error(LocalAgentIpcError {
+                            code: "story_not_found".to_string(),
+                            message: "Story record was not found".to_string(),
+                            retryable: false,
+                        }))
+                })
+            }
+            LocalAgentCommand::ListStories(command) => {
+                let mut operation = ListStoriesOperation {
+                    scope: self.scope.clone(),
+                    command,
+                    response: None,
+                };
+                self.storage
+                    .transaction(&mut operation)
+                    .await
+                    .and_then(|()| {
+                        operation.response.ok_or(StorageError::Transaction {
+                            reason: "story list transaction returned no page".to_string(),
                         })
                     })
             }
@@ -631,6 +663,65 @@ impl StorageTransaction for ListMediaOperation {
             .map(crate::media_snapshot)
             .collect::<StorageResult<Vec<_>>>()?;
         self.response = Some(LocalAgentIpcResponse::MediaRecords {
+            records,
+            next_cursor: page.next_cursor,
+        });
+        Ok(())
+    }
+}
+
+struct GetStoryOperation {
+    scope: RecordScope,
+    command: GetStoryCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for GetStoryOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.response = repositories
+            .stories()
+            .get(&RecordQuery {
+                scope: self.scope.clone(),
+                id: self.command.record_id.clone(),
+            })
+            .await?
+            .map(crate::story_snapshot)
+            .transpose()?
+            .map(LocalAgentIpcResponse::Story);
+        Ok(())
+    }
+}
+
+struct ListStoriesOperation {
+    scope: RecordScope,
+    command: ListStoriesCommand,
+    response: Option<LocalAgentIpcResponse>,
+}
+
+#[async_trait]
+impl StorageTransaction for ListStoriesOperation {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let page = repositories
+            .stories()
+            .list(&ListQuery {
+                scope: self.scope.clone(),
+                cursor: self.command.cursor.clone(),
+                limit: self.command.limit,
+            })
+            .await?;
+        let records = page
+            .records
+            .into_iter()
+            .map(crate::story_snapshot)
+            .collect::<StorageResult<Vec<_>>>()?;
+        self.response = Some(LocalAgentIpcResponse::StoryRecords {
             records,
             next_cursor: page.next_cursor,
         });

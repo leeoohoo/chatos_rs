@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 19
+public let localAgentProtocolVersion: UInt32 = 20
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -449,6 +449,56 @@ public struct LocalAgentMediaMutationResult: Codable, Equatable, Sendable {
     }
 }
 
+public enum LocalAgentStoryKind: String, Codable, Equatable, Sendable {
+    case project
+    case agentRun = "agent_run"
+    case mediaBatch = "media_batch"
+}
+
+public struct LocalAgentStoryDraft: Codable, Equatable, Sendable {
+    public var projectID: String
+    public var kind: LocalAgentStoryKind
+    public var status: String?
+    public var state: LocalAgentJSONValue
+
+    public init(
+        projectID: String,
+        kind: LocalAgentStoryKind,
+        status: String?,
+        state: LocalAgentJSONValue
+    ) {
+        self.projectID = projectID
+        self.kind = kind
+        self.status = status
+        self.state = state
+    }
+}
+
+public struct LocalAgentStorySnapshot: Codable, Equatable, Sendable {
+    public var recordID: String
+    public var ownerUserID: String
+    public var draft: LocalAgentStoryDraft
+    public var revision: UInt64
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        recordID: String,
+        ownerUserID: String,
+        draft: LocalAgentStoryDraft,
+        revision: UInt64,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.recordID = recordID
+        self.ownerUserID = ownerUserID
+        self.draft = draft
+        self.revision = revision
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 public enum LocalAgentCommand: Equatable, Sendable {
     case updateAccessToken(String)
     case createMainChatTurn(LocalAgentCreateMainChatTurn)
@@ -490,6 +540,10 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case listMedia(cursor: String?, limit: UInt32)
     case putMedia(recordID: String, expectedRevision: UInt64?, draft: LocalAgentMediaDraft)
     case deleteMedia(recordID: String, expectedRevision: UInt64)
+    case getStory(recordID: String)
+    case listStories(cursor: String?, limit: UInt32)
+    case putStory(recordID: String, expectedRevision: UInt64?, draft: LocalAgentStoryDraft)
+    case deleteStory(recordID: String, expectedRevision: UInt64)
     case subscribeRunEvents(afterSequence: UInt64, limit: UInt32)
     case getUIEventCursor
     case acknowledgeUIEvents(throughSequence: UInt64)
@@ -572,6 +626,16 @@ extension LocalAgentCommand: Encodable {
         let draft: LocalAgentMediaDraft
     }
     private struct DeleteMediaPayload: Encodable {
+        let recordID: String
+        let expectedRevision: UInt64
+    }
+    private struct StoryPayload: Encodable { let recordID: String }
+    private struct PutStoryPayload: Encodable {
+        let recordID: String
+        let expectedRevision: UInt64?
+        let draft: LocalAgentStoryDraft
+    }
+    private struct DeleteStoryPayload: Encodable {
         let recordID: String
         let expectedRevision: UInt64
     }
@@ -773,6 +837,28 @@ extension LocalAgentCommand: Encodable {
             try container.encode("delete_media", forKey: .type)
             try container.encode(
                 DeleteMediaPayload(recordID: recordID, expectedRevision: expectedRevision),
+                forKey: .payload
+            )
+        case let .getStory(recordID):
+            try container.encode("get_story", forKey: .type)
+            try container.encode(StoryPayload(recordID: recordID), forKey: .payload)
+        case let .listStories(cursor, limit):
+            try container.encode("list_stories", forKey: .type)
+            try container.encode(ListPayload(cursor: cursor, limit: limit), forKey: .payload)
+        case let .putStory(recordID, expectedRevision, draft):
+            try container.encode("put_story", forKey: .type)
+            try container.encode(
+                PutStoryPayload(
+                    recordID: recordID,
+                    expectedRevision: expectedRevision,
+                    draft: draft
+                ),
+                forKey: .payload
+            )
+        case let .deleteStory(recordID, expectedRevision):
+            try container.encode("delete_story", forKey: .type)
+            try container.encode(
+                DeleteStoryPayload(recordID: recordID, expectedRevision: expectedRevision),
                 forKey: .payload
             )
         case let .subscribeRunEvents(afterSequence, limit):
@@ -1504,6 +1590,8 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case media(LocalAgentMediaSnapshot)
     case mediaRecords([LocalAgentMediaSnapshot], nextCursor: String?)
     case mediaMutation(LocalAgentMediaMutationResult)
+    case story(LocalAgentStorySnapshot)
+    case storyRecords([LocalAgentStorySnapshot], nextCursor: String?)
     case events([LocalAgentUIEvent], nextSequence: UInt64, hasMore: Bool)
     case uiEventCursor(eventSequence: UInt64)
     case storageProfile(LocalAgentStorageProfile)
@@ -1538,6 +1626,10 @@ extension LocalAgentResponse: Decodable {
     }
     private struct MediaRecords: Decodable {
         let records: [LocalAgentMediaSnapshot]
+        let nextCursor: String?
+    }
+    private struct StoryRecords: Decodable {
+        let records: [LocalAgentStorySnapshot]
         let nextCursor: String?
     }
     private struct Events: Decodable {
@@ -1606,6 +1698,13 @@ extension LocalAgentResponse: Decodable {
             self = .mediaMutation(
                 try container.decode(LocalAgentMediaMutationResult.self, forKey: .payload)
             )
+        case "story":
+            self = .story(
+                try container.decode(LocalAgentStorySnapshot.self, forKey: .payload)
+            )
+        case "story_records":
+            let value = try container.decode(StoryRecords.self, forKey: .payload)
+            self = .storyRecords(value.records, nextCursor: value.nextCursor)
         case "events":
             let value = try container.decode(Events.self, forKey: .payload)
             self = .events(value.events, nextSequence: value.nextSeq, hasMore: value.hasMore)

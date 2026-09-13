@@ -206,9 +206,14 @@ final class AppModel: ObservableObject {
             let client = try await localAgentAccountSession.client(accountID: ownerUserID)
             return MediaStudioHistoryStorageContext(ownerUserID: ownerUserID, client: client)
         }
+        let storyStore = StoryProjectStore { ownerUserID in
+            let client = try await localAgentAccountSession.client(accountID: ownerUserID)
+            return StoryProjectStorageContext(ownerUserID: ownerUserID, client: client)
+        }
         self.mediaStudio = MediaStudioViewModel(
             service: ChatOSMediaGenerationService(client: apiClient),
             historyStore: mediaHistoryStore,
+            storyStore: storyStore,
             storyPlanner: ChatOSStoryPlanningService(client: apiClient)
         )
         self.localConnectorService = localConnectorService

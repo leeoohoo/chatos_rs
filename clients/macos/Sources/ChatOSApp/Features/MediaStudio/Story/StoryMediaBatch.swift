@@ -129,15 +129,18 @@ enum StoryBatchError: LocalizedError {
 }
 
 extension StoryProjectStore {
-    func loadMediaBatches(owner: String, projectID: UUID) throws -> (batches: [StoryMediaBatch], unreadable: Int) {
-        let folder = try fileURL("project.json", projectID: projectID, owner: owner).deletingLastPathComponent()
-        guard FileManager.default.fileExists(atPath: folder.path) else { return ([], 0) }
+    func loadMediaBatches(owner: String, projectID: UUID) async throws -> (batches: [StoryMediaBatch], unreadable: Int) {
+        let storage = try await storageContext(owner: owner)
         var batches: [StoryMediaBatch] = []; var unreadable = 0
-        for url in try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey]) where url.lastPathComponent.hasPrefix("media-batch-") && url.pathExtension == "json" {
+        for record in try await storage.client.storyRecords()
+            where record.draft.kind == .mediaBatch
+                && record.draft.projectID.lowercased() == projectID.uuidString.lowercased() {
             do {
-                guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 32 * 1024 * 1024 else { throw StoryAgentError.invalidRun }
-                let batch = try JSONDecoder().decode(StoryMediaBatch.self, from: Data(contentsOf: url))
-                guard url.lastPathComponent == "media-batch-\(batch.id).json" else { throw StoryAgentError.invalidRun }
+                let batch: StoryMediaBatch = try Self.decodeState(record.draft.state)
+                guard record.ownerUserID == storage.ownerUserID,
+                      record.recordID == Self.mediaBatchRecordID(batch.id) else {
+                    throw StoryAgentError.invalidRun
+                }
                 try batch.validate(owner: owner, projectID: projectID); batches.append(batch)
             } catch { unreadable += 1 }
         }
@@ -145,16 +148,26 @@ extension StoryProjectStore {
     }
     /// Write-ahead batch first, canonical project second. Repeating this on restart completes
     /// an interrupted second write, but never overwrites a different manual project edit.
-    func commitMediaBatch(_ batch: StoryMediaBatch) throws {
-        try batch.validate(owner: batch.owner, projectID: batch.draft.id)
-        let manifest = try fileURL("project.json", projectID: batch.draft.id, owner: batch.owner)
-        let current = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: manifest))
-        let digest = try StoryAgentRun.digest(current)
-        let draftDigest = try StoryAgentRun.digest(batch.draft)
-        guard digest == batch.expectedProjectDigest || digest == draftDigest else { throw StoryAgentError.projectChanged }
-        let data = try JSONEncoder().encode(batch)
-        guard data.count <= 32 * 1024 * 1024 else { throw StoryAgentError.invalidRun }
-        try data.write(to: try fileURL("media-batch-\(batch.id).json", projectID: batch.draft.id, owner: batch.owner), options: .atomic)
-        if digest != draftDigest { try save(batch.draft, owner: batch.owner) }
+    func commitMediaBatch(_ batch: StoryMediaBatch) async throws {
+        try await withMutation {
+            try batch.validate(owner: batch.owner, projectID: batch.draft.id)
+            let current = try await self.loadProject(projectID: batch.draft.id, owner: batch.owner)
+            let digest = try StoryAgentRun.digest(current)
+            let draftDigest = try StoryAgentRun.digest(batch.draft)
+            guard digest == batch.expectedProjectDigest || digest == draftDigest else {
+                throw StoryAgentError.projectChanged
+            }
+            _ = try await self.putRecord(
+                batch,
+                recordID: Self.mediaBatchRecordID(batch.id),
+                projectID: batch.draft.id,
+                kind: .mediaBatch,
+                status: batch.status.rawValue,
+                owner: batch.owner
+            )
+            if digest != draftDigest {
+                try await self.saveUnlocked(batch.draft, owner: batch.owner)
+            }
+        }
     }
 }

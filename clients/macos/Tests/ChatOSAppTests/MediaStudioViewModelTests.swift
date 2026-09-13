@@ -8,7 +8,8 @@ final class MediaStudioViewModelTests: XCTestCase {
     func testModelChangesResetUnsupportedResolutionAndDuration() async throws {
         let viewModel = MediaStudioViewModel(
             service: MediaStudioFailureService(),
-            historyStore: testHistoryStore()
+            historyStore: testHistoryStore(),
+            storyStore: testStoryStore()
         )
         viewModel.activate(userID: "media-studio-test")
         viewModel.loadIfNeeded()
@@ -26,7 +27,8 @@ final class MediaStudioViewModelTests: XCTestCase {
     func testRejectedCreationClearsQueuedProgressAndAllowsRetry() async throws {
         let viewModel = MediaStudioViewModel(
             service: MediaStudioFailureService(),
-            historyStore: testHistoryStore()
+            historyStore: testHistoryStore(),
+            storyStore: testStoryStore()
         )
         viewModel.activate(userID: "media-studio-test")
         viewModel.loadIfNeeded()
@@ -49,6 +51,13 @@ final class MediaStudioViewModelTests: XCTestCase {
             .appendingPathComponent("MediaStudioViewModelTests-\(UUID().uuidString)")
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
         return makeMediaStudioHistoryStore(root: root)
+    }
+
+    private func testStoryStore() -> StoryProjectStore {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MediaStudioStoryTests-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return makeStoryProjectStore(root: root)
     }
 }
 

@@ -132,7 +132,11 @@ final class MediaStudioImageInteractionTests: XCTestCase {
             images: ["first", "second"].map { .init(id: $0, mimeType: "image/png", base64Data: png.base64EncodedString()) }
         ), prompt: "saved images", owner: "test-account")
         let service = ImageReferenceCaptureService()
-        let vm = MediaStudioViewModel(service: service, historyStore: store)
+        let vm = MediaStudioViewModel(
+            service: service,
+            historyStore: store,
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
+        )
         vm.activate(userID: "test-account")
         vm.loadIfNeeded()
         try await wait { !vm.isLoadingHistory && !vm.isLoadingModels }

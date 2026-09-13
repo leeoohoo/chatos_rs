@@ -334,33 +334,6 @@ public struct StorySegment: Codable, Equatable, Identifiable, Sendable {
         self.kind = kind; self.seconds = seconds
         self.characterIDs = characterIDs; self.sceneIDs = sceneIDs; self.propIDs = propIDs
     }
-    private enum CodingKeys: String, CodingKey {
-        case id, title, synopsis, kind, seconds, sourceRange, characterIDs, sceneIDs, propIDs, detail
-        case firstFrames, inheritedFirstFrameSourceSegmentID, lastFrames, useLastFrameForVideo
-        case attempt, previousAttempts, video, error
-    }
-    public init(from decoder: any Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decode(String.self, forKey: .id)
-        title = try values.decode(String.self, forKey: .title)
-        synopsis = try values.decode(String.self, forKey: .synopsis)
-        kind = try values.decodeIfPresent(StorySegmentKind.self, forKey: .kind) ?? .story
-        seconds = try values.decodeIfPresent(Int.self, forKey: .seconds) ?? 15
-        sourceRange = try values.decode(StorySourceRange.self, forKey: .sourceRange)
-        characterIDs = try values.decodeIfPresent([String].self, forKey: .characterIDs) ?? []
-        sceneIDs = try values.decodeIfPresent([String].self, forKey: .sceneIDs) ?? []
-        propIDs = try values.decodeIfPresent([String].self, forKey: .propIDs) ?? []
-        detail = try values.decodeIfPresent(StorySegmentDetail.self, forKey: .detail)
-        firstFrames = try values.decodeIfPresent(StoryImageCollection.self, forKey: .firstFrames) ?? .init()
-        inheritedFirstFrameSourceSegmentID = try values.decodeIfPresent(String.self, forKey: .inheritedFirstFrameSourceSegmentID)
-        // version=2 projects written before tail-frame support intentionally decode to an empty collection.
-        lastFrames = try values.decodeIfPresent(StoryImageCollection.self, forKey: .lastFrames) ?? .init()
-        useLastFrameForVideo = try values.decodeIfPresent(Bool.self, forKey: .useLastFrameForVideo) ?? true
-        attempt = try values.decodeIfPresent(StoryVideoAttempt.self, forKey: .attempt)
-        previousAttempts = try values.decodeIfPresent([StoryVideoAttempt].self, forKey: .previousAttempts) ?? []
-        video = try values.decodeIfPresent(StoryVideo.self, forKey: .video)
-        error = try values.decodeIfPresent(String.self, forKey: .error)
-    }
     public var resourceIDs: [String] { characterIDs + sceneIDs + propIDs }
     public var firstFrame: StoryImage? { firstFrames.confirmedImage }
     public var lastFrame: StoryImage? { lastFrames.confirmedImage }
@@ -475,22 +448,6 @@ public struct StoryVideoAttempt: Codable, Equatable, Sendable {
         self.seconds = seconds
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case id, modelConfigID, prompt, size, ratio, seconds, jobID, status, createdAt
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        modelConfigID = try values.decode(String.self, forKey: .modelConfigID)
-        prompt = try values.decode(String.self, forKey: .prompt)
-        size = try values.decode(String.self, forKey: .size)
-        ratio = try values.decode(String.self, forKey: .ratio)
-        seconds = try values.decodeIfPresent(Int.self, forKey: .seconds) ?? 15
-        jobID = try values.decodeIfPresent(String.self, forKey: .jobID)
-        status = try values.decodeIfPresent(String.self, forKey: .status) ?? "submitting"
-        createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-    }
 }
 
 public struct StoryVideo: Codable, Equatable, Sendable {

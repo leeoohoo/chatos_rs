@@ -13,13 +13,14 @@ use crate::{
     require_bounded_json, require_digest, require_identifier, AgentMessage, AgentMessageRole,
     ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
     ClipboardMutationResult, CreateProjectCommand, DeleteClipboardCommand, DeleteMediaCommand,
-    ExportClientDataCommand, GetClipboardCommand, GetMediaCommand, GetProjectCommand,
-    ImportClientDataCommand, InstallProjectPluginCapabilityCommand, ListClipboardCommand,
-    ListMediaCommand, ListProjectsCommand, LocalAgentRun, LocalClipboardSnapshot,
-    LocalMediaSnapshot, LocalProjectSnapshot, MediaMutationResult, PostgresConnectionTestCommand,
-    PostgresConnectionTestResult, ProtocolError, PutMediaCommand,
-    RemoveProjectPluginCapabilityCommand, SetClipboardPinnedCommand, StoreClipboardCommand,
-    ToolExecution, UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    DeleteStoryCommand, ExportClientDataCommand, GetClipboardCommand, GetMediaCommand,
+    GetProjectCommand, GetStoryCommand, ImportClientDataCommand,
+    InstallProjectPluginCapabilityCommand, ListClipboardCommand, ListMediaCommand,
+    ListProjectsCommand, ListStoriesCommand, LocalAgentRun, LocalClipboardSnapshot,
+    LocalMediaSnapshot, LocalProjectSnapshot, LocalStorySnapshot, MediaMutationResult,
+    PostgresConnectionTestCommand, PostgresConnectionTestResult, ProtocolError, PutMediaCommand,
+    PutStoryCommand, RemoveProjectPluginCapabilityCommand, SetClipboardPinnedCommand,
+    StoreClipboardCommand, ToolExecution, UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -99,6 +100,10 @@ pub enum LocalAgentCommand {
     ListMedia(ListMediaCommand),
     PutMedia(PutMediaCommand),
     DeleteMedia(DeleteMediaCommand),
+    GetStory(GetStoryCommand),
+    ListStories(ListStoriesCommand),
+    PutStory(PutStoryCommand),
+    DeleteStory(DeleteStoryCommand),
     SubscribeRunEvents { after_seq: u64, limit: u32 },
     GetUiEventCursor,
     AcknowledgeUiEvents { through_seq: u64 },
@@ -146,6 +151,10 @@ impl LocalAgentCommand {
             Self::ListMedia(command) => command.validate(),
             Self::PutMedia(command) => command.validate(),
             Self::DeleteMedia(command) => command.validate(),
+            Self::GetStory(command) => command.validate(),
+            Self::ListStories(command) => command.validate(),
+            Self::PutStory(command) => command.validate(),
+            Self::DeleteStory(command) => command.validate(),
             Self::SubscribeRunEvents { limit, .. } => validate_page(None, *limit),
             Self::GetUiEventCursor => Ok(()),
             Self::AcknowledgeUiEvents { through_seq } => {
@@ -954,6 +963,11 @@ pub enum LocalAgentIpcResponse {
         next_cursor: Option<String>,
     },
     MediaMutation(MediaMutationResult),
+    Story(LocalStorySnapshot),
+    StoryRecords {
+        records: Vec<LocalStorySnapshot>,
+        next_cursor: Option<String>,
+    },
     Events {
         events: Vec<LocalAgentUiEvent>,
         next_seq: u64,
@@ -1042,6 +1056,19 @@ impl LocalAgentIpcResponse {
                 Ok(())
             }
             Self::MediaMutation(result) => result.validate(),
+            Self::Story(record) => record.validate(),
+            Self::StoryRecords {
+                records,
+                next_cursor,
+            } => {
+                for record in records {
+                    record.validate()?;
+                }
+                if let Some(cursor) = next_cursor {
+                    require_identifier("next_cursor", cursor)?;
+                }
+                Ok(())
+            }
             Self::Events {
                 events, next_seq, ..
             } => {

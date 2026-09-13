@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use chatos_client_storage::{
     decode_storage_archive, AgentRunStateRecord, ClientStorage, ClipboardRecord, MediaStateRecord,
     PutRecord, RecordMetadata, RecordScope, SecretReference, SqliteBootstrapProfile,
-    SqliteClientStorage, StorageEncryptionKey, StorageResult, StorageTransaction,
-    TransactionRepositories,
+    SqliteClientStorage, StorageEncryptionKey, StorageResult, StorageTransaction, StoryRecord,
+    StoryRecordKind, TransactionRepositories,
 };
 use chatos_local_agent_host::{
     LocalAgentIpcMutationExecutor, LocalAgentStorageIpcExecutor, LocalAgentStoragePlatform,
@@ -248,7 +248,7 @@ async fn archive_export_strips_local_payload_references_and_import_checks_digest
         LocalAgentIpcResponse::DataTransfer(result) => (result.archive_digest, result.record_count),
         other => panic!("unexpected response: {other:?}"),
     };
-    assert_eq!(record_count, 1);
+    assert_eq!(record_count, 2);
     let bytes = source_platform
         .state
         .lock()
@@ -259,6 +259,11 @@ async fn archive_export_strips_local_payload_references_and_import_checks_digest
     let decoded = decode_storage_archive(bytes.as_slice()).unwrap();
     assert_eq!(decoded.records.clipboard[0].payload_reference, None);
     assert!(decoded.records.media.is_empty());
+    assert_eq!(decoded.records.stories.len(), 1);
+    assert_eq!(
+        decoded.records.stories[0].metadata.id,
+        "story-without-media"
+    );
 
     let target_platform = Arc::new(Platform {
         state: Mutex::new(PlatformState {
@@ -325,6 +330,36 @@ impl StorageTransaction for SeedArchiveRecords {
                             "payload_reference": "Payloads/owner/media-1/image.png"
                         }]
                     }),
+                },
+                expected_revision: None,
+            })
+            .await?;
+        repositories
+            .stories()
+            .put(PutRecord {
+                record: StoryRecord {
+                    metadata: metadata("story-with-media", now),
+                    project_id: "project-1".to_string(),
+                    kind: StoryRecordKind::Project,
+                    status: Some("draft".to_string()),
+                    state: serde_json::json!({
+                        "cover": {
+                            "payload_reference": "Payloads/owner/story-1/cover.png"
+                        }
+                    }),
+                },
+                expected_revision: None,
+            })
+            .await?;
+        repositories
+            .stories()
+            .put(PutRecord {
+                record: StoryRecord {
+                    metadata: metadata("story-without-media", now),
+                    project_id: "project-2".to_string(),
+                    kind: StoryRecordKind::Project,
+                    status: Some("draft".to_string()),
+                    state: serde_json::json!({"title": "portable story"}),
                 },
                 expected_revision: None,
             })

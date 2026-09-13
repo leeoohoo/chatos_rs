@@ -115,7 +115,8 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         let backend = MediaStudioHistoryTestBackend()
         let vm = MediaStudioViewModel(
             service: HistoryGenerationService(),
-            historyStore: makeMediaStudioHistoryStore(root: root, backend: backend)
+            historyStore: makeMediaStudioHistoryStore(root: root, backend: backend),
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
         )
         vm.activate(userID: "alice")
         vm.loadIfNeeded()
@@ -130,7 +131,8 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         XCTAssertTrue(vm.history.isEmpty)
         let restarted = MediaStudioViewModel(
             service: HistoryGenerationService(),
-            historyStore: makeMediaStudioHistoryStore(root: root, backend: backend)
+            historyStore: makeMediaStudioHistoryStore(root: root, backend: backend),
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
         )
         restarted.activate(userID: "alice")
         try await wait { !restarted.isLoadingHistory }
@@ -150,7 +152,8 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         let backend = MediaStudioHistoryTestBackend()
         let vm = MediaStudioViewModel(
             service: service,
-            historyStore: makeMediaStudioHistoryStore(root: root, backend: backend)
+            historyStore: makeMediaStudioHistoryStore(root: root, backend: backend),
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
         )
         vm.activate(userID: "alice")
         vm.loadIfNeeded()
@@ -181,7 +184,11 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         ]
         let store = makeMediaStudioHistoryStore(root: root)
         _ = try await store.saveImage(result, prompt: "two references", owner: "alice")
-        let vm = MediaStudioViewModel(service: HistoryGenerationService(), historyStore: store)
+        let vm = MediaStudioViewModel(
+            service: HistoryGenerationService(),
+            historyStore: store,
+            storyStore: makeStoryProjectStore(root: root.appendingPathComponent("stories"))
+        )
         vm.activate(userID: "alice")
         try await wait { !vm.isLoadingHistory }
         let assets = try XCTUnwrap(vm.history.first?.images)

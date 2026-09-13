@@ -5,8 +5,8 @@ import ChatOSCore
 import Foundation
 import Testing
 
-@Suite("Shared Local Agent protocol v19 fixtures")
-struct LocalAgentProtocolV19FixtureTests {
+@Suite("Shared Local Agent protocol v20 fixtures")
+struct LocalAgentProtocolV20FixtureTests {
     private struct Request: Encodable {
         let protocolVersion: UInt32
         let requestID: String
@@ -32,7 +32,7 @@ struct LocalAgentProtocolV19FixtureTests {
             with: Data(contentsOf: fixtureURL("retry_task_request.json"))
         ) as? NSDictionary
 
-        #expect(localAgentProtocolVersion == 19)
+        #expect(localAgentProtocolVersion == 20)
         #expect(encoded == fixture)
     }
 
@@ -124,6 +124,50 @@ struct LocalAgentProtocolV19FixtureTests {
         #expect(result.record?.draft.projectID == "project-1")
         #expect(result.record?.draft.status == .completed)
         #expect(result.discardedPayloadReferences.isEmpty)
+    }
+
+    @Test("encodes and decodes owner-scoped Story state")
+    func storyState() throws {
+        let projectID = "00000000-0000-4000-8000-000000000020"
+        let request = Request(
+            protocolVersion: localAgentProtocolVersion,
+            requestID: "request-put-story-1",
+            ownerUserID: "user-1",
+            command: .putStory(
+                recordID: "project:\(projectID)",
+                expectedRevision: nil,
+                draft: .init(
+                    projectID: projectID,
+                    kind: .project,
+                    status: "draft",
+                    state: .object([
+                        "id": .string(projectID),
+                        "title": .string("Visual story"),
+                    ])
+                )
+            )
+        )
+        let encoded = try JSONSerialization.jsonObject(
+            with: LocalAgentProtocolJSON.encoder().encode(request)
+        ) as? NSDictionary
+        let fixture = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: fixtureURL("story_put_request.json"))
+        ) as? NSDictionary
+        #expect(encoded == fixture)
+
+        let reply = try LocalAgentProtocolJSON.decoder().decode(
+            LocalAgentIPCReply.self,
+            from: Data(contentsOf: fixtureURL("story_records_response.json"))
+        )
+        guard case let .storyRecords(records, nextCursor) = reply.response else {
+            Issue.record("Expected a Story records response")
+            return
+        }
+        #expect(reply.protocolVersion == localAgentProtocolVersion)
+        #expect(records.first?.ownerUserID == "user-1")
+        #expect(records.first?.draft.projectID == projectID)
+        #expect(records.first?.draft.kind == .project)
+        #expect(nextCursor == nil)
     }
 
     @Test("encodes and decodes owner-scoped Project CRUD")
@@ -286,7 +330,7 @@ struct LocalAgentProtocolV19FixtureTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v19")
+            .appendingPathComponent("shared/fixtures/local_agent/v20")
             .appendingPathComponent(name)
     }
 }

@@ -177,7 +177,7 @@ pub struct ClipboardRecord {
 pub enum StoryRecordKind {
     Project,
     AgentRun,
-    Continuity,
+    MediaBatch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

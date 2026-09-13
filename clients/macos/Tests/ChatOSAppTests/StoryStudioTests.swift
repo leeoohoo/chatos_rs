@@ -209,24 +209,6 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(segment.video)
     }
 
-    func testLegacyMiniMaxPromptFailureIsUnlockedWhenProjectLoads() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoryPreflightMigration-\(UUID())")
-        let store = StoryProjectStore(root: root)
-        addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
-        var project = makeProject()
-        var segment = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
-        segment.attempt = .init(modelConfigID: "video", prompt: String(repeating: "长提示", count: 3_000),
-                                size: "768P", ratio: "16:9")
-        segment.error = "MiniMax 视频提示词不能为空，且不能超过 7000 字符。"
-        project.segments = [segment]
-        try await store.save(project, owner: "alice")
-
-        let loaded = try await store.load(owner: "alice")
-        XCTAssertNil(loaded.projects.first?.segments.first?.attempt)
-        XCTAssertEqual(loaded.projects.first?.segments.first?.error,
-                       "MiniMax 视频提示词不能为空，且不能超过 7000 字符。")
-    }
-
     func testManualRetryArchivesIntentAndNeverImmediatelyGenerates() async throws {
         let (vm, _, service) = try await fixture()
         var draft = makeProject()
@@ -243,16 +225,25 @@ final class StoryStudioTests: XCTestCase {
     }
 
     func testStoreRejectsTraversalAndPreservesCorruptProjects() async throws {
-        let (_, store, _) = try await fixture()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StoryCorruptRecordTests-\(UUID().uuidString)")
+        let backend = StoryProjectTestBackend()
+        let store = makeStoryProjectStore(root: root, backend: backend)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
         let draft = makeProject()
         try await store.save(draft, owner: "alice")
         XCTAssertThrowsError(try store.fileURL("../../secret", projectID: draft.id, owner: "alice"))
-        let manifest = try store.fileURL("project.json", projectID: draft.id, owner: "alice")
-        try Data("broken".utf8).write(to: manifest)
+        var record = try await backend.record(
+            owner: "alice",
+            id: StoryProjectStore.projectRecordID(draft.id)
+        )
+        record.draft.state = .string("broken")
+        await backend.replace(owner: "alice", record: record)
         let snapshot = try await store.load(owner: "alice")
         XCTAssertEqual(snapshot.unreadableCount, 1)
         XCTAssertTrue(snapshot.projects.isEmpty)
-        XCTAssertEqual(try String(contentsOf: manifest, encoding: .utf8), "broken")
+        let preserved = try await backend.record(owner: "alice", id: record.recordID)
+        XCTAssertEqual(preserved.draft.state, .string("broken"))
     }
 
     func testSigningOutDuringPlanningDropsLateOutput() async throws {
@@ -478,20 +469,9 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertEqual(batch.steps.map(\.targetID), ["hero", "room", "s1", "s1", "s1"])
     }
 
-    func testLegacySegmentWithoutTailFrameFieldsStillDecodes() throws {
-        let original = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
-        object.removeValue(forKey: "lastFrames")
-        object.removeValue(forKey: "useLastFrameForVideo")
-        let decoded = try JSONDecoder().decode(StorySegment.self, from: JSONSerialization.data(withJSONObject: object))
-        XCTAssertTrue(decoded.lastFrames.images.isEmpty)
-        XCTAssertNil(decoded.lastFrameGenerationAttemptID)
-        XCTAssertTrue(decoded.useLastFrameForVideo)
-    }
-
     func testFirstAndLastFrameAttemptsMergeByRoleAndAttemptID() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoryFrameStoreTests-\(UUID().uuidString)", isDirectory: true)
-        let store = StoryProjectStore(root: root)
+        let store = makeStoryProjectStore(root: root)
         addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
         var project = makeProject()
         var segment = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
@@ -520,7 +500,7 @@ final class StoryStudioTests: XCTestCase {
 
     func testRegenerationKeepsPreviouslyConfirmedAssetAndFrameVersions() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoryRegenerationTests-\(UUID().uuidString)", isDirectory: true)
-        let store = StoryProjectStore(root: root)
+        let store = makeStoryProjectStore(root: root)
         addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
         var project = makeProject()
         project.props = [.init(id: "key", name: "钥匙", description: "一把旧铜钥匙")]
@@ -620,7 +600,7 @@ final class StoryStudioTests: XCTestCase {
 
     func testConcurrentAssetGenerationsUseStableIDsAndMergeReverseCompletions() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoryConcurrentTests-\(UUID().uuidString)", isDirectory: true)
-        let store = StoryProjectStore(root: root)
+        let store = makeStoryProjectStore(root: root)
         addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16,
@@ -674,7 +654,7 @@ final class StoryStudioTests: XCTestCase {
 
     func testFirstFrameGenerationAutomaticallyIncludesPreviousConfirmedTail() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoryContinuityFrameTests-\(UUID().uuidString)", isDirectory: true)
-        let store = StoryProjectStore(root: root)
+        let store = makeStoryProjectStore(root: root)
         addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16,
@@ -894,7 +874,7 @@ final class StoryStudioTests: XCTestCase {
     }
     private func fixture() async throws -> (StoryStudioViewModel, StoryProjectStore, StoryTestService) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoryStudioTests-\(UUID().uuidString)", isDirectory: true)
-        let store = StoryProjectStore(root: root)
+        let store = makeStoryProjectStore(root: root)
         addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
         let service = StoryTestService()
         let vm = StoryStudioViewModel(media: service, planner: service, store: store)

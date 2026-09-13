@@ -16,6 +16,7 @@ mod plugin_ipc;
 mod project_ipc;
 mod run;
 mod storage_ipc;
+mod story_ipc;
 mod tool;
 
 pub use clipboard_ipc::*;
@@ -29,9 +30,10 @@ pub use plugin_ipc::*;
 pub use project_ipc::*;
 pub use run::*;
 pub use storage_ipc::*;
+pub use story_ipc::*;
 pub use tool::*;
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 19;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 20;
 pub const MAX_BOUNDED_JSON_BYTES: usize = 64 * 1024;
 pub const MAX_PLUGIN_CAPABILITY_JSON_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_ENCRYPTED_CONTEXT_BYTES: usize = 128 * 1024;

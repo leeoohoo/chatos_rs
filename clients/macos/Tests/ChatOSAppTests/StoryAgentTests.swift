@@ -425,7 +425,7 @@ final class StoryAgentTests: XCTestCase {
     private func fixture() -> StoryProjectStore {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoryAgentTests-\(UUID())")
         addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
-        return StoryProjectStore(root: root)
+        return makeStoryProjectStore(root: root)
     }
     private func project() -> StoryProject {
         var project = StoryProject(title: "故事", description: "从开头到结局", models: .init(textModelID: "text", imageModelID: "image", videoModelID: "video"))

@@ -1,0 +1,20 @@
+{
+  "protocol_version": 20,
+  "request_id": "request-put-story-1",
+  "owner_user_id": "user-1",
+  "command": {
+    "type": "put_story",
+    "payload": {
+      "record_id": "project:00000000-0000-4000-8000-000000000020",
+      "draft": {
+        "project_id": "00000000-0000-4000-8000-000000000020",
+        "kind": "project",
+        "status": "draft",
+        "state": {
+          "id": "00000000-0000-4000-8000-000000000020",
+          "title": "Visual story"
+        }
+      }
+    }
+  }
+}

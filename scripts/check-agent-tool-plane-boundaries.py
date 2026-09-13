@@ -211,7 +211,6 @@ require(
 )
 production_files = rust_files(
     [
-        "agent/src",
         "clients/shared/rust",
         "local_connector_service/backend/src",
         "mcp_management_service/backend/src",

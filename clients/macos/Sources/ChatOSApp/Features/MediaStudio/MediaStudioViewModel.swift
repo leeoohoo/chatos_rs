@@ -90,9 +90,15 @@ final class MediaStudioViewModel: ObservableObject {
     private var inputImagesSelectionID = UUID()
     private let imageTransport: any HTTPTransport
 
-    init(service: any MediaGenerationServicing, historyStore: MediaStudioHistoryStore, imageTransport: any HTTPTransport = URLSessionHTTPTransport(), storyPlanner: (any StoryPlanningServicing)? = nil) {
+    init(
+        service: any MediaGenerationServicing,
+        historyStore: MediaStudioHistoryStore,
+        storyStore: StoryProjectStore,
+        imageTransport: any HTTPTransport = URLSessionHTTPTransport(),
+        storyPlanner: (any StoryPlanningServicing)? = nil
+    ) {
         self.service = service
-        self.stories = StoryStudioViewModel(media: service, planner: storyPlanner)
+        self.stories = StoryStudioViewModel(media: service, planner: storyPlanner, store: storyStore)
         self.historyStore = historyStore
         self.imageTransport = imageTransport
     }

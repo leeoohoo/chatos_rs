@@ -249,6 +249,10 @@ fn strip_large_payload_references(archive: &mut ClientStorageArchive) {
         .records
         .media
         .retain(|record| !contains_large_payload_reference(&record.state));
+    archive
+        .records
+        .stories
+        .retain(|record| !contains_large_payload_reference(&record.state));
 }
 
 fn contains_large_payload_reference(value: &serde_json::Value) -> bool {
