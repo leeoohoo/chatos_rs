@@ -73,13 +73,35 @@ struct MessageTaskInspectorView: View {
     @ViewBuilder
     private func process(_ task: MessageTask) -> some View {
         TaskInspectorTitle(task: task)
-        TaskProcessTimelineView(
-            items: TaskProcessTimelineBuilder.build(
-                processLog: task.processLog,
-                taskStatus: task.status
-            ),
-            allowsTextSelection: false
-        )
+        if viewModel.isLoadingRun && viewModel.runDetail == nil {
+            ProgressView("正在加载实时执行过程…")
+        } else if let detail = viewModel.runDetail, !detail.events.isEmpty {
+            TaskRunEventTimeline(
+                events: detail.events,
+                allowsTextSelection: false
+            )
+            if detail.eventsHasMore {
+                Button {
+                    viewModel.loadMoreRunEvents()
+                } label: {
+                    if viewModel.isLoadingMoreRunEvents {
+                        ProgressView().controlSize(.small)
+                        Text("正在加载…")
+                    } else {
+                        Text("加载更多执行事件（剩余 \(max(detail.eventsTotal - detail.events.count, 0))）")
+                    }
+                }
+                .disabled(viewModel.isLoadingMoreRunEvents)
+            }
+        } else {
+            ContentUnavailableView(
+                "暂无执行过程",
+                systemImage: "list.bullet.clipboard",
+                description: Text(task.lastRunID == nil
+                    ? "该任务尚未开始运行。"
+                    : "Local Host 尚未为这次 Run 写入模型或工具事件。")
+            )
+        }
     }
 
     @ViewBuilder

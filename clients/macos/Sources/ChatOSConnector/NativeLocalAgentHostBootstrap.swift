@@ -83,6 +83,7 @@ public struct NativeLocalAgentHostBootstrapSettings: Sendable {
     public let platformStateDirectory: URL
     public let modelGatewayBaseURL: URL
     public let memoryEngineBaseURL: URL
+    public let pluginManagementBaseURL: URL
     public let memorySourceID: String
     public let storage: NativeLocalAgentStorageBootstrap
 
@@ -95,6 +96,7 @@ public struct NativeLocalAgentHostBootstrapSettings: Sendable {
         platformStateDirectory: URL,
         modelGatewayBaseURL: URL,
         memoryEngineBaseURL: URL,
+        pluginManagementBaseURL: URL,
         memorySourceID: String = "chatos",
         storage: NativeLocalAgentStorageBootstrap
     ) {
@@ -106,6 +108,7 @@ public struct NativeLocalAgentHostBootstrapSettings: Sendable {
         self.platformStateDirectory = platformStateDirectory
         self.modelGatewayBaseURL = modelGatewayBaseURL
         self.memoryEngineBaseURL = memoryEngineBaseURL
+        self.pluginManagementBaseURL = pluginManagementBaseURL
         self.memorySourceID = memorySourceID
         self.storage = storage
     }
@@ -172,6 +175,7 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
             "platform_state_directory": settings.platformStateDirectory.path,
             "model_gateway_base_url": settings.modelGatewayBaseURL.absoluteString,
             "memory_engine_base_url": settings.memoryEngineBaseURL.absoluteString,
+            "plugin_management_base_url": settings.pluginManagementBaseURL.absoluteString,
             "memory_source_id": settings.memorySourceID,
             "storage_profile": storageProfile,
             "credential_references": [
@@ -255,6 +259,10 @@ public struct NativeLocalAgentHostBootstrapBuilder: Sendable {
         }
         try validateServiceURL(settings.modelGatewayBaseURL, field: "modelGatewayBaseURL")
         try validateServiceURL(settings.memoryEngineBaseURL, field: "memoryEngineBaseURL")
+        try validateServiceURL(
+            settings.pluginManagementBaseURL,
+            field: "pluginManagementBaseURL"
+        )
     }
 
     private func validateServiceURL(_ url: URL, field: String) throws {

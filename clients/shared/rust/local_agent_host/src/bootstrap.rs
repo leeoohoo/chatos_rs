@@ -16,7 +16,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::ProvidedLocalAgentCredentials;
 
-pub const LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION: u32 = 4;
+pub const LOCAL_AGENT_HOST_LAUNCH_PROTOCOL_VERSION: u32 = 5;
 pub const MAXIMUM_LOCAL_AGENT_LAUNCH_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAXIMUM_LOCAL_AGENT_SECRET_FRAME_BYTES: usize = 512 * 1024;
 const MAXIMUM_LOCAL_AGENT_SECRET_BYTES: usize = 64 * 1024;
@@ -132,6 +132,7 @@ pub struct LocalAgentHostLaunchRequest {
     pub platform_state_directory: String,
     pub model_gateway_base_url: String,
     pub memory_engine_base_url: String,
+    pub plugin_management_base_url: String,
     pub memory_source_id: String,
     pub storage_profile: BootstrapStorageProfile,
     pub credential_references: LocalAgentHostCredentialReferences,
@@ -151,6 +152,10 @@ impl fmt::Debug for LocalAgentHostLaunchRequest {
             .field("platform_state_directory", &"[PRIVATE DIRECTORY]")
             .field("model_gateway_base_url", &self.model_gateway_base_url)
             .field("memory_engine_base_url", &self.memory_engine_base_url)
+            .field(
+                "plugin_management_base_url",
+                &self.plugin_management_base_url,
+            )
             .field("memory_source_id", &self.memory_source_id)
             .field("storage_profile", &self.storage_profile)
             .field("credential_references", &self.credential_references)
@@ -174,6 +179,10 @@ impl LocalAgentHostLaunchRequest {
         }
         validate_service_url("model_gateway_base_url", &self.model_gateway_base_url)?;
         validate_service_url("memory_engine_base_url", &self.memory_engine_base_url)?;
+        validate_service_url(
+            "plugin_management_base_url",
+            &self.plugin_management_base_url,
+        )?;
         self.ipc_endpoint.validate()?;
         for (field, value) in [
             (

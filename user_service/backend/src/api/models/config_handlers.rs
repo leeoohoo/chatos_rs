@@ -401,6 +401,21 @@ fn validate_context_window_tokens(
 fn validate_model_runtime_metadata(
     record: &UserModelConfigRecord,
 ) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
+    if record.protocol.is_none() {
+        return Err(bad_request("protocol is required"));
+    }
+    if record.context_strategy.is_none() {
+        return Err(bad_request("context_strategy is required"));
+    }
+    if record.context_window_tokens.is_none() {
+        return Err(bad_request("context_window_tokens is required"));
+    }
+    if record.max_output_tokens.is_none() {
+        return Err(bad_request("max_output_tokens is required"));
+    }
+    if !record.supports_streaming {
+        return Err(bad_request("supports_streaming must be enabled"));
+    }
     if let (Some(context_window_tokens), Some(max_output_tokens)) =
         (record.context_window_tokens, record.max_output_tokens)
     {

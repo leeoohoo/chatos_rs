@@ -27,9 +27,10 @@ use crate::{
     LocalAgentHostStartupReport, LocalAgentHostWorker, LocalAgentIpcMutationExecutor,
     LocalAgentIpcServerError, LocalAgentMemorySyncWorker, LocalAgentProfileRegistry,
     LocalAgentStoragePlatform, LocalAttachmentGrantResolver, LocalCapabilityPlatform,
-    ProfileRoutingLocalToolRuntime, ProviderContextEncryptionKey, RegisteredLocalCapabilityRuntime,
-    StandardLocalAgentContextRuntime, StoredApprovalReviewContextProvider,
-    StoredLocalCapabilityLoader, StoredLocalTaskCreationPlanner, StoredMainChatContextProvider,
+    PluginManagementTaskPromptSource, ProfileRoutingLocalToolRuntime, ProviderContextEncryptionKey,
+    RegisteredLocalCapabilityRuntime, StandardLocalAgentContextRuntime,
+    StoredApprovalReviewContextProvider, StoredLocalCapabilityLoader,
+    StoredLocalTaskCreationPlanner, StoredMainChatContextProvider,
     StoredStoryDesignContextProvider, StoredTaskRunnerContextProvider, StoryDesignLocalToolRuntime,
 };
 
@@ -212,6 +213,14 @@ pub async fn assemble_local_agent_host(
     let task_planner = Arc::new(StoredLocalTaskCreationPlanner::new(
         storage.clone(),
         scope.clone(),
+        request.device_id.clone(),
+        Arc::new(
+            PluginManagementTaskPromptSource::new(
+                request.plugin_management_base_url.clone(),
+                access_token.clone(),
+            )
+            .map_err(LocalAgentHostAssemblyError::Host)?,
+        ),
         capability_runtime.clone(),
     ));
     let capability_tool_runtime = Arc::new(FrozenCapabilityLocalToolRuntime::new(

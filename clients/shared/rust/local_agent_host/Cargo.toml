@@ -17,11 +17,13 @@ chatos_mcp_client = { path = "../chatos_mcp_client" }
 chatos_local_agent_protocol = { path = "../chatos_local_agent_protocol" }
 chatos_local_agent_runtime = { path = "../chatos_local_agent_runtime" }
 chatos_plugin_capability = { path = "../chatos_plugin_capability" }
+chatos_plugin_management_sdk = { path = "../../../../crates/chatos_plugin_management_sdk" }
 parking_lot = "0.12"
 chrono = "0.4"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt", "signal", "sync", "time"] }

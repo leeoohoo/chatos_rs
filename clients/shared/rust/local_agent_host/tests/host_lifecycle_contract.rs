@@ -822,7 +822,6 @@ fn task_runner_snapshots() -> (FrozenSnapshot, FrozenSnapshot, FrozenSnapshot) {
         serde_json::to_value(TaskRunnerPromptSnapshot {
             prompt_revision: "task-prompt-revision-1".to_string(),
             base_system_prompt: "Execute the local task safely.".to_string(),
-            task_prompt: "Preserve the approved visual design.".to_string(),
             skill_snapshot: serde_json::json!({"skills": []}),
         })
         .unwrap(),
@@ -2522,6 +2521,77 @@ async fn host_renews_the_claim_and_commits_a_successful_local_tool_batch() {
     assert_eq!(
         committed.run_record.run.status,
         LocalAgentRunStatus::ContinuationReady
+    );
+}
+
+#[tokio::test]
+async fn replayable_tool_failure_is_persisted_without_failing_the_host() {
+    let now = Utc::now();
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:failed-tool-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([42; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    storage
+        .transaction(&mut SeedToolBatch {
+            now,
+            effect: "read",
+        })
+        .await
+        .unwrap();
+    let tools = Arc::new(RecordingTools {
+        invocations: Mutex::new(Vec::new()),
+        delay: std::time::Duration::ZERO,
+        fail: true,
+    });
+    let profiles =
+        LocalAgentProfileRegistry::new([Arc::new(Profile) as Arc<dyn LocalAgentProfile>]).unwrap();
+    let (host, _) = LocalAgentHost::start(
+        storage.clone(),
+        Arc::new(Gateway),
+        Arc::new(TestContextRuntime),
+        tools,
+        Arc::new(UnusedTaskPlanner),
+        profiles,
+        scope(),
+        "device-1",
+        LocalAgentHostPolicy::default(),
+        now,
+    )
+    .await
+    .unwrap();
+    let SchedulerTickResult::Claimed(claimed) = host.claim_next("tool-claim-1", now).await.unwrap()
+    else {
+        panic!("tool batch was not claimed");
+    };
+
+    let committed = host
+        .execute_claimed_tool_batch(&claimed, &execution_session(), now)
+        .await
+        .expect("a failed replayable invocation must still commit its batch");
+    assert_eq!(
+        committed.emitted_events[0].event.event_type,
+        LocalAgentEventType::ToolBatchCompleted
+    );
+    let mut state = ReadCreationState::default();
+    storage.transaction(&mut state).await.unwrap();
+    assert_eq!(state.tool_executions.len(), 1);
+    let execution = &state.tool_executions[0].execution;
+    assert_eq!(execution.status, ToolExecutionStatus::Failed);
+    assert_eq!(
+        execution
+            .bounded_result
+            .as_ref()
+            .and_then(|value| value.pointer("/error/code"))
+            .and_then(serde_json::Value::as_str),
+        Some("local_tool_execution_failed")
     );
 }
 

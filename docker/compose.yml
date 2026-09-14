@@ -50,26 +50,6 @@ x-config-center-mtls-chatos-secrets: &config-center-mtls-chatos-secrets
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_chatos_identity
     target: plugin_management_mtls_client_identity
-  - source: local_connector_mtls_ca
-    target: local_connector_mtls_ca
-  - source: local_connector_mtls_chatos_identity
-    target: local_connector_mtls_client_identity
-
-x-config-center-mtls-local-connector-secrets: &config-center-mtls-local-connector-secrets
-  - source: config_center_mtls_ca
-    target: config_center_mtls_ca
-  - source: config_center_mtls_local_connector_identity
-    target: config_center_mtls_client_identity
-  - source: plugin_management_mtls_ca
-    target: plugin_management_mtls_ca
-  - source: plugin_management_mtls_local_connector_identity
-    target: plugin_management_mtls_client_identity
-  - source: local_connector_mtls_ca
-    target: local_connector_mtls_ca
-  - source: local_connector_mtls_server_cert
-    target: local_connector_mtls_server_cert
-  - source: local_connector_mtls_server_key
-    target: local_connector_mtls_server_key
 
 x-config-center-mtls-memory-engine-secrets: &config-center-mtls-memory-engine-secrets
   - source: config_center_mtls_ca
@@ -300,7 +280,6 @@ services:
       CONFIG_CENTER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
       CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET:-change_me_config_center_chatos_backend_signing_secret}
-      CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_local_connector_signing_secret}
       CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET:-change_me_config_center_memory_engine_signing_secret}
       CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET:-change_me_config_center_official_website_signing_secret}
       CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_plugin_management_signing_secret}
@@ -545,7 +524,6 @@ services:
       PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE: plugin_management_service
       PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       PLUGIN_MANAGEMENT_CORS_ORIGINS: ${PLUGIN_MANAGEMENT_CORS_ORIGINS:-http://127.0.0.1:39261,http://localhost:39261}
-      PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_local_connector_secret}
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
       PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME: ${CHATOS_ADMIN_USERNAME:-admin}
       PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
@@ -570,48 +548,6 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39260/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
-  local-connector-service-backend:
-    <<: *rust-service
-    image: ${LOCAL_CONNECTOR_SERVICE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-local-connector-service-backend:${CHATOS_IMAGE_TAG:-latest}}
-    secrets: *config-center-mtls-local-connector-secrets
-    environment:
-      <<: *service-runtime-env
-      CHATOS_SERVICE_NAME: local-connector-service
-      CONFIG_CENTER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_local_connector_signing_secret}
-      CHATOS_SERVICE_ID: local-connector-service-docker
-      CHATOS_SERVICE_ADDRESS: local-connector-service-backend
-      CHATOS_SERVICE_PORT: 39230
-      CHATOS_SERVICE_HEALTH_PATH: /api/health
-      LOCAL_CONNECTOR_SERVICE_HOST: 0.0.0.0
-      LOCAL_CONNECTOR_SERVICE_PORT: 39230
-      LOCAL_CONNECTOR_INTERNAL_MTLS_PORT: 39232
-      LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH: /run/secrets/local_connector_mtls_server_cert
-      LOCAL_CONNECTOR_MTLS_SERVER_KEY_PATH: /run/secrets/local_connector_mtls_server_key
-      LOCAL_CONNECTOR_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
-      LOCAL_CONNECTOR_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/local_connector_service?authSource=admin&replicaSet=rs0
-      LOCAL_CONNECTOR_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      LOCAL_CONNECTOR_PUBLIC_BASE_URL: ${LOCAL_CONNECTOR_PUBLIC_BASE_URL:-http://localhost:39230}
-      LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH:-}
-      LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH:-}
-      LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID:-}
-      LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS:-86400}
-      CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
-      LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-}
-      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_local_connector_secret}
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${LOCAL_CONNECTOR_SERVICE_PORT:-39230}:39230"
-    volumes:
-      - local-connector-data:/data/local_connector
-    depends_on:
-      plugin-management-backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39230/api/health"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -660,11 +596,7 @@ services:
       CHATOS_USER_SERVICE_INTERNAL_API_SECRET: ${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
       USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL: https://local-connector-service-backend:39232
-      LOCAL_CONNECTOR_MTLS_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
-      LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/local_connector_mtls_client_identity
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
       CHATOS_PLUGIN_UI_PARENT_ORIGIN: ${CHATOS_PLUGIN_UI_PARENT_ORIGIN:-}
       CHATOS_PLUGIN_UI_RESOURCE_ORIGIN: ${CHATOS_PLUGIN_UI_RESOURCE_ORIGIN:-}
       CHATOS_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
@@ -694,8 +626,6 @@ services:
       user-service-backend:
         condition: service_healthy
       memory-engine-backend:
-        condition: service_healthy
-      local-connector-service-backend:
         condition: service_healthy
       plugin-management-backend:
         condition: service_healthy
@@ -779,7 +709,6 @@ volumes:
   mongodb-data:
   minio-data:
   chatos-data:
-  local-connector-data:
   plugin-management-data:
   harness-data:
 
@@ -792,8 +721,6 @@ secrets:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/server.key
   config_center_mtls_chatos_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/chatos-backend.identity.pem
-  config_center_mtls_local_connector_identity:
-    file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/local-connector-service.identity.pem
   config_center_mtls_memory_engine_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/memory-engine.identity.pem
   config_center_mtls_official_website_identity:
@@ -802,14 +729,6 @@ secrets:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/plugin-management-service.identity.pem
   config_center_mtls_user_service_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/user-service.identity.pem
-  local_connector_mtls_ca:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/ca.crt
-  local_connector_mtls_server_cert:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/server.crt
-  local_connector_mtls_server_key:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/server.key
-  local_connector_mtls_chatos_identity:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/chatos-backend.identity.pem
   memory_engine_mtls_ca:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/ca.crt
   memory_engine_mtls_server_cert:
@@ -828,8 +747,6 @@ secrets:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/server.key
   plugin_management_mtls_chatos_identity:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/chatos-backend.identity.pem
-  plugin_management_mtls_local_connector_identity:
-    file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/local-connector-service.identity.pem
   plugin_management_mtls_memory_engine_identity:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/memory-engine.identity.pem
   user_service_mtls_ca:

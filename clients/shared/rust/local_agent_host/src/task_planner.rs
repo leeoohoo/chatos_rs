@@ -9,11 +9,16 @@ use chatos_agent_profiles::{
     TaskRunnerPromptSnapshot,
 };
 use chatos_client_storage::{
-    ClientSettingRecord, ClientStorage, ProjectRecord, RecordQuery, RecordScope, StorageError,
-    StorageResult, StorageTransaction, TransactionRepositories,
+    ClientSettingRecord, ClientStorage, ProjectRecord, PutRecord, RecordMetadata, RecordQuery,
+    RecordScope, StorageError, StorageResult, StorageTransaction, TransactionRepositories,
 };
 use chatos_local_agent_protocol::FrozenSnapshot;
-use serde::Deserialize;
+use chatos_memory_client::RotatingBearerToken;
+use chatos_plugin_management_sdk::{
+    required_agent_prompt_vendor, validate_agent_prompt_checksum, ResolveAgentPromptRequest,
+    ResolvedAgentPrompt, SystemAgentKey, DEFAULT_AGENT_PROMPT_PROFILE,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -21,16 +26,127 @@ use crate::{
     host::stable_host_id, LocalTaskCreationPlan, LocalTaskCreationPlanner, LocalTaskPlanningRequest,
 };
 
-pub const TASK_RUNNER_PROMPT_SETTING_ID: &str = "local-agent-task-runner-prompt";
 pub const TASK_RUNNER_PROMPT_SETTING_KEY: &str = "local_agent.task_runner_prompt";
+pub const TASK_RUNNER_PROMPT_SETTING_ID: &str = "client_setting:local_agent.task_runner_prompt";
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[async_trait]
+pub trait LocalTaskPromptSource: Send + Sync {
+    async fn resolve_prompt(
+        &self,
+        model_provider: &str,
+        cancellation: CancellationToken,
+    ) -> Result<LocalTaskPromptConfiguration, String>;
+}
+
+pub struct PluginManagementTaskPromptSource {
+    base_url: String,
+    access_token: RotatingBearerToken,
+    http: reqwest::Client,
+}
+
+impl PluginManagementTaskPromptSource {
+    pub fn new(
+        base_url: impl Into<String>,
+        access_token: RotatingBearerToken,
+    ) -> Result<Self, String> {
+        let base_url = base_url.into().trim().trim_end_matches('/').to_string();
+        let parsed = reqwest::Url::parse(base_url.as_str())
+            .map_err(|error| format!("Plugin Management URL is invalid: {error}"))?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err("Plugin Management URL must be an absolute HTTP(S) URL".to_string());
+        }
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|error| format!("Plugin Management client could not start: {error}"))?;
+        Ok(Self {
+            base_url,
+            access_token,
+            http,
+        })
+    }
+}
+
+#[async_trait]
+impl LocalTaskPromptSource for PluginManagementTaskPromptSource {
+    async fn resolve_prompt(
+        &self,
+        model_provider: &str,
+        cancellation: CancellationToken,
+    ) -> Result<LocalTaskPromptConfiguration, String> {
+        let vendor = required_agent_prompt_vendor(None, model_provider)
+            .map_err(|error| error.to_string())?;
+        let access_token = self
+            .access_token
+            .snapshot()
+            .map_err(|_| "model access token is unavailable".to_string())?;
+        let request = self
+            .http
+            .post(format!("{}/runtime/agent-prompts/resolve", self.base_url))
+            .bearer_auth(access_token.as_str())
+            .json(&ResolveAgentPromptRequest {
+                agent_key: SystemAgentKey::TaskRunnerRunPhase,
+                vendor,
+                profile: Some(DEFAULT_AGENT_PROMPT_PROFILE.to_string()),
+            })
+            .send();
+        let response = tokio::select! {
+            _ = cancellation.cancelled() => return Err("Task Runner Prompt sync was cancelled".to_string()),
+            response = request => response.map_err(|error| format!("Task Runner Prompt request failed: {error}"))?,
+        };
+        let status = response.status();
+        if !status.is_success() {
+            let detail = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Task Runner Prompt request was rejected with HTTP {}: {}",
+                status.as_u16(),
+                detail.chars().take(1_024).collect::<String>()
+            ));
+        }
+        let resolved: ResolvedAgentPrompt = response
+            .json()
+            .await
+            .map_err(|error| format!("Task Runner Prompt response is invalid: {error}"))?;
+        if resolved.agent_key != SystemAgentKey::TaskRunnerRunPhase.as_str()
+            || resolved.vendor != vendor
+            || resolved.revision <= 0
+            || !validate_agent_prompt_checksum(
+                resolved.content.as_str(),
+                resolved.checksum.as_str(),
+            )
+        {
+            return Err(
+                "Task Runner Prompt response failed identity or checksum validation".to_string(),
+            );
+        }
+        Ok(LocalTaskPromptConfiguration {
+            schema_version: 1,
+            prompt_revision: format!(
+                "{}:{}:{}",
+                resolved.vendor, resolved.revision, resolved.checksum
+            ),
+            base_system_prompt: resolved.content,
+            skill_snapshot: serde_json::json!({
+                "source": "plugin_management",
+                "vendor": resolved.vendor,
+                "published_at": resolved.published_at,
+            }),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalTaskPromptConfiguration {
     pub schema_version: u32,
     pub prompt_revision: String,
     pub base_system_prompt: String,
-    pub task_prompt: String,
     pub skill_snapshot: Value,
 }
 
@@ -63,6 +179,8 @@ pub trait LocalTaskCapabilityResolver: Send + Sync {
 pub struct StoredLocalTaskCreationPlanner {
     storage: Arc<dyn ClientStorage>,
     scope: RecordScope,
+    origin_device_id: String,
+    prompt_source: Arc<dyn LocalTaskPromptSource>,
     capability_resolver: Arc<dyn LocalTaskCapabilityResolver>,
 }
 
@@ -70,13 +188,39 @@ impl StoredLocalTaskCreationPlanner {
     pub fn new(
         storage: Arc<dyn ClientStorage>,
         scope: RecordScope,
+        origin_device_id: impl Into<String>,
+        prompt_source: Arc<dyn LocalTaskPromptSource>,
         capability_resolver: Arc<dyn LocalTaskCapabilityResolver>,
     ) -> Self {
         Self {
             storage,
             scope,
+            origin_device_id: origin_device_id.into(),
+            prompt_source,
             capability_resolver,
         }
+    }
+
+    async fn sync_prompt(
+        &self,
+        model_provider: &str,
+        cancellation: CancellationToken,
+    ) -> Result<(), String> {
+        let prompt = self
+            .prompt_source
+            .resolve_prompt(model_provider, cancellation)
+            .await?;
+        validate_prompt_configuration(&prompt)?;
+        let mut operation = PersistTaskRunnerPrompt {
+            scope: self.scope.clone(),
+            origin_device_id: self.origin_device_id.clone(),
+            prompt: Some(prompt),
+            now: chrono::Utc::now(),
+        };
+        self.storage
+            .transaction(&mut operation)
+            .await
+            .map_err(|error| format!("failed to persist resolved Task Runner Prompt: {error}"))
     }
 
     async fn load_sources(&self, project_id: &str) -> StorageResult<LocalTaskPlanningSources> {
@@ -105,11 +249,14 @@ impl LocalTaskCreationPlanner for StoredLocalTaskCreationPlanner {
         if request.project_id.trim().is_empty()
             || request.task_id.trim().is_empty()
             || request.model_config_id.trim().is_empty()
+            || request.model_provider.trim().is_empty()
             || request.objective.trim().is_empty()
             || request.acceptance_criteria.is_empty()
         {
             return Err("local Task planning request is incomplete".to_string());
         }
+        self.sync_prompt(&request.model_provider, cancellation.clone())
+            .await?;
         let sources = self
             .load_sources(&request.project_id)
             .await
@@ -189,7 +336,6 @@ impl LocalTaskCreationPlanner for StoredLocalTaskCreationPlanner {
         let prompt = TaskRunnerPromptSnapshot {
             prompt_revision: prompt_config.prompt_revision.clone(),
             base_system_prompt: prompt_config.base_system_prompt,
-            task_prompt: prompt_config.task_prompt,
             skill_snapshot: prompt_config.skill_snapshot,
         };
         prompt.validate()?;
@@ -238,6 +384,76 @@ impl LocalTaskCreationPlanner for StoredLocalTaskCreationPlanner {
     }
 }
 
+struct PersistTaskRunnerPrompt {
+    scope: RecordScope,
+    origin_device_id: String,
+    prompt: Option<LocalTaskPromptConfiguration>,
+    now: chrono::DateTime<chrono::Utc>,
+}
+
+#[async_trait]
+impl StorageTransaction for PersistTaskRunnerPrompt {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        let prompt = self.prompt.take().ok_or(StorageError::Transaction {
+            reason: "Task Runner Prompt persistence request was already consumed".to_string(),
+        })?;
+        let repository = &mut *repositories.settings();
+        let query = RecordQuery {
+            scope: self.scope.clone(),
+            id: TASK_RUNNER_PROMPT_SETTING_ID.to_string(),
+        };
+        let current = repository.get(&query).await?;
+        if let Some(current) = current.as_ref() {
+            if current.key != TASK_RUNNER_PROMPT_SETTING_KEY {
+                return Err(StorageError::InvalidData {
+                    reason: "Task Runner Prompt setting identity does not match its key"
+                        .to_string(),
+                });
+            }
+            let existing: LocalTaskPromptConfiguration =
+                serde_json::from_value(current.value.clone()).map_err(|error| {
+                    StorageError::InvalidData {
+                        reason: format!("persisted Task Runner Prompt is invalid: {error}"),
+                    }
+                })?;
+            if existing == prompt {
+                return Ok(());
+            }
+        }
+        let expected_revision = current.as_ref().map(|record| record.metadata.revision);
+        let metadata = current
+            .map(|record| record.metadata)
+            .unwrap_or_else(|| RecordMetadata {
+                id: TASK_RUNNER_PROMPT_SETTING_ID.to_string(),
+                scope: self.scope.clone(),
+                origin_device_id: self.origin_device_id.clone(),
+                revision: 0,
+                created_at: self.now,
+                updated_at: self.now,
+            });
+        repository
+            .put(PutRecord {
+                record: ClientSettingRecord {
+                    metadata,
+                    key: TASK_RUNNER_PROMPT_SETTING_KEY.to_string(),
+                    value: serde_json::to_value(prompt).map_err(|error| {
+                        StorageError::InvalidData {
+                            reason: format!(
+                                "resolved Task Runner Prompt cannot be stored: {error}"
+                            ),
+                        }
+                    })?,
+                },
+                expected_revision,
+            })
+            .await?;
+        Ok(())
+    }
+}
+
 struct LocalTaskPlanningSources {
     project: ProjectRecord,
     prompt: ClientSettingRecord,
@@ -283,7 +499,6 @@ fn validate_prompt_configuration(config: &LocalTaskPromptConfiguration) -> Resul
     let prompt = TaskRunnerPromptSnapshot {
         prompt_revision: config.prompt_revision.clone(),
         base_system_prompt: config.base_system_prompt.clone(),
-        task_prompt: config.task_prompt.clone(),
         skill_snapshot: config.skill_snapshot.clone(),
     };
     prompt.validate()

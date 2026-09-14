@@ -314,8 +314,15 @@ final class ConversationSessionViewModel: ObservableObject {
         do {
             async let settings = runtimeSettingsService.fetchSettings(sessionID: sessionID)
             async let models = runtimeSettingsService.fetchAvailableModels()
-            let (resolvedSettings, resolvedModels) = try await (settings, models)
+            var (resolvedSettings, resolvedModels) = try await (settings, models)
             availableModels = resolvedModels
+            if resolvedSettings.selectedModelID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+               let defaultModel = resolvedModels.first {
+                resolvedSettings = try await runtimeSettingsService.updateModel(
+                    sessionID: sessionID,
+                    modelID: defaultModel.id
+                )
+            }
             applyRuntimeSettings(resolvedSettings)
         } catch {
             runtimeSettingsError = error.localizedDescription

@@ -1,7 +1,5 @@
 pub const PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.chatos_internal_api_secret";
-pub const PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "plugin_management.downstream.local_connector_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.memory_engine_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
@@ -19,10 +17,6 @@ pub const PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY: &str =
 pub const PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY: &str =
     "plugin_management.runtime.mongodb_database";
 pub const PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY: &str = "plugin_management.http.cors_origins";
-pub const PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY: &str =
-    "plugin_management.local_connector.check_ttl_seconds";
-pub const PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_MAX_TOOL_SNAPSHOT_BYTES_CONFIG_KEY: &str =
-    "plugin_management.local_connector.max_tool_snapshot_bytes";
 pub const PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED_CONFIG_KEY: &str =
     "plugin_management.catalog.sync_enabled";
 pub const PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS_CONFIG_KEY: &str =

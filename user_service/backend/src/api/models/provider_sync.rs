@@ -132,7 +132,12 @@ fn apply_provider_managed_fields(
         || model.has_api_key != provider_record.has_api_key
         || model.supports_images != provider_record.supports_images
         || model.supports_reasoning != provider_record.supports_reasoning
-        || model.supports_responses != provider_record.supports_responses;
+        || model.supports_responses != provider_record.supports_responses
+        || model.protocol.is_none()
+        || model.context_strategy.is_none()
+        || model.context_window_tokens.is_none()
+        || model.max_output_tokens.is_none()
+        || !model.supports_streaming;
     if !changed {
         return false;
     }
@@ -149,6 +154,7 @@ fn apply_provider_managed_fields(
     model.supports_images = provider_record.supports_images;
     model.supports_reasoning = provider_record.supports_reasoning;
     model.supports_responses = provider_record.supports_responses;
+    model.apply_execution_metadata_defaults();
     true
 }
 
@@ -308,7 +314,7 @@ pub(super) async fn refresh_provider_models_from_record(
                 model.as_str(),
             )
         });
-        let record = UserModelConfigRecord {
+        let mut record = UserModelConfigRecord {
             id: target_id.clone(),
             revision: existing.map_or(0, |item| item.revision),
             owner_user_id: provider_record.owner_user_id.clone(),
@@ -346,6 +352,7 @@ pub(super) async fn refresh_provider_models_from_record(
                 .unwrap_or_else(|| now.clone()),
             updated_at: now.clone(),
         };
+        record.apply_execution_metadata_defaults();
         state
             .store
             .save_user_model_config(&record)

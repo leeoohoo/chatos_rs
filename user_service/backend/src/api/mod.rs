@@ -23,6 +23,7 @@ mod internal_auth;
 mod internal_models;
 mod invite_codes;
 mod models;
+mod model_gateway;
 mod system;
 mod users;
 
@@ -90,6 +91,7 @@ fn protected_api(state: AppState) -> Router<AppState> {
             "/api/model-configs/{id}/refresh",
             post(models::refresh_model_config_provider_models),
         )
+        .merge(model_gateway::router())
         .route("/api/system/config", get(system::get_system_config))
         .route_layer(middleware::from_fn_with_state(state, require_auth))
 }

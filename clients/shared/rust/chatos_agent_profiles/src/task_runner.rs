@@ -53,7 +53,6 @@ impl TaskRunnerProjectSnapshot {
 pub struct TaskRunnerPromptSnapshot {
     pub prompt_revision: String,
     pub base_system_prompt: String,
-    pub task_prompt: String,
     pub skill_snapshot: Value,
 }
 
@@ -62,7 +61,6 @@ impl TaskRunnerPromptSnapshot {
         for (field, value) in [
             ("prompt revision", self.prompt_revision.as_str()),
             ("base system prompt", self.base_system_prompt.as_str()),
-            ("task prompt", self.task_prompt.as_str()),
         ] {
             if value.trim().is_empty() {
                 return Err(format!("{field} must not be empty"));
@@ -350,8 +348,6 @@ fn build_task_runner_instructions(context: &TaskRunnerStepContext) -> Result<Str
     .map_err(|error| format!("failed to serialize Task Runner context: {error}"))?;
     Ok([
         context.prompt_snapshot.base_system_prompt.as_str(),
-        "You are the local Task Runner. Work only inside the frozen project and capability snapshot below. The runtime injects project_id into execution scope; never include or choose project_id in tool arguments. Use only the supplied execution tools. Use task_runner_ask_user alone only when a missing user decision materially changes the result. Use task_runner_report_outcome alone only after the acceptance criteria are deterministically supported by committed verification receipts. Plain text is progress, not completion. Never claim success from intended work, uncommitted output, or your own description.",
-        context.prompt_snapshot.task_prompt.as_str(),
         frozen_context.as_str(),
     ]
     .join("\n\n"))
@@ -909,7 +905,6 @@ mod tests {
             prompt_snapshot: TaskRunnerPromptSnapshot {
                 prompt_revision: "prompt-1".to_string(),
                 base_system_prompt: "Perform the task safely.".to_string(),
-                task_prompt: "Use the repository conventions.".to_string(),
                 skill_snapshot: json!({"skills": []}),
             },
             capability_snapshot: TaskRunnerCapabilitySnapshot {

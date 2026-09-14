@@ -18,8 +18,8 @@ use super::internal_auth::{
 use super::models::{is_supported_provider, model_config_has_backing_provider};
 use super::{bad_request, forbidden, internal_error, not_found, ApiResult};
 
-#[derive(Debug, Serialize)]
-pub struct InternalModelRuntimeConfigResponse {
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct InternalModelRuntimeConfigResponse {
     pub id: String,
     pub revision: u64,
     pub owner_user_id: String,
@@ -135,87 +135,13 @@ pub async fn get_user_model_runtime_config(
     } else {
         model_config_id.as_str()
     };
-    let result = async {
-        if user_id.is_empty() {
-            return Err(bad_request("user_id is required"));
-        }
-        if model_config_id.is_empty() {
-            return Err(bad_request("model_config_id is required"));
-        }
-        let Some(model_config) = state
-            .store
-            .find_user_model_config_by_id(model_config_id.as_str())
-            .await
-            .map_err(internal_error)?
-        else {
-            return Err(not_found("model config not found"));
-        };
-        if model_config.owner_user_id != user_id {
-            return Err(forbidden("model config does not belong to the target user"));
-        }
-        if !is_supported_provider(model_config.provider.as_str()) {
-            return Err(not_found("model config not found"));
-        }
-        let providers = state
-            .store
-            .list_user_model_providers(Some(user_id.as_str()))
-            .await
-            .map_err(internal_error)?;
-        if !model_config_has_backing_provider(&model_config, providers.as_slice()) {
-            return Err(bad_request(
-                "model config is not backed by an active model provider",
-            ));
-        }
-        if !model_config.enabled {
-            return Err(bad_request("model config is disabled"));
-        }
-        if model_config.model.trim().is_empty() {
-            return Err(bad_request("model config requires a concrete model name"));
-        }
-        let api_key = model_config
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| bad_request("cloud model config requires a stored API key"))?
-            .to_string();
-        let base_url = model_config
-            .base_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| bad_request("cloud model config requires a stored base_url"))?
-            .to_string();
-        let prompt_vendor = model_config.prompt_vendor.clone().or_else(|| {
-            normalize_agent_prompt_vendor(None, model_config.provider.as_str())
-                .map(|vendor| vendor.as_str().to_string())
-        });
-
-        Ok(Json(InternalModelRuntimeConfigResponse {
-            id: model_config.id,
-            revision: model_config.revision,
-            owner_user_id: model_config.owner_user_id,
-            name: model_config.name,
-            provider: model_config.provider,
-            protocol: model_config.protocol,
-            context_strategy: model_config.context_strategy,
-            prompt_vendor,
-            base_url,
-            api_key,
-            model: model_config.model,
-            thinking_level: model_config.thinking_level,
-            temperature: model_config.temperature,
-            context_window_tokens: model_config.context_window_tokens,
-            max_output_tokens: model_config.max_output_tokens,
-            supports_images: model_config.supports_images,
-            supports_reasoning: model_config.supports_reasoning,
-            supports_responses: model_config.supports_responses,
-            supports_streaming: model_config.supports_streaming,
-            supports_native_compaction: model_config.supports_native_compaction,
-            supports_input_token_count: model_config.supports_input_token_count,
-        }))
-    }
-    .await;
+    let result = load_user_model_runtime_config(
+        &state,
+        user_id.as_str(),
+        model_config_id.as_str(),
+    )
+    .await
+    .map(Json);
     record_user_service_internal_resource_access(
         &identity,
         UserServiceInternalResourceAudit {
@@ -234,3 +160,90 @@ pub async fn get_user_model_runtime_config(
     );
     result
 }
+
+pub(crate) async fn load_user_model_runtime_config(
+    state: &AppState,
+    user_id: &str,
+    model_config_id: &str,
+) -> ApiResultValue<InternalModelRuntimeConfigResponse> {
+    if user_id.is_empty() {
+        return Err(bad_request("user_id is required"));
+    }
+    if model_config_id.is_empty() {
+        return Err(bad_request("model_config_id is required"));
+    }
+    let Some(model_config) = state
+        .store
+        .find_user_model_config_by_id(model_config_id)
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(not_found("model config not found"));
+    };
+    if model_config.owner_user_id != user_id {
+        return Err(forbidden("model config does not belong to the target user"));
+    }
+    if !is_supported_provider(model_config.provider.as_str()) {
+        return Err(not_found("model config not found"));
+    }
+    let providers = state
+        .store
+        .list_user_model_providers(Some(user_id))
+        .await
+        .map_err(internal_error)?;
+    if !model_config_has_backing_provider(&model_config, providers.as_slice()) {
+        return Err(bad_request(
+            "model config is not backed by an active model provider",
+        ));
+    }
+    if !model_config.enabled {
+        return Err(bad_request("model config is disabled"));
+    }
+    if model_config.model.trim().is_empty() {
+        return Err(bad_request("model config requires a concrete model name"));
+    }
+    let api_key = model_config
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| bad_request("cloud model config requires a stored API key"))?
+        .to_string();
+    let base_url = model_config
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| bad_request("cloud model config requires a stored base_url"))?
+        .to_string();
+    let prompt_vendor = model_config.prompt_vendor.clone().or_else(|| {
+        normalize_agent_prompt_vendor(None, model_config.provider.as_str())
+            .map(|vendor| vendor.as_str().to_string())
+    });
+
+    Ok(InternalModelRuntimeConfigResponse {
+        id: model_config.id,
+        revision: model_config.revision,
+        owner_user_id: model_config.owner_user_id,
+        name: model_config.name,
+        provider: model_config.provider,
+        protocol: model_config.protocol,
+        context_strategy: model_config.context_strategy,
+        prompt_vendor,
+        base_url,
+        api_key,
+        model: model_config.model,
+        thinking_level: model_config.thinking_level,
+        temperature: model_config.temperature,
+        context_window_tokens: model_config.context_window_tokens,
+        max_output_tokens: model_config.max_output_tokens,
+        supports_images: model_config.supports_images,
+        supports_reasoning: model_config.supports_reasoning,
+        supports_responses: model_config.supports_responses,
+        supports_streaming: model_config.supports_streaming,
+        supports_native_compaction: model_config.supports_native_compaction,
+        supports_input_token_count: model_config.supports_input_token_count,
+    })
+}
+
+type ApiResultValue<T> = Result<T, (axum::http::StatusCode, Json<serde_json::Value>)>;

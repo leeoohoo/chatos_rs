@@ -227,9 +227,49 @@ pub struct UserModelConfigRecord {
     pub updated_at: String,
 }
 
+pub const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS: i64 = 200_000;
+pub const DEFAULT_MODEL_MAX_OUTPUT_TOKENS: i64 = 32_768;
+
 impl UserModelConfigRecord {
     pub fn enabled_for_tasks(&self) -> bool {
         self.enabled && self.task_enabled.unwrap_or(self.enabled)
+    }
+
+    pub fn requires_execution_metadata_upgrade(&self) -> bool {
+        self.protocol.is_none()
+            || self.context_strategy.is_none()
+            || self.context_window_tokens.is_none_or(|value| value <= 0)
+            || self.max_output_tokens.is_none_or(|value| value <= 0)
+            || !self.supports_streaming
+    }
+
+    pub fn apply_execution_metadata_defaults(&mut self) -> bool {
+        if !self.requires_execution_metadata_upgrade() {
+            return false;
+        }
+
+        if self.protocol.is_none() {
+            self.protocol = Some(if self.supports_responses {
+                ModelProtocol::Responses
+            } else {
+                ModelProtocol::ChatCompletions
+            });
+        }
+        if self.context_strategy.is_none() {
+            self.context_strategy = Some(ContextStrategy::MemoryEngine);
+        }
+        if self.context_window_tokens.is_none_or(|value| value <= 0) {
+            self.context_window_tokens = Some(DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS);
+        }
+        let context_window_tokens = self
+            .context_window_tokens
+            .unwrap_or(DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS);
+        if self.max_output_tokens.is_none_or(|value| value <= 0) {
+            self.max_output_tokens =
+                Some(DEFAULT_MODEL_MAX_OUTPUT_TOKENS.min(context_window_tokens));
+        }
+        self.supports_streaming = true;
+        true
     }
 }
 
@@ -506,7 +546,11 @@ pub struct SystemConfigResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::UserModelConfigRecord;
+    use chatos_local_agent_protocol::{ContextStrategy, ModelProtocol};
+
+    use super::{
+        UserModelConfigRecord, DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS, DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
+    };
 
     fn model(enabled: bool, task_enabled: Option<bool>) -> UserModelConfigRecord {
         UserModelConfigRecord {
@@ -549,5 +593,40 @@ mod tests {
         assert!(!model(false, Some(true)).enabled_for_tasks());
         assert!(model(true, None).enabled_for_tasks());
         assert!(!model(false, None).enabled_for_tasks());
+    }
+
+    #[test]
+    fn execution_metadata_upgrade_produces_a_complete_responses_configuration() {
+        let mut record = model(true, Some(true));
+        record.protocol = None;
+        record.context_strategy = None;
+        record.context_window_tokens = None;
+        record.max_output_tokens = None;
+        record.supports_streaming = false;
+
+        assert!(record.apply_execution_metadata_defaults());
+        assert_eq!(record.protocol, Some(ModelProtocol::Responses));
+        assert_eq!(record.context_strategy, Some(ContextStrategy::MemoryEngine));
+        assert_eq!(
+            record.context_window_tokens,
+            Some(DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS)
+        );
+        assert_eq!(
+            record.max_output_tokens,
+            Some(DEFAULT_MODEL_MAX_OUTPUT_TOKENS)
+        );
+        assert!(record.supports_streaming);
+        assert!(!record.requires_execution_metadata_upgrade());
+        assert!(!record.apply_execution_metadata_defaults());
+    }
+
+    #[test]
+    fn execution_metadata_upgrade_uses_chat_completions_without_responses_support() {
+        let mut record = model(true, Some(true));
+        record.supports_responses = false;
+        record.supports_streaming = false;
+
+        assert!(record.apply_execution_metadata_defaults());
+        assert_eq!(record.protocol, Some(ModelProtocol::ChatCompletions));
     }
 }

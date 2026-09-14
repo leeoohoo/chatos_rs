@@ -31,7 +31,6 @@ impl AppState {
             .await?;
         state.purge_user_preferences_from_config_center().await?;
         state.purge_retired_config_keys().await?;
-        state.migrate_local_connector_runtime_config().await?;
         state.migrate_memory_engine_runtime_config().await?;
         state.migrate_platform_pressure_config().await?;
         state.migrate_internal_request_security_config().await?;

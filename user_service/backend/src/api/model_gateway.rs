@@ -5,7 +5,7 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::extract::Path;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive};
 use axum::response::Sse;
@@ -29,14 +29,18 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::config::Config;
-use crate::core::auth::AuthUser;
-use crate::services::user_service_api_client::{self, UserServiceInternalModelRuntimeRecord};
+use crate::api::internal_models::{
+    load_user_model_runtime_config, InternalModelRuntimeConfigResponse,
+};
+use crate::auth::CurrentPrincipal;
+use crate::state::AppState;
+
+type UserServiceInternalModelRuntimeRecord = InternalModelRuntimeConfigResponse;
 
 type ApiError = (StatusCode, Json<Value>);
 type ApiResult<T> = Result<Json<T>, ApiError>;
 
-pub fn router() -> Router {
+pub fn router() -> Router<AppState> {
     Router::new()
         .route(
             "/api/model-gateway/descriptors/{model_config_id}",
@@ -50,7 +54,8 @@ pub fn router() -> Router {
 }
 
 async fn count_model_input_tokens(
-    auth: AuthUser,
+    State(state): State<AppState>,
+    auth: CurrentPrincipal,
     Json(request): Json<ModelGatewayRequest>,
 ) -> ApiResult<ModelGatewayTokenCount> {
     request.validate().map_err(|error| {
@@ -58,7 +63,8 @@ async fn count_model_input_tokens(
         api_error(StatusCode::BAD_REQUEST, error.to_string())
     })?;
     let runtime =
-        load_runtime_for_authenticated_user(&auth, request.model_config_id.as_str()).await?;
+        load_runtime_for_authenticated_user(&state, &auth, request.model_config_id.as_str())
+            .await?;
     if runtime.revision != request.model_config_revision {
         return Err(api_error(
             StatusCode::CONFLICT,
@@ -118,7 +124,8 @@ async fn count_model_input_tokens(
 
 async fn get_model_runtime_descriptor(
     Path(model_config_id): Path<String>,
-    auth: AuthUser,
+    State(state): State<AppState>,
+    auth: CurrentPrincipal,
 ) -> ApiResult<ModelRuntimeDescriptor> {
     let model_config_id = model_config_id.trim();
     if model_config_id.is_empty() {
@@ -128,7 +135,7 @@ async fn get_model_runtime_descriptor(
         ));
     }
 
-    let runtime = load_runtime_for_authenticated_user(&auth, model_config_id).await?;
+    let runtime = load_runtime_for_authenticated_user(&state, &auth, model_config_id).await?;
 
     let descriptor = descriptor_from_runtime(&runtime).map_err(|detail| {
         warn!(model_config_id, detail = %detail, "model_gateway.descriptor.invalid_config");
@@ -138,7 +145,8 @@ async fn get_model_runtime_descriptor(
 }
 
 async fn stream_model_request(
-    auth: AuthUser,
+    State(state): State<AppState>,
+    auth: CurrentPrincipal,
     Json(request): Json<ModelGatewayRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     request.validate().map_err(|error| {
@@ -147,7 +155,8 @@ async fn stream_model_request(
     })?;
 
     let runtime =
-        load_runtime_for_authenticated_user(&auth, request.model_config_id.as_str()).await?;
+        load_runtime_for_authenticated_user(&state, &auth, request.model_config_id.as_str())
+            .await?;
     if runtime.revision != request.model_config_revision {
         return Err(api_error(
             StatusCode::CONFLICT,
@@ -707,37 +716,19 @@ fn provider_status_from_transport_error(error: &str) -> Option<u16> {
 }
 
 async fn load_runtime_for_authenticated_user(
-    auth: &AuthUser,
+    state: &AppState,
+    auth: &CurrentPrincipal,
     model_config_id: &str,
 ) -> Result<UserServiceInternalModelRuntimeRecord, ApiError> {
-    let config = Config::try_get().map_err(|error| {
-        warn!(error = %error, "model_gateway.config_unavailable");
-        api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "model gateway configuration is unavailable",
-        )
-    })?;
-    let internal_secret = config
-        .user_service_internal_api_secret
+    let user_id = auth
+        .user_id
         .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "model gateway service identity is unavailable",
-            )
-        })?;
-    let runtime = user_service_api_client::get_internal_model_runtime_config(
-        &config.user_service_internal_http_client,
-        config.user_service_internal_base_url.as_str(),
-        internal_secret,
-        auth.user_id.as_str(),
-        model_config_id,
-    )
-    .await
-    .map_err(|error| map_runtime_service_error(model_config_id, &error))?;
-    validate_runtime_identity(&runtime, auth.user_id.as_str(), model_config_id).map_err(
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| api_error(StatusCode::UNAUTHORIZED, "missing authenticated user"))?;
+    let runtime = load_user_model_runtime_config(state, user_id, model_config_id)
+        .await
+        .map_err(|(status, body)| (status, body))?;
+    validate_runtime_identity(&runtime, user_id, model_config_id).map_err(
         |detail| {
             warn!(
                 model_config_id,
@@ -805,28 +796,6 @@ fn descriptor_from_runtime(
     Ok(descriptor)
 }
 
-fn map_runtime_service_error(model_config_id: &str, error: &str) -> ApiError {
-    let status = match user_service_api_client::response_status_from_error(error) {
-        Some(400) => StatusCode::UNPROCESSABLE_ENTITY,
-        Some(401) => StatusCode::UNAUTHORIZED,
-        Some(403) => StatusCode::FORBIDDEN,
-        Some(404) => StatusCode::NOT_FOUND,
-        Some(409) => StatusCode::CONFLICT,
-        _ => StatusCode::BAD_GATEWAY,
-    };
-    warn!(model_config_id, status = %status, error = %error, "model_gateway.descriptor.user_service_failed");
-    let message = if status == StatusCode::NOT_FOUND {
-        "model configuration was not found"
-    } else if status == StatusCode::FORBIDDEN {
-        "model configuration does not belong to the current user"
-    } else if status == StatusCode::UNPROCESSABLE_ENTITY {
-        "model configuration is not ready for local agent execution"
-    } else {
-        "model runtime configuration could not be loaded"
-    };
-    api_error(status, message)
-}
-
 fn api_error(status: StatusCode, message: impl Into<String>) -> ApiError {
     (status, Json(json!({ "error": message.into() })))
 }
@@ -855,7 +824,7 @@ mod tests {
         stream_callbacks, terminal_from_ai_response, validate_gateway_parameter_policy,
         validate_runtime_identity, GatewayEventEmitter, GatewayEventReceiver,
     };
-    use crate::services::user_service_api_client::UserServiceInternalModelRuntimeRecord;
+    use super::UserServiceInternalModelRuntimeRecord;
 
     fn complete_runtime() -> UserServiceInternalModelRuntimeRecord {
         UserServiceInternalModelRuntimeRecord {

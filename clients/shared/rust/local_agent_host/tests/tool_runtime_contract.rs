@@ -146,7 +146,6 @@ async fn fixture(
         serde_json::to_value(TaskRunnerPromptSnapshot {
             prompt_revision: "prompt-revision-1".to_string(),
             base_system_prompt: "Execute the local task carefully.".to_string(),
-            task_prompt: "Preserve the approved design.".to_string(),
             skill_snapshot: json!({"skills": []}),
         })
         .unwrap(),

@@ -336,8 +336,8 @@ mod tests {
     fn caller_keys_are_isolated_and_legacy_static_headers_are_rejected() {
         let secrets = BTreeMap::from([
             (
-                "local-connector-service".to_string(),
-                "local-connector-config-center-test-secret".to_string(),
+                "memory-engine".to_string(),
+                "memory-engine-config-center-test-secret".to_string(),
             ),
             (
                 "chatos-backend".to_string(),
@@ -345,8 +345,8 @@ mod tests {
             ),
         ]);
         let token = issue_internal_service_token(
-            secrets["local-connector-service"].as_str(),
-            "local-connector-service",
+            secrets["memory-engine"].as_str(),
+            "memory-engine",
             CONFIG_CENTER_AUDIENCE,
             CONFIG_SNAPSHOT_READ_SCOPE,
             60,
@@ -355,15 +355,15 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             CONFIG_CENTER_CALLER_HEADER,
-            HeaderValue::from_static("local-connector-service"),
+            HeaderValue::from_static("memory-engine"),
         );
         headers.insert(
             CONFIG_CENTER_TOKEN_HEADER,
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
         let claims = authenticate_internal_request(&headers, &secrets, CONFIG_SNAPSHOT_READ_SCOPE)
-            .expect("authenticate local connector");
-        assert_eq!(claims.caller, "local-connector-service");
+            .expect("authenticate memory engine");
+        assert_eq!(claims.caller, "memory-engine");
 
         headers.insert(
             CONFIG_CENTER_CALLER_HEADER,
@@ -376,7 +376,7 @@ mod tests {
         let mut legacy_headers = HeaderMap::new();
         legacy_headers.insert(
             "x-config-center-internal-secret",
-            HeaderValue::from_static("local-connector-config-center-test-secret"),
+            HeaderValue::from_static("memory-engine-config-center-test-secret"),
         );
         assert!(authenticate_internal_request(
             &legacy_headers,
@@ -423,13 +423,13 @@ mod tests {
         );
         assert!(require_matching_service_identity(
             "chatos-backend",
-            "local-connector-service",
+            "memory-engine",
             "snapshot",
         )
         .is_err());
         assert!(require_matching_service_identity(
             "chatos-backend",
-            "local-connector-service",
+            "memory-engine",
             "heartbeat",
         )
         .is_err());

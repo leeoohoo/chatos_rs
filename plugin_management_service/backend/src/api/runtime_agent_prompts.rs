@@ -5,13 +5,13 @@ use std::collections::HashMap;
 
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::Json;
+use axum::{Extension, Json};
 use chatos_plugin_management_sdk::{
     validate_agent_prompt_checksum, AgentPromptBundle, AgentPromptBundleManifest,
     AgentPromptVendor, ResolveAgentPromptRequest, ResolvedAgentPrompt,
 };
 
-use crate::models::AgentProviderPromptRecord;
+use crate::models::{AgentProviderPromptRecord, CurrentUser};
 use crate::state::AppState;
 
 use super::{
@@ -25,6 +25,21 @@ pub(super) async fn resolve_agent_prompt_internal(
     Json(request): Json<ResolveAgentPromptRequest>,
 ) -> Result<Json<ResolvedAgentPrompt>, ApiError> {
     authorize(&state, &headers, AGENT_PROMPTS_RESOLVE_SCOPE)?;
+    resolve_agent_prompt(&state, request).await.map(Json)
+}
+
+pub(super) async fn resolve_agent_prompt_for_user(
+    State(state): State<AppState>,
+    Extension(_user): Extension<CurrentUser>,
+    Json(request): Json<ResolveAgentPromptRequest>,
+) -> Result<Json<ResolvedAgentPrompt>, ApiError> {
+    resolve_agent_prompt(&state, request).await.map(Json)
+}
+
+async fn resolve_agent_prompt(
+    state: &AppState,
+    request: ResolveAgentPromptRequest,
+) -> Result<ResolvedAgentPrompt, ApiError> {
     let profile =
         chatos_plugin_management_sdk::normalize_agent_prompt_profile(request.profile.as_deref());
     if !crate::seed::agent_prompt_profiles_for_agent(request.agent_key.as_str())
@@ -38,7 +53,7 @@ pub(super) async fn resolve_agent_prompt_internal(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("agent_prompt_not_configured"))?;
-    resolved_prompt(record).map(Json)
+    resolved_prompt(record)
 }
 
 pub(super) async fn agent_prompt_bundle_manifest_internal(

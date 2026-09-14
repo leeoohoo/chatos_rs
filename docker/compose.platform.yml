@@ -217,10 +217,6 @@ services:
     networks:
       - cloud
 
-  local-connector-service-backend:
-    environment:
-      LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
-
   memory-engine-backend:
     environment:
       MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}

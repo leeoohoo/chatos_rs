@@ -373,7 +373,7 @@ private struct PersistentHostFixture: Sendable {
         os.chmod(socket_path, 0o600)
         server.listen(8)
         ready = {
-            'protocol_version': 4,
+            'protocol_version': 5,
             'launch_id': request['launch_id'],
             'process_id': os.getpid(),
             'client_endpoint': socket_path,
@@ -436,7 +436,7 @@ private struct PersistentHostFixture: Sendable {
     func configuration() throws -> NativeLocalAgentHostLaunchConfiguration {
         let launchID = "launch-\(UUID().uuidString.lowercased())"
         let request = try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 4,
+            "protocol_version": 5,
             "launch_id": launchID,
             "ipc_endpoint": ["transport": "unix_socket", "path": socketPath],
             "credential_references": [
@@ -445,7 +445,7 @@ private struct PersistentHostFixture: Sendable {
             ],
         ])
         let secrets = try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 4,
+            "protocol_version": 5,
             "launch_id": launchID,
             "secrets": [],
         ])
@@ -534,7 +534,7 @@ private struct RestartingHostFixture: Sendable {
         secret_length = struct.unpack('>I', sys.stdin.buffer.read(4))[0]
         json.loads(sys.stdin.buffer.read(secret_length))
         ready = {
-            'protocol_version': 4,
+            'protocol_version': 5,
             'launch_id': request['launch_id'],
             'process_id': os.getpid(),
             'client_endpoint': request['ipc_endpoint']['path'],
@@ -557,7 +557,7 @@ private struct RestartingHostFixture: Sendable {
 
     func configuration() throws -> NativeLocalAgentHostLaunchConfiguration {
         let request = try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 4,
+            "protocol_version": 5,
             "launch_id": "launch-1",
             "ipc_endpoint": ["transport": "unix_socket", "path": socketPath],
             "credential_references": [
@@ -566,7 +566,7 @@ private struct RestartingHostFixture: Sendable {
             ],
         ])
         let secrets = try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 4,
+            "protocol_version": 5,
             "launch_id": "launch-1",
             "secrets": [],
         ])

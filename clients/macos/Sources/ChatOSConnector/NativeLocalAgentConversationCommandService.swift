@@ -87,9 +87,10 @@ public actor NativeLocalAgentConversationCommandService: ConversationCommandServ
             contactValue,
             projectValue
         )
-        guard let modelConfigID = settings.selectedModelID?.trimmedNonEmpty else {
-            throw NativeLocalAgentConversationCommandError.missingModelConfiguration
-        }
+        let modelConfigID = try await resolveModelConfigID(
+            settings: settings,
+            sessionID: command.sessionID
+        )
         try validateIdentity(modelConfigID, field: "模型配置 ID")
         if let projectID = scope.projectID {
             guard project?.id == projectID, project?.ownerUserID == scope.accountID else {
@@ -181,6 +182,30 @@ public actor NativeLocalAgentConversationCommandService: ConversationCommandServ
             ownerUserID: ownerUserID,
             projectID: projectID
         )
+    }
+
+    /// A conversation without an explicit model uses the first enabled model
+    /// from the same authoritative catalog shown by the composer. Persisting
+    /// that choice before Run creation keeps the UI and command boundary on
+    /// one value instead of merely rendering a visual fallback.
+    private func resolveModelConfigID(
+        settings: ConversationRuntimeSettings,
+        sessionID: String
+    ) async throws -> String {
+        if let selected = settings.selectedModelID?.trimmedNonEmpty {
+            return selected
+        }
+        guard let defaultModel = try await runtimeSettings.fetchAvailableModels().first else {
+            throw NativeLocalAgentConversationCommandError.missingModelConfiguration
+        }
+        let persisted = try await runtimeSettings.updateModel(
+            sessionID: sessionID,
+            modelID: defaultModel.id
+        )
+        guard let selected = persisted.selectedModelID?.trimmedNonEmpty else {
+            throw NativeLocalAgentConversationCommandError.missingModelConfiguration
+        }
+        return selected
     }
 
     private func validateIdentity(_ value: String, field: String) throws {

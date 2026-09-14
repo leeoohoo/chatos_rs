@@ -139,7 +139,7 @@ private struct HostFixture {
             time.sleep(30)
             sys.exit(0)
         ready = {
-            'protocol_version': 4,
+            'protocol_version': 5,
             'launch_id': 'wrong-launch' if mode == 'wrong-launch' else request['launch_id'],
             'process_id': os.getpid(),
             'client_endpoint': request['ipc_endpoint']['path'],
@@ -166,7 +166,7 @@ private struct HostFixture {
         timeout: Duration = .seconds(15)
     ) throws -> NativeLocalAgentHostLaunchConfiguration {
         let request = try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 4,
+            "protocol_version": 5,
             "launch_id": "launch-1",
             "ipc_endpoint": ["transport": "unix_socket", "path": socketPath],
             "credential_references": [
@@ -175,7 +175,7 @@ private struct HostFixture {
             ],
         ])
         let secrets = try JSONSerialization.data(withJSONObject: [
-            "protocol_version": 4,
+            "protocol_version": 5,
             "launch_id": "launch-1",
             "secrets": [],
         ])

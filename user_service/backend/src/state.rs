@@ -33,6 +33,13 @@ impl AppState {
                 "migrated legacy model enabled state into task_enabled"
             );
         }
+        let migrated_runtime_count = store.migrate_model_runtime_schema().await?;
+        if migrated_runtime_count > 0 {
+            info!(
+                migrated_runtime_count,
+                "migrated model configs to the executable runtime schema"
+            );
+        }
         store.ensure_default_super_admin(&config).await?;
         Ok(Self {
             config,

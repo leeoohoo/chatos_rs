@@ -112,6 +112,7 @@ struct NativeLocalAgentHostBootstrapTests {
                 platformStateDirectory: firstSettings.platformStateDirectory,
                 modelGatewayBaseURL: firstSettings.modelGatewayBaseURL,
                 memoryEngineBaseURL: firstSettings.memoryEngineBaseURL,
+                pluginManagementBaseURL: firstSettings.pluginManagementBaseURL,
                 storage: firstSettings.storage
             )
         )
@@ -153,6 +154,7 @@ private struct BootstrapFixture: Sendable {
             platformStateDirectory: state,
             modelGatewayBaseURL: URL(string: "https://api.example.com")!,
             memoryEngineBaseURL: URL(string: "https://memory.example.com")!,
+            pluginManagementBaseURL: URL(string: "https://plugins.example.com")!,
             storage: storage
         )
     }

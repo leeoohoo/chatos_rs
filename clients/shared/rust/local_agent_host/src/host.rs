@@ -110,6 +110,7 @@ pub struct LocalTaskPlanningRequest {
     pub source_turn_id: String,
     pub project_id: String,
     pub model_config_id: String,
+    pub model_provider: String,
     pub objective: String,
     pub acceptance_criteria: Vec<String>,
     pub parent_capability_snapshot_ref: String,
@@ -255,8 +256,6 @@ pub enum LocalAgentHostError {
     ModelStepExecutorRequired(String),
     #[error("event {0} is not a claimed model step request")]
     NotModelStep(String),
-    #[error("local tool runtime failed after invocation start: {0}")]
-    ToolRuntime(String),
     #[error("local tool runtime returned an invalid outcome: {0}")]
     InvalidToolOutcome(String),
     #[error("local tool batch still has uncompleted invocations")]
@@ -1346,7 +1345,29 @@ impl LocalAgentHost {
                             // enters needs_review instead of retrying the call.
                             break 'calls;
                         }
-                        Err(error) => return Err(LocalAgentHostError::ToolRuntime(error)),
+                        Err(error) => {
+                            // A tool implementation error belongs to this invocation, not to the
+                            // long-lived Host process. Persist it as an ordinary failed tool
+                            // result so the reducer can return the failure to the model and the
+                            // Worker can continue serving unrelated Runs.
+                            complete_tool_execution(
+                                self.storage.as_ref(),
+                                CompleteToolExecutionRequest {
+                                    scope: self.scope.clone(),
+                                    invocation_id: call.invocation_id.clone(),
+                                    status:
+                                        chatos_local_agent_protocol::ToolExecutionStatus::Failed,
+                                    bounded_result: json!({
+                                        "error": {
+                                            "code": "local_tool_execution_failed",
+                                            "message": bounded_error_message(&error),
+                                        }
+                                    }),
+                                    now: Utc::now(),
+                                },
+                            )
+                            .await?;
+                        }
                     }
                 }
                 BeginToolExecutionResult::AlreadyCompleted(_) => {}
@@ -1490,6 +1511,7 @@ impl LocalAgentHost {
             source_turn_id: invocation.source_turn_id.clone(),
             project_id: project_id.clone(),
             model_config_id: parent.run.model_config_id.clone(),
+            model_provider: parent.run.model_runtime_snapshot.provider.clone(),
             objective: objective.clone(),
             acceptance_criteria: acceptance_criteria.clone(),
             parent_capability_snapshot_ref: invocation.capability_snapshot_ref.clone(),
@@ -1596,6 +1618,15 @@ impl LocalAgentHost {
     pub(crate) async fn wait_for_scheduler_wake(&self) {
         self.scheduler_wake.notified().await;
     }
+}
+
+fn bounded_error_message(error: &str) -> String {
+    const MAX_ERROR_CHARS: usize = 4_096;
+    let mut message = error.chars().take(MAX_ERROR_CHARS).collect::<String>();
+    if error.chars().count() > MAX_ERROR_CHARS {
+        message.push_str("…");
+    }
+    message
 }
 
 struct LoadRunRecord {

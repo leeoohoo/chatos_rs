@@ -34,7 +34,6 @@ const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
   'memory-engine': { label: 'Memory Engine', order: 40 },
   'user-service': { label: '用户服务', order: 70 },
   'plugin-management-service': { label: '插件管理', order: 80 },
-  'local-connector-service': { label: '本地连接器', order: 90 },
   'configuration-center': { label: '配置中心', order: 100 },
   'official-website': { label: '官方网站', order: 110 },
   'platform-shared': { label: '平台与共享', order: 120 },
@@ -51,7 +50,6 @@ function configAreaKey(definition: ConfigDefinition) {
   if (categoryRoot === 'memory engine') return 'memory-engine';
   if (categoryRoot === 'user service') return 'user-service';
   if (categoryRoot === 'plugin management') return 'plugin-management-service';
-  if (categoryRoot === 'local connector') return 'local-connector-service';
   if (categoryRoot === 'configuration center') return 'configuration-center';
   if (categoryRoot === 'developer') return 'developer';
   return 'platform-shared';
@@ -377,7 +375,6 @@ export function ConfigEditor({ environment }: { environment: string }) {
                 'chatos-backend',
                 'user-service',
                 'plugin-management-service',
-                'local-connector-service',
                 'memory-engine',
                 'official-website',
               ].map((value) => ({ value, label: value }))}

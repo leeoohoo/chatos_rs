@@ -4,8 +4,6 @@ mod chatos;
 mod mcp_plugin;
 #[path = "constants/memory_engine.rs"]
 mod memory_engine;
-#[path = "constants/sandbox_local_connector.rs"]
-mod sandbox_local_connector;
 #[path = "constants/shared.rs"]
 mod shared;
 #[path = "constants/user_service.rs"]
@@ -14,6 +12,5 @@ mod user_service;
 pub use chatos::*;
 pub use mcp_plugin::*;
 pub use memory_engine::*;
-pub use sandbox_local_connector::*;
 pub use shared::*;
 pub use user_service::*;

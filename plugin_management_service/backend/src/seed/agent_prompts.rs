@@ -240,7 +240,7 @@ fn baseline_prompts() -> Vec<(&'static str, &'static str, &'static str)> {
         (
             SystemAgentKey::TaskRunnerRunPhase.as_str(),
             DEFAULT_AGENT_PROMPT_PROFILE,
-            include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
+            include_str!("../../../../resources/agent_prompts/task_runner_run_phase.md"),
         ),
         (
             SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),

@@ -344,3 +344,8 @@
 "Local Host 尚未为这一轮记录模型、工具或人工交互事件。" = "The Local Host has not recorded any model, tool, or human-interaction events for this turn.";
 "项目目录" = "Project Folder";
 "可以选择这台 Mac 上当前账户有权访问的任意文件夹。" = "Choose any folder on this Mac that your account can access.";
+"任务工作区" = "Task Workspace";
+"对话过程" = "Conversation Process";
+"查看 Task Runner 任务图、实时进度、模型输出、工具调用和运行详情" = "View the Task Runner graph, live progress, model output, tool calls, and run details";
+"查看主对话 Agent 这一轮的推理和调度过程" = "View this turn's reasoning and orchestration process from the main conversation agent";
+"正在加载实时执行过程…" = "Loading the live execution process…";

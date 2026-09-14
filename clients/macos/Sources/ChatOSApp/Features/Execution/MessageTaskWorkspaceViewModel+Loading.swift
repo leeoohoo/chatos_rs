@@ -158,8 +158,6 @@ extension MessageTaskWorkspaceViewModel {
                 return
             }
             switch inspectorSection {
-            case .process:
-                break
             case .detail:
                 let run = try await graphService.fetchRun(
                     taskID: detail.id,
@@ -171,7 +169,7 @@ extension MessageTaskWorkspaceViewModel {
                 guard self.selectedTask?.id == requestedTaskID else { return }
                 loadedModelOutputRunID = runID
                 taskDetail = detail.merging(run: run.run)
-            case .run:
+            case .process, .run:
                 let run = try await graphService.fetchRun(
                     taskID: detail.id,
                     runID: runID,
@@ -222,7 +220,10 @@ extension MessageTask {
     }
 
     var isActive: Bool {
-        ["pending", "queued", "ready", "running", "processing", "in_progress", "doing"]
-            .contains(normalizedStatus)
+        [
+            "pending", "queued", "ready", "running", "processing", "in_progress", "doing",
+            "model_ready", "model_running", "waiting_tool_result", "continuation_ready",
+            "retry_scheduled", "paused", "needs_review"
+        ].contains(normalizedStatus)
     }
 }

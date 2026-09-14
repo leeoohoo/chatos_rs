@@ -27,13 +27,13 @@ struct UserTurnMessageView: View {
                 }
                 if showsProcess || showsTaskGraph {
                     HStack(spacing: 8) {
-                        if showsProcess {
-                            Button("查看过程", systemImage: "waveform.path.ecg", action: onOpenProcess)
-                                .help("查看这一轮对话的推理、工具调用和中间结果")
-                        }
                         if showsTaskGraph {
-                            Button("任务图", systemImage: "point.3.connected.trianglepath.dotted", action: onOpenTaskGraph)
-                                .help("查看这条用户消息创建的 Task Runner 任务图")
+                            Button("任务工作区", systemImage: "point.3.connected.trianglepath.dotted", action: onOpenTaskGraph)
+                                .help("查看 Task Runner 任务图、实时进度、模型输出、工具调用和运行详情")
+                        }
+                        if showsProcess {
+                            Button("对话过程", systemImage: "waveform.path.ecg", action: onOpenProcess)
+                                .help("查看主对话 Agent 这一轮的推理和调度过程")
                         }
                     }
                     .buttonStyle(.bordered)

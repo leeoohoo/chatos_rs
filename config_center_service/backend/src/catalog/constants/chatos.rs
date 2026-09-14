@@ -16,10 +16,6 @@ pub const CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "chatos.downstream.user_service_request_timeout_ms";
 pub const CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "chatos.downstream.plugin_management_internal_api_secret";
-pub const CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY: &str =
-    "chatos.downstream.local_connector_service_base_url";
-pub const CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "chatos.downstream.local_connector_service_request_timeout_ms";
 pub const CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY: &str =
     "chatos.downstream.memory_engine_base_url";
 pub const CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =

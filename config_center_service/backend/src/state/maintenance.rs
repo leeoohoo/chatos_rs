@@ -166,83 +166,6 @@ impl AppState {
         Ok(())
     }
 
-    pub(super) async fn migrate_local_connector_runtime_config(&self) -> Result<(), String> {
-        let definitions = self.store.list_definitions().await?;
-        let defaults = local_connector_service_runtime_default_values(&definitions);
-        if defaults.is_empty() {
-            return Err(
-                "Local Connector runtime configuration definitions are incomplete".to_string(),
-            );
-        }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys =
-                ensure_local_connector_runtime_values(&mut release.values, &defaults);
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                defaults
-                    .iter()
-                    .map(|(key, fallback)| {
-                        (
-                            key.clone(),
-                            release
-                                .values
-                                .get(key)
-                                .cloned()
-                                .unwrap_or_else(|| fallback.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
-
-        for mut snapshot in self.store.list_all_snapshots().await? {
-            if snapshot.service_name != "local-connector-service" {
-                continue;
-            }
-            let snapshot_defaults = values_by_release
-                .get(&(snapshot.environment.clone(), snapshot.revision))
-                .cloned()
-                .unwrap_or_else(|| defaults.clone());
-            let changed =
-                !ensure_local_connector_runtime_values(&mut snapshot.values, &snapshot_defaults)
-                    .is_empty();
-            let previous_env = snapshot.env.clone();
-            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
-                definition.scope == "shared"
-                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
-            });
-            if changed || snapshot.env != previous_env {
-                snapshot.checksum = checksum(&json!({
-                    "values": snapshot.values,
-                    "env": snapshot.env,
-                }))?;
-                self.store.save_snapshot(&snapshot).await?;
-            }
-        }
-
-        self.republish_active_releases_to_consul(
-            &definitions,
-            "add Local Connector runtime configuration",
-        )
-        .await?;
-
-        tracing::info!(
-            user_service_base_url_key = LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY,
-            public_base_url_key = LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY,
-            relay_timeout_key = LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-            "Local Connector runtime configuration is present in releases and snapshots"
-        );
-        Ok(())
-    }
-
     pub(super) async fn migrate_memory_engine_runtime_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = memory_engine_runtime_default_values(&definitions);
@@ -424,7 +347,6 @@ impl AppState {
 
         for mut snapshot in self.store.list_all_snapshots().await? {
             if ![
-                "local-connector-service",
                 "plugin-management-service",
                 "memory-engine",
                 "chatos-backend",
@@ -491,7 +413,6 @@ impl AppState {
         .await?;
 
         tracing::info!(
-            local_connector_key = LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             plugin_management_key = PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             memory_engine_key = MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
             "Internal request security configuration is present in configuration center releases and snapshots"

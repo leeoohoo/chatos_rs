@@ -175,6 +175,7 @@ async fn announces_ready_only_after_assembly_and_stops_cleanly() {
         "platform_state_directory": platform_state,
         "model_gateway_base_url": "https://api.example.com",
         "memory_engine_base_url": "https://memory.example.com",
+        "plugin_management_base_url": "https://plugins.example.com",
         "memory_source_id": "local-agent",
         "storage_profile": {
             "backend": "sqlite",

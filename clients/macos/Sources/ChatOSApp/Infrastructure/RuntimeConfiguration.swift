@@ -43,6 +43,7 @@ enum RuntimeConfiguration {
                 .appendingPathComponent("PlatformState", isDirectory: true),
             modelGatewayBaseURL: modelGatewayBaseURL,
             memoryEngineBaseURL: memoryEngineBaseURL,
+            pluginManagementBaseURL: pluginManagementBaseURL,
             storage: .sqlite(
                 databaseURL: accountDirectory.appendingPathComponent("Client.sqlite3"),
                 encryptionSecretReference: NativeLocalAgentAccountSession
@@ -107,6 +108,14 @@ enum RuntimeConfiguration {
         environmentURL("CHATOS_MEMORY_ENGINE_BASE_URL")
             ?? bundleURL("ChatOSMemoryEngineBaseURL")
             ?? serviceRootURL
+    }
+
+    private static var pluginManagementBaseURL: URL {
+        environmentURL("CHATOS_PLUGIN_MANAGEMENT_BASE_URL")
+            ?? bundleURL("ChatOSPluginManagementBaseURL")
+            ?? serviceRootURL
+                .appendingPathComponent("api", isDirectory: true)
+                .appendingPathComponent("plugin", isDirectory: true)
     }
 
     static var serviceRootURL: URL {

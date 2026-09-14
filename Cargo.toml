@@ -6,7 +6,6 @@ members = [
   "chatos/backend",
   "crates/chatos_model_transport",
   "crates/chatos_internal_auth",
-  "crates/chatos_sandbox_contract",
   "crates/memory_engine_sdk",
   "crates/chatos_service_runtime",
   "crates/chatos_config_sdk",
@@ -22,7 +21,6 @@ members = [
   "clients/shared/rust/local_agent_host",
   "crates/chatos_queue_observability",
   "config_center_service/backend",
-  "local_connector_service/backend",
   "plugin_management_service/backend",
   "official_website_service/backend",
 ]

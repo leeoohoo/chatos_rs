@@ -108,7 +108,7 @@ use queue_operations::replay_catalog_sync_dead_letter;
 use resource_policy::*;
 use runtime_agent_prompts::{
     agent_prompt_bundle_internal, agent_prompt_bundle_manifest_internal,
-    resolve_agent_prompt_internal,
+    resolve_agent_prompt_for_user, resolve_agent_prompt_internal,
 };
 use skill_packages::{get_skill_package, list_skill_packages};
 use skills::{check_skill, get_skill, list_skills};
@@ -263,6 +263,10 @@ pub fn build_public_router(state: AppState) -> Router {
         .route(
             "/api/runtime/agent-capabilities",
             get(resolve_agent_capabilities),
+        )
+        .route(
+            "/api/runtime/agent-prompts/resolve",
+            post(resolve_agent_prompt_for_user),
         )
         .route("/api/plugins/catalog", get(list_plugin_catalog))
         .route(

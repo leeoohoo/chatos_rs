@@ -102,9 +102,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         switch inspectorSection {
         case .detail:
             loadModelOutput(for: task)
-        case .process:
-            break
-        case .run:
+        case .process, .run:
             guard runDetail == nil, !isLoadingRun else { return }
             loadRun(for: task)
         }

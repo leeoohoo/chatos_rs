@@ -74,7 +74,6 @@ fn snapshots() -> (FrozenSnapshot, FrozenSnapshot, FrozenSnapshot) {
         serde_json::to_value(TaskRunnerPromptSnapshot {
             prompt_revision: "prompt-revision-1".to_string(),
             base_system_prompt: "Work as a careful local implementation agent.".to_string(),
-            task_prompt: "Preserve the approved visual design and verify the result.".to_string(),
             skill_snapshot: serde_json::json!({"skills": ["visual-verification"]}),
         })
         .unwrap(),

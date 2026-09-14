@@ -4,7 +4,7 @@
 import Darwin
 import Foundation
 
-public let localAgentHostLaunchProtocolVersion: UInt32 = 4
+public let localAgentHostLaunchProtocolVersion: UInt32 = 5
 private let localAgentHostStorageUnavailableExitStatus: Int32 = 75
 
 public enum NativeLocalAgentHostExitCause: Equatable, Sendable {

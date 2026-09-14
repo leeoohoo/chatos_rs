@@ -9,8 +9,6 @@ use crate::models::ConfigDefinitionRecord;
 
 #[path = "builtin/configuration_center.rs"]
 mod configuration_center;
-#[path = "builtin/local_connector.rs"]
-mod local_connector;
 #[path = "builtin/memory_engine.rs"]
 mod memory_engine;
 #[path = "builtin/plugin_management.rs"]
@@ -25,7 +23,6 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     let mut definitions = Vec::new();
     definitions.extend(configuration_center::definitions(&now));
     definitions.extend(shared_chatos::definitions(&now));
-    definitions.extend(local_connector::definitions(&now));
     definitions.extend(plugin_management::definitions(&now));
     definitions.extend(memory_engine::definitions(&now));
     definitions.extend(user_service::definitions(&now));

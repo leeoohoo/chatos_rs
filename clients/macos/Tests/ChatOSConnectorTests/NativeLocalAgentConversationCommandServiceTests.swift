@@ -83,6 +83,27 @@ struct NativeLocalAgentConversationCommandServiceTests {
         #expect(await fixture.account.discardedReferences().count == 1)
     }
 
+    @Test("persists the visible default model before creating a Run")
+    func persistsDefaultModel() async throws {
+        let fixture = try await Fixture.make(selectedModelID: nil)
+
+        _ = try await fixture.service.sendNewTurn(
+            ConversationSendCommand(
+                sessionID: "conversation-1",
+                turnID: "turn-1",
+                messageID: "message-1",
+                content: "Design it",
+                attachments: []
+            )
+        )
+
+        #expect(await fixture.runtimeSettings.selectedModel() == "model-1")
+        let request = try requestObject(from: await fixture.transport.lastRequestData())
+        let command = try #require(request["command"] as? [String: Any])
+        let payload = try #require(command["payload"] as? [String: Any])
+        #expect(payload["model_config_id"] as? String == "model-1")
+    }
+
     @Test("cancels by authoritative local Run ID")
     func cancelsLocalRun() async throws {
         let fixture = try await Fixture.make(responseType: "accepted")
@@ -105,6 +126,7 @@ private struct Fixture {
     let account: MainChatAccountSession
     let contacts: MainChatContactContexts
     let projects: MainChatProjects
+    let runtimeSettings: MainChatRuntimeSettings
 
     static let attachment = ConversationAttachmentDraft(
         id: "attachment-1",
@@ -117,7 +139,8 @@ private struct Fixture {
 
     static func make(
         responseType: String = "run_created",
-        returnedOwnerID: String = "user-1"
+        returnedOwnerID: String = "user-1",
+        selectedModelID: String? = "model-1"
     ) async throws -> Fixture {
         let transport = MainChatCommandTransport(
             responseType: responseType,
@@ -151,18 +174,20 @@ private struct Fixture {
         )
         let contacts = MainChatContactContexts()
         let projects = MainChatProjects()
+        let runtimeSettings = MainChatRuntimeSettings(selectedModelID: selectedModelID)
         return Fixture(
             service: NativeLocalAgentConversationCommandService(
                 accountSession: account,
                 scopes: scopes,
-                runtimeSettings: MainChatRuntimeSettings(),
+                runtimeSettings: runtimeSettings,
                 contactContexts: contacts,
                 projects: projects
             ),
             transport: transport,
             account: account,
             contacts: contacts,
-            projects: projects
+            projects: projects,
+            runtimeSettings: runtimeSettings
         )
     }
 }
@@ -271,21 +296,45 @@ private actor MainChatAccountSession: NativeLocalAgentAccountSessionAccess {
     func activeClientRequestCount() -> Int { activeRequests }
 }
 
-private struct MainChatRuntimeSettings: ConversationRuntimeSettingsServicing {
-    func fetchSettings(sessionID: String) async throws -> ConversationRuntimeSettings {
-        guard sessionID == "conversation-1" else { throw TestFailure.unexpected }
-        return ConversationRuntimeSettings(selectedModelID: "model-1")
+private actor MainChatRuntimeSettings: ConversationRuntimeSettingsServicing {
+    private var selectedModelID: String?
+
+    init(selectedModelID: String?) {
+        self.selectedModelID = selectedModelID
     }
 
-    func fetchAvailableModels() async throws -> [ConversationModelOption] { [] }
+    func fetchSettings(sessionID: String) async throws -> ConversationRuntimeSettings {
+        guard sessionID == "conversation-1" else { throw TestFailure.unexpected }
+        return ConversationRuntimeSettings(selectedModelID: selectedModelID)
+    }
+
+    func fetchAvailableModels() async throws -> [ConversationModelOption] {
+        [ConversationModelOption(
+            id: "model-1",
+            displayName: "Model",
+            modelName: "gpt-test",
+            provider: "gpt",
+            thinkingLevel: nil,
+            supportsReasoning: false,
+            thinkingLevels: []
+        )]
+    }
     func updateModel(sessionID: String, modelID: String) async throws
-        -> ConversationRuntimeSettings { throw TestFailure.unexpected }
+        -> ConversationRuntimeSettings {
+        guard sessionID == "conversation-1", modelID == "model-1" else {
+            throw TestFailure.unexpected
+        }
+        selectedModelID = modelID
+        return ConversationRuntimeSettings(selectedModelID: modelID)
+    }
     func updateRemoteConnection(sessionID: String, connectionID: String?) async throws
         -> ConversationRuntimeSettings { throw TestFailure.unexpected }
     func updateReasoning(sessionID: String, enabled: Bool) async throws
         -> ConversationRuntimeSettings { throw TestFailure.unexpected }
     func updateReasoningLevel(sessionID: String, level: String, enabled: Bool) async throws
         -> ConversationRuntimeSettings { throw TestFailure.unexpected }
+
+    func selectedModel() -> String? { selectedModelID }
 }
 
 private actor MainChatContactContexts: LocalAgentContactRuntimeContextServicing {

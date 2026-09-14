@@ -38,6 +38,7 @@ fn bundled_binary_rejects_missing_secure_store_values_before_ready() {
         "platform_state_directory": platform_state,
         "model_gateway_base_url": "https://gateway.example.test",
         "memory_engine_base_url": "https://memory.example.test",
+        "plugin_management_base_url": "https://plugins.example.test",
         "memory_source_id": "binary-contract-source",
         "storage_profile": {
             "backend": "sqlite",
@@ -103,6 +104,7 @@ fn bundled_binary_accepts_one_correlated_secret_frame_and_becomes_ready() {
         "platform_state_directory": platform_state,
         "model_gateway_base_url": "https://gateway.example.test",
         "memory_engine_base_url": "https://memory.example.test",
+        "plugin_management_base_url": "https://plugins.example.test",
         "memory_source_id": "binary-ready-source",
         "storage_profile": {
             "backend": "sqlite",

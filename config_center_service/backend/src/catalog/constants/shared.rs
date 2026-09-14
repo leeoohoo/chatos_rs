@@ -4,7 +4,6 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "agent.runtime.max_iterations",
     "chatos.ai.max_iterations",
     "chatos.ui.local_project_creation_enabled",
-    "local_connector.relay.sandbox_image_request_timeout_ms",
     "memory_engine.ai.openai_api_key",
     "memory_engine.ai.openai_base_url",
     "memory_engine.ai.openai_model",

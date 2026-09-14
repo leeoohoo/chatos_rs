@@ -123,6 +123,20 @@ impl AppStore {
         Ok(migrated)
     }
 
+    pub async fn migrate_model_runtime_schema(&self) -> Result<usize, String> {
+        let configs = self.list_user_model_configs(None).await?;
+        let mut migrated = 0usize;
+        for mut config in configs {
+            if !config.apply_execution_metadata_defaults() {
+                continue;
+            }
+            config.updated_at = super::now_rfc3339();
+            self.save_user_model_config(&config).await?;
+            migrated += 1;
+        }
+        Ok(migrated)
+    }
+
     pub async fn find_user_model_config_by_id(
         &self,
         id: &str,

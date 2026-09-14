@@ -68,6 +68,7 @@ struct NativeLocalAgentAccountSessionTests {
                         platformStateDirectory: root.appendingPathComponent("state"),
                         modelGatewayBaseURL: URL(string: "https://gateway.example.test")!,
                         memoryEngineBaseURL: URL(string: "https://memory.example.test")!,
+                        pluginManagementBaseURL: URL(string: "https://plugins.example.test")!,
                         storage: .sqlite(
                             databaseURL: root.appendingPathComponent("client.sqlite3"),
                             encryptionSecretReference: NativeLocalAgentAccountSession
@@ -440,6 +441,7 @@ struct NativeLocalAgentAccountSessionTests {
             platformStateDirectory: root.appendingPathComponent("state"),
             modelGatewayBaseURL: URL(string: "https://gateway.example.test")!,
             memoryEngineBaseURL: URL(string: "https://memory.example.test")!,
+            pluginManagementBaseURL: URL(string: "https://plugins.example.test")!,
             storage: .sqlite(
                 databaseURL: root.appendingPathComponent("client.sqlite3"),
                 encryptionSecretReference: NativeLocalAgentAccountSession.sqliteEncryptionKeyReference

@@ -18,11 +18,6 @@ pub const CONFIG_CENTER_CALLER_BOOTSTRAP_SECRETS: &[(&str, &str, &str)] = &[
         "change_me_config_center_chatos_backend_signing_secret",
     ),
     (
-        "local-connector-service",
-        "CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET",
-        "change_me_config_center_local_connector_signing_secret",
-    ),
-    (
         "memory-engine",
         "CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET",
         "change_me_config_center_memory_engine_signing_secret",

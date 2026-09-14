@@ -15,8 +15,9 @@ use chatos_client_storage::{
 };
 use chatos_local_agent_host::{
     LocalTaskCapabilityRequest, LocalTaskCapabilityResolution, LocalTaskCapabilityResolver,
-    LocalTaskCreationPlanner, LocalTaskPlanningRequest, StoredLocalTaskCreationPlanner,
-    TASK_RUNNER_PROMPT_SETTING_ID, TASK_RUNNER_PROMPT_SETTING_KEY,
+    LocalTaskCreationPlanner, LocalTaskPlanningRequest, LocalTaskPromptConfiguration,
+    LocalTaskPromptSource, StoredLocalTaskCreationPlanner, TASK_RUNNER_PROMPT_SETTING_ID,
+    TASK_RUNNER_PROMPT_SETTING_KEY,
 };
 use chatos_local_agent_protocol::ToolEffect;
 use chrono::Utc;
@@ -76,7 +77,6 @@ impl StorageTransaction for SeedPlanningSources {
                         "schema_version": 1,
                         "prompt_revision": "task-prompt-3",
                         "base_system_prompt": "Work as a local implementation agent.",
-                        "task_prompt": "Prioritize UI fidelity and deterministic verification.",
                         "skill_snapshot": {"skills": ["visual-verification"]}
                     }),
                 },
@@ -88,6 +88,26 @@ impl StorageTransaction for SeedPlanningSources {
 }
 
 struct LeakedAbsolutePathReference;
+
+#[derive(Default)]
+struct ReadTaskRunnerPrompt(Option<ClientSettingRecord>);
+
+#[async_trait]
+impl StorageTransaction for ReadTaskRunnerPrompt {
+    async fn execute(
+        &mut self,
+        repositories: &mut dyn TransactionRepositories,
+    ) -> StorageResult<()> {
+        self.0 = repositories
+            .settings()
+            .get(&RecordQuery {
+                scope: scope(),
+                id: TASK_RUNNER_PROMPT_SETTING_ID.to_string(),
+            })
+            .await?;
+        Ok(())
+    }
+}
 
 #[async_trait]
 impl StorageTransaction for LeakedAbsolutePathReference {
@@ -115,6 +135,25 @@ impl StorageTransaction for LeakedAbsolutePathReference {
 
 struct RecordingCapabilityResolver {
     requests: Mutex<Vec<LocalTaskCapabilityRequest>>,
+}
+
+struct PromptSource;
+
+#[async_trait]
+impl LocalTaskPromptSource for PromptSource {
+    async fn resolve_prompt(
+        &self,
+        model_provider: &str,
+        _cancellation: CancellationToken,
+    ) -> Result<LocalTaskPromptConfiguration, String> {
+        assert_eq!(model_provider, "openai");
+        Ok(LocalTaskPromptConfiguration {
+            schema_version: 1,
+            prompt_revision: "task-prompt-3".to_string(),
+            base_system_prompt: "Work as a local implementation agent.".to_string(),
+            skill_snapshot: serde_json::json!({"skills": ["visual-verification"]}),
+        })
+    }
 }
 
 #[async_trait]
@@ -159,10 +198,52 @@ fn planning_request() -> LocalTaskPlanningRequest {
         source_turn_id: "turn-1".to_string(),
         project_id: "project-1".to_string(),
         model_config_id: "model-task-1".to_string(),
+        model_provider: "openai".to_string(),
         objective: "Implement the approved visual design".to_string(),
         acceptance_criteria: vec!["The screenshot matches the approved reference".to_string()],
         parent_capability_snapshot_ref: "main-capabilities-1".to_string(),
     }
+}
+
+#[tokio::test]
+async fn planner_syncs_the_required_task_runner_prompt_before_loading_local_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let storage = Arc::new(
+        SqliteClientStorage::open(
+            &SqliteBootstrapProfile {
+                database_path: directory.path().join("client.sqlite3"),
+                encryption_secret: SecretReference::new("test:task-prompt-bootstrap-key").unwrap(),
+            },
+            &StorageEncryptionKey::new([73; 32]),
+        )
+        .await
+        .unwrap(),
+    );
+    let resolver = Arc::new(RecordingCapabilityResolver {
+        requests: Mutex::new(Vec::new()),
+    });
+    let planner = StoredLocalTaskCreationPlanner::new(
+        storage.clone(),
+        scope(),
+        "device-1",
+        Arc::new(PromptSource),
+        resolver,
+    );
+    let error = planner
+        .plan_task(&planning_request(), CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(error.contains("planning sources"));
+
+    let mut read = ReadTaskRunnerPrompt::default();
+    storage.transaction(&mut read).await.unwrap();
+    let record = read.0.expect("Task Runner prompt must be persisted");
+    assert_eq!(record.metadata.id, TASK_RUNNER_PROMPT_SETTING_ID);
+    assert_eq!(record.metadata.revision, 1);
+    assert_eq!(record.key, TASK_RUNNER_PROMPT_SETTING_KEY);
+    let prompt: LocalTaskPromptConfiguration = serde_json::from_value(record.value).unwrap();
+    assert_eq!(prompt.schema_version, 1);
+    assert!(!prompt.base_system_prompt.trim().is_empty());
 }
 
 #[tokio::test]
@@ -186,7 +267,13 @@ async fn planner_freezes_only_owner_scoped_project_prompt_and_resolved_capabilit
     let resolver = Arc::new(RecordingCapabilityResolver {
         requests: Mutex::new(Vec::new()),
     });
-    let planner = StoredLocalTaskCreationPlanner::new(storage.clone(), scope(), resolver.clone());
+    let planner = StoredLocalTaskCreationPlanner::new(
+        storage.clone(),
+        scope(),
+        "device-1",
+        Arc::new(PromptSource),
+        resolver.clone(),
+    );
 
     let first = planner
         .plan_task(&planning_request(), CancellationToken::new())
