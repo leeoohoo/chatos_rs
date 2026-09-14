@@ -15,15 +15,14 @@ use chatos_local_agent_protocol::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-const PROJECT_STATE_SCHEMA_VERSION: u32 = 1;
+const PROJECT_STATE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct StoredProjectState {
     schema_version: u32,
     description: String,
-    workspace_id: String,
-    relative_root: String,
+    root_path: String,
     status: LocalProjectStatus,
 }
 
@@ -178,13 +177,12 @@ fn project_record(
     let state = StoredProjectState {
         schema_version: PROJECT_STATE_SCHEMA_VERSION,
         description: draft.description,
-        workspace_id: draft.workspace_id.clone(),
-        relative_root: draft.relative_root,
+        root_path: draft.root_path.clone(),
         status,
     };
     Ok(ProjectRecord {
         metadata: RecordMetadata {
-            id: project_id,
+            id: project_id.clone(),
             scope: scope.clone(),
             origin_device_id: device_id.to_string(),
             revision: 0,
@@ -192,9 +190,7 @@ fn project_record(
             updated_at: now,
         },
         name: draft.name,
-        // The workspace grant ID is the only working-directory authority stored here.
-        // Absolute paths remain inside the native connector filesystem boundary.
-        root_reference: Some(draft.workspace_id),
+        root_reference: Some(project_id),
         state: serde_json::to_value(state)
             .map_err(|error| project_internal_error(error.to_string()))?,
     })
@@ -206,10 +202,10 @@ pub(crate) fn project_snapshot(record: ProjectRecord) -> StorageResult<LocalProj
             reason: format!("stored project state is invalid: {error}"),
         })?;
     if state.schema_version != PROJECT_STATE_SCHEMA_VERSION
-        || record.root_reference.as_deref() != Some(state.workspace_id.as_str())
+        || record.root_reference.as_deref() != Some(record.metadata.id.as_str())
     {
         return Err(StorageError::InvalidData {
-            reason: "stored project authority does not match its workspace binding".to_string(),
+            reason: "stored project authority does not match its project identity".to_string(),
         });
     }
     let snapshot = LocalProjectSnapshot {
@@ -218,8 +214,7 @@ pub(crate) fn project_snapshot(record: ProjectRecord) -> StorageResult<LocalProj
         draft: LocalProjectDraft {
             name: record.name,
             description: state.description,
-            workspace_id: state.workspace_id,
-            relative_root: state.relative_root,
+            root_path: state.root_path,
         },
         revision: record.metadata.revision,
         status: state.status,

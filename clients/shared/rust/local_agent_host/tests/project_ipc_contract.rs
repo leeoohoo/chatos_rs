@@ -57,8 +57,7 @@ fn draft(name: &str) -> LocalProjectDraft {
     LocalProjectDraft {
         name: name.to_string(),
         description: "Visual editor".to_string(),
-        workspace_id: "workspace-1".to_string(),
-        relative_root: "apps/editor".to_string(),
+        root_path: "/apps/editor".to_string(),
     }
 }
 

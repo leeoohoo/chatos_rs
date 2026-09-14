@@ -137,6 +137,7 @@ struct NativeConnectorCredentialsTests {
                 supportRootURL: root
             ),
             ticketProvider: LegacyStateTicketProvider(),
+            sessionAccessTokenProvider: LegacyStateTicketProvider(),
             accountSession: UnavailableLocalAgentAccountSession(),
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
@@ -146,6 +147,7 @@ struct NativeConnectorCredentialsTests {
     }
 }
 
-private struct LegacyStateTicketProvider: LocalConnectorPairingTicketProviding {
+private struct LegacyStateTicketProvider: LocalConnectorPairingTicketProviding, ChatOSSessionAccessTokenProviding {
     func issueLocalConnectorPairingTicket() async throws -> String { "unused" }
+    func currentChatOSAccessToken() async -> String? { "test-token" }
 }

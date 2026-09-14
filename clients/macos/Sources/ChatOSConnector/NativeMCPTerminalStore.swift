@@ -137,21 +137,11 @@ actor NativeMCPTerminalStore {
             exitCode: nil,
             startedAt: now,
             lastActiveAt: now,
-            logs: []
+            logs: [],
+            outputReaders: []
         )
         processes[id] = managed
         append(kind: "command", content: command + "\n", to: id)
-
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            Task { await self?.append(kind: "stdout", data: data, to: id) }
-        }
-        error.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            Task { await self?.append(kind: "stderr", data: data, to: id) }
-        }
         process.terminationHandler = { [weak self] terminated in
             Task { await self?.finish(id: id, exitCode: Int(terminated.terminationStatus)) }
         }
@@ -162,6 +152,10 @@ actor NativeMCPTerminalStore {
             processes.removeValue(forKey: id)
             throw NativeMCPTerminalError.launchFailed(error.localizedDescription)
         }
+        managed.outputReaders = [
+            outputReader(output.fileHandleForReading, kind: "stdout", id: id),
+            outputReader(error.fileHandleForReading, kind: "stderr", id: id),
+        ]
 
         if background {
             return .object([
@@ -461,20 +455,33 @@ actor NativeMCPTerminalStore {
 
     private func finish(id: String, exitCode: Int) async {
         guard let process = processes[id] else { return }
-        process.output.fileHandleForReading.readabilityHandler = nil
-        process.error.fileHandleForReading.readabilityHandler = nil
-        let stdout = process.output.fileHandleForReading.readDataToEndOfFile()
-        let stderr = process.error.fileHandleForReading.readDataToEndOfFile()
-        if !stdout.isEmpty { append(kind: "stdout", data: stdout, to: id) }
-        if !stderr.isEmpty { append(kind: "stderr", data: stderr, to: id) }
-        // A readability handler may already have consumed the final bytes and queued its
-        // actor append just before termination. Let that append commit before exposing the
-        // process as exited, so process_wait cannot observe a terminal state with missing tail output.
-        await Task.yield()
+        for reader in process.outputReaders {
+            await reader.value
+        }
+        process.outputReaders.removeAll()
         process.status = "exited"
         process.exitCode = exitCode
         process.lastActiveAt = Self.timestamp()
         try? process.input.close()
+    }
+
+    private func outputReader(
+        _ handle: FileHandle,
+        kind: String,
+        id: String
+    ) -> Task<Void, Never> {
+        Task.detached(priority: .utility) { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    guard let data = try handle.read(upToCount: 64 * 1_024), !data.isEmpty else {
+                        return
+                    }
+                    await self?.append(kind: kind, data: data, to: id)
+                } catch {
+                    return
+                }
+            }
+        }
     }
 
     private func append(kind: String, data: Data, to id: String) {
@@ -641,6 +648,7 @@ private final class ManagedTerminalProcess: @unchecked Sendable {
     let startedAt: String
     var lastActiveAt: String
     var logs: [TerminalLog]
+    var outputReaders: [Task<Void, Never>]
 
     init(
         id: String,
@@ -655,7 +663,8 @@ private final class ManagedTerminalProcess: @unchecked Sendable {
         exitCode: Int?,
         startedAt: String,
         lastActiveAt: String,
-        logs: [TerminalLog]
+        logs: [TerminalLog],
+        outputReaders: [Task<Void, Never>]
     ) {
         self.id = id
         self.command = command
@@ -670,6 +679,7 @@ private final class ManagedTerminalProcess: @unchecked Sendable {
         self.startedAt = startedAt
         self.lastActiveAt = lastActiveAt
         self.logs = logs
+        self.outputReaders = outputReaders
     }
 }
 

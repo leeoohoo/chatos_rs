@@ -321,7 +321,7 @@ private actor MainChatProjects: NativeLocalAgentProjectRecordLoading {
             draft: LocalProjectDraft(
                 name: "Website",
                 description: "Editorial product page",
-                workspaceID: "workspace-private"
+                rootPath: "/tmp/website"
             ),
             revision: 4,
             createdAtUnixMs: 1,

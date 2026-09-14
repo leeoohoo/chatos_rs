@@ -6,7 +6,14 @@ use axum::Json;
 use serde_json::Value;
 
 use super::error;
-pub(crate) type LocalConnectorRootRef = chatos_local_workspace::LocalConnectorWorkspaceRef;
+const LOCAL_CONNECTOR_ROOT_PREFIX: &str = "local://connector/";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalConnectorRootRef {
+    pub device_id: String,
+    pub workspace_id: String,
+    pub relative_path: Option<String>,
+}
 
 pub(super) fn sanitize_optional_local_relative_path(
     value: Option<&str>,
@@ -17,7 +24,7 @@ pub(super) fn sanitize_optional_local_relative_path(
     let Some(normalized) = normalize_local_relative_path(Some(value)) else {
         return Ok(None);
     };
-    if chatos_local_workspace::local_connector_relative_path_is_safe(normalized.as_str()) {
+    if local_relative_path_is_safe(normalized.as_str()) {
         Ok(Some(normalized))
     } else {
         Err(error(
@@ -38,11 +45,30 @@ pub(super) fn sanitize_required_local_relative_path(
 }
 
 pub(super) fn normalize_local_relative_path(value: Option<&str>) -> Option<String> {
-    chatos_local_workspace::normalize_local_connector_relative_path(value)
+    let value = value?.trim().replace('\\', "/");
+    let parts = value
+        .trim_matches('/')
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>();
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 pub(crate) fn parse_local_connector_root_path(root_path: &str) -> Option<LocalConnectorRootRef> {
-    chatos_local_workspace::parse_local_connector_workspace_root(root_path)
+    let rest = root_path.trim().strip_prefix(LOCAL_CONNECTOR_ROOT_PREFIX)?;
+    let mut parts = rest.splitn(3, '/');
+    let device_id = normalized_text(parts.next()?)?.to_string();
+    let workspace_id = normalized_text(parts.next()?)?.to_string();
+    let relative_path = match parts.next() {
+        Some(path) => Some(decode_relative_path(path)?),
+        None => None,
+    };
+    Some(LocalConnectorRootRef {
+        device_id,
+        workspace_id,
+        relative_path,
+    })
 }
 
 pub(crate) fn local_connector_root_path(
@@ -50,17 +76,62 @@ pub(crate) fn local_connector_root_path(
     workspace_id: &str,
     relative_path: Option<&str>,
 ) -> String {
-    match chatos_local_workspace::local_connector_workspace_root(
-        device_id,
-        workspace_id,
-        relative_path,
-    ) {
+    match format_local_root(device_id, workspace_id, relative_path) {
         Some(root_path) => root_path,
         None => {
             tracing::error!("validated Local Connector root parts could not be formatted");
             "local://connector/invalid".to_string()
         }
     }
+}
+
+fn format_local_root(
+    device_id: &str,
+    workspace_id: &str,
+    relative_path: Option<&str>,
+) -> Option<String> {
+    let device_id = normalized_text(device_id)?;
+    let workspace_id = normalized_text(workspace_id)?;
+    let base = format!("{LOCAL_CONNECTOR_ROOT_PREFIX}{device_id}/{workspace_id}");
+    let Some(path) = normalize_local_relative_path(relative_path) else {
+        return Some(base);
+    };
+    if !local_relative_path_is_safe(path.as_str()) {
+        return None;
+    }
+    let encoded = path
+        .split('/')
+        .map(|part| urlencoding::encode(part).into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    Some(format!("{base}/{encoded}"))
+}
+
+fn decode_relative_path(path: &str) -> Option<String> {
+    let decoded = path
+        .split('/')
+        .filter(|part| !part.trim().is_empty())
+        .map(|part| urlencoding::decode(part).map(|part| part.into_owned()))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?
+        .join("/");
+    let normalized = normalize_local_relative_path(Some(decoded.as_str()));
+    normalized.filter(|path| local_relative_path_is_safe(path))
+}
+
+fn local_relative_path_is_safe(path: &str) -> bool {
+    let path = path.trim();
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.starts_with('\\')
+        && path
+            .split('/')
+            .all(|part| !part.trim().is_empty() && part != "." && part != "..")
+}
+
+fn normalized_text(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
 }
 
 #[cfg(test)]

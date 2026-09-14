@@ -1,3 +1,4 @@
+import AppKit
 import ChatOSCore
 import SwiftUI
 
@@ -6,16 +7,10 @@ struct CreateProjectSheetHost: View {
     let onCreated: (WorkspaceProject) -> Void
 
     init(
-        connectorStatus: LocalConnectorStatus?,
-        filesystemService: any ProjectFilesystemServicing,
         creationService: any LocalProjectCreating,
         onCreated: @escaping (WorkspaceProject) -> Void
     ) {
-        _viewModel = StateObject(wrappedValue: CreateProjectViewModel(
-            connectorStatus: connectorStatus,
-            filesystemService: filesystemService,
-            creationService: creationService
-        ))
+        _viewModel = StateObject(wrappedValue: CreateProjectViewModel(creationService: creationService))
         self.onCreated = onCreated
     }
 
@@ -29,9 +24,6 @@ struct CreateProjectSheet: View {
     @ObservedObject var viewModel: CreateProjectViewModel
     let onCreated: (WorkspaceProject) -> Void
 
-    @State private var showingNewFolderPrompt = false
-    @State private var newFolderName = ""
-
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -41,19 +33,7 @@ struct CreateProjectSheet: View {
             Divider()
             footer
         }
-        .frame(minWidth: 700, idealWidth: 740, minHeight: 650, idealHeight: 700)
-        .task { await viewModel.loadInitialDirectory() }
-        .alert("新建文件夹", isPresented: $showingNewFolderPrompt) {
-            TextField("文件夹名称", text: $newFolderName)
-            Button("取消", role: .cancel) { newFolderName = "" }
-            Button("创建") {
-                let name = newFolderName
-                newFolderName = ""
-                Task { await viewModel.createDirectory(named: name) }
-            }
-        } message: {
-            Text("文件夹将创建在当前所选目录中。")
-        }
+        .frame(minWidth: 620, idealWidth: 660, minHeight: 390, idealHeight: 430)
     }
 
     private var header: some View {
@@ -77,16 +57,33 @@ struct CreateProjectSheet: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if viewModel.selectedWorkspace == nil {
-                Label("请先授权本机工作区", systemImage: "externaldrive.badge.exclamationmark")
-                    .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("项目目录")
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    Image(systemName: "folder.fill")
+                        .foregroundStyle(Color.accentColor)
+                    Text(viewModel.selectedDirectoryPath ?? "尚未选择文件夹")
+                        .appFont(.body)
+                        .foregroundStyle(viewModel.selectedDirectoryPath == nil ? .secondary : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    Button(viewModel.selectedDirectoryPath == nil ? "选择文件夹…" : "更改…") {
+                        chooseDirectory()
+                    }
+                }
+                .padding(12)
+                .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(AppPalette.border, lineWidth: 1)
+                }
+                Text("可以选择这台 Mac 上当前账户有权访问的任意文件夹。")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
             }
-
-            CreateProjectDirectoryBrowser(
-                viewModel: viewModel,
-                showingNewFolderPrompt: $showingNewFolderPrompt
-            )
-            .frame(maxWidth: .infinity, minHeight: 250)
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("项目名称")
@@ -119,6 +116,21 @@ struct CreateProjectSheet: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func chooseDirectory() {
+        let panel = NSOpenPanel()
+        panel.title = "选择项目文件夹"
+        panel.prompt = "选择"
+        panel.message = "选择这台 Mac 上的一个文件夹作为项目目录。"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = viewModel.selectedDirectoryPath.map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        viewModel.selectDirectory(url)
     }
 
     private var footer: some View {

@@ -30,7 +30,7 @@ struct NativeLocalAgentMainChatSnapshotFactoryTests {
             draft: LocalProjectDraft(
                 name: "Landing page",
                 description: "A restrained editorial storefront.",
-                workspaceID: "workspace-1"
+                rootPath: "/tmp/landing-page"
             ),
             revision: 7,
             createdAtUnixMs: 1,
@@ -78,7 +78,7 @@ struct NativeLocalAgentMainChatSnapshotFactoryTests {
             draft: LocalProjectDraft(
                 name: "Project",
                 description: "Read /Users/example/private",
-                workspaceID: "workspace-1"
+                rootPath: "/tmp/project"
             ),
             createdAtUnixMs: 1,
             updatedAtUnixMs: 1

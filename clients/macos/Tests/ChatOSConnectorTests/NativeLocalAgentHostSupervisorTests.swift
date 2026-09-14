@@ -170,8 +170,8 @@ struct NativeLocalAgentHostSupervisorTests {
         await first.logout()
     }
 
-    @Test("does not replace a live Host speaking another protocol")
-    func rejectsWrongProtocolHost() async throws {
+    @Test("replaces a trusted Host left behind by an older App protocol")
+    func replacesTrustedOlderProtocolHost() async throws {
         let fixture = try PersistentHostFixture(responseProtocolVersion: 15)
         defer { fixture.cleanup() }
         let verifier: @Sendable (pid_t) throws -> Void = { _ in }
@@ -181,18 +181,26 @@ struct NativeLocalAgentHostSupervisorTests {
             restartDelays: [.milliseconds(10)]
         )
         try await first.start(accountID: "user-1") { try fixture.configuration() }
+        guard case let .running(_, oldProcessID, _, _) = await first.state() else {
+            Issue.record("Expected the old Host to be running")
+            return
+        }
+        await first.detach()
         let second = try NativeLocalAgentHostSupervisor(
             launcher: NativeLocalAgentHostProcessLauncher(testingIdentityVerifier: { _ in }),
             attacher: NativeLocalAgentHostAttacher(testingIdentityVerifier: verifier),
             restartDelays: [.milliseconds(10)]
         )
 
-        await #expect(throws: NativeLocalAgentIPCError.protocolMismatch(15)) {
-            try await second.start(accountID: "user-1") { try fixture.configuration() }
-        }
+        try await second.start(accountID: "user-1") { try fixture.configuration() }
 
-        #expect(fixture.launchCount() == 1)
-        await first.logout()
+        guard case let .running(_, newProcessID, _, _) = await second.state() else {
+            Issue.record("Expected a replacement Host to be running")
+            return
+        }
+        #expect(newProcessID != oldProcessID)
+        #expect(fixture.launchCount() == 2)
+        await second.logout()
     }
 
     @Test("restarts a crashed Host with a freshly produced launch frame")

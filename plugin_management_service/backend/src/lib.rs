@@ -11,6 +11,7 @@ pub mod pressure;
 pub mod seed;
 pub mod state;
 pub mod store;
+mod system_mcp_catalog;
 mod tool_catalog;
 
 pub use api::{build_internal_router, build_public_router};

@@ -6,20 +6,20 @@ import XCTest
 final class ClientOwnedWorkspaceLoaderTests: XCTestCase {
     func testOfflineRelationsDoNotHideLocalProjectsAndUnpairedProjectsRemainVisible() async throws {
         let registry = MemoryProjectRegistry()
-        let project = try await registry.create(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws"))
+        let project = try await registry.create(ownerUserID: "alice", draft: .init(name: "Local", rootPath: "/repo"))
         let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: OfflineRelations(), ownerUserID: "alice")
         let local = try await loader.loadLocal(deviceID: nil)
         XCTAssertEqual(local.projects.map(\.id), [project.id])
-        XCTAssertNil(local.projects.first?.rootPath)
+        XCTAssertEqual(local.projects.first?.rootPath, "/repo")
         let refreshed = try await loader.refresh(deviceID: "device")
-        XCTAssertEqual(refreshed.snapshot.projects.first?.rootPath, "local://connector/device/ws")
+        XCTAssertEqual(refreshed.snapshot.projects.first?.rootPath, "/repo")
         XCTAssertNotNil(refreshed.remoteError)
         XCTAssertEqual(refreshed.snapshot.projects.map(\.id), [project.id])
     }
 
     func testRelationsCannotCreateOrRenameProjectsAndChooseLatestActiveConversation() async throws {
         let registry = MemoryProjectRegistry()
-        let project = try await registry.create(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "目录/a%20b #x"))
+        let project = try await registry.create(ownerUserID: "alice", draft: .init(name: "Local", rootPath: "/目录/a%20b #x"))
         let remote = FixedRelations(snapshot: .init(contacts: [], conversations: [
             conversation("archived", project: project.id, time: 30, archived: true),
             conversation("new", project: project.id, time: 20),
@@ -32,7 +32,7 @@ final class ClientOwnedWorkspaceLoaderTests: XCTestCase {
         XCTAssertEqual(result.snapshot.projects.first?.name, "Local")
         XCTAssertEqual(result.snapshot.projects.first?.latestConversationID, "new")
         let path = try XCTUnwrap(result.snapshot.projects.first?.rootPath)
-        XCTAssertEqual(URLComponents(string: path)?.path, "/device/ws/目录/a%20b #x")
+        XCTAssertEqual(path, "/目录/a%20b #x")
         XCTAssertEqual(result.snapshot.conversations.count, 4, "Historical/orphan conversations remain readable")
     }
 
@@ -47,7 +47,7 @@ final class ClientOwnedWorkspaceLoaderTests: XCTestCase {
 
     func testDeletionDuringRemoteRefreshCannotResurrectProject() async throws {
         let registry = MemoryProjectRegistry()
-        let project = try await registry.create(ownerUserID: "alice", draft: .init(name: "Local", workspaceID: "ws"))
+        let project = try await registry.create(ownerUserID: "alice", draft: .init(name: "Local", rootPath: "/repo"))
         let remote = DeletingRelations(registry: registry, project: project)
         let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: remote, ownerUserID: "alice")
         let result = try await loader.refresh(deviceID: "device")

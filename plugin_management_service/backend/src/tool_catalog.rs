@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp::{
+use crate::system_mcp_catalog::{
     system_mcp_descriptor_for_record, system_mcp_provider_skills, system_mcp_tool_catalog,
     SystemMcpToolCatalog,
 };
@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn every_static_system_mcp_has_real_tools() {
-        for descriptor in chatos_mcp::system_mcp_catalog() {
+        for descriptor in crate::system_mcp_catalog::system_mcp_catalog() {
             let catalog = system_mcp_tool_catalog(descriptor.key).expect("catalog");
             if let SystemMcpToolCatalog::Static(tools) = catalog {
                 assert!(!tools.is_empty(), "{}", descriptor.server_name);

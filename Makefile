@@ -14,9 +14,9 @@ SHELL := /bin/bash
 help:
 	@echo "Chat OS tasks:"
 	@echo "  make dev                    # build/start the Docker stack from local source"
-	@echo "  make local-dev              # start host-side cloud services and administration frontends"
-	@echo "  make local-dev-stop         # stop host-side local dev stack"
-	@echo "  make local-dev-status       # show host-side local dev stack status"
+	@echo "  make local-dev              # start the macOS 3.0.2 local backend services"
+	@echo "  make local-dev-stop         # stop the macOS 3.0.2 local backend services"
+	@echo "  make local-dev-status       # show the macOS 3.0.2 local backend status"
 	@echo "  make docker-up              # pull/start the prebuilt Docker stack"
 	@echo "  make docker-fast            # start/reconcile existing Docker images without pulling"
 	@echo "  make docker-dev             # build/start Docker images from local source"
@@ -43,16 +43,16 @@ help:
 dev: docker-dev
 
 local-dev:
-	@bash scripts/local-dev-stack.sh up
+	@bash scripts/local-client-stack.sh up
 
 local-dev-stop:
-	@bash scripts/local-dev-stack.sh down
+	@bash scripts/local-client-stack.sh down
 
 local-dev-status:
-	@bash scripts/local-dev-stack.sh status
+	@bash scripts/local-client-stack.sh status
 
 local-dev-logs:
-	@bash scripts/local-dev-stack.sh logs $(SERVICE)
+	@bash scripts/local-client-stack.sh logs $(SERVICE)
 
 docker-up:
 	@docker/deploy.sh up

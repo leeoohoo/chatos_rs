@@ -148,8 +148,7 @@ impl LocalTaskCreationPlanner for StoredLocalTaskCreationPlanner {
             working_directory_ref: working_directory_ref.to_string(),
             authority_snapshot: serde_json::json!({
                 "schema_version": 1,
-                "workspace_id": project.draft.workspace_id,
-                "relative_root": project.draft.relative_root,
+                "root_path": project.draft.root_path,
             }),
         };
         project.validate()?;

@@ -10,21 +10,21 @@ fn task_runner_run_phase_defaults_cover_execution_capabilities() {
         .map(|(kind, _)| kind)
         .collect::<Vec<_>>();
 
-    assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerRead));
-    assert!(kinds.contains(&BuiltinMcpKind::CodeMaintainerWrite));
-    assert!(kinds.contains(&BuiltinMcpKind::TerminalController));
-    assert!(kinds.contains(&BuiltinMcpKind::Notepad));
-    assert!(kinds.contains(&BuiltinMcpKind::RemoteConnectionController));
-    assert!(!kinds.contains(&BuiltinMcpKind::AgentBuilder));
-    assert!(!kinds.contains(&BuiltinMcpKind::MemorySkillReader));
+    assert!(kinds.contains(&SystemMcpKey::CodeMaintainerRead));
+    assert!(kinds.contains(&SystemMcpKey::CodeMaintainerWrite));
+    assert!(kinds.contains(&SystemMcpKey::TerminalController));
+    assert!(kinds.contains(&SystemMcpKey::Notepad));
+    assert!(kinds.contains(&SystemMcpKey::RemoteConnectionController));
+    assert!(!kinds.contains(&SystemMcpKey::AgentBuilder));
+    assert!(!kinds.contains(&SystemMcpKey::MemorySkillReader));
 }
 
 #[test]
 fn every_seeded_builtin_mcp_has_provider_skills_in_both_locales() {
-    for kind in builtin_kinds() {
-        let skills = provider_skills_for_builtin_mcp(kind);
+    for key in active_system_mcp_keys() {
+        let skills = provider_skills_for_system_key(key);
         let skills = skills.as_array().expect("provider skills array");
-        assert_eq!(skills.len(), 2, "{}", kind.kind_name());
+        assert_eq!(skills.len(), 2, "{}", key.as_str());
         assert!(skills.iter().all(|skill| {
             skill
                 .get("instructions")
@@ -41,21 +41,23 @@ fn every_seeded_builtin_mcp_has_provider_skills_in_both_locales() {
 }
 
 #[test]
-fn every_seeded_builtin_mcp_has_a_real_tool_catalog() {
-    for kind in builtin_kinds() {
-        let descriptor = chatos_mcp::system_mcp_catalog()
-            .iter()
-            .find(|descriptor| descriptor.embedded_kind == Some(kind))
-            .expect("embedded descriptor");
-        let tools = chatos_mcp::system_mcp_static_tools(descriptor.key)
-            .unwrap_or_else(|err| panic!("{}: {err}", kind.kind_name()));
-        assert!(!tools.is_empty(), "{}", kind.kind_name());
+fn service_owned_static_tool_catalogs_are_real() {
+    for key in [
+        SystemMcpKey::LocalCommandApproval,
+        SystemMcpKey::TaskProcessLog,
+    ] {
+        let catalog = system_mcp_tool_catalog(key).expect("tool catalog");
+        let SystemMcpToolCatalog::Static(tools) = catalog else {
+            panic!("{} must be service-owned static metadata", key.as_str());
+        };
+        assert!(!tools.is_empty(), "{}", key.as_str());
+        assert!(tools.iter().all(|tool| tool.get("name").is_some()));
     }
 }
 
 #[test]
 fn every_system_mcp_has_provider_skills() {
-    for descriptor in chatos_mcp::system_mcp_catalog() {
+    for descriptor in system_mcp_catalog() {
         let skills = provider_skills_for_system_mcp(descriptor.resource_id)
             .and_then(|value| value.as_array().cloned())
             .expect("system MCP provider skills");
@@ -149,22 +151,19 @@ fn local_command_approval_agent_is_registered_with_a_local_only_tool_plane() {
 
 #[test]
 fn seeded_system_mcp_records_use_the_unified_runtime_kind() {
-    for descriptor in chatos_mcp::system_mcp_catalog() {
+    for descriptor in system_mcp_catalog() {
         let record = system_mcp_record(descriptor, "admin", "now").expect("system MCP record");
         assert_eq!(record.runtime.kind, RUNTIME_KIND_SYSTEM);
         assert_eq!(
             record.runtime.system_key.as_deref(),
             Some(descriptor.key.as_str())
         );
-        assert!(record.runtime.builtin_kind.is_none());
     }
 }
 
 #[test]
 fn task_process_log_is_a_seeded_task_runner_system_mcp() {
-    let descriptor = chatos_mcp::system_mcp_descriptor(
-        chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog,
-    );
+    let descriptor = system_mcp_descriptor(SystemMcpKey::TaskProcessLog);
 
     assert_eq!(descriptor.resource_id, TASK_PROCESS_LOG_MCP_RESOURCE_ID);
     assert_eq!(descriptor.server_name, "task_run_process");

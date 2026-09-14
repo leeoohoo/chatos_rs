@@ -276,8 +276,6 @@
     </array>
     <key>ChatOSAPIBaseURL</key>
     <string>https://gateway.jgoool.com/api/chatos</string>
-    <key>ChatOSLocalConnectorCloudBaseURL</key>
-    <string>https://connector.jgoool.com</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>

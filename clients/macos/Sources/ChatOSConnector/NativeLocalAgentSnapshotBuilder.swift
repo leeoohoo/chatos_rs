@@ -25,6 +25,10 @@ extension NativeLocalAgentSnapshotBuilderError: LocalizedError {
 /// protocol's canonical object-key ordering. Both sides hash the exact UTF-8
 /// JSON bytes and include the `sha256:` algorithm prefix on the wire.
 public enum NativeLocalAgentSnapshotBuilder {
+    public static func digest(_ payload: LocalAgentJSONValue) throws -> String {
+        "sha256:\(try NativePluginHash.localAgentCanonicalSHA256(payload))"
+    }
+
     public static func make(
         snapshotID: String,
         revision: String,
@@ -39,7 +43,7 @@ public enum NativeLocalAgentSnapshotBuilder {
         return LocalAgentFrozenSnapshot(
             snapshotID: snapshotID,
             revision: revision,
-            digest: "sha256:\(try NativePluginHash.localAgentCanonicalSHA256(payload))",
+            digest: try digest(payload),
             payload: payload
         )
     }

@@ -8,15 +8,14 @@ use crate::{require_identifier, ProtocolError};
 
 const MAXIMUM_PROJECT_NAME_BYTES: usize = 1_024;
 const MAXIMUM_PROJECT_DESCRIPTION_BYTES: usize = 64 * 1_024;
-const MAXIMUM_RELATIVE_ROOT_BYTES: usize = 4 * 1_024;
+const MAXIMUM_ROOT_PATH_BYTES: usize = 16 * 1_024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LocalProjectDraft {
     pub name: String,
     pub description: String,
-    pub workspace_id: String,
-    pub relative_root: String,
+    pub root_path: String,
 }
 
 impl LocalProjectDraft {
@@ -28,15 +27,7 @@ impl LocalProjectDraft {
             MAXIMUM_PROJECT_DESCRIPTION_BYTES,
             false,
         )?;
-        require_identifier("workspace_id", &self.workspace_id)?;
-        if self.workspace_id.contains(['/', '\\'])
-            || matches!(self.workspace_id.as_str(), "." | "..")
-        {
-            return Err(ProtocolError::InvalidState {
-                reason: "workspace_id must be an opaque route identifier",
-            });
-        }
-        validate_relative_root(&self.relative_root)
+        validate_root_path(&self.root_path)
     }
 }
 
@@ -164,18 +155,20 @@ fn require_project_text(
     Ok(())
 }
 
-fn validate_relative_root(value: &str) -> Result<(), ProtocolError> {
+fn validate_root_path(value: &str) -> Result<(), ProtocolError> {
     let invalid = value.trim() != value
-        || value.len() > MAXIMUM_RELATIVE_ROOT_BYTES
-        || value.contains(['\\', ':'])
+        || value.is_empty()
+        || value.len() > MAXIMUM_ROOT_PATH_BYTES
+        || !value.starts_with('/')
+        || value.contains("//")
+        || (value.len() > 1 && value.ends_with('/'))
         || value.chars().any(char::is_control)
-        || (!value.is_empty()
-            && value
-                .split('/')
-                .any(|segment| segment.is_empty() || matches!(segment, "." | "..")));
+        || value
+            .split('/')
+            .any(|segment| matches!(segment, "." | ".."));
     if invalid {
         Err(ProtocolError::InvalidState {
-            reason: "project relative_root must be a canonical portable relative path",
+            reason: "project root_path must be an absolute normalized path",
         })
     } else {
         Ok(())
@@ -186,22 +179,22 @@ fn validate_relative_root(value: &str) -> Result<(), ProtocolError> {
 mod tests {
     use super::*;
 
-    fn draft(relative_root: &str) -> LocalProjectDraft {
+    fn draft(root_path: &str) -> LocalProjectDraft {
         LocalProjectDraft {
             name: "Project".to_string(),
             description: String::new(),
-            workspace_id: "workspace-1".to_string(),
-            relative_root: relative_root.to_string(),
+            root_path: root_path.to_string(),
         }
     }
 
     #[test]
-    fn relative_root_accepts_portable_paths_only() {
-        for accepted in ["", "apps/site", "项目/site", "space here"] {
+    fn root_path_accepts_absolute_normalized_paths_only() {
+        for accepted in ["/", "/apps/site", "/项目/site", "/space here"] {
             assert!(draft(accepted).validate().is_ok(), "{accepted}");
         }
         for rejected in [
-            "/absolute",
+            "",
+            "relative",
             "../escape",
             "a/../b",
             "a/./b",

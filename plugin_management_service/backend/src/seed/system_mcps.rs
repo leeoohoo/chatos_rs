@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use super::*;
 #[cfg(test)]
-use chatos_mcp::system_mcp_descriptor_by_resource_id;
+use crate::system_mcp_catalog::system_mcp_descriptor_by_resource_id;
 
 pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), String> {
     let active_resource_ids = system_mcp_catalog()
@@ -15,7 +15,6 @@ pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), S
     store
         .remove_system_seed_mcps_except(active_resource_ids.as_slice())
         .await?;
-    store.delete_retired_task_manager_mcp().await?;
     for resource_id in [
         "system_mcp_sandbox_images",
         "system_mcp_project_environment",
@@ -104,9 +103,7 @@ pub(super) fn system_mcp_record(
             kind: RUNTIME_KIND_SYSTEM.to_string(),
             system_key: Some(descriptor.key.as_str().to_string()),
             server_name: Some(descriptor.server_name.to_string()),
-            command: descriptor
-                .embedded_kind
-                .and_then(|kind| kind.command().map(ToOwned::to_owned)),
+            command: descriptor.runtime_command.map(ToOwned::to_owned),
             ..McpRuntime::default()
         },
         security: ResourceSecurity {
@@ -146,27 +143,19 @@ pub(super) fn provider_skills_for_system_mcp(resource_id: &str) -> Option<Value>
 }
 
 #[cfg(test)]
-pub(super) fn provider_skills_for_builtin_mcp(kind: BuiltinMcpKind) -> Value {
-    let descriptor = chatos_mcp::system_mcp_catalog()
-        .iter()
-        .find(|descriptor| descriptor.embedded_kind == Some(kind))
-        .expect("embedded MCP descriptor");
-    serde_json::to_value(system_mcp_provider_skills(descriptor.key))
+pub(super) fn provider_skills_for_system_key(key: SystemMcpKey) -> Value {
+    serde_json::to_value(system_mcp_provider_skills(key))
         .unwrap_or_else(|_| Value::Array(Vec::new()))
 }
 
 #[cfg(test)]
-pub(super) fn builtin_kinds() -> Vec<BuiltinMcpKind> {
+pub(super) fn active_system_mcp_keys() -> Vec<SystemMcpKey> {
     system_mcp_catalog()
         .iter()
-        .filter_map(|descriptor| descriptor.embedded_kind)
+        .map(|descriptor| descriptor.key)
         .collect()
 }
 
-pub(super) fn builtin_resource_id(kind: BuiltinMcpKind) -> String {
-    system_mcp_catalog()
-        .iter()
-        .find(|descriptor| descriptor.embedded_kind == Some(kind))
-        .map(|descriptor| descriptor.resource_id.to_string())
-        .expect("embedded MCP resource id")
+pub(super) fn system_mcp_resource_id(key: SystemMcpKey) -> String {
+    system_mcp_descriptor(key).resource_id.to_string()
 }

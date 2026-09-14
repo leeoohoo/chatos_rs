@@ -59,9 +59,7 @@ extension NativeLocalConnectorService {
         } else {
             resolvedPath = nil
         }
-        guard let deviceID = pairingState.deviceID else {
-            throw NativeConnectorError.notPaired
-        }
+        let deviceID = Self.localPluginRuntimeDeviceID(ownerUserID: ownerUserID)
         return try await pluginApplicationRuntime.launch(
             record: record,
             manifest: manifest,
@@ -80,20 +78,13 @@ extension NativeLocalConnectorService {
     }
 
     public func fetchPlugins() async throws -> [LocalConnectorPlugin] {
-        do {
-            return try await fetchPluginsWithCurrentPairing()
-        } catch NativeConnectorError.notPaired {
-            // Switching between local and deployed gateways can leave only the connector token
-            // stale. Re-pair it once through the still-valid primary ChatOS session.
-            _ = try await pairWithCurrentChatOSSession(deviceName: Host.current().localizedName)
-            return try await fetchPluginsWithCurrentPairing()
-        }
+        try await fetchPluginsForActiveAccount()
     }
 
-    private func fetchPluginsWithCurrentPairing() async throws -> [LocalConnectorPlugin] {
+    private func fetchPluginsForActiveAccount() async throws -> [LocalConnectorPlugin] {
         let ownerUserID = try activeClientStorageOwnerUserID()
         let installations = try await pluginStateStore.installations(ownerUserID: ownerUserID)
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         let sources = try await gateway.pluginSources(token: token)
         return sources.items.map { source in
             let id = source.catalog.id
@@ -174,7 +165,7 @@ extension NativeLocalConnectorService {
 
     public func installPlugin(id: String) async throws {
         let ownerUserID = try activeClientStorageOwnerUserID()
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         let sources = try await gateway.pluginSources(token: token)
         guard let source = sources.items.first(where: { $0.catalog.id == id }) else {
             throw NativeConnectorError.pluginInstallation("Marketplace 中没有找到这个 Plugin")
@@ -193,10 +184,10 @@ extension NativeLocalConnectorService {
         let ownerUserID = try activeClientStorageOwnerUserID()
         let installation = try await pluginStateStore.installations(ownerUserID: ownerUserID)[pluginID]
         guard installation?.enabled == true,
-              let record = installation?.record,
-              let deviceID = pairingState.deviceID else {
-            throw NativeConnectorError.browserExtensionPairing("Browser CDP 尚未安装或设备尚未配对")
+              let record = installation?.record else {
+            throw NativeConnectorError.browserExtensionPairing("Browser CDP 尚未安装或已停用")
         }
+        let deviceID = Self.localPluginRuntimeDeviceID(ownerUserID: ownerUserID)
         let manifest = try installedPluginManifest(record: record)
         guard manifest.name == NativeBrowserPluginIdentity.packageName,
               manifest.mcpServers[NativeBrowserPluginIdentity.componentKey] != nil else {
@@ -221,10 +212,10 @@ extension NativeLocalConnectorService {
         guard let record = try await pluginStateStore.record(
             ownerUserID: ownerUserID,
             pluginID: pluginID
-        ),
-              let deviceID = pairingState.deviceID else {
+        ) else {
             return false
         }
+        let deviceID = Self.localPluginRuntimeDeviceID(ownerUserID: ownerUserID)
         let manifest = try installedPluginManifest(record: record)
         guard manifest.name == NativeBrowserPluginIdentity.packageName,
               manifest.mcpServers[NativeBrowserPluginIdentity.componentKey] != nil else {
@@ -260,14 +251,16 @@ extension NativeLocalConnectorService {
         try? await publishPluginInstallationStatus()
     }
 
+    private static func localPluginRuntimeDeviceID(ownerUserID: String) -> String {
+        "local-" + String(NativePluginManifestLoader.sha256(ownerUserID).prefix(32))
+    }
+
     public func updatePluginEnabled(id: String, enabled: Bool) async throws {
         let ownerUserID = try activeClientStorageOwnerUserID()
-        let token = try requireAccessToken()
-        guard let deviceID = pairingState.deviceID else { throw NativeConnectorError.notPaired }
+        let token = try await requireChatOSAccessToken()
         try await gateway.updatePluginPreference(
             token: token,
             pluginID: id,
-            deviceID: deviceID,
             enabled: enabled
         )
         try await pluginStateStore.setEnabled(

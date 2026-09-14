@@ -4,7 +4,6 @@
 plugins/browser/crates/browser-cdp-core/src/runtime.rs	1887	2026-10-31	3.0 plugin import: split browser runtime lifecycle and session state
 plugins/browser/crates/browser-cdp-mcp/src/lib.rs	1842	2026-10-31	3.0 plugin import: split MCP tools, schemas, and execution handlers
 plugins/browser/crates/browser-cdp-extension/src/lib.rs	1520	2026-10-31	3.0 plugin import: split extension pairing, transport, and protocol handlers
-mcp/src/implementations/builtin/code_maintainer/registration_write.rs	1412	2026-10-31	3.0 hardening: split registration mutation validation and write operations
 config_center_service/backend/src/state/maintenance.rs	1242	2026-10-31	3.0 hardening: split maintenance state transitions and reconciliation
 docker/deploy.sh	1110	2026-10-31	3.0 hardening: split deployment validation, lifecycle, runtime mTLS preflight, and reporting helpers
 plugins/browser/crates/browser-cdp-bridge/src/server.rs	1052	2026-10-31	3.0 plugin import: split Browser Bridge server protocol and connection lifecycle

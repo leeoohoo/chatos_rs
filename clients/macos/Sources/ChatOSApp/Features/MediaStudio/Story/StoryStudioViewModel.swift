@@ -1,6 +1,5 @@
 import AppKit
 import ChatOSCore
-import ChatOSAgentRuntime
 import Combine
 import Foundation
 
@@ -33,8 +32,6 @@ final class StoryStudioViewModel: ObservableObject {
     @Published private(set) var mediaBatches: [StoryMediaBatch] = []
     @Published private(set) var optimizationSuggestion: StoryPlanningTools.OptimizationSuggestion?
     @Published private(set) var optimizationTarget: StoryPlanningTools.OptimizationTarget?
-    @Published private(set) var streamingModelText = ""
-    @Published private(set) var streamingToolName: String?
     @Published private(set) var activeAssetGenerations: Set<AssetGenerationKey> = []
     @Published private(set) var assetGenerationErrors: [AssetGenerationKey: String] = [:]
     @Published private(set) var activeVideoGenerations: Set<VideoGenerationKey> = []
@@ -42,7 +39,6 @@ final class StoryStudioViewModel: ObservableObject {
     private let store: StoryProjectStore
     private let media: any MediaGenerationServicing
     private let planner: (any StoryPlanningServicing)?
-    private let agentServices: (any AgentServiceProviding)?
     private let agentSettings: any AgentRuntimePreferencesProviding
     private var owner: String?
     private var session = UUID()
@@ -54,17 +50,15 @@ final class StoryStudioViewModel: ObservableObject {
     private var sourceDrafts: [UUID: SourceDraft] = [:]
 
     init(media: any MediaGenerationServicing, planner: (any StoryPlanningServicing)? = nil,
-         store: StoryProjectStore, agentServices: (any AgentServiceProviding)? = nil,
-         agentSettings: any AgentRuntimePreferencesProviding) {
+         store: StoryProjectStore, agentSettings: any AgentRuntimePreferencesProviding) {
         self.media = media; self.planner = planner; self.store = store
-        self.agentServices = agentServices ?? (planner as? any AgentServiceProviding)
         self.agentSettings = agentSettings
     }
 
     var project: StoryProject? { projects.first { $0.id == selectedProjectID } }
     var segment: StorySegment? { project?.segments.first { $0.id == selectedSegmentID } }
     var canCreate: Bool { owner != nil && !isLoading && !isBusy && activeAssetGenerations.isEmpty }
-    var supportsAgentPlanning: Bool { agentServices != nil }
+    var supportsAgentPlanning: Bool { owner != nil }
     var projectAgentRuns: [StoryAgentRun] { agentRuns.filter { $0.projectID == selectedProjectID } }
     var latestAgentRun: StoryAgentRun? { projectAgentRuns.first }
     var projectMediaBatches: [StoryMediaBatch] { mediaBatches.filter { $0.draft.id == selectedProjectID } }
@@ -112,10 +106,9 @@ final class StoryStudioViewModel: ObservableObject {
         guard let canonical = projects.first(where: { $0.id == projectID }),
               let canonicalDigest = try? StoryAgentRun.digest(canonical) else { return nil }
         return agentRuns.first { run in
-            guard run.projectID == projectID, !run.applied, run.abandonedAt == nil,
-                  run.baseDigest == canonicalDigest,
+            guard run.projectID == projectID, !run.applied,
                   let draftDigest = try? StoryAgentRun.digest(run.draft) else { return false }
-            return draftDigest != canonicalDigest
+            return draftDigest != canonicalDigest && !run.isExecuting
         }
     }
 
@@ -126,8 +119,7 @@ final class StoryStudioViewModel: ObservableObject {
         guard let canonicalDigest = try? StoryAgentRun.digest(canonical) else { return nil }
         return agentRuns.first { run in
             guard run.id == activeAgentRunID, run.projectID == canonical.id,
-                  !run.applied, run.abandonedAt == nil,
-                  run.baseDigest == canonicalDigest,
+                  !run.applied, run.isExecuting,
                   let draftDigest = try? StoryAgentRun.digest(run.draft) else { return false }
             return draftDigest != canonicalDigest
         }
@@ -164,7 +156,6 @@ final class StoryStudioViewModel: ObservableObject {
         projects = []; selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = []
         sourceDrafts = [:]; optimizationSuggestion = nil; optimizationTarget = nil
         isBusy = false; isLoading = false; operation = ""; errorMessage = nil; progress = nil; activeSegmentID = nil; activeProjectID = nil; activeAgentRunID = nil; pauseRequested = false
-        streamingModelText = ""; streamingToolName = nil
     }
 
     func open(_ id: UUID) {
@@ -999,20 +990,7 @@ final class StoryStudioViewModel: ObservableObject {
                 let result = try await store.loadRuns(owner: owner, projectID: projectID)
                 let batches = try await store.loadMediaBatches(owner: owner, projectID: projectID)
                 guard session == token, selectedProjectID == projectID, !Task.isCancelled else { return }
-                var runs = result.runs
-                if let canonical = projects.first(where: { $0.id == projectID }) {
-                    let canonicalDigest = try StoryAgentRun.digest(canonical)
-                    if let candidateIndex = runs.firstIndex(where: {
-                        !$0.applied && $0.abandonedAt == nil
-                            && ($0.baseDigest == canonicalDigest || (try? StoryAgentRun.digest($0.draft)) == canonicalDigest)
-                    }), let recovered = try await store.applyValidatedRunIfPossible(runs[candidateIndex], owner: owner) {
-                        runs[candidateIndex] = recovered.0
-                        if let projectIndex = projects.firstIndex(where: { $0.id == projectID }) {
-                            projects[projectIndex] = recovered.1
-                        }
-                    }
-                }
-                for run in runs { publishAgentRun(run, token: token) }
+                for run in result.runs { publishAgentRun(run, token: token) }
                 for batch in batches.batches { publishMediaBatch(batch, token: token, updateProject: false) }
                 if result.unreadable > 0 { errorMessage = "有 \(result.unreadable) 条规划运行记录无法读取，原文件已保留。" }
                 if batches.unreadable > 0 { errorMessage = "有 \(batches.unreadable) 条制作批次无法读取，原文件已保留。" }
@@ -1026,21 +1004,21 @@ final class StoryStudioViewModel: ObservableObject {
             if agentRuns[index].updatedAt <= value.updatedAt { agentRuns[index] = value }
         } else { agentRuns.append(value) }
         agentRuns.sort { $0.updatedAt > $1.updatedAt }
-        if isBusy, activeProjectID == value.projectID, let event = value.events.last { operation = event.detail }
+        if isBusy, activeProjectID == value.projectID {
+            operation = "第 \(value.modelCalls) 轮 · \(value.status.rawValue)"
+        }
     }
 
     private func startAgent(stage: StoryAgentRun.Stage, targets: [String]) {
         guard let project else { return }
         run("启动分步剧情规划") { owner, token in
-            let policy = try await self.effectiveAgentPolicy()
-            let draft = try StoryAgentRun(
-                project: project,
-                owner: owner,
+            let created = try await self.store.createRun(
+                projectID: project.id,
                 stage: stage,
-                targetIDs: targets,
-                policy: policy
+                targets: targets,
+                owner: owner
             )
-            try await self.executeAgent(draft, resume: false, owner: owner, token: token)
+            try await self.executeAgent(created, resume: false, owner: owner, token: token)
         }
     }
 
@@ -1050,11 +1028,15 @@ final class StoryStudioViewModel: ObservableObject {
             let history = try await self.store.loadRuns(owner: owner, projectID: project.id)
             try self.check(token)
             guard let saved = history.runs.first(where: { $0.id == runID }),
-                  !saved.applied, saved.abandonedAt == nil else { throw StoryAgentError.invalidRun }
-            let digest = try StoryAgentRun.digest(project)
-            let draftDigest = try StoryAgentRun.digest(saved.draft)
-            guard digest == saved.baseDigest || (saved.checkpoint.status == .completed && digest == draftDigest) else { throw StoryAgentError.projectChanged }
-            try await self.executeAgent(saved, resume: true, owner: owner, token: token)
+                  !saved.applied else { throw StoryAgentError.invalidRun }
+            if saved.canApply {
+                let applied = try await self.store.applyRun(saved, owner: owner)
+                try self.check(token)
+                self.publishAppliedRun(applied, token: token)
+            } else {
+                guard saved.canResume || saved.isExecuting else { throw StoryAgentError.invalidRun }
+                try await self.executeAgent(saved, resume: saved.canResume, owner: owner, token: token)
+            }
         }
     }
 
@@ -1063,94 +1045,64 @@ final class StoryStudioViewModel: ObservableObject {
         run("放弃中断的剧情规划草稿") { owner, token in
             let history = try await self.store.loadRuns(owner: owner, projectID: project.id)
             try self.check(token)
-            guard var saved = history.runs.first(where: { $0.id == runID }),
-                  !saved.applied, saved.abandonedAt == nil else { throw StoryAgentError.invalidRun }
-            saved.abandonedAt = Date()
-            saved.checkpoint.stopReason = "用户已放弃这份中断草稿；正式项目未被修改。"
-            saved.events.append(.init(kind: "abandoned", detail: "用户放弃中断草稿，正式项目保持不变",
-                                      modelCalls: saved.checkpoint.modelCalls))
-            saved.updatedAt = Date()
-            try await self.store.saveRun(saved, owner: owner)
+            guard let saved = history.runs.first(where: { $0.id == runID }),
+                  !saved.applied else { throw StoryAgentError.invalidRun }
+            let cancelled = try await self.store.cancelRun(saved, owner: owner)
             try self.check(token)
-            self.publishAgentRun(saved, token: token)
+            self.publishAgentRun(cancelled, token: token)
         }
     }
 
     private func executeAgent(_ initial: StoryAgentRun, resume: Bool, owner: String, token: UUID) async throws {
-        guard let services = agentServices else { throw StoryAgentError.unavailable }
         try check(token)
-        var saved = initial
+        var saved = resume ? try await store.resumeRun(initial, owner: owner) : initial
         activeAgentRunID = saved.id
         defer {
             if session == token, activeAgentRunID == initial.id { activeAgentRunID = nil }
         }
-        var context: AgentMemoryContextProvider?
-        if saved.checkpoint.status != .completed {
-            let scope = try AgentMemoryScope(tenantID: owner, profile: "story", projectID: saved.projectID,
-                                            runID: saved.id, runtimeScope: saved.checkpoint.scope)
-            let memory = try await services.makeAgentMemory(scope: scope)
-            try check(token)
-            let provider = AgentMemoryContextProvider(scope: scope, service: memory)
-            saved.checkpoint = try provider.bind(saved.checkpoint)
-            context = provider
-        }
-        try await store.saveRun(saved, owner: owner)
         publishAgentRun(saved, token: token)
-        let coordinator = StoryAgentSession(run: saved, store: store) { [weak self] snapshot in
-            await self?.publishAgentRun(snapshot, token: token)
-        }
-        do {
-            if resume {
-                let policy = try await effectiveAgentPolicy()
-                saved = try await coordinator.prepareForResume(
-                    policy: policy
-                )
-            }
-            if saved.checkpoint.status != .completed {
-                let model = try await services.makeAgentModel(configID: saved.draft.models.textModelID, policy: saved.policy)
-                try check(token)
-                let result = try await AgentRuntime().run(checkpoint: saved.checkpoint, scope: saved.checkpoint.scope, policy: saved.policy,
-                    model: model, tools: StoryAgentTools.definitions(stage: saved.stage), execute: { call in try await coordinator.execute(call) },
-                    completionCheck: { await coordinator.validatedCompletion() },
-                    contextProvider: context, shouldPause: { [weak self] in
-                        await self?.shouldPauseAgent(token) ?? true
-                    }, onModelStreamEvent: { [weak self] event in
-                        await self?.receiveModelStream(event, token: token)
-                    }, record: { checkpoint, event in try await coordinator.record(checkpoint, event: event) })
-                saved = try await coordinator.finish(result)
-            }
+        var pauseSent = false
+        while true {
             try check(token)
-            if saved.checkpoint.status == .completed {
+            saved = try await store.refreshRun(saved, owner: owner)
+            publishAgentRun(saved, token: token)
+            if saved.canApply {
                 let (applied, project) = try await store.applyRun(saved, owner: owner)
                 try check(token)
-                if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = project }
-                publishAgentRun(applied, token: token)
-                if selectedSegmentID == nil { selectedSegmentID = project.segments.first?.id }
-            } else if let reason = saved.checkpoint.stopReason { errorMessage = reason }
-        } catch {
-            try await coordinator.abort(error.localizedDescription)
-            throw error
+                publishAppliedRun((applied, project), token: token)
+                return
+            }
+            if saved.status == .failed {
+                throw StoryAgentError.incompletePlan
+            }
+            if saved.status == .cancelled { return }
+            if saved.status == .paused || saved.status == .needsReview {
+                errorMessage = "剧情规划已暂停，可检查后继续。"
+                return
+            }
+            if pauseRequested && !pauseSent {
+                saved = try await store.pauseRun(saved, owner: owner)
+                pauseSent = true
+                publishAgentRun(saved, token: token)
+            }
+            try await Task.sleep(for: .milliseconds(300))
         }
     }
 
-    private func shouldPauseAgent(_ token: UUID) -> Bool { session != token || pauseRequested }
-
-    private func receiveModelStream(_ event: AgentModelStreamEvent, token: UUID) {
+    private func publishAppliedRun(
+        _ value: (StoryAgentRun, StoryProject),
+        token: UUID
+    ) {
         guard session == token else { return }
-        switch event {
-        case .responseCreated:
-            streamingModelText = ""; streamingToolName = nil
-            operation = "文本模型正在流式分析…"
-        case let .textDelta(delta):
-            streamingModelText += delta
-            if streamingModelText.count > 12_000 { streamingModelText.removeFirst(streamingModelText.count - 12_000) }
-            operation = "文本模型正在流式输出…"
-        case let .toolCallDelta(_, _, name, _):
-            if let name, !name.isEmpty { streamingToolName = (streamingToolName ?? "") + name }
-            operation = "正在组装工具调用：\(streamingToolName ?? "参数")"
-        case .completed:
-            operation = streamingToolName.map { "已接收完整工具调用：\($0)" } ?? "本轮流式响应已完成"
+        if let index = projects.firstIndex(where: { $0.id == value.1.id }) {
+            projects[index] = value.1
         }
+        publishAgentRun(value.0, token: token)
+        if selectedSegmentID == nil { selectedSegmentID = value.1.segments.first?.id }
+    }
+
+    private func shouldPauseAgent(_ token: UUID) -> Bool {
+        session != token || pauseRequested
     }
 
     func previewMediaBatch(kind: StoryMediaBatch.Kind, targets: [String], models: [MediaGenerationModel]) throws -> StoryMediaBatch {
@@ -1245,7 +1197,6 @@ final class StoryStudioViewModel: ObservableObject {
         }
         let token = session
         isBusy = true; operation = label; errorMessage = nil; pauseRequested = false; progress = nil; activeSegmentID = nil
-        streamingModelText = ""; streamingToolName = nil
         activeProjectID = selectedProjectID
         task = Task {
             do { try await body(owner, token) }

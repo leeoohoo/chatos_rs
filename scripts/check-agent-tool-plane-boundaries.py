@@ -70,7 +70,7 @@ def forbid(relative_path: str, needles: list[str], reason: str) -> None:
 
 def require_absent(relative_path: str, reason: str) -> None:
     path = ROOT / relative_path
-    if path.is_file() or (path.is_dir() and any(item.is_file() for item in path.rglob("*"))):
+    if path.exists():
         ERRORS.append(f"{relative_path}: {reason}")
 
 
@@ -81,6 +81,7 @@ for retired_path in [
     "crates/chatos_cloud_agent_runtime",
     "crates/chatos_mcp_gateway",
     "task_runner_service/backend",
+    "admin_console/src/modules/task-runner",
     "chatos/backend/src/modules/cloud_agent_runtime.rs",
     "chatos/backend/src/api/agent_chat/task_runner_callback.rs",
     "memory_engine/backend/src/cloud_agent_queue.rs",
@@ -98,11 +99,21 @@ for retired_path in [
     "crates/chatos_model_transport/src/task.rs",
     "crates/chatos_model_transport/src/tool_runtime",
     "crates/chatos_model_transport/src/tool_runtime.rs",
-    "mcp/provider_skills/task-runner-service.md",
+    "mcp",
+    "crates/chatos_mcp_runtime",
+    "crates/chatos_mcp_service",
+    "crates/chatos_local_workspace",
     ".harness/pipelines/images/image-task-runner-backend.yml",
     "official_website_service/frontend/public/showcase/task-runner.png",
     "mcp_management_service/backend",
     "crates/chatos_mcp_management_sdk",
+    "crates/chatos_project_execution",
+    "crates/chatos_plugin_package",
+    "crates/chatos_remote_runtime",
+    "crates/chatos_terminal_runtime",
+    "clients/macos/Sources/ChatOSAgentRuntime",
+    "clients/macos/Tests/ChatOSAgentRuntimeTests",
+    "clients/shared/fixtures/local_agent/v11",
 ]:
     require_absent(retired_path, "retired server execution plane must stay physically deleted")
 
@@ -111,7 +122,6 @@ server_files = rust_files(
         "chatos/backend/src",
         "memory_engine/backend/src",
         "config_center_service/backend/src",
-        "mcp_management_service/backend/src",
         "plugin_management_service/backend/src",
         "user_service/backend/src",
         "crates",
@@ -188,8 +198,8 @@ for path in memory_agent_files:
     )
 forbid(
     "crates/chatos_model_transport/Cargo.toml",
-    ["local-agent-loop", "chatos_mcp_runtime", "memory_engine_sdk"],
-    "server model transport must not regain an Agent loop, tool runtime, or Memory Engine client",
+    ["local-agent-loop", "memory_engine_sdk"],
+    "server model transport must not regain an Agent loop or Memory Engine client",
 )
 forbid(
     ".github/workflows/docker-images.yml",
@@ -267,7 +277,6 @@ production_files = rust_files(
     [
         "clients/shared/rust",
         "local_connector_service/backend/src",
-        "mcp_management_service/backend/src",
         "plugins/browser/crates",
         "crates",
     ]

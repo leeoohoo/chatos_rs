@@ -77,6 +77,7 @@ final class MediaStudioViewModel: ObservableObject {
     private let service: any MediaGenerationServicing
     let stories: StoryStudioViewModel
     private var hasLoaded = false
+    private var modelLoadGeneration: UInt64 = 0
     private var videoGenerationTask: Task<Void, Never>?
     private var imageGenerationTask: Task<Void, Never>?
     private var historyLoadTask: Task<Void, Never>?
@@ -170,13 +171,12 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     func loadIfNeeded() {
-        guard !hasLoaded else { return }
-        hasLoaded = true
+        guard ownerID != nil, !hasLoaded, !isLoadingModels else { return }
         loadModels()
     }
 
     func reloadModels() {
-        hasLoaded = true
+        guard ownerID != nil else { return }
         loadModels()
     }
 
@@ -476,6 +476,7 @@ final class MediaStudioViewModel: ObservableObject {
         historyErrorMessage = nil
         videoGenerationTask?.cancel()
         videoGenerationTask = nil
+        modelLoadGeneration &+= 1
         hasLoaded = false
         prompt = ""
         selectedModelID = nil
@@ -496,12 +497,14 @@ final class MediaStudioViewModel: ObservableObject {
 
     private func loadModels() {
         let session = sessionID
+        modelLoadGeneration &+= 1
+        let generation = modelLoadGeneration
         isLoadingModels = true
         errorMessage = nil
         Task {
             do {
                 let next = try await service.fetchModels()
-                guard sessionID == session else { return }
+                guard sessionID == session, modelLoadGeneration == generation else { return }
                 models = next
                 videoModels = next.filter(\.isLikelyVideoModel)
                 if !next.contains(where: { $0.id == selectedModelID }) {
@@ -511,11 +514,18 @@ final class MediaStudioViewModel: ObservableObject {
                     selectedVideoModelID = videoModels.first?.id
                 }
                 normalizeVideoOptions()
+                hasLoaded = true
+                errorMessage = nil
             } catch {
-                guard sessionID == session else { return }
+                guard sessionID == session, modelLoadGeneration == generation else { return }
+                // Startup failures are transient. Keep the model catalog
+                // retryable when the client runtime becomes ready.
+                hasLoaded = false
                 errorMessage = error.localizedDescription
             }
-            isLoadingModels = false
+            if sessionID == session, modelLoadGeneration == generation {
+                isLoadingModels = false
+            }
         }
     }
 

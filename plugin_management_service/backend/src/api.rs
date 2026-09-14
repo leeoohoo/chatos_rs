@@ -80,7 +80,8 @@ pub(crate) use plugin_catalog_sync::{
 };
 use plugin_catalog_sync::{sync_admin_plugin_marketplace, sync_plugin_marketplace};
 use plugin_install_sources::{
-    get_plugin_install_source_internal, list_plugin_install_sources_internal,
+    get_plugin_install_source_internal, list_plugin_install_sources,
+    list_plugin_install_sources_internal,
 };
 use plugin_installations::{list_installed_plugins, sync_plugin_installation_internal};
 use plugin_marketplaces::{
@@ -264,6 +265,10 @@ pub fn build_public_router(state: AppState) -> Router {
             get(resolve_agent_capabilities),
         )
         .route("/api/plugins/catalog", get(list_plugin_catalog))
+        .route(
+            "/api/plugins/install-sources",
+            get(list_plugin_install_sources),
+        )
         .route(
             "/api/plugins/catalog/{plugin_id}",
             get(get_plugin_catalog_entry),

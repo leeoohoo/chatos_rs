@@ -210,8 +210,6 @@ struct ResourceSidebar: View {
             case .project:
                 if let creator = model.localProjectCreator, let owner = model.localProjectOwnerUserID {
                     CreateProjectSheetHost(
-                        connectorStatus: model.localConnectorControl.status,
-                        filesystemService: model.projectFilesystemService,
                         creationService: creator,
                         onCreated: { project in
                             guard owner == model.localProjectOwnerUserID else { return }

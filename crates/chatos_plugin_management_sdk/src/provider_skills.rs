@@ -190,7 +190,6 @@ fn mcp_matches_identifier(mcp: &McpRecord, identifier: &str) -> bool {
         || mcp.name == identifier
         || mcp.runtime.server_name.as_deref() == Some(identifier)
         || mcp.runtime.system_key.as_deref() == Some(identifier)
-        || mcp.runtime.builtin_kind.as_deref() == Some(identifier)
 }
 
 fn select_skills_for_context(

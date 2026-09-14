@@ -171,20 +171,18 @@ final class AppModel: ObservableObject {
         )
         let localConnectorService = NativeLocalConnectorService(
             configuration: .init(
-                gatewayBaseURL: RuntimeConfiguration.localConnectorCloudBaseURL,
+                gatewayBaseURL: RuntimeConfiguration.serviceRootURL,
                 supportRootURL: RuntimeConfiguration.nativeConnectorSupportRootURL
             ),
             ticketProvider: connectorTicketProvider,
+            sessionAccessTokenProvider: connectorTicketProvider,
             routeStore: connectorRouteStore,
             accountSession: localAgentAccountSession,
             agentRuntimeSettings: agentRuntimeSettings,
             remoteConnectionRuntime: remoteConnectionService
         )
         let localAgentConversationScopes = NativeLocalAgentConversationScopeStore()
-        let localProjectsService = NativeLocalProjectsService(
-            connector: localConnectorService,
-            accountSession: localAgentAccountSession
-        )
+        let localProjectsService = NativeLocalProjectsService(accountSession: localAgentAccountSession)
         let runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
         let commandService = NativeLocalAgentConversationCommandService(
             accountSession: localAgentAccountSession,
@@ -691,15 +689,13 @@ final class AppModel: ObservableObject {
                     remote: workspaceService,
                     ownerUserID: ownerUserID
                 )
-                let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)
-                try? await localProjectsService.repairRootWorkspaceBindings(ownerUserID: ownerUserID)
-                var local = try await loader.loadLocal(deviceID: deviceID)
+                var local = try await loader.loadLocal(deviceID: nil)
                 guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
                 local.contacts = workspaceContacts
                 local.conversations = workspaceConversations
                 await publishWorkspace(local, generation: generation, ownerUserID: ownerUserID)
                 guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-                let result = try await loader.refresh(deviceID: deviceID)
+                let result = try await loader.refresh(deviceID: nil)
                 guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
                 var snapshot = result.snapshot
                 if result.remoteError != nil {
@@ -855,6 +851,7 @@ final class AppModel: ObservableObject {
         case let .authenticated(session):
             workspaceAccountGeneration += 1
             if authenticatedUserID != session.user.id {
+                mediaStudio.resetForSignedOut()
                 workspaceConversations = []
                 workspaceContacts = []
                 workspaceProjects = []
@@ -871,10 +868,8 @@ final class AppModel: ObservableObject {
             Task {
                 await localAgentConversationScopes.activate(accountID: session.user.id)
             }
-            mediaStudio.activate(userID: session.user.id)
             loadLanguagePreferences()
             startLocalAgentHostIfReady()
-            refreshWorkspace()
             refreshRemoteConnections()
             refreshPluginApplications()
         case .signedOut:
@@ -986,6 +981,11 @@ final class AppModel: ObservableObject {
                     }
                 )
                 try await localConnectorService.activateClientStorage(ownerUserID: accountID)
+                // Bind every client-owned store only after the embedded runtime
+                // is usable. Activating these stores earlier leaks an internal
+                // startup race into product UI as a "Local Agent" error.
+                mediaStudio.activate(userID: accountID)
+                mediaStudio.loadIfNeeded()
                 await petPreferences.activate(ownerUserID: accountID)
                 await globalUtilityPreferences.activate(ownerUserID: accountID)
                 await quickSearchUsage.activate(ownerUserID: accountID)
@@ -1016,7 +1016,7 @@ final class AppModel: ObservableObject {
                 }
                 localAgentEventHub = eventHub
                 localAgentHostState = state
-                localConnectorControl.activate(pairIfNeeded: true)
+                localConnectorControl.activate(pairIfNeeded: false)
                 observeLocalAgentHostState(accountID: accountID, generation: generation)
             } catch {
                 await localConnectorService.deactivateClientStorage()
@@ -1086,6 +1086,8 @@ final class AppModel: ObservableObject {
                     localAgentHostError = reason
                 case let .running(stateAccountID, _, _, _) where stateAccountID == accountID:
                     localAgentHostError = nil
+                    mediaStudio.loadIfNeeded()
+                    refreshWorkspace()
                 case .stopped:
                     // A signed-in account must never silently appear healthy
                     // after its desired Host has stopped.
@@ -1427,6 +1429,12 @@ final class AppModel: ObservableObject {
                 let conversationID = try await projectConversationService.ensureConversation(
                     project: project,
                     contact: contact
+                )
+                await localAgentConversationScopes.upsert(
+                    conversationID: conversationID,
+                    projectID: projectID,
+                    contactAgentID: contact.agentID,
+                    accountID: owner
                 )
                 guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration,
                       workspaceProject(id: projectID) != nil else { return }

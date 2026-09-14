@@ -8,7 +8,6 @@ let package = Package(
         .macOS(.v14),
     ],
     products: [
-        .library(name: "ChatOSAgentRuntime", targets: ["ChatOSAgentRuntime"]),
         .library(name: "ChatOSCore", targets: ["ChatOSCore"]),
         .library(name: "ChatOSAPI", targets: ["ChatOSAPI"]),
         .library(name: "ChatOSConnector", targets: ["ChatOSConnector"]),
@@ -16,7 +15,6 @@ let package = Package(
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
     ],
     targets: [
-        .target(name: "ChatOSAgentRuntime", dependencies: ["ChatOSCore"]),
         .target(name: "ChatOSCore"),
         .target(
             name: "ChatOSMacSecurity",
@@ -24,7 +22,7 @@ let package = Package(
         ),
         .target(
             name: "ChatOSAPI",
-            dependencies: ["ChatOSCore", "ChatOSAgentRuntime"]
+            dependencies: ["ChatOSCore"]
         ),
         .target(
             name: "ChatOSConnector",
@@ -47,17 +45,13 @@ let package = Package(
         ),
         .executableTarget(
             name: "ChatOSApp",
-            dependencies: ["ChatOSCore", "ChatOSAPI", "ChatOSConnector", "ChatOSAgentRuntime"],
+            dependencies: ["ChatOSCore", "ChatOSAPI", "ChatOSConnector"],
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("Security"),
                 .linkedFramework("WebKit"),
             ]
-        ),
-        .testTarget(
-            name: "ChatOSAgentRuntimeTests",
-            dependencies: ["ChatOSAgentRuntime", "ChatOSCore"]
         ),
         .testTarget(
             name: "ChatOSCoreTests",

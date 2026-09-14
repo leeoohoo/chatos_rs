@@ -141,7 +141,7 @@ if plugin.catalog.name == "browser" {
 修改：
 
 ```text
-crates/chatos_mcp_runtime/src/rpc/stdio.rs
+clients/shared/rust/chatos_mcp_client/src/stdio.rs
 ```
 
 每个新 stdio session 必须：
@@ -361,8 +361,7 @@ debugger + nativeMessaging + tabs
 涉及目录包括但不限于：
 
 ```text
-crates/chatos_mcp_runtime
-crates/chatos_mcp_service
+clients/shared/rust/chatos_mcp_client
 crates/chatos_plugin_management_sdk
 mcp_management_service
 task_runner_service

@@ -3,103 +3,34 @@ import Foundation
 
 @MainActor
 final class CreateProjectViewModel: ObservableObject {
-    @Published private(set) var entries: [ProjectFileEntry] = []
-    @Published private(set) var currentPath: String = ""
-    @Published private(set) var currentRelativePath: String?
-    @Published private(set) var parentPath: String?
-    @Published private(set) var isLoadingDirectory = false
+    @Published private(set) var selectedDirectoryPath: String?
     @Published private(set) var isSaving = false
-    @Published private(set) var showsHiddenDirectories = false
-    private(set) var selectedWorkspaceID: String
     @Published var projectName = ""
     @Published var errorMessage: String?
 
-    let workspaces: [LocalConnectorWorkspace]
-
-    private let filesystemService: any ProjectFilesystemServicing
     private let creationService: any LocalProjectCreating
     private var userEditedProjectName = false
-    private var allDirectoryEntries: [ProjectFileEntry] = []
 
-    init(
-        connectorStatus: LocalConnectorStatus?,
-        filesystemService: any ProjectFilesystemServicing,
-        creationService: any LocalProjectCreating
-    ) {
-        workspaces = connectorStatus?.workspaces ?? []
-        self.filesystemService = filesystemService
+    init(creationService: any LocalProjectCreating) {
         self.creationService = creationService
-        selectedWorkspaceID = connectorStatus?.defaultWorkspaceID
-            ?? connectorStatus?.workspaces.first?.id
-            ?? ""
-    }
-
-    var selectedWorkspace: LocalConnectorWorkspace? {
-        workspaces.first(where: { $0.id == selectedWorkspaceID })
     }
 
     var canCreate: Bool {
-        !normalizedProjectName.isEmpty && selectedWorkspace != nil && !currentPath.isEmpty
-            && !isLoadingDirectory && !isSaving
+        !normalizedProjectName.isEmpty && selectedDirectoryPath != nil && !isSaving
     }
 
-    var displayedLocation: String {
-        guard let workspace = selectedWorkspace else { return "没有可用工作区" }
-        guard let currentRelativePath else { return workspace.alias }
-        return workspace.alias + "/" + currentRelativePath
-    }
-
-    func loadInitialDirectory() async {
-        guard currentPath.isEmpty else { return }
-        await openInitialDirectory()
-    }
-
-    func openWorkspaceRoot() async {
-        guard let root = workspaceRootPath else {
-            resetDirectory()
+    func selectDirectory(_ url: URL) {
+        let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            errorMessage = "请选择一个存在的本机文件夹。"
             return
         }
-        await loadDirectory(path: root, relativePath: nil)
-    }
-
-    func openDirectory(_ entry: ProjectFileEntry) async {
-        guard entry.isDirectory else { return }
-        await loadDirectory(
-            path: entry.path,
-            relativePath: relativePath(for: entry.path)
-        )
-    }
-
-    func goToParentDirectory() async {
-        guard let parentPath else { return }
-        await loadDirectory(
-            path: parentPath,
-            relativePath: relativePath(for: parentPath)
-        )
-    }
-
-    func refreshDirectory() async {
-        guard !currentPath.isEmpty else { return }
-        await loadDirectory(path: currentPath, relativePath: currentRelativePath, forceRefresh: true)
-    }
-
-    func toggleHiddenDirectories() {
-        showsHiddenDirectories.toggle()
-        applyDirectoryFilter()
-    }
-
-    func createDirectory(named rawName: String) async {
-        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !currentPath.isEmpty else { return }
+        selectedDirectoryPath = resolved.path
         errorMessage = nil
-        isLoadingDirectory = true
-        do {
-            try await filesystemService.createDirectory(parentPath: currentPath, name: name)
-            try await reloadCurrentDirectory()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isLoadingDirectory = false
+        guard !userEditedProjectName else { return }
+        projectName = resolved.lastPathComponent.isEmpty ? resolved.path : resolved.lastPathComponent
     }
 
     func updateProjectName(_ value: String) {
@@ -109,12 +40,11 @@ final class CreateProjectViewModel: ObservableObject {
 
     func save() async -> WorkspaceProject? {
         guard !isSaving else { return nil }
-        guard let workspace = selectedWorkspace, !currentPath.isEmpty else {
-            errorMessage = "请选择可访问的本机项目目录。"
+        guard let selectedDirectoryPath else {
+            errorMessage = "请选择本机项目目录。"
             return nil
         }
-        let draft = LocalProjectDraft(name: normalizedProjectName, workspaceID: workspace.id,
-                                      relativeRoot: currentRelativePath ?? "")
+        let draft = LocalProjectDraft(name: normalizedProjectName, rootPath: selectedDirectoryPath)
         isSaving = true
         defer { isSaving = false }
         errorMessage = nil
@@ -130,124 +60,4 @@ final class CreateProjectViewModel: ObservableObject {
     private var normalizedProjectName: String {
         projectName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-
-    private var workspaceRootPath: String? {
-        guard let workspace = selectedWorkspace else { return nil }
-        return workspace.absoluteRoot
-    }
-
-    private func loadDirectory(
-        path: String,
-        relativePath: String?,
-        forceRefresh: Bool = false
-    ) async {
-        isLoadingDirectory = true
-        errorMessage = nil
-        do {
-            let listing = try await filesystemService.listEntries(
-                path: path,
-                forceRefresh: forceRefresh
-            )
-            currentPath = listing.path
-            currentRelativePath = relativePath
-            parentPath = listing.parentPath
-            allDirectoryEntries = listing.entries.filter(\.isDirectory)
-            applyDirectoryFilter()
-            applySuggestedProjectName()
-        } catch {
-            errorMessage = error.localizedDescription
-            allDirectoryEntries = []
-            entries = []
-        }
-        isLoadingDirectory = false
-    }
-
-    private func reloadCurrentDirectory() async throws {
-        let listing = try await filesystemService.listEntries(path: currentPath, forceRefresh: true)
-        parentPath = listing.parentPath
-        allDirectoryEntries = listing.entries.filter(\.isDirectory)
-        applyDirectoryFilter()
-    }
-
-    private func applySuggestedProjectName() {
-        guard !userEditedProjectName else { return }
-        if let currentRelativePath,
-           let name = currentRelativePath.split(separator: "/").last {
-            projectName = String(name)
-        } else {
-            projectName = selectedWorkspace?.alias ?? ""
-        }
-    }
-
-    private func relativePath(for logicalPath: String) -> String? {
-        guard let root = workspaceRootPath else { return nil }
-        if logicalPath == root { return nil }
-        let prefix = root.hasSuffix("/") ? root : root + "/"
-        guard logicalPath.hasPrefix(prefix) else { return currentRelativePath }
-        let value = String(logicalPath.dropFirst(prefix.count))
-        return value.isEmpty || value == "." ? nil : value
-    }
-
-    private func resetDirectory() {
-        currentPath = ""
-        currentRelativePath = nil
-        parentPath = nil
-        allDirectoryEntries = []
-        entries = []
-    }
-
-    private func openInitialDirectory() async {
-        guard let root = workspaceRootPath else {
-            resetDirectory()
-            return
-        }
-        guard let relativeHomePath else {
-            await loadDirectory(path: root, relativePath: nil)
-            return
-        }
-        await loadDirectory(path: root + "/" + relativeHomePath, relativePath: relativeHomePath)
-    }
-
-    private var relativeHomePath: String? {
-        guard let workspace = selectedWorkspace else { return nil }
-        let root = URL(fileURLWithPath: workspace.absoluteRoot).standardizedFileURL.path
-        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
-        let prefix = root == "/" ? "/" : root + "/"
-        guard home != root, home.hasPrefix(prefix) else { return nil }
-        return String(home.dropFirst(prefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    }
-
-    private func applyDirectoryFilter() {
-        guard !showsHiddenDirectories else {
-            entries = allDirectoryEntries
-            return
-        }
-        entries = allDirectoryEntries.filter { entry in
-            guard !entry.name.hasPrefix(".") else { return false }
-            if isSystemRootDirectory, Self.systemRootDirectoryNames.contains(entry.name) {
-                return false
-            }
-            if isUserHomeDirectory, Self.userSystemDirectoryNames.contains(entry.name) {
-                return false
-            }
-            return true
-        }
-    }
-
-    private var isSystemRootDirectory: Bool {
-        selectedWorkspace?.absoluteRoot == "/" && currentRelativePath == nil
-    }
-
-    private var isUserHomeDirectory: Bool {
-        currentRelativePath == relativeHomePath
-    }
-
-    private static let systemRootDirectoryNames: Set<String> = [
-        "Applications", "Library", "System", "bin", "cores", "dev", "etc",
-        "home", "net", "opt", "private", "sbin", "tmp", "usr", "var",
-    ]
-
-    private static let userSystemDirectoryNames: Set<String> = [
-        "Applications", "Applications (Parallels)", "Library", "bin", "opt",
-    ]
 }

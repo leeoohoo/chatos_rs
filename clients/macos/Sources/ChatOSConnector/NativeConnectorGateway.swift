@@ -77,13 +77,13 @@ struct NativeConnectorGateway: Sendable {
     }
 
     func modelConfigs(token: String) async throws -> [GatewayModelConfigDTO] {
-        try await request("/api/model-configs", token: token)
+        try await request("/api/chatos/ai-model-configs", token: token)
     }
 
     func modelConfig(token: String, id: String, includeSecret: Bool) async throws -> GatewayModelConfigDTO {
         let suffix = includeSecret ? "?include_secret=true" : ""
         return try await request(
-            "/api/model-configs/\(id.urlPathEncoded)\(suffix)",
+            "/api/chatos/ai-model-configs/\(id.urlPathEncoded)\(suffix)",
             token: token
         )
     }
@@ -94,15 +94,15 @@ struct NativeConnectorGateway: Sendable {
         update: LocalConnectorModelConfigUpdate
     ) async throws -> GatewayModelConfigDTO {
         try await request(
-            "/api/model-configs/\(id.urlPathEncoded)",
+            "/api/chatos/ai-model-configs/\(id.urlPathEncoded)",
             token: token,
-            method: "PATCH",
+            method: "PUT",
             body: GatewayModelConfigUpdateRequest(update: update)
         )
     }
 
     func modelSettings(token: String) async throws -> GatewayModelSettingsDTO {
-        try await request("/api/model-configs/settings", token: token)
+        try await request("/api/chatos/ai-model-settings", token: token)
     }
 
     func updateModelSettings(
@@ -110,7 +110,7 @@ struct NativeConnectorGateway: Sendable {
         settings: LocalConnectorModelSettings
     ) async throws -> GatewayModelSettingsDTO {
         try await request(
-            "/api/model-configs/settings",
+            "/api/chatos/ai-model-settings",
             token: token,
             method: "PUT",
             body: GatewayModelSettingsUpdateRequest(settings: settings)
@@ -118,7 +118,7 @@ struct NativeConnectorGateway: Sendable {
     }
 
     func modelProviders(token: String) async throws -> [GatewayModelProviderDTO] {
-        try await request("/api/model-providers", token: token)
+        try await request("/api/chatos/ai-model-providers", token: token)
     }
 
     func createModelProvider(
@@ -126,7 +126,7 @@ struct NativeConnectorGateway: Sendable {
         draft: LocalConnectorModelProviderDraft
     ) async throws -> GatewayModelProviderDTO {
         try await request(
-            "/api/model-providers",
+            "/api/chatos/ai-model-providers",
             token: token,
             method: "POST",
             body: GatewayModelProviderMutationRequest(draft: draft, includeEmptyAPIKey: true)
@@ -139,16 +139,16 @@ struct NativeConnectorGateway: Sendable {
         draft: LocalConnectorModelProviderDraft
     ) async throws -> GatewayModelProviderDTO {
         try await request(
-            "/api/model-providers/\(id.urlPathEncoded)",
+            "/api/chatos/ai-model-providers/\(id.urlPathEncoded)",
             token: token,
-            method: "PATCH",
+            method: "PUT",
             body: GatewayModelProviderMutationRequest(draft: draft, includeEmptyAPIKey: false)
         )
     }
 
     func refreshModelProvider(token: String, id: String) async throws -> GatewayModelProviderDTO {
         try await request(
-            "/api/model-providers/\(id.urlPathEncoded)/refresh",
+            "/api/chatos/ai-model-providers/\(id.urlPathEncoded)/refresh",
             token: token,
             method: "POST",
             body: EmptyRequest()
@@ -157,7 +157,7 @@ struct NativeConnectorGateway: Sendable {
 
     func deleteModelProvider(token: String, id: String) async throws {
         try await requestWithoutResponse(
-            "/api/model-providers/\(id.urlPathEncoded)",
+            "/api/chatos/ai-model-providers/\(id.urlPathEncoded)",
             token: token,
             method: "DELETE"
         )
@@ -165,7 +165,7 @@ struct NativeConnectorGateway: Sendable {
 
     func pluginSources(token: String) async throws -> GatewayPluginSourceListDTO {
         try await request(
-            "/api/plugin-management/plugins/install-sources",
+            "/api/plugins/install-sources",
             token: token
         )
     }
@@ -173,14 +173,13 @@ struct NativeConnectorGateway: Sendable {
     func updatePluginPreference(
         token: String,
         pluginID: String,
-        deviceID: String,
         enabled: Bool
     ) async throws {
         let _: GatewayPluginPreferenceResponse = try await request(
-            "/api/plugin-management/plugins/\(pluginID.urlPathEncoded)/preference",
+            "/api/plugins/\(pluginID.urlPathEncoded)/preference",
             token: token,
             method: "PUT",
-            body: GatewayPluginPreferenceRequest(deviceID: deviceID, enabled: enabled)
+            body: GatewayPluginPreferenceRequest(enabled: enabled)
         )
     }
 
@@ -190,10 +189,9 @@ struct NativeConnectorGateway: Sendable {
 
     func downloadPluginArtifact(
         token: String,
-        pluginID: String,
-        releaseID: String
+        artifactSHA256: String
     ) async throws -> URL {
-        let endpoint = "/api/plugin-management/plugins/\(pluginID.urlPathEncoded)/releases/\(releaseID.urlPathEncoded)/artifact"
+        let endpoint = "/api/plugin-artifacts/\(artifactSHA256.urlPathEncoded)"
         guard let url = makeURL(endpoint) else { throw NativeConnectorError.invalidEndpoint }
         var request = Self.dynamicRequest(url: url)
         request.timeoutInterval = 5 * 60
@@ -687,12 +685,7 @@ struct GatewayPluginPreferenceDTO: Decodable, Sendable {
 }
 
 struct GatewayPluginPreferenceRequest: Encodable {
-    var deviceID: String
     var enabled: Bool
-    enum CodingKeys: String, CodingKey {
-        case enabled
-        case deviceID = "device_id"
-    }
 }
 
 struct GatewayPluginPreferenceResponse: Decodable, Sendable {

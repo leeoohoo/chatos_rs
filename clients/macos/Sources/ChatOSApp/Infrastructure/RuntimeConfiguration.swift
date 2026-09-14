@@ -16,12 +16,6 @@ enum RuntimeConfiguration {
             ?? "conversation-test-project"
     }
 
-    static var localConnectorCloudBaseURL: URL {
-        environmentURL("CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL")
-            ?? bundleURL("ChatOSLocalConnectorCloudBaseURL")
-            ?? URL(string: "http://127.0.0.1:39230")!
-    }
-
     static var nativeConnectorSupportRootURL: URL {
         let root = FileManager.default.urls(
             for: .applicationSupportDirectory,
@@ -115,7 +109,7 @@ enum RuntimeConfiguration {
             ?? serviceRootURL
     }
 
-    private static var serviceRootURL: URL {
+    static var serviceRootURL: URL {
         guard var components = URLComponents(
             url: apiBaseURL,
             resolvingAgainstBaseURL: false

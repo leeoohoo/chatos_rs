@@ -1,93 +1,151 @@
-import ChatOSAgentRuntime
 import ChatOSCore
 import CryptoKit
 import Foundation
 
-struct StoryAgentRun: Codable, Equatable, Identifiable, Sendable {
+/// Native presentation of one durable Rust `story_design` Run.
+/// The model contains no checkpoint, tool loop, model client, or retry policy.
+struct StoryAgentRun: Equatable, Identifiable, Sendable {
     enum Stage: String, Codable, Sendable { case outline, refine }
-    struct Receipt: Codable, Equatable, Sendable {
-        let name: String
-        let arguments: String
-        let outcome: AgentToolOutcome
-    }
-    var version = 1
-    var id: UUID { checkpoint.id }
+
+    let id: UUID
+    let runID: String
+    let storyRecordID: String
     let owner: String
     let projectID: UUID
     let stage: Stage
     let targetIDs: [String]
+    let baseProjectRevision: UInt64
     let baseDigest: String
-    let cloudMemory: Bool
-    let consentAt: Date
-    var policy: AgentRunPolicy
-    var checkpoint: AgentRunCheckpoint
     var draft: StoryProject
-    var readThrough = 0
-    var toolReceipts: [String: Receipt] = [:]
-    var events: [AgentRunEvent] = []
-    var applied = false
-    /// A recoverable draft can be dismissed without pretending that it was applied.
-    /// Optional keeps existing version-1 run files backward compatible.
-    var abandonedAt: Date?
-    var updatedAt = Date()
+    var status: LocalAgentRunStatus
+    var runVersion: UInt64
+    var modelCalls: UInt32
+    var retryCount: UInt32
+    var storyRevision: UInt64
+    var applied: Bool
+    var updatedAt: Date
 
-    init(project: StoryProject, owner: String, stage: Stage, targetIDs: [String], policy: AgentRunPolicy) throws {
-        try project.validate(); try policy.validate()
-        guard !project.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw StoryError.invalidProject }
-        if stage == .outline {
-            guard project.segments.isEmpty else { throw StoryError.invalidPlan }
-        } else {
-            guard !targetIDs.isEmpty, Set(targetIDs).count == targetIDs.count,
-                  targetIDs.allSatisfy({ id in project.segments.contains { $0.id == id && $0.attempt == nil && $0.video == nil } }) else { throw StoryError.invalidPlan }
-        }
-        var preparedDraft = project
-        if stage == .refine {
-            for id in targetIDs {
-                guard let index = preparedDraft.segments.firstIndex(where: { $0.id == id }) else {
-                    throw StoryError.invalidPlan
-                }
-                // Regeneration is isolated in the run draft. Existing image versions remain
-                // available, but a newly applied prompt must be explicitly confirmed again.
-                preparedDraft.segments[index].detail = nil
-                preparedDraft.segments[index].confirmedFrameID = nil
-                preparedDraft.segments[index].confirmedLastFrameID = nil
-                preparedDraft.segments[index].useLastFrameForVideo = false
-            }
-        }
-        self.owner = owner; self.projectID = project.id; self.stage = stage; self.targetIDs = targetIDs
-        self.baseDigest = try Self.digest(project); self.cloudMemory = true; self.consentAt = Date()
-        self.policy = policy; self.draft = preparedDraft
-        self.checkpoint = .init(scope: "story:\(owner):\(project.id):\(baseDigest):\(UUID())", messages: [
-            .init(role: .system, content: StoryAgentTools.systemPrompt),
-            .init(role: .user, content: StoryAgentTools.goalPrompt(
-                stage: stage, sourceLength: project.source.count, targetCount: targetIDs.count
-            )),
-        ])
+    var isTerminal: Bool {
+        status == .succeeded || status == .failed || status == .cancelled
     }
-    var canResume: Bool { !applied && abandonedAt == nil && checkpoint.status != .completed }
+
+    var canResume: Bool {
+        !applied && (status == .paused || status == .needsReview)
+    }
+
+    var canApply: Bool { !applied && status == .succeeded }
+    var isExecuting: Bool { !isTerminal && status != .paused && status != .needsReview }
+
+    init(run: LocalAgentRunSnapshot, record: LocalAgentStorySnapshot) throws {
+        let durable: DurableStoryDesignRecord = try StoryProjectStore.decodeState(record.draft.state)
+        guard let id = UUID(uuidString: run.runID),
+              let projectID = UUID(uuidString: durable.design.projectID),
+              run.profileKey == "story_design",
+              run.ownerEntityType == "story_design",
+              run.ownerEntityID == record.recordID,
+              run.ownerUserID == record.ownerUserID,
+              run.projectID?.lowercased() == durable.design.projectID.lowercased(),
+              record.draft.kind == .agentRun,
+              record.draft.projectID.lowercased() == durable.design.projectID.lowercased(),
+              record.recordID == durable.design.storyRecordID,
+              durable.schemaVersion == 1,
+              durable.design.schemaVersion == 1,
+              durable.design.draft.id == projectID
+        else { throw StoryAgentError.invalidRun }
+
+        try durable.design.draft.validate()
+        self.id = id
+        self.runID = run.runID
+        self.storyRecordID = record.recordID
+        self.owner = run.ownerUserID
+        self.projectID = projectID
+        self.stage = durable.design.stage
+        self.targetIDs = durable.design.targetIDs
+        self.baseProjectRevision = durable.design.baseProjectRevision
+        self.baseDigest = durable.design.baseProjectDigest
+        self.draft = durable.design.draft
+        self.status = run.status
+        self.runVersion = run.version
+        self.modelCalls = run.iteration
+        self.retryCount = run.retryCount
+        self.storyRevision = record.revision
+        self.applied = durable.appliedProjectRevision != nil && durable.appliedAt != nil
+        self.updatedAt = max(Self.date(run.updatedAt), Self.date(record.updatedAt))
+    }
+
+    /// Used only for comparing two in-memory editor copies. The authoritative
+    /// storage CAS uses the Rust canonical digest frozen in `baseDigest`.
     static func digest(_ project: StoryProject) throws -> String {
-        var value = project; value.updatedAt = .distantPast
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        return SHA256.hash(data: try encoder.encode(value)).map { String(format: "%02x", $0) }.joined()
+        var value = project
+        value.updatedAt = .distantPast
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return SHA256.hash(data: try encoder.encode(value))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
-    func validate(owner: String, projectID: UUID) throws {
-        guard version == 1, self.owner == owner, self.projectID == projectID, draft.id == projectID,
-              !(applied && abandonedAt != nil),
-              readThrough >= 0, readThrough <= draft.source.count, events.count <= 20_000 else { throw StoryAgentError.invalidRun }
-        try draft.validate(); try policy.validate()
+
+    private static func date(_ value: String) -> Date {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value) ?? .distantPast
+    }
+}
+
+private struct DurableStoryDesignRecord: Codable {
+    let schemaVersion: UInt32
+    let design: DurableStoryDesignState
+    let appliedProjectRevision: UInt64?
+    let appliedAt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case design
+        case appliedProjectRevision = "applied_project_revision"
+        case appliedAt = "applied_at"
+    }
+}
+
+private struct DurableStoryDesignState: Codable {
+    let schemaVersion: UInt32
+    let storyRecordID: String
+    let projectID: String
+    let baseProjectRevision: UInt64
+    let baseProjectDigest: String
+    let stage: StoryAgentRun.Stage
+    let targetIDs: [String]
+    let draft: StoryProject
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case storyRecordID = "story_record_id"
+        case projectID = "project_id"
+        case baseProjectRevision = "base_project_revision"
+        case baseProjectDigest = "base_project_digest"
+        case stage
+        case targetIDs = "target_ids"
+        case draft
     }
 }
 
 enum StoryAgentError: LocalizedError {
-    case invalidRun, projectChanged, incompletePlan, unavailable, wrongStage, forbiddenTarget
+    case invalidRun
+    case projectChanged
+    case incompletePlan
+    case unavailable
+    case wrongStage
+    case forbiddenTarget
+
     var errorDescription: String? {
         switch self {
-        case .invalidRun: "剧情运行记录无效，原文件已保留。"
-        case .projectChanged: "项目已被修改，不能覆盖或恢复旧规划；请保留原草稿并启动新的规划。"
-        case .incompletePlan: "计划尚未完成：必须读完原文、连续覆盖全剧，并保存本阶段所有目标。"
-        case .unavailable: "当前剧情服务没有接入公共 Agent 循环。"
-        case .wrongStage: "此工具不属于当前规划阶段。"
-        case .forbiddenTarget: "目标不在本次授权范围内，或已经存在不可覆盖的结果。"
+        case .invalidRun: "剧情运行记录无效。"
+        case .projectChanged: "项目已被修改，不能覆盖这份规划草稿；请启动新的规划。"
+        case .incompletePlan: "规划尚未完成。"
+        case .unavailable: "本地 Agent Host 当前不可用。"
+        case .wrongStage: "此操作不属于当前规划阶段。"
+        case .forbiddenTarget: "目标不在本次授权范围内。"
         }
     }
 }

@@ -1,10 +1,12 @@
 import Darwin
 import Foundation
 import LocalAuthentication
+import OSLog
 import Security
 import ChatOSMacSecurity
 
 private struct BrokerRequest: Decodable {
+    let requestID: String
     let operation: String
     let service: String
     let account: String
@@ -14,11 +16,18 @@ private struct BrokerRequest: Decodable {
 private struct BrokerResponse: Encodable {
     let status: Int32
     let valueBase64: String?
+    let phase: String
 }
+
+private let logger = Logger(
+    subsystem: "com.chatos.swift-client.keychain-broker",
+    category: "KeychainBroker"
+)
 
 private let allowedProductionServices: Set<String> = [
     "com.chatos.swift-client.authentication.v6",
     "com.chatos.local-agent.credentials.v7",
+    "com.chatos.native-connector.credentials.v1",
 ]
 
 private func valid(_ value: String, maximumLength: Int = 2_048) -> Bool {
@@ -33,6 +42,42 @@ private func serviceIsAllowed(_ service: String) -> Bool {
         || service.hasPrefix("com.chatos.tests.")
 }
 
+private func credentialPurpose(for service: String) -> String {
+    switch service {
+    case "com.chatos.swift-client.authentication.v6":
+        "authentication"
+    case "com.chatos.local-agent.credentials.v7":
+        "local-agent"
+    case "com.chatos.native-connector.credentials.v1":
+        "native-connector"
+    default:
+        service.hasPrefix("com.chatos.tests.") ? "test" : "unknown"
+    }
+}
+
+private func statusMessage(_ status: OSStatus) -> String {
+    (SecCopyErrorMessageString(status, nil) as String?) ?? "unknown"
+}
+
+private func logStatus(
+    request: BrokerRequest,
+    operation: String,
+    phase: String,
+    status: OSStatus
+) {
+    let purpose = credentialPurpose(for: request.service)
+    let message = statusMessage(status)
+    if status == errSecSuccess || status == errSecItemNotFound {
+        logger.info(
+            "request=\(request.requestID, privacy: .public) operation=\(operation, privacy: .public) purpose=\(purpose, privacy: .public) phase=\(phase, privacy: .public) status=\(status, privacy: .public) message=\(message, privacy: .public)"
+        )
+    } else {
+        logger.error(
+            "request=\(request.requestID, privacy: .public) operation=\(operation, privacy: .public) purpose=\(purpose, privacy: .public) phase=\(phase, privacy: .public) status=\(status, privacy: .public) message=\(message, privacy: .public)"
+        )
+    }
+}
+
 private func processPath(_ processID: pid_t) -> String? {
     var buffer = [UInt8](repeating: 0, count: 4 * 1_024)
     let length = proc_pidpath(processID, &buffer, UInt32(buffer.count))
@@ -42,7 +87,10 @@ private func processPath(_ processID: pid_t) -> String? {
 
 private func parentIsAllowed(for service: String) -> Bool {
     let parentProcessID = getppid()
-    guard let parentPath = processPath(parentProcessID) else { return false }
+    guard let parentPath = processPath(parentProcessID) else {
+        logger.error("phase=parent-validation check=parent-path result=missing")
+        return false
+    }
     let normalizedParent = URL(fileURLWithPath: parentPath)
         .resolvingSymlinksInPath()
         .standardizedFileURL.path
@@ -51,7 +99,10 @@ private func parentIsAllowed(for service: String) -> Bool {
         .standardizedFileURL
 
     if allowedProductionServices.contains(service) {
-        guard ownExecutable.lastPathComponent == "chatos_keychain_broker" else { return false }
+        guard ownExecutable.lastPathComponent == "chatos_keychain_broker" else {
+            logger.error("phase=parent-validation check=broker-name result=mismatch")
+            return false
+        }
         let parentExecutable = URL(fileURLWithPath: normalizedParent)
         let appBundle = parentExecutable
             .deletingLastPathComponent()
@@ -68,8 +119,10 @@ private func parentIsAllowed(for service: String) -> Bool {
               parentIdentity.identifier == "com.chatos.swift-client",
               parentIdentity.leafCertificateData == brokerIdentity.leafCertificateData
         else {
+            logger.error("phase=parent-validation check=production-identity result=rejected")
             return false
         }
+        logger.debug("phase=parent-validation check=production-identity result=accepted")
         return true
     }
 
@@ -86,23 +139,37 @@ private func query(service: String, account: String) -> [String: Any] {
         kSecAttrAccount as String: account,
         kSecAttrSynchronizable as String: false,
         kSecUseAuthenticationContext as String: context,
-        // LAContext.interactionNotAllowed only guarantees silent failure for
-        // Data Protection keychain items on macOS. ChatOS local development
-        // builds use the legacy login keychain because a self-signed binary
-        // cannot carry Apple's restricted keychain-access-group entitlement.
-        // The legacy query flag is therefore also required: without it an ACL
-        // mismatch can still launch SecurityAgent and ask for the user's macOS
-        // password even though the LAContext forbids interaction.
+        // Legacy macOS Keychain ignores LAContext.interactionNotAllowed for
+        // ACL confirmation. The stable Broker must therefore never be
+        // overwritten after its first trusted installation; a real Broker
+        // upgrade uses a new version directory and new service identifiers.
         kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
     ]
 }
 
 private func execute(_ request: BrokerRequest) -> BrokerResponse {
-    guard serviceIsAllowed(request.service),
-          parentIsAllowed(for: request.service),
-          valid(request.account)
-    else {
-        return BrokerResponse(status: errSecParam, valueBase64: nil)
+    let purpose = credentialPurpose(for: request.service)
+    guard UUID(uuidString: request.requestID) != nil else {
+        logger.error("phase=request-validation check=request-id result=rejected")
+        return BrokerResponse(status: errSecParam, valueBase64: nil, phase: "request-validation")
+    }
+    guard serviceIsAllowed(request.service) else {
+        logger.error(
+            "request=\(request.requestID, privacy: .public) purpose=\(purpose, privacy: .public) phase=request-validation check=service result=rejected"
+        )
+        return BrokerResponse(status: errSecParam, valueBase64: nil, phase: "service-validation")
+    }
+    guard parentIsAllowed(for: request.service) else {
+        logger.error(
+            "request=\(request.requestID, privacy: .public) purpose=\(purpose, privacy: .public) phase=request-validation check=parent result=rejected"
+        )
+        return BrokerResponse(status: errSecParam, valueBase64: nil, phase: "parent-validation")
+    }
+    guard valid(request.account) else {
+        logger.error(
+            "request=\(request.requestID, privacy: .public) purpose=\(purpose, privacy: .public) phase=request-validation check=account-shape result=rejected"
+        )
+        return BrokerResponse(status: errSecParam, valueBase64: nil, phase: "account-validation")
     }
 
     let base = query(service: request.service, account: request.account)
@@ -113,13 +180,18 @@ private func execute(_ request: BrokerRequest) -> BrokerResponse {
         loadQuery[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(loadQuery as CFDictionary, &result)
+        logStatus(request: request, operation: "load", phase: "copy-matching", status: status)
         if status == errSecItemNotFound {
-            return BrokerResponse(status: status, valueBase64: nil)
+            return BrokerResponse(status: status, valueBase64: nil, phase: "copy-matching")
         }
         guard status == errSecSuccess, let data = result as? Data else {
-            return BrokerResponse(status: status, valueBase64: nil)
+            return BrokerResponse(status: status, valueBase64: nil, phase: "copy-matching")
         }
-        return BrokerResponse(status: status, valueBase64: data.base64EncodedString())
+        return BrokerResponse(
+            status: status,
+            valueBase64: data.base64EncodedString(),
+            phase: "copy-matching"
+        )
 
     case "save":
         guard let encoded = request.valueBase64,
@@ -128,34 +200,42 @@ private func execute(_ request: BrokerRequest) -> BrokerResponse {
               !value.isEmpty,
               value.count <= 64 * 1_024
         else {
-            return BrokerResponse(status: errSecParam, valueBase64: nil)
+            logStatus(
+                request: request,
+                operation: "save",
+                phase: "value-validation",
+                status: errSecParam
+            )
+            return BrokerResponse(status: errSecParam, valueBase64: nil, phase: "value-validation")
         }
         let updateStatus = SecItemUpdate(
             base as CFDictionary,
             [kSecValueData as String: value] as CFDictionary
         )
+        logStatus(request: request, operation: "save", phase: "update", status: updateStatus)
         if updateStatus == errSecSuccess {
-            return BrokerResponse(status: updateStatus, valueBase64: nil)
+            return BrokerResponse(status: updateStatus, valueBase64: nil, phase: "update")
         }
         guard updateStatus == errSecItemNotFound else {
-            return BrokerResponse(status: updateStatus, valueBase64: nil)
+            return BrokerResponse(status: updateStatus, valueBase64: nil, phase: "update")
         }
         var addition = base
         addition[kSecValueData as String] = value
         addition[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return BrokerResponse(
-            status: SecItemAdd(addition as CFDictionary, nil),
-            valueBase64: nil
-        )
+        let addStatus = SecItemAdd(addition as CFDictionary, nil)
+        logStatus(request: request, operation: "save", phase: "add", status: addStatus)
+        return BrokerResponse(status: addStatus, valueBase64: nil, phase: "add")
 
     case "delete":
-        return BrokerResponse(
-            status: SecItemDelete(base as CFDictionary),
-            valueBase64: nil
-        )
+        let status = SecItemDelete(base as CFDictionary)
+        logStatus(request: request, operation: "delete", phase: "delete", status: status)
+        return BrokerResponse(status: status, valueBase64: nil, phase: "delete")
 
     default:
-        return BrokerResponse(status: errSecParam, valueBase64: nil)
+        logger.error(
+            "request=\(request.requestID, privacy: .public) purpose=\(purpose, privacy: .public) phase=operation-validation result=rejected"
+        )
+        return BrokerResponse(status: errSecParam, valueBase64: nil, phase: "operation-validation")
     }
 }
 
@@ -170,7 +250,8 @@ let input = FileHandle.standardInput.readDataToEndOfFile()
 guard !input.isEmpty, input.count <= 128 * 1_024,
       let request = try? JSONDecoder().decode(BrokerRequest.self, from: input)
 else {
-    write(BrokerResponse(status: errSecParam, valueBase64: nil))
+    logger.error("phase=input-decode result=invalid")
+    write(BrokerResponse(status: errSecParam, valueBase64: nil, phase: "input-decode"))
     exit(1)
 }
 write(execute(request))

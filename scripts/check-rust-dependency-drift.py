@@ -42,9 +42,6 @@ BASELINE: dict[str, dict[str, str]] = {
     "crates/chatos_model_transport/Cargo.toml": {
         "axum": "0.8",
     },
-    "crates/chatos_mcp_runtime/Cargo.toml": {
-        "axum": "0.8",
-    },
     "crates/chatos_service_runtime/Cargo.toml": {
         "axum": "0.8",
     },

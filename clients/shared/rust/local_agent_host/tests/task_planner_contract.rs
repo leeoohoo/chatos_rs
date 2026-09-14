@@ -55,12 +55,11 @@ impl StorageTransaction for SeedPlanningSources {
                 record: ProjectRecord {
                     metadata: metadata("project-1", self.now),
                     name: "Visual Studio".to_string(),
-                    root_reference: Some("workspace-grant-1".to_string()),
+                    root_reference: Some("project-1".to_string()),
                     state: serde_json::json!({
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "description": "Visual Studio",
-                        "workspace_id": "workspace-grant-1",
-                        "relative_root": "apps/studio",
+                        "root_path": "/apps/studio",
                         "status": "active"
                     }),
                 },
@@ -88,10 +87,10 @@ impl StorageTransaction for SeedPlanningSources {
     }
 }
 
-struct UnsafeRoot;
+struct LeakedAbsolutePathReference;
 
 #[async_trait]
-impl StorageTransaction for UnsafeRoot {
+impl StorageTransaction for LeakedAbsolutePathReference {
     async fn execute(
         &mut self,
         repositories: &mut dyn TransactionRepositories,
@@ -215,7 +214,7 @@ async fn planner_freezes_only_owner_scoped_project_prompt_and_resolved_capabilit
         serde_json::from_value(first.capability_snapshot.payload).unwrap();
     assert_eq!(prompt.prompt_revision, "task-prompt-3");
     assert_eq!(project.project_id, "project-1");
-    assert_eq!(project.working_directory_ref, "workspace-grant-1");
+    assert_eq!(project.working_directory_ref, "project-1");
     assert_eq!(capability.execution_tools[0].name, "write_file");
     assert_eq!(
         capability.snapshot_ref,
@@ -235,11 +234,14 @@ async fn planner_freezes_only_owner_scoped_project_prompt_and_resolved_capabilit
             .all(|request| { request.parent_capability_snapshot_ref == "main-capabilities-1" }));
     }
 
-    storage.transaction(&mut UnsafeRoot).await.unwrap();
+    storage
+        .transaction(&mut LeakedAbsolutePathReference)
+        .await
+        .unwrap();
     let error = planner
         .plan_task(&planning_request(), CancellationToken::new())
         .await
         .unwrap_err();
-    assert!(error.contains("workspace binding"));
+    assert!(error.contains("project authority"));
     assert_eq!(resolver.requests.lock().unwrap().len(), 2);
 }

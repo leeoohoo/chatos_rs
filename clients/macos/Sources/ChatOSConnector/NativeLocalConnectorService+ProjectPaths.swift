@@ -49,17 +49,18 @@ extension NativeLocalConnectorService {
             )
         }
 
+        guard value.hasPrefix("/") else { throw NativeConnectorError.workspaceUnavailable }
         let candidate = URL(fileURLWithPath: value).standardizedFileURL.resolvingSymlinksInPath()
-        guard let workspace = pairingState.workspaces.first(where: { workspace in
-            let root = URL(fileURLWithPath: workspace.absoluteRoot).standardizedFileURL.resolvingSymlinksInPath()
-            let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-            return candidate.path == root.path || candidate.path.hasPrefix(prefix)
-        }) else {
+        guard FileManager.default.fileExists(atPath: candidate.path) else {
             throw NativeConnectorError.workspaceUnavailable
         }
-        let root = URL(fileURLWithPath: workspace.absoluteRoot).standardizedFileURL.resolvingSymlinksInPath()
-        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-        let relative = candidate.path == root.path ? "." : String(candidate.path.dropFirst(prefix.count))
+        let workspace = LocalConnectorWorkspace(
+            id: "local-filesystem",
+            alias: "Mac",
+            absoluteRoot: "/",
+            fingerprint: "local-filesystem"
+        )
+        let relative = candidate.path == "/" ? "." : String(candidate.path.dropFirst())
         return .init(
             workspace: workspace,
             relativePath: relative,

@@ -26,20 +26,17 @@ public enum LocalProjectStatus: String, Codable, Sendable {
 public struct LocalProjectDraft: Codable, Sendable, Equatable {
     public let name: String
     public let description: String
-    public let workspaceID: String
-    public let relativeRoot: String
+    public let rootPath: String
 
-    public init(name: String, description: String = "", workspaceID: String, relativeRoot: String = "") {
+    public init(name: String, description: String = "", rootPath: String) {
         self.name = name
         self.description = description
-        self.workspaceID = workspaceID
-        self.relativeRoot = relativeRoot
+        self.rootPath = rootPath
     }
 
     public func validate() throws {
         try ProjectRegistryValidation.identifier(name, field: "name")
-        try ProjectRegistryValidation.routeIdentifier(workspaceID, field: "workspaceID")
-        try ProjectRegistryValidation.relativeRoot(relativeRoot)
+        try ProjectRegistryValidation.absoluteRootPath(rootPath)
         guard !description.contains("\0") else { throw ProjectRegistryError.invalidField("description") }
     }
 }
@@ -102,18 +99,14 @@ public enum ProjectRegistryValidation {
         }
     }
 
-    /// Canonical portable relative path. This is NOT a filesystem authorization check.
-    /// The connector must still resolve symlinks and enforce the granted workspace at use time.
-    public static func relativeRoot(_ value: String) throws {
-        guard value == value.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.contains("\\"), !value.contains(":"),
-              value.rangeOfCharacter(from: .controlCharacters) == nil else {
-            throw ProjectRegistryError.invalidField("relativeRoot")
+    public static func absoluteRootPath(_ value: String) throws {
+        guard !value.isEmpty,
+              value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+              value.hasPrefix("/"),
+              value.rangeOfCharacter(from: .controlCharacters) == nil,
+              URL(fileURLWithPath: value).standardizedFileURL.path == value else {
+            throw ProjectRegistryError.invalidField("rootPath")
         }
-        if value.isEmpty { return }
-        guard value.split(separator: "/", omittingEmptySubsequences: false).allSatisfy({
-            !$0.isEmpty && $0 != "." && $0 != ".."
-        }) else { throw ProjectRegistryError.invalidField("relativeRoot") }
     }
 }
 
@@ -122,9 +115,7 @@ public enum ProjectRegistryValidation {
 /// mutate a previously-created value. All clients use these explicit camelCase wire keys.
 public struct ProjectContextSnapshot: Codable, Sendable, Equatable {
     public struct ExecutionTarget: Codable, Sendable, Equatable {
-        public let deviceId: String
-        public let workspaceId: String
-        public let relativeRoot: String
+        public let rootPath: String
     }
 
     public let schemaVersion: Int
@@ -133,16 +124,13 @@ public struct ProjectContextSnapshot: Codable, Sendable, Equatable {
     public let projectRevision: Int64
     public let executionTarget: ExecutionTarget
 
-    public init(record: LocalProjectRecord, deviceID: String) throws {
+    public init(record: LocalProjectRecord) throws {
         try record.validate()
-        try ProjectRegistryValidation.routeIdentifier(deviceID, field: "deviceID")
         guard record.status == .active else { throw ProjectRegistryError.invalidField("status") }
         schemaVersion = 1
         projectId = record.id
         projectName = record.draft.name
         projectRevision = record.revision
-        executionTarget = ExecutionTarget(
-            deviceId: deviceID, workspaceId: record.draft.workspaceID, relativeRoot: record.draft.relativeRoot
-        )
+        executionTarget = ExecutionTarget(rootPath: record.draft.rootPath)
     }
 }

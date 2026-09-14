@@ -8,9 +8,6 @@ use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chatos_mcp_service::{
-    BUILTIN_KIND_CODE_MAINTAINER_READ, LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER,
-};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::time::Duration;
@@ -40,7 +37,9 @@ use types::{
 };
 const LOCAL_CONNECTOR_DEVICE_ONLINE: &str = "online";
 const LOCAL_CONNECTOR_WORKSPACE_ACTIVE: &str = "active";
-pub(crate) const LOCAL_CONNECTOR_BUILTIN_CODE_READ: &str = BUILTIN_KIND_CODE_MAINTAINER_READ;
+const LOCAL_CONNECTOR_ENABLED_BUILTIN_KINDS_HEADER: &str =
+    "x-local-connector-enabled-builtin-kinds";
+pub(crate) const LOCAL_CONNECTOR_BUILTIN_CODE_READ: &str = "CodeMaintainerRead";
 pub fn router() -> Router {
     Router::new()
         .route("/api/local-connectors/devices", get(list_devices))

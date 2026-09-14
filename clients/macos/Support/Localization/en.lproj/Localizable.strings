@@ -342,3 +342,5 @@
 "项目保存在本机。Git 由本机管理，聊天可在创建后单独准备。" = "Projects are stored locally. Git is managed on this device, and chat can be set up separately after creation.";
 "没有可展示的本地过程" = "No Local Process to Show";
 "Local Host 尚未为这一轮记录模型、工具或人工交互事件。" = "The Local Host has not recorded any model, tool, or human-interaction events for this turn.";
+"项目目录" = "Project Folder";
+"可以选择这台 Mac 上当前账户有权访问的任意文件夹。" = "Choose any folder on this Mac that your account can access.";

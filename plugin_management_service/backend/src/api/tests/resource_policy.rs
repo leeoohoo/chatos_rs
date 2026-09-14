@@ -258,24 +258,6 @@ fn public_mcp_responses_redact_runtime_credentials() {
 }
 
 #[test]
-fn builtin_mcps_cannot_be_created_through_the_api() {
-    let payload = McpPayload {
-        runtime: Some(McpRuntime {
-            kind: RUNTIME_KIND_BUILTIN.to_string(),
-            builtin_kind: Some("Notepad".to_string()),
-            ..McpRuntime::default()
-        }),
-        ..McpPayload::default()
-    };
-    assert_eq!(
-        validate_client_managed_mcp_payload(&payload, &user(USER_ROLE_USER))
-            .unwrap_err()
-            .status,
-        StatusCode::BAD_REQUEST
-    );
-}
-
-#[test]
 fn system_mcps_cannot_be_created_through_the_api() {
     let payload = McpPayload {
         runtime: Some(McpRuntime {

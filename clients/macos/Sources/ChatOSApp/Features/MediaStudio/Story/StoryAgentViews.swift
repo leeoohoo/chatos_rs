@@ -1,4 +1,3 @@
-import ChatOSAgentRuntime
 import ChatOSCore
 import SwiftUI
 
@@ -14,7 +13,6 @@ struct StoryAgentStartView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: StoryStudioViewModel
     let confirmation: StoryPlanningConfirmation
-    @State private var policy: AgentRunPolicy?
     @State private var error: String?
 
     private var replacesExistingPlan: Bool {
@@ -37,11 +35,6 @@ struct StoryAgentStartView: View {
             } else {
                 Text(appModel.localized("仅细化选定的 \(confirmation.targets.count) 个未完成分段。", english: "Refines only the \(confirmation.targets.count) selected unfinished segments."))
             }
-            if let policy {
-                Text(appModel.localized("本次调用上限：\(policy.maximumModelCalls) 次（包括重试）", english: "Call limit: \(policy.maximumModelCalls), including retries"))
-                    .font(.callout.monospacedDigit())
-                Text(appModel.localized("可在 设置 → Agent 运行 中调整。", english: "Adjust this in Settings → Agent Runtime.")).font(.caption).foregroundStyle(.secondary)
-            }
             Divider()
             Label(appModel.localized("默认使用 Memory Engine 记忆与上下文压缩", english: "Memory Engine Memory and Compaction Are Used by Default"), systemImage: "brain.head.profile")
                 .font(.callout.weight(.medium))
@@ -60,13 +53,9 @@ struct StoryAgentStartView: View {
                         else { viewModel.refineSegments(confirmation.targets) }
                         dismiss()
                     } catch { self.error = error.localizedDescription }
-                }.buttonStyle(.borderedProminent).disabled(policy == nil || !viewModel.canCreate)
+                }.buttonStyle(.borderedProminent).disabled(!viewModel.canCreate)
             }
         }.padding(24).frame(width: 620)
-        .task {
-            do { policy = try await viewModel.effectiveAgentPolicy() }
-            catch { self.error = error.localizedDescription }
-        }
     }
 }
 
@@ -82,30 +71,18 @@ struct StoryAgentRunPanel: View {
                 HStack {
                     Label(appModel.localized("AI 规划运行", english: "AI Planning Run"), systemImage: "arrow.triangle.2.circlepath").font(.headline)
                     Spacer()
-                    Text("\(run.checkpoint.modelCalls) / \(run.policy.maximumModelCalls)").font(.caption.monospacedDigit())
+                    Text(appModel.localized("第 \(run.modelCalls) 轮", english: "Step \(run.modelCalls)"))
+                        .font(.caption.monospacedDigit())
                 }
                 Text(label(run)).font(.caption).foregroundStyle(run.applied ? Color.green : .secondary)
-                if let event = run.events.last { Text(event.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-                if viewModel.isBusy, viewModel.activeProjectID == run.projectID,
-                   !viewModel.streamingModelText.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label(appModel.localized("模型实时输出", english: "Live Model Output"), systemImage: "waveform")
-                            .font(.caption.weight(.semibold)).foregroundStyle(.purple)
-                        ScrollView {
-                            Text(viewModel.streamingModelText)
-                                .font(.caption.monospaced()).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }.frame(maxHeight: 110)
-                    }.padding(10).background(Color.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
-                }
+                Text(run.status.rawValue).font(.caption.monospaced()).foregroundStyle(.secondary)
                 Text(appModel.localized("草稿：\(run.draft.resources.count) 个素材 · \(run.draft.segments.count) 段 · \(run.draft.totalSeconds) 秒", english: "Draft: \(run.draft.resources.count) assets · \(run.draft.segments.count) segments · \(run.draft.totalSeconds) seconds"))
                     .font(.caption)
-                if let reason = run.checkpoint.stopReason { Text(reason).font(.caption).foregroundStyle(.orange).lineLimit(3) }
                 HStack {
                     Button(appModel.localized("草稿 / 运行记录", english: "Draft / Run History")) { showsHistory = true }
                     Spacer()
-                    if !run.applied && run.abandonedAt == nil {
-                        Button(run.checkpoint.status == .completed ? appModel.localized("应用草稿", english: "Apply Draft") : appModel.localized("恢复规划", english: "Resume Planning")) { resumeID = run.id }
+                    if run.canApply || run.canResume {
+                        Button(run.canApply ? appModel.localized("应用草稿", english: "Apply Draft") : appModel.localized("恢复规划", english: "Resume Planning")) { resumeID = run.id }
                             .disabled(viewModel.isBusy || viewModel.isLoadingAgentRuns)
                     }
                 }
@@ -140,10 +117,11 @@ struct StoryAgentRunPanel: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(run.updatedAt, style: .date).font(.caption)
                                 Text(label(run)).font(.headline)
-                                Text("\(run.checkpoint.modelCalls) / \(run.policy.maximumModelCalls) · \(run.draft.totalSeconds)s").monospacedDigit()
+                                Text(appModel.localized("第 \(run.modelCalls) 轮 · \(run.draft.totalSeconds) 秒", english: "Step \(run.modelCalls) · \(run.draft.totalSeconds)s"))
+                                    .monospacedDigit()
                                 Text(appModel.localized("使用 Memory Engine 记忆与压缩", english: "Uses Memory Engine memory and compaction"))
                                     .font(.caption).foregroundStyle(.secondary)
-                                if !run.applied && run.abandonedAt == nil && !viewModel.isBusy {
+                                if (run.canApply || run.canResume) && !viewModel.isBusy {
                                     Button(appModel.localized("恢复 / 应用这一条记录", english: "Resume / Apply This Run")) { showsHistory = false; resumeID = run.id }
                                 }
                                 DisclosureGroup(appModel.localized("人物文字画像", english: "Written Character Profiles")) {
@@ -174,14 +152,6 @@ struct StoryAgentRunPanel: View {
                                         }.font(.caption).textSelection(.enabled).padding(.vertical, 6)
                                     }
                                 }
-                                DisclosureGroup(appModel.localized("最近 100 条动作（完整记录保存在本机）", english: "Last 100 Actions (Full Log Saved Locally)")) {
-                                    ForEach(Array(run.events.suffix(100))) { event in
-                                        HStack(alignment: .top) {
-                                            Text(event.date, style: .time).foregroundStyle(.secondary)
-                                            Text(event.detail).textSelection(.enabled)
-                                        }.font(.caption).padding(.vertical, 3)
-                                    }
-                                }
                             }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                         }
                     }
@@ -191,12 +161,20 @@ struct StoryAgentRunPanel: View {
     }
     private func label(_ run: StoryAgentRun) -> String {
         if run.applied { return appModel.localized("规划完成 · 已应用", english: "Planning Complete · Applied") }
-        if run.abandonedAt != nil { return appModel.localized("中断草稿 · 已放弃", english: "Interrupted Draft · Discarded") }
-        if run.checkpoint.status == .completed { return appModel.localized("草稿已完成 · 待应用", english: "Draft Complete · Awaiting Application") }
+        if run.canApply { return appModel.localized("草稿已完成 · 待应用", english: "Draft Complete · Awaiting Application") }
         if viewModel.isBusy && viewModel.activeProjectID == run.projectID && viewModel.latestAgentRun?.id == run.id {
             return appModel.localized("正在分步规划 · 草稿自动保存", english: "Planning Step by Step · Draft Autosaved")
         }
-        return appModel.localized("已暂停 / 中断 · 可查看并恢复", english: "Paused / Interrupted · Review or Resume")
+        switch run.status {
+        case .paused, .needsReview:
+            return appModel.localized("已暂停 · 可查看并恢复", english: "Paused · Review or Resume")
+        case .failed:
+            return appModel.localized("规划失败 · 草稿已保留", english: "Planning Failed · Draft Preserved")
+        case .cancelled:
+            return appModel.localized("规划已取消 · 草稿已保留", english: "Planning Cancelled · Draft Preserved")
+        default:
+            return appModel.localized("本地 Host 正在执行", english: "Running in Local Host")
+        }
     }
 }
 

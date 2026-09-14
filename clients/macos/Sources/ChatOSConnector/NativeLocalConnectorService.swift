@@ -33,6 +33,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     private let configuration: NativeConnectorConfiguration
     private let ticketProvider: any LocalConnectorPairingTicketProviding
+    let sessionAccessTokenProvider: any ChatOSSessionAccessTokenProviding
     let gateway: NativeConnectorGateway
     let routeStore: NativeConnectorRouteStore
     let pluginInstaller: NativePluginInstaller
@@ -85,6 +86,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     public init(
         configuration: NativeConnectorConfiguration,
         ticketProvider: any LocalConnectorPairingTicketProviding,
+        sessionAccessTokenProvider: any ChatOSSessionAccessTokenProviding,
         routeStore: NativeConnectorRouteStore = .init(),
         accountSession: any NativeLocalAgentAccountSessionAccess,
         agentRuntimeSettings: any AgentRuntimePreferencesProviding,
@@ -92,6 +94,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     ) {
         self.configuration = configuration
         self.ticketProvider = ticketProvider
+        self.sessionAccessTokenProvider = sessionAccessTokenProvider
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
         self.routeStore = routeStore
         self.terminalHistoryStore = NativeTerminalHistoryStore(accountSession: accountSession)
@@ -950,6 +953,15 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     func requireAccessToken() throws -> String {
         guard let token = try accessToken() else { throw NativeConnectorError.notPaired }
+        return token
+    }
+
+    func requireChatOSAccessToken() async throws -> String {
+        guard let token = await sessionAccessTokenProvider.currentChatOSAccessToken()?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty else {
+            throw NativeConnectorError.notPaired
+        }
         return token
     }
 

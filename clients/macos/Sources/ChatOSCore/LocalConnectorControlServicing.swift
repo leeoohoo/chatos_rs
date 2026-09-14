@@ -4,6 +4,13 @@ public protocol LocalConnectorPairingTicketProviding: Sendable {
     func issueLocalConnectorPairingTicket() async throws -> String
 }
 
+/// Supplies the primary authenticated ChatOS session to client-owned features.
+/// Model configuration and Plugin Marketplace calls must use this token directly;
+/// they are not part of the removed Local Connector server execution plane.
+public protocol ChatOSSessionAccessTokenProviding: Sendable {
+    func currentChatOSAccessToken() async -> String?
+}
+
 public protocol LocalConnectorControlServicing: Sendable {
     func fetchStatus() async throws -> LocalConnectorStatus
     func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus

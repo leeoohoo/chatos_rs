@@ -171,7 +171,7 @@ make test-macos-client
 clients/macos/scripts/package-debug-app.sh
 ```
 
-源码运行默认连接 `http://127.0.0.1:9080/api/chatos`。可以通过 `CHATOS_API_BASE_URL` 和 `CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL` 指向其他环境。
+源码运行默认连接 `http://127.0.0.1:9080/api/chatos`。可以通过 `CHATOS_API_BASE_URL` 指向其他环境。
 
 ### Windows
 

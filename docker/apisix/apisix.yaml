@@ -155,12 +155,12 @@ routes:
         uri: https://admin.jgoool.com/memory
         ret_code: 302
 
-  # Plugin artifacts remain public download resources even though the legacy
-  # Plugin Management hostname redirects ordinary UI traffic to Admin Console.
+  # Plugin artifacts are downloaded through the same unified gateway used by
+  # native clients. Keep this route host-agnostic so local 127.0.0.1 gateways,
+  # the public gateway hostname, and the legacy plugin hostname all resolve the
+  # exact artifact bytes without a second client base URL.
   - id: plugin-artifact-download
     priority: 900
-    hosts:
-      - plugin.jgoool.com
     uri: /api/plugin-artifacts/*
     methods:
       - GET

@@ -19,16 +19,16 @@ public enum NativeLocalAgentAccountSessionError: Error, Equatable, Sendable {
 extension NativeLocalAgentAccountSessionError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .invalidAccount: "本地 Agent 账户身份无效"
-        case .invalidAccessToken: "本地 Agent 登录凭据无效。"
-        case .invalidDeviceID: "本地 Agent 设备身份无效"
+        case .invalidAccount: "当前账户信息无效，请重新登录。"
+        case .invalidAccessToken: "登录凭据已失效，请重新登录。"
+        case .invalidDeviceID: "ChatOS 无法初始化本机身份。"
         case let .invalidPersistentKey(reference):
-            "本地 Agent 持久密钥损坏（\(reference)）"
+            "ChatOS 的本机安全密钥已损坏（\(reference)）。"
         case let .credentialUnavailable(reference):
-            "本地 Agent 安全凭据不可用（\(reference)）"
-        case .inactive: "本地 Agent 尚未随当前账户启动"
-        case .accountMismatch: "本地 Agent 当前账户与请求账户不一致"
-        case .hostUnavailable: "本地 Agent Host 尚未就绪"
+            "ChatOS 无法读取本机安全凭据（\(reference)）。"
+        case .inactive: "ChatOS 正在准备本机功能，请稍后重试。"
+        case .accountMismatch: "当前登录账户已变化，请重试。"
+        case .hostUnavailable: "ChatOS 的本机功能尚未就绪，请稍后重试。"
         }
     }
 }

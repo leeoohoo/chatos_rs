@@ -264,6 +264,7 @@ struct StoryProjectForm: View {
             }
         }.padding(26).frame(width: 720)
         .onAppear {
+            mediaStudio.loadIfNeeded()
             if let project {
                 title = project.title; description = project.description
                 textModel = project.models.textModelID; imageModel = project.models.imageModelID; videoModel = project.models.videoModelID

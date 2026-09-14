@@ -72,8 +72,7 @@ impl AppStore {
         user: &CurrentUser,
         query: &ListResourcesQuery,
     ) -> Result<ListResponse<McpRecord>, String> {
-        let filter =
-            exclude_retired_system_mcps(self.resource_filter(user, query, Some("runtime.kind"))?);
+        let filter = self.resource_filter(user, query, Some("runtime.kind"))?;
         let total = self
             .mcps
             .count_documents(filter.clone(), None)
@@ -103,10 +102,7 @@ impl AppStore {
             .sort(doc! { "display_name": 1, "name": 1 })
             .build();
         self.mcps
-            .find(
-                exclude_retired_system_mcps(doc! { "visibility": VISIBILITY_SYSTEM_PRIVATE }),
-                options,
-            )
+            .find(doc! { "visibility": VISIBILITY_SYSTEM_PRIVATE }, options)
             .await
             .map_err(|err| err.to_string())?
             .try_collect()
@@ -119,59 +115,12 @@ impl AppStore {
             .sort(doc! { "visibility": 1, "display_name": 1, "name": 1 })
             .build();
         self.mcps
-            .find(exclude_retired_system_mcps(doc! {}), options)
+            .find(doc! {}, options)
             .await
             .map_err(|err| err.to_string())?
             .try_collect()
             .await
             .map_err(|err| err.to_string())
-    }
-
-    pub async fn delete_retired_task_manager_mcp(&self) -> Result<(), String> {
-        let filter = retired_task_manager_system_mcp_filter();
-        let records: Vec<McpRecord> = self
-            .mcps
-            .find(filter.clone(), None)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())?;
-        let mut resource_ids = RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS
-            .iter()
-            .map(|value| (*value).to_string())
-            .collect::<Vec<_>>();
-        for record in records {
-            if !resource_ids.contains(&record.id) {
-                resource_ids.push(record.id);
-            }
-        }
-
-        self.bindings
-            .delete_many(
-                doc! {
-                    "resource_kind": RESOURCE_KIND_MCP,
-                    "resource_id": { "$in": resource_ids.clone() },
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        self.checks
-            .delete_many(
-                doc! {
-                    "resource_kind": RESOURCE_KIND_MCP,
-                    "resource_id": { "$in": resource_ids },
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        self.mcps
-            .delete_many(filter, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
     }
 
     pub async fn remove_retired_direct_local_mcps(&self) -> Result<u64, String> {
@@ -541,129 +490,4 @@ fn list_options(limit: Option<i64>, offset: Option<u64>) -> FindOptions {
 
 fn upsert_options() -> ReplaceOptions {
     ReplaceOptions::builder().upsert(true).build()
-}
-
-const RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS: &[&str] = &["builtin_task_manager", "task_manager"];
-const RETIRED_TASK_MANAGER_MCP_SERVER_NAME: &str = "task_manager";
-const RETIRED_TASK_MANAGER_MCP_SYSTEM_KEY: &str = "task_manager";
-const RETIRED_TASK_MANAGER_MCP_KIND_NAME: &str = "TaskManager";
-
-pub(crate) fn is_retired_task_manager_mcp(record: &McpRecord) -> bool {
-    let is_system_scope = record.visibility == VISIBILITY_SYSTEM_PRIVATE
-        || record.source_kind == SOURCE_KIND_SYSTEM_SEED
-        || matches!(
-            record.runtime.kind.as_str(),
-            RUNTIME_KIND_SYSTEM | RUNTIME_KIND_BUILTIN
-        );
-    if !is_system_scope {
-        return false;
-    }
-    RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS
-        .iter()
-        .any(|value| record.id.eq_ignore_ascii_case(value))
-        || record
-            .name
-            .eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SERVER_NAME)
-        || record
-            .runtime
-            .server_name
-            .as_deref()
-            .is_some_and(|value| value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SERVER_NAME))
-        || record
-            .runtime
-            .system_key
-            .as_deref()
-            .is_some_and(|value| value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SYSTEM_KEY))
-        || record.runtime.builtin_kind.as_deref().is_some_and(|value| {
-            value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_KIND_NAME)
-                || value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SERVER_NAME)
-        })
-}
-
-fn exclude_retired_system_mcps(filter: Document) -> Document {
-    doc! {
-        "$and": [
-            filter,
-            { "$nor": [retired_task_manager_system_mcp_filter()] },
-        ]
-    }
-}
-
-fn retired_task_manager_system_mcp_filter() -> Document {
-    doc! {
-        "$and": [
-            {
-                "$or": [
-                    { "visibility": VISIBILITY_SYSTEM_PRIVATE },
-                    { "source_kind": SOURCE_KIND_SYSTEM_SEED },
-                    { "runtime.kind": { "$in": [RUNTIME_KIND_SYSTEM, RUNTIME_KIND_BUILTIN] } },
-                ],
-            },
-            {
-                "$or": [
-                    { "id": { "$in": RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS } },
-                    { "name": RETIRED_TASK_MANAGER_MCP_SERVER_NAME },
-                    { "runtime.server_name": RETIRED_TASK_MANAGER_MCP_SERVER_NAME },
-                    { "runtime.system_key": RETIRED_TASK_MANAGER_MCP_SYSTEM_KEY },
-                    { "runtime.builtin_kind": { "$in": [RETIRED_TASK_MANAGER_MCP_KIND_NAME, RETIRED_TASK_MANAGER_MCP_SERVER_NAME] } },
-                ],
-            },
-        ],
-    }
-}
-
-#[cfg(test)]
-mod retired_mcp_tests {
-    use super::*;
-
-    fn mcp_record(
-        visibility: &str,
-        source_kind: &str,
-        runtime_kind: &str,
-        name: &str,
-    ) -> McpRecord {
-        McpRecord {
-            id: name.to_string(),
-            owner_user_id: "admin".to_string(),
-            owner_kind: OWNER_KIND_SYSTEM.to_string(),
-            visibility: visibility.to_string(),
-            source_kind: source_kind.to_string(),
-            name: name.to_string(),
-            display_name: name.to_string(),
-            description: None,
-            enabled: true,
-            runtime: McpRuntime {
-                kind: runtime_kind.to_string(),
-                system_key: Some(name.to_string()),
-                server_name: Some(name.to_string()),
-                ..McpRuntime::default()
-            },
-            security: ResourceSecurity::default(),
-            metadata: ResourceMetadata::default(),
-            plugin_component: PluginComponentOwnership::default(),
-            created_by: "admin".to_string(),
-            updated_by: "admin".to_string(),
-            created_at: "now".to_string(),
-            updated_at: "now".to_string(),
-        }
-    }
-
-    #[test]
-    fn retired_task_manager_detection_only_matches_system_records() {
-        let system = mcp_record(
-            VISIBILITY_SYSTEM_PRIVATE,
-            SOURCE_KIND_SYSTEM_SEED,
-            RUNTIME_KIND_SYSTEM,
-            "task_manager",
-        );
-        assert!(is_retired_task_manager_mcp(&system));
-
-        let user_created_same_name = mcp_record(
-            VISIBILITY_PRIVATE,
-            SOURCE_KIND_USER_CREATED,
-            RUNTIME_KIND_HTTP,
-            "task_manager",
-        );
-        assert!(!is_retired_task_manager_mcp(&user_created_same_name));
-    }
 }

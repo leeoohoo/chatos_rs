@@ -182,7 +182,7 @@ make test-macos-client
 clients/macos/scripts/package-debug-app.sh
 ```
 
-Source runs default to the local gateway at `http://127.0.0.1:9080/api/chatos`. Use `CHATOS_API_BASE_URL` and `CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL` to target another environment.
+Source runs default to the local gateway at `http://127.0.0.1:9080/api/chatos`. Use `CHATOS_API_BASE_URL` to target another environment.
 
 ### Windows
 

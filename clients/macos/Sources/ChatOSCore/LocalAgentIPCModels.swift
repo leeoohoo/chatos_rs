@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 27
+public let localAgentProtocolVersion: UInt32 = 28
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -265,14 +265,12 @@ public enum LocalAgentToolApprovalDecision: String, Codable, Equatable, Sendable
 public struct LocalAgentProjectDraft: Codable, Equatable, Sendable {
     public var name: String
     public var description: String
-    public var workspaceID: String
-    public var relativeRoot: String
+    public var rootPath: String
 
-    public init(name: String, description: String, workspaceID: String, relativeRoot: String) {
+    public init(name: String, description: String, rootPath: String) {
         self.name = name
         self.description = description
-        self.workspaceID = workspaceID
-        self.relativeRoot = relativeRoot
+        self.rootPath = rootPath
     }
 }
 

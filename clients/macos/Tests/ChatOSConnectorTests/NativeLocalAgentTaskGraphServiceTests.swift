@@ -105,7 +105,7 @@ private struct TaskGraphServiceFixture {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("shared/fixtures/local_agent/v26")
+            .appendingPathComponent("shared/fixtures/local_agent/v28")
     }
 }
 

@@ -128,7 +128,7 @@ pub(super) fn validate_client_managed_mcp_payload(
             .runtime
             .as_ref()
             .map(|runtime| runtime.kind.as_str()),
-        Some(RUNTIME_KIND_SYSTEM | RUNTIME_KIND_BUILTIN)
+        Some(RUNTIME_KIND_SYSTEM)
     ) {
         return Err(ApiError::bad_request(
             "system MCPs are managed by the service",
@@ -230,16 +230,13 @@ pub(super) fn validate_mcp_runtime(runtime: &McpRuntime) -> Result<(), ApiError>
                 .as_deref()
                 .and_then(|value| normalized(Some(value)))
                 .ok_or_else(|| ApiError::bad_request("system MCP requires system_key"))?;
-            if chatos_mcp::system_mcp_descriptor_by_any(system_key.as_str()).is_none() {
+            if crate::system_mcp_catalog::system_mcp_descriptor_by_any(system_key.as_str())
+                .is_none()
+            {
                 return Err(ApiError::bad_request(format!(
                     "unknown system MCP key: {system_key}"
                 )));
             }
-        }
-        RUNTIME_KIND_BUILTIN => {
-            return Err(ApiError::bad_request(
-                "legacy system MCP runtime kinds are read-only; use system",
-            ));
         }
         RUNTIME_KIND_HTTP => {
             let url = runtime

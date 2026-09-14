@@ -4,6 +4,17 @@ import CryptoKit
 import Foundation
 
 protocol StoryProjectIPCClient: Sendable {
+    func run(id: String) async throws -> LocalAgentRunSnapshot
+    func runs(cursor: String?, limit: UInt32) async throws -> (
+        runs: [LocalAgentRunSnapshot], nextCursor: String?
+    )
+    func accepted(_ command: LocalAgentCommand) async throws -> String
+    func createStoryDesign(
+        _ command: LocalAgentCreateStoryDesign
+    ) async throws -> (operationID: String, run: LocalAgentRunSnapshot)
+    func applyStoryDesign(
+        _ command: LocalAgentApplyStoryDesign
+    ) async throws -> LocalAgentStoryDesignApplication
     func storyRecord(id: String) async throws -> LocalAgentStorySnapshot
     func storyRecords() async throws -> [LocalAgentStorySnapshot]
     func putStoryRecord(
@@ -346,103 +357,160 @@ actor StoryProjectStore {
         }
     }
 
-    func saveRun(_ run: StoryAgentRun, owner: String) async throws {
-        try await withMutation {
-            try await self.saveRunUnlocked(run, owner: owner)
-        }
-    }
-
-    private func saveRunUnlocked(_ run: StoryAgentRun, owner: String) async throws {
-        try run.validate(owner: owner, projectID: run.projectID)
-        _ = try await put(
-            run,
-            recordID: Self.agentRunRecordID(run.id),
-            projectID: run.projectID,
-            kind: .agentRun,
-            status: run.checkpoint.status.rawValue,
-            owner: owner
-        )
-    }
-
     func loadRuns(owner: String, projectID: UUID) async throws -> (runs: [StoryAgentRun], unreadable: Int) {
         let context = try await storageContext(owner: owner)
-        var runs: [StoryAgentRun] = []; var unreadable = 0
+        var hostRuns: [LocalAgentRunSnapshot] = []
+        var cursor: String?
+        repeat {
+            let page = try await context.client.runs(cursor: cursor, limit: 500)
+            hostRuns.append(contentsOf: page.runs)
+            guard page.nextCursor != cursor else { throw StoryAgentError.invalidRun }
+            cursor = page.nextCursor
+        } while cursor != nil
+        let runsByStoryRecord = Dictionary(
+            grouping: hostRuns.filter {
+                $0.ownerUserID == context.ownerUserID
+                    && $0.profileKey == "story_design"
+                    && $0.ownerEntityType == "story_design"
+            },
+            by: \LocalAgentRunSnapshot.ownerEntityID
+        )
+        var runs: [StoryAgentRun] = []
+        var unreadable = 0
         for record in try await context.client.storyRecords()
             where record.draft.kind == .agentRun
                 && record.draft.projectID.lowercased() == projectID.uuidString.lowercased() {
             do {
-                let run: StoryAgentRun = try Self.decodeState(record.draft.state)
                 guard record.ownerUserID == context.ownerUserID,
-                      record.recordID == Self.agentRunRecordID(run.id) else {
+                      let matches = runsByStoryRecord[record.recordID],
+                      matches.count == 1,
+                      let snapshot = matches.first else {
                     throw StoryAgentError.invalidRun
                 }
-                try run.validate(owner: owner, projectID: projectID)
-                runs.append(run)
+                runs.append(try StoryAgentRun(run: snapshot, record: record))
             } catch { unreadable += 1 }
         }
         return (runs.sorted { $0.updatedAt > $1.updatedAt }, unreadable)
     }
 
-    /// Canonical project replacement is guarded by the original digest. A crash after project save
-    /// but before the applied marker is recoverable by comparing with the completed draft digest.
-    func applyRun(_ input: StoryAgentRun, owner: String) async throws -> (StoryAgentRun, StoryProject) {
+    func createRun(
+        projectID: UUID,
+        stage: StoryAgentRun.Stage,
+        targets: [String],
+        owner: String
+    ) async throws -> StoryAgentRun {
         try await withMutation {
-            try await self.applyRunUnlocked(input, owner: owner)
+            let context = try await self.storageContext(owner: owner)
+            let projectRecord = try await context.client.storyRecord(
+                id: Self.projectRecordID(projectID)
+            )
+            guard projectRecord.ownerUserID == owner,
+                  projectRecord.draft.kind == .project,
+                  projectRecord.draft.projectID.lowercased() == projectID.uuidString.lowercased()
+            else { throw StoryAgentError.invalidRun }
+            let project: StoryProject = try Self.decodeState(projectRecord.draft.state)
+            try project.validate()
+            guard project.id == projectID,
+                  stage != .outline || project.segments.isEmpty,
+                  stage != .refine || (!targets.isEmpty
+                    && Set(targets).count == targets.count
+                    && targets.allSatisfy { target in
+                        project.segments.contains {
+                            $0.id == target && $0.attempt == nil && $0.video == nil
+                        }
+                    })
+            else { throw StoryAgentError.forbiddenTarget }
+
+            let id = UUID()
+            let runID = id.uuidString.lowercased()
+            let recordID = Self.agentRunRecordID(id)
+            let created = try await context.client.createStoryDesign(.init(
+                runID: runID,
+                storyRecordID: recordID,
+                projectID: projectID.uuidString.lowercased(),
+                expectedProjectRevision: projectRecord.revision,
+                modelConfigID: project.models.textModelID,
+                stage: stage == .outline ? .outline : .refine,
+                targetIDs: targets,
+                baseProjectDigest: try NativeLocalAgentSnapshotBuilder.digest(
+                    projectRecord.draft.state
+                )
+            ))
+            guard !created.operationID.isEmpty,
+                  created.run.runID == runID,
+                  created.run.ownerEntityID == recordID else {
+                throw StoryAgentError.invalidRun
+            }
+            let record = try await context.client.storyRecord(id: recordID)
+            return try StoryAgentRun(run: created.run, record: record)
         }
     }
 
-    private func applyRunUnlocked(
-        _ input: StoryAgentRun,
-        owner: String
-    ) async throws -> (StoryAgentRun, StoryProject) {
-        var run = input
-        try run.validate(owner: owner, projectID: run.projectID)
-        guard run.abandonedAt == nil, run.checkpoint.status == .completed else { throw StoryAgentError.incompletePlan }
-        try StoryAgentTools.validateCompletion(run)
-        let current = try await loadProject(projectID: run.projectID, owner: owner)
-        let digest = try StoryAgentRun.digest(current)
-        let draftDigest = try StoryAgentRun.digest(run.draft)
-        guard digest == run.baseDigest || digest == draftDigest else { throw StoryAgentError.projectChanged }
-        var next = run.draft
-        StoryContinuityContext.reconcileInheritedFirstFrames(&next)
-        next.updatedAt = Date()
-        if digest != (try StoryAgentRun.digest(next)) { try await saveUnlocked(next, owner: owner) }
-        else { next = current }
-        run.draft = next; run.applied = true; run.updatedAt = Date()
-        try await saveRunUnlocked(run, owner: owner)
-        return (run, next)
+    func refreshRun(_ input: StoryAgentRun, owner: String) async throws -> StoryAgentRun {
+        let context = try await storageContext(owner: owner)
+        let run = try await context.client.run(id: input.runID)
+        let record = try await context.client.storyRecord(id: input.storyRecordID)
+        let refreshed = try StoryAgentRun(run: run, record: record)
+        guard refreshed.id == input.id,
+              refreshed.projectID == input.projectID,
+              refreshed.owner == owner else { throw StoryAgentError.invalidRun }
+        return refreshed
     }
 
-    /// Reconciles a run that reached a valid domain state but was persisted before the runtime
-    /// could write its terminal checkpoint. This is deliberately local and deterministic: it
-    /// neither resumes the model nor applies an incomplete or stale draft.
-    func applyValidatedRunIfPossible(_ input: StoryAgentRun, owner: String) async throws -> (StoryAgentRun, StoryProject)? {
+    func resumeRun(_ input: StoryAgentRun, owner: String) async throws -> StoryAgentRun {
+        let current = try await refreshRun(input, owner: owner)
+        guard current.canResume else { throw StoryAgentError.invalidRun }
+        let context = try await storageContext(owner: owner)
+        _ = try await context.client.accepted(.resumeRun(
+            runID: current.runID,
+            expectedVersion: current.runVersion
+        ))
+        return try await refreshRun(current, owner: owner)
+    }
+
+    func pauseRun(_ input: StoryAgentRun, owner: String) async throws -> StoryAgentRun {
+        let current = try await refreshRun(input, owner: owner)
+        guard current.isExecuting else { return current }
+        let context = try await storageContext(owner: owner)
+        _ = try await context.client.accepted(.pauseRun(
+            runID: current.runID,
+            expectedVersion: current.runVersion
+        ))
+        return try await refreshRun(current, owner: owner)
+    }
+
+    func cancelRun(_ input: StoryAgentRun, owner: String) async throws -> StoryAgentRun {
+        let current = try await refreshRun(input, owner: owner)
+        guard !current.isTerminal else { return current }
+        let context = try await storageContext(owner: owner)
+        _ = try await context.client.accepted(.cancelRun(
+            runID: current.runID,
+            expectedVersion: current.runVersion
+        ))
+        return try await refreshRun(current, owner: owner)
+    }
+
+    func applyRun(_ input: StoryAgentRun, owner: String) async throws -> (StoryAgentRun, StoryProject) {
         try await withMutation {
-            guard !input.applied, input.abandonedAt == nil, input.checkpoint.pendingCalls.isEmpty,
-                  input.checkpoint.inFlightCallID == nil else { return nil }
-            try input.validate(owner: owner, projectID: input.projectID)
-            guard (try? StoryAgentTools.validateCompletion(input)) != nil else { return nil }
-
-            let current = try await self.loadProject(projectID: input.projectID, owner: owner)
-            let currentDigest = try StoryAgentRun.digest(current)
-            let draftDigest = try StoryAgentRun.digest(input.draft)
-            guard currentDigest == input.baseDigest || currentDigest == draftDigest else { return nil }
-
-            var run = input
-            let result = "本阶段规划完成，已通过客户端校验。"
-            run.checkpoint.status = .completed
-            run.checkpoint.completionResult = result
-            run.checkpoint.result = result
-            run.checkpoint.stopReason = nil
-            if run.events.count < 20_000 {
-                run.events.append(.init(
-                    kind: "completion_recovered",
-                    detail: "启动时检测到业务数据已完整，自动完成并应用草稿",
-                    modelCalls: run.checkpoint.modelCalls
-                ))
-            }
-            run.updatedAt = Date()
-            return try await self.applyRunUnlocked(run, owner: owner)
+            let current = try await self.refreshRun(input, owner: owner)
+            guard current.canApply else { throw StoryAgentError.incompletePlan }
+            let context = try await self.storageContext(owner: owner)
+            let application = try await context.client.applyStoryDesign(.init(
+                runID: current.runID,
+                storyRecordID: current.storyRecordID,
+                projectID: current.projectID.uuidString.lowercased(),
+                expectedProjectRevision: current.baseProjectRevision,
+                expectedStoryRevision: current.storyRevision
+            ))
+            var project: StoryProject = try Self.decodeState(application.project.draft.state)
+            StoryContinuityContext.reconcileInheritedFirstFrames(&project)
+            try project.validate()
+            guard project.id == current.projectID else { throw StoryAgentError.invalidRun }
+            return (
+                try StoryAgentRun(run: try await context.client.run(id: current.runID),
+                                  record: application.design),
+                project
+            )
         }
     }
 

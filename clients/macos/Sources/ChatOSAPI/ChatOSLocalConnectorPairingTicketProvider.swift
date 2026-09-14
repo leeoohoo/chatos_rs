@@ -1,6 +1,9 @@
 import ChatOSCore
 
-public actor ChatOSLocalConnectorPairingTicketProvider: LocalConnectorPairingTicketProviding {
+public actor ChatOSLocalConnectorPairingTicketProvider:
+    LocalConnectorPairingTicketProviding,
+    ChatOSSessionAccessTokenProviding
+{
     private let client: ChatOSAPIClient
 
     public init(client: ChatOSAPIClient) {
@@ -13,6 +16,10 @@ public actor ChatOSLocalConnectorPairingTicketProvider: LocalConnectorPairingTic
             method: "POST"
         )
         return response.ticket
+    }
+
+    public func currentChatOSAccessToken() async -> String? {
+        await client.currentAccessToken()
     }
 }
 

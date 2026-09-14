@@ -41,13 +41,13 @@ final class ChatOSProjectConversationServiceTests: XCTestCase {
     private func project() throws -> WorkspaceProject {
         let record = LocalProjectRecord(
             id: "local-id", ownerUserID: "owner",
-            draft: .init(name: "Local", workspaceID: "ws", relativeRoot: "repo"),
+            draft: .init(name: "Local", rootPath: "/repo"),
             createdAtUnixMs: 1, updatedAtUnixMs: 1
         )
         return WorkspaceProject(
             id: record.id, name: record.draft.name,
-            rootPath: "local://connector/device/ws/repo", latestConversationID: nil,
-            projectContext: try ProjectContextSnapshot(record: record, deviceID: "device")
+            rootPath: "/repo", latestConversationID: nil,
+            projectContext: try ProjectContextSnapshot(record: record)
         )
     }
 }
@@ -62,7 +62,7 @@ private actor ProjectConversationTransport: HTTPTransport {
         guard request.url.path == "/api/chatos/conversations" else {
             throw URLError(.unsupportedURL)
         }
-        let item = #"{"id":"conversation-1","project_id":"local-id","message_count":1,"metadata":{"contact":{"contact_id":"contact-1"},"chat_runtime":{"project_context":{"schemaVersion":1,"projectId":"local-id","projectName":"Local","projectRevision":1,"executionTarget":{"deviceId":"device","workspaceId":"ws","relativeRoot":"repo"}}}}}"#
+        let item = #"{"id":"conversation-1","project_id":"local-id","message_count":1,"metadata":{"contact":{"contact_id":"contact-1"},"chat_runtime":{"project_context":{"schemaVersion":1,"projectId":"local-id","projectName":"Local","projectRevision":1,"executionTarget":{"rootPath":"/repo"}}}}}"#
         let body = request.method == "GET" ? (existing ? "[" + item + "]" : "[]") : item
         return HTTPResponse(statusCode: request.method == "POST" ? 201 : 200, headers: [:], body: Data(body.utf8))
     }

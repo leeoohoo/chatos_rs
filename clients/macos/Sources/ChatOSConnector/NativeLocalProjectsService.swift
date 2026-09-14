@@ -27,21 +27,17 @@ extension NativeLocalAgentIPCClient: NativeLocalProjectIPCClient {}
 public actor NativeLocalProjectsService: ProjectRegistry {
     typealias ClientProvider = @Sendable (String) async throws -> any NativeLocalProjectIPCClient
 
-    private let connector: NativeLocalConnectorService
     private let clientProvider: ClientProvider
 
     public init(
-        connector: NativeLocalConnectorService,
         accountSession: any NativeLocalAgentAccountSessionAccess
     ) {
-        self.connector = connector
         self.clientProvider = { ownerUserID in
             try await accountSession.client(accountID: ownerUserID)
         }
     }
 
-    init(connector: NativeLocalConnectorService, clientProvider: @escaping ClientProvider) {
-        self.connector = connector
+    init(clientProvider: @escaping ClientProvider) {
         self.clientProvider = clientProvider
     }
 
@@ -142,28 +138,21 @@ public actor NativeLocalProjectsService: ProjectRegistry {
         return record
     }
 
-    public func deviceID(ownerUserID: String) async throws -> String? {
-        try await connector.localProjectDeviceID(ownerUserID: ownerUserID)
-    }
-
     public func pluginContext(
         ownerUserID: String,
         projectID: String
     ) async throws -> LocalConnectorPluginApplicationContext {
-        let record = try await activeRecordWithCurrentBinding(
+        let record = try await activeRecord(
             ownerUserID: ownerUserID,
             projectID: projectID
         )
-        guard let deviceID = try await connector.localProjectDeviceID(ownerUserID: ownerUserID) else {
-            throw NativeConnectorError.workspaceUnavailable
-        }
         guard try await get(ownerUserID: ownerUserID, id: projectID) == record else {
             throw ProjectRegistryError.revisionConflict
         }
         return .init(
             projectID: record.id,
             projectName: record.draft.name,
-            projectRoot: try record.localRootURI(deviceID: deviceID)
+            projectRoot: record.draft.rootPath
         )
     }
 
@@ -171,53 +160,30 @@ public actor NativeLocalProjectsService: ProjectRegistry {
         ownerUserID: String,
         projectID: String
     ) async throws -> ProjectContextSnapshot {
-        let record = try await activeRecordWithCurrentBinding(
+        let record = try await activeRecord(
             ownerUserID: ownerUserID,
             projectID: projectID
         )
-        guard let deviceID = try await connector.localProjectDeviceID(ownerUserID: ownerUserID) else {
-            throw NativeConnectorError.workspaceUnavailable
-        }
         guard try await get(ownerUserID: ownerUserID, id: projectID) == record else {
             throw ProjectRegistryError.revisionConflict
         }
-        return try ProjectContextSnapshot(record: record, deviceID: deviceID)
-    }
-
-    public func repairRootWorkspaceBindings(ownerUserID: String) async throws {
-        let records = try await list(ownerUserID: ownerUserID, includeInactive: false)
-        for record in records {
-            do {
-                _ = try await activeRecordWithCurrentBinding(
-                    ownerUserID: ownerUserID,
-                    projectID: record.id
-                )
-            } catch NativeConnectorError.workspaceUnavailable {
-                continue
-            } catch ProjectRegistryError.revisionConflict {
-                continue
-            }
-        }
+        return try ProjectContextSnapshot(record: record)
     }
 
     public func createWorkspaceProject(
         ownerUserID: String,
         draft: LocalProjectDraft
     ) async throws -> WorkspaceProject {
-        let binding = try await connector.validateLocalProjectDirectory(
-            ownerUserID: ownerUserID,
-            draft: draft
-        )
+        let binding = try validateLocalProjectDirectory(draft)
         try Task.checkCancellation()
         let record: LocalProjectRecord = try await create(ownerUserID: ownerUserID, draft: draft)
-        let deviceID = try? await connector.localProjectDeviceID(ownerUserID: ownerUserID)
         return WorkspaceProject(
             id: record.id,
             name: draft.name,
-            rootPath: try record.localRootURI(deviceID: deviceID),
+            rootPath: record.draft.rootPath,
             displayRootPath: binding.absolutePath,
             latestConversationID: nil,
-            projectContext: try deviceID.map { try ProjectContextSnapshot(record: record, deviceID: $0) }
+            projectContext: try ProjectContextSnapshot(record: record)
         )
     }
 
@@ -233,8 +199,7 @@ public actor NativeLocalProjectsService: ProjectRegistry {
         let draft = LocalProjectDraft(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             description: old.draft.description,
-            workspaceID: old.draft.workspaceID,
-            relativeRoot: old.draft.relativeRoot
+            rootPath: old.draft.rootPath
         )
         _ = try await update(
             ownerUserID: ownerUserID,
@@ -262,7 +227,7 @@ public actor NativeLocalProjectsService: ProjectRegistry {
         )
     }
 
-    private func activeRecordWithCurrentBinding(
+    private func activeRecord(
         ownerUserID: String,
         projectID: String
     ) async throws -> LocalProjectRecord {
@@ -271,39 +236,15 @@ public actor NativeLocalProjectsService: ProjectRegistry {
         else {
             throw ProjectRegistryError.notFound
         }
-        do {
-            _ = try await connector.validateLocalProjectDirectory(
-                ownerUserID: ownerUserID,
-                draft: record.draft
-            )
-            return record
-        } catch NativeConnectorError.workspaceUnavailable {
-            _ = try await connector.localProjectDeviceID(ownerUserID: ownerUserID)
-            let resolved = try await connector.resolveReauthorizedProjectPath(
-                relativePath: record.draft.relativeRoot
-            )
-            let draft = LocalProjectDraft(
-                name: record.draft.name,
-                description: record.draft.description,
-                workspaceID: resolved.workspace.id,
-                relativeRoot: resolved.relativePath == "." ? "" : resolved.relativePath
-            )
-            return try await update(
-                ownerUserID: ownerUserID,
-                id: projectID,
-                expectedRevision: record.revision,
-                draft: draft,
-                status: record.status
-            )
-        }
+        _ = try validateLocalProjectDirectory(record.draft)
+        return record
     }
 
     private func wireDraft(_ draft: LocalProjectDraft) -> LocalAgentProjectDraft {
         .init(
             name: draft.name,
             description: draft.description,
-            workspaceID: draft.workspaceID,
-            relativeRoot: draft.relativeRoot
+            rootPath: draft.rootPath
         )
     }
 
@@ -337,8 +278,7 @@ public actor NativeLocalProjectsService: ProjectRegistry {
             draft: .init(
                 name: snapshot.draft.name,
                 description: snapshot.draft.description,
-                workspaceID: snapshot.draft.workspaceID,
-                relativeRoot: snapshot.draft.relativeRoot
+                rootPath: snapshot.draft.rootPath
             ),
             revision: revision,
             status: status,
@@ -389,37 +329,12 @@ public struct AccountLocalProjectCreator: LocalProjectCreating {
     }
 }
 
-extension NativeLocalConnectorService {
-    public func localProjectDeviceID(ownerUserID: String) throws -> String? {
-        guard pairingState.user?.id == ownerUserID else {
-            throw ProjectRegistryError.storage("本机工作区不属于当前账户，请重新配对。")
-        }
-        if let deviceID = pairingState.deviceID {
-            try ProjectRegistryValidation.routeIdentifier(deviceID, field: "deviceID")
-        }
-        return pairingState.deviceID
+private func validateLocalProjectDirectory(_ draft: LocalProjectDraft) throws -> ProjectDirectoryBinding {
+    try draft.validate()
+    let url = URL(fileURLWithPath: draft.rootPath).standardizedFileURL.resolvingSymlinksInPath()
+    guard url.path == draft.rootPath,
+          try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+        throw NativeWorkspaceRelayError.notDirectory
     }
-
-    func validateLocalProjectDirectory(
-        ownerUserID: String,
-        draft: LocalProjectDraft
-    ) throws -> ProjectDirectoryBinding {
-        try draft.validate()
-        _ = try localProjectDeviceID(ownerUserID: ownerUserID)
-        guard let workspace = pairingState.workspaces.first(where: { $0.id == draft.workspaceID }) else {
-            throw NativeConnectorError.workspaceUnavailable
-        }
-        let url = try NativeWorkspaceFilesystem(workspace: workspace).resolveExistingURL(
-            draft.relativeRoot.isEmpty ? "." : draft.relativeRoot
-        )
-        guard try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
-            throw NativeWorkspaceRelayError.notDirectory
-        }
-        return .init(
-            workspaceID: workspace.id,
-            relativeRoot: draft.relativeRoot,
-            absolutePath: url.path,
-            workspaceFingerprint: workspace.fingerprint
-        )
-    }
+    return .init(absolutePath: url.path)
 }

@@ -44,7 +44,7 @@ struct NativePluginRuntimeTests {
               "type": "local_http",
               "bin": "demo-app",
               "healthPath": "/",
-              "launchTimeoutMs": 5000
+              "launchTimeoutMs": 15000
             }
           }],
           "permissions": [{

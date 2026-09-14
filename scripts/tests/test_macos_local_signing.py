@@ -118,6 +118,9 @@ class MacOSLocalSigningContractTests(unittest.TestCase):
         self.assertIn('appendingPathComponent("KeychainBrokerV3"', client)
         self.assertIn("installStableBroker(from: bundled, to: installed)", client)
         self.assertIn("if fileManager.fileExists(atPath: destination.path)", client)
+        self.assertIn("result=existing-pinned-broker", client)
+        self.assertNotIn("fileManager.contentsEqual", client)
+        self.assertNotIn("Darwin.rename(temporary.path, destination.path)", client)
         self.assertIn("isTrustedProductionBroker(at: destination)", client)
         self.assertIn("secureRegularFile(at: url)", client)
         self.assertIn('appIdentity.identifier == "com.chatos.swift-client"', client)
@@ -127,6 +130,7 @@ class MacOSLocalSigningContractTests(unittest.TestCase):
         )
         self.assertIn("brokerIdentity.leafCertificateData == appIdentity.leafCertificateData", client)
         self.assertIn("MacOSCodeSigning.identity(forProcessID: parentProcessID)", broker)
+        self.assertIn('"com.chatos.native-connector.credentials.v1"', broker)
         self.assertIn("import ChatOSMacSecurity", broker)
         self.assertIn("SecStaticCodeCheckValidity", identity)
 

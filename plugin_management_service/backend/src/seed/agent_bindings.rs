@@ -23,9 +23,9 @@ pub(super) async fn seed_agent_bindings(
         .delete_mcp_bindings_for_agent(CHATOS_CONVERSATION_AGENT_KEY)
         .await?;
     for (agent_key, kind, required, priority) in
-        [(TASK_RUNNER_RUN_AGENT_KEY, BuiltinMcpKind::AskUser, true, 20)]
+        [(TASK_RUNNER_RUN_AGENT_KEY, SystemMcpKey::AskUser, true, 20)]
     {
-        let resource_id = builtin_resource_id(kind);
+        let resource_id = system_mcp_resource_id(kind);
         seed_agent_mcp_binding(
             store,
             admin_user_id,
@@ -49,7 +49,7 @@ pub(super) async fn seed_agent_bindings(
     }
     for agent_key in [TASK_RUNNER_RUN_AGENT_KEY] {
         for (kind, priority) in task_runner_run_phase_optional_builtin_kinds() {
-            let resource_id = builtin_resource_id(kind);
+            let resource_id = system_mcp_resource_id(kind);
             seed_agent_mcp_binding(
                 store,
                 admin_user_id,
@@ -62,7 +62,7 @@ pub(super) async fn seed_agent_bindings(
         }
     }
     for (resource_id, priority) in [
-        (builtin_resource_id(BuiltinMcpKind::CodeMaintainerRead), 10),
+        (system_mcp_resource_id(SystemMcpKey::CodeMaintainerRead), 10),
         (LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID.to_string(), 20),
     ] {
         seed_agent_mcp_binding(
@@ -287,8 +287,8 @@ fn binding_matches_admin_override(
         && binding.owner_user_id.is_none()
 }
 
-pub(super) fn task_runner_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {
-    use BuiltinMcpKind::*;
+pub(super) fn task_runner_run_phase_optional_builtin_kinds() -> Vec<(SystemMcpKey, i64)> {
+    use SystemMcpKey::*;
     vec![
         (CodeMaintainerRead, 100),
         (CodeMaintainerWrite, 110),

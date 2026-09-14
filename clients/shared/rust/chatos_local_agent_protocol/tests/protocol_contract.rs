@@ -18,66 +18,66 @@ use chatos_local_agent_protocol::{
 use chrono::Utc;
 
 const RETRY_TASK_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/retry_task_request.json");
+    include_str!("../../../fixtures/local_agent/v28/retry_task_request.json");
 const TOOL_APPROVAL_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/tool_approval_request.json");
+    include_str!("../../../fixtures/local_agent/v28/tool_approval_request.json");
 const RUN_CONTROL_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/run_control_request.json");
+    include_str!("../../../fixtures/local_agent/v28/run_control_request.json");
 const TASK_SNAPSHOT_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/task_snapshot_response.json");
+    include_str!("../../../fixtures/local_agent/v28/task_snapshot_response.json");
 const TASK_GRAPH_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/task_graph_response.json");
+    include_str!("../../../fixtures/local_agent/v28/task_graph_response.json");
 const TASK_RUN_DETAIL_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/task_run_detail_response.json");
+    include_str!("../../../fixtures/local_agent/v28/task_run_detail_response.json");
 const RUN_DETAIL_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/run_detail_response.json");
+    include_str!("../../../fixtures/local_agent/v28/run_detail_response.json");
 const MEMORY_SYNC_EVENT_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/memory_sync_event_response.json");
+    include_str!("../../../fixtures/local_agent/v28/memory_sync_event_response.json");
 const PROJECT_CREATE_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/project_create_request.json");
+    include_str!("../../../fixtures/local_agent/v28/project_create_request.json");
 const PROJECT_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/project_response.json");
+    include_str!("../../../fixtures/local_agent/v28/project_response.json");
 const CLIPBOARD_STORE_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/clipboard_store_request.json");
+    include_str!("../../../fixtures/local_agent/v28/clipboard_store_request.json");
 const CLIPBOARD_MUTATION_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/clipboard_mutation_response.json");
+    include_str!("../../../fixtures/local_agent/v28/clipboard_mutation_response.json");
 const MEDIA_PUT_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/media_put_request.json");
+    include_str!("../../../fixtures/local_agent/v28/media_put_request.json");
 const MEDIA_MUTATION_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/media_mutation_response.json");
+    include_str!("../../../fixtures/local_agent/v28/media_mutation_response.json");
 const STORY_PUT_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/story_put_request.json");
+    include_str!("../../../fixtures/local_agent/v28/story_put_request.json");
 const STORY_RECORDS_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/story_records_response.json");
+    include_str!("../../../fixtures/local_agent/v28/story_records_response.json");
 const CREATE_STORY_DESIGN_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/create_story_design_request.json");
+    include_str!("../../../fixtures/local_agent/v28/create_story_design_request.json");
 const APPLY_STORY_DESIGN_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/apply_story_design_request.json");
+    include_str!("../../../fixtures/local_agent/v28/apply_story_design_request.json");
 const NOTEPAD_PUT_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/notepad_put_request.json");
+    include_str!("../../../fixtures/local_agent/v28/notepad_put_request.json");
 const NOTEPAD_RECORDS_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/notepad_records_response.json");
+    include_str!("../../../fixtures/local_agent/v28/notepad_records_response.json");
 const CLIENT_SETTING_PUT_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/client_setting_put_request.json");
+    include_str!("../../../fixtures/local_agent/v28/client_setting_put_request.json");
 const CLIENT_SETTING_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/client_setting_response.json");
+    include_str!("../../../fixtures/local_agent/v28/client_setting_response.json");
 const TERMINAL_HISTORY_APPEND_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/terminal_history_append_request.json");
+    include_str!("../../../fixtures/local_agent/v28/terminal_history_append_request.json");
 const TERMINAL_HISTORY_RECORDS_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/terminal_history_records_response.json");
+    include_str!("../../../fixtures/local_agent/v28/terminal_history_records_response.json");
 const APPROVAL_HISTORY_APPEND_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/approval_history_append_request.json");
+    include_str!("../../../fixtures/local_agent/v28/approval_history_append_request.json");
 const APPROVAL_HISTORY_RECORDS_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/approval_history_records_response.json");
+    include_str!("../../../fixtures/local_agent/v28/approval_history_records_response.json");
 const INSTALLED_PLUGIN_PUT_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/installed_plugin_put_request.json");
+    include_str!("../../../fixtures/local_agent/v28/installed_plugin_put_request.json");
 const INSTALLED_PLUGIN_RECORDS_RESPONSE_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/installed_plugin_records_response.json");
+    include_str!("../../../fixtures/local_agent/v28/installed_plugin_records_response.json");
 const CREATE_APPROVAL_REVIEW_REQUEST_V27: &str =
-    include_str!("../../../fixtures/local_agent/v27/create_approval_review_request.json");
+    include_str!("../../../fixtures/local_agent/v28/create_approval_review_request.json");
 
 #[test]
-fn shared_v27_approval_review_exposes_no_model_secret_or_provider_configuration() {
+fn shared_v28_approval_review_exposes_no_model_secret_or_provider_configuration() {
     let request: LocalAgentIpcRequest =
         serde_json::from_str(CREATE_APPROVAL_REVIEW_REQUEST_V27).expect("valid fixture");
     request.validate().expect("valid approval review request");
@@ -95,14 +95,14 @@ fn shared_v27_approval_review_exposes_no_model_secret_or_provider_configuration(
 }
 
 #[test]
-fn shared_v27_project_crud_freezes_owner_project_and_revision() {
+fn shared_v28_project_crud_freezes_owner_project_and_revision() {
     let request: LocalAgentIpcRequest = serde_json::from_str(PROJECT_CREATE_REQUEST_V27).unwrap();
     request.validate().unwrap();
     let LocalAgentCommand::CreateProject(command) = request.command else {
         panic!("fixture must contain create_project");
     };
     assert_eq!(command.project_id, "project-1");
-    assert_eq!(command.draft.workspace_id, "workspace-1");
+    assert_eq!(command.draft.root_path, "/apps/studio");
 
     let reply: LocalAgentIpcReply = serde_json::from_str(PROJECT_RESPONSE_V27).unwrap();
     reply.validate().unwrap();
@@ -115,7 +115,7 @@ fn shared_v27_project_crud_freezes_owner_project_and_revision() {
 }
 
 #[test]
-fn shared_v27_clipboard_contract_transports_metadata_without_payload_bytes() {
+fn shared_v28_clipboard_contract_transports_metadata_without_payload_bytes() {
     let request: LocalAgentIpcRequest = serde_json::from_str(CLIPBOARD_STORE_REQUEST_V27).unwrap();
     request.validate().unwrap();
     let LocalAgentCommand::StoreClipboard(command) = request.command else {
@@ -134,7 +134,7 @@ fn shared_v27_clipboard_contract_transports_metadata_without_payload_bytes() {
 }
 
 #[test]
-fn shared_v27_media_contract_transports_integrity_metadata_without_payload_bytes() {
+fn shared_v28_media_contract_transports_integrity_metadata_without_payload_bytes() {
     let request: LocalAgentIpcRequest = serde_json::from_str(MEDIA_PUT_REQUEST_V27).unwrap();
     request.validate().unwrap();
     let LocalAgentCommand::PutMedia(command) = request.command else {
@@ -158,7 +158,7 @@ fn shared_v27_media_contract_transports_integrity_metadata_without_payload_bytes
 }
 
 #[test]
-fn shared_v27_story_contract_preserves_owner_kind_and_state() {
+fn shared_v28_story_contract_preserves_owner_kind_and_state() {
     let request: LocalAgentIpcRequest = serde_json::from_str(STORY_PUT_REQUEST_V27).unwrap();
     request.validate().unwrap();
     let LocalAgentCommand::PutStory(command) = request.command else {
@@ -185,7 +185,7 @@ fn shared_v27_story_contract_preserves_owner_kind_and_state() {
 }
 
 #[test]
-fn shared_v27_story_design_commands_freeze_creation_and_apply_revisions() {
+fn shared_v28_story_design_commands_freeze_creation_and_apply_revisions() {
     let create: LocalAgentIpcRequest =
         serde_json::from_str(CREATE_STORY_DESIGN_REQUEST_V27).unwrap();
     create.validate().unwrap();
@@ -199,8 +199,7 @@ fn shared_v27_story_design_commands_freeze_creation_and_apply_revisions() {
         format!("sha256:{}", "a".repeat(64))
     );
 
-    let apply: LocalAgentIpcRequest =
-        serde_json::from_str(APPLY_STORY_DESIGN_REQUEST_V27).unwrap();
+    let apply: LocalAgentIpcRequest = serde_json::from_str(APPLY_STORY_DESIGN_REQUEST_V27).unwrap();
     apply.validate().unwrap();
     let LocalAgentCommand::ApplyStoryDesign(command) = apply.command else {
         panic!("fixture must contain apply_story_design");
@@ -210,7 +209,7 @@ fn shared_v27_story_design_commands_freeze_creation_and_apply_revisions() {
 }
 
 #[test]
-fn shared_v27_notepad_contract_preserves_typed_note_content() {
+fn shared_v28_notepad_contract_preserves_typed_note_content() {
     let request: LocalAgentIpcRequest = serde_json::from_str(NOTEPAD_PUT_REQUEST_V27).unwrap();
     request.validate().unwrap();
     let LocalAgentCommand::PutNotepad(command) = request.command else {
@@ -235,7 +234,7 @@ fn shared_v27_notepad_contract_preserves_typed_note_content() {
 }
 
 #[test]
-fn shared_v27_client_setting_contract_preserves_owner_value_and_revision() {
+fn shared_v28_client_setting_contract_preserves_owner_value_and_revision() {
     let request: LocalAgentIpcRequest =
         serde_json::from_str(CLIENT_SETTING_PUT_REQUEST_V27).unwrap();
     request.validate().unwrap();
@@ -262,7 +261,7 @@ fn shared_v27_client_setting_contract_preserves_owner_value_and_revision() {
 }
 
 #[test]
-fn shared_v27_terminal_history_contract_preserves_owner_session_and_state() {
+fn shared_v28_terminal_history_contract_preserves_owner_session_and_state() {
     let request: LocalAgentIpcRequest =
         serde_json::from_str(TERMINAL_HISTORY_APPEND_REQUEST_V27).unwrap();
     request.validate().unwrap();
@@ -289,7 +288,7 @@ fn shared_v27_terminal_history_contract_preserves_owner_session_and_state() {
 }
 
 #[test]
-fn shared_v27_approval_history_contract_preserves_terminal_decision_audit() {
+fn shared_v28_approval_history_contract_preserves_terminal_decision_audit() {
     let request: LocalAgentIpcRequest =
         serde_json::from_str(APPROVAL_HISTORY_APPEND_REQUEST_V27).unwrap();
     request.validate().unwrap();
@@ -315,7 +314,7 @@ fn shared_v27_approval_history_contract_preserves_terminal_decision_audit() {
 }
 
 #[test]
-fn shared_v27_installed_plugin_contract_preserves_release_enablement_and_payload() {
+fn shared_v28_installed_plugin_contract_preserves_release_enablement_and_payload() {
     let request: LocalAgentIpcRequest =
         serde_json::from_str(INSTALLED_PLUGIN_PUT_REQUEST_V27).unwrap();
     request.validate().unwrap();
@@ -343,7 +342,7 @@ fn shared_v27_installed_plugin_contract_preserves_release_enablement_and_payload
 }
 
 #[test]
-fn shared_v27_retry_task_request_is_the_authoritative_native_contract() {
+fn shared_v28_retry_task_request_is_the_authoritative_native_contract() {
     let request: LocalAgentIpcRequest = serde_json::from_str(RETRY_TASK_REQUEST_V27).unwrap();
     request.validate().unwrap();
     assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
@@ -355,7 +354,7 @@ fn shared_v27_retry_task_request_is_the_authoritative_native_contract() {
 }
 
 #[test]
-fn shared_v27_tool_approval_binds_run_and_invocation() {
+fn shared_v28_tool_approval_binds_run_and_invocation() {
     let request: LocalAgentIpcRequest = serde_json::from_str(TOOL_APPROVAL_REQUEST_V27).unwrap();
     request.validate().unwrap();
     assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
@@ -368,7 +367,7 @@ fn shared_v27_tool_approval_binds_run_and_invocation() {
 }
 
 #[test]
-fn shared_v27_run_control_binds_the_observed_run_version() {
+fn shared_v28_run_control_binds_the_observed_run_version() {
     let request: LocalAgentIpcRequest = serde_json::from_str(RUN_CONTROL_REQUEST_V27).unwrap();
     request.validate().unwrap();
     assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
@@ -382,7 +381,7 @@ fn shared_v27_run_control_binds_the_observed_run_version() {
 }
 
 #[test]
-fn shared_v27_task_snapshot_response_preserves_initial_current_and_all_runs() {
+fn shared_v28_task_snapshot_response_preserves_initial_current_and_all_runs() {
     let reply: LocalAgentIpcReply = serde_json::from_str(TASK_SNAPSHOT_RESPONSE_V27).unwrap();
     reply.validate().unwrap();
     assert_eq!(reply.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
@@ -395,7 +394,7 @@ fn shared_v27_task_snapshot_response_preserves_initial_current_and_all_runs() {
 }
 
 #[test]
-fn shared_v27_task_graph_is_a_valid_owner_scoped_projection() {
+fn shared_v28_task_graph_is_a_valid_owner_scoped_projection() {
     let reply: LocalAgentIpcReply = serde_json::from_str(TASK_GRAPH_RESPONSE_V27).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::TaskGraph(graph) = reply.response else {
@@ -407,7 +406,7 @@ fn shared_v27_task_graph_is_a_valid_owner_scoped_projection() {
 }
 
 #[test]
-fn shared_v27_task_run_detail_preserves_result_and_event_page() {
+fn shared_v28_task_run_detail_preserves_result_and_event_page() {
     let reply: LocalAgentIpcReply = serde_json::from_str(TASK_RUN_DETAIL_RESPONSE_V27).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::TaskRunDetail(detail) = reply.response else {
@@ -422,7 +421,7 @@ fn shared_v27_task_run_detail_preserves_result_and_event_page() {
 }
 
 #[test]
-fn shared_v27_run_detail_preserves_restart_snapshot_watermark() {
+fn shared_v28_run_detail_preserves_restart_snapshot_watermark() {
     let reply: LocalAgentIpcReply = serde_json::from_str(RUN_DETAIL_RESPONSE_V27).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::RunDetail(detail) = reply.response else {
@@ -434,7 +433,7 @@ fn shared_v27_run_detail_preserves_restart_snapshot_watermark() {
 }
 
 #[test]
-fn shared_v27_memory_sync_status_is_bound_to_one_run() {
+fn shared_v28_memory_sync_status_is_bound_to_one_run() {
     let reply: LocalAgentIpcReply = serde_json::from_str(MEMORY_SYNC_EVENT_RESPONSE_V27).unwrap();
     reply.validate().unwrap();
     let LocalAgentIpcResponse::Events { events, .. } = reply.response else {

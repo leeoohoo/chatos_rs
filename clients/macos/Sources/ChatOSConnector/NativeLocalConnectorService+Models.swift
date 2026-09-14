@@ -3,7 +3,7 @@ import Foundation
 
 extension NativeLocalConnectorService {
     public func fetchModelCatalog(refresh: Bool) async throws -> LocalConnectorModelCatalog {
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         let ownerUserID = try activeClientStorageOwnerUserID()
         let approvalPreferences = try await approvalStore.preferences(ownerUserID: ownerUserID)
         let configs = try await gateway.modelConfigs(token: token)
@@ -41,27 +41,27 @@ extension NativeLocalConnectorService {
     }
 
     public func fetchModelProviders() async throws -> [LocalConnectorModelProvider] {
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         return try await gateway.modelProviders(token: token).map(Self.mapModelProvider)
     }
 
     public func createModelProvider(_ draft: LocalConnectorModelProviderDraft) async throws {
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         _ = try await gateway.createModelProvider(token: token, draft: draft)
     }
 
     public func updateModelProvider(id: String, draft: LocalConnectorModelProviderDraft) async throws {
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         _ = try await gateway.updateModelProvider(token: token, id: id, draft: draft)
     }
 
     public func refreshModelProvider(id: String) async throws {
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         _ = try await gateway.refreshModelProvider(token: token, id: id)
     }
 
     public func deleteModelProvider(id: String) async throws {
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         try await gateway.deleteModelProvider(token: token, id: id)
         let ownerUserID = try activeClientStorageOwnerUserID()
         let approvalPreferences = try await approvalStore.preferences(ownerUserID: ownerUserID)
@@ -78,7 +78,7 @@ extension NativeLocalConnectorService {
     }
 
     public func updateModelConfig(id: String, update: LocalConnectorModelConfigUpdate) async throws {
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         _ = try await gateway.updateModelConfig(token: token, id: id, update: update)
         let ownerUserID = try activeClientStorageOwnerUserID()
         let approvalPreferences = try await approvalStore.preferences(ownerUserID: ownerUserID)
@@ -92,7 +92,7 @@ extension NativeLocalConnectorService {
     }
 
     public func updateModelSettings(_ settings: LocalConnectorModelSettings) async throws {
-        let token = try requireAccessToken()
+        let token = try await requireChatOSAccessToken()
         let ownerUserID = try activeClientStorageOwnerUserID()
         let approvalID: String?
         let approvalThinkingLevel: String?

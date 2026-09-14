@@ -65,6 +65,21 @@ public actor NativeLocalAgentConversationScopeStore {
         scopes = next
     }
 
+    public func upsert(
+        conversationID: String,
+        projectID: String?,
+        contactAgentID: String?,
+        accountID: String
+    ) {
+        activate(accountID: accountID)
+        scopes[conversationID] = NativeLocalAgentConversationScope(
+            accountID: accountID,
+            conversationID: conversationID,
+            projectID: projectID,
+            contactAgentID: contactAgentID
+        )
+    }
+
     public func deactivate() {
         accountID = nil
         scopes = [:]

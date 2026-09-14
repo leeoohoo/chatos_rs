@@ -16,6 +16,7 @@ ZH_HANS_LOCALIZATION_DIR="$RESOURCES_DIR/zh-Hans.lproj"
 EXECUTABLE="$PROJECT_DIR/.build/arm64-apple-macosx/debug/ChatOSSwift"
 KEYCHAIN_BROKER_EXECUTABLE="$PROJECT_DIR/.build/arm64-apple-macosx/debug/ChatOSKeychainBroker"
 LOCAL_AGENT_EXECUTABLE="$REPOSITORY_DIR/target-shared/debug/chatos_local_agent_host"
+DEBUG_API_BASE_URL=${CHATOS_DEBUG_API_BASE_URL:-http://127.0.0.1:9080/api/chatos}
 SIGNING_IDENTITY=${CHATOS_CODESIGN_IDENTITY:-}
 LOCAL_SIGNING_DIRECTORY=${CHATOS_LOCAL_SIGNING_DIRECTORY:-"/Users/$(id -un)/Library/Application Support/ChatOSSwift/DevelopmentSigning"}
 LOCAL_SIGNING_KEYCHAIN="$LOCAL_SIGNING_DIRECTORY/signing.keychain-db"
@@ -108,6 +109,7 @@ cp "$EXECUTABLE" "$MACOS_DIR/ChatOSSwift"
 cp "$KEYCHAIN_BROKER_EXECUTABLE" "$MACOS_DIR/chatos_keychain_broker"
 cp "$LOCAL_AGENT_EXECUTABLE" "$MACOS_DIR/chatos_local_agent_host"
 cp "$PROJECT_DIR/Support/ChatOSSwift-Info.plist" "$CONTENTS_DIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :ChatOSAPIBaseURL $DEBUG_API_BASE_URL" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/Support/Tools/darwin-arm64/rg" "$TOOLS_DIR/rg"
 cp "$PROJECT_DIR/Support/ThirdParty/ripgrep/LICENSE-MIT" "$THIRD_PARTY_DIR/LICENSE-MIT"
 cp "$PROJECT_DIR/Support/ThirdParty/ripgrep/UNLICENSE" "$THIRD_PARTY_DIR/UNLICENSE"

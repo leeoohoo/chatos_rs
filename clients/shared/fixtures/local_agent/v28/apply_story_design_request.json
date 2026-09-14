@@ -1,0 +1,15 @@
+{
+  "protocol_version": 28,
+  "request_id": "request-story-apply-1",
+  "owner_user_id": "user-1",
+  "command": {
+    "type": "apply_story_design",
+    "payload": {
+      "run_id": "story-run-1",
+      "story_record_id": "agent-run:story-1",
+      "project_id": "project-1",
+      "expected_project_revision": 7,
+      "expected_story_revision": 12
+    }
+  }
+}

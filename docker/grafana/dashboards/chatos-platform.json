@@ -32,26 +32,6 @@
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
-      "id": 3,
-      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
-      "targets": [{ "editorMode": "code", "expr": "chatos_mcp_runtime_sessions_active", "legendFormat": "Active Sessions", "range": true, "refId": "A" }],
-      "title": "Active MCP Sessions",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
-      "id": 4,
-      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
-      "targets": [{ "editorMode": "code", "expr": "chatos_mcp_runtime_session_cache_bytes", "legendFormat": "Cache Bytes", "range": true, "refId": "A" }],
-      "title": "MCP Cache Bytes",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
       "id": 5,
       "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
@@ -67,53 +47,6 @@
       "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [{ "editorMode": "code", "expr": "chatos_rabbitmq_queue_consumers", "legendFormat": "{{service}} / {{role}} / {{queue}}", "range": true, "refId": "A" }],
       "title": "RabbitMQ Consumers",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "max": 100, "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 }] }, "unit": "percent" }, "overrides": [] },
-      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 13 },
-      "id": 7,
-      "options": { "displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true, "valueMode": "color" },
-      "targets": [{ "editorMode": "code", "expr": "100 * chatos_mcp_runtime_session_cache_entries / clamp_min(chatos_mcp_runtime_session_cache_entry_limit, 1)", "legendFormat": "Entry Utilization", "range": true, "refId": "A" }],
-      "title": "Cache Entry Utilization",
-      "type": "bargauge"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "max": 100, "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 }] }, "unit": "percent" }, "overrides": [] },
-      "gridPos": { "h": 7, "w": 6, "x": 6, "y": 13 },
-      "id": 8,
-      "options": { "displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true, "valueMode": "color" },
-      "targets": [{ "editorMode": "code", "expr": "100 * chatos_mcp_runtime_session_cache_bytes / clamp_min(chatos_mcp_runtime_session_cache_byte_limit, 1)", "legendFormat": "Byte Utilization", "range": true, "refId": "A" }],
-      "title": "Cache Byte Utilization",
-      "type": "bargauge"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 13 },
-      "id": 9,
-      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [
-        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_hits_total[5m])", "legendFormat": "Hits", "range": true, "refId": "A" },
-        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_misses_total[5m])", "legendFormat": "Misses", "range": true, "refId": "B" }
-      ],
-      "title": "MCP Cache Lookup Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 13 },
-      "id": 10,
-      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [
-        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_capacity_evictions_total[5m])", "legendFormat": "Capacity", "range": true, "refId": "A" },
-        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_expired_evictions_total[5m])", "legendFormat": "Expired", "range": true, "refId": "B" },
-        { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_oversized_rejections_total[5m])", "legendFormat": "Oversized", "range": true, "refId": "C" }
-      ],
-      "title": "MCP Cache Eviction and Rejection Rate",
       "type": "timeseries"
     },
     {

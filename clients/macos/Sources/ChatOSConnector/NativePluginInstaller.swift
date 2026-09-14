@@ -27,8 +27,7 @@ struct NativePluginInstaller: Sendable {
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let archiveURL = try await gateway.downloadPluginArtifact(
             token: token,
-            pluginID: source.catalog.id,
-            releaseID: source.release.id
+            artifactSHA256: artifactSHA256
         )
         defer { try? FileManager.default.removeItem(at: archiveURL) }
 

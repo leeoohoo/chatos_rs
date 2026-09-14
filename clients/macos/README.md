@@ -20,7 +20,7 @@ Task Runner、服务端 MCP 调度、Local Connector 云端执行、管理台或
 swift run ChatOSSwift
 ```
 
-通过 `swift run` 启动时，默认使用本机 APISIX 网关 `http://127.0.0.1:9080/api/chatos`；打包后的 App 从 `Info.plist` 读取线上 API 与 Local Connector 地址。两种方式都可分别使用 `CHATOS_API_BASE_URL` 和 `CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL` 覆盖。客户端只使用网关协议，不加载或嵌入 Web 前端。
+通过 `swift run` 启动时，默认使用本机 APISIX 网关 `http://127.0.0.1:9080/api/chatos`；打包后的 App 从 `Info.plist` 读取同一个统一网关地址。可使用 `CHATOS_API_BASE_URL` 覆盖。客户端只使用统一网关协议，不加载或嵌入 Web 前端。
 
 要求 macOS 14+ 与 Swift 6.2+。
 
@@ -30,6 +30,9 @@ swift run ChatOSSwift
 ./scripts/package-debug-app.sh
 open .build/ChatOS.app
 ```
+
+Debug App 默认连接本机 `127.0.0.1:9080`，因此从 Finder 再次打开也不会切回线上网关。
+需要连接其它调试环境时，可在打包前设置 `CHATOS_DEBUG_API_BASE_URL`。
 
 ## 当前能力
 

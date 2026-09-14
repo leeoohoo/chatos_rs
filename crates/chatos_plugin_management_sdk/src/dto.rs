@@ -18,7 +18,6 @@ pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_con
 pub const TASK_PROCESS_LOG_MCP_RESOURCE_ID: &str = "system_mcp_task_process_log";
 
 pub const SYSTEM_MCP_RUNTIME_KIND: &str = "system";
-pub const LEGACY_BUILTIN_MCP_RUNTIME_KIND: &str = "builtin";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -53,7 +52,6 @@ pub enum SystemMcpKey {
     CodeMaintainerRead,
     CodeMaintainerWrite,
     TerminalController,
-    TaskManager,
     Notepad,
     AgentBuilder,
     AskUser,
@@ -86,7 +84,6 @@ impl SystemMcpKey {
             Self::CodeMaintainerRead => "code_maintainer_read",
             Self::CodeMaintainerWrite => "code_maintainer_write",
             Self::TerminalController => "terminal_controller",
-            Self::TaskManager => "task_manager",
             Self::Notepad => "notepad",
             Self::AgentBuilder => "agent_builder",
             Self::AskUser => "ask_user",
@@ -274,7 +271,6 @@ pub struct McpRuntime {
     pub kind: String,
     #[serde(default)]
     pub system_key: Option<String>,
-    pub builtin_kind: Option<String>,
     pub server_name: Option<String>,
     pub command: Option<String>,
     #[serde(default)]

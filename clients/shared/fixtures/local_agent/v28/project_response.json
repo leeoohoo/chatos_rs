@@ -1,0 +1,20 @@
+{
+  "protocol_version": 28,
+  "request_id": "request-create-project-1",
+  "response": {
+    "type": "project",
+    "payload": {
+      "project_id": "project-1",
+      "owner_user_id": "user-1",
+      "draft": {
+        "name": "Website Studio",
+        "description": "Visual website design",
+        "root_path": "/apps/studio"
+      },
+      "revision": 1,
+      "status": "active",
+      "created_at": "2026-09-13T01:00:00Z",
+      "updated_at": "2026-09-13T01:00:00Z"
+    }
+  }
+}

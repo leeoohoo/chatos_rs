@@ -119,6 +119,7 @@ final class NativeProjectGitServiceTests: XCTestCase {
                 testingPairingState: pairingState
             ),
             ticketProvider: GitTicketProvider(),
+            sessionAccessTokenProvider: GitTicketProvider(),
             accountSession: UnavailableLocalAgentAccountSession(),
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
@@ -153,6 +154,7 @@ private struct GitTestContext {
     var service: NativeProjectGitService
 }
 
-private struct GitTicketProvider: LocalConnectorPairingTicketProviding {
+private struct GitTicketProvider: LocalConnectorPairingTicketProviding, ChatOSSessionAccessTokenProviding {
     func issueLocalConnectorPairingTicket() async throws -> String { "unused" }
+    func currentChatOSAccessToken() async -> String? { "test-token" }
 }

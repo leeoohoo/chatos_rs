@@ -74,6 +74,32 @@ struct StoryProjectTestClient: StoryProjectIPCClient {
     let owner: String
     let backend: StoryProjectTestBackend
 
+    func run(id: String) async throws -> LocalAgentRunSnapshot {
+        throw StoryAgentError.unavailable
+    }
+
+    func runs(cursor: String?, limit: UInt32) async throws -> (
+        runs: [LocalAgentRunSnapshot], nextCursor: String?
+    ) {
+        ([], nil)
+    }
+
+    func accepted(_ command: LocalAgentCommand) async throws -> String {
+        throw StoryAgentError.unavailable
+    }
+
+    func createStoryDesign(
+        _ command: LocalAgentCreateStoryDesign
+    ) async throws -> (operationID: String, run: LocalAgentRunSnapshot) {
+        throw StoryAgentError.unavailable
+    }
+
+    func applyStoryDesign(
+        _ command: LocalAgentApplyStoryDesign
+    ) async throws -> LocalAgentStoryDesignApplication {
+        throw StoryAgentError.unavailable
+    }
+
     func storyRecord(id: String) async throws -> LocalAgentStorySnapshot {
         try await backend.record(owner: owner, id: id)
     }

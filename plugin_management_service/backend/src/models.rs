@@ -41,8 +41,6 @@ pub const SOURCE_KIND_ADMIN_CREATED: &str = "admin_created";
 pub const SOURCE_KIND_USER_CREATED: &str = "user_created";
 
 pub const RUNTIME_KIND_SYSTEM: &str = chatos_plugin_management_sdk::SYSTEM_MCP_RUNTIME_KIND;
-pub const RUNTIME_KIND_BUILTIN: &str =
-    chatos_plugin_management_sdk::LEGACY_BUILTIN_MCP_RUNTIME_KIND;
 pub const RUNTIME_KIND_HTTP: &str = "http";
 
 pub const RESOURCE_KIND_MCP: &str = "mcp";

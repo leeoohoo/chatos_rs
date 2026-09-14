@@ -764,10 +764,6 @@ dependencies = [
  "bytes",
  "chatos_config_sdk",
  "chatos_local_agent_protocol",
- "chatos_local_workspace",
- "chatos_mcp",
- "chatos_mcp_runtime",
- "chatos_mcp_service",
  "chatos_model_transport",
  "chatos_plugin_management_sdk",
  "chatos_service_runtime",
@@ -945,35 +941,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chatos_local_workspace"
-version = "0.1.0"
-dependencies = [
- "urlencoding",
-]
-
-[[package]]
-name = "chatos_mcp"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chatos_mcp_runtime",
- "chatos_plugin_management_sdk",
- "chatos_sandbox_contract",
- "chrono",
- "dirs",
- "hex",
- "libc",
- "pathdiff",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "tracing",
- "uuid",
- "walkdir",
-]
-
-[[package]]
 name = "chatos_mcp_client"
 version = "0.1.0"
 dependencies = [
@@ -983,35 +950,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "chatos_mcp_runtime"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64 0.22.1",
- "chatos_service_runtime",
- "hex",
- "libc",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "chatos_mcp_service"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -1088,14 +1026,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chatos_remote_runtime"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "ssh2",
-]
-
-[[package]]
 name = "chatos_sandbox_contract"
 version = "0.1.0"
 dependencies = [
@@ -1126,15 +1056,6 @@ dependencies = [
  "tracing",
  "urlencoding",
  "uuid",
-]
-
-[[package]]
-name = "chatos_terminal_runtime"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -2936,32 +2857,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libssh2-sys"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c04141a07bb0c0bc461cb657808764de571702a59bc5c726c400ac9a7625e3ab"
-dependencies = [
- "cc",
- "libc",
- "libz-sys",
- "openssl-sys",
- "pkg-config",
- "vcpkg",
-]
-
-[[package]]
-name = "libz-sys"
-version = "1.1.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85bc9657773828b90eeb625adff10eeac83cc21bbfd8e23a03eaa8a33c9e28d9"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
- "vcpkg",
-]
-
-[[package]]
 name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3771,8 +3666,6 @@ dependencies = [
  "axum-server",
  "base64 0.22.1",
  "chatos_config_sdk",
- "chatos_mcp",
- "chatos_mcp_runtime",
  "chatos_model_transport",
  "chatos_plugin_management_sdk",
  "chatos_queue_observability",
@@ -5105,18 +4998,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "ssh2"
-version = "0.9.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c95eb3c09e378543395a3fa9796f897861862466ee331d59140ade4ea0dcfdfc"
-dependencies = [
- "bitflags 2.13.1",
- "libc",
- "libssh2-sys",
- "parking_lot",
 ]
 
 [[package]]

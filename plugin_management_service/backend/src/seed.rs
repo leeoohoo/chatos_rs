@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp::{
-    system_mcp_catalog, system_mcp_provider_skills, system_mcp_tool_catalog, SystemMcpDescriptor,
-    SystemMcpToolCatalog,
-};
-use chatos_mcp_runtime::BuiltinMcpKind;
-use chatos_plugin_management_sdk::SystemAgentKey;
+use chatos_plugin_management_sdk::{SystemAgentKey, SystemMcpKey};
 use serde_json::Value;
 
 use crate::models::*;
 use crate::store::{now_rfc3339, AppStore};
+use crate::system_mcp_catalog::{
+    system_mcp_catalog, system_mcp_descriptor, system_mcp_provider_skills, system_mcp_tool_catalog,
+    SystemMcpDescriptor, SystemMcpToolCatalog,
+};
 
 mod agent_bindings;
 mod agent_prompts;
@@ -27,10 +26,10 @@ use agents::system_agent_specs;
 use agents::{remove_retired_system_agents, seed_agents};
 #[cfg(test)]
 use system_mcps::{
-    builtin_kinds, provider_skills_for_builtin_mcp, provider_skills_for_system_mcp,
+    active_system_mcp_keys, provider_skills_for_system_key, provider_skills_for_system_mcp,
     system_mcp_record,
 };
-use system_mcps::{builtin_resource_id, remove_retired_system_mcps, seed_system_mcps};
+use system_mcps::{remove_retired_system_mcps, seed_system_mcps, system_mcp_resource_id};
 
 pub use chatos_plugin_management_sdk::{
     LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID, TASK_PROCESS_LOG_MCP_RESOURCE_ID,

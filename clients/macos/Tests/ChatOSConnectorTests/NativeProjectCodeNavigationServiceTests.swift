@@ -26,6 +26,7 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
                 testingPairingState: pairingState
             ),
             ticketProvider: NavigationTicketProvider(),
+            sessionAccessTokenProvider: NavigationTicketProvider(),
             accountSession: UnavailableLocalAgentAccountSession(),
             agentRuntimeSettings: AgentRuntimePreferencesTestProvider()
         )
@@ -53,6 +54,7 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
     }
 }
 
-private struct NavigationTicketProvider: LocalConnectorPairingTicketProviding {
+private struct NavigationTicketProvider: LocalConnectorPairingTicketProviding, ChatOSSessionAccessTokenProviding {
     func issueLocalConnectorPairingTicket() async throws -> String { "unused" }
+    func currentChatOSAccessToken() async -> String? { "test-token" }
 }

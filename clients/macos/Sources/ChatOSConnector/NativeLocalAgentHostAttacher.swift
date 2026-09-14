@@ -31,8 +31,10 @@ public struct NativeLocalAgentHostAttacher: Sendable {
             ioTimeoutSeconds: 5,
             peerIdentityVerifier: identityVerifier
         )
+        var verifiedProcessID: pid_t?
         do {
             let firstProcessID = try await transport.connectedPeerProcessID()
+            verifiedProcessID = firstProcessID
             let client = try NativeLocalAgentIPCClient(
                 ownerUserID: accountID,
                 transport: transport
@@ -52,6 +54,22 @@ public struct NativeLocalAgentHostAttacher: Sendable {
             case let .socketUnavailable(code) where code == ENOENT:
                 return nil
             case let .socketUnavailable(code) where code == ECONNREFUSED:
+                try removeStalePrivateSocket(at: endpoint)
+                return nil
+            case .protocolMismatch:
+                // The endpoint is derived from this account and persistent
+                // installation identity. The transport has also verified the
+                // peer UID and that its code signature matches this App.
+                // Therefore an older protocol here is a previous bundled Host,
+                // not an unknown process. Replace it automatically during an
+                // App upgrade instead of exposing an internal protocol error.
+                guard let verifiedProcessID else { throw error }
+                let obsoleteHost = NativeLocalAgentHostProcess(
+                    attachedProcessID: verifiedProcessID,
+                    clientEndpoint: endpoint,
+                    identityVerifier: identityVerifier
+                )
+                _ = await obsoleteHost.stop()
                 try removeStalePrivateSocket(at: endpoint)
                 return nil
             default:

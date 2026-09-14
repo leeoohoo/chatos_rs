@@ -1,6 +1,5 @@
 import AppKit
 import ChatOSCore
-import ChatOSAgentRuntime
 import Foundation
 import XCTest
 @testable import ChatOSApp
@@ -63,27 +62,6 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertEqual(vm.project?.source, draft.source)
         XCTAssertEqual(vm.project?.segments, draft.segments)
         XCTAssertEqual(vm.project?.models.textModelID, "video")
-    }
-
-    func testOutlineIsSeparateFromPerSegmentDetailsAndCanResumeRefinement() async throws {
-        let (vm, store, service) = try await fixture()
-        var draft = makeProject(); draft.source = "Complete story, including its ending."
-        _ = await vm.create(draft, availableModels: models)
-        vm.planOutline(); try await idle(vm)
-        XCTAssertEqual(vm.project?.segments.count, 3)
-        XCTAssertEqual(vm.project?.totalSeconds, 45)
-        XCTAssertTrue(vm.project?.segments.allSatisfy { $0.detail == nil } == true)
-        var events = await service.events()
-        XCTAssertEqual(events, ["story_save_outline"])
-        vm.refineSegments(["s1"]); try await idle(vm)
-        XCTAssertNotNil(vm.project?.segments[0].detail)
-        XCTAssertNil(vm.project?.segments[1].detail)
-        vm.refineSegments(["s1", "s2", "s3"]); try await idle(vm)
-        events = await service.events()
-        XCTAssertEqual(events.filter { $0 == "story_update_segment" }.count, 3, "Already finished details must not be re-requested")
-        let saved = try await store.load(owner: "alice")
-        XCTAssertTrue(saved.projects[0].segments.allSatisfy { $0.detail != nil })
-        XCTAssertFalse(events.contains("video")); XCTAssertFalse(events.contains("image"))
     }
 
     func testAIOptimizationReturnsSuggestionWithoutOverwritingSavedStory() async throws {
@@ -244,118 +222,6 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertTrue(snapshot.projects.isEmpty)
         let preserved = try await backend.record(owner: "alice", id: record.recordID)
         XCTAssertEqual(preserved.draft.state, .string("broken"))
-    }
-
-    func testSigningOutDuringPlanningDropsLateOutput() async throws {
-        let (vm, store, service) = try await fixture()
-        await service.setDelay(true)
-        var draft = makeProject(); draft.source = "Full story"
-        _ = await vm.create(draft, availableModels: models)
-        vm.planOutline(); vm.activate(userID: "bob")
-        try await idle(vm)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertTrue(vm.projects.isEmpty)
-        let alice = try await store.load(owner: "alice")
-        XCTAssertTrue(alice.projects[0].segments.isEmpty)
-    }
-
-    func testPauseFinishesCurrentRefinementAndRetainsItsCheckpoint() async throws {
-        let (vm, _, service) = try await fixture()
-        var draft = makeProject(); draft.source = "Story"
-        _ = await vm.create(draft, availableModels: models)
-        vm.planOutline(); try await idle(vm)
-        await service.setDelay(true)
-        vm.refineSegments(["s1", "s2", "s3"])
-        for _ in 0..<30 {
-            if await service.events().contains("story_update_segment") { break }
-            try await Task.sleep(for: .milliseconds(2))
-        }
-        vm.requestPause(); try await idle(vm)
-        XCTAssertNotNil(vm.project?.segments[0].detail)
-        XCTAssertNil(vm.project?.segments[1].detail)
-        let events = await service.events()
-        XCTAssertEqual(events.filter { $0 == "story_update_segment" }.count, 1)
-    }
-
-    func testRunningProjectCanBeReopenedFromListAndUnsavedTextSurvivesNavigation() async throws {
-        let (vm, _, service) = try await fixture()
-        var draft = makeProject(); draft.source = "Story"
-        _ = await vm.create(draft, availableModels: models)
-        vm.rememberSourceDraft(projectID: draft.id, source: "Unsaved edit", style: draft.style, ratio: draft.ratio)
-        vm.backToList(); vm.open(draft.id)
-        XCTAssertEqual(vm.sourceDraft(for: draft).source, "Unsaved edit")
-        await service.setDelay(true)
-        vm.planOutline()
-        XCTAssertEqual(vm.activeProjectID, draft.id)
-        vm.backToList(); vm.open(draft.id)
-        XCTAssertEqual(vm.selectedProjectID, draft.id, "A running project must remain accessible from the list")
-        try await idle(vm)
-    }
-
-    func testPausedAgentDraftDoesNotLockOrReplaceCanonicalProjectAfterReopen() async throws {
-        let (vm, store, _) = try await fixture()
-        let canonical = makeProject()
-        _ = await vm.create(canonical, availableModels: models)
-
-        var run = try StoryAgentRun(project: canonical, owner: "alice", stage: .outline,
-                                    targetIDs: [], policy: .init())
-        run.draft.characters = [.init(id: "hero", name: "主角", profile: characterProfile())]
-        run.draft.scenes = [.init(id: "room", name: "房间", profile: sceneProfile())]
-        run.draft.segments = [.init(id: "s1", title: "开场", synopsis: "主角进入房间",
-                                    sourceRange: .init(start: 0, end: canonical.source.count),
-                                    characterIDs: ["hero"], sceneIDs: ["room"])]
-        run.checkpoint.status = .paused
-        run.checkpoint.stopReason = "Paused for test"
-        run.updatedAt = Date().addingTimeInterval(1)
-        try await store.saveRun(run, owner: "alice")
-
-        let other = StoryProject(title: "Another Story", description: "", models: canonical.models)
-        _ = await vm.create(other, availableModels: models)
-        vm.open(canonical.id)
-        for _ in 0..<100 where vm.isLoadingAgentRuns { try await Task.sleep(for: .milliseconds(10)) }
-
-        let saved = try XCTUnwrap(vm.project)
-        XCTAssertTrue(saved.characters.isEmpty, "An unfinished run must not overwrite the canonical project")
-        XCTAssertFalse(vm.isPresentingAgentDraft(projectID: canonical.id))
-        let presented = vm.presentationProject(for: saved)
-        XCTAssertTrue(presented.characters.isEmpty)
-        XCTAssertTrue(presented.scenes.isEmpty)
-        XCTAssertTrue(presented.segments.isEmpty)
-        XCTAssertEqual(vm.recoverableAgentRun(projectID: canonical.id)?.draft.characters.map(\.id), ["hero"])
-
-        vm.open(other.id)
-        for _ in 0..<100 where vm.isLoadingAgentRuns { try await Task.sleep(for: .milliseconds(10)) }
-        let otherSaved = try XCTUnwrap(vm.project)
-        XCTAssertFalse(vm.isPresentingAgentDraft(projectID: other.id))
-        XCTAssertTrue(vm.presentationProject(for: otherSaved).resources.isEmpty)
-    }
-
-    func testOpeningProjectAutomaticallyAppliesPausedDraftThatAlreadyPassesCompletionValidation() async throws {
-        let (vm, store, _) = try await fixture()
-        var canonical = makeProject()
-        canonical.scenes = [.init(id: "room", name: "房间", profile: sceneProfile())]
-        canonical.segments = [.init(id: "s1", title: "开场", synopsis: "完整剧情",
-                                    sourceRange: .init(start: 0, end: canonical.source.count), sceneIDs: ["room"])]
-        _ = await vm.create(canonical, availableModels: models)
-
-        var run = try StoryAgentRun(project: canonical, owner: "alice", stage: .refine,
-                                    targetIDs: ["s1"], policy: .init())
-        run.draft.segments[0].detail = makeDetail()
-        run.checkpoint.status = .paused
-        run.checkpoint.stopReason = "旧版本误判为无进展"
-        run.updatedAt = Date().addingTimeInterval(1)
-        try await store.saveRun(run, owner: "alice")
-
-        vm.backToList(); vm.open(canonical.id)
-        for _ in 0..<100 where vm.isLoadingAgentRuns { try await Task.sleep(for: .milliseconds(10)) }
-
-        XCTAssertNotNil(vm.project?.segments[0].detail)
-        XCTAssertFalse(vm.isPresentingAgentDraft(projectID: canonical.id))
-        let history = try await store.loadRuns(owner: "alice", projectID: canonical.id)
-        let savedRun = try XCTUnwrap(history.runs.first)
-        XCTAssertTrue(savedRun.applied)
-        XCTAssertEqual(savedRun.checkpoint.status, .completed)
-        XCTAssertNil(savedRun.checkpoint.stopReason)
     }
 
     func testChangingSharedAssetVersionInvalidatesDependentFramesOnly() async throws {
@@ -802,14 +668,8 @@ final class StoryStudioTests: XCTestCase {
         let definitions = StoryPromptRegistry.definitions
         XCTAssertEqual(definitions.count, StoryPromptRegistry.Key.allCases.count)
         XCTAssertEqual(Set(definitions.map(\.key)).count, definitions.count)
-        XCTAssertEqual(StoryAgentTools.systemPrompt, StoryPromptRegistry.render(.agentSystem))
 
         let items = StoryPromptCatalog.items()
-        XCTAssertEqual(items.first(where: { $0.registryKey == StoryPromptRegistry.Key.agentSystem.rawValue })?.content,
-                       StoryAgentTools.systemPrompt)
-        let tool = try XCTUnwrap(items.first { $0.registryKey == "story.tool.story_append_segments" })
-        XCTAssertTrue(tool.content?.contains("\"kind\"") == true)
-        XCTAssertTrue(tool.content?.contains("\"seconds\"") == true)
         let video = try XCTUnwrap(items.first { $0.registryKey == StoryPromptRegistry.Key.transitionVideo.rawValue })
         XCTAssertTrue(video.content?.contains("独立转场片段") == true)
         XCTAssertTrue(video.content?.contains("不推进新剧情") == true)

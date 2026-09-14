@@ -14,6 +14,15 @@ use super::plugin_publishers::{
 };
 use super::*;
 
+pub(super) async fn list_plugin_install_sources(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+) -> Result<Json<PluginInstallSourceList>, ApiError> {
+    list_plugin_install_sources_for_owner(&state, user.effective_owner_user_id())
+        .await
+        .map(Json)
+}
+
 pub(super) async fn list_plugin_install_sources_internal(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -21,6 +30,15 @@ pub(super) async fn list_plugin_install_sources_internal(
 ) -> Result<Json<PluginInstallSourceList>, ApiError> {
     require_local_connector_internal_request(&state, &headers, PLUGIN_INSTALL_MANAGE_SCOPE)?;
     let owner_user_id = required_text(Some(query.owner_user_id.as_str()), "owner_user_id")?;
+    list_plugin_install_sources_for_owner(&state, owner_user_id.as_str())
+        .await
+        .map(Json)
+}
+
+async fn list_plugin_install_sources_for_owner(
+    state: &AppState,
+    owner_user_id: &str,
+) -> Result<PluginInstallSourceList, ApiError> {
     let catalog = state
         .store
         .list_plugin_catalog(
@@ -29,7 +47,7 @@ pub(super) async fn list_plugin_install_sources_internal(
                 limit: Some(500),
                 ..PluginCatalogQuery::default()
             },
-            Some(owner_user_id.as_str()),
+            Some(owner_user_id),
         )
         .await
         .map_err(ApiError::internal)?;
@@ -49,7 +67,7 @@ pub(super) async fn list_plugin_install_sources_internal(
         }
         let plugin_id = plugin.id.clone();
         let plugin_name = plugin.name.clone();
-        match load_install_source(&state, plugin, None, owner_user_id.as_str()).await {
+        match load_install_source(state, plugin, None, owner_user_id).await {
             Ok(source) => items.push(source),
             Err(error) => {
                 // A single unpublished, unlicensed, or otherwise invalid Plugin must not hide
@@ -59,14 +77,14 @@ pub(super) async fn list_plugin_install_sources_internal(
                 tracing::warn!(
                     plugin_id = plugin_id.as_str(),
                     plugin_name = plugin_name.as_str(),
-                    owner_user_id = owner_user_id.as_str(),
+                    owner_user_id,
                     error = ?error,
                     "omitting unavailable Plugin install source from catalog"
                 );
             }
         }
     }
-    Ok(Json(PluginInstallSourceList { items }))
+    Ok(PluginInstallSourceList { items })
 }
 
 pub(super) async fn get_plugin_install_source_internal(

@@ -114,7 +114,7 @@ private struct LocalAgentHostStatusView: View {
             EmptyView()
         case .starting:
             status(
-                model.localized("正在启动本地 Agent…", english: "Starting Local Agent…"),
+                model.localized("正在准备 ChatOS…", english: "Preparing ChatOS…"),
                 systemImage: "arrow.triangle.2.circlepath",
                 color: .secondary,
                 showsProgress: true
@@ -152,13 +152,13 @@ private struct LocalAgentHostStatusView: View {
         switch cause {
         case .storageUnavailable:
             model.localized(
-                "本地 Agent 存储不可用，正在重连（第 \(attempt) 次）…",
-                english: "Local Agent storage is unavailable. Reconnecting (attempt \(attempt))…"
+                "本机数据暂时不可用，正在重连（第 \(attempt) 次）…",
+                english: "Local data is temporarily unavailable. Reconnecting (attempt \(attempt))…"
             )
         case .unexpected:
             model.localized(
-                "本地 Agent 正在恢复（第 \(attempt) 次）…",
-                english: "Recovering Local Agent (attempt \(attempt))…"
+                "ChatOS 正在恢复本机功能（第 \(attempt) 次）…",
+                english: "ChatOS is restoring local features (attempt \(attempt))…"
             )
         }
     }

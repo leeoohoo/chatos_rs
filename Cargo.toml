@@ -3,20 +3,14 @@
 
 [workspace]
 members = [
-  "mcp",
   "chatos/backend",
   "crates/chatos_model_transport",
   "crates/chatos_internal_auth",
-  "crates/chatos_remote_runtime",
   "crates/chatos_sandbox_contract",
   "crates/memory_engine_sdk",
-  "crates/chatos_mcp_runtime",
-  "crates/chatos_mcp_service",
   "crates/chatos_service_runtime",
-  "crates/chatos_terminal_runtime",
   "crates/chatos_config_sdk",
   "crates/chatos_plugin_management_sdk",
-  "crates/chatos_local_workspace",
   "clients/shared/rust/chatos_client_http",
   "clients/shared/rust/chatos_memory_client",
   "clients/shared/rust/chatos_mcp_client",

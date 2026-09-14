@@ -710,7 +710,7 @@ selected signed Plugin MCP component
 
 ### 13.3 标准 MCP initialize
 
-修改 `chatos_mcp_runtime` stdio session：
+修改客户端公共 `chatos_mcp_client` stdio session：
 
 - spawn 后执行一次 `initialize`。
 - 发送 `notifications/initialized`。
@@ -720,7 +720,7 @@ selected signed Plugin MCP component
 
 当前实现入口：
 
-[stdio MCP runtime](../../crates/chatos_mcp_runtime/src/rpc/stdio.rs)
+[stdio MCP runtime](../../../../clients/shared/rust/chatos_mcp_client/src/stdio.rs)
 
 ### 13.4 Plugin data 和 artifact 目录
 
