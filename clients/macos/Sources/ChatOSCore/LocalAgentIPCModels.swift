@@ -3,7 +3,7 @@
 
 import Foundation
 
-public let localAgentProtocolVersion: UInt32 = 26
+public let localAgentProtocolVersion: UInt32 = 27
 
 public enum LocalAgentProtocolJSON {
     public static func encoder() -> JSONEncoder {
@@ -533,6 +533,93 @@ public struct LocalAgentStorySnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public enum LocalAgentStoryDesignStage: String, Codable, Equatable, Sendable {
+    case outline
+    case refine
+}
+
+public struct LocalAgentCreateStoryDesign: Codable, Equatable, Sendable {
+    public var runID: String
+    public var storyRecordID: String
+    public var projectID: String
+    public var expectedProjectRevision: UInt64
+    public var modelConfigID: String
+    public var stage: LocalAgentStoryDesignStage
+    public var targetIDs: [String]
+    public var baseProjectDigest: String
+
+    private enum CodingKeys: String, CodingKey {
+        case runID = "run_id"
+        case storyRecordID = "story_record_id"
+        case projectID = "project_id"
+        case expectedProjectRevision = "expected_project_revision"
+        case modelConfigID = "model_config_id"
+        case stage
+        case targetIDs = "target_ids"
+        case baseProjectDigest = "base_project_digest"
+    }
+
+    public init(
+        runID: String,
+        storyRecordID: String,
+        projectID: String,
+        expectedProjectRevision: UInt64,
+        modelConfigID: String,
+        stage: LocalAgentStoryDesignStage,
+        targetIDs: [String],
+        baseProjectDigest: String
+    ) {
+        self.runID = runID
+        self.storyRecordID = storyRecordID
+        self.projectID = projectID
+        self.expectedProjectRevision = expectedProjectRevision
+        self.modelConfigID = modelConfigID
+        self.stage = stage
+        self.targetIDs = targetIDs
+        self.baseProjectDigest = baseProjectDigest
+    }
+}
+
+public struct LocalAgentApplyStoryDesign: Codable, Equatable, Sendable {
+    public var runID: String
+    public var storyRecordID: String
+    public var projectID: String
+    public var expectedProjectRevision: UInt64
+    public var expectedStoryRevision: UInt64
+
+    private enum CodingKeys: String, CodingKey {
+        case runID = "run_id"
+        case storyRecordID = "story_record_id"
+        case projectID = "project_id"
+        case expectedProjectRevision = "expected_project_revision"
+        case expectedStoryRevision = "expected_story_revision"
+    }
+
+    public init(
+        runID: String,
+        storyRecordID: String,
+        projectID: String,
+        expectedProjectRevision: UInt64,
+        expectedStoryRevision: UInt64
+    ) {
+        self.runID = runID
+        self.storyRecordID = storyRecordID
+        self.projectID = projectID
+        self.expectedProjectRevision = expectedProjectRevision
+        self.expectedStoryRevision = expectedStoryRevision
+    }
+}
+
+public struct LocalAgentStoryDesignApplication: Codable, Equatable, Sendable {
+    public var project: LocalAgentStorySnapshot
+    public var design: LocalAgentStorySnapshot
+
+    public init(project: LocalAgentStorySnapshot, design: LocalAgentStorySnapshot) {
+        self.project = project
+        self.design = design
+    }
+}
+
 public enum LocalAgentNotepadKind: String, Codable, Equatable, Sendable {
     case folder
     case note
@@ -760,6 +847,8 @@ public enum LocalAgentCommand: Equatable, Sendable {
     case createApprovalReview(LocalAgentCreateApprovalReview)
     case createTask(LocalAgentCreateTask)
     case retryTask(LocalAgentRetryTask)
+    case createStoryDesign(LocalAgentCreateStoryDesign)
+    case applyStoryDesign(LocalAgentApplyStoryDesign)
     case pauseRun(runID: String, expectedVersion: UInt64)
     case resumeRun(runID: String, expectedVersion: UInt64)
     case cancelRun(runID: String, expectedVersion: UInt64)
@@ -1020,6 +1109,12 @@ extension LocalAgentCommand: Encodable {
             try container.encode(payload, forKey: .payload)
         case let .retryTask(payload):
             try container.encode("retry_task", forKey: .type)
+            try container.encode(payload, forKey: .payload)
+        case let .createStoryDesign(payload):
+            try container.encode("create_story_design", forKey: .type)
+            try container.encode(payload, forKey: .payload)
+        case let .applyStoryDesign(payload):
+            try container.encode("apply_story_design", forKey: .type)
             try container.encode(payload, forKey: .payload)
         case let .pauseRun(runID, expectedVersion):
             try encodeRunControl("pause_run", runID, expectedVersion, into: &container)
@@ -2017,6 +2112,7 @@ public enum LocalAgentResponse: Equatable, Sendable {
     case mediaMutation(LocalAgentMediaMutationResult)
     case story(LocalAgentStorySnapshot)
     case storyRecords([LocalAgentStorySnapshot], nextCursor: String?)
+    case storyDesignApplication(LocalAgentStoryDesignApplication)
     case notepad(LocalAgentNotepadSnapshot)
     case notepadRecords([LocalAgentNotepadSnapshot], nextCursor: String?)
     case clientSetting(LocalAgentClientSettingSnapshot)
@@ -2155,6 +2251,10 @@ extension LocalAgentResponse: Decodable {
         case "story_records":
             let value = try container.decode(StoryRecords.self, forKey: .payload)
             self = .storyRecords(value.records, nextCursor: value.nextCursor)
+        case "story_design_application":
+            self = .storyDesignApplication(
+                try container.decode(LocalAgentStoryDesignApplication.self, forKey: .payload)
+            )
         case "notepad":
             self = .notepad(
                 try container.decode(LocalAgentNotepadSnapshot.self, forKey: .payload)

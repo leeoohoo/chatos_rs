@@ -15,10 +15,11 @@ use chatos_client_storage::{
     TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    CreateApprovalReviewCommand, CreateMainChatTurnCommand, CreateTaskCommand, FrozenSnapshot,
-    LocalAgentCommand, LocalAgentEventType, LocalAgentIpcError, LocalAgentIpcResponse,
-    ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult, ModelStreamDeltaKind,
-    ModelStreamUiEvent, ProtocolError, RetryTaskCommand, ToolApprovalCommand, ToolEffect,
+    CreateApprovalReviewCommand, CreateMainChatTurnCommand, CreateStoryDesignCommand,
+    CreateTaskCommand, FrozenSnapshot, LocalAgentCommand, LocalAgentEventType, LocalAgentIpcError,
+    LocalAgentIpcResponse, ModelRuntimeDescriptor, ModelStepCompletion, ModelStepResult,
+    ModelStreamDeltaKind, ModelStreamUiEvent, ProtocolError, RetryTaskCommand, ToolApprovalCommand,
+    ToolEffect,
 };
 use chatos_local_agent_runtime::{
     answer_run_interaction, append_model_stream_event, begin_model_step_execution,
@@ -51,8 +52,9 @@ use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 use crate::{
-    LocalAgentContextRuntime, LocalAgentContextRuntimeError, LocalAgentIpcMutationExecutor,
-    LocalAgentProfileRegistry, ProfileRegistryError,
+    create_story_design_run, CreateStoryDesignRunRequest, LocalAgentContextRuntime,
+    LocalAgentContextRuntimeError, LocalAgentIpcMutationExecutor, LocalAgentProfileRegistry,
+    ProfileRegistryError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +239,8 @@ pub enum LocalAgentHostError {
     InvalidMainChatContext(String),
     #[error("invalid approval review frozen context: {0}")]
     InvalidApprovalReviewContext(String),
+    #[error("invalid story design frozen context: {0}")]
+    InvalidStoryDesignContext(String),
     #[error(transparent)]
     Storage(#[from] StorageError),
     #[error(transparent)]
@@ -649,6 +653,35 @@ impl LocalAgentHost {
             .lock()
             .await
             .schedule(&created.run.start_event);
+        Ok(created)
+    }
+
+    pub async fn create_story_design(
+        &self,
+        request_id: &str,
+        command: CreateStoryDesignCommand,
+        session: &LocalAgentExecutionSession,
+        now: DateTime<Utc>,
+    ) -> Result<CreatedLocalAgentRun, LocalAgentHostError> {
+        command.validate()?;
+        self.profiles.require("story_design")?;
+        let descriptor = self
+            .descriptor_for_creation(&command.run_id, &command.model_config_id, session)
+            .await?;
+        let created = create_story_design_run(
+            self.storage.as_ref(),
+            CreateStoryDesignRunRequest {
+                scope: self.scope.clone(),
+                device_id: self.device_id.clone(),
+                causation_id: request_id.to_string(),
+                command,
+                model_runtime_snapshot: descriptor,
+                now,
+            },
+        )
+        .await?;
+        self.scheduler.lock().await.schedule(&created.start_event);
+        self.scheduler_wake.notify_one();
         Ok(created)
     }
 
@@ -1707,6 +1740,17 @@ impl LocalAgentIpcMutationExecutor for LocalAgentHostCreationExecutor {
                 Ok(LocalAgentIpcResponse::RunCreated {
                     operation_id: created.run.start_event.event.event_id,
                     run: Box::new(created.run.run_record.run),
+                })
+            }
+            LocalAgentCommand::CreateStoryDesign(command) => {
+                let created = self
+                    .host
+                    .create_story_design(request_id, *command, &self.session, Utc::now())
+                    .await
+                    .map_err(run_creation_ipc_error)?;
+                Ok(LocalAgentIpcResponse::RunCreated {
+                    operation_id: created.start_event.event.event_id,
+                    run: Box::new(created.run_record.run),
                 })
             }
             LocalAgentCommand::RetryTask(command) => {

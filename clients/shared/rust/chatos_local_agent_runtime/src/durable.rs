@@ -121,6 +121,17 @@ pub async fn create_local_agent_run(
     })
 }
 
+/// Creates a Run inside a caller-owned storage transaction so a domain record
+/// that owns the Run can be committed atomically with it. Domain code must not
+/// duplicate the Run/event/message persistence invariants maintained here.
+pub async fn create_local_agent_run_in_transaction(
+    repositories: &mut dyn TransactionRepositories,
+    request: CreateLocalAgentRunRequest,
+) -> StorageResult<CreatedLocalAgentRun> {
+    validate_create_run_request(&request)?;
+    create_run_in_transaction(repositories, request).await
+}
+
 struct CreateLocalAgentRunOperation {
     request: Option<CreateLocalAgentRunRequest>,
     result: Option<CreatedLocalAgentRun>,

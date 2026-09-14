@@ -12,9 +12,10 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::{
     require_bounded_json, require_digest, require_identifier, require_nonempty_bounded_text,
     AgentMessage, AgentMessageRole, AppendApprovalHistoryCommand, AppendTerminalHistoryCommand,
-    ApplyStorageProfileCommand, ClientDataTransferResult, ClientStorageProfileDescriptor,
-    ClipboardMutationResult, CreateProjectCommand, DeleteClientSettingCommand,
-    DeleteClipboardCommand, DeleteInstalledPluginCommand, DeleteMediaCommand, DeleteNotepadCommand,
+    ApplyStorageProfileCommand, ApplyStoryDesignCommand, ClientDataTransferResult,
+    ClientStorageProfileDescriptor, ClipboardMutationResult, CreateProjectCommand,
+    CreateStoryDesignCommand, DeleteClientSettingCommand, DeleteClipboardCommand,
+    DeleteInstalledPluginCommand, DeleteMediaCommand, DeleteNotepadCommand,
     DeleteNotepadFolderCommand, DeleteStoryCommand, DeleteTerminalHistoryCommand,
     ExportClientDataCommand, GetClientSettingCommand, GetClipboardCommand, GetMediaCommand,
     GetNotepadCommand, GetProjectCommand, GetStoryCommand, ImportClientDataCommand,
@@ -22,12 +23,13 @@ use crate::{
     ListInstalledPluginsCommand, ListMediaCommand, ListNotepadCommand, ListProjectsCommand,
     ListStoriesCommand, ListTerminalHistoryCommand, LocalAgentRun, LocalApprovalHistorySnapshot,
     LocalClientSettingSnapshot, LocalClipboardSnapshot, LocalInstalledPluginSnapshot,
-    LocalMediaSnapshot, LocalNotepadSnapshot, LocalProjectSnapshot, LocalStorySnapshot,
-    LocalTerminalHistorySnapshot, MediaMutationResult, PostgresConnectionTestCommand,
-    PostgresConnectionTestResult, ProtocolError, PutClientSettingCommand,
-    PutInstalledPluginCommand, PutMediaCommand, PutNotepadCommand, PutStoryCommand,
-    RemoveProjectPluginCapabilityCommand, RenameNotepadFolderCommand, SetClipboardPinnedCommand,
-    StoreClipboardCommand, ToolExecution, UpdateProjectCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalMediaSnapshot, LocalNotepadSnapshot, LocalProjectSnapshot, LocalStoryDesignApplication,
+    LocalStorySnapshot, LocalTerminalHistorySnapshot, MediaMutationResult,
+    PostgresConnectionTestCommand, PostgresConnectionTestResult, ProtocolError,
+    PutClientSettingCommand, PutInstalledPluginCommand, PutMediaCommand, PutNotepadCommand,
+    PutStoryCommand, RemoveProjectPluginCapabilityCommand, RenameNotepadFolderCommand,
+    SetClipboardPinnedCommand, StoreClipboardCommand, ToolExecution, UpdateProjectCommand,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,6 +83,8 @@ pub enum LocalAgentCommand {
     CreateMainChatTurn(Box<CreateMainChatTurnCommand>),
     CreateApprovalReview(Box<CreateApprovalReviewCommand>),
     CreateTask(Box<CreateTaskCommand>),
+    CreateStoryDesign(Box<CreateStoryDesignCommand>),
+    ApplyStoryDesign(ApplyStoryDesignCommand),
     RetryTask(RetryTaskCommand),
     PauseRun(RunControlCommand),
     ResumeRun(RunControlCommand),
@@ -149,6 +153,8 @@ impl LocalAgentCommand {
             Self::CreateMainChatTurn(command) => command.validate(),
             Self::CreateApprovalReview(command) => command.validate(),
             Self::CreateTask(command) => command.validate(),
+            Self::CreateStoryDesign(command) => command.validate(),
+            Self::ApplyStoryDesign(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),
             Self::PauseRun(command) | Self::ResumeRun(command) | Self::CancelRun(command) => {
                 command.validate()
@@ -570,7 +576,7 @@ impl FrozenSnapshot {
         let snapshot = Self {
             snapshot_id: snapshot_id.into(),
             revision: revision.into(),
-            digest: snapshot_payload_digest(&payload),
+            digest: canonical_json_digest(&payload),
             payload,
         };
         snapshot.validate("frozen_snapshot")?;
@@ -587,7 +593,7 @@ impl FrozenSnapshot {
                 reason: "frozen snapshot payload must be an object",
             });
         }
-        if self.digest != snapshot_payload_digest(&self.payload) {
+        if self.digest != canonical_json_digest(&self.payload) {
             return Err(ProtocolError::InvalidDigest {
                 field: "snapshot_digest",
             });
@@ -596,7 +602,7 @@ impl FrozenSnapshot {
     }
 }
 
-fn snapshot_payload_digest(payload: &Value) -> String {
+pub fn canonical_json_digest(payload: &Value) -> String {
     let bytes = serde_json::to_vec(&canonicalize_snapshot_payload(payload))
         .expect("serde_json::Value is always serializable");
     format!("sha256:{:x}", Sha256::digest(bytes))
@@ -1056,6 +1062,7 @@ pub enum LocalAgentIpcResponse {
     },
     MediaMutation(MediaMutationResult),
     Story(LocalStorySnapshot),
+    StoryDesignApplication(LocalStoryDesignApplication),
     StoryRecords {
         records: Vec<LocalStorySnapshot>,
         next_cursor: Option<String>,
@@ -1174,6 +1181,7 @@ impl LocalAgentIpcResponse {
             }
             Self::MediaMutation(result) => result.validate(),
             Self::Story(record) => record.validate(),
+            Self::StoryDesignApplication(application) => application.validate(),
             Self::StoryRecords {
                 records,
                 next_cursor,

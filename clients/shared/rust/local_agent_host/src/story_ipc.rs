@@ -9,8 +9,8 @@ use chatos_client_storage::{
     StorageResult, StorageTransaction, StoryRecord, StoryRecordKind, TransactionRepositories,
 };
 use chatos_local_agent_protocol::{
-    DeleteStoryCommand, LocalAgentCommand, LocalAgentIpcError, LocalAgentIpcResponse,
-    LocalStoryDraft, LocalStoryKind, LocalStorySnapshot, PutStoryCommand,
+    ApplyStoryDesignCommand, DeleteStoryCommand, LocalAgentCommand, LocalAgentIpcError,
+    LocalAgentIpcResponse, LocalStoryDraft, LocalStoryKind, LocalStorySnapshot, PutStoryCommand,
 };
 use chrono::Utc;
 
@@ -70,6 +70,22 @@ impl LocalStoryIpcExecutor {
             .map_err(story_storage_error)?;
         Ok(LocalAgentIpcResponse::Success)
     }
+
+    async fn apply_design(
+        &self,
+        command: ApplyStoryDesignCommand,
+    ) -> Result<LocalAgentIpcResponse, LocalAgentIpcError> {
+        crate::apply_story_design(
+            self.storage.as_ref(),
+            self.scope.clone(),
+            self.device_id.clone(),
+            command,
+            Utc::now(),
+        )
+        .await
+        .map(LocalAgentIpcResponse::StoryDesignApplication)
+        .map_err(story_storage_error)
+    }
 }
 
 #[async_trait]
@@ -82,6 +98,7 @@ impl crate::LocalAgentIpcMutationExecutor for LocalStoryIpcExecutor {
         match command {
             LocalAgentCommand::PutStory(command) => self.put(command).await,
             LocalAgentCommand::DeleteStory(command) => self.delete(command).await,
+            LocalAgentCommand::ApplyStoryDesign(command) => self.apply_design(command).await,
             other => self.next.execute_mutation(request_id, other).await,
         }
     }

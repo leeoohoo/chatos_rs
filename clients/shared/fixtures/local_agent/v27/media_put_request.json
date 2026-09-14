@@ -1,0 +1,29 @@
+{
+  "protocol_version": 27,
+  "request_id": "request-put-media-1",
+  "owner_user_id": "user-1",
+  "command": {
+    "type": "put_media",
+    "payload": {
+      "record_id": "00000000-0000-4000-8000-000000000010",
+      "draft": {
+        "project_id": "project-1",
+        "kind": "image",
+        "status": "completed",
+        "prompt": "A polished product hero",
+        "model_name": "gpt-image-2",
+        "generated_at": "2026-09-09T00:00:00Z",
+        "assets": [
+          {
+            "asset_id": "asset-1",
+            "mime_type": "image/png",
+            "payload_reference": "Payloads/c6c289e49e9c05b2145860387b73bcb18df43fb09a1e4a4a9713c76c88bb541b/00000000-0000-4000-8000-000000000010/asset-1.png",
+            "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "byte_count": 1024,
+            "revised_prompt": "A polished product hero on a soft blue background"
+          }
+        ]
+      }
+    }
+  }
+}

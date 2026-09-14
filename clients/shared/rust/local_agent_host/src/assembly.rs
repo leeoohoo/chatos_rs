@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chatos_agent_profiles::{
-    ApprovalReviewAgentProfile, MainChatAgentProfile, TaskRunnerAgentProfile,
+    ApprovalReviewAgentProfile, MainChatAgentProfile, StoryDesignAgentProfile,
+    TaskRunnerAgentProfile,
 };
 use chatos_client_storage::{
     ClientStorage, ClientStorageFactory, RecordScope, StorageError, StorageSecretResolver,
@@ -26,10 +27,10 @@ use crate::{
     LocalAgentHostStartupReport, LocalAgentHostWorker, LocalAgentIpcMutationExecutor,
     LocalAgentIpcServerError, LocalAgentMemorySyncWorker, LocalAgentProfileRegistry,
     LocalAgentStoragePlatform, LocalAttachmentGrantResolver, LocalCapabilityPlatform,
-    ProviderContextEncryptionKey, RegisteredLocalCapabilityRuntime,
+    ProfileRoutingLocalToolRuntime, ProviderContextEncryptionKey, RegisteredLocalCapabilityRuntime,
     StandardLocalAgentContextRuntime, StoredApprovalReviewContextProvider,
     StoredLocalCapabilityLoader, StoredLocalTaskCreationPlanner, StoredMainChatContextProvider,
-    StoredTaskRunnerContextProvider,
+    StoredStoryDesignContextProvider, StoredTaskRunnerContextProvider, StoryDesignLocalToolRuntime,
 };
 
 const MEMORY_ENGINE_TIMEOUT: Duration = Duration::from_secs(180);
@@ -197,9 +198,14 @@ pub async fn assemble_local_agent_host(
         storage.clone(),
         scope.clone(),
     ));
+    let story_context = Arc::new(StoredStoryDesignContextProvider::new(
+        storage.clone(),
+        scope.clone(),
+    ));
     let profiles = LocalAgentProfileRegistry::new([
         Arc::new(MainChatAgentProfile::new(main_context)) as Arc<dyn LocalAgentProfile>,
         Arc::new(TaskRunnerAgentProfile::new(task_context)) as Arc<dyn LocalAgentProfile>,
+        Arc::new(StoryDesignAgentProfile::new(story_context)) as Arc<dyn LocalAgentProfile>,
         Arc::new(ApprovalReviewAgentProfile::new(approval_context)) as Arc<dyn LocalAgentProfile>,
     ])
     .map_err(|error| LocalAgentHostAssemblyError::Profiles(error.to_string()))?;
@@ -208,10 +214,19 @@ pub async fn assemble_local_agent_host(
         scope.clone(),
         capability_runtime.clone(),
     ));
-    let tool_runtime = Arc::new(FrozenCapabilityLocalToolRuntime::new(
+    let capability_tool_runtime = Arc::new(FrozenCapabilityLocalToolRuntime::new(
         storage.clone(),
         scope.clone(),
         capability_runtime.clone(),
+    ));
+    let story_tool_runtime = Arc::new(StoryDesignLocalToolRuntime::new(
+        storage.clone(),
+        scope.clone(),
+        request.device_id.clone(),
+    ));
+    let tool_runtime = Arc::new(ProfileRoutingLocalToolRuntime::new(
+        story_tool_runtime,
+        capability_tool_runtime,
     ));
     let (host, startup_report) = LocalAgentHost::start(
         storage.clone(),

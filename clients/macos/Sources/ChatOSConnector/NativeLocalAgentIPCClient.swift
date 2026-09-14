@@ -404,6 +404,26 @@ public actor NativeLocalAgentIPCClient {
         return (operationID, run)
     }
 
+    public func createStoryDesign(
+        _ command: LocalAgentCreateStoryDesign
+    ) async throws -> (operationID: String, run: LocalAgentRunSnapshot) {
+        let response = try await send(.createStoryDesign(command))
+        guard case let .runCreated(operationID, run) = response else {
+            throw unexpected("run_created", response)
+        }
+        return (operationID, run)
+    }
+
+    public func applyStoryDesign(
+        _ command: LocalAgentApplyStoryDesign
+    ) async throws -> LocalAgentStoryDesignApplication {
+        let response = try await send(.applyStoryDesign(command))
+        guard case let .storyDesignApplication(application) = response else {
+            throw unexpected("story_design_application", response)
+        }
+        return application
+    }
+
     public func run(id: String) async throws -> LocalAgentRunSnapshot {
         let response = try await send(.getRun(runID: id))
         guard case let .run(run) = response else { throw unexpected("run", response) }
@@ -1027,6 +1047,7 @@ private extension LocalAgentResponse {
         case .mediaMutation: "media_mutation"
         case .story: "story"
         case .storyRecords: "story_records"
+        case .storyDesignApplication: "story_design_application"
         case .notepad: "notepad"
         case .notepadRecords: "notepad_records"
         case .clientSetting: "client_setting"

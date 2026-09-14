@@ -5,7 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chatos_local_agent_protocol::{LocalAgentRun, ModelStepResult, ToolEffect};
+use chatos_local_agent_protocol::{
+    canonical_json_digest, LocalAgentRun, ModelStepResult, ToolEffect,
+};
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileStep, ModelGatewayOutput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -331,7 +333,7 @@ fn interpret_story_output(
             "base_project_revision":state.base_project_revision,
             "base_project_digest":state.base_project_digest,
             "stage":state.stage,
-            "draft":state.draft,
+            "draft_digest":canonical_json_digest(&state.draft),
         })));
     }
     let definitions = story_tool_definitions(state.stage)
