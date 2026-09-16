@@ -29,6 +29,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             guard sqlite3_exec(handle, Self.schema, nil, nil, nil) == SQLITE_OK else {
                 throw AgentGroupChatError.storage(String(cString: sqlite3_errmsg(handle)))
             }
+            try Self.migrateConversationSchema(handle)
             database = handle
         } catch {
             sqlite3_close(handle)
@@ -331,35 +332,39 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                     .integer(nowUnixMs), .integer(nowUnixMs),
                 ]
             )
-            let member = ProjectAgentRoomMember(
-                ownerUserID: ownerUserID,
-                roomID: roomID,
-                agentID: agent.id,
-                draft: proposal.draft.memberDraft,
-                joinedAtUnixMs: nowUnixMs
-            )
-            try member.validate()
-            try execute(
-                """
-                INSERT INTO project_agent_room_members (
-                    owner_user_id, room_id, agent_id, role, responsibility,
-                    plugin_allowlist_json, status, joined_at_unix_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
-                """,
-                [
-                    .text(ownerUserID), .text(roomID), .text(agent.id),
-                    .text(member.draft.role), .text(member.draft.responsibility),
-                    .text(try encodeStrings(member.draft.pluginAllowlist)), .integer(nowUnixMs),
-                ]
-            )
-            if room.defaultAgentID == nil {
+            var member: ProjectAgentRoomMember?
+            if room.conversationKind == .projectTeam {
+                let createdMember = ProjectAgentRoomMember(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: agent.id,
+                    draft: proposal.draft.memberDraft,
+                    joinedAtUnixMs: nowUnixMs
+                )
+                try createdMember.validate()
                 try execute(
                     """
-                    UPDATE project_agent_rooms SET default_agent_id = ?, updated_at_unix_ms = ?
-                    WHERE owner_user_id = ? AND id = ? AND status = 'active'
+                    INSERT INTO project_agent_room_members (
+                        owner_user_id, room_id, agent_id, role, responsibility,
+                        plugin_allowlist_json, status, joined_at_unix_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
                     """,
-                    [.text(agent.id), .integer(nowUnixMs), .text(ownerUserID), .text(roomID)]
+                    [
+                        .text(ownerUserID), .text(roomID), .text(agent.id),
+                        .text(createdMember.draft.role), .text(createdMember.draft.responsibility),
+                        .text(try encodeStrings(createdMember.draft.pluginAllowlist)), .integer(nowUnixMs),
+                    ]
                 )
+                member = createdMember
+                if room.defaultAgentID == nil {
+                    try execute(
+                        """
+                        UPDATE project_agent_rooms SET default_agent_id = ?, updated_at_unix_ms = ?
+                        WHERE owner_user_id = ? AND id = ? AND status = 'active'
+                        """,
+                        [.text(agent.id), .integer(nowUnixMs), .text(ownerUserID), .text(roomID)]
+                    )
+                }
             }
             try execute(
                 """
@@ -1033,6 +1038,107 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }
     }
 
+    public func openHumanAgentDirect(
+        ownerUserID: String,
+        agentID: String
+    ) throws -> ProjectAgentRoom {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        let directKey = "human:\(ownerUserID)|agent:\(agentID)"
+        try AgentGroupChatValidation.identifier(directKey, field: "directKey")
+        return try transaction {
+            if let existing = try readDirectRoom(ownerUserID: ownerUserID, directKey: directKey) {
+                return existing
+            }
+            guard let agent = try readAgent(ownerUserID: ownerUserID, agentID: agentID),
+                  agent.status == .active else {
+                throw AgentGroupChatError.notFound
+            }
+            let now = Self.now()
+            let roomID = UUID().uuidString.lowercased()
+            let room = ProjectAgentRoom(
+                id: roomID,
+                ownerUserID: ownerUserID,
+                projectID: "direct:\(roomID)",
+                draft: .init(name: agent.draft.name),
+                defaultAgentID: agentID,
+                conversationKind: .humanAgentDirect,
+                directKey: directKey,
+                createdAtUnixMs: now,
+                updatedAtUnixMs: now
+            )
+            try room.validate()
+            try insertConversation(room)
+            try insertDirectMember(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agent: agent,
+                nowUnixMs: now
+            )
+            return room
+        }
+    }
+
+    public func openAgentDirect(
+        ownerUserID: String,
+        initiatingAgentID: String,
+        targetAgentID: String
+    ) throws -> ProjectAgentRoom {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(initiatingAgentID, field: "initiatingAgentID")
+        try AgentGroupChatValidation.identifier(targetAgentID, field: "targetAgentID")
+        guard initiatingAgentID != targetAgentID else {
+            throw AgentGroupChatError.invalidField("targetAgentID")
+        }
+        let pair = [initiatingAgentID, targetAgentID].sorted()
+        let directKey = "agent:\(pair[0])|agent:\(pair[1])"
+        try AgentGroupChatValidation.identifier(directKey, field: "directKey")
+        return try transaction {
+            if let existing = try readDirectRoom(ownerUserID: ownerUserID, directKey: directKey) {
+                return existing
+            }
+            guard let first = try readAgent(ownerUserID: ownerUserID, agentID: pair[0]),
+                  first.status == .active,
+                  let second = try readAgent(ownerUserID: ownerUserID, agentID: pair[1]),
+                  second.status == .active else {
+                throw AgentGroupChatError.notFound
+            }
+            let now = Self.now()
+            let roomID = UUID().uuidString.lowercased()
+            let room = ProjectAgentRoom(
+                id: roomID,
+                ownerUserID: ownerUserID,
+                projectID: "direct:\(roomID)",
+                draft: .init(name: "\(first.draft.name) · \(second.draft.name)"),
+                conversationKind: .agentAgentDirect,
+                directKey: directKey,
+                createdAtUnixMs: now,
+                updatedAtUnixMs: now
+            )
+            try room.validate()
+            try insertConversation(room)
+            try insertDirectMember(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agent: first,
+                nowUnixMs: now
+            )
+            try insertDirectMember(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agent: second,
+                nowUnixMs: now
+            )
+            return room
+        }
+    }
+
+    public func room(ownerUserID: String, roomID: String) throws -> ProjectAgentRoom? {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        return try readRoom(ownerUserID: ownerUserID, roomID: roomID)
+    }
+
     public func activeRoom(ownerUserID: String, projectID: String) throws -> ProjectAgentRoom? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(projectID, field: "projectID")
@@ -1045,7 +1151,21 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     ) throws -> [ProjectAgentRoom] {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         return try query(
-            "SELECT \(Self.roomColumns) FROM project_agent_rooms WHERE owner_user_id = ?"
+            "SELECT \(Self.roomColumns) FROM project_agent_rooms WHERE owner_user_id = ? AND conversation_kind = 'project_team'"
+                + (includeArchived ? "" : " AND status = 'active'")
+                + " ORDER BY updated_at_unix_ms DESC, id DESC",
+            [.text(ownerUserID)],
+            row: readRoom
+        )
+    }
+
+    public func listDirectConversations(
+        ownerUserID: String,
+        includeArchived: Bool = false
+    ) throws -> [ProjectAgentRoom] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        return try query(
+            "SELECT \(Self.roomColumns) FROM project_agent_rooms WHERE owner_user_id = ? AND conversation_kind != 'project_team'"
                 + (includeArchived ? "" : " AND status = 'active'")
                 + " ORDER BY updated_at_unix_ms DESC, id DESC",
             [.text(ownerUserID)],
@@ -1239,7 +1359,16 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 createdAtUnixMs: now
             )
             let candidates: [String]
-            if !draft.mentionedAgentIDs.isEmpty {
+            if room.conversationKind.isDirect {
+                candidates = try query(
+                    """
+                    SELECT agent_id FROM project_agent_room_members
+                    WHERE owner_user_id = ? AND room_id = ? AND status = 'active'
+                    ORDER BY joined_at_unix_ms, agent_id
+                    """,
+                    [.text(ownerUserID), .text(roomID)]
+                ) { Self.string($0, 0) }
+            } else if !draft.mentionedAgentIDs.isEmpty {
                 candidates = draft.mentionedAgentIDs
             } else if draft.senderKind == .human, let defaultAgentID = room.defaultAgentID {
                 candidates = [defaultAgentID]
@@ -1521,6 +1650,35 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         agentID: String,
         nowUnixMs: Int64
     ) throws -> ProjectAgentDelivery? {
+        try claimNextDelivery(
+            ownerUserID: ownerUserID,
+            roomID: nil,
+            agentID: agentID,
+            nowUnixMs: nowUnixMs
+        )
+    }
+
+    public func claimNextDelivery(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentDelivery? {
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        return try claimNextDelivery(
+            ownerUserID: ownerUserID,
+            roomID: Optional(roomID),
+            agentID: agentID,
+            nowUnixMs: nowUnixMs
+        )
+    }
+
+    private func claimNextDelivery(
+        ownerUserID: String,
+        roomID: String?,
+        agentID: String,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentDelivery? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(agentID, field: "agentID")
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
@@ -1533,8 +1691,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 [.text(ownerUserID), .text(agentID)]
             )
             guard activeCount == 0 else { return nil }
-            let ids: [String] = try query(
-                """
+            var sql = """
                 SELECT d.id FROM project_agent_deliveries d
                 JOIN project_agent_rooms r
                   ON r.owner_user_id = d.owner_user_id AND r.id = d.room_id
@@ -1543,9 +1700,16 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                  AND m.room_id = d.room_id AND m.agent_id = d.target_agent_id
                 WHERE d.owner_user_id = ? AND d.target_agent_id = ?
                   AND d.status = 'pending' AND r.status = 'active' AND m.status = 'active'
-                ORDER BY d.created_at_unix_ms, d.id LIMIT 1
-                """,
-                [.text(ownerUserID), .text(agentID)]
+                """
+            var values: [Value] = [.text(ownerUserID), .text(agentID)]
+            if let roomID {
+                sql += " AND d.room_id = ?"
+                values.append(.text(roomID))
+            }
+            sql += " ORDER BY d.created_at_unix_ms, d.id LIMIT 1"
+            let ids: [String] = try query(
+                sql,
+                values
             ) { Self.string($0, 0) }
             guard let id = ids.first else { return nil }
             try execute(
@@ -1797,9 +1961,22 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try query(
             """
             SELECT \(Self.roomColumns) FROM project_agent_rooms
-            WHERE owner_user_id = ? AND project_id = ? AND status = 'active' LIMIT 1
+            WHERE owner_user_id = ? AND project_id = ?
+              AND conversation_kind = 'project_team' AND status = 'active' LIMIT 1
             """,
             [.text(ownerUserID), .text(projectID)],
+            row: readRoom
+        ).first
+    }
+
+    private func readDirectRoom(ownerUserID: String, directKey: String) throws -> ProjectAgentRoom? {
+        try query(
+            """
+            SELECT \(Self.roomColumns) FROM project_agent_rooms
+            WHERE owner_user_id = ? AND direct_key = ?
+              AND conversation_kind != 'project_team' AND status = 'active' LIMIT 1
+            """,
+            [.text(ownerUserID), .text(directKey)],
             row: readRoom
         ).first
     }
@@ -1833,6 +2010,44 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             [.text(ownerUserID), .text(roomID), .text(agentID)],
             row: readMember
         ).first
+    }
+
+    private func insertConversation(_ room: ProjectAgentRoom) throws {
+        try execute(
+            """
+            INSERT INTO project_agent_rooms (
+                owner_user_id, id, project_id, name, goal, default_agent_id, status,
+                created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                .text(room.ownerUserID), .text(room.id), .text(room.projectID),
+                .text(room.draft.name), .text(room.draft.goal),
+                .optionalText(room.defaultAgentID), .text(room.status.rawValue),
+                .integer(room.createdAtUnixMs), .integer(room.updatedAtUnixMs),
+                .text(room.conversationKind.rawValue), .optionalText(room.directKey),
+            ]
+        )
+    }
+
+    private func insertDirectMember(
+        ownerUserID: String,
+        roomID: String,
+        agent: LocalAgentProfile,
+        nowUnixMs: Int64
+    ) throws {
+        try execute(
+            """
+            INSERT INTO project_agent_room_members (
+                owner_user_id, room_id, agent_id, role, responsibility,
+                plugin_allowlist_json, status, joined_at_unix_ms
+            ) VALUES (?, ?, ?, ?, ?, '[]', 'active', ?)
+            """,
+            [
+                .text(ownerUserID), .text(roomID), .text(agent.id), .text(agent.draft.name),
+                .text(agent.draft.description), .integer(nowUnixMs),
+            ]
+        )
     }
 
     private func readMessage(ownerUserID: String, messageID: String) throws -> ProjectAgentMessage? {
@@ -2112,7 +2327,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     }
 
     private func readRoom(_ statement: OpaquePointer) throws -> ProjectAgentRoom {
-        guard let status = ProjectAgentRoomStatus(rawValue: Self.string(statement, 6)) else {
+        guard let status = ProjectAgentRoomStatus(rawValue: Self.string(statement, 6)),
+              let conversationKind = LocalAgentConversationKind(
+                rawValue: Self.string(statement, 9)
+              ) else {
             throw AgentGroupChatError.storage("invalid room status")
         }
         let room = ProjectAgentRoom(
@@ -2121,6 +2339,8 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             projectID: Self.string(statement, 2),
             draft: .init(name: Self.string(statement, 3), goal: Self.string(statement, 4)),
             defaultAgentID: Self.optionalString(statement, 5),
+            conversationKind: conversationKind,
+            directKey: Self.optionalString(statement, 10),
             status: status,
             createdAtUnixMs: sqlite3_column_int64(statement, 7),
             updatedAtUnixMs: sqlite3_column_int64(statement, 8)
@@ -2429,7 +2649,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     private static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
 
     private static let agentColumns = "owner_user_id, id, name, description, role_prompt, model_config_id, default_plugin_ids_json, default_skill_ids_json, status, created_at_unix_ms, updated_at_unix_ms"
-    private static let roomColumns = "owner_user_id, id, project_id, name, goal, default_agent_id, status, created_at_unix_ms, updated_at_unix_ms"
+    private static let roomColumns = "owner_user_id, id, project_id, name, goal, default_agent_id, status, created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key"
     private static let memberColumns = "owner_user_id, room_id, agent_id, role, responsibility, plugin_allowlist_json, status, joined_at_unix_ms"
     private static let messageColumns = "owner_user_id, id, room_id, sender_kind, sender_id, content, reply_to_message_id, source_run_id, causation_id, root_message_id, hop_count, created_at_unix_ms"
     private static let proposalColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_agent_id, created_at_unix_ms, resolved_at_unix_ms"
@@ -2468,6 +2688,9 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
             created_at_unix_ms INTEGER NOT NULL,
             updated_at_unix_ms INTEGER NOT NULL,
+            conversation_kind TEXT NOT NULL DEFAULT 'project_team'
+                CHECK(conversation_kind IN ('project_team', 'human_agent_direct', 'agent_agent_direct')),
+            direct_key TEXT,
             PRIMARY KEY(owner_user_id, id),
             FOREIGN KEY(owner_user_id, default_agent_id)
                 REFERENCES local_agent_profiles(owner_user_id, id)
@@ -2703,4 +2926,42 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (7);
         COMMIT;
         """
+
+    private static func migrateConversationSchema(_ handle: OpaquePointer?) throws {
+        guard let handle else { throw AgentGroupChatError.storage("database unavailable") }
+        func hasColumn(_ name: String) -> Bool {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(handle, "PRAGMA table_info(project_agent_rooms)", -1, &statement, nil) == SQLITE_OK,
+                  let statement else { return false }
+            defer { sqlite3_finalize(statement) }
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let value = sqlite3_column_text(statement, 1) else { continue }
+                if String(cString: value) == name { return true }
+            }
+            return false
+        }
+        func execute(_ sql: String) throws {
+            guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else {
+                throw AgentGroupChatError.storage(String(cString: sqlite3_errmsg(handle)))
+            }
+        }
+        if !hasColumn("conversation_kind") {
+            try execute(
+                "ALTER TABLE project_agent_rooms ADD COLUMN conversation_kind TEXT NOT NULL DEFAULT 'project_team'"
+            )
+        }
+        if !hasColumn("direct_key") {
+            try execute("ALTER TABLE project_agent_rooms ADD COLUMN direct_key TEXT")
+        }
+        try execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS one_active_direct_conversation_per_pair
+            ON project_agent_rooms(owner_user_id, direct_key)
+            WHERE status = 'active' AND direct_key IS NOT NULL
+            """
+        )
+        try execute(
+            "INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (8)"
+        )
+    }
 }

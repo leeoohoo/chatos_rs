@@ -469,3 +469,10 @@
 "按任务自主发现" = "Discovered on Demand";
 "无需预先选择。Agent 会通过内置能力发现 Skill 按任务搜索、展开并调用本机工具；项目目录与授权边界由 ChatOS 控制。" = "No preselection is required. The built-in capability-discovery skill lets the agent search, inspect, and invoke local tools on demand, while ChatOS controls project and authorization boundaries.";
 "点击确认前不会创建 Agent。确认时客户端会重新校验模型是否仍然可用。" = "The agent is not created until you confirm. The client revalidates the selected model at confirmation time.";
+"发消息" = "Message";
+"开始对话" = "Start a conversation";
+"私聊" = "Direct Messages";
+"还没有私聊" = "No direct messages yet";
+"创建后可以直接私聊，也可以加入项目团队。" = "Start a direct message or add the agent to a project team.";
+"私聊与项目团队" = "Direct messages and project teams";
+"管理 Agent、模型和权限。" = "Manage agents, models, and permissions.";

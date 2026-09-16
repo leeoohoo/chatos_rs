@@ -179,12 +179,12 @@ public struct LocalAgentCreationProposal: Codable, Sendable, Equatable, Identifi
 public struct LocalAgentProposalApproval: Codable, Sendable, Equatable {
     public let proposal: LocalAgentCreationProposal
     public let agent: LocalAgentProfile
-    public let member: ProjectAgentRoomMember
+    public let member: ProjectAgentRoomMember?
 
     public init(
         proposal: LocalAgentCreationProposal,
         agent: LocalAgentProfile,
-        member: ProjectAgentRoomMember
+        member: ProjectAgentRoomMember? = nil
     ) {
         self.proposal = proposal
         self.agent = agent
@@ -606,6 +606,16 @@ public enum ProjectAgentRoomStatus: String, Codable, Sendable {
     case active, archived
 }
 
+/// Project teams and private conversations share the same durable transcript, unread cursor,
+/// delivery queue and Relay MCP. The kind only controls participants, routing and project access.
+public enum LocalAgentConversationKind: String, Codable, Sendable {
+    case projectTeam = "project_team"
+    case humanAgentDirect = "human_agent_direct"
+    case agentAgentDirect = "agent_agent_direct"
+
+    public var isDirect: Bool { self != .projectTeam }
+}
+
 public struct ProjectAgentRoomDraft: Codable, Sendable, Equatable {
     public let name: String
     public let goal: String
@@ -627,6 +637,8 @@ public struct ProjectAgentRoom: Codable, Sendable, Equatable, Identifiable {
     public let projectID: String
     public let draft: ProjectAgentRoomDraft
     public let defaultAgentID: String?
+    public let conversationKind: LocalAgentConversationKind
+    public let directKey: String?
     public let status: ProjectAgentRoomStatus
     public let createdAtUnixMs: Int64
     public let updatedAtUnixMs: Int64
@@ -637,6 +649,8 @@ public struct ProjectAgentRoom: Codable, Sendable, Equatable, Identifiable {
         projectID: String,
         draft: ProjectAgentRoomDraft,
         defaultAgentID: String? = nil,
+        conversationKind: LocalAgentConversationKind = .projectTeam,
+        directKey: String? = nil,
         status: ProjectAgentRoomStatus = .active,
         createdAtUnixMs: Int64,
         updatedAtUnixMs: Int64
@@ -646,6 +660,8 @@ public struct ProjectAgentRoom: Codable, Sendable, Equatable, Identifiable {
         self.projectID = projectID
         self.draft = draft
         self.defaultAgentID = defaultAgentID
+        self.conversationKind = conversationKind
+        self.directKey = directKey
         self.status = status
         self.createdAtUnixMs = createdAtUnixMs
         self.updatedAtUnixMs = updatedAtUnixMs
@@ -658,6 +674,17 @@ public struct ProjectAgentRoom: Codable, Sendable, Equatable, Identifiable {
         try draft.validate()
         if let defaultAgentID {
             try AgentGroupChatValidation.identifier(defaultAgentID, field: "defaultAgentID")
+        }
+        switch conversationKind {
+        case .projectTeam:
+            guard directKey == nil else {
+                throw AgentGroupChatError.invalidField("directKey")
+            }
+        case .humanAgentDirect, .agentAgentDirect:
+            guard let directKey else {
+                throw AgentGroupChatError.invalidField("directKey")
+            }
+            try AgentGroupChatValidation.identifier(directKey, field: "directKey")
         }
         try AgentGroupChatValidation.timestamps(createdAtUnixMs, updatedAtUnixMs)
     }
@@ -1122,8 +1149,22 @@ public protocol AgentGroupChatStore: Sendable {
         projectID: String,
         draft: ProjectAgentRoomDraft
     ) async throws -> ProjectAgentRoom
+    func openHumanAgentDirect(
+        ownerUserID: String,
+        agentID: String
+    ) async throws -> ProjectAgentRoom
+    func openAgentDirect(
+        ownerUserID: String,
+        initiatingAgentID: String,
+        targetAgentID: String
+    ) async throws -> ProjectAgentRoom
+    func room(ownerUserID: String, roomID: String) async throws -> ProjectAgentRoom?
     func activeRoom(ownerUserID: String, projectID: String) async throws -> ProjectAgentRoom?
     func listRooms(ownerUserID: String, includeArchived: Bool) async throws -> [ProjectAgentRoom]
+    func listDirectConversations(
+        ownerUserID: String,
+        includeArchived: Bool
+    ) async throws -> [ProjectAgentRoom]
     func addMember(
         ownerUserID: String,
         roomID: String,

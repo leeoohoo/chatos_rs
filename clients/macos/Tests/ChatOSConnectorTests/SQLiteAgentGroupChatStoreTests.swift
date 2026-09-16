@@ -59,6 +59,77 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertEqual(rooms.map(\.ownerUserID), ["alice", "alice"])
     }
 
+    func testHumanAgentDirectReusesConversationAndRoutesWithoutProjectTeam() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "私人助理")
+
+        let first = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+        let reopened = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+
+        XCTAssertEqual(first.id, reopened.id)
+        XCTAssertEqual(first.conversationKind, .humanAgentDirect)
+        let teams = try await store.listRooms(ownerUserID: "alice")
+        let directs = try await store.listDirectConversations(ownerUserID: "alice")
+        XCTAssertTrue(teams.isEmpty)
+        XCTAssertEqual(directs.map(\.id), [first.id])
+
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: first.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "帮我创建一个项目团队"),
+            limits: .init()
+        )
+        XCTAssertEqual(post.deliveries.map(\.targetAgentID), [agent.id])
+    }
+
+    func testAgentDirectPairIsOrderIndependentAndRoutesOnlyToPeer() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let firstAgent = try await makeAgent(store, name: "架构师")
+        let secondAgent = try await makeAgent(store, name: "开发者")
+
+        let first = try await store.openAgentDirect(
+            ownerUserID: "alice",
+            initiatingAgentID: firstAgent.id,
+            targetAgentID: secondAgent.id
+        )
+        let reversed = try await store.openAgentDirect(
+            ownerUserID: "alice",
+            initiatingAgentID: secondAgent.id,
+            targetAgentID: firstAgent.id
+        )
+        XCTAssertEqual(first.id, reversed.id)
+        XCTAssertEqual(first.conversationKind, .agentAgentDirect)
+
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: first.id,
+            draft: .init(senderKind: .agent, senderID: firstAgent.id, content: "请检查接口"),
+            limits: .init()
+        )
+        XCTAssertEqual(post.deliveries.map(\.targetAgentID), [secondAgent.id])
+
+        do {
+            _ = try await store.openAgentDirect(
+                ownerUserID: "alice",
+                initiatingAgentID: firstAgent.id,
+                targetAgentID: firstAgent.id
+            )
+            XCTFail("Agent opened a direct conversation with itself")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .invalidField("targetAgentID"))
+        }
+    }
+
     func testMentionCreatesDurableDeliveryWithStableAgentIdentity() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -444,8 +515,8 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         )
         XCTAssertEqual(approval.proposal.status, .approved)
         XCTAssertEqual(approval.proposal.createdAgentID, approval.agent.id)
-        XCTAssertEqual(approval.member.agentID, approval.agent.id)
-        XCTAssertEqual(approval.member.draft.role, draft.role)
+        XCTAssertEqual(approval.member?.agentID, approval.agent.id)
+        XCTAssertEqual(approval.member?.draft.role, draft.role)
         let members = try await store.listMembers(ownerUserID: "alice", roomID: room.id)
         XCTAssertEqual(Set(members.map(\.agentID)), Set([proposer.id, approval.agent.id]))
         do {

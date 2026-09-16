@@ -626,10 +626,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                 schedulerNeedsAnotherPass = false
                 var schedulerMessage: String?
                 do {
-                    let results = try await scheduler.drainProject(
-                        ownerUserID: ownerUserID,
-                        projectID: projectID
-                    )
+                    let results = try await scheduler.drainAccount(ownerUserID: ownerUserID)
                     if let failure = results.last(where: { $0.outcome == .failed }) {
                         schedulerMessage = failure.detail ?? "本地 Agent 运行失败。"
                     } else if let suspended = results.last(where: { $0.outcome == .suspended }) {
@@ -639,6 +636,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                     schedulerMessage = error.localizedDescription
                 }
                 await load()
+                NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
                 if let schedulerMessage { errorMessage = schedulerMessage }
             } while schedulerNeedsAnotherPass
             isRunningAgents = false

@@ -615,9 +615,6 @@ private struct EditLocalAgentSheet: View {
                         .foregroundStyle(.orange)
                 }
             }
-            Text("工具与 Plugin 无需在 Agent profile 中预选；运行时由能力发现 Skill 按任务加载，项目文件边界由 ChatOS 控制。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
             HStack {
                 Spacer()
                 Button("取消") { dismiss() }
@@ -794,8 +791,6 @@ private struct CreateLocalAgentSheet: View {
                     }
                 }
             }
-            Text("工具与 Plugin 无需预选；Agent 会在运行时通过能力发现 Skill 按任务加载。")
-                .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
                 Button("取消") { dismiss() }
@@ -931,10 +926,6 @@ private struct LocalAgentBuilderSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Text("Builder 只能读取当前项目、群成员和可用模型；它只能提交草案，不能直接创建成员，也不会预选 Plugin。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             if isGenerating {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -955,7 +946,6 @@ private struct LocalAgentBuilderSheet: View {
                 draftField("群聊角色", draft.role)
                 draftField("职责", draft.responsibility.isEmpty ? "未单独设置" : draft.responsibility)
                 draftField("模型", modelName(draft.modelConfigID))
-                draftField("工具与 Plugin", "运行时按任务自主发现")
                 draftField("创建理由", draft.rationale.isEmpty ? "未说明" : draft.rationale)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("角色 Prompt").font(.caption).foregroundStyle(.secondary)

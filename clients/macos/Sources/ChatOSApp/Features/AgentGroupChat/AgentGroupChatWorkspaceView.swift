@@ -8,12 +8,14 @@ extension Notification.Name {
 
 private enum AgentGroupChatWorkspaceDestination: Hashable {
     case agents
+    case direct(String)
     case room(String)
 }
 
 @MainActor
 private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     @Published private(set) var rooms: [ProjectAgentRoom] = []
+    @Published private(set) var directConversations: [ProjectAgentRoom] = []
     @Published private(set) var agents: [LocalAgentProfile] = []
     @Published private(set) var availableModels: [LocalAgentBuilderModelOption] = []
     @Published var selectedRoomID: String?
@@ -44,9 +46,14 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         do {
             let store = try await resolveStore()
             let rooms = try await store.listRooms(ownerUserID: ownerUserID)
+            let directConversations = try await store.listDirectConversations(
+                ownerUserID: ownerUserID,
+                includeArchived: false
+            )
             let agents = try await store.listAgents(ownerUserID: ownerUserID, includeArchived: false)
             let resources = try? await builderService.loadResources(ownerUserID: ownerUserID)
             self.rooms = rooms
+            self.directConversations = directConversations
             self.agents = agents
             self.availableModels = resources?.models ?? []
             if let selectedRoomID, rooms.contains(where: { $0.id == selectedRoomID }) {
@@ -139,6 +146,25 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         }
     }
 
+    func openDirect(with agent: LocalAgentProfile) async -> ProjectAgentRoom? {
+        do {
+            let store = try await resolveStore()
+            let conversation = try await store.openHumanAgentDirect(
+                ownerUserID: ownerUserID,
+                agentID: agent.id
+            )
+            directConversations = try await store.listDirectConversations(
+                ownerUserID: ownerUserID,
+                includeArchived: false
+            )
+            errorMessage = nil
+            return conversation
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     func createRoom(projectID: String, name: String, goal: String) async -> Bool {
         guard !isCreating else { return false }
         isCreating = true
@@ -210,7 +236,7 @@ struct AgentGroupChatWorkspaceView: View {
                 .workspaceFill()
         }
         .workspaceFill()
-        .navigationTitle(model.localized("Agent 群聊", english: "Agent Group Chat"))
+        .navigationTitle("Agent")
         .task { await viewModel.load() }
         .onReceive(NotificationCenter.default.publisher(for: .agentGroupChatRoomsDidChange)) { _ in
             Task { await viewModel.load() }
@@ -252,13 +278,18 @@ struct AgentGroupChatWorkspaceView: View {
         return viewModel.rooms.first { $0.id == roomID }
     }
 
+    private var selectedDirectConversation: ProjectAgentRoom? {
+        guard case let .direct(roomID) = destination else { return nil }
+        return viewModel.directConversations.first { $0.id == roomID }
+    }
+
     private var teamList: some View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Agent 与团队")
+                    Text("Agent")
                         .font(.headline)
-                    Text("先管理 Agent，再进入项目团队")
+                    Text("私聊与项目团队")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -317,6 +348,34 @@ struct AgentGroupChatWorkspaceView: View {
                             }
                         }
                     }
+
+
+                    Section("私聊") {
+                        if viewModel.directConversations.isEmpty {
+                            Text("还没有私聊")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(viewModel.directConversations) { conversation in
+                                Label {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(conversation.draft.name)
+                                            .font(.body.weight(.medium))
+                                        Text(conversation.conversationKind == .humanAgentDirect
+                                             ? "Agent 私聊" : "Agent 之间")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                } icon: {
+                                    Image(systemName: conversation.conversationKind == .humanAgentDirect
+                                          ? "bubble.left.and.bubble.right"
+                                          : "person.2.wave.2")
+                                }
+                                .padding(.vertical, 4)
+                                .tag(AgentGroupChatWorkspaceDestination.direct(conversation.id))
+                            }
+                        }
+                    }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -330,7 +389,23 @@ struct AgentGroupChatWorkspaceView: View {
     @ViewBuilder
     private var detail: some View {
         if destination == .agents {
-            AgentManagementView(viewModel: viewModel)
+            AgentManagementView(viewModel: viewModel) { agent in
+                Task {
+                    if let conversation = await viewModel.openDirect(with: agent) {
+                        destination = .direct(conversation.id)
+                    }
+                }
+            }
+        } else if let conversation = selectedDirectConversation {
+            AgentDirectChatView(
+                ownerUserID: ownerUserID,
+                conversationID: conversation.id,
+                service: service,
+                scheduler: scheduler,
+                builderService: builderService,
+                projectsService: model.localProjectsService
+            )
+            .id(conversation.id)
         } else if let room = selectedRoom {
             ProjectAgentGroupChatView(
                 projectID: room.projectID,
@@ -370,6 +445,7 @@ private enum AgentProfileEditorTarget: Identifiable {
 
 private struct AgentManagementView: View {
     @ObservedObject var viewModel: AgentGroupChatWorkspaceViewModel
+    let openDirect: (LocalAgentProfile) -> Void
     @State private var editorTarget: AgentProfileEditorTarget?
 
     var body: some View {
@@ -378,7 +454,7 @@ private struct AgentManagementView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Agent 管理")
                         .font(.title3.weight(.semibold))
-                    Text("Agent 可以复用于不同项目团队；模型、Prompt 和本机 Plugin 在这里统一管理。")
+                    Text("管理 Agent、模型和权限。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -396,7 +472,7 @@ private struct AgentManagementView: View {
                 ContentUnavailableView {
                     Label("还没有 Agent", systemImage: "person.crop.rectangle.stack")
                 } description: {
-                    Text("先创建 Agent，再把它加入需要协作的项目团队。")
+                    Text("创建后可以直接私聊，也可以加入项目团队。")
                 } actions: {
                     Button("创建 Agent") { editorTarget = .create }
                         .buttonStyle(.borderedProminent)
@@ -440,6 +516,11 @@ private struct AgentManagementView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button("私聊", systemImage: "bubble.left.and.bubble.right") {
+                    openDirect(agent)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
                 Menu("加入团队", systemImage: "person.2.badge.plus") {
                     if viewModel.rooms.isEmpty {
                         Text("请先创建项目团队")
@@ -590,13 +671,6 @@ private struct AgentProfileEditorSheet: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("工具与 Plugin")
-                            .font(.subheadline.weight(.medium))
-                        Text("无需预先选择。Agent 会通过内置能力发现 Skill 按任务搜索、展开并调用本机工具；项目目录与授权边界由 ChatOS 控制。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                 }
             }

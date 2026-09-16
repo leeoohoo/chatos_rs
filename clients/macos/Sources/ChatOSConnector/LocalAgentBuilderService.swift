@@ -231,6 +231,33 @@ public struct LocalAgentBuilderService: Sendable {
         )
     }
 
+    /// Confirms an Agent proposal from a direct conversation. The new profile is account-owned
+    /// and remains independent; it is not silently added to the private conversation or a team.
+    public func approveProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposal: LocalAgentCreationProposal
+    ) async throws -> LocalAgentProposalApproval {
+        guard proposal.ownerUserID == ownerUserID,
+              proposal.roomID == roomID,
+              proposal.status == .pending else {
+            throw AgentGroupChatError.conflict
+        }
+        let resources = try await loadResources(ownerUserID: ownerUserID)
+        try validate(draft: proposal.draft, resources: resources)
+        let store = try await groupChatService.store()
+        guard let room = try await store.room(ownerUserID: ownerUserID, roomID: roomID),
+              room.conversationKind.isDirect else {
+            throw LocalAgentBuilderError.roomUnavailable
+        }
+        return try await store.approveAgentProposal(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            proposalID: proposal.id,
+            nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+    }
+
     private func validate(
         draft: LocalAgentDraft,
         resources: LocalAgentBuilderResources

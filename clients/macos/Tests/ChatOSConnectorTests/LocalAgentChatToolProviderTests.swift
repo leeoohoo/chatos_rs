@@ -85,7 +85,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "relay_bootstrap", "chat_get_trigger", "chat_list_members", "chat_read_unread",
                 "chat_read_messages", "chat_mark_read", "agent_propose_member",
                 "agent_propose_member_removal",
-                "chat_send_message",
+                "chat_direct_open", "chat_direct_send", "chat_send_message",
             ]
         )
         let bootstrap = try await provider.execute(

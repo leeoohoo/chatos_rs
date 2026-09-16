@@ -215,15 +215,17 @@ final class AppModel: ObservableObject {
                         context: runContext
                     ))
                 }
-                let projectContext = try await localProjectsService.pluginContext(
-                    ownerUserID: runContext.ownerUserID,
-                    projectID: runContext.projectID
-                )
-                providers.append(try await localConnectorService.makeAgentCapabilityToolProvider(
-                    ownerUserID: runContext.ownerUserID,
-                    runContext: runContext,
-                    projectContext: projectContext
-                ))
+                if !runContext.projectID.hasPrefix("direct:") {
+                    let projectContext = try await localProjectsService.pluginContext(
+                        ownerUserID: runContext.ownerUserID,
+                        projectID: runContext.projectID
+                    )
+                    providers.append(try await localConnectorService.makeAgentCapabilityToolProvider(
+                        ownerUserID: runContext.ownerUserID,
+                        runContext: runContext,
+                        projectContext: projectContext
+                    ))
+                }
                 return providers
             }
         )

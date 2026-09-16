@@ -82,6 +82,76 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             projectID: projectID
         ) else { throw AgentGroupChatError.notFound }
 
+        return try await drain(
+            store: store,
+            ownerUserID: ownerUserID,
+            room: room,
+            maximumRuns: maximumRuns
+        )
+    }
+
+    /// Drains one durable conversation, whether it is a project team or a private chat.
+    public func drainConversation(
+        ownerUserID: String,
+        roomID: String,
+        maximumRuns: Int = 32
+    ) async throws -> [RunResult] {
+        guard maximumRuns > 0 else { return [] }
+        let store = try await service.store()
+        guard let room = try await store.room(ownerUserID: ownerUserID, roomID: roomID),
+              room.status == .active else {
+            throw AgentGroupChatError.notFound
+        }
+        return try await drain(
+            store: store,
+            ownerUserID: ownerUserID,
+            room: room,
+            maximumRuns: maximumRuns
+        )
+    }
+
+    /// Drains all account-owned conversations so a Relay message that opens another private
+    /// conversation is delivered without requiring that destination to be visible in the UI.
+    public func drainAccount(
+        ownerUserID: String,
+        maximumRuns: Int = 64
+    ) async throws -> [RunResult] {
+        guard maximumRuns > 0 else { return [] }
+        let store = try await service.store()
+        var results: [RunResult] = []
+        while results.count < maximumRuns, !Task.isCancelled {
+            let teams = try await store.listRooms(ownerUserID: ownerUserID, includeArchived: false)
+            let directs = try await store.listDirectConversations(
+                ownerUserID: ownerUserID,
+                includeArchived: false
+            )
+            let rooms = teams + directs
+            var madeProgress = false
+            for room in rooms where results.count < maximumRuns {
+                let round = try await drain(
+                    store: store,
+                    ownerUserID: ownerUserID,
+                    room: room,
+                    maximumRuns: maximumRuns - results.count
+                )
+                if !round.isEmpty {
+                    madeProgress = true
+                    results.append(contentsOf: round)
+                }
+            }
+            if !madeProgress { break }
+        }
+        return results
+    }
+
+    private func drain(
+        store: SQLiteAgentGroupChatStore,
+        ownerUserID: String,
+        room: ProjectAgentRoom,
+        maximumRuns: Int
+    ) async throws -> [RunResult] {
+        let projectID = room.projectID
+
         var results: [RunResult] = []
         while results.count < maximumRuns {
             if Task.isCancelled { break }
@@ -93,6 +163,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                 if Task.isCancelled { break }
                 guard let delivery = try await store.claimNextDelivery(
                     ownerUserID: ownerUserID,
+                    roomID: room.id,
                     agentID: member.agentID,
                     nowUnixMs: now()
                 ) else { continue }
@@ -514,6 +585,19 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         room: ProjectAgentRoom,
         delivery: ProjectAgentDelivery
     ) -> [AgentMessage] {
+        let conversationRole: String
+        let conversationContext: String
+        switch room.conversationKind {
+        case .projectTeam:
+            conversationRole = "项目团队会话"
+            conversationContext = "项目群目标：\(room.draft.goal.isEmpty ? "未单独设置" : room.draft.goal)"
+        case .humanAgentDirect:
+            conversationRole = "你与 Human 的私聊"
+            conversationContext = "这是独立私聊，不绑定项目；不要假定可以读取任何项目文件。"
+        case .agentAgentDirect:
+            conversationRole = "Agent 之间的私聊"
+            conversationContext = "这是独立私聊，不绑定项目；通过 Relay 回复对方，不要假定可以读取任何项目文件。"
+        }
         let staffingInstructions = LocalAgentPermission.canManageStaff(
             profile.draft.defaultSkillIDs
         ) ? """
@@ -527,19 +611,19 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         Human 已明确授予你本地项目与团队创建权限。需要创建团队时调用 team_propose，并从工具 schema 提供的项目单选项中选择已有项目或“新建项目”。真实项目 ID 与本机路径由 ChatOS 内部映射，不会提供给你，也不得猜测或要求用户提供。该工具只生成提案，必须等待 Human 确认。
         """ : ""
         let system = """
-        你是项目群聊中的本地 Agent「\(profile.draft.name)」。
+        你是\(conversationRole)中的本地 Agent「\(profile.draft.name)」。
         你的角色：\(member.draft.role)
         你的职责：\(member.draft.responsibility.isEmpty ? profile.draft.description : member.draft.responsibility)
         角色指令：\(profile.draft.rolePrompt)
-        项目群目标：\(room.draft.goal.isEmpty ? "未单独设置" : room.draft.goal)
+        \(conversationContext)
 
-        你通过 ChatOS 本机唯一的 Relay MCP 与其他 Agent 协作。群聊记录不是你的私有记忆，也不会整段注入提示词。先调用 relay_bootstrap 获取当前身份、团队、成员、唤醒消息和你的独立未读页；需要继续处理未读时调用 chat_read_unread，需要历史上下文时用稳定消息 ID 游标调用 chat_read_messages。处理完消息后调用 chat_mark_read 推进你自己的已读游标。本次提供的其他工具来自用户明确授予的本机权限和 Plugin，可以按职责调用。完成工作后必须单独调用 chat_send_message 回复共享群聊；只有该 MCP 工具成功才算完成本次 delivery，成功回复也会确认当前触发消息。不得假冒其他 Agent，也不得自行猜测成员 ID。
+        你通过 ChatOS 本机唯一的 Relay MCP 协作。聊天记录不是你的私有记忆，也不会整段注入提示词。先调用 relay_bootstrap 获取当前身份、会话参与者、唤醒消息和你的独立未读页；需要继续处理未读时调用 chat_read_unread，需要历史上下文时用稳定消息 ID 游标调用 chat_read_messages。处理完消息后调用 chat_mark_read 推进你自己的已读游标。你可以用 chat_direct_open 和 chat_direct_send 与另一个 Agent 建立私聊。本次提供的其他工具来自用户明确授予的本机权限和 Plugin，可以按职责调用。完成工作后必须单独调用 chat_send_message 回复当前会话；只有该 MCP 工具成功才算完成本次 delivery，成功回复也会确认当前触发消息。不得假冒其他 Agent，也不得自行猜测成员 ID。
         \(LocalAgentCapabilityDiscoverySkill.instructions)
         \(staffingInstructions)
         \(projectInstructions)
         """
         let envelope = """
-        你收到一个本地群聊 delivery：
+        你收到一个本地会话 delivery：
         - delivery_id: \(delivery.id)
         - trigger_message_id: \(delivery.messageID)
         - root_message_id: \(delivery.rootMessageID)

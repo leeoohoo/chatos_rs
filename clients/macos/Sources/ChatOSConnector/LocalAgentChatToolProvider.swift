@@ -90,6 +90,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let readUnreadToolName = "chat_read_unread"
     public static let readMessagesToolName = "chat_read_messages"
     public static let markReadToolName = "chat_mark_read"
+    public static let openDirectToolName = "chat_direct_open"
+    public static let sendDirectToolName = "chat_direct_send"
     public static let proposeMemberToolName = "agent_propose_member"
     public static let proposeMemberRemovalToolName = "agent_propose_member_removal"
     public static let sendMessageToolName = "chat_send_message"
@@ -115,13 +117,19 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     }
 
     public func definitions() async throws -> [AgentToolDefinition] {
-        guard try await canManageStaff() else {
-            return Self.toolDefinitions.filter {
+        var definitions = Self.toolDefinitions
+        if !(try await canManageStaff()) {
+            definitions = definitions.filter {
                 $0.name != Self.proposeMemberToolName
                     && $0.name != Self.proposeMemberRemovalToolName
             }
+        } else if try await store.room(
+            ownerUserID: context.ownerUserID,
+            roomID: context.roomID
+        )?.conversationKind.isDirect == true {
+            definitions = definitions.filter { $0.name != Self.proposeMemberRemovalToolName }
         }
-        return Self.toolDefinitions
+        return definitions
     }
 
     public func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -138,6 +146,10 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await readMessages(call)
         case Self.markReadToolName:
             return try await markRead(call)
+        case Self.openDirectToolName:
+            return try await openDirect(call)
+        case Self.sendDirectToolName:
+            return try await sendDirect(call)
         case Self.proposeMemberToolName:
             return try await proposeMember(call)
         case Self.proposeMemberRemovalToolName:
@@ -151,9 +163,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     private func bootstrap(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         _ = try Self.arguments(call)
-        guard let room = try await store.activeRoom(
+        guard let room = try await store.room(
             ownerUserID: context.ownerUserID,
-            projectID: context.projectID
+            roomID: context.roomID
         ), room.id == context.roomID,
            let trigger = try await store.message(
             ownerUserID: context.ownerUserID,
@@ -282,6 +294,58 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             cursor: cursor,
             hasUnread: !remaining.messages.isEmpty,
             nextUnreadMessageID: remaining.messages.first?.id
+        ))
+    }
+
+    private func openDirect(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let targetAgentID = try Self.requiredString(arguments, key: "target_agent_id")
+        let conversation = try await store.openAgentDirect(
+            ownerUserID: context.ownerUserID,
+            initiatingAgentID: context.agentID,
+            targetAgentID: targetAgentID
+        )
+        return try Self.outcome(DirectOpenResponse(
+            conversationID: conversation.id,
+            targetAgentID: targetAgentID
+        ))
+    }
+
+    private func sendDirect(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let conversationID = try Self.requiredString(arguments, key: "conversation_id")
+        let content = try Self.requiredString(arguments, key: "content")
+        guard let conversation = try await store.room(
+            ownerUserID: context.ownerUserID,
+            roomID: conversationID
+        ), conversation.conversationKind == .agentAgentDirect else {
+            throw AgentGroupChatError.notFound
+        }
+        let members = try await store.listMembers(
+            ownerUserID: context.ownerUserID,
+            roomID: conversationID
+        )
+        guard members.contains(where: { $0.agentID == context.agentID }) else {
+            throw AgentGroupChatError.notMember
+        }
+        let post = try await store.postMessage(
+            ownerUserID: context.ownerUserID,
+            roomID: conversationID,
+            draft: .init(
+                senderKind: .agent,
+                senderID: context.agentID,
+                content: content,
+                sourceRunID: context.runID,
+                causationID: context.deliveryID,
+                hopCount: context.hopCount + 1
+            ),
+            limits: limits
+        )
+        return try Self.outcome(DirectSendResponse(
+            conversationID: conversationID,
+            messageID: post.message.id,
+            spawnedDeliveryIDs: post.deliveries.map(\.id),
+            routingStopReason: post.routingStopReason
         ))
     }
 
@@ -448,6 +512,30 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         }
     }
 
+    private struct DirectOpenResponse: Encodable {
+        let conversationID: String
+        let targetAgentID: String
+
+        enum CodingKeys: String, CodingKey {
+            case conversationID = "conversation_id"
+            case targetAgentID = "target_agent_id"
+        }
+    }
+
+    private struct DirectSendResponse: Encodable {
+        let conversationID: String
+        let messageID: String
+        let spawnedDeliveryIDs: [String]
+        let routingStopReason: String?
+
+        enum CodingKeys: String, CodingKey {
+            case conversationID = "conversation_id"
+            case messageID = "message_id"
+            case spawnedDeliveryIDs = "spawned_delivery_ids"
+            case routingStopReason = "routing_stop_reason"
+        }
+    }
+
     private struct SendResponse: Encodable {
         let messageID: String
         let deliveryID: String
@@ -546,8 +634,20 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             effect: .write
         ),
         .init(
+            name: openDirectToolName,
+            description: "打开或复用与另一个 Agent 的私聊。不能与自己私聊；A 到 B 和 B 到 A 会得到同一个 conversation_id。",
+            schema: Data(#"{"type":"object","properties":{"target_agent_id":{"type":"string","minLength":1,"maxLength":512}},"required":["target_agent_id"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: sendDirectToolName,
+            description: "向已经打开的 Agent 私聊发送消息。当前 Agent 必须是该私聊参与者，成功后会通过本地 delivery 唤醒对方。",
+            schema: Data(#"{"type":"object","properties":{"conversation_id":{"type":"string","minLength":1,"maxLength":512},"content":{"type":"string","minLength":1,"maxLength":64000}},"required":["conversation_id","content"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
             name: proposeMemberToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 成员草案。该工具只持久化待确认提案，绝不会直接创建 Agent；账号、项目、团队和提案者身份由当前 Relay session 固定。model_config_id 省略时继承当前 Agent，Plugin 必须在 Human 确认时仍已安装可用。",
+            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。该工具只持久化待确认提案，绝不会直接创建 Agent；私聊中确认后只创建独立 Agent，团队会话中确认后才加入当前团队。model_config_id 省略时继承当前 Agent。",
             schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"model_config_id":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
