@@ -589,19 +589,24 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         return try readRun(ownerUserID: ownerUserID, deliveryID: deliveryID)
     }
 
-    public func listRuns(
+    public func listUnfinishedRuns(
         ownerUserID: String,
-        projectID: String
+        projectID: String,
+        limit: Int
     ) throws -> [LocalAgentGroupChatRun] {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(projectID, field: "projectID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
         let values: [String] = try query(
             """
             SELECT run_json FROM local_agent_group_chat_runs
             WHERE owner_user_id = ? AND project_id = ?
-            ORDER BY updated_at_unix_ms DESC, id DESC
+              AND status NOT IN ('completed', 'failed')
+            ORDER BY updated_at_unix_ms DESC, id DESC LIMIT ?
             """,
-            [.text(ownerUserID), .text(projectID)]
+            [.text(ownerUserID), .text(projectID), .integer(Int64(limit))]
         ) { Self.string($0, 0) }
         return try values.map(Self.decodeRun)
     }

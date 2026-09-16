@@ -114,14 +114,68 @@ public struct LocalAgentGroupChatScheduler: Sendable {
            ) else {
             throw AgentGroupChatError.conflict
         }
-        return try await runClaimedDelivery(
-            store: store,
+        do {
+            return try await runClaimedDelivery(
+                store: store,
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                room: room,
+                member: member,
+                delivery: delivery,
+                savedRun: savedRun
+            )
+        } catch {
+            var paused = savedRun
+            paused.checkpoint.status = .paused
+            paused.checkpoint.stopReason = "恢复失败：\(Self.failureDetail(error))"
+            paused.events.append(.init(
+                kind: "resume_failed",
+                detail: paused.checkpoint.stopReason ?? "恢复失败",
+                modelCalls: paused.checkpoint.modelCalls
+            ))
+            paused.updatedAtUnixMs = max(now(), paused.updatedAtUnixMs)
+            try await store.saveRun(paused)
+            return .init(
+                deliveryID: delivery.id,
+                agentID: delivery.targetAgentID,
+                outcome: .suspended,
+                detail: paused.checkpoint.stopReason
+            )
+        }
+    }
+
+    public func abandonDelivery(
+        ownerUserID: String,
+        projectID: String,
+        deliveryID: String
+    ) async throws {
+        let store = try await service.store()
+        guard let room = try await store.activeRoom(
             ownerUserID: ownerUserID,
-            projectID: projectID,
-            room: room,
-            member: member,
-            delivery: delivery,
-            savedRun: savedRun
+            projectID: projectID
+        ), let delivery = try await store.delivery(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+        ), delivery.roomID == room.id,
+           delivery.status == .running,
+           var run = try await store.run(ownerUserID: ownerUserID, deliveryID: deliveryID) else {
+            throw AgentGroupChatError.conflict
+        }
+        let detail = "用户已结束这个未完成的本地 Agent Run。"
+        run.checkpoint.status = .failed
+        run.checkpoint.stopReason = detail
+        run.events.append(.init(
+            kind: "abandoned",
+            detail: detail,
+            modelCalls: run.checkpoint.modelCalls
+        ))
+        run.updatedAtUnixMs = max(now(), run.updatedAtUnixMs)
+        try await store.saveRun(run)
+        _ = try await store.failDelivery(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID,
+            error: detail,
+            nowUnixMs: now()
         )
     }
 
@@ -263,13 +317,18 @@ public struct LocalAgentGroupChatScheduler: Sendable {
 
         var memoryProvider: AgentMemoryContextProvider?
         do {
-            let memoryScope = try checkpoint.memory?.scope ?? AgentMemoryScope(
+            let memoryScope: AgentMemoryScope
+            if let boundScope = checkpoint.memory?.scope {
+                memoryScope = boundScope
+            } else {
+                memoryScope = try AgentMemoryScope(
                     tenantID: ownerUserID,
                     agentID: profile.id,
                     projectID: projectID,
                     runID: runID,
                     runtimeScope: scope
                 )
+            }
             let memory = try await services.makeAgentMemory(scope: memoryScope)
             let provider = AgentMemoryContextProvider(scope: memoryScope, service: memory)
             if checkpoint.memory == nil {

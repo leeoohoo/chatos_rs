@@ -11,6 +11,24 @@ final class AgentGroupChatViewModel: ObservableObject {
         let profile: LocalAgentProfile?
     }
 
+    struct InterruptedRunPresentation: Identifiable {
+        var id: String { delivery.id }
+        let run: LocalAgentGroupChatRun
+        let delivery: ProjectAgentDelivery
+        let agentName: String
+
+        var statusText: String {
+            switch run.checkpoint.status {
+            case .ready, .running: "运行被中断"
+            case .paused: "已暂停"
+            case .needsReview: "需要检查副作用"
+            case .limitReached: "达到运行限制"
+            case .completed: "已完成"
+            case .failed: "失败"
+            }
+        }
+    }
+
     let projectID: String
     let ownerUserID: String
 
@@ -19,11 +37,13 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var members: [ProjectAgentRoomMember] = []
     @Published private(set) var messages: [ProjectAgentMessage] = []
     @Published private(set) var installedPlugins: [NativeInstalledAgentPlugin] = []
+    @Published private(set) var interruptedRuns: [InterruptedRunPresentation] = []
     @Published var draftMessage = ""
     @Published var selectedMentionAgentIDs: Set<String> = []
     @Published private(set) var isLoading = false
     @Published private(set) var isSending = false
     @Published private(set) var isRunningAgents = false
+    @Published private(set) var runActionDeliveryIDs: Set<String> = []
     @Published var errorMessage: String?
 
     private let service: NativeAgentGroupChatService
@@ -74,6 +94,7 @@ final class AgentGroupChatViewModel: ObservableObject {
             let room = try await store.activeRoom(ownerUserID: ownerUserID, projectID: projectID)
             let members: [ProjectAgentRoomMember]
             let messages: [ProjectAgentMessage]
+            let interruptedRuns: [InterruptedRunPresentation]
             if let room {
                 members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
                 messages = try await store.listMessages(
@@ -82,14 +103,35 @@ final class AgentGroupChatViewModel: ObservableObject {
                     afterUnixMs: nil,
                     limit: 500
                 )
+                let recentRuns = try await store.listUnfinishedRuns(
+                    ownerUserID: ownerUserID,
+                    projectID: projectID,
+                    limit: 100
+                )
+                let profileNames = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0.draft.name) })
+                var values: [InterruptedRunPresentation] = []
+                for run in recentRuns where run.checkpoint.status != .completed {
+                    guard let delivery = try await store.delivery(
+                        ownerUserID: ownerUserID,
+                        deliveryID: run.context.deliveryID
+                    ), delivery.status == .running else { continue }
+                    values.append(.init(
+                        run: run,
+                        delivery: delivery,
+                        agentName: profileNames[run.context.agentID] ?? run.context.agentID
+                    ))
+                }
+                interruptedRuns = values
             } else {
                 members = []
                 messages = []
+                interruptedRuns = []
             }
             self.agents = agents
             self.room = room
             self.members = members
             self.messages = messages
+            self.interruptedRuns = interruptedRuns
             self.installedPlugins = (try? await pluginService.installedAgentPlugins(
                 ownerUserID: ownerUserID
             )) ?? []
@@ -97,6 +139,13 @@ final class AgentGroupChatViewModel: ObservableObject {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func activate() async {
+        await load()
+        if room != nil {
+            startScheduler()
         }
     }
 
@@ -206,6 +255,45 @@ final class AgentGroupChatViewModel: ObservableObject {
         }
     }
 
+    func resumeRun(deliveryID: String) async {
+        guard !isRunningAgents, runActionDeliveryIDs.insert(deliveryID).inserted else { return }
+        defer { runActionDeliveryIDs.remove(deliveryID) }
+        do {
+            let result = try await scheduler.resumeDelivery(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                deliveryID: deliveryID
+            )
+            await load()
+            switch result.outcome {
+            case .completed:
+                startScheduler()
+            case .suspended, .failed:
+                errorMessage = result.detail ?? "本地 Agent Run 尚未完成。"
+            }
+        } catch {
+            await load()
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func abandonRun(deliveryID: String) async {
+        guard !isRunningAgents, runActionDeliveryIDs.insert(deliveryID).inserted else { return }
+        defer { runActionDeliveryIDs.remove(deliveryID) }
+        do {
+            try await scheduler.abandonDelivery(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                deliveryID: deliveryID
+            )
+            await load()
+            startScheduler()
+        } catch {
+            await load()
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func resolveStore() async throws -> SQLiteAgentGroupChatStore {
         if let openedStore { return openedStore }
         let store = try await service.store()
@@ -221,20 +309,22 @@ final class AgentGroupChatViewModel: ObservableObject {
             guard let self else { return }
             repeat {
                 schedulerNeedsAnotherPass = false
+                var schedulerMessage: String?
                 do {
                     let results = try await scheduler.drainProject(
                         ownerUserID: ownerUserID,
                         projectID: projectID
                     )
                     if let failure = results.last(where: { $0.outcome == .failed }) {
-                        errorMessage = failure.detail ?? "本地 Agent 运行失败。"
+                        schedulerMessage = failure.detail ?? "本地 Agent 运行失败。"
                     } else if let suspended = results.last(where: { $0.outcome == .suspended }) {
-                        errorMessage = suspended.detail ?? "本地 Agent 已暂停，运行检查点已保存。"
+                        schedulerMessage = suspended.detail ?? "本地 Agent 已暂停，运行检查点已保存。"
                     }
                 } catch {
-                    errorMessage = error.localizedDescription
+                    schedulerMessage = error.localizedDescription
                 }
                 await load()
+                if let schedulerMessage { errorMessage = schedulerMessage }
             } while schedulerNeedsAnotherPass
             isRunningAgents = false
             schedulerTask = nil

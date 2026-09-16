@@ -6,6 +6,7 @@ struct ProjectAgentGroupChatView: View {
     @StateObject private var viewModel: AgentGroupChatViewModel
     @State private var showsCreateRoom = false
     @State private var showsCreateAgent = false
+    @State private var abandonDeliveryID: String?
 
     init(
         projectID: String,
@@ -35,7 +36,7 @@ struct ProjectAgentGroupChatView: View {
                 roomContent
             }
         }
-        .task { await viewModel.load() }
+        .task { await viewModel.activate() }
         .sheet(isPresented: $showsCreateRoom) {
             CreateAgentRoomSheet(viewModel: viewModel)
         }
@@ -52,6 +53,23 @@ struct ProjectAgentGroupChatView: View {
             Button("好", role: .cancel) { viewModel.errorMessage = nil }
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+        .confirmationDialog(
+            "结束这个 Agent Run？",
+            isPresented: Binding(
+                get: { abandonDeliveryID != nil },
+                set: { if !$0 { abandonDeliveryID = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("结束 Run", role: .destructive) {
+                guard let deliveryID = abandonDeliveryID else { return }
+                abandonDeliveryID = nil
+                Task { await viewModel.abandonRun(deliveryID: deliveryID) }
+            }
+            Button("取消", role: .cancel) { abandonDeliveryID = nil }
+        } message: {
+            Text("该 delivery 会标记为失败并释放 Agent 队列；已保存的检查点和事件仍会保留。")
         }
     }
 
@@ -70,6 +88,10 @@ struct ProjectAgentGroupChatView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 roomHeader
+                if !viewModel.interruptedRuns.isEmpty {
+                    Divider()
+                    interruptedRuns
+                }
                 Divider()
                 transcript
                 Divider()
@@ -79,6 +101,49 @@ struct ProjectAgentGroupChatView: View {
             memberSidebar
                 .frame(width: 230)
         }
+    }
+
+    private var interruptedRuns: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("检测到未完成的本地 Agent Run", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
+                .appFont(.caption)
+                .fontWeight(.semibold)
+            ForEach(viewModel.interruptedRuns) { item in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(item.agentName) · \(item.statusText)")
+                            .appFont(.caption)
+                        if let reason = item.run.checkpoint.stopReason, !reason.isEmpty {
+                            Text(reason)
+                                .appFont(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                    Spacer()
+                    let isActing = viewModel.runActionDeliveryIDs.contains(item.delivery.id)
+                    if isActing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("恢复") {
+                            Task { await viewModel.resumeRun(deliveryID: item.delivery.id) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(viewModel.isRunningAgents)
+                        Button("结束", role: .destructive) {
+                            abandonDeliveryID = item.delivery.id
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(viewModel.isRunningAgents)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.08))
     }
 
     private var roomHeader: some View {

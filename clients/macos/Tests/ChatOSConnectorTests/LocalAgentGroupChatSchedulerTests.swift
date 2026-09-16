@@ -80,6 +80,135 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertNil(savedRun?.checkpoint.memory)
         XCTAssertTrue(savedRun?.events.contains(where: { $0.kind == "memory_unavailable" }) == true)
     }
+
+    func testResumeKeepsUnknownWriteInNeedsReviewUntilUserAbandonsIt() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-resume-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let nativeService = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await nativeService.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "实现者", rolePrompt: "实现任务", modelConfigID: "local-model")
+        )
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            draft: .init(name: "项目群")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "实现者")
+        )
+        _ = try await store.setDefaultAgent(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id
+        )
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "继续"),
+            limits: .init()
+        )
+        let pending = try XCTUnwrap(post.deliveries.first)
+        let claimed = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: post.message.createdAtUnixMs + 1
+        )
+        let delivery = try XCTUnwrap(claimed)
+        let runID = UUID()
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            roomID: room.id,
+            agentID: agent.id,
+            deliveryID: delivery.id,
+            triggerMessageID: post.message.id,
+            rootMessageID: post.message.rootMessageID,
+            runID: runID.uuidString.lowercased(),
+            hopCount: delivery.hopCount
+        )
+        var checkpoint = AgentRunCheckpoint(
+            scope: LocalAgentGroupChatRun.runtimeScope(for: context),
+            messages: [.init(role: .system, content: "system")]
+        )
+        checkpoint.id = runID
+        let call = AgentToolCall(
+            id: "unknown-write",
+            name: LocalAgentChatToolProvider.sendMessageToolName,
+            arguments: #"{"content":"可能已经发送"}"#
+        )
+        checkpoint.pendingCalls = [call]
+        checkpoint.inFlightCallID = call.id
+        checkpoint.status = .running
+        let run = try LocalAgentGroupChatRun(
+            id: runID,
+            context: context,
+            modelConfigID: agent.draft.modelConfigID,
+            policy: .init(),
+            checkpoint: checkpoint,
+            createdAtUnixMs: post.message.createdAtUnixMs + 1,
+            updatedAtUnixMs: post.message.createdAtUnixMs + 1
+        )
+        try await store.saveRun(run)
+
+        let settingsSuite = "local-agent-resume-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: nativeService,
+            services: SchedulerTestServices(),
+            settings: .init(suiteName: settingsSuite)
+        )
+        let result = try await scheduler.resumeDelivery(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            deliveryID: pending.id
+        )
+        XCTAssertEqual(result.outcome, .suspended)
+        let loadedReviewed = try await store.run(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        let reviewed = try XCTUnwrap(loadedReviewed)
+        XCTAssertEqual(reviewed.id, runID)
+        XCTAssertEqual(reviewed.checkpoint.status, .needsReview)
+        let runningDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        XCTAssertEqual(runningDelivery?.status, .running)
+        let listedRuns = try await store.listUnfinishedRuns(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            limit: 10
+        )
+        XCTAssertEqual(listedRuns.map(\.id), [runID])
+
+        try await scheduler.abandonDelivery(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            deliveryID: delivery.id
+        )
+        let failedDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        let failedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
+        let unfinishedAfterAbandon = try await store.listUnfinishedRuns(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            limit: 10
+        )
+        XCTAssertEqual(failedDelivery?.status, .failed)
+        XCTAssertEqual(failedRun?.checkpoint.status, .failed)
+        XCTAssertTrue(unfinishedAfterAbandon.isEmpty)
+    }
 }
 
 private enum SchedulerTestError: Error {
