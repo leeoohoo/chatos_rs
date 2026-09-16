@@ -12,21 +12,10 @@ use serde_json::{json, Value};
 use tokio::time;
 
 use super::super::parsing::{
-    extract_chat_completion_stream_text, extract_responses_stream_text,
-    extract_stream_error_message, trim_or_truncate_for_log,
+    extract_responses_stream_text, extract_stream_error_message, trim_or_truncate_for_log,
 };
-use super::super::protocol::{
-    base_url_disallows_system_messages, base_url_requires_responses_input_list,
-    build_chat_completions_endpoint, build_chat_messages, build_responses_endpoint,
-    build_responses_input,
-};
+use super::super::protocol::{build_responses_endpoint, build_responses_input};
 use super::AiClient;
-
-#[derive(Clone, Copy)]
-enum StreamResponseKind {
-    ChatCompletions,
-    Responses,
-}
 
 pub(super) async fn send_text_request(
     client: &AiClient,
@@ -36,54 +25,13 @@ pub(super) async fn send_text_request(
     requested_max_tokens: Option<i64>,
     effective_temperature: f64,
 ) -> Result<String, String> {
-    if client.supports_responses {
-        request_responses(
-            client,
-            api_key,
-            system_prompt,
-            user_prompt,
-            requested_max_tokens,
-            effective_temperature,
-        )
-        .await
-    } else {
-        request_chat_completions(
-            client,
-            api_key,
-            system_prompt,
-            user_prompt,
-            requested_max_tokens,
-            effective_temperature,
-        )
-        .await
-    }
-}
-
-async fn request_chat_completions(
-    client: &AiClient,
-    api_key: &str,
-    system_prompt: &str,
-    user_prompt: &str,
-    requested_max_tokens: Option<i64>,
-    effective_temperature: f64,
-) -> Result<String, String> {
-    let endpoint = build_chat_completions_endpoint(client.base_url.as_str());
-    let body = build_chat_completions_body(
-        client.model.as_str(),
+    request_responses(
+        client,
+        api_key,
         system_prompt,
         user_prompt,
         requested_max_tokens,
         effective_temperature,
-        base_url_disallows_system_messages(client.base_url.as_str()),
-        client.disable_thinking,
-    );
-
-    send_stream_request(
-        client,
-        api_key,
-        endpoint.as_str(),
-        &body,
-        StreamResponseKind::ChatCompletions,
     )
     .await
 }
@@ -96,8 +44,6 @@ async fn request_responses(
     requested_max_tokens: Option<i64>,
     effective_temperature: f64,
 ) -> Result<String, String> {
-    let no_system_messages = base_url_disallows_system_messages(client.base_url.as_str());
-    let input_as_list = base_url_requires_responses_input_list(client.base_url.as_str());
     let endpoint = build_responses_endpoint(client.base_url.as_str());
     let body = build_responses_body(
         client.model.as_str(),
@@ -105,9 +51,9 @@ async fn request_responses(
         user_prompt,
         requested_max_tokens,
         effective_temperature,
-        no_system_messages,
-        input_as_list,
-        client.disable_thinking,
+        false,
+        true,
+        false,
     );
 
     send_stream_request(
@@ -115,33 +61,8 @@ async fn request_responses(
         api_key,
         endpoint.as_str(),
         &body,
-        StreamResponseKind::Responses,
     )
     .await
-}
-
-fn build_chat_completions_body(
-    model: &str,
-    system_prompt: &str,
-    user_prompt: &str,
-    requested_max_tokens: Option<i64>,
-    effective_temperature: f64,
-    no_system_messages: bool,
-    disable_thinking: bool,
-) -> Value {
-    let mut body = json!({
-        "model": model,
-        "temperature": effective_temperature,
-        "stream": true,
-        "messages": build_chat_messages(system_prompt, user_prompt, no_system_messages),
-    });
-    if let Some(requested_max_tokens) = requested_max_tokens {
-        body["max_tokens"] = json!(requested_max_tokens);
-    }
-    if disable_thinking {
-        body["thinking"] = json!({ "type": "disabled" });
-    }
-    body
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -169,6 +90,12 @@ fn build_responses_body(
         "temperature": effective_temperature,
         "stream": true,
         "input": build_responses_input(wrapped_user_prompt.as_str(), input_as_list),
+        "store": false,
+        "prompt_cache_key": format!("memory-engine-summary:{model}"),
+        "context_management": [{
+            "type": "compaction",
+            "compact_threshold": 200_000,
+        }],
     });
     if let Some(requested_max_tokens) = requested_max_tokens {
         body["max_output_tokens"] = json!(requested_max_tokens);
@@ -187,7 +114,6 @@ async fn send_stream_request(
     api_key: &str,
     endpoint: &str,
     body: &Value,
-    response_kind: StreamResponseKind,
 ) -> Result<String, String> {
     let response = time::timeout(
         Duration::from_secs(client.timeout_secs),
@@ -232,13 +158,12 @@ async fn send_stream_request(
         ));
     }
 
-    read_streamed_text_response(client, response, response_kind).await
+    read_streamed_text_response(client, response).await
 }
 
 async fn read_streamed_text_response(
     client: &AiClient,
     response: Response,
-    response_kind: StreamResponseKind,
 ) -> Result<String, String> {
     let mut stream = response.bytes_stream();
     let mut output = String::new();
@@ -261,12 +186,7 @@ async fn read_streamed_text_response(
         while let Some((index, delimiter_len)) = find_sse_event_delimiter(buffer.as_slice()) {
             let raw_event = decode_sse_event_bytes(buffer[..index].to_vec())?;
             buffer.drain(..index + delimiter_len);
-            if process_sse_event(
-                raw_event.as_str(),
-                response_kind,
-                &mut output,
-                &mut saw_stream_text,
-            )? {
+            if process_sse_event(raw_event.as_str(), &mut output, &mut saw_stream_text)? {
                 return finalize_stream_output(output);
             }
         }
@@ -274,12 +194,7 @@ async fn read_streamed_text_response(
 
     if !bytes_trimmed_empty(buffer.as_slice()) {
         let raw_event = decode_sse_event_bytes(buffer)?;
-        if process_sse_event(
-            raw_event.as_str(),
-            response_kind,
-            &mut output,
-            &mut saw_stream_text,
-        )? {
+        if process_sse_event(raw_event.as_str(), &mut output, &mut saw_stream_text)? {
             return finalize_stream_output(output);
         }
     }
@@ -322,7 +237,6 @@ mod tests;
 
 fn process_sse_event(
     raw_event: &str,
-    response_kind: StreamResponseKind,
     output: &mut String,
     saw_stream_text: &mut bool,
 ) -> Result<bool, String> {
@@ -354,10 +268,7 @@ fn process_sse_event(
         return Err(format!("ai stream error: {}", message));
     }
 
-    let text = match response_kind {
-        StreamResponseKind::ChatCompletions => extract_chat_completion_stream_text(&value),
-        StreamResponseKind::Responses => extract_responses_stream_text(&value, *saw_stream_text),
-    };
+    let text = extract_responses_stream_text(&value, *saw_stream_text);
     if let Some(text) = text {
         *saw_stream_text = true;
         output.push_str(text.as_str());

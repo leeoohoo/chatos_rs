@@ -8,7 +8,6 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::compat::extract_usage_snapshot;
-use crate::model_config::supports_responses_server_compaction;
 use crate::request::{AiRequestHandler, AiRequestOptions, AiResponse, StreamCallbacks};
 use crate::traits::{ModelRequest, RuntimeCallbacks};
 
@@ -87,6 +86,14 @@ pub(super) async fn dispatch_model_request(
         build_before_send_model_request_callback(&options.callbacks, request_debug);
 
     let started_at = Instant::now();
+    let prompt_cache_key = request.prompt_cache_key.clone().or_else(|| {
+        options
+            .conversation_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("chatos:{value}"))
+    });
     let raw_result = request_handler
         .handle_request_with_options(
             request.base_url.as_str(),
@@ -110,8 +117,8 @@ pub(super) async fn dispatch_model_request(
             request.thinking_level.clone(),
             on_before_send_model_request,
             AiRequestOptions {
-                prompt_cache_key: request.prompt_cache_key.clone(),
-                previous_response_id: request.previous_response_id.clone(),
+                prompt_cache_key,
+                previous_response_id: None,
                 request_cwd: request.request_cwd.clone(),
                 include_prompt_cache_retention: request.include_prompt_cache_retention,
                 request_body_limit_bytes: request.request_body_limit_bytes,
@@ -119,12 +126,9 @@ pub(super) async fn dispatch_model_request(
                 force_identity_encoding,
                 stream: provider_stream,
                 output_format: request.output_format.clone(),
-                responses_compaction_threshold: (request.supports_responses
-                    && supports_responses_server_compaction(
-                        request.provider.as_str(),
-                        request.base_url.as_str(),
-                    ))
-                .then_some(super::ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS),
+                responses_compaction_threshold: request
+                    .supports_responses
+                    .then_some(super::ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS),
             },
         )
         .await;

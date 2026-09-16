@@ -18,25 +18,27 @@ struct StoryWorkbenchView: View {
     @State private var editSegment: StorySegment?
     @State private var imageTarget: StoryImageTarget?
     @State private var preview: MediaStudioImagePreviewRequest?
-    @State private var confirmsBatch = false
     @State private var segmentToDelete: String?
     @State private var segmentToRetry: String?
     @State private var agentRunToAbandon: UUID?
     @State private var planningConfirmation: StoryPlanningConfirmation?
     @State private var showsMediaBatch = false
     @State private var mediaBatchKind: StoryMediaBatch.Kind = .pipeline
+    @State private var videoToRegenerate: StorySegment?
+    @State private var playlistPreview: StoryStudioViewModel.CreationHistoryGroup?
     @State private var section: Section = .source
 
     private var selected: StorySegment? { project.segments.first { $0.id == viewModel.selectedSegmentID } }
     private var selectedReady: [StorySegment] { project.segments.filter { viewModel.selectedSegments.contains($0.id) && $0.isReady } }
     private var selectedReadySeconds: Int { selectedReady.reduce(0) { $0 + $1.seconds } }
-    private var selectedVideoModel: MediaGenerationModel? {
-        mediaStudio.models.first { $0.id == project.models.videoModelID }
-    }
-    private var videoSendsLastFrame: Bool { selectedVideoModel?.supportsVideoLastFrame == true }
     private var isAgentDraftVisible: Bool { viewModel.isPresentingAgentDraft(projectID: project.id) }
     private var recoverableAgentRun: StoryAgentRun? { viewModel.recoverableAgentRun(projectID: project.id) }
-    private var editingLocked: Bool { viewModel.isBusy || isAgentDraftVisible }
+    private var editingLocked: Bool {
+        viewModel.isBusy || isAgentDraftVisible || viewModel.hasActiveFrameGenerations(projectID: project.id)
+    }
+    private var playlistGroup: StoryStudioViewModel.CreationHistoryGroup? {
+        viewModel.creationHistoryGroups.first { $0.projectID == project.id && !$0.currentVideos.isEmpty }
+    }
 
     var body: some View {
         ZStack {
@@ -79,6 +81,16 @@ struct StoryWorkbenchView: View {
             StoryMediaBatchStartView(viewModel: viewModel, project: project, models: mediaStudio.models,
                                      initialKind: mediaBatchKind).environmentObject(appModel)
         }
+        .sheet(item: $videoToRegenerate) { segment in
+            StoryVideoRegenerationStartView(
+                viewModel: viewModel, project: project, segmentID: segment.id,
+                models: mediaStudio.models
+            )
+            .environmentObject(appModel)
+        }
+        .sheet(item: $playlistPreview) { group in
+            StoryVideoPlaylistPlayer(group: group).environmentObject(appModel)
+        }
         .sheet(item: $imageTarget) { target in
             StoryImagePicker(viewModel: viewModel, mediaStudio: mediaStudio, project: project, target: target)
                 .environmentObject(appModel)
@@ -86,25 +98,6 @@ struct StoryWorkbenchView: View {
         .sheet(item: $preview) { request in
             MediaStudioImagePreview(request: request) { mediaStudio.useGeneratedImageForVideo($0) }
                 .environmentObject(appModel)
-        }
-        .confirmationDialog(videoSendsLastFrame
-                            ? appModel.localized("确认批量生成视频？", english: "Generate the selected videos?")
-                            : appModel.localized("当前接入不会使用尾帧，仍要生成吗？", english: "This connection will not use tail frames. Continue?"),
-                            isPresented: $confirmsBatch, titleVisibility: .visible) {
-            Button(videoSendsLastFrame
-                   ? appModel.localized("确认生成", english: "Confirm Generation")
-                   : appModel.localized("仅使用首帧，继续生成", english: "Continue with First Frames Only")) {
-                viewModel.generateBatch(availableModels: mediaStudio.models)
-            }
-        } message: {
-            if videoSendsLastFrame {
-                Text("\(selectedReady.count) " + appModel.localized("段，共", english: "segments, totaling") + " \(selectedReadySeconds)s。"
-                     + appModel.localized("已启用的确认尾帧会随视频请求发送；可能产生费用。失败时暂停，不自动重试。",
-                                          english: "Enabled confirmed tail frames are sent with the video request. Charges may apply. Pauses on failure without automatic retries."))
-            } else {
-                Text(appModel.localized("当前 \(selectedVideoModel?.modelName ?? "视频模型") 通过 OpenAI 兼容 /v1/videos 接入。本次请求只发送首帧，已确认尾帧不会发送给视频模型；尾帧仅用于衔接下一段首帧。生成可能产生费用。",
-                                        english: "The current \(selectedVideoModel?.modelName ?? "video model") uses the OpenAI-compatible /v1/videos connection. This request sends only the first frame; confirmed tail frames are not sent to the video model and are used only to anchor the next segment's first frame. Charges may apply."))
-            }
         }
         .confirmationDialog(appModel.localized("删除该分段并重新检查全剧衔接？", english: "Remove this segment and re-plan continuity?"), isPresented: Binding(get: { segmentToDelete != nil }, set: { if !$0 { segmentToDelete = nil } }), titleVisibility: .visible) {
             Button(appModel.localized("删除分段", english: "Remove Segment"), role: .destructive) {
@@ -718,11 +711,17 @@ struct StoryWorkbenchView: View {
             if !viewModel.projectMediaBatches.isEmpty {
                 StoryMediaBatchPanel(viewModel: viewModel)
             }
-            HStack(alignment: .top, spacing: 20) {
-                overview.frame(width: 390)
-                detailPanel.frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack(alignment: .top, spacing: 16) {
+                overview.frame(width: 410)
+                detailPanel
+                    .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .topLeading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear { selectFirstSegmentIfNeeded(project.segments.map(\.id)) }
+        .onChange(of: project.segments.map(\.id)) { _, ids in selectFirstSegmentIfNeeded(ids) }
     }
 
     private var overview: some View {
@@ -759,10 +758,13 @@ struct StoryWorkbenchView: View {
                         }
                     }
                 }
-                Text(appModel.localized("每段单独生成；总时长是计划时长，暂不自动拼接成片。", english: "Segments generate separately. Total duration is planned length, not an automatically assembled movie."))
+                Text(appModel.localized("每段单独生成，完成后可按剧情顺序连续播放。", english: "Segments generate separately, then play continuously in story order."))
                     .font(.caption).foregroundStyle(.secondary)
             }
-        }.padding(18).storySurface(tint: .blue)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .storySurface(tint: .blue)
     }
 
     private func segmentRow(_ segment: StorySegment, index: Int) -> some View {
@@ -771,7 +773,8 @@ struct StoryWorkbenchView: View {
         return HStack(spacing: 10) {
             Toggle("", isOn: Binding(get: { viewModel.selectedSegments.contains(segment.id) }, set: { on in
                 if on { viewModel.selectedSegments.insert(segment.id) } else { viewModel.selectedSegments.remove(segment.id) }
-            })).labelsHidden().toggleStyle(.checkbox).disabled(!segment.isReady || editingLocked)
+            })).labelsHidden().toggleStyle(.checkbox)
+                .disabled(!segment.isReady || viewModel.isBusy || isAgentDraftVisible)
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(String(format: "%02d", index + 1))
@@ -842,6 +845,77 @@ struct StoryWorkbenchView: View {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .stroke(Color.primary.opacity(0.1))
                                 }
+                            HStack(spacing: 10) {
+                                Button {
+                                    videoToRegenerate = segment
+                                } label: {
+                                    Label(appModel.localized("重新生成本段视频…", english: "Regenerate This Video…"),
+                                          systemImage: "arrow.triangle.2.circlepath")
+                                        .font(.callout.weight(.semibold))
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.indigo)
+                                .disabled(editingLocked)
+                                Text(appModel.localized("旧视频会保留在创作记录中", english: "The previous video stays in creation history"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            HStack(spacing: 10) {
+                                if let actual = segment.actualVideoLastFrame,
+                                   let asset = viewModel.mediaAsset(actual, projectID: project.id) {
+                                    StoryThumbnail(asset: asset)
+                                        .frame(width: 76, height: 48)
+                                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 6) {
+                                            Text(appModel.localized("成片末帧", english: "Video Final Frame"))
+                                                .font(.caption.weight(.semibold))
+                                            Label(appModel.localized("已确认用于衔接", english: "Confirmed for Continuity"),
+                                                  systemImage: "checkmark.circle.fill")
+                                                .font(.caption2.weight(.semibold)).foregroundStyle(.green)
+                                        }
+                                        Text(appModel.localized("默认衔接到下一段，也可手动改选下一段首帧",
+                                                                english: "Used for the next segment by default; you can still choose another first frame"))
+                                            .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                                    }
+                                } else {
+                                    Label(appModel.localized("尚未提取成片末帧", english: "Video final frame not extracted yet"),
+                                          systemImage: "photo.badge.arrow.down")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 4)
+                                let extracting = viewModel.isExtractingVideoLastFrame(segment.id, projectID: project.id)
+                                Button {
+                                    viewModel.reextractVideoLastFrame(segment.id)
+                                } label: {
+                                    if extracting {
+                                        HStack(spacing: 6) {
+                                            ProgressView().controlSize(.mini)
+                                            Text(appModel.localized("提取中", english: "Extracting"))
+                                        }
+                                    } else {
+                                        Label(segment.actualVideoLastFrame == nil
+                                              ? appModel.localized("提取末帧", english: "Extract Final Frame")
+                                              : appModel.localized("重新抽取", english: "Extract Again"),
+                                              systemImage: "arrow.clockwise")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(extracting)
+                            }
+                            if let index = project.segments.firstIndex(where: { $0.id == segment.id }),
+                               project.segments.indices.contains(index + 1) {
+                                let next = project.segments[index + 1]
+                                Button {
+                                    imageTarget = .init(assetID: nil, segmentID: next.id, frameRole: .first)
+                                } label: {
+                                    Label(appModel.localized("手动生成或选择下一段首帧",
+                                                             english: "Generate or Choose Next First Frame"),
+                                          systemImage: "sparkles.rectangle.stack")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(next.attempt != nil)
+                            }
                         }
                         .padding(12)
                         .background(Color.purple.opacity(0.045), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -862,13 +936,10 @@ struct StoryWorkbenchView: View {
                                 if let percent = viewModel.videoProgress(segment.id, projectID: project.id)?.percent {
                                     ProgressView(value: min(100, max(0, percent)), total: 100)
                                 }
-                                if let jobID = attempt.jobID {
-                                    Text(appModel.localized("任务 ID：\(jobID)", english: "Task ID: \(jobID)"))
-                                        .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                                } else {
+                                if attempt.jobID == nil {
                                     Text(appModel.localized(
-                                        "正在等待服务返回任务 ID，无需手动填写。",
-                                        english: "Waiting for the service to return a task ID. No manual input is needed."
+                                        "正在等待生成服务确认，请稍候。",
+                                        english: "Waiting for the generation service to confirm."
                                     ))
                                     .font(.caption).foregroundStyle(.secondary)
                                 }
@@ -876,17 +947,15 @@ struct StoryWorkbenchView: View {
                             .padding(12)
                             .background(Color.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                         } else {
-                            if let jobID = attempt.jobID {
-                                Text(appModel.localized("任务 ID：\(jobID)", english: "Task ID: \(jobID)"))
-                                    .font(.caption).textSelection(.enabled)
+                            if attempt.jobID != nil {
                                 Button(appModel.localized("查询原任务 / 恢复下载", english: "Check Task / Resume Download")) {
                                     viewModel.resumeVideo(segment.id)
                                 }
                                 .disabled(editingLocked)
                             } else {
                                 Text(appModel.localized(
-                                    "提交结果未返回任务 ID。客户端不会要求手动填写；请先核对服务商记录，再决定是否允许重试。",
-                                    english: "No task ID was returned. The app never asks you to enter one manually; check the provider record before allowing a retry."
+                                    "上次提交状态尚未确认。请先核对生成记录，再决定是否重试。",
+                                    english: "The previous submission is not yet confirmed. Check your generation history before retrying."
                                 ))
                                 .font(.caption).foregroundStyle(.orange)
                             }
@@ -908,21 +977,7 @@ struct StoryWorkbenchView: View {
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     videoActionPanel(segment)
                     if let videoModel = mediaStudio.models.first(where: { $0.id == project.models.videoModelID }) {
-                        if videoModel.supportsVideoLastFrame {
-                            Toggle(appModel.localized("生成视频时使用已确认尾帧", english: "Use Confirmed Last Frame for Video"),
-                                   isOn: Binding(get: { segment.useLastFrameForVideo }, set: {
-                                viewModel.setUseLastFrameForVideo($0, segmentID: segment.id)
-                            }))
-                            .disabled(editingLocked || segment.lastFrame == nil)
-                        } else {
-                            Label(appModel.localized("注意：当前 \(videoModel.modelName) 通过 OpenAI 兼容 /v1/videos 接入。本次视频请求不会发送尾帧，只发送首帧；尾帧仅用于生成下一段的连续首帧。",
-                                                     english: "Notice: \(videoModel.modelName) currently uses the OpenAI-compatible /v1/videos connection. Tail frames are not sent with this video request; only first frames are sent. Tail frames are used only to create a continuous first frame for the next segment."),
-                                  systemImage: "exclamationmark.triangle.fill")
-                                .font(.callout.weight(.semibold)).foregroundStyle(.orange)
-                                .padding(11).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.orange.opacity(0.22)))
-                        }
+                        videoGuidancePicker(segment, model: videoModel)
                     }
                     if !hasConfirmedAssets(segment) {
                         Text(appModel.localized("可以打开首帧或尾帧选择器，从本段已确认的素材中任选一个或多个进行生成。",
@@ -949,7 +1004,11 @@ struct StoryWorkbenchView: View {
                                   systemImage: "arrow.triangle.2.circlepath")
                         }
                         .buttonStyle(.bordered)
-                        .disabled(editingLocked || project.hasUnresolvedJobs || segment.video != nil)
+                        .disabled(editingLocked
+                                  || viewModel.activeVideoGenerationCount(projectID: project.id) > 0
+                                  || (segment.attempt != nil && segment.video == nil)
+                                  || segment.imageGenerationAttemptID != nil
+                                  || segment.lastFrameGenerationAttemptID != nil)
                         .help(appModel.localized("旧图片版本会保留；新计划应用后需要重新确认首帧与尾帧。",
                                                  english: "Existing image versions are kept; first and last frames must be confirmed again after applying the new plan."))
                     } else {
@@ -958,20 +1017,116 @@ struct StoryWorkbenchView: View {
                         Button(appModel.localized("细化这个 \(segment.seconds) 秒分段", english: "Refine This \(segment.seconds)-second Segment")) { confirmPlanning(.refine, targets: [segment.id]) }
                             .disabled(editingLocked)
                     }
-                }.padding(20)
-            }.storySurface(tint: .blue)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .storySurface(tint: .blue)
         } else {
-            ContentUnavailableView(appModel.localized("分段详情", english: "Segment Details"), systemImage: "sidebar.right",
-                                   description: Text(appModel.localized("选择一段，编辑镜头、素材和首帧。", english: "Select a segment to edit its shots, assets and first frame.")))
-                .frame(maxHeight: .infinity).storySurface(tint: .blue)
+            VStack(spacing: 14) {
+                Image(systemName: "rectangle.stack.badge.plus")
+                    .font(.system(size: 34, weight: .medium))
+                    .foregroundStyle(.blue)
+                    .frame(width: 68, height: 68)
+                    .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Text(appModel.localized("选择一个分段", english: "Select a Segment"))
+                    .font(.title3.weight(.semibold))
+                Text(appModel.localized("在左侧时间线选择分段后，可以查看镜头计划、首尾帧和视频。",
+                                        english: "Choose a segment from the timeline to review its shot plan, frames, and video."))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .storySurface(tint: .blue)
         }
+    }
+
+    @ViewBuilder private func videoGuidancePicker(_ segment: StorySegment,
+                                                  model: MediaGenerationModel) -> some View {
+        let index = project.segments.firstIndex(where: { $0.id == segment.id })
+        let hasPreviousVideo = index.map { $0 > 0 && project.segments[$0 - 1].video != nil } == true
+        VStack(alignment: .leading, spacing: 9) {
+            Text(appModel.localized("视频衔接方式", english: "Video Continuity Input"))
+                .font(.callout.weight(.semibold))
+            Picker("", selection: Binding(get: { segment.videoGuidanceMode }, set: {
+                viewModel.setVideoGuidanceMode($0, segmentID: segment.id)
+            })) {
+                Text(appModel.localized("仅首帧", english: "First Frame"))
+                    .tag(StoryVideoGuidanceMode.firstFrame)
+                if model.supportsVideoLastFrame
+                    && (segment.lastFrame != nil || segment.videoGuidanceMode == .firstAndLastFrames) {
+                    Text(appModel.localized("首帧 + 尾帧", english: "First + Last Frames"))
+                        .tag(StoryVideoGuidanceMode.firstAndLastFrames)
+                }
+                if model.supportsVideoReference
+                    && (hasPreviousVideo || segment.videoGuidanceMode == .previousVideo) {
+                    Text(appModel.localized("上一段视频", english: "Previous Video"))
+                        .tag(StoryVideoGuidanceMode.previousVideo)
+                }
+                if segment.videoGuidanceMode == .sourceVideo {
+                    Text(appModel.localized("原视频重做", english: "Original Video"))
+                        .tag(StoryVideoGuidanceMode.sourceVideo)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .disabled(editingLocked || segment.attempt != nil || segment.video != nil)
+
+            switch segment.videoGuidanceMode {
+            case .firstFrame:
+                Label(appModel.localized("只把当前确认首帧交给模型；已保存尾帧不会参与本次视频生成。",
+                                         english: "Only the confirmed first frame is sent; saved last frames are not used for this generation."),
+                      systemImage: "1.circle.fill")
+            case .firstAndLastFrames:
+                Label(appModel.localized("同时发送当前确认的首帧和尾帧，约束视频的开始与结束。",
+                                         english: "Sends both confirmed frames to constrain the beginning and end."),
+                      systemImage: "rectangle.leadinghalf.inset.filled.arrow.leading")
+            case .previousVideo:
+                Label(model.supportsVideoExtension
+                      ? appModel.localized("从紧邻上一段成片的结尾继续生成，延续人物、动作、光线与运镜；不会同时发送首帧或尾帧。",
+                                           english: "Continues from the end of the immediately previous cut, preserving character, action, lighting, and camera continuity; frame inputs are not sent at the same time.")
+                      : appModel.localized("把紧邻上一段的完整成片作为参考，帮助延续人物、动作和运镜；当前模型属于参考重生成，并非从结尾精确续写。",
+                                           english: "Uses the immediately previous cut as a reference for character, action, and camera continuity. This model regenerates from reference rather than precisely extending the ending."),
+                      systemImage: "film.stack.fill")
+            case .sourceVideo:
+                Label(model.supportsVideoEditing
+                      ? appModel.localized("编辑创作记录中最近一版原视频，按你填写的问题修改，并尽量保留未提及的画面。",
+                                           english: "Edits the latest archived original using your requested changes while preserving unaffected content where possible.")
+                      : appModel.localized("把最近一版原视频作为参考重新生成；当前模型不能精确编辑原片，画面可能整体变化。",
+                                           english: "Regenerates using the latest original as reference. This model cannot precisely edit the source, so the overall result may change."),
+                      systemImage: "arrow.triangle.2.circlepath.camera.fill")
+            }
+            if model.supportsVideoReference, index != 0, !hasPreviousVideo,
+               segment.videoGuidanceMode != .previousVideo {
+                Text(appModel.localized("上一段成片完成后，这里会出现“上一段视频”选项。",
+                                        english: "The Previous Video option appears after the preceding cut is complete."))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.blue.opacity(0.14)))
+    }
+
+    private func selectFirstSegmentIfNeeded(_ ids: [String]) {
+        guard !ids.isEmpty, viewModel.selectedSegmentID.map(ids.contains) != true else { return }
+        viewModel.selectedSegmentID = ids.first
     }
 
     private func frameCard(_ segment: StorySegment, role: StoryFrameRole) -> some View {
         let collection = segment.frames(for: role)
-        let frame = collection.confirmedImage ?? collection.images.last
+        // A cancelled last frame remains available in history, but must not keep
+        // occupying the active last-frame slot. First-frame generation still uses
+        // the latest image as a preview until the user confirms it.
+        let frame = role == .first ? (collection.confirmedImage ?? collection.images.last) : collection.confirmedImage
+        let isGenerating = viewModel.isGeneratingFrame(segment.id, role: role, projectID: project.id)
         let isFirst = role == .first
-        let previousTail = isFirst ? StoryContinuityContext.previousTail(project, segmentID: segment.id) : nil
+        let previousTail = isFirst ? StoryContinuityContext.previousActualVideoTail(project, segmentID: segment.id) : nil
         let directlyInherited = previousTail?.image.id == collection.confirmedImage?.id
             && segment.inheritedFirstFrameSourceSegmentID == previousTail?.segment.id
         return VStack(alignment: .leading, spacing: 8) {
@@ -982,35 +1137,90 @@ struct StoryWorkbenchView: View {
                 if collection.confirmedImage != nil {
                     Label(appModel.localized("已确认", english: "Confirmed"), systemImage: "checkmark.circle.fill")
                         .font(.caption2).foregroundStyle(.green)
+                } else if isGenerating {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text(appModel.localized("生成中", english: "Generating"))
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.indigo)
                 }
             }
             if directlyInherited {
-                Label(appModel.localized("已直接承接上一段尾帧 · 未调用图片模型",
-                                         english: "Directly inherited from the previous tail · No image model call"),
+                Label(appModel.localized("已承接上一段成片最后一帧 · 未调用图片模型",
+                                         english: "Inherited from the previous video's final frame · No image model call"),
                       systemImage: "link.circle.fill")
                     .font(.caption2.weight(.semibold)).foregroundStyle(.green)
             }
             Button {
-                if let frame, let asset = viewModel.mediaAsset(frame, projectID: project.id) { preview = .init(images: [asset]) }
+                if isGenerating || frame == nil {
+                    imageTarget = .init(assetID: nil, segmentID: segment.id, frameRole: role)
+                } else if let frame, let asset = viewModel.mediaAsset(frame, projectID: project.id) {
+                    preview = .init(images: [asset])
+                }
             } label: {
-                StoryThumbnail(asset: frame.flatMap { viewModel.mediaAsset($0, projectID: project.id) })
-                    .frame(height: 118).frame(maxWidth: .infinity).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
-            }.buttonStyle(.plain).disabled(frame == nil)
+                ZStack {
+                    StoryThumbnail(asset: frame.flatMap { viewModel.mediaAsset($0, projectID: project.id) })
+                        .frame(height: 118).frame(maxWidth: .infinity).clipped()
+                    if isGenerating {
+                        Color.black.opacity(frame == nil ? 0.025 : 0.3)
+                        VStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text(isFirst
+                                 ? appModel.localized("正在生成首帧…", english: "Generating First Frame…")
+                                 : appModel.localized("正在生成尾帧…", english: "Generating Last Frame…"))
+                                .font(.caption.weight(.semibold))
+                            Text(appModel.localized("点击查看状态", english: "Click to view status"))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(10)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
             Button(isFirst
                    ? appModel.localized("选择 / 上传 / 确认首帧", english: "Choose / Upload / Confirm First Frame")
                    : appModel.localized("选择 / 上传 / 确认尾帧", english: "Choose / Upload / Confirm Last Frame")) {
                 imageTarget = .init(assetID: nil, segmentID: segment.id, frameRole: role)
-            }.disabled(editingLocked || segment.attempt != nil)
-            Button {
-                imageTarget = .init(assetID: nil, segmentID: segment.id, frameRole: role)
-            } label: {
-                Label(frameGenerationTitle(collection, role: role),
-                      systemImage: collection.images.isEmpty ? "sparkles.rectangle.stack" : "arrow.clockwise")
+            }.disabled((editingLocked && !isGenerating) || segment.attempt != nil)
+            if isGenerating {
+                Button {
+                    imageTarget = .init(assetID: nil, segmentID: segment.id, frameRole: role)
+                } label: {
+                    Label(appModel.localized("查看生成状态", english: "View Generation Status"),
+                          systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
+            } else {
+                Button {
+                    imageTarget = .init(assetID: nil, segmentID: segment.id, frameRole: role)
+                } label: {
+                    Label(frameGenerationTitle(collection, role: role),
+                          systemImage: collection.images.isEmpty ? "sparkles.rectangle.stack" : "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
+                .disabled(editingLocked || segment.detail == nil || segment.attempt != nil
+                          || collection.generationAttemptID != nil)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.indigo)
-            .disabled(editingLocked || segment.detail == nil || segment.attempt != nil
-                      || collection.generationAttemptID != nil)
+            if !isFirst, collection.confirmedImage != nil,
+               segment.attempt == nil, segment.video == nil {
+                Button(role: .destructive) {
+                    viewModel.clearConfirmedLastFrame(segment.id)
+                } label: {
+                    Label(appModel.localized("取消使用尾帧", english: "Stop Using Last Frame"),
+                          systemImage: "xmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .disabled(editingLocked || isGenerating)
+            }
+            if let error = viewModel.frameGenerationError(segment.id, role: role, projectID: project.id) {
+                Text(error).font(.caption2).foregroundStyle(.red).lineLimit(3)
+            }
         }
         .padding(10).frame(maxWidth: .infinity)
         .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 11))
@@ -1019,21 +1229,15 @@ struct StoryWorkbenchView: View {
 
     @ViewBuilder private func videoActionPanel(_ segment: StorySegment) -> some View {
         if segment.video == nil, segment.attempt == nil, segment.detail != nil {
-            let supportsLastFrame = mediaStudio.models.first(where: { $0.id == project.models.videoModelID })?
-                .supportsVideoLastFrame == true
             let hasGeneratedFirst = !segment.firstFrames.images.isEmpty
             let hasUnconfirmedFirst = segment.firstFrame == nil && hasGeneratedFirst
-            let hasUnconfirmedLast = segment.lastFrame == nil && !segment.lastFrames.images.isEmpty
-
             VStack(alignment: .leading, spacing: 10) {
                 if hasUnconfirmedFirst {
                     Button {
                         viewModel.confirmLatestFrames(segment.id,
-                                                      useConfirmedLastFrameForVideo: supportsLastFrame)
+                                                      useConfirmedLastFrameForVideo: false)
                     } label: {
-                        Label(hasUnconfirmedLast
-                              ? appModel.localized("确认最新首尾帧", english: "Confirm Latest First & Last Frames")
-                              : appModel.localized("确认最新首帧", english: "Confirm Latest First Frame"),
+                        Label(appModel.localized("确认最新首帧", english: "Confirm Latest First Frame"),
                               systemImage: "checkmark.circle.fill")
                             .frame(maxWidth: .infinity)
                     }
@@ -1043,27 +1247,17 @@ struct StoryWorkbenchView: View {
                                             english: "Images exist but no version is selected. Confirming does not call a model or incur cost."))
                         .font(.caption).foregroundStyle(.secondary)
                 } else if segment.firstFrame != nil {
-                    if hasUnconfirmedLast {
-                        Button {
-                            viewModel.confirmLatestFrames(segment.id,
-                                                          useConfirmedLastFrameForVideo: supportsLastFrame)
-                        } label: {
-                            Label(appModel.localized("确认最新尾帧", english: "Confirm Latest Last Frame"),
-                                  systemImage: "checkmark.circle")
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(editingLocked)
-                    }
                     Button {
                         viewModel.selectedSegments = [segment.id]
-                        confirmsBatch = true
+                        mediaBatchKind = .videos
+                        showsMediaBatch = true
                     } label: {
                         Label(appModel.localized("生成本段视频…", english: "Generate This Segment Video…"),
                               systemImage: "play.rectangle.fill")
                             .font(.headline).frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent).tint(.blue).controlSize(.large)
-                    .disabled(editingLocked)
+                    .disabled(viewModel.isBusy || isAgentDraftVisible)
                     Text(appModel.localized("点击后仍会显示费用确认；确认前不会提交视频任务。",
                                             english: "A cost confirmation appears next; no video task is submitted before confirmation."))
                         .font(.caption).foregroundStyle(.secondary)
@@ -1098,6 +1292,16 @@ struct StoryWorkbenchView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            if let playlistGroup {
+                Button { playlistPreview = playlistGroup } label: {
+                    Label(playlistGroup.isComplete
+                          ? appModel.localized("全剧连播", english: "Play Full Story")
+                          : appModel.localized("连播已完成分段", english: "Play Completed Segments"),
+                          systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
+            }
             if viewModel.isBusy {
                 ProgressView().controlSize(.small)
                 Button(viewModel.pauseRequested ? appModel.localized("将在当前步骤结束后暂停", english: "Pausing after this step") : appModel.localized("暂停后续任务", english: "Pause Remaining Tasks")) { viewModel.requestPause() }
@@ -1107,9 +1311,13 @@ struct StoryWorkbenchView: View {
                 Text("\(selectedReady.count) " + appModel.localized("段已选", english: "selected") + " · \(selectedReadySeconds)s").font(.callout)
                 Button(appModel.localized("选择全部就绪段", english: "Select Ready Segments")) {
                     viewModel.selectedSegments = Set(project.segments.filter(\.isReady).map(\.id))
-                }.disabled(editingLocked)
-                Button(appModel.localized("批量生成所选视频", english: "Generate Selected Videos")) { confirmsBatch = true }
-                    .buttonStyle(.borderedProminent).tint(.blue).disabled(editingLocked || selectedReady.isEmpty)
+                }.disabled(viewModel.isBusy || isAgentDraftVisible)
+                Button(appModel.localized("批量生成所选视频", english: "Generate Selected Videos")) {
+                    mediaBatchKind = .videos
+                    showsMediaBatch = true
+                }
+                    .buttonStyle(.borderedProminent).tint(.blue)
+                    .disabled(viewModel.isBusy || isAgentDraftVisible || selectedReady.isEmpty)
             }
         }
         .padding(.horizontal, 24).padding(.vertical, 12)
@@ -1206,6 +1414,12 @@ struct StoryWorkbenchView: View {
             return appModel.localized("正在生成视频", english: "Generating Video")
         }
         if segment.attempt != nil { return appModel.localized("已提交 · 查询原任务", english: "Submitted · Check Existing Task") }
+        if viewModel.isGeneratingFrame(segment.id, role: .first, projectID: project.id) {
+            return appModel.localized("正在生成首帧 · 可点开查看", english: "Generating First Frame · Click to View")
+        }
+        if viewModel.isGeneratingFrame(segment.id, role: .last, projectID: project.id) {
+            return appModel.localized("正在生成尾帧 · 可点开查看", english: "Generating Last Frame · Click to View")
+        }
         if segment.detail == nil { return appModel.localized("待细化镜头计划", english: "Needs Shot Plan") }
         if segment.firstFrame == nil {
             return segment.firstFrames.images.isEmpty
@@ -1217,9 +1431,7 @@ struct StoryWorkbenchView: View {
     private func time(_ seconds: Int) -> String { String(format: "%02d:%02d", seconds / 60, seconds % 60) }
     private func rememberDraft() { viewModel.rememberSourceDraft(projectID: project.id, source: source, style: style, ratio: ratio) }
     private func confirmPlanning(_ stage: StoryAgentRun.Stage, targets: [String]) {
-        if viewModel.supportsAgentPlanning { planningConfirmation = .init(stage: stage, targets: targets, project: project) }
-        else if stage == .outline { viewModel.planOutline() }
-        else { viewModel.refineSegments(targets) }
+        planningConfirmation = .init(stage: stage, targets: targets, project: project)
     }
 }
 

@@ -147,9 +147,9 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         let wireProtocol = runtime.videoProtocol
         var job: ProviderVideoJob
         if let existingJobID {
-            let url = try wireProtocol == .miniMaxNative
-                ? Self.miniMaxEndpoint(baseURL: runtime.baseURL ?? "", jobID: existingJobID)
-                : Self.videoJobEndpoint(baseURL: runtime.baseURL ?? "", jobID: existingJobID)
+            let url = try Self.videoStatusEndpoint(
+                baseURL: runtime.baseURL ?? "", jobID: existingJobID, wireProtocol: wireProtocol
+            )
             job = try await sendVideoJobRequest(.init(url: url, method: "GET", headers: Self.providerHeaders(runtime: runtime)), wireProtocol: wireProtocol)
         } else {
             let createRequest = try Self.makeVideoCreateRequest(runtime: runtime, request: request)
@@ -167,11 +167,8 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             if videoPollIntervalNanoseconds > 0 {
                 try await Task.sleep(nanoseconds: videoPollIntervalNanoseconds)
             }
-            let statusURL = try wireProtocol == .miniMaxNative ? Self.miniMaxEndpoint(
-                baseURL: runtime.baseURL ?? "", jobID: job.id
-            ) : Self.videoJobEndpoint(
-                baseURL: runtime.baseURL ?? "",
-                jobID: job.id
+            let statusURL = try Self.videoStatusEndpoint(
+                baseURL: runtime.baseURL ?? "", jobID: job.id, wireProtocol: wireProtocol
             )
             job = try await sendVideoJobRequest(
                 HTTPRequest(
@@ -191,7 +188,7 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         try Task.checkCancellation()
         let contentURL: URL
         let downloadHeaders: [String: String]
-        if wireProtocol == .miniMaxNative {
+        if wireProtocol == .miniMaxNative || wireProtocol == .volcengineArk {
             guard let url = job.contentURL, url.scheme?.lowercased() == "https",
                   url.host != nil, url.user == nil, url.password == nil else {
                 throw MediaGenerationClientError.invalidProviderResponse
@@ -327,8 +324,22 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         if runtime.videoProtocol == .miniMaxNative {
             return try makeMiniMaxCreateRequest(runtime: runtime, request: request, profile: profile)
         }
+        if runtime.videoProtocol == .volcengineArk {
+            return try makeSeedanceCreateRequest(runtime: runtime, request: request, profile: profile)
+        }
         guard profile.durations.contains(request.seconds), profile.sizes.contains(request.size) else {
             throw MediaGenerationClientError.invalidVideoOptions
+        }
+        if request.referenceVideo != nil, !profile.supportsReferenceVideo {
+            throw MediaGenerationClientError.unsupportedReferenceVideoProtocol
+        }
+        if profile.isSeedance {
+            if request.referenceVideo != nil {
+                throw MediaGenerationClientError.unsupportedReferenceVideoProtocol
+            }
+            if request.lastFrameImage != nil {
+                throw MediaGenerationClientError.unsupportedLastFrameProtocol
+            }
         }
         let endpoint = try videoCreateEndpoint(baseURL: runtime.baseURL ?? "")
         var headers = providerHeaders(runtime: runtime)
@@ -392,6 +403,10 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
     private static func miniMaxPayload(
         runtime: RuntimeModelConfig, request: VideoGenerationRequest, profile: VideoGenerationProfile
     ) throws -> [String: Any] {
+        guard request.referenceVideo == nil
+                || (request.inputImage == nil && request.lastFrameImage == nil) else {
+            throw MediaGenerationClientError.mixedFrameAndReferenceVideoInputs
+        }
         guard profile.sizes.contains(request.size), profile.durations.contains(request.seconds),
               (request.inputImage != nil || VideoGenerationProfile.miniMaxRatios.contains(request.ratio)) else {
             throw MediaGenerationClientError.invalidVideoOptions
@@ -420,6 +435,17 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
                 "role": "last_frame",
             ])
         }
+        if let video = request.referenceVideo {
+            guard profile.supportsReferenceVideo else {
+                throw MediaGenerationClientError.unsupportedReferenceVideoProtocol
+            }
+            try validateMiniMaxReferenceVideo(video)
+            content.append([
+                "type": "video_url",
+                "video_url": ["url": "data:\(video.mimeType.lowercased());base64,\(video.base64Data)"],
+                "role": "reference_video",
+            ])
+        }
         return [
             "model": runtime.model,
             "content": content,
@@ -427,6 +453,130 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             "duration": request.seconds,
             "ratio": request.inputImage == nil && request.lastFrameImage == nil ? request.ratio : "adaptive",
         ]
+    }
+
+    // https://ark.volcengine.com/region:cn-beijing/docs/82379/1520757?lang=zh
+    private static func makeSeedanceCreateRequest(
+        runtime: RuntimeModelConfig,
+        request: VideoGenerationRequest,
+        profile: VideoGenerationProfile
+    ) throws -> HTTPRequest {
+        guard profile.isSeedance else {
+            throw MediaGenerationClientError.invalidModelConfiguration
+        }
+        let payload = try seedancePayload(runtime: runtime, request: request, profile: profile)
+        var headers = providerHeaders(runtime: runtime)
+        headers["Content-Type"] = "application/json"
+        return HTTPRequest(
+            url: try arkVideoEndpoint(baseURL: runtime.baseURL ?? ""),
+            method: "POST", headers: headers,
+            body: try JSONSerialization.data(withJSONObject: payload), timeoutInterval: 120
+        )
+    }
+
+    private static func seedancePayload(
+        runtime: RuntimeModelConfig,
+        request: VideoGenerationRequest,
+        profile: VideoGenerationProfile
+    ) throws -> [String: Any] {
+        guard profile.sizes.contains(request.size) else {
+            throw MediaGenerationClientError.invalidVideoOptions
+        }
+        guard request.referenceVideo == nil
+                || (request.inputImage == nil && request.lastFrameImage == nil) else {
+            throw MediaGenerationClientError.mixedFrameAndReferenceVideoInputs
+        }
+        if request.referencePurpose != .reference {
+            guard request.referenceVideo != nil else {
+                throw MediaGenerationClientError.missingReferenceVideo
+            }
+        }
+        let duration = request.referencePurpose == .edit ? -1 : request.seconds
+        guard duration == -1 || profile.durations.contains(duration) else {
+            throw MediaGenerationClientError.invalidVideoOptions
+        }
+        var content: [[String: Any]] = [[
+            "type": "text",
+            "text": seedancePrompt(request.prompt, purpose: request.referencePurpose),
+        ]]
+        if let image = request.inputImage {
+            try validateSeedanceImage(image)
+            content.append([
+                "type": "image_url",
+                "image_url": ["url": "data:\(image.mimeType.lowercased());base64,\(image.base64Data)"],
+                "role": "first_frame",
+            ])
+        }
+        if let image = request.lastFrameImage {
+            guard request.inputImage != nil else {
+                throw MediaGenerationClientError.unsupportedLastFrameProtocol
+            }
+            try validateSeedanceImage(image)
+            content.append([
+                "type": "image_url",
+                "image_url": ["url": "data:\(image.mimeType.lowercased());base64,\(image.base64Data)"],
+                "role": "last_frame",
+            ])
+        }
+        if let video = request.referenceVideo {
+            try validateSeedanceReferenceVideo(video)
+            content.append([
+                "type": "video_url",
+                "video_url": ["url": "data:\(video.mimeType.lowercased());base64,\(video.base64Data)"],
+                "role": "reference_video",
+            ])
+        }
+        var payload: [String: Any] = [
+            "model": runtime.model,
+            "content": content,
+            "resolution": request.size,
+            "ratio": request.referencePurpose == .reference
+                ? (request.inputImage == nil ? request.ratio : "adaptive") : "adaptive",
+            "duration": duration,
+            "generate_audio": true,
+        ]
+        if request.referenceVideo != nil {
+            switch request.referencePurpose {
+            case .reference: payload["omni_reference_task_type"] = "reference"
+            case .edit: payload["omni_reference_task_type"] = "edit"
+            case .extend: payload["omni_reference_task_type"] = "extend"
+            }
+        }
+        if profile == .seedance25 {
+            payload["output_format"] = "mp4"
+        }
+        return payload
+    }
+
+    private static func seedancePrompt(
+        _ prompt: String, purpose: VideoGenerationReferencePurpose
+    ) -> String {
+        let value = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch purpose {
+        case .reference:
+            return value
+        case .edit:
+            return "视频编辑：以@视频1为原视频，严格执行以下修改，未提及的主体、场景与镜头尽量保持不变。\n\(value)"
+        case .extend:
+            return "延长@视频1：从原视频结尾自然继续，保持人物、场景、动作方向、光线与运镜连贯，不要重复原视频已有内容。\n\(value)"
+        }
+    }
+
+    private static func validateSeedanceImage(_ image: ImageGenerationInputImage) throws {
+        let mimeType = image.mimeType.lowercased()
+        guard ["image/png", "image/jpeg", "image/webp"].contains(mimeType),
+              let data = Data(base64Encoded: image.base64Data), !data.isEmpty,
+              data.count <= 30 * 1024 * 1024 else {
+            throw MediaGenerationClientError.invalidInputImage
+        }
+    }
+
+    private static func validateSeedanceReferenceVideo(_ video: VideoGenerationInputVideo) throws {
+        guard ["video/mp4", "video/quicktime"].contains(video.mimeType.lowercased()),
+              let data = Data(base64Encoded: video.base64Data), !data.isEmpty,
+              data.count <= 50 * 1024 * 1024 else {
+            throw MediaGenerationClientError.invalidReferenceVideo
+        }
     }
 
     private static func validateMiniMaxImage(_ image: ImageGenerationInputImage) throws {
@@ -443,6 +593,16 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
               (256...5760).contains(width), (256...5760).contains(height),
               (0.4...2.5).contains(Double(width) / Double(height)) else {
             throw MediaGenerationClientError.invalidMiniMaxImageDimensions
+        }
+    }
+
+    /// Base64 adds roughly one third to the request size. Keep the local source below
+    /// 47 MiB so the complete JSON body remains under MiniMax's 64 MiB request limit.
+    private static func validateMiniMaxReferenceVideo(_ video: VideoGenerationInputVideo) throws {
+        guard ["video/mp4", "video/quicktime"].contains(video.mimeType.lowercased()),
+              let data = Data(base64Encoded: video.base64Data), !data.isEmpty,
+              data.count <= 47 * 1024 * 1024 else {
+            throw MediaGenerationClientError.invalidReferenceVideo
         }
     }
 
@@ -467,6 +627,43 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             return root.appendingPathComponent("query/video_generation").appendingPathComponent(jobID)
         }
         return root.appendingPathComponent("video_generation")
+    }
+
+    private static func arkVideoEndpoint(baseURL: String, jobID: String? = nil) throws -> URL {
+        var value = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.hasSuffix("/") { value.removeLast() }
+        if let range = value.range(of: "/contents/generations/tasks", options: .backwards) {
+            value = String(value[..<range.lowerBound])
+        }
+        guard var components = URLComponents(string: value),
+              ["https", "http"].contains(components.scheme?.lowercased() ?? ""),
+              components.host != nil else {
+            throw MediaGenerationClientError.invalidModelConfiguration
+        }
+        if components.path.isEmpty || components.path == "/" {
+            components.path = "/api/v3"
+        }
+        components.query = nil
+        components.fragment = nil
+        guard let root = components.url else {
+            throw MediaGenerationClientError.invalidModelConfiguration
+        }
+        var endpoint = root.appendingPathComponent("contents/generations/tasks")
+        if let jobID { endpoint.appendPathComponent(jobID) }
+        return endpoint
+    }
+
+    private static func videoStatusEndpoint(
+        baseURL: String, jobID: String, wireProtocol: VideoWireProtocol
+    ) throws -> URL {
+        switch wireProtocol {
+        case .miniMaxNative:
+            try miniMaxEndpoint(baseURL: baseURL, jobID: jobID)
+        case .volcengineArk:
+            try arkVideoEndpoint(baseURL: baseURL, jobID: jobID)
+        case .openAICompatible:
+            try videoJobEndpoint(baseURL: baseURL, jobID: jobID)
+        }
     }
 
     private static func videoMultipartBody(
@@ -567,8 +764,9 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         guard let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
             throw MediaGenerationClientError.invalidProviderResponse
         }
-        if wireProtocol == .miniMaxNative && isCreation {
-            guard let id = (root["task_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if (wireProtocol == .miniMaxNative || wireProtocol == .volcengineArk) && isCreation {
+            let rawID = wireProtocol == .miniMaxNative ? root["task_id"] : root["id"]
+            guard let id = (rawID as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !id.isEmpty else {
                 throw MediaGenerationClientError.invalidProviderResponse
             }
@@ -607,7 +805,10 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             progress: progress,
             model: object["model"] as? String,
             errorMessage: errorMessage,
-            contentURL: ((object["content"] as? [String: Any])?["url"] as? String).flatMap(URL.init(string:))
+            contentURL: {
+                let content = object["content"] as? [String: Any]
+                return ((content?["url"] ?? content?["video_url"]) as? String).flatMap(URL.init(string:))
+            }()
         )
     }
 
@@ -702,7 +903,7 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
     }
 }
 
-private enum VideoWireProtocol { case openAICompatible, miniMaxNative }
+private enum VideoWireProtocol { case openAICompatible, miniMaxNative, volcengineArk }
 
 private struct RuntimeModelConfig: Decodable, Sendable {
     var provider: String?
@@ -722,10 +923,18 @@ private struct RuntimeModelConfig: Decodable, Sendable {
         switch provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "gpt", "openai": return .openAICompatible
         case "minimax": return .miniMaxNative
+        case "volcengine", "ark", "doubao", "seedance", "bytedance", "byteplus":
+            return .volcengineArk
         default:
             let host = URL(string: baseURL ?? "")?.host?.lowercased()
-            return ["api.minimax.io", "api.minimaxi.com"].contains(host ?? "")
-                ? .miniMaxNative : .openAICompatible
+            if ["api.minimax.io", "api.minimaxi.com"].contains(host ?? "") {
+                return .miniMaxNative
+            }
+            if host == "ark.cn-beijing.volces.com"
+                || host?.hasSuffix(".volcengineapi.com") == true {
+                return .volcengineArk
+            }
+            return .openAICompatible
         }
     }
 }
@@ -786,6 +995,10 @@ private enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissi
     case invalidMiniMaxPrompt
     case invalidMiniMaxImageDimensions
     case unsupportedLastFrameProtocol
+    case invalidReferenceVideo
+    case unsupportedReferenceVideoProtocol
+    case mixedFrameAndReferenceVideoInputs
+    case missingReferenceVideo
     case videoEndpointReturnedHTML(String)
 
     var errorDescription: String? {
@@ -810,6 +1023,14 @@ private enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissi
             "MiniMax 参考图宽高须为 256–5760 像素，宽高比须为 0.4–2.5。"
         case .unsupportedLastFrameProtocol:
             "尾帧约束需要同时提供首帧，且当前视频模型必须支持首尾帧生成。"
+        case .invalidReferenceVideo:
+            "参考视频必须是有效的 MP4 或 MOV，且文件不能超过 47 MB。"
+        case .unsupportedReferenceVideoProtocol:
+            "当前视频模型或接口不支持使用上一段视频作为参考。"
+        case .mixedFrameAndReferenceVideoInputs:
+            "上一段视频参考不能与首帧或尾帧同时发送，请重新选择视频衔接方式。"
+        case .missingReferenceVideo:
+            "视频编辑或延续需要先提供一段原视频。"
         case let .videoEndpointReturnedHTML(endpoint):
             "视频接口 \(endpoint) 返回了网页而非任务数据，请检查客户端协议与接口路径是否匹配。"
         case .invalidVideoContent:
@@ -825,7 +1046,9 @@ private enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissi
         switch self {
         case .preflightFailed, .invalidModelConfiguration, .invalidInputImage,
              .invalidVideoOptions, .invalidMiniMaxPrompt, .invalidMiniMaxImageDimensions,
-             .unsupportedLastFrameProtocol:
+             .unsupportedLastFrameProtocol, .invalidReferenceVideo,
+             .unsupportedReferenceVideoProtocol, .mixedFrameAndReferenceVideoInputs,
+             .missingReferenceVideo:
             false
         case .invalidProviderResponse, .responseTooLarge, .providerRejected,
              .invalidVideoContent, .videoTimedOut, .videoFailed, .videoEndpointReturnedHTML:

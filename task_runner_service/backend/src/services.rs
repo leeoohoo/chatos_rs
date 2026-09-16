@@ -276,7 +276,6 @@ pub fn system_config(
         scheduler_poll_interval_ms: config.scheduler_poll_interval.as_millis() as u64,
         worker_claim_ttl_ms: config.worker_claim_ttl.as_millis() as u64,
         worker_concurrency: config.worker_concurrency,
-        auto_memory_summary: config.auto_memory_summary,
         default_task_execution_max_iterations: config.default_task_execution_max_iterations,
         task_execution_max_iterations: task_runner_runtime_settings.max_iterations,
         task_runner_review_read_only_iterations: task_runner_runtime_settings

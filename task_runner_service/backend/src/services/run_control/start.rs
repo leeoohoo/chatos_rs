@@ -326,6 +326,10 @@ impl RunService {
             {
                 task_record.status = TaskStatus::Queued;
                 task_record.last_run_id = Some(run.id.clone());
+                // A task-level result belongs to the run that produced it. Once a new
+                // run is queued, retaining the previous terminal summary makes clients
+                // present the old failure as if it came from the active retry.
+                task_record.result_summary = None;
                 task_record.updated_at = now_rfc3339();
                 if let Err(err) = self.store.save_task(task_record).await {
                     warn!(

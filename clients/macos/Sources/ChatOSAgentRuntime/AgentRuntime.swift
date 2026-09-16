@@ -35,6 +35,12 @@ public struct AgentRuntime: Sendable {
         let elapsedBefore = state.elapsedSeconds
         let registry = Dictionary(uniqueKeysWithValues: tools.map { ($0.name, $0) })
         let contextPolicy = policy.context ?? AgentContextPolicy()
+        // Memory Engine is composed once at the start of this run/resume. New
+        // messages are appended locally for the rest of the model/tool loop so
+        // official OpenAI Responses can keep one stable continuation and let
+        // server-side compaction own in-run context management.
+        var activeModelMessages: [AgentMessage]?
+        var activeCheckpointMessageCount = state.messages.count
         let deadline = started.addingTimeInterval(Double(policy.runTimeoutSeconds) - elapsedBefore)
         func snapshot(_ value: AgentRunCheckpoint) -> AgentRunCheckpoint {
             var copy = value; copy.elapsedSeconds = elapsedBefore + Date().timeIntervalSince(started); return copy
@@ -56,6 +62,30 @@ public struct AgentRuntime: Sendable {
         do {
             while true {
                 try Task.checkCancellation()
+                // Flush every newly appended user/assistant/tool message before
+                // handling another tool or taking any normal early-exit path.
+                // This keeps Memory Engine as the complete audit transcript even
+                // though it is composed only once per run/resume boundary.
+                if let contextProvider, let memory = state.memory,
+                   memory.syncedMessageCount < state.messages.count {
+                    let synced = try await contextProvider.prepare(
+                        checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
+                        deadline: deadline, synchronizeOnly: true,
+                        shouldPause: { false }, record: record
+                    )
+                    state = synced.checkpoint
+                    if activeModelMessages != nil {
+                        guard activeCheckpointMessageCount <= state.messages.count else {
+                            throw AgentContextError.invalidHistory
+                        }
+                        activeModelMessages!.append(
+                            contentsOf: state.messages[activeCheckpointMessageCount...]
+                        )
+                        activeCheckpointMessageCount = state.messages.count
+                    }
+                } else if state.memory != nil, contextProvider == nil {
+                    throw AgentContextError.unavailable
+                }
                 if await shouldPause() {
                     state.status = .paused; try await emit("paused", "已保存检查点，后续步骤暂停")
                     return snapshot(state)
@@ -134,18 +164,21 @@ public struct AgentRuntime: Sendable {
                 }
                 var messages: [AgentMessage]
                 if let contextProvider {
-                    let prepared = try await contextProvider.prepare(checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
-                        deadline: deadline, shouldPause: shouldPause, record: record)
-                    state = prepared.checkpoint; messages = prepared.messages
+                    if activeModelMessages == nil {
+                        let prepared = try await contextProvider.prepare(
+                            checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
+                            deadline: deadline, shouldPause: shouldPause, record: record
+                        )
+                        state = prepared.checkpoint
+                        activeModelMessages = prepared.messages
+                        activeCheckpointMessageCount = state.messages.count
+                    }
+                    messages = activeModelMessages!
                 } else {
                     guard state.memory == nil else { throw AgentContextError.unavailable }
                     messages = state.messages
-                    guard try AgentContextBudget.estimate(messages: messages, tools: tools) <= contextPolicy.hardInputLimit else {
-                        throw AgentContextError.budgetExceeded
-                    }
                 }
                 var response: AgentMessage?
-                var recoveredOverflow = false
                 for attempt in 0...policy.maximumRequestRetries {
                     try Task.checkCancellation()
                     if await shouldPause() { throw CancellationError() }
@@ -161,13 +194,6 @@ public struct AgentRuntime: Sendable {
                         }
                         break
                     } catch {
-                        if case AgentRuntimeError.contextOverflow = error, let contextProvider,
-                           !recoveredOverflow, attempt < policy.maximumRequestRetries, state.modelCalls < policy.maximumModelCalls {
-                            let prepared = try await contextProvider.prepare(checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
-                                forceCompaction: true, deadline: deadline, shouldPause: shouldPause, record: record)
-                            state = prepared.checkpoint; messages = prepared.messages; recoveredOverflow = true
-                            continue
-                        }
                         guard attempt < policy.maximumRequestRetries, AgentRuntimeError.isTransient(error) else { throw error }
                         let retryNumber = attempt + 1
                         let delaySeconds = Self.retryDelaySeconds(forRetry: retryNumber)
@@ -184,6 +210,9 @@ public struct AgentRuntime: Sendable {
                       Set(response.toolCalls.map(\.id)).count == response.toolCalls.count,
                       response.toolCalls.allSatisfy({ !$0.id.isEmpty && state.receipts[$0.id] == nil }) else { throw AgentRuntimeError.invalidResponse }
                 state.noProgressRounds += 1
+                var accumulatedUsage = state.usage ?? AgentUsage()
+                accumulatedUsage.add(response.usage)
+                state.usage = accumulatedUsage
                 state.messages.append(response)
                 if response.toolCalls.isEmpty {
                     state.messages.append(.init(role: .user, content: "请根据已保存的业务状态继续调用工具；只有调用结束工具并通过业务校验才能结束。"))

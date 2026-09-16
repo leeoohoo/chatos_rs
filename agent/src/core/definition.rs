@@ -12,7 +12,6 @@ pub trait AgentIdentity: Send + Sync {
 pub trait SystemAgentDefinition: AgentIdentity {
     fn message_mode(&self) -> &'static str;
     fn message_source(&self) -> &'static str;
-    fn context_overflow_trigger(&self) -> &'static str;
 
     fn default_temperature(&self) -> Option<f64> {
         None
@@ -70,10 +69,6 @@ mod tests {
 
         fn message_source(&self) -> &'static str {
             "test"
-        }
-
-        fn context_overflow_trigger(&self) -> &'static str {
-            "test_overflow"
         }
 
         fn default_temperature(&self) -> Option<f64> {

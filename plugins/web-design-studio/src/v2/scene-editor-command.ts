@@ -533,9 +533,9 @@ export function createSceneEditorCommandTransaction(
         gap: { row: 0, column: 0 },
         alignItems: 'stretch',
         justifyContent: 'start',
-        sizingX: 'fixed',
+        sizingX: 'fill',
         sizingY: 'hug',
-        minHeight: command.height,
+        minHeight: 1,
         position: 'flow',
         clipContent: false
       },

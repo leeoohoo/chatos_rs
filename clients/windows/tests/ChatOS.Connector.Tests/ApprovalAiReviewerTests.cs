@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using ChatOS.Connector.Approval;
 using ChatOS.Connector.Gateway;
 using ChatOS.Connector.Relay;
@@ -74,7 +75,7 @@ public sealed class ApprovalAiReviewerTests
         {
             authorization = request.Headers.Authorization?.ToString();
             body = await request.Content!.ReadAsStringAsync();
-            return Json(HttpStatusCode.OK, ToolDecision("approve", "Read-only command.", true));
+            return Json(HttpStatusCode.OK, ResponsesToolDecision("approve", "Read-only command.", true));
         });
 
         var result = await reviewer.ReviewAsync(context.Request(), context.Risk);
@@ -88,6 +89,196 @@ public sealed class ApprovalAiReviewerTests
     }
 
     [Fact]
+    public async Task ReviewerSynchronizesCompleteMemoryTranscriptAndUsesComposedContext()
+    {
+        var context = await TestContext.CreateAsync();
+        var requests = new List<(HttpMethod Method, Uri Uri, string Body)>();
+        string? memoryThreadId = null;
+        var handler = new DelegateHandler(async request =>
+        {
+            var body = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync();
+            requests.Add((request.Method, request.RequestUri!, body));
+            if (request.RequestUri!.AbsolutePath == "/api/memory/context/compose")
+            {
+                using var composeRequest = JsonDocument.Parse(body);
+                var threadId = composeRequest.RootElement.GetProperty("thread_id").GetString();
+                return Json(HttpStatusCode.OK, $$"""
+                    {
+                      "thread_id": "{{threadId}}",
+                      "blocks": [{"block_type":"thread_summary","text":"durable approval context"}],
+                      "recent_records": [],
+                      "meta": {"recent_record_count": 0}
+                    }
+                    """);
+            }
+            if (request.RequestUri.AbsolutePath.EndsWith("/records/batch-sync", StringComparison.Ordinal))
+            {
+                using var syncRequest = JsonDocument.Parse(body);
+                var count = syncRequest.RootElement.GetProperty("records").GetArrayLength();
+                return Json(HttpStatusCode.OK, $$"""
+                    {"thread_id":"{{memoryThreadId}}","received_count":{{count}},"upserted_count":{{count}}}
+                    """);
+            }
+            if (request.Method == HttpMethod.Put &&
+                request.RequestUri.AbsolutePath.StartsWith("/api/memory/threads/", StringComparison.Ordinal))
+            {
+                memoryThreadId = Uri.UnescapeDataString(request.RequestUri.AbsolutePath.Split('/')[^1]);
+                using var threadRequest = JsonDocument.Parse(body);
+                var root = threadRequest.RootElement;
+                return Json(HttpStatusCode.OK, $$"""
+                    {
+                      "id":"{{memoryThreadId}}",
+                      "tenant_id":"{{root.GetProperty("tenant_id").GetString()}}",
+                      "source_id":"{{root.GetProperty("source_id").GetString()}}",
+                      "subject_id":"{{root.GetProperty("subject_id").GetString()}}"
+                    }
+                    """);
+            }
+            if (request.RequestUri.Host == "provider.example")
+            {
+                return Json(HttpStatusCode.OK, ResponsesToolDecision("approve", "Safe.", true, includeUsage: true));
+            }
+            return Json(HttpStatusCode.NotFound, "{}");
+        });
+        var factory = new FakeHttpClientFactory(new HttpClient(handler));
+        var reviewer = new OpenAiCompatibleCommandApprovalReviewer(
+            context.Configuration,
+            context.Runtime,
+            factory,
+            new ApprovalMemoryEngineRecorder(factory));
+
+        var result = await reviewer.ReviewAsync(context.Request(), context.Risk);
+
+        Assert.Equal(CommandApprovalAiDecisionKind.Approve, result.Decision);
+        Assert.Equal(5, requests.Count);
+        Assert.Equal(HttpMethod.Put, requests[0].Method);
+        Assert.StartsWith("/api/memory/threads/", requests[0].Uri.AbsolutePath, StringComparison.Ordinal);
+        Assert.EndsWith("/records/batch-sync", requests[1].Uri.AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal("/api/memory/context/compose", requests[2].Uri.AbsolutePath);
+        Assert.Equal("/v1/responses", requests[3].Uri.AbsolutePath);
+        Assert.EndsWith("/records/batch-sync", requests[4].Uri.AbsolutePath, StringComparison.Ordinal);
+
+        using var initialSync = JsonDocument.Parse(requests[1].Body);
+        var initialRecords = initialSync.RootElement.GetProperty("records");
+        Assert.Equal(new[] { "system", "user" }, initialRecords.EnumerateArray()
+            .Select(record => record.GetProperty("role").GetString()).ToArray());
+
+        using var modelRequest = JsonDocument.Parse(requests[3].Body);
+        var input = modelRequest.RootElement.GetProperty("input");
+        Assert.Equal(new[] { "system", "system", "user" }, input.EnumerateArray()
+            .Select(message => message.GetProperty("role").GetString()).ToArray());
+        Assert.Equal("durable approval context", input[1].GetProperty("content").GetString());
+
+        using var completionSync = JsonDocument.Parse(requests[4].Body);
+        var completionRecords = completionSync.RootElement.GetProperty("records");
+        Assert.Equal(new[] { "assistant", "tool" }, completionRecords.EnumerateArray()
+            .Select(record => record.GetProperty("role").GetString()).ToArray());
+        var assistant = completionRecords[0];
+        var tool = completionRecords[1];
+        Assert.Equal("call_1", assistant.GetProperty("structured_payload")
+            .GetProperty("tool_calls")[0].GetProperty("id").GetString());
+        Assert.Equal("call_1", tool.GetProperty("structured_payload")
+            .GetProperty("tool_call_id").GetString());
+        Assert.Equal("resp_1", assistant.GetProperty("metadata")
+            .GetProperty("response_id").GetString());
+        Assert.Equal(9, assistant.GetProperty("metadata").GetProperty("provider_usage")
+            .GetProperty("input_tokens").GetInt32());
+    }
+
+    [Fact]
+    public async Task MemoryFailureStopsAutomaticApprovalBeforeCallingTheModel()
+    {
+        var context = await TestContext.CreateAsync();
+        var providerCalls = 0;
+        var memory = new FakeApprovalMemoryEngineRecorder
+        {
+            BeginError = new InvalidOperationException("memory unavailable"),
+        };
+        var reviewer = context.Reviewer(request =>
+        {
+            providerCalls++;
+            return Task.FromResult(Json(HttpStatusCode.OK, ResponsesToolDecision("approve", "Safe.")));
+        }, memory);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => reviewer.ReviewAsync(context.Request(), context.Risk));
+
+        Assert.Equal(0, providerCalls);
+        Assert.Equal(1, memory.BeginCalls);
+        Assert.Equal(0, memory.CompleteCalls);
+    }
+
+    [Fact]
+    public async Task MemoryCompletionFailureSuppressesAutomaticApprovalResult()
+    {
+        var context = await TestContext.CreateAsync();
+        var memory = new FakeApprovalMemoryEngineRecorder
+        {
+            CompleteError = new InvalidOperationException("memory unavailable"),
+        };
+        var reviewer = context.Reviewer(
+            _ => Task.FromResult(Json(HttpStatusCode.OK, ResponsesToolDecision("approve", "Safe."))),
+            memory);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => reviewer.ReviewAsync(context.Request(), context.Risk));
+
+        Assert.Equal(1, memory.BeginCalls);
+        Assert.Equal(1, memory.CompleteCalls);
+    }
+
+    [Fact]
+    public async Task ConfiguredGatewayUsesResponsesServerCompaction()
+    {
+        var context = await TestContext.CreateAsync();
+        context.Gateway.Model = context.Gateway.Model with
+        {
+            BaseUrl = "https://new-api.example/v1",
+        };
+        Uri? endpoint = null;
+        string? body = null;
+        var reviewer = context.Reviewer(async request =>
+        {
+            endpoint = request.RequestUri;
+            body = await request.Content!.ReadAsStringAsync();
+            return Json(HttpStatusCode.OK, ResponsesToolDecision("approve", "Safe."));
+        });
+
+        var result = await reviewer.ReviewAsync(context.Request(), context.Risk);
+
+        Assert.Equal(CommandApprovalAiDecisionKind.Approve, result.Decision);
+        Assert.Equal("https://new-api.example/v1/responses", endpoint?.AbsoluteUri);
+        using var payload = JsonDocument.Parse(body!);
+        var root = payload.RootElement;
+        Assert.Equal(200_000, root.GetProperty("context_management")[0]
+            .GetProperty("compact_threshold").GetInt32());
+        Assert.Equal("compaction", root.GetProperty("context_management")[0]
+            .GetProperty("type").GetString());
+        Assert.Equal("approval_decision", root.GetProperty("tools")[0]
+            .GetProperty("name").GetString());
+        Assert.False(root.GetProperty("store").GetBoolean());
+        Assert.Equal("approval-agent:model-1", root.GetProperty("prompt_cache_key").GetString());
+        Assert.False(root.TryGetProperty("messages", out _));
+        Assert.False(root.TryGetProperty("previous_response_id", out _));
+    }
+
+    [Fact]
+    public async Task OfficialOpenAiReviewerRejectsIncompleteResponsesResult()
+    {
+        var context = await TestContext.CreateAsync();
+        context.Gateway.Model = context.Gateway.Model with
+        {
+            BaseUrl = "https://api.openai.com/v1",
+        };
+        var payload = ResponsesToolDecision("approve", "Safe.")
+            .Replace("\"status\": \"completed\"", "\"status\": \"incomplete\"", StringComparison.Ordinal);
+        var reviewer = context.Reviewer(_ => Task.FromResult(Json(HttpStatusCode.OK, payload)));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => reviewer.ReviewAsync(context.Request(), context.Risk));
+    }
+
+    [Fact]
     public async Task ReviewerRetriesTransientFailureOnlyOnce()
     {
         var context = await TestContext.CreateAsync();
@@ -97,7 +288,7 @@ public sealed class ApprovalAiReviewerTests
             calls++;
             return Task.FromResult(calls == 1
                 ? Json(HttpStatusCode.TooManyRequests, "{\"error\":{\"message\":\"busy\"}}")
-                : Json(HttpStatusCode.OK, ToolDecision("deny", "Unsafe.")));
+                : Json(HttpStatusCode.OK, ResponsesToolDecision("deny", "Unsafe.")));
         });
 
         var result = await reviewer.ReviewAsync(context.Request(), context.Risk);
@@ -125,18 +316,20 @@ public sealed class ApprovalAiReviewerTests
         Assert.DoesNotContain("credential", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string ToolDecision(string decision, string reason, bool remember = false) => $$"""
+    private static string ResponsesToolDecision(
+        string decision,
+        string reason,
+        bool remember = false,
+        bool includeUsage = false) => $$"""
         {
-          "choices": [{
-            "message": {
-              "tool_calls": [{
-                "function": {
-                  "name": "approval_decision",
-                  "arguments": "{\"decision\":\"{{decision}}\",\"reason\":\"{{reason}}\",\"remember_allow\":{{remember.ToString().ToLowerInvariant()}}}"
-                }
-              }]
-            }
-          }]
+          "id": "resp_1",
+          "status": "completed",
+          "output": [{
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "approval_decision",
+            "arguments": "{\"decision\":\"{{decision}}\",\"reason\":\"{{reason}}\",\"remember_allow\":{{remember.ToString().ToLowerInvariant()}}}"
+          }]{{(includeUsage ? ",\n  \"usage\": {\"input_tokens\":9,\"output_tokens\":4}" : string.Empty)}}
         }
         """;
 
@@ -221,9 +414,11 @@ public sealed class ApprovalAiReviewerTests
             "scope-1");
 
         public OpenAiCompatibleCommandApprovalReviewer Reviewer(
-            Func<HttpRequestMessage, Task<HttpResponseMessage>> response) =>
+            Func<HttpRequestMessage, Task<HttpResponseMessage>> response,
+            IApprovalMemoryEngineRecorder? memoryRecorder = null) =>
             new(Configuration, Runtime, new FakeHttpClientFactory(
-                new HttpClient(new DelegateHandler(response))));
+                new HttpClient(new DelegateHandler(response))),
+                memoryRecorder ?? new FakeApprovalMemoryEngineRecorder());
 
         private static string Checksum(string content) =>
             "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
@@ -290,6 +485,49 @@ public sealed class ApprovalAiReviewerTests
     private sealed class FakeHttpClientFactory(HttpClient client) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => client;
+    }
+
+    private sealed class FakeApprovalMemoryEngineRecorder : IApprovalMemoryEngineRecorder
+    {
+        public Exception? BeginError { get; init; }
+        public Exception? CompleteError { get; init; }
+        public int BeginCalls { get; private set; }
+        public int CompleteCalls { get; private set; }
+
+        public Task<ApprovalMemoryRun> BeginAsync(
+            ApprovalModelRuntimeConfiguration runtime,
+            CommandApprovalRequest request,
+            string systemPrompt,
+            string userPrompt,
+            CancellationToken cancellationToken)
+        {
+            BeginCalls++;
+            if (BeginError is not null)
+            {
+                return Task.FromException<ApprovalMemoryRun>(BeginError);
+            }
+            return Task.FromResult(new ApprovalMemoryRun(
+                request.OwnerUserId,
+                "client-agent:approval:test",
+                "client-agent:approval-run:test",
+                runtime.GatewayBaseUri,
+                runtime.ConnectorAccessToken,
+                DateTimeOffset.UtcNow,
+                []));
+        }
+
+        public Task CompleteAsync(
+            ApprovalMemoryRun run,
+            CommandApprovalRequest request,
+            string responsePayload,
+            CommandApprovalAiReview decision,
+            CancellationToken cancellationToken)
+        {
+            CompleteCalls++;
+            return CompleteError is null
+                ? Task.CompletedTask
+                : Task.FromException(CompleteError);
+        }
     }
 
     private sealed class DelegateHandler(

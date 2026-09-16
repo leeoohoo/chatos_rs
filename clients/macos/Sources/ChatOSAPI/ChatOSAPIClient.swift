@@ -54,7 +54,7 @@ public actor ChatOSAPIClient {
         return authenticationSessionID
     }
 
-    enum Service { case chatOS, memoryEngine, taskRunner }
+    enum Service { case chatOS, userService, memoryEngine, taskRunner }
 
     public func webSocketURL(path: String, ticket: String) -> URL? {
         let base = configuration.baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -142,23 +142,40 @@ public actor ChatOSAPIClient {
         if service == .memoryEngine, response.body.count > 8 * 1_024 * 1_024 { throw ChatOSAPIError.invalidResponse }
 
         do {
+            if response.body.isEmpty, Response.self == EmptyResponse.self,
+               let empty = EmptyResponse() as? Response {
+                return empty
+            }
             return try decoder.decode(Response.self, from: response.body)
         } catch {
             throw ChatOSAPIError.decoding(error.localizedDescription)
         }
     }
 
+    func requestVoid(
+        _ endpoint: String,
+        method: String,
+        service: Service = .chatOS
+    ) async throws {
+        let _: EmptyResponse = try await request(endpoint, method: method, service: service)
+    }
+
     private func makeURL(endpoint: String, service: Service = .chatOS) -> URL? {
         var baseURL = configuration.baseURL
-        if service == .memoryEngine || service == .taskRunner {
+        if service != .chatOS {
             guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
                   components.query == nil, components.fragment == nil, components.user == nil, components.password == nil else { return nil }
             var path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             if path == "api/chatos" { path = "" }
             else if path.hasSuffix("/api/chatos") { path = String(path.dropLast("/api/chatos".count)) }
             else if !path.isEmpty { return nil }
-            components.path = (path.isEmpty ? "" : "/" + path)
-                + (service == .memoryEngine ? "/api/memory" : "/api/task")
+            let servicePath = switch service {
+            case .chatOS: "/api/chatos"
+            case .userService: "/api/user"
+            case .memoryEngine: "/api/memory"
+            case .taskRunner: "/api/task"
+            }
+            components.path = (path.isEmpty ? "" : "/" + path) + servicePath
             guard let resolved = components.url else { return nil }
             baseURL = resolved
         }
@@ -167,6 +184,8 @@ public actor ChatOSAPIClient {
         return URL(string: base + cleanedEndpoint)
     }
 }
+
+private struct EmptyResponse: Decodable, Sendable {}
 
 private struct APIErrorPayload: Decodable {
     var message: String?

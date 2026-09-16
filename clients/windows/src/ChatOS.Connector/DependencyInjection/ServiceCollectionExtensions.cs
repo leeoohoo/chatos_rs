@@ -78,10 +78,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRemoteSshSessionFactory, SshNetRemoteSessionFactory>();
         services.AddSingleton<IRemoteConnectionTester, SshNetRemoteConnectionTester>();
         services.AddSingleton<WindowsRemoteConnectionService>();
-        services.AddSingleton<IRemoteConnectionService>(provider => provider.GetRequiredService<WindowsRemoteConnectionService>());
         services.AddSingleton<IRemoteConnectionRuntime>(provider => provider.GetRequiredService<WindowsRemoteConnectionService>());
         services.AddSingleton<IRemoteSftpService, SshNetRemoteSftpService>();
         services.AddSingleton<IRemoteTerminalCommandService, SshNetRemoteTerminalCommandService>();
+        services.AddSingleton<IRemoteTerminalSessionFactory, SshNetRemoteTerminalSessionFactory>();
+        services.AddSingleton<RemoteTerminalSessionManager>();
+        services.AddSingleton<IRemoteConnectionService, TerminalAwareRemoteConnectionService>();
+        services.AddSingleton<RemoteTerminalRelayHandler>();
+        services.AddSingleton<IRelayRequestHandler>(provider =>
+            provider.GetRequiredService<RemoteTerminalRelayHandler>());
+        services.AddSingleton<IRelayOneWayHandler>(provider =>
+            provider.GetRequiredService<RemoteTerminalRelayHandler>());
         services.AddSingleton<IRelaySecurityContextProvider>(provider =>
             provider.GetRequiredService<ConnectorRuntimeContext>());
         services.AddSingleton<IRelayRequestVerifier, Ed25519RelayRequestVerifier>();
@@ -97,6 +104,15 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient(OpenAiCompatibleCommandApprovalReviewer.HttpClientName, client =>
         {
             client.Timeout = TimeSpan.FromSeconds(45);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = System.Net.DecompressionMethods.None,
+            UseCookies = false,
+        });
+        services.AddHttpClient(ApprovalMemoryEngineRecorder.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
         {
             AllowAutoRedirect = false,
@@ -135,6 +151,7 @@ public static class ServiceCollectionExtensions
             provider.GetRequiredService<IControlledNetworkGuardClient>()));
         services.AddSingleton<SandboxExecutionPolicyProvider>();
         services.AddSingleton<ApprovalModelRuntimeConfigurationService>();
+        services.AddSingleton<IApprovalMemoryEngineRecorder, ApprovalMemoryEngineRecorder>();
         services.AddSingleton<IApprovalReviewerReadinessService, ApprovalReviewerReadinessService>();
         services.AddSingleton<ICommandApprovalAiReviewer, OpenAiCompatibleCommandApprovalReviewer>();
         services.AddSingleton<CommandApprovalCoordinator>();

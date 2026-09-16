@@ -248,7 +248,7 @@ final class ConversationHistoryStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.unreadNewerCount, 1)
     }
 
-    func testLatestPageUpdateCreatesUnreadWhenViewportIsNotPinned() async {
+    func testLatestPageReconciliationDoesNotCreateUnreadWhenViewportIsNotPinned() async {
         let store = ConversationHistoryStore()
         await store.mergeCachedTurns(
             [turn(id: "1", sequence: 1, revision: 1)],
@@ -266,6 +266,125 @@ final class ConversationHistoryStoreTests: XCTestCase {
                 hasOlder: false,
                 snapshotRevision: 2,
                 requestGeneration: 1
+            ),
+            sessionID: "session-a",
+            origin: .latest
+        )
+
+        let snapshot = await store.snapshot(sessionID: "session-a")
+        XCTAssertEqual(snapshot.unreadNewerCount, 0)
+    }
+
+    func testSubsequentLatestPageCountsOnlyNewTurnsWhenViewportIsNotPinned() async {
+        let store = ConversationHistoryStore()
+        await store.mergePage(
+            HistoryPage(
+                turns: [turn(id: "1", sequence: 1, revision: 1)],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 1,
+                requestGeneration: 1
+            ),
+            sessionID: "session-a",
+            origin: .latest
+        )
+        await store.setViewportAnchor(
+            ViewportAnchor(turnID: "1", relativeOffset: 0, isPinnedToBottom: false),
+            sessionID: "session-a"
+        )
+
+        await store.mergePage(
+            HistoryPage(
+                turns: [
+                    turn(id: "1", sequence: 1, revision: 2),
+                    turn(id: "2", sequence: 2, revision: 1),
+                ],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 2,
+                requestGeneration: 2
+            ),
+            sessionID: "session-a",
+            origin: .latest
+        )
+
+        let snapshot = await store.snapshot(sessionID: "session-a")
+        XCTAssertEqual(snapshot.unreadNewerCount, 1)
+    }
+
+    func testSubsequentLatestPageDoesNotCountRevisionOnlyUpdate() async {
+        let store = ConversationHistoryStore()
+        await store.mergePage(
+            HistoryPage(
+                turns: [turn(id: "1", sequence: 1, revision: 1)],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 1,
+                requestGeneration: 1
+            ),
+            sessionID: "session-a",
+            origin: .latest
+        )
+        await store.setViewportAnchor(
+            ViewportAnchor(turnID: "1", relativeOffset: 0, isPinnedToBottom: false),
+            sessionID: "session-a"
+        )
+
+        await store.mergePage(
+            HistoryPage(
+                turns: [turn(id: "1", sequence: 1, revision: 2)],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 2,
+                requestGeneration: 2
+            ),
+            sessionID: "session-a",
+            origin: .latest
+        )
+
+        let snapshot = await store.snapshot(sessionID: "session-a")
+        XCTAssertEqual(snapshot.unreadNewerCount, 0)
+    }
+
+    func testSubsequentLatestPageCountsNewReplyOnExistingTurn() async {
+        let store = ConversationHistoryStore()
+        let original = turn(id: "1", sequence: 1, revision: 1)
+        await store.mergePage(
+            HistoryPage(
+                turns: [original],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 1,
+                requestGeneration: 1
+            ),
+            sessionID: "session-a",
+            origin: .latest
+        )
+        await store.setViewportAnchor(
+            ViewportAnchor(turnID: "1", relativeOffset: 0, isPinnedToBottom: false),
+            sessionID: "session-a"
+        )
+
+        var updated = original
+        updated.revision = 2
+        updated.assistantReplies = [
+            ConversationAssistantReply(message: original.finalAssistantMessage!),
+            ConversationAssistantReply(
+                message: ChatMessage(
+                    id: "task-callback-1",
+                    role: .assistant,
+                    text: "任务已完成",
+                    createdAt: Date(timeIntervalSince1970: 2)
+                )
+            ),
+        ]
+        await store.mergePage(
+            HistoryPage(
+                turns: [updated],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 2,
+                requestGeneration: 2
             ),
             sessionID: "session-a",
             origin: .latest

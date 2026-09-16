@@ -51,7 +51,7 @@ fn model_runtime_config_builds_model_request() {
 }
 
 #[test]
-fn direct_vendor_runtime_configs_do_not_select_missing_responses_routes() {
+fn every_vendor_runtime_config_selects_responses() {
     for (provider, base_url, model) in [
         ("kimi", "https://api.moonshot.ai/v1", "kimi-k2.6"),
         ("glm", "https://open.bigmodel.cn/api/paas/v4", "glm-5.2"),
@@ -59,10 +59,7 @@ fn direct_vendor_runtime_configs_do_not_select_missing_responses_routes() {
         let request = ModelRuntimeConfig::openai_compatible(base_url, "secret", model, provider)
             .with_responses_support(true)
             .to_model_request(json!("hello"), Vec::new());
-        assert!(
-            !request.supports_responses,
-            "{provider} must use chat completions"
-        );
+        assert!(request.supports_responses, "{provider} must use Responses");
     }
 
     let deepseek = ModelRuntimeConfig::openai_compatible(

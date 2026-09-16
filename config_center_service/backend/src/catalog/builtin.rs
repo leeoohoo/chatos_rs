@@ -80,7 +80,7 @@ fn memory_policy_definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             &defaults,
             "token_limit",
             "输入 Token 阈值",
-            "单次处理或分块使用的输入 Token 上限",
+            "累计待处理内容达到该值后触发任务，同时作为单次处理或分块使用的输入 Token 上限",
             category.as_str(),
             128,
             2_000_000,

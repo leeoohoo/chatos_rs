@@ -5,7 +5,7 @@ use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use tower_http::cors::{Any, CorsLayer};
@@ -17,6 +17,7 @@ use crate::auth::{
 };
 use crate::models::{PRINCIPAL_TYPE_AGENT_ACCOUNT, PRINCIPAL_TYPE_HUMAN_USER};
 use crate::state::AppState;
+use crate::store::now_rfc3339;
 
 mod agents;
 mod auth;
@@ -27,12 +28,37 @@ mod models;
 mod system;
 mod token_exchange;
 mod users;
+mod wechat_auth;
 
 fn protected_api(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/verify", get(auth::verify))
         .route("/api/auth/logout", post(auth::logout))
+        .route(
+            "/api/auth/wechat/mini-program/bind-tickets",
+            post(wechat_auth::issue_bind_ticket),
+        )
+        .route(
+            "/api/auth/wechat/mini-program/bind-tickets/{id}",
+            get(wechat_auth::get_bind_ticket),
+        )
+        .route(
+            "/api/auth/wechat/mini-program/bind-tickets/{id}/confirm",
+            post(wechat_auth::confirm_bind_ticket),
+        )
+        .route(
+            "/api/auth/wechat/mini-program/binding",
+            get(wechat_auth::get_binding).delete(wechat_auth::unbind),
+        )
+        .route(
+            "/api/auth/client-sessions",
+            get(wechat_auth::list_client_sessions),
+        )
+        .route(
+            "/api/auth/client-sessions/{id}",
+            delete(wechat_auth::revoke_client_session),
+        )
         .route(
             "/api/auth/local-connector-ticket",
             post(auth::issue_local_connector_ticket),
@@ -117,21 +143,37 @@ fn protected_api(state: AppState) -> Router<AppState> {
 }
 
 pub fn build_public_router(state: AppState) -> Router {
+    let router = Router::new()
+        .route("/api/health", get(system::health))
+        .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/register", post(auth::register))
+        .route(
+            "/api/auth/wechat/mini-program/login",
+            post(wechat_auth::login),
+        )
+        .route(
+            "/api/auth/wechat/mini-program/bind-claims",
+            post(wechat_auth::claim_bind_ticket),
+        )
+        .route(
+            "/api/auth/wechat/mini-program/bind-claims/{id}/result",
+            post(wechat_auth::claim_result),
+        )
+        .route(
+            "/api/auth/register/send-code",
+            post(auth::send_register_email_code),
+        )
+        .route(
+            "/api/auth/local-connector-ticket/exchange",
+            post(auth::exchange_local_connector_ticket),
+        );
+    #[cfg(debug_assertions)]
+    let router = router.route(
+        "/api/auth/wechat/mini-program/development-login",
+        post(wechat_auth::development_login),
+    );
     apply_common_layers(
-        Router::new()
-            .route("/api/health", get(system::health))
-            .route("/api/auth/login", post(auth::login))
-            .route("/api/auth/register", post(auth::register))
-            .route(
-                "/api/auth/register/send-code",
-                post(auth::send_register_email_code),
-            )
-            .route(
-                "/api/auth/local-connector-ticket/exchange",
-                post(auth::exchange_local_connector_ticket),
-            )
-            .merge(protected_api(state.clone()))
-            .with_state(state),
+        router.merge(protected_api(state.clone())).with_state(state),
         "public",
     )
 }
@@ -208,6 +250,17 @@ pub async fn require_auth(
     let token = bearer_token_from_headers(request.headers()).map_err(|err| unauthorized(&err))?;
     let claims = decode_any_user_service_token(token.as_str(), &state.config)
         .map_err(|_| unauthorized("invalid or expired token"))?;
+    let is_wechat_companion = claims
+        .scopes
+        .iter()
+        .any(|scope| scope == "wechat_companion");
+    if is_wechat_companion
+        && !wechat_companion_request_allowed(request.method(), request.uri().path())
+    {
+        return Err(forbidden(
+            "client session is not allowed to access this endpoint",
+        ));
+    }
     if state
         .store
         .is_token_revoked(claims.jti.as_str())
@@ -216,12 +269,41 @@ pub async fn require_auth(
     {
         return Err(unauthorized("token has been revoked"));
     }
+    if state
+        .store
+        .is_client_session_invalid(claims.jti.as_str(), is_wechat_companion)
+        .await
+        .map_err(internal_error)?
+    {
+        return Err(unauthorized("client session has been revoked or expired"));
+    }
+    if is_wechat_companion {
+        let now = now_rfc3339();
+        state
+            .store
+            .touch_client_session(claims.jti.as_str(), now.as_str())
+            .await
+            .map_err(internal_error)?;
+    }
 
     let mut principal = CurrentPrincipal::from(claims);
     refresh_principal_identity(&state, &mut principal).await?;
 
     request.extensions_mut().insert(principal);
     Ok(next.run(request).await)
+}
+
+fn wechat_companion_request_allowed(method: &Method, path: &str) -> bool {
+    (method == Method::GET
+        && matches!(
+            path,
+            "/api/auth/me" | "/api/auth/verify" | "/api/auth/client-sessions"
+        ))
+        || (method == Method::POST && path == "/api/auth/logout")
+        || (method == Method::DELETE
+            && path
+                .strip_prefix("/api/auth/client-sessions/")
+                .is_some_and(|id| !id.is_empty() && !id.contains('/')))
 }
 
 async fn refresh_principal_identity(
@@ -297,6 +379,14 @@ pub fn forbidden(message: impl Into<String>) -> (StatusCode, Json<Value>) {
     error(StatusCode::FORBIDDEN, message)
 }
 
+pub fn conflict(message: impl Into<String>) -> (StatusCode, Json<Value>) {
+    error(StatusCode::CONFLICT, message)
+}
+
+pub fn service_unavailable(message: impl Into<String>) -> (StatusCode, Json<Value>) {
+    error(StatusCode::SERVICE_UNAVAILABLE, message)
+}
+
 pub fn not_found(message: impl Into<String>) -> (StatusCode, Json<Value>) {
     error(StatusCode::NOT_FOUND, message)
 }
@@ -325,9 +415,10 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
 
-    use super::{build_internal_router, build_public_router};
+    use super::{build_internal_router, build_public_router, wechat_companion_request_allowed};
     use crate::config::AppConfig;
     use crate::state::AppState;
+    use axum::http::Method;
 
     fn test_config() -> AppConfig {
         AppConfig {
@@ -372,6 +463,14 @@ mod tests {
             login_max_failed_attempts: 3,
             login_failure_window_seconds: 300,
             login_lockout_seconds: 120,
+            wechat_mini_program_app_id: None,
+            wechat_mini_program_app_secret: None,
+            wechat_mini_program_identity_hash_secret: None,
+            wechat_mini_program_api_base_url: "https://api.weixin.qq.com".to_string(),
+            wechat_mini_program_env_version: "release".to_string(),
+            wechat_mini_program_request_timeout_ms: 5_000,
+            wechat_mini_program_bind_ticket_ttl_seconds: 120,
+            wechat_mini_program_client_session_ttl_seconds: 604_800,
         }
     }
 
@@ -398,12 +497,10 @@ mod tests {
     async fn public_router_does_not_expose_internal_routes() {
         let (base_url, server) = spawn_router(build_public_router(test_state().await)).await;
         let client = reqwest::Client::new();
-        for (method, path) in [
-            (
-                reqwest::Method::GET,
-                "/api/internal/users/user-1/model-settings",
-            ),
-        ] {
+        for (method, path) in [(
+            reqwest::Method::GET,
+            "/api/internal/users/user-1/model-settings",
+        )] {
             let status = client
                 .request(method, format!("{base_url}{path}"))
                 .send()
@@ -443,12 +540,10 @@ mod tests {
                 .status();
             assert_eq!(status, StatusCode::NOT_FOUND, "unexpected route: {path}");
         }
-        for (method, path) in [
-            (
-                reqwest::Method::GET,
-                "/api/internal/users/user-1/model-settings",
-            ),
-        ] {
+        for (method, path) in [(
+            reqwest::Method::GET,
+            "/api/internal/users/user-1/model-settings",
+        )] {
             let status = client
                 .request(method, format!("{base_url}{path}"))
                 .send()
@@ -458,5 +553,34 @@ mod tests {
             assert_eq!(status, StatusCode::UNAUTHORIZED, "missing route: {path}");
         }
         server.abort();
+    }
+
+    #[test]
+    fn wechat_companion_cannot_unbind_or_mutate_account_configuration() {
+        for (method, path) in [
+            (Method::GET, "/api/auth/me"),
+            (Method::GET, "/api/auth/client-sessions"),
+            (Method::POST, "/api/auth/logout"),
+            (Method::DELETE, "/api/auth/client-sessions/session-1"),
+        ] {
+            assert!(
+                wechat_companion_request_allowed(&method, path),
+                "path={path}"
+            );
+        }
+        for (method, path) in [
+            (Method::DELETE, "/api/auth/wechat/mini-program/binding"),
+            (Method::POST, "/api/auth/client-sessions"),
+            (Method::GET, "/api/auth/client-sessions/session-1"),
+            (Method::DELETE, "/api/auth/client-sessions/session-1/extra"),
+            (Method::GET, "/api/model-configs"),
+            (Method::GET, "/api/model-configs/settings"),
+            (Method::POST, "/api/model-configs"),
+        ] {
+            assert!(
+                !wechat_companion_request_allowed(&method, path),
+                "path={path}"
+            );
+        }
     }
 }

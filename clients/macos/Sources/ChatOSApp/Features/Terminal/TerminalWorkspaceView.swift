@@ -2,7 +2,11 @@ import SwiftUI
 
 struct TerminalWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
-    @StateObject private var workspace = TerminalWorkspaceViewModel()
+    @ObservedObject private var workspace: TerminalWorkspaceViewModel
+
+    init(workspace: TerminalWorkspaceViewModel) {
+        self.workspace = workspace
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,7 +19,7 @@ struct TerminalWorkspaceView: View {
             )
             Divider()
             if let session = workspace.selectedSession {
-                TerminalSessionView(terminal: session.terminal)
+                NativeLocalTerminalSessionView(terminal: session.terminal)
                     .id(session.id)
             }
         }
@@ -24,6 +28,7 @@ struct TerminalWorkspaceView: View {
                 ?? model.localized("终端", english: "Terminal")
         )
         .toolbar { toolbar }
+        .onAppear(perform: workspace.ensureTerminal)
     }
 
     @ToolbarContentBuilder
@@ -40,12 +45,35 @@ struct TerminalWorkspaceView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 190)
 
+                Button(
+                    model.localized("上一个匹配项", english: "Previous Match"),
+                    systemImage: "chevron.up",
+                    action: terminal.findPrevious
+                )
+                .labelStyle(.iconOnly)
+                .disabled(terminal.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Button(
+                    model.localized("下一个匹配项", english: "Next Match"),
+                    systemImage: "chevron.down",
+                    action: terminal.findNext
+                )
+                .labelStyle(.iconOnly)
+                .disabled(terminal.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
                 Menu {
                     Button(
                         model.localized("清屏", english: "Clear"),
                         systemImage: "eraser",
                         action: terminal.clear
                     )
+                    Divider()
+                    Button(
+                        model.localized("中断", english: "Interrupt"),
+                        systemImage: "stop.fill",
+                        action: terminal.interrupt
+                    )
+                    .disabled(terminal.state != .running)
                     Divider()
                     Button(
                         model.localized("关闭终端", english: "Close Terminal"),
@@ -60,74 +88,31 @@ struct TerminalWorkspaceView: View {
     }
 }
 
-struct TerminalSessionView: View {
-    @ObservedObject var terminal: TerminalViewModel
-    var onSubmit: (() -> Void)?
-    var showsHeader: Bool
-    @FocusState private var commandFocused: Bool
-
-    init(
-        terminal: TerminalViewModel,
-        onSubmit: (() -> Void)? = nil,
-        showsHeader: Bool = true
-    ) {
-        self.terminal = terminal
-        self.onSubmit = onSubmit
-        self.showsHeader = showsHeader
-    }
+struct NativeLocalTerminalSessionView: View {
+    @ObservedObject var terminal: NativeLocalTerminalViewModel
 
     var body: some View {
         VStack(spacing: 0) {
-            if showsHeader {
-                TerminalHeaderView(terminal: terminal)
-                Divider()
-            }
-            viewport
-        }
-        .onAppear { restoreCommandFocus() }
-        .onChange(of: terminal.focusRequestRevision) { restoreCommandFocus() }
-    }
+            NativeTerminalHeaderView(terminal: terminal)
+            Divider()
+            NativeLocalTerminalSurface(terminal: terminal)
+                .padding(TerminalLayout.contentInsets)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .textBackgroundColor))
 
-    private var viewport: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(terminal.visibleLines) { line in
-                        TerminalLineView(line: line, promptPath: promptPath)
-                            .id(line.id)
-                    }
-
-                    TerminalPromptView(
-                        command: $terminal.command,
-                        isRunning: terminal.isRunning,
-                        promptPath: promptPath,
-                        isFocused: $commandFocused,
-                        onSubmit: onSubmit ?? terminal.submit
-                    )
-                    .id("prompt")
+            if case let .failed(message) = terminal.state {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(message).lineLimit(2)
+                    Spacer()
                 }
-                .appFont(.system(size: 13, design: .monospaced))
-                .textSelection(.enabled)
-                .padding(22)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(Color(nsColor: .textBackgroundColor))
-            .onChange(of: terminal.lines.count) {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo("prompt", anchor: .bottom)
-                }
+                .appFont(.caption)
+                .foregroundStyle(.red)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 30)
+                .background(Color.red.opacity(0.08))
             }
         }
-    }
-
-    private var promptPath: String {
-        URL(fileURLWithPath: terminal.workingDirectory).lastPathComponent
-    }
-
-    private func restoreCommandFocus() {
-        Task { @MainActor in
-            await Task.yield()
-            commandFocused = true
-        }
+        .onAppear { terminal.focus() }
     }
 }

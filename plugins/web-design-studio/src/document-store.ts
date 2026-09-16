@@ -186,7 +186,11 @@ export class WebDesignDocumentStore {
     });
   }
 
-  async ensureScopedProject(scopeKey: string, name: string): Promise<WebDesignProject> {
+  async ensureScopedProject(
+    scopeKey: string,
+    name: string,
+    options: { consolidateDefaultProjects?: boolean } = {}
+  ): Promise<WebDesignProject> {
     if (!/^[a-f0-9]{64}$/.test(scopeKey)) throw new Error('scopeKey must be a SHA-256 fingerprint.');
     return this.withStoreLock(async () => {
       let projects = await this.readAllProjects();
@@ -205,8 +209,14 @@ export class WebDesignDocumentStore {
       }
 
       const scopedProjects = projects
-        .filter((project) => project.scopeKey === scopeKey)
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+        .filter((project) => project.scopeKey === scopeKey
+          || (options.consolidateDefaultProjects === true && project.isScopeDefault === true))
+        .sort((left, right) => {
+          const membership = right.designIds.length - left.designIds.length;
+          if (membership !== 0) return membership;
+          const exactScope = Number(right.scopeKey === scopeKey) - Number(left.scopeKey === scopeKey);
+          return exactScope !== 0 ? exactScope : left.createdAt.localeCompare(right.createdAt);
+        });
       if (scopedProjects.length === 0) {
         const project = this.prepareProject(name, undefined, scopeKey, true);
         const unassigned = await this.unassignedDocumentIds(projects);

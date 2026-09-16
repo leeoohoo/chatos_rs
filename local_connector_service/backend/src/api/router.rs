@@ -57,6 +57,26 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
             "/api/local-connectors/devices",
             get(list_devices).post(create_device),
         )
+        .route(
+            "/api/local-connectors/companion/devices",
+            get(super::devices::list_companion_devices),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/resources",
+            get(super::companion::list_companion_resources),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/resources/resolve",
+            post(super::companion::resolve_companion_resource),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/approvals",
+            get(super::companion::list_companion_approvals),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/approvals/{approval_id}/resolve",
+            post(super::companion::resolve_companion_approval),
+        )
         .route("/api/local-connectors/devices/{id}", get(get_device))
         .route(
             "/api/local-connectors/devices/{id}/controlled-network/readiness",

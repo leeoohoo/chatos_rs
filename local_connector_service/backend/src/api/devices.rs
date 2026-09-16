@@ -13,12 +13,13 @@ use futures::{SinkExt, StreamExt};
 use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 use crate::controlled_network::normalize_windows_sid;
 use crate::models::{
-    normalize_optional_text, CurrentUser, LocalConnectorDevice, LocalConnectorSession,
-    DEVICE_STATUS_REVOKED,
+    normalize_optional_text, CompanionDeviceSummary, CurrentUser, LocalConnectorDevice,
+    LocalConnectorSession, DEVICE_STATUS_OFFLINE, DEVICE_STATUS_ONLINE, DEVICE_STATUS_REVOKED,
 };
 use crate::state::AppState;
 use crate::store::SessionAcquireError;
@@ -63,6 +64,79 @@ pub(super) async fn list_devices(
         .map_err(ApiError::internal)
 }
 
+pub(super) async fn list_companion_devices(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+) -> Result<Json<Vec<CompanionDeviceSummary>>, ApiError> {
+    let owner_user_id = user.effective_owner_user_id();
+    let devices = state
+        .store
+        .list_devices(owner_user_id)
+        .await
+        .map_err(ApiError::internal)?;
+    let mut summaries_by_identity: HashMap<String, CompanionDeviceSummary> = HashMap::new();
+    for device in devices {
+        if device.status == DEVICE_STATUS_REVOKED {
+            continue;
+        }
+        let is_online = state
+            .device_presence(device.id.as_str())
+            .await
+            .map_err(ApiError::internal)?
+            .is_some_and(|presence| presence.owner_user_id == owner_user_id);
+        let is_legacy_placeholder = !is_online
+            && device.display_name.trim() == "Local Connector"
+            && device.client_version.as_deref() == Some("0.1.0");
+        if is_legacy_placeholder {
+            continue;
+        }
+        // The signing key is the strongest registration identity, but older client
+        // reinstalls could rotate it. Companion presents physical devices, so fold
+        // stale registrations with the same owner-visible name and platform while
+        // retaining every record in the audit store.
+        let identity = format!(
+            "{}\u{0}{}",
+            device.display_name.trim().to_lowercase(),
+            device
+                .os
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_lowercase()
+        );
+        let summary = CompanionDeviceSummary {
+            id: device.id,
+            display_name: device.display_name,
+            client_version: device.client_version,
+            os: device.os,
+            status: if is_online {
+                DEVICE_STATUS_ONLINE.to_string()
+            } else {
+                DEVICE_STATUS_OFFLINE.to_string()
+            },
+            is_online,
+            last_seen_at: device.last_seen_at,
+            updated_at: device.updated_at,
+        };
+        match summaries_by_identity.get(identity.as_str()) {
+            Some(existing)
+                if existing.is_online
+                    || (!summary.is_online && existing.updated_at >= summary.updated_at) => {}
+            _ => {
+                summaries_by_identity.insert(identity, summary);
+            }
+        }
+    }
+    let mut summaries = summaries_by_identity.into_values().collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .is_online
+            .cmp(&left.is_online)
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+    });
+    Ok(Json(summaries))
+}
+
 pub(super) async fn create_device(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -77,12 +151,19 @@ pub(super) async fn create_device(
         normalize_optional_text(req.client_version),
         normalize_optional_text(req.os),
     );
-    state
+    let (device, created) = state
         .store
-        .create_device(&device)
+        .register_device(&device)
         .await
         .map_err(ApiError::internal)?;
-    Ok((StatusCode::CREATED, Json(device)))
+    Ok((
+        if created {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        },
+        Json(device),
+    ))
 }
 
 pub(super) async fn get_device(

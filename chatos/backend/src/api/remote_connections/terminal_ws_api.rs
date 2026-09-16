@@ -4,15 +4,17 @@
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{Path, WebSocketUpgrade};
+use axum::extract::{Path, Query, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
+use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use tokio_tungstenite::connect_async_tls_with_config;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as ConnectorMessage;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::api::local_connectors::{
     local_connector_tls_connector, local_connector_websocket_url,
@@ -30,9 +32,15 @@ use super::{resolve_jump_connection_snapshot, ws_error_output, WsInput, WsOutput
 
 const REMOTE_TERMINAL_WS_CHANNEL: &str = "remote_terminal";
 
+#[derive(Default, Deserialize)]
+pub(super) struct RemoteTerminalWsQuery {
+    terminal_id: Option<String>,
+}
+
 pub(super) async fn remote_terminal_ws(
     auth: AuthUser,
     Path(id): Path<String>,
+    Query(query): Query<RemoteTerminalWsQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     let connection = match ensure_owned_remote_connection(&id, &auth).await {
@@ -56,17 +64,25 @@ pub(super) async fn remote_terminal_ws(
         .into_response();
     };
 
-    ws.on_upgrade(move |socket| handle_remote_terminal_socket(connection, access_token, socket))
-        .into_response()
+    let terminal_session_id = query
+        .terminal_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.len() <= 256)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    ws.on_upgrade(move |socket| {
+        handle_remote_terminal_socket(connection, terminal_session_id, access_token, socket)
+    })
+    .into_response()
 }
 
 async fn handle_remote_terminal_socket(
     connection: RemoteConnection,
+    terminal_session_id: String,
     access_token: String,
     mut socket: WebSocket,
 ) {
     let _active_connection = ActiveWebSocketConnection::start(WebSocketKind::RemoteTerminal);
-    let ws_url = remote_terminal_connector_ws_url(&connection);
+    let ws_url = remote_terminal_connector_ws_url(&connection, terminal_session_id.as_str());
     let mut request = match ws_url.as_str().into_client_request() {
         Ok(request) => request,
         Err(error) => {
@@ -218,6 +234,7 @@ async fn handle_remote_terminal_socket(
     let _ = to_connector.await;
     info!(
         connection_id = connection_id.as_str(),
+        terminal_session_id = terminal_session_id.as_str(),
         host = host.as_str(),
         port,
         channel = REMOTE_TERMINAL_WS_CHANNEL,
@@ -266,14 +283,31 @@ fn translate_browser_text(text: &str) -> BrowserTextAction {
     }
 }
 
-fn remote_terminal_connector_ws_url(connection: &RemoteConnection) -> String {
-    let path = format!(
+fn remote_terminal_connector_ws_url(
+    connection: &RemoteConnection,
+    terminal_session_id: &str,
+) -> String {
+    local_connector_websocket_url(
+        remote_terminal_connector_path(
+            connection.local_connector_device_id.as_str(),
+            connection.local_connector_workspace_id.as_str(),
+            terminal_session_id,
+        )
+        .as_str(),
+    )
+}
+
+fn remote_terminal_connector_path(
+    device_id: &str,
+    workspace_id: &str,
+    terminal_session_id: &str,
+) -> String {
+    format!(
         "/api/local-connectors/relay/{}/remote-connections/terminal/ws?workspace_id={}&terminal_id={}",
-        urlencoding::encode(connection.local_connector_device_id.as_str()),
-        urlencoding::encode(connection.local_connector_workspace_id.as_str()),
-        urlencoding::encode(connection.id.as_str()),
-    );
-    local_connector_websocket_url(path.as_str())
+        urlencoding::encode(device_id),
+        urlencoding::encode(workspace_id),
+        urlencoding::encode(terminal_session_id),
+    )
 }
 
 async fn send_startup_error(socket: &mut WebSocket, error: String) {
@@ -315,5 +349,13 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("pong")
         );
+    }
+
+    #[test]
+    fn remote_terminal_session_id_is_independent_from_connection_id() {
+        let url = remote_terminal_connector_path("device-1", "workspace-1", "terminal-tab-2");
+
+        assert!(url.contains("terminal_id=terminal-tab-2"));
+        assert!(!url.contains("terminal_id=connection-1"));
     }
 }

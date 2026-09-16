@@ -3,185 +3,178 @@ import SwiftUI
 
 struct RemoteTerminalWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
-    @ObservedObject private var viewModel: RemoteTerminalWorkspaceViewModel
+    @ObservedObject private var viewModel: NativeRemoteTerminalViewModel
 
-    init(viewModel: RemoteTerminalWorkspaceViewModel) {
+    init(viewModel: NativeRemoteTerminalViewModel) {
         self.viewModel = viewModel
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Label(
-                    viewModel.terminal.workingDirectory,
-                    systemImage: "network"
-                )
-                .appFont(.caption.monospaced())
-                .lineLimit(1)
-                .truncationMode(.middle)
+                Label(viewModel.workingDirectory, systemImage: "network")
+                    .appFont(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Spacer()
                 StatusCapsule(
-                    title: viewModel.connectionLabel(language: model.interfaceLanguage),
-                    color: viewModel.connectionColor
+                    title: viewModel.connectionName,
+                    color: viewModel.statusColor
                 )
-                Button("断开", systemImage: "stop.circle", action: viewModel.disconnect)
-                    .labelStyle(.iconOnly)
-                    .help("断开远程终端")
-                    .disabled(!viewModel.isConnected)
+                Text(localizedStatus)
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 18)
-            .frame(height: 48)
+            .frame(height: 40)
             .background(AppPalette.canvas)
 
             Divider()
 
-            TerminalSessionView(
-                terminal: viewModel.terminal,
-                onSubmit: viewModel.submit,
-                showsHeader: false
-            )
+            NativeRemoteTerminalSurface(terminal: viewModel)
+                .padding(TerminalLayout.contentInsets)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .textBackgroundColor))
+
+            if let message = viewModel.failureMessage {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(message).lineLimit(2)
+                    Spacer()
+                    Button(model.localized("重新连接", english: "Reconnect")) {
+                        viewModel.reconnect()
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .appFont(.caption)
+                .foregroundStyle(.red)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 34)
+                .background(Color.red.opacity(0.08))
+            }
         }
+        .navigationTitle(viewModel.title)
+        .toolbar { terminalToolbar }
         .onAppear {
-            viewModel.interfaceLanguage = model.interfaceLanguage
-            viewModel.activate()
+            viewModel.startIfNeeded()
+            viewModel.focus()
         }
-        .onChange(of: model.interfaceLanguage) { _, language in
-            viewModel.interfaceLanguage = language
+        .sheet(isPresented: verificationPresented) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(model.localized("SSH 二次验证", english: "SSH Verification"))
+                    .appFont(.title3.weight(.semibold))
+                Text(viewModel.verificationPrompt
+                    ?? model.localized("请输入服务器要求的验证码。", english: "Enter the verification code requested by the server."))
+                    .appFont(.body)
+                SecureField(
+                    model.localized("验证码", english: "Verification code"),
+                    text: $viewModel.verificationCode
+                )
+                .textFieldStyle(.roundedBorder)
+                HStack {
+                    Spacer()
+                    Button(model.localized("取消", english: "Cancel")) {
+                        viewModel.cancelVerification()
+                    }
+                    Button(model.localized("验证并连接", english: "Verify and Connect")) {
+                        viewModel.submitVerificationCode()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(
+                        viewModel.verificationCode
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .isEmpty
+                    )
+                }
+            }
+            .padding(24)
+            .frame(width: 420)
         }
-        .onDisappear(perform: viewModel.disconnect)
-    }
-}
-
-@MainActor
-final class RemoteTerminalWorkspaceViewModel: ObservableObject {
-    enum ConnectionState {
-        case ready
-        case connected
-        case disconnected
     }
 
-    @Published private(set) var state: ConnectionState = .ready
-    var interfaceLanguage: ChatOSLanguage = .simplifiedChinese
-    let terminal: TerminalViewModel
-
-    private let idleTimeout: Duration
-    private var idleTask: Task<Void, Never>?
-
-    init(
-        connection: RemoteConnection,
-        service: any RemoteTerminalCommandServicing,
-        idleTimeout: Duration = .seconds(10 * 60)
-    ) {
-        self.idleTimeout = idleTimeout
-        let initialDirectory = connection.defaultRemotePath?.remoteTerminalNonEmpty ?? "~"
-        self.terminal = TerminalViewModel(
-            workingDirectory: initialDirectory,
-            executor: RemoteTerminalCommandExecutor(
-                connectionID: connection.id,
-                service: service
+    @ToolbarContentBuilder
+    private var terminalToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            TextField(
+                model.localized("搜索终端输出", english: "Search terminal output"),
+                text: $viewModel.searchText
             )
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 190)
+
+            Button(
+                model.localized("上一个匹配项", english: "Previous Match"),
+                systemImage: "chevron.up",
+                action: viewModel.findPrevious
+            )
+            .labelStyle(.iconOnly)
+            .disabled(searchIsEmpty)
+
+            Button(
+                model.localized("下一个匹配项", english: "Next Match"),
+                systemImage: "chevron.down",
+                action: viewModel.findNext
+            )
+            .labelStyle(.iconOnly)
+            .disabled(searchIsEmpty)
+
+            Menu {
+                Button(
+                    model.localized("清屏", english: "Clear"),
+                    systemImage: "eraser",
+                    action: viewModel.clear
+                )
+                Button(
+                    model.localized("中断", english: "Interrupt"),
+                    systemImage: "stop.fill",
+                    action: viewModel.interrupt
+                )
+                .disabled(!viewModel.isConnected)
+                Divider()
+                if viewModel.isConnected {
+                    Button(
+                        model.localized("断开", english: "Disconnect"),
+                        systemImage: "stop.circle",
+                        action: viewModel.disconnect
+                    )
+                } else {
+                    Button(
+                        model.localized("重新连接", english: "Reconnect"),
+                        systemImage: "arrow.clockwise",
+                        action: viewModel.reconnect
+                    )
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+        }
+    }
+
+    private var searchIsEmpty: Bool {
+        viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var verificationPresented: Binding<Bool> {
+        Binding(
+            get: { viewModel.verificationPrompt != nil },
+            set: { if !$0 { viewModel.cancelVerification() } }
         )
     }
 
-    var isConnected: Bool { state == .connected }
-
-    func connectionLabel(language: ChatOSLanguage) -> String {
-        switch state {
-        case .ready: language == .english ? "Connect on First Command" : "输入命令后连接"
-        case .connected: language == .english ? "Connected" : "已连接"
-        case .disconnected: language == .english ? "Disconnected" : "已断开"
+    private var localizedStatus: String {
+        switch viewModel.state {
+        case .idle:
+            model.localized("准备连接", english: "Ready")
+        case .connecting:
+            model.localized("连接中", english: "Connecting")
+        case .running:
+            model.localized("已连接", english: "Connected")
+        case .exited:
+            model.localized("连接已退出", english: "Connection Exited")
+        case .failed:
+            model.localized("连接失败", english: "Connection Failed")
+        case .closed:
+            model.localized("已断开", english: "Disconnected")
         }
-    }
-
-    var connectionColor: Color {
-        switch state {
-        case .ready: .secondary
-        case .connected: .green
-        case .disconnected: .orange
-        }
-    }
-
-    func activate() {
-        if state == .disconnected { state = .ready }
-    }
-
-    func submit() {
-        guard !terminal.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if state == .disconnected {
-            terminal.appendSystemLine(localized(
-                "正在重新连接远端服务器…",
-                english: "Reconnecting to the remote server…"
-            ))
-        }
-        state = .connected
-        terminal.submit()
-        scheduleIdleDisconnect()
-    }
-
-    func disconnect() {
-        idleTask?.cancel()
-        idleTask = nil
-        guard state == .connected else { return }
-        state = .disconnected
-        terminal.appendSystemLine(localized(
-            "远程终端已断开。再次输入命令时会自动重新连接。",
-            english: "The remote terminal was disconnected. It will reconnect when you enter another command."
-        ))
-    }
-
-    private func scheduleIdleDisconnect() {
-        idleTask?.cancel()
-        let timeout = idleTimeout
-        idleTask = Task { [weak self] in
-            try? await Task.sleep(for: timeout)
-            guard !Task.isCancelled else { return }
-            self?.disconnectAfterIdle()
-        }
-    }
-
-    private func disconnectAfterIdle() {
-        guard state == .connected, !terminal.isRunning else {
-            if terminal.isRunning { scheduleIdleDisconnect() }
-            return
-        }
-        state = .disconnected
-        terminal.appendSystemLine(localized(
-            "远程终端已因 10 分钟无操作自动断开。",
-            english: "The remote terminal disconnected after 10 minutes of inactivity."
-        ))
-    }
-
-    private func localized(_ chinese: String, english: String) -> String {
-        interfaceLanguage == .english ? english : chinese
-    }
-}
-
-private struct RemoteTerminalCommandExecutor: TerminalCommandExecuting {
-    let connectionID: String
-    let service: any RemoteTerminalCommandServicing
-
-    func execute(command: String, workingDirectory: String) async -> TerminalCommandResult {
-        do {
-            let result = try await service.executeRemoteCommand(
-                connectionID: connectionID,
-                command: command,
-                workingDirectory: workingDirectory
-            )
-            return .init(
-                output: result.output,
-                error: result.error,
-                exitCode: result.exitCode,
-                workingDirectory: result.workingDirectory
-            )
-        } catch {
-            return .init(output: "", error: error.localizedDescription, exitCode: -1)
-        }
-    }
-}
-
-private extension String {
-    var remoteTerminalNonEmpty: String? {
-        let value = trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
     }
 }

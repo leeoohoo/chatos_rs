@@ -37,7 +37,7 @@ public struct AgentMemoryContextProvider: Sendable {
     }
 
     public func prepare(checkpoint initial: AgentRunCheckpoint, tools: [AgentToolDefinition],
-                        policy: AgentContextPolicy, forceCompaction: Bool = false,
+                        policy: AgentContextPolicy,
                         deadline: Date, synchronizeOnly: Bool = false,
                         shouldPause: @escaping @Sendable () async -> Bool = { false },
                         record: @escaping AgentRuntime.Recorder) async throws -> AgentPreparedContext {
@@ -46,8 +46,14 @@ public struct AgentMemoryContextProvider: Sendable {
             try policy.validate()
             guard let bound = state.memory, bound.scope == scope, state.scope == scope.runtimeScope,
                   state.id == scope.runID, bound.syncedMessageCount >= 0,
-                  bound.syncedMessageCount <= state.messages.count,
-                  state.pendingCalls.isEmpty, state.inFlightCallID == nil else { throw AgentContextError.invalidHistory }
+                  bound.syncedMessageCount <= state.messages.count else { throw AgentContextError.invalidHistory }
+            // A write-only flush is valid while an assistant tool call is pending:
+            // the call itself must reach Memory Engine before tool execution. Only
+            // context composition requires a quiescent call/result boundary.
+            if !synchronizeOnly,
+               (!state.pendingCalls.isEmpty || state.inFlightCallID != nil) {
+                throw AgentContextError.invalidHistory
+            }
             if bound.syncedMessageCount > 0 {
                 guard try AgentContextBudget.digest(state.messages.prefix(bound.syncedMessageCount)) == bound.syncedDigest else {
                     throw AgentContextError.invalidHistory
@@ -81,59 +87,12 @@ public struct AgentMemoryContextProvider: Sendable {
             if synchronizeOnly { return .init(checkpoint: state, messages: []) }
             try await check(deadline: deadline, shouldPause: shouldPause)
 
-            // This is the same boundary used by AiRuntime: observe a server-owned in-flight job
-            // before composing input. The checkpoint never owns a second summary state machine.
-            do {
-                if try await waitForInflightSummary(checkpoint: state, policy: policy, deadline: deadline,
-                                                    shouldPause: shouldPause, record: record) {
-                    state.memory!.compactions += 1
-                }
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                // AiRuntime warns and continues here. Compose remains authoritative and will still
-                // fail closed if Memory Engine itself is unavailable.
-                try await emit(state, "context_summary_check_failed",
-                               "无法确认在途摘要状态，本轮继续从 Memory Engine compose：\(error.localizedDescription)", record: record)
-            }
-
-            var messages = try AgentContextAssembler.assemble(checkpoint: state, memory: state.memory!,
-                                                                context: await service.compose())
-            var count = try AgentContextBudget.estimate(messages: messages, tools: tools)
-            var force = forceCompaction
-            for _ in 0..<policy.maximumCompactionPasses where count > policy.compactionThresholdTokens || force {
-                try await check(deadline: deadline, shouldPause: shouldPause)
-                let before = count
-                let changed: Bool
-                do {
-                    changed = try await compactActiveContext(
-                        checkpoint: state, reason: force ? "context_overflow" : "active_context_budget",
-                        policy: policy, deadline: deadline, shouldPause: shouldPause, record: record
-                    )
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    if force || count > policy.hardInputLimit { throw error }
-                    try await emit(state, "context_summary_skipped",
-                                   "主动摘要失败，但输入仍在硬限制内，本轮继续：\(error.localizedDescription)", record: record)
-                    break
-                }
-                guard changed else {
-                    if force || count > policy.hardInputLimit { throw AgentContextError.noImprovement }
-                    try await emit(state, "context_summary_skipped",
-                                   "Memory Engine 未生成摘要或压缩记录；输入仍在硬限制内，本轮不重复提交", record: record)
-                    break
-                }
-                state.memory!.compactions += 1
-                try await emit(state, "context_summary_completed", "摘要任务完成，正在从 Memory Engine 重新 compose 上下文", record: record)
-                try await check(deadline: deadline, shouldPause: shouldPause)
-                messages = try AgentContextAssembler.assemble(checkpoint: state, memory: state.memory!,
-                                                               context: await service.compose())
-                count = try AgentContextBudget.estimate(messages: messages, tools: tools)
-                force = false
-                try await emit(state, "context_compacted", "模型输入估算由 \(before) 降至 \(count) tokens", record: record)
-            }
-            guard count <= policy.hardInputLimit else { throw AgentContextError.budgetExceeded }
+            // The engine owns durable records and background summaries. It is
+            // composed at this turn boundary, but it is never used as an
+            // in-loop overflow recovery mechanism.
+            let messages = try AgentContextAssembler.assemble(
+                checkpoint: state, memory: state.memory!, context: await service.compose()
+            )
             try await check(deadline: deadline, shouldPause: shouldPause)
             return .init(checkpoint: state, messages: messages)
         } catch {
@@ -148,66 +107,6 @@ public struct AgentMemoryContextProvider: Sendable {
         try Task.checkCancellation()
         if await shouldPause() { throw CancellationError() }
         guard Date() < deadline else { throw AgentRuntimeError.timeout }
-    }
-
-    private func waitForInflightSummary(
-        checkpoint: AgentRunCheckpoint, policy: AgentContextPolicy, deadline: Date,
-        shouldPause: @escaping @Sendable () async -> Bool,
-        record: @escaping AgentRuntime.Recorder
-    ) async throws -> Bool {
-        let initial = try await service.summaryStatus(jobID: nil)
-        guard initial.running else { return false }
-        try await emit(checkpoint, "context_summary_waiting",
-                       "检测到当前线程正在压缩上下文，暂停新的模型请求", record: record)
-        let status = try await waitForSummary(initial, policy: policy, deadline: deadline,
-                                              shouldPause: shouldPause)
-        if status.failed {
-            try await emit(checkpoint, "context_summary_skipped",
-                           "在途摘要任务失败，本轮将使用 Memory Engine 当前可 compose 的上下文", record: record)
-            return false
-        }
-        return status.changedContext
-    }
-
-    private func compactActiveContext(
-        checkpoint: AgentRunCheckpoint, reason: String, policy: AgentContextPolicy, deadline: Date,
-        shouldPause: @escaping @Sendable () async -> Bool,
-        record: @escaping AgentRuntime.Recorder
-    ) async throws -> Bool {
-        try await emit(checkpoint, "context_compacting",
-                       reason == "context_overflow"
-                        ? "模型报告上下文溢出，正在请求 Memory Engine 压缩"
-                        : "上下文达到主动压缩阈值，正在请求 Memory Engine 压缩",
-                       record: record)
-        let initial = try await service.startSummary(reason: reason)
-        let status = try await waitForSummary(initial, policy: policy, deadline: deadline,
-                                              shouldPause: shouldPause)
-        if status.failed { throw AgentContextError.summaryFailed(status.errorMessage) }
-        return status.changedContext
-    }
-
-    private func waitForSummary(
-        _ initial: AgentSummaryStatus, policy: AgentContextPolicy, deadline: Date,
-        shouldPause: @escaping @Sendable () async -> Bool
-    ) async throws -> AgentSummaryStatus {
-        if initial.completed || initial.failed || !initial.running { return initial }
-        var status = initial
-        let summaryDeadline = min(deadline, Date().addingTimeInterval(Double(policy.summaryTimeoutSeconds)))
-        while status.running {
-            try await check(deadline: deadline, shouldPause: shouldPause)
-            guard Date() < summaryDeadline else { throw AgentContextError.summaryTimedOut }
-            let delay = min(Double(policy.summaryPollSeconds), max(0, summaryDeadline.timeIntervalSinceNow))
-            guard delay > 0 else { throw AgentContextError.summaryTimedOut }
-            let nanoseconds = UInt64(min(Double(UInt64.max), (delay * 1_000_000_000).rounded(.up)))
-            // Keep suspension in the current task frame. This also avoids the Swift 6.3
-            // cancellation/deallocation crash seen in the previous escaping sleep closure.
-            do { try await Task<Never, Never>.sleep(nanoseconds: nanoseconds) }
-            catch { throw CancellationError() }
-            try await check(deadline: deadline, shouldPause: shouldPause)
-            guard Date() < summaryDeadline else { throw AgentContextError.summaryTimedOut }
-            status = try await service.summaryStatus(jobID: initial.jobID)
-        }
-        return status
     }
 
     private func emit(_ checkpoint: AgentRunCheckpoint, _ kind: String, _ detail: String,

@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -14,6 +15,8 @@ use crate::utils::attachments::Attachment;
 const TURN_KEY_SEPARATOR: &str = "::";
 pub const DEFAULT_MAX_QUEUE_SIZE: usize = 20;
 pub const DEFAULT_DRAIN_LIMIT: usize = 20;
+const TURN_ADMISSION_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+const MAX_TURN_ADMISSIONS: usize = 10_000;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -42,6 +45,19 @@ pub enum EnqueueGuidanceError {
     TurnNotRunning,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdmitTurnResult {
+    Accepted,
+    Duplicate {
+        turn_id: String,
+        user_message_id: String,
+    },
+    ActiveTurnConflict {
+        active_turn_id: String,
+    },
+    IdempotencyConflict,
+}
+
 #[derive(Debug, Default)]
 struct ActiveTurnState {
     queue: VecDeque<String>,
@@ -53,6 +69,15 @@ struct State {
     active_turn_by_session: HashMap<String, String>,
     turns: HashMap<String, ActiveTurnState>,
     items: HashMap<String, RuntimeGuidanceItem>,
+    turn_admissions: HashMap<(String, String), TurnAdmission>,
+}
+
+#[derive(Debug)]
+struct TurnAdmission {
+    turn_id: String,
+    user_message_id: String,
+    request_fingerprint: String,
+    created_at: Instant,
 }
 
 #[derive(Clone)]
@@ -91,6 +116,84 @@ impl RuntimeGuidanceManager {
             queue: VecDeque::new(),
             max_queue_size: self.default_max_queue_size,
         });
+    }
+
+    pub fn admit_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        user_message_id: &str,
+        idempotency_key: &str,
+        request_fingerprint: &str,
+    ) -> AdmitTurnResult {
+        let session_id = session_id.trim();
+        let turn_id = turn_id.trim();
+        let user_message_id = user_message_id.trim();
+        let idempotency_key = idempotency_key.trim();
+        if session_id.is_empty()
+            || turn_id.is_empty()
+            || user_message_id.is_empty()
+            || idempotency_key.is_empty()
+            || request_fingerprint.is_empty()
+        {
+            return AdmitTurnResult::IdempotencyConflict;
+        }
+
+        let mut state = self.state.lock();
+        state
+            .turn_admissions
+            .retain(|_, admission| admission.created_at.elapsed() <= TURN_ADMISSION_RETENTION);
+        let admission_key = (session_id.to_string(), idempotency_key.to_string());
+        if let Some(existing) = state.turn_admissions.get(&admission_key) {
+            if existing.request_fingerprint != request_fingerprint {
+                return AdmitTurnResult::IdempotencyConflict;
+            }
+            return AdmitTurnResult::Duplicate {
+                turn_id: existing.turn_id.clone(),
+                user_message_id: existing.user_message_id.clone(),
+            };
+        }
+        if let Some(active_turn_id) = state.active_turn_by_session.get(session_id) {
+            return AdmitTurnResult::ActiveTurnConflict {
+                active_turn_id: active_turn_id.clone(),
+            };
+        }
+
+        if state.turn_admissions.len() >= MAX_TURN_ADMISSIONS {
+            let active_turns = state.active_turn_by_session.clone();
+            if let Some(oldest_key) = state
+                .turn_admissions
+                .iter()
+                .filter(|((admission_session_id, _), admission)| {
+                    active_turns.get(admission_session_id) != Some(&admission.turn_id)
+                })
+                .min_by_key(|(_, admission)| admission.created_at)
+                .map(|(key, _)| key.clone())
+            {
+                state.turn_admissions.remove(&oldest_key);
+            }
+        }
+
+        state.turn_admissions.insert(
+            admission_key,
+            TurnAdmission {
+                turn_id: turn_id.to_string(),
+                user_message_id: user_message_id.to_string(),
+                request_fingerprint: request_fingerprint.to_string(),
+                created_at: Instant::now(),
+            },
+        );
+        state
+            .active_turn_by_session
+            .insert(session_id.to_string(), turn_id.to_string());
+        state
+            .turns
+            .entry(turn_key(session_id, turn_id))
+            .or_insert_with(|| ActiveTurnState {
+                queue: VecDeque::new(),
+                max_queue_size: self.default_max_queue_size,
+            });
+        AdmitTurnResult::Accepted
     }
 
     pub fn is_active_turn(&self, session_id: &str, turn_id: &str) -> bool {
@@ -306,4 +409,101 @@ static RUNTIME_GUIDANCE_MANAGER: Lazy<RuntimeGuidanceManager> =
 
 pub fn runtime_guidance_manager() -> &'static RuntimeGuidanceManager {
     &RUNTIME_GUIDANCE_MANAGER
+}
+
+#[cfg(test)]
+mod turn_admission_tests {
+    use super::{AdmitTurnResult, RuntimeGuidanceManager};
+
+    #[test]
+    fn duplicate_send_returns_the_original_identity_without_starting_another_turn() {
+        let manager = RuntimeGuidanceManager::new(20);
+        assert_eq!(
+            manager.admit_turn(
+                "conversation-1",
+                "turn-1",
+                "message-1",
+                "request-1",
+                "fingerprint-1",
+            ),
+            AdmitTurnResult::Accepted
+        );
+        assert_eq!(
+            manager.admit_turn(
+                "conversation-1",
+                "turn-1",
+                "different-message-id",
+                "request-1",
+                "fingerprint-1",
+            ),
+            AdmitTurnResult::Duplicate {
+                turn_id: "turn-1".to_string(),
+                user_message_id: "message-1".to_string(),
+            }
+        );
+        assert!(manager.is_active_turn("conversation-1", "turn-1"));
+    }
+
+    #[test]
+    fn active_conversation_rejects_a_different_turn_until_the_first_closes() {
+        let manager = RuntimeGuidanceManager::new(20);
+        assert_eq!(
+            manager.admit_turn(
+                "conversation-1",
+                "turn-1",
+                "message-1",
+                "request-1",
+                "fingerprint-1",
+            ),
+            AdmitTurnResult::Accepted
+        );
+        assert_eq!(
+            manager.admit_turn(
+                "conversation-1",
+                "turn-2",
+                "message-2",
+                "request-2",
+                "fingerprint-2",
+            ),
+            AdmitTurnResult::ActiveTurnConflict {
+                active_turn_id: "turn-1".to_string(),
+            }
+        );
+        manager.close_turn("conversation-1", "turn-1");
+        assert_eq!(
+            manager.admit_turn(
+                "conversation-1",
+                "turn-2",
+                "message-2",
+                "request-2",
+                "fingerprint-2",
+            ),
+            AdmitTurnResult::Accepted
+        );
+    }
+
+    #[test]
+    fn reusing_an_idempotency_key_for_different_input_is_rejected() {
+        let manager = RuntimeGuidanceManager::new(20);
+        assert_eq!(
+            manager.admit_turn(
+                "conversation-1",
+                "turn-1",
+                "message-1",
+                "request-1",
+                "fingerprint-1",
+            ),
+            AdmitTurnResult::Accepted
+        );
+        assert_eq!(
+            manager.admit_turn(
+                "conversation-1",
+                "turn-2",
+                "message-2",
+                "request-1",
+                "changed-fingerprint",
+            ),
+            AdmitTurnResult::IdempotencyConflict
+        );
+    }
 }

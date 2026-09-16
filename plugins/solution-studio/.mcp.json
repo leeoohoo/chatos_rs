@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "solution-studio-mcp": {
+      "command": "chatos-solution-studio",
+      "args": ["mcp"]
+    }
+  }
+}

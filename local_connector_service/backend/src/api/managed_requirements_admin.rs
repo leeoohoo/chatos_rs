@@ -415,11 +415,13 @@ mod tests {
     fn user(role: &str, principal_type: &str) -> CurrentUser {
         CurrentUser {
             principal_type: principal_type.to_string(),
+            token_jti: None,
             user_id: "admin-1".to_string(),
             username: Some("admin".to_string()),
             display_name: Some("Admin".to_string()),
             role: role.to_string(),
             owner_user_id: None,
+            scopes: Vec::new(),
         }
     }
 

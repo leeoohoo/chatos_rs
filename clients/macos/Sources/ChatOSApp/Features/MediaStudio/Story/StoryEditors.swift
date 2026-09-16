@@ -10,6 +10,10 @@ struct StoryImageTarget: Identifiable {
 }
 
 struct StoryImagePicker: View {
+    private enum ImageLibrary: String, CaseIterable, Identifiable {
+        case stories, standalone
+        var id: Self { self }
+    }
     @EnvironmentObject private var appModel: AppModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: StoryStudioViewModel
@@ -19,8 +23,10 @@ struct StoryImagePicker: View {
     @State private var showsUpload = false
     @State private var preview: MediaStudioImagePreviewRequest?
     @State private var assetPrompt = ""
+    @State private var additionalIdeas = ""
     @State private var confirmsImageRetry = false
     @State private var selectedReferenceAssetIDs: Set<String> = []
+    @State private var imageLibrary: ImageLibrary = .stories
     private var current: StoryProject { viewModel.projects.first { $0.id == project.id } ?? project }
     private var asset: StoryResource? { current.resources.first { $0.id == target.assetID } }
     private var segment: StorySegment? { current.segments.first { $0.id == target.segmentID } }
@@ -56,6 +62,20 @@ struct StoryImagePicker: View {
         guard let id = target.assetID else { return false }
         return viewModel.isGeneratingAsset(id, projectID: current.id)
     }
+    private var isGeneratingFrame: Bool {
+        guard let id = target.segmentID else { return false }
+        return viewModel.isGeneratingFrame(id, role: target.frameRole, projectID: current.id)
+    }
+    private var reusableStoryImages: [StoryStudioViewModel.ReusableStoryImage] {
+        guard let asset else { return [] }
+        return viewModel.reusableStoryImages(kind: asset.kind, excluding: current.id)
+    }
+    private var existingTargetImageIDs: Set<String> { Set(images.map { $0.id.uuidString }) }
+    private var availableStoryHistoryCount: Int {
+        viewModel.creationHistoryGroups.reduce(0) { count, group in
+            count + group.images.filter { !existingTargetImageIDs.contains($0.asset.id) }.count
+        }
+    }
 
     private var referenceSelection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -64,11 +84,11 @@ struct StoryImagePicker: View {
                     Text(target.frameRole == .first
                          ? appModel.localized("首帧参考素材", english: "First-frame References")
                          : appModel.localized("尾帧参考素材", english: "Last-frame References")).font(.headline)
-                    Text(appModel.localized("可选择一个或多个本段关联素材；顺序将与提示词中的参考编号保持一致。",
-                                            english: "Select one or more linked assets. Their order stays aligned with prompt reference numbers."))
+                    Text(appModel.localized("选择一个或多个本段关联素材作为画面参考。",
+                                            english: "Choose one or more linked assets as visual references."))
                         .font(.caption).foregroundStyle(.secondary)
-                    Text(appModel.localized("生成请求还会自动带上本段完整镜头语言，以及所有关联场景、人物、道具的文字画像和关系。",
-                                            english: "The request also includes the complete shot plan plus written profiles and relations for every linked scene, character, and prop."))
+                    Text(appModel.localized("生成时会结合本段镜头计划，以及关联的人物、场景和道具，保持画面一致。",
+                                            english: "Generation uses the shot plan and linked characters, scenes, and props to keep the visuals consistent."))
                         .font(.caption).foregroundStyle(.secondary)
                     if previousTailReference != nil {
                         Text(appModel.localized("上一段已确认尾帧会自动作为额外参考图，不需要手动选择。",
@@ -197,7 +217,38 @@ struct StoryImagePicker: View {
                      ? appModel.localized("分段首帧", english: "Segment First Frame")
                      : appModel.localized("分段尾帧", english: "Segment Last Frame"))).font(.title2.bold())
                 Spacer()
+                if target.assetID == nil, target.frameRole == .last, confirmedID != nil {
+                    Button(role: .destructive) {
+                        if let id = target.segmentID {
+                            viewModel.clearConfirmedLastFrame(id)
+                            dismiss()
+                        }
+                    } label: {
+                        Label(appModel.localized("取消使用尾帧", english: "Stop Using Last Frame"),
+                              systemImage: "xmark.circle")
+                    }
+                    .disabled(viewModel.isBusy || isGeneratingFrame || segment?.attempt != nil)
+                }
                 Button(appModel.localized("关闭", english: "Close")) { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+            if isGeneratingFrame {
+                HStack(spacing: 11) {
+                    ProgressView().controlSize(.small)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(target.frameRole == .first
+                             ? appModel.localized("首帧正在生成", english: "Generating First Frame")
+                             : appModel.localized("尾帧正在生成", english: "Generating Last Frame"))
+                            .font(.callout.weight(.semibold))
+                        Text(appModel.localized("可以关闭这个窗口，生成会在后台继续；之后随时可以重新点开查看。",
+                                                english: "You can close this window. Generation continues in the background, and you can reopen it anytime."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(11)
+                .background(Color.indigo.opacity(0.075), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(Color.indigo.opacity(0.18)))
             }
             if let asset {
                 if let profile = asset.characterProfile {
@@ -210,6 +261,7 @@ struct StoryImagePicker: View {
                         ScrollView { StorySceneProfileView(profile: profile).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 200)
                     }
                 }
+                Text(appModel.localized("素材描述", english: "Asset Description")).font(.headline)
                 TextEditor(text: $assetPrompt).frame(height: 75)
                 Button(appModel.localized("保存素材描述", english: "Save Asset Description")) {
                     viewModel.updateAssetPrompt(asset.id, prompt: assetPrompt)
@@ -217,11 +269,22 @@ struct StoryImagePicker: View {
                            || assetPrompt.count > 4_000 || current.hasUnresolvedJobs)
             }
             if segment != nil { referenceSelection }
+            StoryAdditionalIdeasField(
+                text: $additionalIdeas,
+                help: asset != nil
+                    ? appModel.localized("例如：调整材质、色彩、光线、构图，或强调必须保留的外观细节。只影响这一次生成。", english: "For example: adjust materials, color, lighting, composition, or emphasize an appearance detail. This affects only this generation.")
+                    : appModel.localized("例如：指定构图、人物状态、镜头氛围，或强调要衔接的画面细节。只影响这一次生成。", english: "For example: specify composition, character state, mood, or continuity details. This affects only this generation."),
+                maximumLength: StoryGenerationContext.maximumUserIdeasLength
+            )
             if let error = viewModel.errorMessage { Text(error).font(.caption).foregroundStyle(.red) }
             if let id = target.assetID, let error = viewModel.assetGenerationError(id, projectID: current.id) {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
-            if hasUnresolvedImageSubmission {
+            if let id = target.segmentID,
+               let error = viewModel.frameGenerationError(id, role: target.frameRole, projectID: current.id) {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            if hasUnresolvedImageSubmission && !isGeneratingAsset && !isGeneratingFrame {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(appModel.localized("上次图片提交结果尚未核实，为避免重复扣费，当前禁止再次提交。", english: "The previous image submission is unresolved, so resubmission is blocked to avoid duplicate charges."))
                         .font(.caption).foregroundStyle(.orange)
@@ -231,14 +294,17 @@ struct StoryImagePicker: View {
             }
             HStack {
                 if let id = target.assetID {
-                    Button(appModel.localized("生成素材图片", english: "Generate Asset Image")) { viewModel.generateAsset(id) }
+                    Button(appModel.localized("生成素材图片", english: "Generate Asset Image")) {
+                        viewModel.generateAsset(id, userIdeas: additionalIdeas)
+                    }
                         .buttonStyle(.borderedProminent).tint(.purple)
                         .disabled(viewModel.isBusy || isGeneratingAsset || hasUnresolvedImageSubmission || assetPrompt != asset?.prompt)
                 }
                 if let segment {
                     Button {
                         viewModel.generateFrame(segment.id, role: target.frameRole,
-                                                referenceAssetIDs: selectedReferences.map(\.id))
+                                                referenceAssetIDs: selectedReferences.map(\.id),
+                                                userIdeas: additionalIdeas)
                     } label: {
                         Label((target.frameRole == .first
                                ? (previousTailReference == nil
@@ -254,10 +320,16 @@ struct StoryImagePicker: View {
                               || segment.detail == nil || selectedReferences.isEmpty)
                 }
                 Button(appModel.localized("本机上传", english: "Upload Image")) { showsUpload = true }
-                    .disabled(viewModel.isBusy || viewModel.hasActiveAssetGenerations)
+                    .disabled(viewModel.isBusy || viewModel.hasActiveAssetGenerations || isGeneratingFrame)
                 if isGeneratingAsset {
                     ProgressView().controlSize(.small)
                     Text(appModel.localized("正在生成此素材…", english: "Generating this asset…")).font(.caption)
+                } else if isGeneratingFrame {
+                    ProgressView().controlSize(.small)
+                    Text(target.frameRole == .first
+                         ? appModel.localized("正在生成首帧…", english: "Generating First Frame…")
+                         : appModel.localized("正在生成尾帧…", english: "Generating Last Frame…"))
+                        .font(.caption)
                 } else if viewModel.isBusy {
                     ProgressView().controlSize(.small); Text(viewModel.operation).font(.caption)
                 }
@@ -280,34 +352,18 @@ struct StoryImagePicker: View {
                                 Button(confirmedID == image.id ? appModel.localized("已确认使用", english: "Confirmed") : appModel.localized("确认使用此图", english: "Use This Image")) {
                                     viewModel.confirmImage(image, assetID: target.assetID, segmentID: target.segmentID,
                                                            frameRole: target.frameRole)
-                                }.disabled(viewModel.isBusy || viewModel.hasActiveAssetGenerations || confirmedID == image.id)
+                                }.disabled(viewModel.isBusy || viewModel.hasActiveAssetGenerations
+                                           || isGeneratingFrame || confirmedID == image.id)
                             }.padding(8).background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
                         }
                     }
                     Divider()
-                    Text(appModel.localized("从图片生成记录选择", english: "Choose from Image History")).font(.headline)
-                    if mediaStudio.history.isEmpty {
-                        Text(appModel.localized("还没有图片生成记录，本机上传仍可使用。", english: "No generated images yet. You can still upload an image."))
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 175))], spacing: 14) {
-                        ForEach(mediaStudio.history) { record in
-                            ForEach(record.images) { image in
-                                Button { viewModel.importImage(image, assetID: target.assetID, segmentID: target.segmentID,
-                                                               frameRole: target.frameRole) } label: {
-                                    VStack {
-                                        StoryThumbnail(asset: image).frame(height: 110).clipped()
-                                        Text(record.prompt).font(.caption).lineLimit(2)
-                                    }
-                                }.buttonStyle(.plain).disabled(viewModel.isBusy || viewModel.hasActiveAssetGenerations)
-                            }
-                        }
-                    }
+                    imageLibrarySection
                 }
             }
             Text(appModel.localized("旧版本会保留；确认角色或场景新版本后，相关未生成分段需要重新确认首帧。", english: "Old versions are retained. Changing a shared asset requires affected first frames to be confirmed again."))
                 .font(.caption).foregroundStyle(.secondary)
-        }.padding(22).frame(width: 760, height: 740)
+        }.padding(22).frame(width: 800, height: 780)
         .onAppear {
             assetPrompt = asset?.prompt ?? ""
             selectedReferenceAssetIDs = Set(relatedAssets.compactMap { $0.confirmedImage == nil ? nil : $0.id })
@@ -330,6 +386,199 @@ struct StoryImagePicker: View {
             }
         } message: {
             Text(appModel.localized("只有确认服务商没有生成可用结果后才应解锁。下一次点击生成会再次提交，并可能再次计费。", english: "Unlock only after confirming the provider produced no usable result. The next Generate click submits again and may incur another charge."))
+        }
+    }
+
+    @ViewBuilder
+    private var imageLibrarySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(asset == nil
+                         ? appModel.localized("从图片生成记录选择", english: "Choose from Image History")
+                         : appModel.localized("复用已有素材", english: "Reuse Existing Assets"))
+                        .font(.headline)
+                    if let asset {
+                        Text(appModel.localized(
+                            "当前是\(referenceKind(asset.kind))，只显示其他剧情里的同类素材。",
+                            english: "This is a \(referenceKind(asset.kind).lowercased()); only matching assets from other stories are shown."
+                        ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Picker("", selection: $imageLibrary) {
+                    Text(asset == nil
+                         ? appModel.localized("剧情创作记录", english: "Story History")
+                         : appModel.localized("其他剧情", english: "Other Stories")).tag(ImageLibrary.stories)
+                    Text(appModel.localized("独立生成记录", english: "Standalone History")).tag(ImageLibrary.standalone)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 270)
+            }
+
+            if imageLibrary == .stories {
+                if asset != nil { reusableStoryLibrary }
+                else { storyFrameLibrary }
+            } else {
+                standaloneImageLibrary
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var storyFrameLibrary: some View {
+        if availableStoryHistoryCount == 0 {
+            ContentUnavailableView {
+                Label(appModel.localized("还没有可选择的剧情图片", english: "No Story Images Available"),
+                      systemImage: "photo.stack")
+            } description: {
+                Text(appModel.localized("人物、场景、道具、首帧、尾帧和成片末帧都会按剧情显示在这里。",
+                                        english: "Characters, scenes, props, frames, and extracted video tails appear here by story."))
+            }
+            .frame(maxWidth: .infinity, minHeight: 150)
+        } else {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(viewModel.creationHistoryGroups) { group in
+                    let available = group.images.filter { !existingTargetImageIDs.contains($0.asset.id) }
+                    if !available.isEmpty {
+                        VStack(alignment: .leading, spacing: 9) {
+                            Label(group.projectTitle, systemImage: "film.stack")
+                                .font(.callout.weight(.semibold))
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 12)], spacing: 12) {
+                                ForEach(available) { item in
+                                    Button {
+                                        viewModel.importImage(item.asset, assetID: target.assetID,
+                                                              segmentID: target.segmentID,
+                                                              frameRole: target.frameRole,
+                                                              confirmImported: true)
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 7) {
+                                            StoryThumbnail(asset: item.asset)
+                                                .frame(height: 112).frame(maxWidth: .infinity).clipped()
+                                                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                            Text(item.title).font(.caption.weight(.semibold)).lineLimit(1)
+                                            Text(historyKind(item.kind)).font(.caption2).foregroundStyle(.secondary)
+                                            Label(appModel.localized("选作当前帧", english: "Use as Current Frame"),
+                                                  systemImage: "checkmark.circle")
+                                                .font(.caption2.weight(.semibold)).foregroundStyle(.indigo)
+                                        }
+                                        .padding(9)
+                                        .background(Color.primary.opacity(0.03),
+                                                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(viewModel.isBusy || viewModel.hasActiveAssetGenerations || isGeneratingFrame)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func historyKind(_ kind: StoryStudioViewModel.CreationHistoryImage.Kind) -> String {
+        switch kind {
+        case .character: appModel.localized("人物图片", english: "Character")
+        case .scene: appModel.localized("场景图片", english: "Scene")
+        case .prop: appModel.localized("道具图片", english: "Prop")
+        case .firstFrame: appModel.localized("首帧", english: "First Frame")
+        case .lastFrame: appModel.localized("预生成尾帧", english: "Planned Last Frame")
+        case .videoLastFrame: appModel.localized("成片最后一帧", english: "Video Final Frame")
+        }
+    }
+
+    @ViewBuilder
+    private var reusableStoryLibrary: some View {
+        if reusableStoryImages.isEmpty {
+            ContentUnavailableView {
+                Label(appModel.localized("还没有可复用的同类素材", english: "No Matching Assets Yet"),
+                      systemImage: "photo.stack")
+            } description: {
+                Text(appModel.localized(
+                    "其他剧情中确认过的同类素材会自动出现在这里，也可以切换到独立生成记录。",
+                    english: "Matching assets from other stories appear here automatically. You can also use standalone image history."
+                ))
+            }
+            .frame(maxWidth: .infinity, minHeight: 150)
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 205), spacing: 12)], spacing: 12) {
+                ForEach(reusableStoryImages) { item in
+                    Button {
+                        viewModel.importImage(item.asset, assetID: target.assetID,
+                                              segmentID: target.segmentID, frameRole: target.frameRole)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            StoryThumbnail(asset: item.asset)
+                                .frame(height: 124)
+                                .frame(maxWidth: .infinity)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            Text(item.resourceName)
+                                .font(.callout.weight(.semibold))
+                                .lineLimit(1)
+                            Label(item.projectTitle, systemImage: "film.stack")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            Label(appModel.localized("选择这个素材", english: "Use This Asset"),
+                                  systemImage: "plus.circle.fill")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.indigo)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.indigo.opacity(0.045),
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.indigo.opacity(0.13))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.isBusy || viewModel.hasActiveAssetGenerations || isGeneratingFrame)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var standaloneImageLibrary: some View {
+        if mediaStudio.history.isEmpty {
+            Text(appModel.localized("还没有图片生成记录，本机上传仍可使用。",
+                                    english: "No generated images yet. You can still upload an image."))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 12)], spacing: 12) {
+            ForEach(mediaStudio.history) { record in
+                ForEach(record.images) { image in
+                    Button {
+                        viewModel.importImage(image, assetID: target.assetID, segmentID: target.segmentID,
+                                              frameRole: target.frameRole)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            StoryThumbnail(asset: image)
+                                .frame(height: 120)
+                                .frame(maxWidth: .infinity)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            Text(record.prompt)
+                                .font(.caption)
+                                .lineLimit(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(9)
+                        .background(Color.primary.opacity(0.03),
+                                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.isBusy || viewModel.hasActiveAssetGenerations || isGeneratingFrame)
+                }
+            }
         }
     }
 }
@@ -369,9 +618,11 @@ struct StorySegmentEditor: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     TextField(appModel.localized("分段标题", english: "Segment Title"), text: $segment.title)
-                    Stepper(appModel.localized("时长：\(segment.seconds) 秒", english: "Duration: \(segment.seconds) seconds"),
-                            value: durationBinding,
-                            in: segment.kind == .transition ? 2...3 : 2...15)
+                    Picker(appModel.localized("时长", english: "Duration"), selection: durationBinding) {
+                        ForEach(Array(Set((project.models.supportedVideoDurations ?? Array(2...15)) + [segment.seconds])).sorted(), id: \.self) {
+                            Text("\($0) " + appModel.localized("秒", english: "seconds")).tag($0)
+                        }
+                    }
                     Text(segment.kind == .transition
                          ? appModel.localized("转场段只连接前后画面状态，不额外消耗剧情原文。",
                                               english: "A transition only connects adjacent visual states and consumes no story text.")

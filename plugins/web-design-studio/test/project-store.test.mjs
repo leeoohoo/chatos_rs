@@ -112,6 +112,33 @@ test('scope startup merges duplicate internal projects into the single program-b
   }
 });
 
+test('project-isolated startup consolidates default indexes left by changing workspace context', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-project-context-migration-'));
+  const store = new WebDesignDocumentStore(root);
+  try {
+    const previousScope = 'e'.repeat(64);
+    const currentScope = 'f'.repeat(64);
+    const previous = await store.ensureScopedProject(previousScope, 'nova_dream');
+    const design = await store.createInProject(previous.projectId, '保留的网站设计', true);
+    const emptyCurrent = await store.ensureScopedProject(currentScope, 'nova_dream');
+
+    const consolidated = await store.ensureScopedProject(
+      currentScope,
+      'nova_dream',
+      { consolidateDefaultProjects: true }
+    );
+
+    assert.equal(consolidated.projectId, previous.projectId);
+    assert.equal(consolidated.scopeKey, currentScope);
+    assert.deepEqual(consolidated.designIds, [design.documentId]);
+    assert.deepEqual((await store.listProjects(currentScope)).map((project) => project.projectId), [previous.projectId]);
+    await assert.rejects(() => store.readProject(emptyCurrent.projectId), /ENOENT/);
+    assert.equal((await store.read(design.documentId)).title, '保留的网站设计');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('legacy projects are assigned to the first transmitted scope without changing design bytes', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scope-migration-'));
   const store = new WebDesignDocumentStore(root);

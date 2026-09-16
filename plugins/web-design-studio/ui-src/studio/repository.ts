@@ -80,6 +80,18 @@ export interface GenerationPlanSummary {
     activeAttemptId?: string;
   };
   nextAction: Record<string, unknown>;
+  deliveryGate: {
+    status: 'blocked' | 'ready';
+    code: string;
+    message: string;
+    visibleSceneReady: boolean;
+    projectImplementationAllowed: boolean;
+    taskCompletionAllowed: boolean;
+    acceptedVisibleStepCount: number;
+    completedArtboardCount: number;
+    plannedArtboardCount: number;
+    requiredNextAction: Record<string, unknown>;
+  };
 }
 
 export interface GenerationReviewArtifact {

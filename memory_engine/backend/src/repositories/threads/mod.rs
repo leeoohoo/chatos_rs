@@ -26,10 +26,12 @@ pub struct ListThreadsQuery<'a> {
 
 pub use dispatch::{
     defer_summary_dispatch_until_unlock, get_pending_summary_dispatch, get_summary_dispatch_state,
-    list_pending_summary_dispatches, mark_summary_dispatch_consumed,
+    list_eligible_summary_dispatches, list_pending_summary_dispatches,
+    list_stale_published_summary_dispatches, mark_summary_dispatch_consumed,
     mark_summary_dispatch_dead_lettered, mark_summary_dispatch_failed,
-    mark_summary_dispatch_published, rearm_summary_dispatch_if_eligible,
-    replay_dead_lettered_summary_dispatch, SummaryDispatchOutbox,
+    mark_summary_dispatch_published, rearm_stale_published_summary_dispatch,
+    rearm_summary_dispatch_if_eligible, replay_dead_lettered_summary_dispatch,
+    SummaryDispatchOutbox,
 };
 #[allow(unused_imports)]
 pub use queries::{

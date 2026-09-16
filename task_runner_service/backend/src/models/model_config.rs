@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_ai_runtime::model_config::{normalize_provider, normalize_thinking_level};
+use chatos_ai_runtime::model_config::normalize_thinking_level;
 use chatos_ai_runtime::ModelRuntimeConfig;
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +61,7 @@ impl ModelConfigRecord {
             self.model.clone(),
             provider,
         )
-        .with_responses_support(self.supports_responses)
+        .with_responses_support(true)
         .with_instructions(self.instructions.clone())
         .with_temperature(self.temperature)
         .with_max_output_tokens(self.max_output_tokens)
@@ -74,16 +74,8 @@ impl ModelConfigRecord {
 }
 
 fn runtime_provider_for_model(provider: &str, base_url: &str) -> String {
-    let normalized = normalize_provider(provider);
-    if normalized == "gpt" && !is_openai_api_base_url(base_url) {
-        return "openai_compatible".to_string();
-    }
+    let _ = base_url;
     provider.to_string()
-}
-
-fn is_openai_api_base_url(base_url: &str) -> bool {
-    let value = base_url.trim().to_ascii_lowercase();
-    value.is_empty() || value.contains("api.openai.com")
 }
 
 #[cfg(test)]
@@ -91,13 +83,13 @@ mod tests {
     use super::ModelConfigRecord;
 
     #[test]
-    fn runtime_config_treats_custom_openai_base_url_as_compatible() {
+    fn runtime_config_preserves_provider_for_custom_base_url() {
         let record = model_config_record("openai", "https://gateway.example.test/v1", "minimal");
 
         let runtime = record.to_runtime_config(None);
 
-        assert_eq!(runtime.provider, "openai_compatible");
-        assert_eq!(runtime.thinking_level.as_deref(), Some("low"));
+        assert_eq!(runtime.provider, "openai");
+        assert_eq!(runtime.thinking_level.as_deref(), Some("minimal"));
         assert_eq!(runtime.max_transient_retries, Some(5));
     }
 

@@ -315,6 +315,9 @@ pub async fn delete_records_by_thread(
         .map_err(|err| err.to_string())?;
     compact_turns::delete_compact_turns_by_thread(db, thread_id, tenant_id, source_id, record_type)
         .await?;
+    if result.deleted_count > 0 {
+        threads::refresh_summary_queue_state(db, tenant_id, source_id, thread_id).await?;
+    }
     Ok(result.deleted_count as i64)
 }
 
@@ -348,6 +351,17 @@ pub async fn delete_record_by_id(
             record.metadata.as_ref(),
         )
         .await?;
+        if summary_status_is_pending(Some(record.summary_status.as_str())) {
+            threads::apply_summary_queue_state_delta(
+                db,
+                record.tenant_id.as_str(),
+                record.source_id.as_str(),
+                record.thread_id.as_str(),
+                -1,
+                -estimate_pending_record_tokens(record),
+            )
+            .await?;
+        }
     }
     Ok(deleted.is_some())
 }

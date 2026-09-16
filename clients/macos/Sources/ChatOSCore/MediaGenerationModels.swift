@@ -46,7 +46,35 @@ public struct MediaGenerationModel: Codable, Identifiable, Sendable, Equatable {
     /// MiniMax H3/H3 Max accept official V2 `content` roles for first and last frames.
     /// The same content envelope is supported by our NewAPI `/v1/videos` compatibility layer.
     public var supportsVideoLastFrame: Bool {
-        VideoGenerationProfile(modelName: modelName).supportsLastFrame
+        let profile = VideoGenerationProfile(modelName: modelName)
+        return (!profile.isSeedance || usesNativeSeedanceProtocol)
+            ? profile.supportsLastFrame : false
+    }
+
+    /// MiniMax H3 reference mode can use a completed video as motion/style context.
+    /// Frame inputs and reference-video inputs are mutually exclusive upstream.
+    public var supportsVideoReference: Bool {
+        let profile = VideoGenerationProfile(modelName: modelName)
+        return (!profile.isSeedance || usesNativeSeedanceProtocol)
+            ? profile.supportsReferenceVideo : false
+    }
+
+    /// True when the provider exposes a source-preserving video edit operation.
+    public var supportsVideoEditing: Bool {
+        usesNativeSeedanceProtocol
+            && VideoGenerationProfile(modelName: modelName).supportsVideoEditing
+    }
+
+    /// True when the provider can continue forward from a completed source video.
+    public var supportsVideoExtension: Bool {
+        usesNativeSeedanceProtocol
+            && VideoGenerationProfile(modelName: modelName).supportsVideoExtension
+    }
+
+    private var usesNativeSeedanceProtocol: Bool {
+        ["volcengine", "ark", "doubao", "seedance", "bytedance", "byteplus"].contains(
+            provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        )
     }
 }
 
@@ -206,6 +234,8 @@ public struct VideoGenerationRequest: Sendable, Equatable {
     public var seconds: Int
     public var inputImage: ImageGenerationInputImage?
     public var lastFrameImage: ImageGenerationInputImage?
+    public var referenceVideo: VideoGenerationInputVideo?
+    public var referencePurpose: VideoGenerationReferencePurpose
     public var ratio: String
 
     public init(
@@ -215,6 +245,8 @@ public struct VideoGenerationRequest: Sendable, Equatable {
         seconds: Int,
         inputImage: ImageGenerationInputImage? = nil,
         lastFrameImage: ImageGenerationInputImage? = nil,
+        referenceVideo: VideoGenerationInputVideo? = nil,
+        referencePurpose: VideoGenerationReferencePurpose = .reference,
         ratio: String = "16:9"
     ) {
         self.modelConfigID = modelConfigID
@@ -223,30 +255,86 @@ public struct VideoGenerationRequest: Sendable, Equatable {
         self.seconds = seconds
         self.inputImage = inputImage
         self.lastFrameImage = lastFrameImage
+        self.referenceVideo = referenceVideo
+        self.referencePurpose = referencePurpose
         self.ratio = ratio
     }
 }
 
-/// Shared by request validation and the creation form. Values follow MiniMax's V2 API.
+public enum VideoGenerationReferencePurpose: Sendable, Equatable {
+    /// Use the source as visual/motion context for a new generation.
+    case reference
+    /// Modify the source while retaining its unaffected content where possible.
+    case edit
+    /// Continue forward from the end of the source video.
+    case extend
+}
+
+public struct VideoGenerationInputVideo: Sendable, Equatable {
+    public var name: String
+    public var mimeType: String
+    public var base64Data: String
+
+    public init(name: String, mimeType: String, base64Data: String) {
+        self.name = name
+        self.mimeType = mimeType
+        self.base64Data = base64Data
+    }
+}
+
+/// Shared by request validation and the creation form. Values follow each provider's
+/// official native API rather than treating all video models as OpenAI-compatible.
 public enum VideoGenerationProfile: Sendable {
     case openAI, miniMaxH3, miniMaxH3Max
+    case seedance25, seedance20, seedance20Fast, seedance20Mini
 
     public init(modelName: String) {
-        switch modelName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        let value = modelName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch value {
         case "minimax-h3": self = .miniMaxH3
         case "minimax-h3-max": self = .miniMaxH3Max
-        default: self = .openAI
+        default:
+            if value.contains("seedance-2-5") || value.contains("seedance-2.5") {
+                self = .seedance25
+            } else if value.contains("seedance-2-0-fast") || value.contains("seedance-2.0-fast") {
+                self = .seedance20Fast
+            } else if value.contains("seedance-2-0-mini") || value.contains("seedance-2.0-mini") {
+                self = .seedance20Mini
+            } else if value.contains("seedance-2-0") || value.contains("seedance-2.0") {
+                self = .seedance20
+            } else {
+                self = .openAI
+            }
         }
     }
 
-    public var isMiniMax: Bool { self != .openAI }
-    public var supportsLastFrame: Bool { isMiniMax }
+    public var isMiniMax: Bool {
+        self == .miniMaxH3 || self == .miniMaxH3Max
+    }
+    public var isSeedance: Bool {
+        switch self {
+        case .seedance25, .seedance20, .seedance20Fast, .seedance20Mini: true
+        default: false
+        }
+    }
+    public var supportsLastFrame: Bool { isMiniMax || isSeedance }
+    public var supportsReferenceVideo: Bool {
+        switch self {
+        case .miniMaxH3, .miniMaxH3Max,
+             .seedance25, .seedance20, .seedance20Fast, .seedance20Mini: true
+        case .openAI: false
+        }
+    }
+    public var supportsVideoEditing: Bool { isSeedance }
+    public var supportsVideoExtension: Bool { isSeedance }
 
     public var sizes: [String] {
         switch self {
         case .openAI: ["1280x720", "720x1280", "1792x1024", "1024x1792"]
         case .miniMaxH3: ["768P", "2K"]
         case .miniMaxH3Max: ["768P", "480P"]
+        case .seedance25, .seedance20: ["720p", "1080p", "480p"]
+        case .seedance20Fast, .seedance20Mini: ["720p", "480p"]
         }
     }
 
@@ -255,6 +343,8 @@ public enum VideoGenerationProfile: Sendable {
         case .openAI: [4, 8, 12]
         case .miniMaxH3: Array(4...15)
         case .miniMaxH3Max: Array(5...15)
+        case .seedance25: Array(4...30)
+        case .seedance20, .seedance20Fast, .seedance20Mini: Array(4...15)
         }
     }
 

@@ -14,6 +14,12 @@ let package = Package(
         .library(name: "ChatOSConnector", targets: ["ChatOSConnector"]),
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/migueldeicaza/SwiftTerm.git",
+            exact: "1.20.0"
+        ),
+    ],
     targets: [
         .target(name: "ChatOSAgentRuntime"),
         .target(name: "ChatOSCore"),
@@ -23,7 +29,11 @@ let package = Package(
         ),
         .target(
             name: "ChatOSConnector",
-            dependencies: ["ChatOSCore", "ChatOSAgentRuntime"],
+            dependencies: [
+                "ChatOSCore",
+                "ChatOSAgentRuntime",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
                 .linkedFramework("ApplicationServices"),
@@ -38,12 +48,19 @@ let package = Package(
         ),
         .executableTarget(
             name: "ChatOSApp",
-            dependencies: ["ChatOSCore", "ChatOSAPI", "ChatOSConnector", "ChatOSAgentRuntime"],
+            dependencies: [
+                "ChatOSCore",
+                "ChatOSAPI",
+                "ChatOSConnector",
+                "ChatOSAgentRuntime",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("Security"),
                 .linkedFramework("WebKit"),
+                .linkedFramework("AVFoundation"),
                 .linkedLibrary("sqlite3"),
             ]
         ),

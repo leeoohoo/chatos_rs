@@ -257,6 +257,54 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         XCTAssertEqual(payload["ratio"] as? String, "adaptive")
     }
 
+    func testMiniMaxNativePreviousVideoUsesReferenceModeWithoutFrames() async throws {
+        let transport = MiniMaxTransport()
+        let source = Data([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70])
+        let video = VideoGenerationInputVideo(
+            name: "previous.mp4", mimeType: "video/mp4",
+            base64Data: source.base64EncodedString()
+        )
+        _ = try await miniMaxService(transport).generateVideo(.init(
+            modelConfigID: "h3", prompt: "Continue the camera motion", size: "768P", seconds: 4,
+            referenceVideo: video, ratio: "16:9"
+        )) { _ in }
+        let requests = await transport.allRequests()
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(requests[1].body)) as? [String: Any])
+        let content = try XCTUnwrap(payload["content"] as? [[String: Any]])
+        XCTAssertEqual(content.compactMap { $0["role"] as? String }, ["reference_video"])
+        XCTAssertEqual(
+            (content.last?["video_url"] as? [String: String])?["url"],
+            "data:video/mp4;base64,\(source.base64EncodedString())"
+        )
+        XCTAssertEqual(payload["ratio"] as? String, "16:9")
+    }
+
+    func testMiniMaxRejectsMixingFrameAndPreviousVideo() async throws {
+        let transport = MiniMaxTransport()
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let frame = ImageGenerationInputImage(
+            name: "first.png", mimeType: "image/png", base64Data: png.base64EncodedString()
+        )
+        let video = VideoGenerationInputVideo(
+            name: "previous.mp4", mimeType: "video/mp4", base64Data: Data([0x01]).base64EncodedString()
+        )
+        do {
+            _ = try await miniMaxService(transport).generateVideo(.init(
+                modelConfigID: "h3", prompt: "Continue", size: "768P", seconds: 4,
+                inputImage: frame, referenceVideo: video
+            )) { _ in }
+            XCTFail("Frame mode and reference-video mode must be mutually exclusive")
+        } catch {
+            let requests = await transport.allRequests()
+            XCTAssertEqual(requests.count, 1)
+        }
+    }
+
     func testOpenAICompatibleH3SendsOfficialFirstAndLastFrameContentRoles() async throws {
         let transport = NewAPIVideoTransport()
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
@@ -503,6 +551,86 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         }
     }
 
+    func testSeedanceNativeEditAndExtendUseDistinctOfficialTaskModes() async throws {
+        let source = Data([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70])
+        let video = VideoGenerationInputVideo(
+            name: "source.mp4", mimeType: "video/mp4", base64Data: source.base64EncodedString()
+        )
+        for (purpose, expectedMode, expectedDuration, promptPrefix) in [
+            (VideoGenerationReferencePurpose.edit, "edit", -1, "视频编辑：以@视频1为原视频"),
+            (.extend, "extend", 8, "延长@视频1：从原视频结尾自然继续"),
+        ] {
+            let transport = SeedanceTransport()
+            let progress = VideoProgressRecorder()
+            let result = try await ChatOSMediaGenerationService(
+                client: ChatOSAPIClient(
+                    configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+                    transport: transport
+                ),
+                providerTransport: transport,
+                videoPollIntervalNanoseconds: 0
+            ).generateVideo(.init(
+                modelConfigID: "seedance", prompt: "让女主更开心", size: "720p", seconds: 8,
+                referenceVideo: video, referencePurpose: purpose, ratio: "16:9"
+            )) { await progress.append($0) }
+
+            XCTAssertEqual(result.videoData, Data("seedance-mp4".utf8))
+            let requests = await transport.allRequests()
+            XCTAssertEqual(requests.map(\.url.path), [
+                "/api/chatos/ai-model-configs/seedance",
+                "/api/v3/contents/generations/tasks",
+                "/api/v3/contents/generations/tasks/cgt-1",
+                "/result.mp4",
+            ])
+            XCTAssertEqual(requests[1].headers["Authorization"], "Bearer ark-secret")
+            XCTAssertNil(requests.last?.headers["Authorization"])
+            let payload = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: XCTUnwrap(requests[1].body)) as? [String: Any]
+            )
+            XCTAssertEqual(payload["omni_reference_task_type"] as? String, expectedMode)
+            XCTAssertEqual(payload["duration"] as? Int, expectedDuration)
+            XCTAssertEqual(payload["ratio"] as? String, "adaptive")
+            XCTAssertEqual(payload["resolution"] as? String, "720p")
+            XCTAssertEqual(payload["output_format"] as? String, "mp4")
+            let content = try XCTUnwrap(payload["content"] as? [[String: Any]])
+            XCTAssertTrue((content.first?["text"] as? String)?.hasPrefix(promptPrefix) == true)
+            XCTAssertEqual(content.last?["role"] as? String, "reference_video")
+            XCTAssertEqual(
+                (content.last?["video_url"] as? [String: String])?["url"],
+                "data:video/mp4;base64,\(source.base64EncodedString())"
+            )
+            let progressValues = await progress.values()
+            XCTAssertEqual(progressValues.map(\.status), ["queued", "completed", "downloading"])
+        }
+    }
+
+    func testSeedanceNativeFirstAndLastFramesUseOfficialRoles() async throws {
+        let transport = SeedanceTransport()
+        let frame = ImageGenerationInputImage(
+            name: "frame.png", mimeType: "image/png",
+            base64Data: Data("image".utf8).base64EncodedString()
+        )
+        _ = try await ChatOSMediaGenerationService(
+            client: ChatOSAPIClient(
+                configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+                transport: transport
+            ),
+            providerTransport: transport,
+            videoPollIntervalNanoseconds: 0
+        ).generateVideo(.init(
+            modelConfigID: "seedance", prompt: "人物走向门口", size: "720p", seconds: 6,
+            inputImage: frame, lastFrameImage: frame, ratio: "16:9"
+        )) { _ in }
+        let requests = await transport.allRequests()
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: XCTUnwrap(requests[1].body)) as? [String: Any]
+        )
+        let content = try XCTUnwrap(payload["content"] as? [[String: Any]])
+        XCTAssertEqual(content.compactMap { $0["role"] as? String }, ["first_frame", "last_frame"])
+        XCTAssertEqual(payload["ratio"] as? String, "adaptive")
+        XCTAssertNil(payload["omni_reference_task_type"])
+    }
+
     private func compatibleVideoService(_ transport: NewAPIVideoTransport) -> ChatOSMediaGenerationService {
         ChatOSMediaGenerationService(
             client: ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!), transport: transport),
@@ -597,6 +725,45 @@ private actor MiniMaxTransport: HTTPTransport {
             throw URLError(.badURL)
         }
         return .init(statusCode: 200, headers: [:], body: try JSONSerialization.data(withJSONObject: payload))
+    }
+
+    func allRequests() -> [HTTPRequest] { requests }
+}
+
+private actor SeedanceTransport: HTTPTransport {
+    private var requests: [HTTPRequest] = []
+
+    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        requests.append(request)
+        let payload: [String: Any]
+        switch (request.method, request.url.path) {
+        case ("GET", "/api/chatos/ai-model-configs/seedance"):
+            payload = [
+                "provider": "volcengine",
+                "model": "doubao-seedance-2-5-260628",
+                "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                "api_key": "ark-secret",
+                "enabled": true,
+            ]
+        case ("POST", "/api/v3/contents/generations/tasks"):
+            payload = ["id": "cgt-1"]
+        case ("GET", "/api/v3/contents/generations/tasks/cgt-1"):
+            payload = [
+                "id": "cgt-1", "model": "doubao-seedance-2-5-260628", "status": "succeeded",
+                "content": ["video_url": "https://seedance-cdn.example/result.mp4"],
+            ]
+        case ("GET", "/result.mp4"):
+            return .init(
+                statusCode: 200, headers: ["content-type": "video/mp4"],
+                body: Data("seedance-mp4".utf8)
+            )
+        default:
+            throw URLError(.badURL)
+        }
+        return .init(
+            statusCode: 200, headers: ["content-type": "application/json"],
+            body: try JSONSerialization.data(withJSONObject: payload)
+        )
     }
 
     func allRequests() -> [HTTPRequest] { requests }

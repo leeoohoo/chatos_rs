@@ -2,6 +2,8 @@ using ChatOS.Connector.Connection;
 using ChatOS.Connector.Gateway;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
+using ChatOS.Connector.Remote;
+using ChatOS.Connector.Terminal;
 
 namespace ChatOS.Connector.Runtime;
 
@@ -12,19 +14,25 @@ public sealed class LocalConnectorControlService : ILocalConnectorControlService
     private readonly ConnectorConnectionStateMachine _connection;
     private readonly IConnectorGatewayClient _gateway;
     private readonly IConnectorAccessTokenStore _tokens;
+    private readonly TerminalSessionManager? _localTerminals;
+    private readonly RemoteTerminalSessionManager? _remoteTerminals;
 
     public LocalConnectorControlService(
         ConnectorRuntimeContext runtime,
         ConnectorPairingService pairing,
         ConnectorConnectionStateMachine connection,
         IConnectorGatewayClient gateway,
-        IConnectorAccessTokenStore tokens)
+        IConnectorAccessTokenStore tokens,
+        TerminalSessionManager? localTerminals = null,
+        RemoteTerminalSessionManager? remoteTerminals = null)
     {
         _runtime = runtime;
         _pairing = pairing;
         _connection = connection;
         _gateway = gateway;
         _tokens = tokens;
+        _localTerminals = localTerminals;
+        _remoteTerminals = remoteTerminals;
     }
 
     public async Task<LocalConnectorStatus> GetStatusAsync(CancellationToken cancellationToken = default)
@@ -53,6 +61,15 @@ public sealed class LocalConnectorControlService : ILocalConnectorControlService
                 draft.Workspaces.Select(static workspace =>
                     new ConnectorWorkspacePairing(workspace.AbsoluteRoot, workspace.Alias)).ToArray()),
             cancellationToken).ConfigureAwait(false);
+        if (_localTerminals is not null)
+        {
+            await _localTerminals.CloseRelaySessionsAsync(CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        if (_remoteTerminals is not null)
+        {
+            await _remoteTerminals.CloseAllAsync(CancellationToken.None).ConfigureAwait(false);
+        }
         _connection.SetConfigured(true);
         return Status();
     }
@@ -81,6 +98,15 @@ public sealed class LocalConnectorControlService : ILocalConnectorControlService
 
         await _runtime.ReplaceAsync(null, CancellationToken.None).ConfigureAwait(false);
         await _tokens.ClearAsync(CancellationToken.None).ConfigureAwait(false);
+        if (_localTerminals is not null)
+        {
+            await _localTerminals.CloseRelaySessionsAsync(CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        if (_remoteTerminals is not null)
+        {
+            await _remoteTerminals.CloseAllAsync(CancellationToken.None).ConfigureAwait(false);
+        }
         _connection.SetConfigured(false);
         if (remoteError is not null)
         {

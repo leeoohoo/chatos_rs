@@ -17,11 +17,11 @@ import { GenerationVisualArtifactStore } from './v2/generation-visual-artifact-s
 import { GenerationVisualService, type ToolImagePayload } from './v2/generation-visual-service.js';
 import { ChromiumSceneImageRenderer } from './v2/headless-scene-renderer.js';
 import { AnnotationAiService } from './v2/annotation-ai-service.js';
-import { ProgressiveGenerationService, type SubmittedStepVerification } from './v2/progressive-generation-service.js';
-import { executeSceneEditorCommand, sceneEditorCommandRequestSchema } from './v2/scene-editor-command.js';
+import { ProgressiveGenerationService } from './v2/progressive-generation-service.js';
+import { executeSceneEditorCommand, type SceneEditorCommand } from './v2/scene-editor-command.js';
 import { jsonEncodedValueSchema, jsonScalarValueSchema, stringLiteralSchema } from './json-schema.js';
 import { SceneQueryIndex, type SceneQuery } from './v2/scene-query.js';
-import { indexSceneDocument } from './v2/scene-schema.js';
+import { createSceneNodeBase, indexSceneDocument, type SceneDocument, type SceneNode, type SceneNodeType } from './v2/scene-schema.js';
 import { SceneDocumentStore, SceneRevisionConflictError } from './v2/scene-store.js';
 import type { CreateGenerationStepInput, GenerationArtifact, GenerationDesignIntent } from './v2/generation-plan-schema.js';
 import type { SceneTransactionOperation } from './v2/scene-transaction.js';
@@ -42,7 +42,7 @@ import {
 } from './schema.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '3.0.3';
+const SERVER_VERSION = '3.0.20';
 const store = new WebDesignDocumentStore();
 await store.initialize();
 const scopeKey = runtimeScopeFingerprint(store.rootDirectory);
@@ -50,7 +50,8 @@ const defaultProject = await store.ensureScopedProject(
   scopeKey,
   process.env.CHATOS_CONTEXT_SCOPE === 'project' && process.env.CHATOS_PROJECT_ID
     ? process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 网站项目'
-    : '公共网站设计'
+    : '公共网站设计',
+  { consolidateDefaultProjects: process.env.CHATOS_CONTEXT_SCOPE === 'project' }
 );
 const generationRepositories = {
   plans: new GenerationPlanStore(store.rootDirectory),
@@ -68,10 +69,18 @@ async function assertGenerationDocumentInScope(documentId: string): Promise<{ na
 function progressiveGenerationService(): ProgressiveGenerationService {
   const projectId = process.env.CHATOS_PROJECT_ID;
   if (!projectId) throw new Error('Progressive website generation requires a ChatOS project context with a host-injected projectId.');
+  const visuals = generationVisualService();
   return new ProgressiveGenerationService({
     projectId,
     repositories: generationRepositories,
-    assertDocumentInScope: assertGenerationDocumentInScope
+    assertDocumentInScope: assertGenerationDocumentInScope,
+    verifyCandidate: (input) => visuals.verifyCandidate(input),
+    captureVisualInputs: async ({ documentId, pageId, viewportWidths }) => {
+      const captures = await Promise.all(viewportWidths.map((viewportWidth) => visuals.capturePage(documentId, pageId, viewportWidth)));
+      return captures.flatMap((capture) => (capture.artifacts as GenerationArtifact[])
+        .filter((artifact) => artifact.kind === 'page-snapshot' || artifact.kind === 'visual-grounding'));
+    },
+    loadArtifactImages: (scope, artifacts) => visuals.loadArtifactImages(scope.documentId, artifacts)
   });
 }
 
@@ -466,10 +475,117 @@ const generationArtifactSchema = {
   additionalProperties: false
 } as const;
 
+const simpleSceneFrameSchema = {
+  type: 'object',
+  properties: {
+    x: { type: 'number', minimum: -100000, maximum: 100000 },
+    y: { type: 'number', minimum: -100000, maximum: 100000 },
+    width: { type: 'number', exclusiveMinimum: 0, maximum: 100000 },
+    height: { type: 'number', exclusiveMinimum: 0, maximum: 100000 }
+  },
+  required: ['x', 'y', 'width', 'height'],
+  additionalProperties: false
+} as const;
+
+const simpleSceneNodeSchema = {
+  type: 'object',
+  description: 'Preferred safe node input. The plugin supplies every required Scene v2 base field and makes paints visible. Insert parents before children in the same transaction.',
+  properties: {
+    id: { type: 'string', minLength: 1, maxLength: 160, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$' },
+    type: { type: 'string', enum: ['frame', 'group', 'text', 'shape', 'library-instance'] },
+    name: { type: 'string', minLength: 1, maxLength: 240 },
+    role: { type: 'string', minLength: 1, maxLength: 160 },
+    frame: simpleSceneFrameSchema,
+    content: { type: 'string', maxLength: 12000, description: 'Required for text. One semantic text item only.' },
+    shape: { type: 'string', enum: ['rectangle', 'ellipse', 'line', 'polygon', 'star', 'vector'] },
+    layout: {
+      type: 'object',
+      description: 'Optional layout overrides. Defaults are free/fixed/flow with zero padding and gap.',
+      properties: {
+        mode: { type: 'string', enum: ['free', 'auto', 'grid'] },
+        direction: { type: 'string', enum: ['horizontal', 'vertical'] },
+        wrap: { type: 'boolean' },
+        padding: { type: 'number', minimum: 0, maximum: 2000 },
+        gap: { type: 'number', minimum: 0, maximum: 2000 },
+        alignItems: { type: 'string', enum: ['start', 'center', 'end', 'stretch', 'baseline'] },
+        justifyContent: { type: 'string', enum: ['start', 'center', 'end', 'between', 'around', 'evenly'] },
+        sizingX: { type: 'string', enum: ['fixed', 'hug', 'fill'] },
+        sizingY: { type: 'string', enum: ['fixed', 'hug', 'fill'] },
+        position: { type: 'string', enum: ['flow', 'absolute'] },
+        clipContent: { type: 'boolean' }
+      },
+      additionalProperties: false
+    },
+    style: {
+      type: 'object',
+      description: 'Optional safe visual styling. fill is used for both surfaces and text color; generated paints always include visible:true.',
+      properties: {
+        fill: { type: 'string', minLength: 1, maxLength: 120 },
+        fillOpacity: { type: 'number', minimum: 0, maximum: 1 },
+        opacity: { type: 'number', minimum: 0, maximum: 1 },
+        radius: { type: 'number', minimum: 0, maximum: 2000 },
+        stroke: { type: 'string', minLength: 1, maxLength: 120 },
+        strokeWidth: { type: 'number', minimum: 0, maximum: 200 },
+        shadowColor: { type: 'string', minLength: 1, maxLength: 120 },
+        shadowRadius: { type: 'number', minimum: 0, maximum: 500 },
+        shadowOffsetX: { type: 'number', minimum: -1000, maximum: 1000 },
+        shadowOffsetY: { type: 'number', minimum: -1000, maximum: 1000 },
+        fontFamily: { type: 'string', minLength: 1, maxLength: 300 },
+        fontSize: { type: 'number', minimum: 1, maximum: 1000 },
+        fontWeight: { type: 'number', minimum: 1, maximum: 1000 },
+        lineHeight: { type: 'number', minimum: 0.5, maximum: 4, description: 'Unitless multiplier of fontSize. Use values such as 1.1 for display text or 1.5 for body text.' },
+        letterSpacing: { type: 'number', minimum: -100, maximum: 500 },
+        textAlign: { type: 'string', enum: ['left', 'center', 'right', 'justify'] }
+      },
+      additionalProperties: false
+    },
+    library: { type: 'string', minLength: 1, maxLength: 160, description: 'For library-instance, copy from sceneBindingTemplate.' },
+    component: { type: 'string', minLength: 1, maxLength: 160, description: 'For library-instance, copy from sceneBindingTemplate.' },
+    variant: { type: 'string', maxLength: 160 },
+    properties: { type: 'object', additionalProperties: true },
+    slots: { type: 'object', additionalProperties: { type: 'array', maxItems: 0, items: { type: 'object' } } }
+  },
+  required: ['id', 'type', 'name', 'frame'],
+  additionalProperties: false
+} as const;
+
 const generationSceneOperationSchema = {
   oneOf: [
     {
       type: 'object',
+      description: 'Insert a complete editable hierarchy in one compact operation. tree is recursive: { node: <simple Scene node>, children?: [<tree>...] }. Frame and group nodes may have children; every descendant remains an independent stable Scene node.',
+      properties: {
+        op: stringLiteralSchema('insert-simple-tree'),
+        parentId: { type: 'string', minLength: 1, maxLength: 160 },
+        index: { type: 'integer', minimum: 0, maximum: 100000 },
+        slot: { type: 'string', minLength: 1, maxLength: 160 },
+        tree: {
+          type: 'object',
+          properties: {
+            node: simpleSceneNodeSchema,
+            children: {
+              type: 'array', maxItems: 512,
+              items: { type: 'object', description: 'Recursive tree item with the same {node, children?} shape.' }
+            }
+          },
+          required: ['node'], additionalProperties: false
+        }
+      },
+      required: ['op', 'parentId', 'index', 'tree'], additionalProperties: false
+    },
+    {
+      type: 'object',
+      description: 'Preferred insertion operation. Use this for custom frames, groups, text, shapes, and component-contract library instances; defaults prevent incomplete invisible Scene nodes.',
+      properties: {
+        op: stringLiteralSchema('insert-simple-node'), parentId: { type: 'string', minLength: 1, maxLength: 160 },
+        index: { type: 'integer', minimum: 0, maximum: 100000 }, slot: { type: 'string', minLength: 1, maxLength: 160 },
+        node: simpleSceneNodeSchema
+      },
+      required: ['op', 'parentId', 'index', 'node'], additionalProperties: false
+    },
+    {
+      type: 'object',
+      description: 'Advanced raw insertion. Prefer insert-simple-node. Raw nodes must include the full Scene v2 base contract, including visible/locked, frame, transform, layout, appearance (fills with visible), variableBindings, annotations, aiPolicy, creator fields, timestamps, and type-specific children/content.',
       properties: {
         op: stringLiteralSchema('insert-node'), parentId: { type: 'string', minLength: 1, maxLength: 160 },
         index: { type: 'integer', minimum: 0, maximum: 100000 }, slot: { type: 'string', minLength: 1, maxLength: 160 },
@@ -534,27 +650,6 @@ const generationSceneOperationSchema = {
   ]
 } as const;
 
-const generationVerificationSchema = {
-  type: 'object',
-  properties: {
-    passed: { type: 'boolean' },
-    qualitySummary: { type: 'string', minLength: 1, maxLength: 12000 },
-    issueIds: { type: 'array', maxItems: 256, items: { type: 'string', minLength: 1, maxLength: 240 } },
-    artifacts: { type: 'array', maxItems: 80, items: generationArtifactSchema },
-    error: {
-      type: 'object',
-      properties: {
-        code: { type: 'string', enum: ['generation_error', 'scope_violation', 'layout_error', 'render_error', 'quality_reject', 'revision_conflict', 'cancelled'] },
-        message: { type: 'string', minLength: 1, maxLength: 12000 }, retryable: { type: 'boolean' },
-        issueIds: { type: 'array', maxItems: 256, items: { type: 'string', minLength: 1, maxLength: 240 } }
-      },
-      required: ['code', 'message', 'retryable', 'issueIds'], additionalProperties: false
-    }
-  },
-  required: ['passed', 'qualitySummary', 'issueIds', 'artifacts'],
-  additionalProperties: false
-} as const;
-
 const progressiveStepExecutionProperties = {
   documentId: { type: 'string', minLength: 1, maxLength: 128 },
   expectedPlanRevision: { type: 'integer', minimum: 0 },
@@ -562,8 +657,7 @@ const progressiveStepExecutionProperties = {
   idempotencyKey: { type: 'string', minLength: 1, maxLength: 160 },
   transactionId: { type: 'string', minLength: 1, maxLength: 160 },
   operations: { type: 'array', minItems: 1, maxItems: 64, items: generationSceneOperationSchema },
-  visualInputs: { type: 'array', minItems: 2, maxItems: 40, items: generationArtifactSchema },
-  verification: generationVerificationSchema
+  visualInputs: { type: 'array', minItems: 2, maxItems: 40, items: generationArtifactSchema }
 } as const;
 
 const visualRectSchema = {
@@ -581,13 +675,13 @@ const visualRectSchema = {
 const TOOL_DEFINITIONS_BASE = [
   {
     name: 'web_design_get_active_context',
-    description: 'Read the immutable ChatOS project scope, active document/page hints, current selection, pending human requests, and resumable generation plan. This tool accepts no projectId.',
+    description: 'Read the immutable ChatOS project scope, active document/page hints, current selection, pending human requests, resumable generation plan, and delivery gate. Follow the returned nextAction before unrelated implementation work or task completion. This tool accepts no projectId.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     _meta: policy
   },
   {
     name: 'web_design_plan_site',
-    description: 'Create or revise only the website page inventory and site objective. This writes the Plan Store and never creates Scene nodes or page content.',
+    description: 'Create or revise only the semantic artboard inventory and site objective. This planning-only call never creates visible Scene content and is not a deliverable. In the same task run, immediately continue with the returned deliveryGate.requiredNextAction.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -617,7 +711,7 @@ const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_plan_page',
-    description: 'Plan one page only: save its visual direction, content hierarchy, acceptance criteria, and bounded step dependency graph. It does not execute any Scene transaction.',
+    description: 'Plan one semantic artboard only: save its visual direction, content hierarchy, acceptance criteria, and bounded step dependency graph. It does not create visible content; immediately continue with the returned deliveryGate.requiredNextAction.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -634,7 +728,7 @@ const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_get_plan',
-    description: 'Read a compact generation-plan summary with stable IDs, current page/step, status counts, and exactly one recommended next action.',
+    description: 'Read a compact generation-plan summary with stable IDs, current page/step, delivery gate, status counts, and exactly one required next action.',
     inputSchema: {
       type: 'object', properties: { documentId: { type: 'string', minLength: 1, maxLength: 128 } },
       required: ['documentId'], additionalProperties: false
@@ -643,7 +737,7 @@ const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_start_page',
-    description: 'Start exactly one planned page and ensure its empty canonical Scene root frame exists. It never starts another page or generates page sections.',
+    description: 'Start exactly one planned artboard and ensure its empty canonical Scene root frame exists. The root alone is still visually empty and cannot satisfy delivery; capture it and run the returned visual Step next.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -751,16 +845,16 @@ const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_query_scene',
-    description: 'Read the current Scene v2 revision and a bounded set of editable nodes with stable IDs, parent/page paths, layout, appearance, protection, and library bindings. Use this before a focused Scene edit and after revision conflicts.',
+    description: 'Read a bounded flat set of editable nodes from exactly one artboard chosen from get_active_context.artboardDirectory. Never loads several artboards into model context. Containers never recursively repeat descendants.',
     inputSchema: {
       type: 'object',
       properties: {
         documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        artboardId: { type: 'string', minLength: 1, maxLength: 160 },
         query: {
           type: 'object',
           properties: {
             ids: { type: 'array', minItems: 1, maxItems: 256, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
-            pageIds: { type: 'array', minItems: 1, maxItems: 100, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
             types: { type: 'array', minItems: 1, maxItems: 10, uniqueItems: true, items: { type: 'string', enum: ['section', 'frame', 'group', 'text', 'shape', 'media', 'library-instance', 'component-main', 'component-set', 'component-instance'] } },
             roles: { type: 'array', minItems: 1, maxItems: 100, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 160 } },
             name: {
@@ -780,29 +874,34 @@ const TOOL_DEFINITIONS_BASE = [
           additionalProperties: false
         }
       },
-      required: ['documentId'], additionalProperties: false
+      required: ['documentId', 'artboardId'], additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
   },
   {
     name: 'web_design_edit_scene',
-    description: 'Apply one atomic Scene v2 editor action through the same transaction path as the visual editor: move, resize, group, frame, Auto Layout frame, or ungroup. This is for focused revision-safe adjustments, not whole-page generation. Capture and inspect the affected page after editing.',
+    description: 'Apply one atomic commandJson action inside exactly one artboard chosen from get_active_context.artboardDirectory. The server validates the decoded command and rejects cross-artboard edits. Use for focused revision-safe adjustments, then capture that same artboard.',
     inputSchema: {
-      ...sceneEditorCommandRequestSchema,
+      type: 'object',
       properties: {
         documentId: { type: 'string', minLength: 1, maxLength: 128 },
-        ...sceneEditorCommandRequestSchema.properties
+        artboardId: { type: 'string', minLength: 1, maxLength: 160 },
+        transactionId: { type: 'string', minLength: 1, maxLength: 160 },
+        expectedRevision: { type: 'integer', minimum: 0 },
+        reason: { type: 'string', minLength: 1, maxLength: 240 },
+        commandJson: { type: 'string', minLength: 2, maxLength: 262144, description: 'JSON object encoded as text. Load web-design-scene-building for command formats.' }
       },
-      required: ['documentId', ...sceneEditorCommandRequestSchema.required]
+      required: ['documentId', 'artboardId', 'transactionId', 'expectedRevision', 'commandJson'],
+      additionalProperties: false
     },
     _meta: policy
   },
   {
     name: 'web_design_run_next_step',
-    description: 'Submit and validate one Candidate Transaction for the next ready step on the active page. Requires current-revision visual inputs and candidate-revision layout, screenshots, grounding, visual Diff, calibration, and quality evidence. One call can advance at most one step.',
+    description: 'Create and mechanically verify one Candidate Transaction for the next ready step. Supply current-revision page captures; the plugin returns real Candidate and Diff images and waits for explicit visual review before commit.',
     inputSchema: {
       type: 'object', properties: progressiveStepExecutionProperties,
-      required: ['documentId', 'expectedPlanRevision', 'idempotencyKey', 'transactionId', 'operations', 'visualInputs', 'verification'],
+      required: ['documentId', 'expectedPlanRevision', 'idempotencyKey', 'transactionId', 'operations', 'visualInputs'],
       additionalProperties: false
     },
     _meta: policy
@@ -813,7 +912,7 @@ const TOOL_DEFINITIONS_BASE = [
     inputSchema: {
       type: 'object',
       properties: { ...progressiveStepExecutionProperties, stepId: { type: 'string', minLength: 1, maxLength: 160 } },
-      required: ['documentId', 'expectedPlanRevision', 'stepId', 'idempotencyKey', 'transactionId', 'operations', 'visualInputs', 'verification'],
+      required: ['documentId', 'expectedPlanRevision', 'stepId', 'idempotencyKey', 'transactionId', 'operations', 'visualInputs'],
       additionalProperties: false
     },
     _meta: policy
@@ -824,7 +923,44 @@ const TOOL_DEFINITIONS_BASE = [
     inputSchema: {
       type: 'object',
       properties: { ...progressiveStepExecutionProperties, stepId: { type: 'string', minLength: 1, maxLength: 160 } },
-      required: ['documentId', 'expectedPlanRevision', 'stepId', 'idempotencyKey', 'transactionId', 'operations', 'visualInputs', 'verification'],
+      required: ['documentId', 'expectedPlanRevision', 'stepId', 'idempotencyKey', 'transactionId', 'operations', 'visualInputs'],
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_execute_step',
+    description: 'Prepare one visible Scene Candidate from operationsJson for the next or named Step. The plugin validates decoded operations, captures every required viewport, chooses first-run/retry/repair behavior, creates IDs, renders Candidate and Diff PNGs, and waits for explicit visual review.',
+    inputSchema: {
+      type: 'object', properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        expectedPlanRevision: { type: 'integer', minimum: 0 },
+        stepId: { type: 'string', minLength: 1, maxLength: 160 },
+        requestId: { type: 'string', minLength: 1, maxLength: 160 },
+        operationsJson: { type: 'string', minLength: 2, maxLength: 262144, description: 'JSON array encoded as text. Load web-design-scene-building for insert-simple-tree and focused operation formats.' }
+      },
+      required: ['documentId', 'expectedPlanRevision', 'operationsJson'],
+      additionalProperties: false
+    },
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
+  },
+  {
+    name: 'web_design_control_plan',
+    description: 'Apply one lifecycle decision to the active Plan. Accept commits only the reviewed Candidate and automatically completes an accepted handoff page; reject/skip/rollback/pause/resume/start-page are revision checked. This tool never generates visual content.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', minLength: 1, maxLength: 128 },
+        expectedPlanRevision: { type: 'integer', minimum: 0 },
+        action: { type: 'string', enum: ['accept', 'reject', 'skip', 'rollback', 'pause', 'resume', 'start-page'] },
+        pageId: { type: 'string', minLength: 1, maxLength: 160 },
+        stepId: { type: 'string', minLength: 1, maxLength: 160 },
+        attemptId: { type: 'string', minLength: 1, maxLength: 160 },
+        reason: { type: 'string', minLength: 1, maxLength: 12000 },
+        approveSoftProtectionConflicts: { type: 'boolean', default: false },
+        viewportWidth: { type: 'integer', minimum: 240, maximum: 10000, default: 1440 }
+      },
+      required: ['documentId', 'expectedPlanRevision', 'action'],
       additionalProperties: false
     },
     _meta: policy
@@ -897,7 +1033,7 @@ const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_complete_page',
-    description: 'Complete only the active page after its handoff Step and every required design Step are accepted. The plan stops at the page boundary and never starts the next page automatically.',
+    description: 'Complete only the active artboard after its handoff Step and every required visual Step are accepted. Only completed artboards may be implemented in product source code. Continue the plan before claiming the full requested design scope is complete.',
     inputSchema: {
       type: 'object', properties: {
         documentId: { type: 'string', minLength: 1, maxLength: 128 }, expectedPlanRevision: { type: 'integer', minimum: 0 },
@@ -934,7 +1070,7 @@ const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_create_document',
-    description: 'Create an empty AI-first design workspace in the current program-injected ChatOS scope. It never inserts a demo page; plan the site and start one page next.',
+    description: 'Create an empty AI-first design workspace in the current program-injected ChatOS scope. This is not visible design output: immediately plan the site, plan one artboard, start it, and accept a visible Candidate before unrelated implementation work.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -997,8 +1133,29 @@ const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_get_catalog',
-    description: 'Read the compact Web Design Studio catalog: available design systems, categories, component counts, production sections, page templates, and visual themes. Use search next instead of loading every component and variant.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'Read a small catalog index. The default summary returns library and asset-kind counts only; request one kind for bounded library, section, template, or theme summaries. Use catalog search next instead of loading all design supply.',
+    inputSchema: {
+      type: 'object',
+      properties: { kind: { type: 'string', enum: ['summary', 'libraries', 'sections', 'templates', 'themes'], default: 'summary' } },
+      additionalProperties: false
+    },
+    _meta: policy
+  },
+  {
+    name: 'web_design_search_catalog',
+    description: 'Search one bounded catalog kind by intent or keyword. Component results are compact and require web_design_get_component_contract before insertion; section, template, and theme results are design references, not mandatory art direction.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['components', 'sections', 'templates', 'themes'], default: 'components' },
+        query: { type: 'string', maxLength: 200 },
+        libraryId: { type: 'string', enum: UI_LIBRARIES.map((library) => library.id) },
+        category: { type: 'string', maxLength: 120 },
+        includeDeprecated: { type: 'boolean', default: false },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 }
+      },
+      additionalProperties: false
+    },
     _meta: policy
   },
   {
@@ -1250,18 +1407,11 @@ const TOOL_DEFINITIONS_BASE = [
 ] as const;
 
 function webDesignToolSkills(name: string): string[] {
-  if (name === 'web_design_get_active_context'
-    || name === 'web_design_plan_site' || name === 'web_design_plan_page' || name === 'web_design_get_plan'
-    || name === 'web_design_start_page' || name === 'web_design_run_next_step' || name === 'web_design_retry_step' || name === 'web_design_repair_step'
-    || name === 'web_design_inspect_step' || name === 'web_design_accept_step' || name === 'web_design_reject_step'
-    || name === 'web_design_skip_step' || name === 'web_design_rollback_step' || name === 'web_design_complete_page'
-    || name === 'web_design_pause_plan' || name === 'web_design_resume_plan'
-    || name === 'web_design_capture_page' || name === 'web_design_capture_region'
-    || name === 'web_design_get_visual_grounding' || name === 'web_design_compare_snapshots'
-    || name === 'web_design_inspect_at_point' || name === 'web_design_query_scene'
-    || name === 'web_design_edit_scene' || name === 'web_design_prepare_annotation_task') {
-    return ['web-design-progressive-generation'];
-  }
+  if (name === 'web_design_get_active_context' || name === 'web_design_plan_site' || name === 'web_design_plan_page') return ['web-design-planning'];
+  if (name === 'web_design_execute_step' || name === 'web_design_query_scene' || name === 'web_design_edit_scene') return ['web-design-scene-building'];
+  if (name === 'web_design_control_plan' || name === 'web_design_capture_page' || name === 'web_design_capture_region'
+    || name === 'web_design_compare_snapshots' || name === 'web_design_inspect_at_point'
+    || name === 'web_design_prepare_annotation_task') return ['web-design-candidate-review'];
   if (name === 'web_design_replace_document'
     || name === 'web_design_insert_section' || name === 'web_design_apply_page_template') {
     return ['web-design-components', 'web-design-responsive-layout', 'web-design-visual-system'];
@@ -1276,15 +1426,13 @@ function webDesignToolSkills(name: string): string[] {
 
 const SCENE_V3_TOOL_NAMES = new Set([
   'web_design_get_active_context',
-  'web_design_plan_site', 'web_design_plan_page', 'web_design_get_plan', 'web_design_start_page',
+  'web_design_plan_site', 'web_design_plan_page',
   'web_design_capture_page', 'web_design_capture_region', 'web_design_prepare_annotation_task',
-  'web_design_get_visual_grounding', 'web_design_compare_snapshots', 'web_design_inspect_at_point',
+  'web_design_compare_snapshots', 'web_design_inspect_at_point',
   'web_design_query_scene', 'web_design_edit_scene',
-  'web_design_run_next_step', 'web_design_retry_step', 'web_design_repair_step', 'web_design_inspect_step',
-  'web_design_accept_step', 'web_design_reject_step', 'web_design_skip_step', 'web_design_rollback_step',
-  'web_design_complete_page', 'web_design_pause_plan', 'web_design_resume_plan',
+  'web_design_execute_step', 'web_design_control_plan',
   'web_design_list_documents', 'web_design_create_document',
-  'web_design_get_catalog', 'web_design_search_components', 'web_design_get_component_contract',
+  'web_design_get_catalog', 'web_design_search_catalog', 'web_design_get_component_contract',
   'web_design_list_requests'
 ]);
 
@@ -1315,11 +1463,138 @@ function decodeStructuredJson(value: unknown, label: string): Record<string, unk
   return decoded as Record<string, unknown> | unknown[];
 }
 
+function simpleSceneNode(value: unknown, operationIndex: number): SceneNode {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`operations[${operationIndex}].node must be an object.`);
+  const input = value as Record<string, unknown>;
+  const type = String(input.type) as SceneNodeType;
+  if (!['frame', 'group', 'text', 'shape', 'library-instance'].includes(type)) throw new Error(`operations[${operationIndex}].node.type is not supported by insert-simple-node.`);
+  if (!input.frame || typeof input.frame !== 'object' || Array.isArray(input.frame)) throw new Error(`operations[${operationIndex}].node.frame is required.`);
+  const frame = input.frame as Record<string, unknown>;
+  const base = createSceneNodeBase(type, String(input.name), {
+    x: Number(frame.x), y: Number(frame.y), width: Number(frame.width), height: Number(frame.height)
+  }, 'ai');
+  base.id = String(input.id);
+  if (typeof input.role === 'string') base.role = input.role;
+
+  if (input.layout && typeof input.layout === 'object' && !Array.isArray(input.layout)) {
+    const layout = input.layout as Record<string, unknown>;
+    if (type === 'group' && layout.mode !== undefined && layout.mode !== 'free') throw new Error(`operations[${operationIndex}] group nodes support only free layout; use frame for auto or grid layout.`);
+    if (typeof layout.mode === 'string') base.layout.mode = layout.mode as 'free' | 'auto' | 'grid';
+    if (typeof layout.direction === 'string') base.layout.direction = layout.direction as 'horizontal' | 'vertical';
+    if (typeof layout.wrap === 'boolean') base.layout.wrap = layout.wrap;
+    if (typeof layout.padding === 'number') base.layout.padding = { top: layout.padding, right: layout.padding, bottom: layout.padding, left: layout.padding };
+    if (typeof layout.gap === 'number') base.layout.gap = { row: layout.gap, column: layout.gap };
+    if (typeof layout.alignItems === 'string') base.layout.alignItems = layout.alignItems as typeof base.layout.alignItems;
+    if (typeof layout.justifyContent === 'string') base.layout.justifyContent = layout.justifyContent as typeof base.layout.justifyContent;
+    if (typeof layout.sizingX === 'string') base.layout.sizingX = layout.sizingX as typeof base.layout.sizingX;
+    if (typeof layout.sizingY === 'string') base.layout.sizingY = layout.sizingY as typeof base.layout.sizingY;
+    if (typeof layout.position === 'string') base.layout.position = layout.position as typeof base.layout.position;
+    if (typeof layout.clipContent === 'boolean') base.layout.clipContent = layout.clipContent;
+  }
+
+  const style = input.style && typeof input.style === 'object' && !Array.isArray(input.style)
+    ? input.style as Record<string, unknown>
+    : {};
+  if (typeof style.opacity === 'number') base.appearance.opacity = style.opacity;
+  const fill = typeof style.fill === 'string'
+    ? style.fill
+    : type === 'text' || type === 'shape' ? '#111111' : undefined;
+  if (fill) base.appearance.fills = [{ type: 'solid', visible: true, opacity: typeof style.fillOpacity === 'number' ? style.fillOpacity : 1, color: fill }];
+  if (typeof style.radius === 'number') base.appearance.radius = { topLeft: style.radius, topRight: style.radius, bottomRight: style.radius, bottomLeft: style.radius };
+  if (typeof style.stroke === 'string') {
+    const width = typeof style.strokeWidth === 'number' ? style.strokeWidth : 1;
+    base.appearance.strokes = [{
+      paint: { type: 'solid', visible: true, opacity: 1, color: style.stroke },
+      width: { top: width, right: width, bottom: width, left: width },
+      style: 'solid'
+    }];
+  }
+  if (typeof style.shadowColor === 'string' || typeof style.shadowRadius === 'number') {
+    base.appearance.effects = [{
+      type: 'drop-shadow', visible: true,
+      radius: typeof style.shadowRadius === 'number' ? style.shadowRadius : 16,
+      color: typeof style.shadowColor === 'string' ? style.shadowColor : '#00000033',
+      offset: {
+        x: typeof style.shadowOffsetX === 'number' ? style.shadowOffsetX : 0,
+        y: typeof style.shadowOffsetY === 'number' ? style.shadowOffsetY : 8
+      }
+    }];
+  }
+  if (type === 'text') {
+    base.appearance.typography = {
+      fontFamily: typeof style.fontFamily === 'string' ? style.fontFamily : 'Inter, system-ui, sans-serif',
+      fontSize: typeof style.fontSize === 'number' ? style.fontSize : 16,
+      fontWeight: typeof style.fontWeight === 'number' ? style.fontWeight : 400,
+      lineHeight: typeof style.lineHeight === 'number' ? style.lineHeight : 1.5,
+      letterSpacing: typeof style.letterSpacing === 'number' ? style.letterSpacing : 0,
+      textAlign: typeof style.textAlign === 'string' ? style.textAlign as 'left' | 'center' | 'right' | 'justify' : 'left'
+    };
+    return { ...base, type, content: typeof input.content === 'string' ? input.content : '' };
+  }
+  if (type === 'shape') return { ...base, type, shape: typeof input.shape === 'string' ? input.shape as 'rectangle' : 'rectangle' };
+  if (type === 'library-instance') {
+    if (typeof input.library !== 'string' || typeof input.component !== 'string') throw new Error(`operations[${operationIndex}] library-instance must copy library and component from web_design_get_component_contract.`);
+    return {
+      ...base, type, library: input.library, component: input.component,
+      ...(typeof input.variant === 'string' ? { variant: input.variant } : {}),
+      ...(typeof input.content === 'string' ? { content: input.content } : {}),
+      properties: input.properties && typeof input.properties === 'object' && !Array.isArray(input.properties) ? input.properties as Record<string, unknown> : {},
+      slots: input.slots && typeof input.slots === 'object' && !Array.isArray(input.slots) ? input.slots as Record<string, SceneNode[]> : {}
+    };
+  }
+  if (type === 'frame') return { ...base, type, children: [] };
+  if (type === 'group') return { ...base, type, children: [] };
+  throw new Error(`operations[${operationIndex}].node.type is not supported by insert-simple-node.`);
+}
+
+function simpleSceneTree(
+  value: unknown,
+  operationIndex: number,
+  depth = 0,
+  counter: { value: number } = { value: 0 }
+): SceneNode {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`operations[${operationIndex}].tree must use { node, children? }.`);
+  }
+  if (depth > 24) throw new Error(`operations[${operationIndex}].tree exceeds 24 nesting levels.`);
+  counter.value += 1;
+  if (counter.value > 512) throw new Error(`operations[${operationIndex}].tree exceeds 512 editable nodes.`);
+  const input = value as Record<string, unknown>;
+  const node = simpleSceneNode(input.node, operationIndex);
+  const children = input.children === undefined ? [] : input.children;
+  if (!Array.isArray(children)) throw new Error(`operations[${operationIndex}].tree.children must be an array.`);
+  if (children.length > 0) {
+    if (node.type !== 'frame' && node.type !== 'group') {
+      throw new Error(`operations[${operationIndex}].tree node ${node.id} cannot contain children.`);
+    }
+    node.children = children.map((child) => simpleSceneTree(child, operationIndex, depth + 1, counter));
+  }
+  return node;
+}
+
 function normalizeGenerationOperations(value: unknown): SceneTransactionOperation[] {
   if (!Array.isArray(value)) return value as SceneTransactionOperation[];
   return value.map((item, operationIndex) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return item as SceneTransactionOperation;
     const operation = item as Record<string, unknown>;
+    if (operation.op === 'insert-simple-tree') {
+      return {
+        op: 'insert-node',
+        parentId: String(operation.parentId),
+        index: Number(operation.index),
+        ...(typeof operation.slot === 'string' ? { slot: operation.slot } : {}),
+        node: simpleSceneTree(operation.tree, operationIndex)
+      } as SceneTransactionOperation;
+    }
+    if (operation.op === 'insert-simple-node') {
+      return {
+        op: 'insert-node',
+        parentId: String(operation.parentId),
+        index: Number(operation.index),
+        ...(typeof operation.slot === 'string' ? { slot: operation.slot } : {}),
+        node: simpleSceneNode(operation.node, operationIndex)
+      } as SceneTransactionOperation;
+    }
     if (operation.op !== 'update-node' || !Array.isArray(operation.patches)) return item as SceneTransactionOperation;
     return {
       ...operation,
@@ -1462,27 +1737,111 @@ async function activeProgressiveContext(): Promise<Record<string, unknown>> {
   const pageId = process.env.CHATOS_ACTIVE_PAGE_ID?.trim() || undefined;
   let pendingRequests: Awaited<ReturnType<typeof requestEntries>> = [];
   let plan: Record<string, unknown> | undefined;
+  let artboardDirectory: Array<Record<string, unknown>> = [];
+  let resumeReview: Record<string, unknown> | undefined;
+  let resumeImages: ToolImagePayload[] = [];
   if (documentId) {
     pendingRequests = await requestEntries(documentId, false);
-    try { plan = (await progressiveGenerationService().getPlan(documentId)).plan as Record<string, unknown>; }
+    try {
+      const context = await progressiveGenerationService().getActiveContext(documentId);
+      plan = context.plan as Record<string, unknown>;
+      resumeReview = context.resumeReview as Record<string, unknown> | undefined;
+      resumeImages = Array.isArray(context.__images) ? context.__images as ToolImagePayload[] : [];
+    }
     catch (error) { if (!isMissingFileError(error)) throw error; }
+    try {
+      const scene = await generationRepositories.scenes.read(documentId);
+      artboardDirectory = scene.pages.map((page, index) => ({
+        artboardId: page.id,
+        name: page.name,
+        order: index,
+        rootNodeIds: page.children.map((node) => node.id)
+      }));
+    } catch (error) { if (!isMissingFileError(error)) throw error; }
   }
+  const plannedActivePageId = plan?.activePage && typeof plan.activePage === 'object'
+    ? String((plan.activePage as Record<string, unknown>).pageId ?? '') || undefined
+    : undefined;
+  const activePageId = pageId ?? plannedActivePageId;
+  const requiredNextAction = plan
+    ? plan.nextAction
+    : documentId
+      ? { type: 'plan-site', tool: 'web_design_plan_site', documentId }
+      : { type: 'select-or-create-document', tool: 'web_design_list_documents' };
   return {
     scope: { projectId, kind: process.env.CHATOS_CONTEXT_SCOPE ?? 'project' },
-    active: { documentId, pageId, selectionNodeIds: activeSelectionIds() },
+    active: { documentId, pageId: activePageId, selectionNodeIds: activeSelectionIds() },
     documents,
+    artboardDirectory,
     pendingRequests,
     ...(plan ? { plan } : {}),
-    nextAction: plan
-      ? plan.nextAction
-      : documentId
-        ? { type: 'plan-site', tool: 'web_design_plan_site', documentId }
-        : { type: 'select-or-create-document', tool: 'web_design_list_documents' }
+    ...(resumeReview ? { resumeReview } : {}),
+    nextAction: requiredNextAction,
+    deliveryGate: plan?.deliveryGate ?? {
+      status: 'blocked',
+      code: documentId ? 'NO_SITE_PLAN' : 'NO_DOCUMENT',
+      message: documentId
+        ? 'The document has no generation plan and no accepted visible Scene work. Plan the site and continue its required next action before editing product UI code or reporting a task outcome.'
+        : 'No design document is active. Select or create one and continue until a visible Scene Candidate is accepted before editing product UI code or reporting a task outcome.',
+      visibleSceneReady: false,
+      projectImplementationAllowed: false,
+      taskCompletionAllowed: false,
+      acceptedVisibleStepCount: 0,
+      completedArtboardCount: 0,
+      plannedArtboardCount: 0,
+      requiredNextAction
+    },
+    ...(resumeImages.length > 0 ? { __images: resumeImages } : {})
   };
 }
 
 function isMissingFileError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === 'ENOENT';
+}
+
+function assertSceneCommandInArtboard(scene: SceneDocument, command: SceneEditorCommand, artboardId: string): void {
+  if (!scene.pages.some((page) => page.id === artboardId)) throw new Error(`Artboard not found: ${artboardId}`);
+  const index = indexSceneDocument(scene);
+  const assertNode = (nodeId: string, label = 'node'): void => {
+    const entry = index.get(nodeId);
+    if (!entry) throw new Error(`${label} not found: ${nodeId}`);
+    if (entry.pageId !== artboardId) throw new Error(`${label} ${nodeId} is outside artboard ${artboardId}.`);
+  };
+  const assertNodes = (nodeIds: string[]): void => nodeIds.forEach((nodeId) => assertNode(nodeId));
+  switch (command.type) {
+    case 'create-page':
+    case 'duplicate-page':
+    case 'delete-page':
+    case 'set-variable-collections':
+      throw new Error(`${command.type} is not a focused artboard edit. Use the artboard plan or directory workflow.`);
+    case 'rename-page':
+      if (command.pageId !== artboardId) throw new Error(`Page ${command.pageId} is outside artboard ${artboardId}.`);
+      return;
+    case 'insert-node':
+      if (command.parentId !== artboardId) assertNode(command.parentId, 'Insertion parent');
+      return;
+    case 'move':
+    case 'align':
+    case 'distribute':
+    case 'reorder':
+    case 'group':
+    case 'frame':
+    case 'auto-layout-frame':
+    case 'delete-nodes':
+      assertNodes(command.nodeIds);
+      return;
+    case 'ungroup':
+      assertNode(command.wrapperId, 'Wrapper');
+      return;
+    case 'resize':
+    case 'set-responsive-override':
+    case 'clear-responsive-override':
+    case 'add-annotation':
+    case 'resolve-annotation':
+    case 'reopen-annotation':
+    case 'update-node':
+      assertNode(command.nodeId);
+  }
 }
 
 async function callTool(name: string, rawArguments: unknown): Promise<Record<string, unknown>> {
@@ -1553,11 +1912,14 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       );
     case 'web_design_query_scene': {
       const documentId = String(argumentsValue.documentId);
+      const artboardId = String(argumentsValue.artboardId);
       await assertGenerationDocumentInScope(documentId);
       const scene = await generationRepositories.scenes.read(documentId);
       const query = argumentsValue.query && typeof argumentsValue.query === 'object'
         ? structuredClone(argumentsValue.query) as SceneQuery
         : { limit: 100 };
+      if (!scene.pages.some((page) => page.id === artboardId)) throw new Error(`Artboard not found: ${artboardId}`);
+      query.pageIds = [artboardId];
       if (query.limit === undefined) query.limit = 100;
       const results = new SceneQueryIndex(scene).query(query);
       return {
@@ -1565,7 +1927,11 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
           documentId: scene.documentId,
           name: scene.name,
           revision: scene.revision,
-          pages: scene.pages.map((page) => ({ pageId: page.id, name: page.name, rootNodeIds: page.children.map((node) => node.id) }))
+          activeArtboard: {
+            artboardId,
+            name: scene.pages.find((page) => page.id === artboardId)?.name,
+            rootNodeIds: scene.pages.find((page) => page.id === artboardId)?.children.map((node) => node.id) ?? []
+          }
         },
         resultCount: results.length,
         results
@@ -1573,25 +1939,18 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     }
     case 'web_design_edit_scene': {
       const documentId = String(argumentsValue.documentId);
+      const artboardId = String(argumentsValue.artboardId);
       await assertGenerationDocumentInScope(documentId);
-      const { documentId: _documentId, ...request } = argumentsValue;
-      if (request.command && typeof request.command === 'object' && !Array.isArray(request.command)) {
-        const command = request.command as Record<string, unknown>;
-        if (command.type === 'update-node' && Array.isArray(command.patches)) {
-          command.patches = command.patches.map((item) => {
-            if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
-            const patch = item as Record<string, unknown>;
-            const path = typeof patch.path === 'string' ? patch.path.split('.') : patch.path;
-            if (!Object.hasOwn(patch, 'valueJson')) return { ...patch, path };
-            const { valueJson, ...rest } = patch;
-            return {
-              ...rest,
-              path,
-              value: decodeStructuredJson(valueJson, 'command.patches[].valueJson')
-            };
-          });
-        }
-      }
+      const currentScene = await generationRepositories.scenes.read(documentId);
+      const decodedCommand = decodeStructuredJson(argumentsValue.commandJson, 'commandJson');
+      if (Array.isArray(decodedCommand)) throw new Error('commandJson must encode one command object.');
+      const request = {
+        transactionId: String(argumentsValue.transactionId),
+        expectedRevision: Number(argumentsValue.expectedRevision),
+        ...(typeof argumentsValue.reason === 'string' ? { reason: argumentsValue.reason } : {}),
+        command: decodedCommand
+      };
+      assertSceneCommandInArtboard(currentScene, decodedCommand as SceneEditorCommand, artboardId);
       const edited = await executeSceneEditorCommand(generationRepositories.scenes, documentId, request, 'ai');
       const changedNodeIds = [...new Set([
         ...edited.summary.insertedNodeIds,
@@ -1616,41 +1975,40 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         ]
       };
     }
-    case 'web_design_run_next_step':
-      return progressiveGenerationService().runNextStep({
+    case 'web_design_execute_step':
+      {
+      const decodedOperations = decodeStructuredJson(argumentsValue.operationsJson, 'operationsJson');
+      if (!Array.isArray(decodedOperations)) throw new Error('operationsJson must encode an operation array.');
+      return progressiveGenerationService().executeStep({
         documentId: String(argumentsValue.documentId),
         expectedPlanRevision: Number(argumentsValue.expectedPlanRevision),
-        attemptId: typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined,
-        idempotencyKey: String(argumentsValue.idempotencyKey),
-        transactionId: String(argumentsValue.transactionId),
-        operations: normalizeGenerationOperations(argumentsValue.operations),
-        visualInputs: argumentsValue.visualInputs as GenerationArtifact[],
-        verification: argumentsValue.verification as SubmittedStepVerification
+        stepId: typeof argumentsValue.stepId === 'string' ? argumentsValue.stepId : undefined,
+        requestId: typeof argumentsValue.requestId === 'string' ? argumentsValue.requestId : undefined,
+        operations: normalizeGenerationOperations(decodedOperations)
       });
-    case 'web_design_retry_step':
-      return progressiveGenerationService().retryStep({
-        documentId: String(argumentsValue.documentId),
-        expectedPlanRevision: Number(argumentsValue.expectedPlanRevision),
-        stepId: String(argumentsValue.stepId),
-        attemptId: typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined,
-        idempotencyKey: String(argumentsValue.idempotencyKey),
-        transactionId: String(argumentsValue.transactionId),
-        operations: normalizeGenerationOperations(argumentsValue.operations),
-        visualInputs: argumentsValue.visualInputs as GenerationArtifact[],
-        verification: argumentsValue.verification as SubmittedStepVerification
-      });
-    case 'web_design_repair_step':
-      return progressiveGenerationService().repairStep({
-        documentId: String(argumentsValue.documentId),
-        expectedPlanRevision: Number(argumentsValue.expectedPlanRevision),
-        stepId: String(argumentsValue.stepId),
-        attemptId: typeof argumentsValue.attemptId === 'string' ? argumentsValue.attemptId : undefined,
-        idempotencyKey: String(argumentsValue.idempotencyKey),
-        transactionId: String(argumentsValue.transactionId),
-        operations: normalizeGenerationOperations(argumentsValue.operations),
-        visualInputs: argumentsValue.visualInputs as GenerationArtifact[],
-        verification: argumentsValue.verification as SubmittedStepVerification
-      });
+      }
+    case 'web_design_control_plan': {
+      const service = progressiveGenerationService();
+      const documentId = String(argumentsValue.documentId);
+      const revision = Number(argumentsValue.expectedPlanRevision);
+      const action = String(argumentsValue.action);
+      if (action === 'accept') return service.acceptStep(
+        documentId, revision, String(argumentsValue.stepId), String(argumentsValue.attemptId),
+        argumentsValue.approveSoftProtectionConflicts === true
+      );
+      if (action === 'reject') return service.rejectStep(
+        documentId, revision, String(argumentsValue.stepId), String(argumentsValue.attemptId), String(argumentsValue.reason)
+      );
+      if (action === 'skip') return service.skipStep(documentId, revision, String(argumentsValue.stepId));
+      if (action === 'rollback') return service.rollbackStep(documentId, revision, String(argumentsValue.stepId));
+      if (action === 'pause') return service.pause(documentId, revision);
+      if (action === 'resume') return service.resume(documentId, revision);
+      if (action === 'start-page') return service.startPage(
+        documentId, revision, String(argumentsValue.pageId),
+        typeof argumentsValue.viewportWidth === 'number' ? argumentsValue.viewportWidth : 1440
+      );
+      throw new Error(`Unsupported plan control action: ${action}`);
+    }
     case 'web_design_inspect_step':
       return progressiveGenerationService().inspectStep(
         String(argumentsValue.documentId), String(argumentsValue.stepId),
@@ -1763,25 +2121,105 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         nodes: descendants
       };
     }
-    case 'web_design_get_catalog':
-      return {
-        libraries: UI_LIBRARIES.map((library) => ({
+    case 'web_design_get_catalog': {
+      const kind = typeof argumentsValue.kind === 'string' ? argumentsValue.kind : 'summary';
+      const libraries = UI_LIBRARIES.map((library) => ({
           id: library.id,
           name: library.displayName,
           version: library.version,
-          license: library.license,
-          sourceUrl: library.sourceUrl,
-          licenseUrl: library.licenseUrl,
           categories: library.categories,
           componentCount: library.components.length,
           variantCount: library.components.reduce((total, component) => total + (library.variants[component.id]?.length ?? 1), 0)
-        })),
-        sections: WEB_DESIGN_BLOCK_PRESETS,
-        pageTemplates: WEB_DESIGN_PAGE_TEMPLATES,
-        themes: WEB_DESIGN_THEME_PRESETS
+        }));
+      if (kind === 'libraries') return { kind, libraries };
+      if (kind === 'sections') return { kind, sections: WEB_DESIGN_BLOCK_PRESETS };
+      if (kind === 'templates') return { kind, templates: WEB_DESIGN_PAGE_TEMPLATES };
+      if (kind === 'themes') return {
+        kind,
+        themes: WEB_DESIGN_THEME_PRESETS.map(({ tokens: _tokens, ...theme }) => theme)
       };
+      return {
+        kind: 'summary',
+        libraries,
+        assetKinds: {
+          components: UI_LIBRARIES.reduce((count, library) => count + library.components.length, 0),
+          sections: WEB_DESIGN_BLOCK_PRESETS.length,
+          templates: WEB_DESIGN_PAGE_TEMPLATES.length,
+          themes: WEB_DESIGN_THEME_PRESETS.length
+        },
+        nextAction: { tool: 'web_design_search_catalog', detail: 'Search only the kind needed by the active design Step.' }
+      };
+    }
+    case 'web_design_search_catalog': {
+      const kind = typeof argumentsValue.kind === 'string' ? argumentsValue.kind : 'components';
+      const query = typeof argumentsValue.query === 'string' ? argumentsValue.query.trim().toLocaleLowerCase() : '';
+      const queryTokens = [...new Set(query.split(/[^\p{L}\p{N}]+/u).filter(Boolean))];
+      const category = typeof argumentsValue.category === 'string' ? argumentsValue.category.trim().toLocaleLowerCase() : '';
+      const limit = typeof argumentsValue.limit === 'number' ? Math.max(1, Math.min(50, Math.trunc(argumentsValue.limit))) : 20;
+      const matches = (values: string[]): number => {
+        if (!query) return 1;
+        const searchable = values.map((value) => value.toLocaleLowerCase());
+        if (searchable.some((value) => value.includes(query))) return 100;
+        return queryTokens.filter((token) => searchable.some((value) => value.includes(token))).length;
+      };
+      if (kind === 'sections') {
+        const candidates = WEB_DESIGN_BLOCK_PRESETS
+          .filter((item) => !category || item.category.toLocaleLowerCase() === category)
+          .map((item) => ({ item, score: matches([item.id, item.name, item.category, item.description, ...item.keywords]) }))
+          .filter(({ score }) => score > 0).sort((left, right) => right.score - left.score)
+          .slice(0, limit).map(({ item }) => item);
+        return { kind, query, count: candidates.length, candidates };
+      }
+      if (kind === 'templates') {
+        const candidates = WEB_DESIGN_PAGE_TEMPLATES
+          .filter((item) => !category || item.category.toLocaleLowerCase() === category)
+          .map((item) => ({ item, score: matches([item.id, item.name, item.category, item.description, ...item.blocks]) }))
+          .filter(({ score }) => score > 0).sort((left, right) => right.score - left.score)
+          .slice(0, limit).map(({ item }) => item);
+        return { kind, query, count: candidates.length, candidates };
+      }
+      if (kind === 'themes') {
+        const candidates = WEB_DESIGN_THEME_PRESETS
+          .map((item) => ({ item, score: matches([item.id, item.name, item.description]) }))
+          .filter(({ score }) => score > 0).sort((left, right) => right.score - left.score)
+          .slice(0, limit).map(({ item }) => ({
+            id: item.id, name: item.name, description: item.description,
+            canvasBackground: item.canvasBackground, preview: item.preview
+          }));
+        return { kind, query, count: candidates.length, candidates };
+      }
+      const libraryId = typeof argumentsValue.libraryId === 'string' ? argumentsValue.libraryId : undefined;
+      const includeDeprecated = argumentsValue.includeDeprecated === true;
+      const candidates = UI_LIBRARIES
+        .filter((library) => !libraryId || library.id === libraryId)
+        .flatMap((library) => library.components.map((component) => ({ library, component })))
+        .filter(({ component }) => includeDeprecated || component.status !== 'deprecated')
+        .filter(({ component }) => !category || component.category.toLocaleLowerCase() === category)
+        .map(({ library, component }) => ({
+          library, component,
+          score: matches([component.id, component.label, component.category, component.baseType, ...component.keywords])
+        }))
+        .filter(({ score }) => score > 0)
+        .sort((left, right) => right.score - left.score || left.component.id.localeCompare(right.component.id))
+        .slice(0, limit)
+        .map(({ library, component }) => ({
+          libraryId: library.id,
+          libraryName: library.displayName,
+          libraryVersion: library.version,
+          componentId: component.id,
+          label: component.label,
+          category: component.category,
+          baseType: component.baseType,
+          defaultSize: { width: component.width, height: component.height },
+          variantCount: library.variants[component.id]?.length ?? 1,
+          keywords: component.keywords,
+          status: component.status ?? 'stable'
+        }));
+      return { kind: 'components', query, count: candidates.length, candidates };
+    }
     case 'web_design_search_components': {
       const query = typeof argumentsValue.query === 'string' ? argumentsValue.query.trim().toLocaleLowerCase() : '';
+      const queryTokens = [...new Set(query.split(/[^\p{L}\p{N}]+/u).filter(Boolean))];
       const libraryId = typeof argumentsValue.libraryId === 'string' ? argumentsValue.libraryId : undefined;
       const category = typeof argumentsValue.category === 'string' ? argumentsValue.category.trim().toLocaleLowerCase() : '';
       const includeDeprecated = argumentsValue.includeDeprecated === true;
@@ -1791,11 +2229,17 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         .flatMap((library) => library.components.map((component) => ({ library, component })))
         .filter(({ component }) => includeDeprecated || component.status !== 'deprecated')
         .filter(({ component }) => !category || component.category.toLocaleLowerCase() === category)
-        .filter(({ component }) => {
-          if (!query) return true;
-          return [component.id, component.label, component.category, component.baseType, ...component.keywords]
-            .some((value) => value.toLocaleLowerCase().includes(query));
+        .map(({ library, component }) => {
+          const searchable = [component.id, component.label, component.category, component.baseType, ...component.keywords]
+            .map((value) => value.toLocaleLowerCase());
+          const exact = query ? searchable.some((value) => value.includes(query)) : true;
+          const tokenMatches = queryTokens.filter((token) => searchable.some((value) => value.includes(token))).length;
+          return { library, component, exact, tokenMatches };
         })
+        .filter(({ exact, tokenMatches }) => !query || exact || tokenMatches > 0)
+        .sort((left, right) => Number(right.exact) - Number(left.exact)
+          || right.tokenMatches - left.tokenMatches
+          || left.component.id.localeCompare(right.component.id))
         .slice(0, limit)
         .map(({ library, component }) => ({
           libraryId: library.id,
@@ -2015,7 +2459,7 @@ function result(value: Record<string, unknown>, isError = false) {
   const { __images: _discardedImages, ...structuredContent } = value;
   return {
     content: [
-      { type: 'text' as const, text: JSON.stringify(structuredContent, null, 2) },
+      { type: 'text' as const, text: JSON.stringify(structuredContent) },
       ...sourceImages.map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType }))
     ],
     structuredContent,

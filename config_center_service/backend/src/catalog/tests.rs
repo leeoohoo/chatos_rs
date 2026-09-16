@@ -365,12 +365,6 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "duration_ms",
         ),
         (
-            TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_AUTO_MEMORY_SUMMARY",
-            "boolean",
-        ),
-        (
             TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_CHATOS_CALLBACK_URL",
@@ -2027,6 +2021,54 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
         (
             USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY,
             "USER_SERVICE_LOGIN_LOCKOUT_SECONDS",
+            "integer",
+            false,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_APP_ID_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_ID",
+            "string",
+            true,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_APP_SECRET_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_SECRET",
+            "string",
+            true,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_IDENTITY_HASH_SECRET_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_IDENTITY_HASH_SECRET",
+            "string",
+            true,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_API_BASE_URL_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_API_BASE_URL",
+            "string",
+            false,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION",
+            "enum",
+            false,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_REQUEST_TIMEOUT_MS",
+            "duration_ms",
+            false,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_BIND_TICKET_TTL_SECONDS_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_BIND_TICKET_TTL_SECONDS",
+            "integer",
+            false,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_CLIENT_SESSION_TTL_SECONDS_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_CLIENT_SESSION_TTL_SECONDS",
             "integer",
             false,
         ),

@@ -16,8 +16,38 @@ export interface WebDesignViewportDimensions {
   height: number;
 }
 
+export interface WebDesignArtboardSizePreset {
+  id: string;
+  label: string;
+  width: number;
+  height: number;
+  group?: 'large-surface';
+}
+
+export const WEB_DESIGN_ARTBOARD_SIZE_PRESETS: WebDesignArtboardSizePreset[] = [
+  { id: 'artboard-narrow-360', label: '窄画板 360', width: 360, height: 800 },
+  { id: 'artboard-narrow-390', label: '窄画板 390', width: 390, height: 844 },
+  { id: 'artboard-medium-768', label: '中型画板 768', width: 768, height: 1024 },
+  { id: 'artboard-standard-1200', label: '标准画板 1200', width: 1200, height: 900 },
+  { id: 'artboard-wide-1440', label: '宽画板 1440', width: 1440, height: 900 },
+  { id: 'artboard-wide-1920', label: '宽画板 1920', width: 1920, height: 1080 },
+  { id: 'artboard-large-2560', label: '大型画板 2560', width: 2560, height: 1080, group: 'large-surface' }
+];
+
+export function matchArtboardSizePreset(
+  width: number,
+  height: number
+): { preset: WebDesignArtboardSizePreset; orientation: WebDesignViewportOrientation } | undefined {
+  for (const preset of WEB_DESIGN_ARTBOARD_SIZE_PRESETS) {
+    if (preset.width === width && preset.height === height) return { preset, orientation: 'default' };
+    if (preset.height === width && preset.width === height) return { preset, orientation: 'rotated' };
+  }
+  return undefined;
+}
+
 export const WEB_DESIGN_VIEWPORT_PRESETS: WebDesignViewportPreset[] = [
   { id: 'desktop-responsive', device: 'desktop', label: '响应式桌面', width: 1200, height: 900 },
+  { id: 'desktop-design-1440', device: 'desktop', label: '桌面设计 1440', width: 1440, height: 900 },
   { id: 'desktop-hd', device: 'desktop', label: '笔记本 HD', width: 1366, height: 768 },
   { id: 'macbook-air-13', device: 'desktop', label: 'MacBook Air 13″', width: 1470, height: 956 },
   { id: 'macbook-pro-14', device: 'desktop', label: 'MacBook Pro 14″', width: 1512, height: 982 },
@@ -48,7 +78,7 @@ export function viewportPresetsForDevice(device: WebDesignDevice): WebDesignView
 }
 
 export function viewportDimensions(
-  preset: WebDesignViewportPreset,
+  preset: Pick<WebDesignViewportPreset, 'width' | 'height'>,
   orientation: WebDesignViewportOrientation
 ): WebDesignViewportDimensions {
   return orientation === 'rotated'

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solution Studio"
+  short_description: "从需求到依赖执行计划的完整规划工作台"
+  default_prompt: "Use $solution-studio to analyze this project and create a traceable solution plan."

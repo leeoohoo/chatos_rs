@@ -167,6 +167,9 @@ async fn mark_task_running(service: &RunService, task: &TaskRecord, run_id: &str
         task_record.status = TaskStatus::Running;
         task_record.updated_at = now_rfc3339();
         task_record.last_run_id = Some(run_id.to_string());
+        // Be defensive when recovering a queued run created by an older service
+        // version: an active run must never expose a previous run's terminal result.
+        task_record.result_summary = None;
         if let Err(err) = service.store.save_task(task_record).await {
             warn!("failed to persist running task {}: {}", task.id, err);
             return false;

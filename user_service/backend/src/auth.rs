@@ -45,6 +45,13 @@ pub struct AuthClaims {
 }
 
 #[derive(Debug, Clone)]
+pub struct IssuedUserToken {
+    pub token: String,
+    pub jti: String,
+    pub expires_at_unix: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct CurrentPrincipal {
     pub sub: String,
     pub jti: String,
@@ -161,15 +168,35 @@ pub fn verify_password(password: &str, password_hash: &str) -> bool {
 }
 
 pub fn encode_user_token(config: &AppConfig, user: &UserRecord) -> Result<String, String> {
-    encode_token(
+    issue_user_token(config, user, config.user_access_ttl_seconds).map(|issued| issued.token)
+}
+
+pub fn issue_user_token(
+    config: &AppConfig,
+    user: &UserRecord,
+    ttl_seconds: i64,
+) -> Result<IssuedUserToken, String> {
+    issue_user_token_with_scopes(config, user, ttl_seconds, vec!["user_service".to_string()])
+}
+
+pub fn issue_user_token_with_scopes(
+    config: &AppConfig,
+    user: &UserRecord,
+    ttl_seconds: i64,
+    scopes: Vec<String>,
+) -> Result<IssuedUserToken, String> {
+    let issued_at = now_timestamp();
+    let expires_at = (issued_at as i64 + ttl_seconds.max(60)).max(0);
+    let jti = Uuid::new_v4().to_string();
+    let token = encode_token(
         config,
         AuthClaims {
             iss: config.jwt_issuer.clone(),
             aud: config.user_service_audience.clone(),
             sub: format!("user:{}", user.id),
-            exp: expiry_timestamp(config.user_access_ttl_seconds),
-            iat: now_timestamp(),
-            jti: Uuid::new_v4().to_string(),
+            exp: expires_at as usize,
+            iat: issued_at,
+            jti: jti.clone(),
             principal_type: PRINCIPAL_TYPE_HUMAN_USER.to_string(),
             user_id: Some(user.id.clone()),
             username: Some(user.username.clone()),
@@ -179,9 +206,14 @@ pub fn encode_user_token(config: &AppConfig, user: &UserRecord) -> Result<String
             owner_user_id: None,
             owner_username: None,
             owner_display_name: None,
-            scopes: vec!["user_service".to_string()],
+            scopes,
         },
-    )
+    )?;
+    Ok(IssuedUserToken {
+        token,
+        jti,
+        expires_at_unix: expires_at,
+    })
 }
 
 pub fn encode_agent_token(

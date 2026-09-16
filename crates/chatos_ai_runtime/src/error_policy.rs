@@ -66,6 +66,7 @@ pub fn replay_request_error_policy(err_msg: &str) -> RequestErrorReplay {
 pub fn is_response_parse_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("invalid json response")
+        || message.contains("incomplete responses sse stream")
         || message.contains("stream response parse failed")
         || message.contains("stream response body failed")
         || message.contains("malformed sse event")
@@ -644,6 +645,9 @@ mod tests {
     fn combines_transient_network_and_parse_detection() {
         assert!(is_transient_transport_or_parse_error(
             "invalid JSON response (status 200): expected value"
+        ));
+        assert!(is_transient_transport_or_parse_error(
+            "incomplete Responses SSE stream: ended after 925 valid event(s) without response.completed, response.incomplete, or response.failed"
         ));
         assert!(is_transient_transport_or_parse_error(
             "status 504: gateway timeout"

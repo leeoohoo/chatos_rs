@@ -239,7 +239,6 @@ pub async fn apply_summary_queue_state_delta(
                                 },
                             ]
                         },
-                        "summary_dispatch_pending": false,
                     }
                 },
             ],

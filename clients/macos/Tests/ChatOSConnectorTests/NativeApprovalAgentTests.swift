@@ -18,6 +18,33 @@ final class NativeApprovalAgentTests: XCTestCase {
         XCTAssertEqual(Set(toolNames), Set(["read_file_raw", "read_file_range", "list_dir", "search_text", "approval_decision"]))
     }
 
+    func testMemoryProviderReceivesApprovalMessagesToolCallsAndResults() async throws {
+        let runID = UUID()
+        let runtimeScope = "approval:\(runID.uuidString)"
+        let scope = try AgentMemoryScope(
+            tenantID: "user-1", profile: "approval", projectID: "workspace-1",
+            runID: runID, runtimeScope: runtimeScope
+        )
+        let memory = ApprovalTestMemory()
+        let provider = AgentMemoryContextProvider(scope: scope, service: memory)
+
+        let result = await NativeApprovalAgent().evaluate(
+            request: request(FileManager.default.temporaryDirectory),
+            modelClient: ApprovalTestModel(finishAt: 2), policy: .init(),
+            runID: runID, runtimeScope: runtimeScope, contextProvider: provider
+        )
+
+        XCTAssertEqual(result, .approve(reason: "checked", rememberAllow: false))
+        let messages = await memory.entries.map(\.message)
+        XCTAssertEqual(messages.map(\.role), [.system, .user, .assistant, .tool, .assistant, .tool])
+        XCTAssertEqual(messages[2].toolCalls.first?.id, "read-1")
+        XCTAssertEqual(messages[3].toolCallID, "read-1")
+        XCTAssertEqual(messages[4].toolCalls.first?.id, "decision")
+        XCTAssertEqual(messages[5].toolCallID, "decision")
+        let composeCalls = await memory.composeCalls
+        XCTAssertEqual(composeCalls, 1)
+    }
+
     func testExhaustedBudgetAndUnavailableModelAskHuman() async throws {
         var policy = AgentRunPolicy(); policy.maximumModelCalls = 1
         for fail in [false, true] {
@@ -72,5 +99,24 @@ private actor ApprovalTestModel: AgentModelClient {
         }
         return .init(role: .assistant, toolCalls: [.init(id: "read-\(calls)", name: "read_file_range",
             arguments: "{\"path\":\"sample.txt\",\"start_line\":\(calls),\"end_line\":\(calls)}")])
+    }
+}
+
+private actor ApprovalTestMemory: AgentMemoryServicing {
+    var entries: [AgentMemoryEntry] = []
+    var composeCalls = 0
+
+    func ensureThread() {}
+
+    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) {
+        self.entries.append(contentsOf: entries)
+    }
+
+    func compose() -> AgentMemoryContext {
+        composeCalls += 1
+        return .init(
+            blocks: [],
+            recentRecords: entries.map { .init(id: $0.id, message: $0.message) }
+        )
     }
 }

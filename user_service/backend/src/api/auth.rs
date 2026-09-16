@@ -569,6 +569,15 @@ pub async fn logout(
         )
         .await
         .map_err(internal_error)?;
+    state
+        .store
+        .revoke_client_session_by_jti(
+            principal.jti.as_str(),
+            principal.sub.as_str(),
+            now_rfc3339().as_str(),
+        )
+        .await
+        .map_err(internal_error)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 

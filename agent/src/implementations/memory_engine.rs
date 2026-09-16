@@ -90,10 +90,6 @@ impl SystemAgentDefinition for MemoryEngineAgent {
         "memory_engine"
     }
 
-    fn context_overflow_trigger(&self) -> &'static str {
-        "memory_engine_context_overflow"
-    }
-
     fn default_temperature(&self) -> Option<f64> {
         Some(0.2)
     }

@@ -30,6 +30,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 mod auth_middleware;
+mod companion;
 mod devices;
 mod internal_auth;
 mod managed_requirements;
@@ -758,6 +759,25 @@ async fn dispatch_relay(
     state
         .relay
         .dispatch(request, timeout)
+        .await
+        .map_err(relay_error_to_api_error)
+}
+
+async fn dispatch_companion_relay(
+    state: &AppState,
+    request: RelayRequest,
+    timeout: std::time::Duration,
+    client_session_id: &str,
+) -> Result<RelayResponse, ApiError> {
+    ensure_device_active_lease(
+        state,
+        request.owner_user_id.as_str(),
+        request.device_id.as_str(),
+    )
+    .await?;
+    state
+        .relay
+        .dispatch_companion(request, timeout, client_session_id)
         .await
         .map_err(relay_error_to_api_error)
 }

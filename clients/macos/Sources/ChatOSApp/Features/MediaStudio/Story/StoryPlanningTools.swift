@@ -24,19 +24,25 @@ enum StoryPlanningTools {
         var segments: [Segment]
     }
 
-    static func outlineRequest(_ project: StoryProject) throws -> StoryPlanningRequest {
+    static func outlineRequest(_ project: StoryProject, userIdeas: String = "") throws -> StoryPlanningRequest {
+        let supportedDurations = project.models.supportedVideoDurations ?? Array(2...15)
         let string: [String: Any] = ["type": "string", "minLength": 1]
         let prop = object(["id": string, "name": string, "description": string])
         let segment = object(["id": string, "title": string, "synopsis": string,
                               "kind": ["type": "string", "enum": ["story", "transition"]],
-                              "seconds": ["type": "integer", "minimum": 2, "maximum": 15],
+                              "seconds": ["type": "integer", "enum": supportedDurations],
                               "propIDs": ["type": "array", "items": string, "maxItems": 8]])
         let schema = object(["summary": string,
             "props": ["type": "array", "items": prop, "maxItems": 100],
             "segments": ["type": "array", "items": segment, "minItems": 1, "maxItems": 200]])
         return .init(modelConfigID: project.models.textModelID,
-                     systemPrompt: StoryPromptRegistry.render(.fallbackOutline),
-                     context: try contextJSON(["title": project.title, "description": project.description, "style": project.style, "story": project.source]),
+                     systemPrompt: StoryPromptRegistry.render(.fallbackOutline, values: [
+                        "supportedVideoDurations": supportedDurations.map(String.init).joined(separator: "、"),
+                        "minimumVideoSeconds": "\(supportedDurations.min() ?? 2)",
+                     ]),
+                     context: try contextJSON(["title": project.title, "description": project.description,
+                                               "style": project.style, "story": project.source,
+                                               "userIdeas": normalizedUserIdeas(userIdeas)]),
                      toolName: "story_save_outline", schema: try JSONSerialization.data(withJSONObject: schema))
     }
 
@@ -69,11 +75,12 @@ enum StoryPlanningTools {
     static func applyOutline(_ data: Data, to project: StoryProject) throws -> StoryProject {
         guard project.segments.isEmpty else { throw StoryError.invalidPlan }
         let outline = try JSONDecoder().decode(Outline.self, from: data)
+        let supportedDurations = project.models.supportedVideoDurations ?? Array(2...15)
         guard !outline.summary.isEmpty, !outline.segments.isEmpty,
               outline.props.allSatisfy({ !$0.id.isEmpty && !$0.name.isEmpty && !$0.description.isEmpty }),
               outline.segments.allSatisfy({ value in
                   !value.id.isEmpty && !value.synopsis.isEmpty && value.propIDs.count <= 8
-                      && (2...15).contains(value.seconds) && (value.kind != .transition || value.seconds <= 3)
+                      && supportedDurations.contains(value.seconds)
               }) else {
             throw StoryError.invalidPlan
         }
@@ -110,7 +117,8 @@ enum StoryPlanningTools {
         return result
     }
 
-    static func detailRequest(_ project: StoryProject, segmentID: String) throws -> StoryPlanningRequest {
+    static func detailRequest(_ project: StoryProject, segmentID: String,
+                              userIdeas: String = "") throws -> StoryPlanningRequest {
         guard let index = project.segments.firstIndex(where: { $0.id == segmentID }) else { throw StoryError.invalidPlan }
         let segment = project.segments[index]
         let string: [String: Any] = ["type": "string"]
@@ -130,6 +138,7 @@ enum StoryPlanningTools {
             "scenes": project.scenes.filter { segment.sceneIDs.contains($0.id) }.map { ["id": $0.id, "name": $0.name, "profile": $0.imagePrompt] },
             "props": project.props.filter { segment.propIDs.contains($0.id) }.map { ["id": $0.id, "name": $0.name, "profile": $0.imagePrompt] },
             "relations": project.relations(for: segment.id).map { ["characterID": $0.characterID, "sceneID": $0.sceneID, "action": $0.action, "position": $0.position] },
+            "userIdeas": normalizedUserIdeas(userIdeas),
         ]
         return .init(modelConfigID: project.models.textModelID,
                      systemPrompt: StoryPromptRegistry.render(.segmentDetail),
@@ -147,5 +156,9 @@ enum StoryPlanningTools {
     }
     private static func contextJSON(_ value: [String: Any]) throws -> String {
         String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+    }
+    private static func normalizedUserIdeas(_ value: String) -> String {
+        String(value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(StoryAgentTools.maximumUserIdeasLength))
     }
 }

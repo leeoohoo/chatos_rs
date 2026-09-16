@@ -372,13 +372,22 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
         } else {
             Vec::new()
         };
+        let is_initial_attempt = matches!(trigger, CloudAgentModelTrigger::RunStarted { .. });
         let request = ContextualTurnRequest::new(
             shared_model_config.to_model_request(Value::Null, tools),
             runtime_options,
             current_input_items,
         )
-        .with_memory_scope(resolve_chatos_memory_scope(input.session_id.as_str()).await?)
-        .with_prefixed_input_items(input.prefixed_input_items.clone());
+        .with_memory_scope(if is_initial_attempt {
+            resolve_chatos_memory_scope(input.session_id.as_str()).await?
+        } else {
+            None
+        })
+        .with_prefixed_input_items(if is_initial_attempt {
+            input.prefixed_input_items.clone()
+        } else {
+            Vec::new()
+        });
         let runner = build_shared_contextual_turn_runner_with_max_iterations(
             runtime_context.use_tools.then_some(prepared.executor),
             MessageManager::new(),

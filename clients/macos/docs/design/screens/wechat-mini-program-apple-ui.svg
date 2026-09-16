@@ -1,0 +1,326 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1120" viewBox="0 0 1440 1120" role="img" aria-labelledby="title desc">
+  <title id="title">ChatOS 微信小程序 Apple 风格界面设计</title>
+  <desc id="desc">三个微信小程序页面设计：设备监控、会话列表和会话详情。采用苹果风格的大标题、分组卡片、系统蓝、轻量层级和宽松留白，同时保留微信小程序胶囊按钮。</desc>
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#EEF2F7"/>
+    </linearGradient>
+    <linearGradient id="heroBlue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#147BFF"/>
+      <stop offset="1" stop-color="#5AA7FF"/>
+    </linearGradient>
+    <linearGradient id="heroPurple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6657E8"/>
+      <stop offset="1" stop-color="#9B8AFB"/>
+    </linearGradient>
+    <filter id="phoneShadow" x="-25%" y="-15%" width="150%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="24" flood-color="#24334D" flood-opacity="0.16"/>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#24334D" flood-opacity="0.08"/>
+    </filter>
+    <clipPath id="clip1"><rect x="80" y="142" width="390" height="844" rx="48"/></clipPath>
+    <clipPath id="clip2"><rect x="525" y="142" width="390" height="844" rx="48"/></clipPath>
+    <clipPath id="clip3"><rect x="970" y="142" width="390" height="844" rx="48"/></clipPath>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif; fill: #1C1C1E; }
+      .board-title { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; }
+      .board-subtitle { font-size: 15px; fill: #6E7583; }
+      .screen-label { font-size: 13px; font-weight: 600; fill: #6E7583; letter-spacing: 1.4px; }
+      .status { font-size: 13px; font-weight: 600; }
+      .large-title { font-size: 34px; font-weight: 700; letter-spacing: -1px; }
+      .nav-title { font-size: 16px; font-weight: 600; }
+      .headline { font-size: 16px; font-weight: 600; }
+      .body { font-size: 15px; }
+      .callout { font-size: 14px; font-weight: 600; }
+      .caption { font-size: 12px; fill: #8E8E93; }
+      .caption-dark { font-size: 12px; fill: #5F6672; }
+      .tab { font-size: 10px; font-weight: 500; fill: #8E8E93; }
+      .tab-active { font-size: 10px; font-weight: 600; fill: #007AFF; }
+      .white-title { font-size: 21px; font-weight: 700; fill: #FFFFFF; }
+      .white-body { font-size: 13px; fill: #FFFFFF; fill-opacity: 0.86; }
+      .token-title { font-size: 13px; font-weight: 600; }
+      .token-text { font-size: 12px; fill: #6E7583; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="1120" fill="url(#canvas)"/>
+  <text x="80" y="54" class="board-title">ChatOS 微信小程序</text>
+  <text x="80" y="82" class="board-subtitle">Apple 风格视觉方向 · 清晰、克制、专注于设备与会话</text>
+
+  <g transform="translate(1090 34)">
+    <rect width="270" height="50" rx="25" fill="#FFFFFF" stroke="#D9DEE7"/>
+    <circle cx="26" cy="25" r="8" fill="#34C759"/>
+    <text x="45" y="30" class="callout">微信容器 + Apple 设计语言</text>
+  </g>
+
+  <text x="80" y="122" class="screen-label">01  设备监控</text>
+  <text x="525" y="122" class="screen-label">02  云端会话</text>
+  <text x="970" y="122" class="screen-label">03  会话详情</text>
+
+  <!-- Phone 1 frame -->
+  <rect x="80" y="142" width="390" height="844" rx="48" fill="#111216" filter="url(#phoneShadow)"/>
+  <g clip-path="url(#clip1)">
+    <rect x="80" y="142" width="390" height="844" fill="#F2F2F7"/>
+    <rect x="80" y="142" width="390" height="110" fill="#F2F2F7" fill-opacity="0.92"/>
+
+    <!-- status / WeChat capsule -->
+    <text x="108" y="178" class="status">9:41</text>
+    <g transform="translate(354 159)">
+      <rect width="82" height="32" rx="16" fill="#FFFFFF" stroke="#D1D1D6"/>
+      <circle cx="24" cy="16" r="3" fill="#1C1C1E"/>
+      <circle cx="33" cy="16" r="3" fill="#1C1C1E"/>
+      <circle cx="59" cy="16" r="8" fill="none" stroke="#1C1C1E" stroke-width="1.6"/>
+    </g>
+    <g transform="translate(292 167)">
+      <path d="M0 8h3l2-6 4 12 3-8h4" fill="none" stroke="#1C1C1E" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M22 12V6M27 12V3M32 12V0" stroke="#1C1C1E" stroke-width="2" stroke-linecap="round"/>
+      <rect x="40" y="1" width="22" height="12" rx="3" fill="none" stroke="#1C1C1E" stroke-width="1.4"/>
+      <rect x="63" y="5" width="2" height="4" rx="1" fill="#1C1C1E"/>
+      <rect x="42" y="3" width="16" height="8" rx="2" fill="#1C1C1E"/>
+    </g>
+
+    <text x="104" y="232" class="large-title">设备</text>
+    <text x="104" y="259" class="body" fill="#6E7583">2 台设备 · 1 台在线</text>
+
+    <!-- hero -->
+    <g filter="url(#softShadow)">
+      <rect x="104" y="284" width="342" height="132" rx="24" fill="url(#heroBlue)"/>
+    </g>
+    <circle cx="140" cy="321" r="20" fill="#FFFFFF" fill-opacity="0.19"/>
+    <rect x="131" y="314" width="18" height="13" rx="2" fill="none" stroke="#FFFFFF" stroke-width="1.8"/>
+    <path d="M136 332h8M140 327v5" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="170" y="318" class="white-title">Mac Studio</text>
+    <text x="170" y="341" class="white-body">在线 · 本地工具可用</text>
+    <rect x="122" y="366" width="306" height="1" fill="#FFFFFF" fill-opacity="0.24"/>
+    <text x="122" y="392" class="white-body">正在执行「修复登录问题」</text>
+    <circle cx="409" cy="387" r="5" fill="#FFFFFF"/>
+    <circle cx="394" cy="387" r="5" fill="#FFFFFF" fill-opacity="0.58"/>
+    <circle cx="379" cy="387" r="5" fill="#FFFFFF" fill-opacity="0.28"/>
+
+    <text x="104" y="458" class="callout">其他设备</text>
+    <g filter="url(#softShadow)">
+      <rect x="104" y="474" width="342" height="84" rx="20" fill="#FFFFFF"/>
+    </g>
+    <circle cx="140" cy="516" r="22" fill="#EEF1F6"/>
+    <rect x="131" y="508" width="18" height="12" rx="2" fill="none" stroke="#8E8E93" stroke-width="1.7"/>
+    <path d="M136 526h8M140 521v5" stroke="#8E8E93" stroke-width="1.7" stroke-linecap="round"/>
+    <text x="174" y="508" class="headline">MacBook Pro</text>
+    <text x="174" y="532" class="caption-dark">离线 · 12 分钟前</text>
+    <path d="M421 511l6 6-6 6" fill="none" stroke="#C7C7CC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <text x="104" y="604" class="callout">状态说明</text>
+    <g filter="url(#softShadow)">
+      <rect x="104" y="620" width="342" height="104" rx="20" fill="#FFFFFF"/>
+    </g>
+    <circle cx="130" cy="650" r="6" fill="#34C759"/>
+    <text x="148" y="655" class="body">在线设备可以执行本地工具</text>
+    <rect x="122" y="672" width="306" height="1" fill="#E5E5EA"/>
+    <circle cx="130" cy="697" r="6" fill="#AEAEB2"/>
+    <text x="148" y="702" class="body">离线设备的会话历史仍可查看</text>
+
+    <!-- tab bar -->
+    <rect x="80" y="893" width="390" height="93" fill="#FCFCFE" fill-opacity="0.96"/>
+    <rect x="80" y="893" width="390" height="1" fill="#DADAE0"/>
+    <g transform="translate(160 913)">
+      <rect x="-9" y="0" width="18" height="13" rx="2" fill="none" stroke="#007AFF" stroke-width="2"/>
+      <path d="M-4 20h8M0 13v7" stroke="#007AFF" stroke-width="2" stroke-linecap="round"/>
+      <text x="0" y="42" text-anchor="middle" class="tab-active">设备</text>
+    </g>
+    <g transform="translate(350 913)">
+      <path d="M-11 1h22a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H0l-8 6 2-6h-5a5 5 0 0 1-5-5V6a5 5 0 0 1 5-5Z" fill="none" stroke="#8E8E93" stroke-width="2" stroke-linejoin="round"/>
+      <text x="0" y="42" text-anchor="middle" class="tab">会话</text>
+    </g>
+    <rect x="211" y="969" width="128" height="5" rx="2.5" fill="#1C1C1E"/>
+  </g>
+  <rect x="80" y="142" width="390" height="844" rx="48" fill="none" stroke="#202226" stroke-width="5"/>
+
+  <!-- Phone 2 frame -->
+  <rect x="525" y="142" width="390" height="844" rx="48" fill="#111216" filter="url(#phoneShadow)"/>
+  <g clip-path="url(#clip2)">
+    <rect x="525" y="142" width="390" height="844" fill="#F2F2F7"/>
+    <text x="553" y="178" class="status">9:41</text>
+    <g transform="translate(799 159)">
+      <rect width="82" height="32" rx="16" fill="#FFFFFF" stroke="#D1D1D6"/>
+      <circle cx="24" cy="16" r="3" fill="#1C1C1E"/>
+      <circle cx="33" cy="16" r="3" fill="#1C1C1E"/>
+      <circle cx="59" cy="16" r="8" fill="none" stroke="#1C1C1E" stroke-width="1.6"/>
+    </g>
+    <g transform="translate(737 167)">
+      <path d="M0 8h3l2-6 4 12 3-8h4" fill="none" stroke="#1C1C1E" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M22 12V6M27 12V3M32 12V0" stroke="#1C1C1E" stroke-width="2" stroke-linecap="round"/>
+      <rect x="40" y="1" width="22" height="12" rx="3" fill="none" stroke="#1C1C1E" stroke-width="1.4"/>
+      <rect x="63" y="5" width="2" height="4" rx="1" fill="#1C1C1E"/>
+      <rect x="42" y="3" width="16" height="8" rx="2" fill="#1C1C1E"/>
+    </g>
+
+    <text x="549" y="232" class="large-title">会话</text>
+    <circle cx="879" cy="221" r="18" fill="#E2E2E8"/>
+    <path d="M871 221h16M879 213v16" stroke="#007AFF" stroke-width="2" stroke-linecap="round"/>
+
+    <!-- search -->
+    <rect x="549" y="258" width="342" height="40" rx="12" fill="#E3E3E8"/>
+    <circle cx="569" cy="278" r="7" fill="none" stroke="#8E8E93" stroke-width="1.8"/>
+    <path d="M574 283l5 5" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="588" y="283" class="body" fill="#8E8E93">搜索会话</text>
+
+    <text x="549" y="337" class="callout">最近</text>
+    <g filter="url(#softShadow)">
+      <rect x="549" y="353" width="342" height="330" rx="22" fill="#FFFFFF"/>
+    </g>
+
+    <!-- conversation row 1 -->
+    <circle cx="583" cy="397" r="22" fill="url(#heroPurple)"/>
+    <path d="M574 398h18M574 391h13M574 405h10" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+    <text x="619" y="386" class="headline">修复登录问题</text>
+    <text x="619" y="409" class="caption-dark">正在检查认证回调和错误日志…</text>
+    <text x="859" y="386" text-anchor="end" class="caption">刚刚</text>
+    <rect x="619" y="421" width="58" height="22" rx="11" fill="#E8F7ED"/>
+    <circle cx="632" cy="432" r="4" fill="#34C759"/>
+    <text x="643" y="436" class="caption" fill="#248A3D">运行中</text>
+    <text x="859" y="436" text-anchor="end" class="caption">Mac Studio</text>
+    <rect x="619" y="460" width="252" height="1" fill="#E5E5EA"/>
+
+    <!-- conversation row 2 -->
+    <circle cx="583" cy="504" r="22" fill="#007AFF"/>
+    <path d="M575 496h16v15h-16Z" fill="none" stroke="#FFFFFF" stroke-width="1.8"/>
+    <path d="M579 501h8M579 506h6" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+    <text x="619" y="493" class="headline">发布流程检查</text>
+    <text x="619" y="516" class="caption-dark">检查完成，没有发现阻塞项。</text>
+    <text x="859" y="493" text-anchor="end" class="caption">10:24</text>
+    <text x="619" y="543" class="caption">已完成</text>
+    <text x="859" y="543" text-anchor="end" class="caption">Mac Studio</text>
+    <rect x="619" y="567" width="252" height="1" fill="#E5E5EA"/>
+
+    <!-- conversation row 3 -->
+    <circle cx="583" cy="612" r="22" fill="#E8E8ED"/>
+    <path d="M572 612h22M583 601v22" stroke="#8E8E93" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="619" y="601" class="headline">讨论移动控制端</text>
+    <text x="619" y="624" class="caption-dark">已生成微信小程序实施方案。</text>
+    <text x="859" y="601" text-anchor="end" class="caption">昨天</text>
+    <text x="619" y="651" class="caption">云端会话</text>
+    <circle cx="858" cy="650" r="5" fill="#007AFF"/>
+
+    <!-- offline notice -->
+    <g filter="url(#softShadow)">
+      <rect x="549" y="707" width="342" height="74" rx="20" fill="#FFFFFF"/>
+    </g>
+    <circle cx="579" cy="744" r="16" fill="#FFF4E5"/>
+    <path d="M579 735v11M579 751h.1" stroke="#FF9500" stroke-width="2.2" stroke-linecap="round"/>
+    <text x="607" y="737" class="callout">1 台设备离线</text>
+    <text x="607" y="758" class="caption-dark">历史仍可查看，本地工具暂不可用</text>
+    <path d="M866 738l6 6-6 6" fill="none" stroke="#C7C7CC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- tab bar -->
+    <rect x="525" y="893" width="390" height="93" fill="#FCFCFE" fill-opacity="0.96"/>
+    <rect x="525" y="893" width="390" height="1" fill="#DADAE0"/>
+    <g transform="translate(605 913)">
+      <rect x="-9" y="0" width="18" height="13" rx="2" fill="none" stroke="#8E8E93" stroke-width="2"/>
+      <path d="M-4 20h8M0 13v7" stroke="#8E8E93" stroke-width="2" stroke-linecap="round"/>
+      <text x="0" y="42" text-anchor="middle" class="tab">设备</text>
+    </g>
+    <g transform="translate(795 913)">
+      <path d="M-11 1h22a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H0l-8 6 2-6h-5a5 5 0 0 1-5-5V6a5 5 0 0 1 5-5Z" fill="none" stroke="#007AFF" stroke-width="2" stroke-linejoin="round"/>
+      <text x="0" y="42" text-anchor="middle" class="tab-active">会话</text>
+    </g>
+    <rect x="656" y="969" width="128" height="5" rx="2.5" fill="#1C1C1E"/>
+  </g>
+  <rect x="525" y="142" width="390" height="844" rx="48" fill="none" stroke="#202226" stroke-width="5"/>
+
+  <!-- Phone 3 frame -->
+  <rect x="970" y="142" width="390" height="844" rx="48" fill="#111216" filter="url(#phoneShadow)"/>
+  <g clip-path="url(#clip3)">
+    <rect x="970" y="142" width="390" height="844" fill="#F2F2F7"/>
+    <rect x="970" y="142" width="390" height="114" fill="#FAFAFC" fill-opacity="0.96"/>
+    <rect x="970" y="255" width="390" height="1" fill="#DADAE0"/>
+    <text x="998" y="178" class="status">9:41</text>
+    <g transform="translate(1244 159)">
+      <rect width="82" height="32" rx="16" fill="#FFFFFF" stroke="#D1D1D6"/>
+      <circle cx="24" cy="16" r="3" fill="#1C1C1E"/>
+      <circle cx="33" cy="16" r="3" fill="#1C1C1E"/>
+      <circle cx="59" cy="16" r="8" fill="none" stroke="#1C1C1E" stroke-width="1.6"/>
+    </g>
+    <g transform="translate(1182 167)">
+      <path d="M0 8h3l2-6 4 12 3-8h4" fill="none" stroke="#1C1C1E" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M22 12V6M27 12V3M32 12V0" stroke="#1C1C1E" stroke-width="2" stroke-linecap="round"/>
+      <rect x="40" y="1" width="22" height="12" rx="3" fill="none" stroke="#1C1C1E" stroke-width="1.4"/>
+      <rect x="63" y="5" width="2" height="4" rx="1" fill="#1C1C1E"/>
+      <rect x="42" y="3" width="16" height="8" rx="2" fill="#1C1C1E"/>
+    </g>
+
+    <path d="M1009 218l-8 8 8 8" fill="none" stroke="#007AFF" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="1018" y="231" class="body" fill="#007AFF">会话</text>
+    <text x="1165" y="231" text-anchor="middle" class="nav-title">修复登录问题</text>
+    <circle cx="1327" cy="226" r="4" fill="#34C759"/>
+
+    <!-- chat content -->
+    <text x="1165" y="286" text-anchor="middle" class="caption">今天 09:36 · Mac Studio 在线</text>
+
+    <rect x="1117" y="309" width="219" height="70" rx="20" fill="#007AFF"/>
+    <text x="1135" y="337" class="body" fill="#FFFFFF">帮我检查一下登录失败的原因，</text>
+    <text x="1135" y="360" class="body" fill="#FFFFFF">重点看微信绑定回调。</text>
+
+    <circle cx="1004" cy="427" r="19" fill="url(#heroPurple)"/>
+    <path d="M996 420h16M996 427h12M996 434h9" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round"/>
+    <rect x="1033" y="397" width="289" height="89" rx="20" fill="#FFFFFF"/>
+    <text x="1051" y="427" class="body">我会检查认证回调、绑定票据和</text>
+    <text x="1051" y="450" class="body">最近的服务日志。</text>
+    <text x="1051" y="473" class="caption">ChatOS</text>
+
+    <!-- tool activity -->
+    <g filter="url(#softShadow)">
+      <rect x="1033" y="507" width="289" height="154" rx="20" fill="#FFFFFF"/>
+    </g>
+    <circle cx="1056" cy="535" r="10" fill="#E8F7ED"/>
+    <path d="M1051 535l4 4 7-9" fill="none" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="1075" y="540" class="callout">已读取认证配置</text>
+    <rect x="1051" y="557" width="253" height="1" fill="#E5E5EA"/>
+    <circle cx="1056" cy="584" r="10" fill="#E8F7ED"/>
+    <path d="M1051 584l4 4 7-9" fill="none" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="1075" y="589" class="callout">已检查绑定票据</text>
+    <rect x="1051" y="606" width="253" height="1" fill="#E5E5EA"/>
+    <circle cx="1056" cy="633" r="10" fill="#EAF2FF"/>
+    <path d="M1056 627v6l4 3" fill="none" stroke="#007AFF" stroke-width="2" stroke-linecap="round"/>
+    <text x="1075" y="638" class="callout">正在分析服务日志</text>
+
+    <rect x="1033" y="683" width="289" height="92" rx="20" fill="#FFFFFF"/>
+    <text x="1051" y="712" class="body">问题出在回调域名配置。我找到</text>
+    <text x="1051" y="735" class="body">了一处环境变量不一致，正在确认。</text>
+    <text x="1051" y="760" class="caption">正在输入…</text>
+
+    <!-- composer -->
+    <rect x="970" y="849" width="390" height="137" fill="#FAFAFC" fill-opacity="0.98"/>
+    <rect x="970" y="849" width="390" height="1" fill="#DADAE0"/>
+    <circle cx="1004" cy="888" r="18" fill="#E8E8ED"/>
+    <path d="M996 888h16M1004 880v16" stroke="#5F6672" stroke-width="2" stroke-linecap="round"/>
+    <rect x="1032" y="868" width="274" height="42" rx="21" fill="#FFFFFF" stroke="#D1D1D6"/>
+    <text x="1050" y="894" class="body" fill="#8E8E93">发送消息…</text>
+    <circle cx="1285" cy="889" r="15" fill="#007AFF"/>
+    <path d="M1285 896V882M1279 888l6-6 6 6" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="1101" y="969" width="128" height="5" rx="2.5" fill="#1C1C1E"/>
+  </g>
+  <rect x="970" y="142" width="390" height="844" rx="48" fill="none" stroke="#202226" stroke-width="5"/>
+
+  <!-- design tokens -->
+  <g transform="translate(80 1031)">
+    <rect width="1280" height="58" rx="20" fill="#FFFFFF" stroke="#D9DEE7"/>
+    <text x="24" y="26" class="token-title">视觉基线</text>
+    <text x="24" y="45" class="token-text">Apple Human Interface 风格，保留微信小程序胶囊与生命周期约束</text>
+
+    <circle cx="382" cy="29" r="12" fill="#007AFF"/>
+    <text x="403" y="25" class="token-title">System Blue</text>
+    <text x="403" y="43" class="token-text">主操作与选中态</text>
+
+    <rect x="568" y="17" width="38" height="24" rx="8" fill="#F2F2F7" stroke="#E5E5EA"/>
+    <text x="620" y="25" class="token-title">Grouped Surface</text>
+    <text x="620" y="43" class="token-text">页面分组背景</text>
+
+    <rect x="804" y="15" width="42" height="28" rx="12" fill="#FFFFFF" stroke="#D9DEE7"/>
+    <text x="860" y="25" class="token-title">16–24 圆角</text>
+    <text x="860" y="43" class="token-text">卡片与消息气泡</text>
+
+    <text x="1082" y="26" class="token-title">SF Pro / 苹方</text>
+    <text x="1082" y="44" class="token-text">系统字体与动态字号</text>
+  </g>
+</svg>

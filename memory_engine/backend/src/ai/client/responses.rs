@@ -7,12 +7,8 @@ use tracing::{info, warn};
 
 use super::AiClient;
 
-pub(super) fn request_kind(supports_responses: bool) -> &'static str {
-    if supports_responses {
-        "responses"
-    } else {
-        "chat_completions"
-    }
+pub(super) fn request_kind(_supports_responses: bool) -> &'static str {
+    "responses"
 }
 
 pub(super) fn validate_summary_text(

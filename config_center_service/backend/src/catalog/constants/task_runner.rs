@@ -79,8 +79,6 @@ pub const TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY: &str =
     "task_runner.retention.ask_user_prompt_cleanup_interval_ms";
 pub const TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY: &str =
     "task_runner.retention.ask_user_prompt_cleanup_batch_size";
-pub const TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY: &str =
-    "task_runner.memory.auto_summary_enabled";
 pub const TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "task_runner.downstream.user_service_base_url";
 pub const TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =

@@ -27,7 +27,10 @@ struct NativeApprovalAgent: Sendable {
     func evaluate(
         request: NativeApprovalAgentRequest,
         model: GatewayModelConfigDTO,
-        thinkingLevel: String?
+        thinkingLevel: String?,
+        runID: UUID = UUID(),
+        runtimeScope: String? = nil,
+        contextProvider: AgentMemoryContextProvider? = nil
     ) async -> NativeApprovalDecision {
         do {
             let policy = try settingsStore.load().effective(.approval)
@@ -38,18 +41,28 @@ struct NativeApprovalAgent: Sendable {
                 throw NativeApprovalAgentError.invalidModelConfiguration
             }
             let reserve = (policy.context ?? .init()).outputReserveTokens
-            let client = try AgentChatModelClient(baseURL: baseURL, model: model.model, apiKey: apiKey,
-                thinking: thinkingLevel, maximumOutputTokens: min(max(1, model.maxOutputTokens ?? 1_200), reserve),
-                temperature: model.temperature ?? 0)
-            return await evaluate(request: request, modelClient: client, policy: policy)
+            let maximumOutputTokens = min(max(1, model.maxOutputTokens ?? 1_200), reserve)
+            let client: any AgentModelClient = try AgentResponsesModelClient(
+                baseURL: baseURL, model: model.model, apiKey: apiKey,
+                thinking: thinkingLevel, maximumOutputTokens: maximumOutputTokens,
+                temperature: model.temperature ?? 0,
+                promptCacheKey: "approval-agent:\(model.id)"
+            )
+            return await evaluate(
+                request: request, modelClient: client, policy: policy,
+                runID: runID, runtimeScope: runtimeScope, contextProvider: contextProvider
+            )
         } catch {
             return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
         }
     }
 
-    /// Shared loop, separate read-only registry. No automatic cloud memory upload of local files.
+    /// Shared loop with a separate read-only registry. Production callers provide
+    /// a Memory Engine context so prompts, tool calls, and tool results share the
+    /// same durable audit contract as the story and server Agents.
     func evaluate(request: NativeApprovalAgentRequest, modelClient: any AgentModelClient,
-                  policy: AgentRunPolicy) async -> NativeApprovalDecision {
+                  policy: AgentRunPolicy, runID: UUID = UUID(), runtimeScope: String? = nil,
+                  contextProvider: AgentMemoryContextProvider? = nil) async -> NativeApprovalDecision {
         do {
             let definitions = try Self.toolSchemas.map { schema -> AgentToolDefinition in
                 guard let function = schema["function"] as? [String: Any],
@@ -62,10 +75,15 @@ struct NativeApprovalAgent: Sendable {
                     schema: try JSONSerialization.data(withJSONObject: parameters),
                     effect: name == "approval_decision" ? .terminal : .readOnly)
             }
-            let checkpoint = AgentRunCheckpoint(scope: "approval:\(UUID())", messages: [
+            let scope = runtimeScope ?? "approval:\(runID.uuidString)"
+            var checkpoint = AgentRunCheckpoint(scope: scope, messages: [
                 .init(role: .system, content: Self.systemPrompt),
                 .init(role: .user, content: prompt(for: request)),
             ])
+            checkpoint.id = runID
+            if let contextProvider {
+                checkpoint = try contextProvider.bind(checkpoint)
+            }
             let result = try await AgentRuntime().run(checkpoint: checkpoint, scope: checkpoint.scope, policy: policy,
                 model: modelClient, tools: definitions, execute: { call in
                     let arguments = try decodeArguments(call.arguments)
@@ -75,7 +93,7 @@ struct NativeApprovalAgent: Sendable {
                     }
                     let output = tools.execute(name: call.name, arguments: arguments, projectRoot: request.projectRoot)
                     return output.hasPrefix("工具执行失败：") ? .failure(output) : .init(output)
-                })
+                }, contextProvider: contextProvider)
             guard result.status == .completed, let output = result.result else {
                 return .askUser(reason: result.stopReason ?? "本机审批 Agent 未形成有效结论，已转交人工确认。")
             }

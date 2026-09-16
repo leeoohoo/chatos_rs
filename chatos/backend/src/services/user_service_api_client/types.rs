@@ -41,6 +41,8 @@ pub struct UserServiceVerifiedPrincipal {
     pub principal_type: String,
     pub user_id: Option<String>,
     pub role: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

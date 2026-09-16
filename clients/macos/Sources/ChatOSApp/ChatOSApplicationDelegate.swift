@@ -36,6 +36,10 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        model.prepareForApplicationTermination()
+    }
+
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
         receive(
             filenames.map { URL(fileURLWithPath: $0) },

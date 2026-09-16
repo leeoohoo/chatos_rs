@@ -45,9 +45,11 @@ import { officialRuntimePresentation } from '../library-runtime/registry';
 import { WEB_DESIGN_THEME_PRESETS, type WebDesignThemePreset } from '../../src/design-themes';
 import { componentDefaults } from '../../src/templates';
 import {
+  matchArtboardSizePreset,
   matchViewportPreset,
   viewportDimensions,
   viewportPresetsForDevice,
+  WEB_DESIGN_ARTBOARD_SIZE_PRESETS,
   type WebDesignViewportOrientation
 } from '../../src/viewport-presets';
 import {
@@ -82,8 +84,8 @@ import { componentEffectStyleToCss, componentStyleToCss, mergeComponentStyles } 
 import { CanvasComponent as WorkspaceCanvasComponent, CanvasComponentContent as WorkspaceCanvasComponentContent } from './CanvasComponent';
 import { libraryPreviewSelection, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
 import { WorkspaceBottomToolbar, WorkspaceNavigationBar, WorkspacePanelResizeHandle } from './WorkspaceShellChrome';
-import { buildPrototypeFlowConnections, prototypeFlowPath, scenePrototypeFlowSources } from './prototype-flow-model';
 import { DEFAULT_WORKSPACE_SHELL, parseWorkspaceShellState, workspaceShellGridStyle, workspaceShellReducer, workspaceShellShortcut, type WorkspaceArea, type WorkspaceTool } from './workspace-shell-model';
+import { initialWorkspaceArtboards, reconcileWorkspaceArtboards, updateWorkspaceArtboardById, workspaceViewportHeight } from './workspace-artboard-model';
 import {
   fitWorkspaceRect,
   fitWorkspaceWidth,
@@ -118,8 +120,8 @@ import {
 type BasicShapeId = 'rectangle' | 'ellipse' | 'line';
 
 const SCENE_RESPONSIVE_EDITOR_RULES = {
-  tablet: { ruleId: 'editor:tablet', ruleName: '人工平板布局', minWidth: 768, maxWidth: 1200 },
-  mobile: { ruleId: 'editor:mobile', ruleName: '人工手机布局', maxWidth: 768 }
+  tablet: { ruleId: 'editor:tablet', ruleName: '人工中等宽度布局', minWidth: 768, maxWidth: 1200 },
+  mobile: { ruleId: 'editor:mobile', ruleName: '人工窄宽度布局', maxWidth: 768 }
 } as const;
 
 const SLOT_EDITOR_HEADER_HEIGHT = 72;
@@ -475,12 +477,6 @@ async function materializeOfficialDemoContent(
     });
 }
 
-const deviceOptions: Array<{ device: WebDesignDevice; label: string; icon: string }> = [
-  { device: 'desktop', label: '桌面', icon: '▰' },
-  { device: 'tablet', label: '平板', icon: '▯' },
-  { device: 'mobile', label: '手机', icon: '▯' }
-];
-
 const horizontalConstraintOptions: Array<{ id: WebHorizontalConstraint; label: string; description: string }> = [
   { id: 'auto', label: '智能响应', description: '根据组件大小和位置自动选择缩放或锚定方式' },
   { id: 'left', label: '左侧固定', description: '保持宽度和左边距' },
@@ -579,14 +575,6 @@ type CanvasMarquee = {
   moved: boolean;
 };
 
-type WorkspaceArtboardDrag = {
-  artboardId: string;
-  pointerX: number;
-  pointerY: number;
-  x: number;
-  y: number;
-};
-
 type LayerAction = 'front' | 'forward' | 'backward' | 'back';
 type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
 type LibraryTab = 'components' | WebDesignLibraryName | 'my' | 'layers';
@@ -612,7 +600,6 @@ type InspectorTab = 'design' | 'prototype' | 'ai' | 'review';
 const PERSONAL_SYMBOLS_STORAGE_KEY = 'web-design-studio:personal-symbols:v1';
 const SCENE_SNIPPETS_STORAGE_KEY = 'web-design-studio:scene-snippets:v2';
 
-const WORKSPACE_ARTBOARD_GAP = 160;
 const WORKSPACE_ARTBOARD_HEADER_HEIGHT = 48;
 
 const WORKSPACE_SURFACE_LABELS: Record<WorkspaceSurfaceKind, string> = {
@@ -637,73 +624,6 @@ function deviceForWorkspaceArtboard(document: WebDesignDocument, artboard: Works
     Math.abs(breakpointFor(document, candidate).width - artboard.viewportWidth)
       < Math.abs(breakpointFor(document, closest).width - artboard.viewportWidth) ? candidate : closest
   ), 'desktop' as WebDesignDevice);
-}
-
-function workspaceViewportHeight(document: WebDesignDocument, device: WebDesignDevice): number {
-  const responsive = breakpointFor(document, device);
-  if (responsive.preview?.viewportHeight) return responsive.preview.viewportHeight;
-  const preset = matchViewportPreset(device, responsive.width);
-  return preset
-    ? viewportDimensions(preset.preset, preset.orientation).height
-    : Math.min(responsive.height, device === 'desktop' ? 1080 : device === 'tablet' ? 1024 : 844);
-}
-
-function workspacePageSources(document: WebDesignDocument, scene?: SceneDocument) {
-  return scene
-    ? scene.pages.map((page) => ({ id: page.id, surfaceKind: 'page' as WorkspaceSurfaceKind }))
-    : pagesForDocument(document).map((page) => ({ id: page.id, surfaceKind: page.surfaceKind ?? 'page' }));
-}
-
-function initialWorkspaceArtboards(document: WebDesignDocument, scene?: SceneDocument): WorkspaceArtboardPlacement[] {
-  let x = 0;
-  return workspacePageSources(document, scene).map((page) => {
-    const responsive = breakpointFor(document, 'desktop');
-    const artboard: WorkspaceArtboardPlacement = {
-      artboardId: `artboard-${page.id}`,
-      pageId: page.id,
-      surfaceKind: page.surfaceKind,
-      viewportWidth: responsive.width,
-      viewportHeight: workspaceViewportHeight(document, 'desktop'),
-      x,
-      y: 0
-    };
-    x += responsive.width + WORKSPACE_ARTBOARD_GAP;
-    return artboard;
-  });
-}
-
-function reconcileWorkspaceArtboards(document: WebDesignDocument, stored: readonly WorkspaceArtboardPlacement[], scene?: SceneDocument): WorkspaceArtboardPlacement[] {
-  const pages = workspacePageSources(document, scene);
-  const pageIds = new Set(pages.map((page) => page.id));
-  const seenPages = new Set<string>();
-  const valid = stored.filter((artboard) => {
-    if (!pageIds.has(artboard.pageId) || seenPages.has(artboard.pageId)) return false;
-    seenPages.add(artboard.pageId);
-    return true;
-  }).map((artboard) => ({ ...artboard }));
-  let right = valid.length === 0
-    ? 0
-    : Math.max(...valid.map((artboard) => artboard.x + artboard.viewportWidth)) + WORKSPACE_ARTBOARD_GAP;
-  const desktop = breakpointFor(document, 'desktop');
-  for (const page of pages) {
-    if (seenPages.has(page.id)) continue;
-    valid.push({
-      artboardId: `artboard-${page.id}`,
-      pageId: page.id,
-      surfaceKind: page.surfaceKind,
-      viewportWidth: desktop.width,
-      viewportHeight: workspaceViewportHeight(document, 'desktop'),
-      x: right,
-      y: 0
-    });
-    right += desktop.width + WORKSPACE_ARTBOARD_GAP;
-  }
-  return valid;
-}
-
-function workspaceArtboardBounds(document: WebDesignDocument, artboards: readonly WorkspaceArtboardPlacement[], scene?: SceneDocument) {
-  return unionWorkspaceRects(artboards.map((artboard) => workspaceArtboardContentBounds(document, artboard, scene)))
-    ?? { x: 0, y: 0, width: 1, height: 1 };
 }
 
 function workspaceArtboardContentBounds(document: WebDesignDocument, artboard: WorkspaceArtboardPlacement, scene?: SceneDocument) {
@@ -873,7 +793,6 @@ export function WebDesignStudioApp() {
   const [snapGuides, setSnapGuides] = useState<SnapGuides>({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [preview, setPreview] = useState(false);
   const [previewOverlayPageId, setPreviewOverlayPageId] = useState<string>();
   const [interactionMode, setInteractionMode] = useState(false);
   const [device, setDevice] = useState<WebDesignDevice>('desktop');
@@ -881,8 +800,8 @@ export function WebDesignStudioApp() {
   const [workspaceCamera, setWorkspaceCamera] = useState<WorkspaceCamera>({ x: 0, y: 0, zoom: 0.82 });
   const [workspacePlacement, setWorkspacePlacement] = useState<WorkspacePlacementDocument>();
   const [activeArtboardId, setActiveArtboardId] = useState<string>();
+  const [scenePreviewHeights, setScenePreviewHeights] = useState<Record<string, number>>({});
   const [newSurfaceKind, setNewSurfaceKind] = useState<WorkspaceSurfaceKind>('page');
-  const [prototypeLinksVisible, setPrototypeLinksVisible] = useState(true);
   const [past, setPast] = useState<WebDesignDocument[]>([]);
   const [future, setFuture] = useState<WebDesignDocument[]>([]);
   const [toast, setToast] = useState<string>();
@@ -918,7 +837,6 @@ export function WebDesignStudioApp() {
   const interaction = useRef<Interaction | undefined>(undefined);
   const canvasPan = useRef<CanvasPan | undefined>(undefined);
   const canvasMarquee = useRef<CanvasMarquee | undefined>(undefined);
-  const workspaceArtboardDrag = useRef<WorkspaceArtboardDrag | undefined>(undefined);
   const spacePressed = useRef(false);
   const workspaceCameraContext = useRef<string | undefined>(undefined);
   const workspaceCameraBeforeSlot = useRef<WorkspaceCamera | undefined>(undefined);
@@ -927,11 +845,11 @@ export function WebDesignStudioApp() {
   const variantPickerDragRef = useRef<VariantPickerPointerDrag | undefined>(undefined);
   const documentRef = useRef<WebDesignDocument | undefined>(undefined);
   const sceneDocumentRef = useRef<SceneDocument | undefined>(undefined);
+  const sceneCommandQueue = useRef<Promise<void>>(Promise.resolve());
   const assetInput = useRef<HTMLInputElement | null>(null);
   const canvasStage = useRef<HTMLElement | null>(null);
   const canvasScroll = useRef<HTMLDivElement | null>(null);
   const zoom = workspaceCamera.zoom;
-  const previewZoom = useRef(zoom);
   const interactionZoom = useRef(zoom);
   const [canvasPanning, setCanvasPanning] = useState(false);
   const [canvasPanReady, setCanvasPanReady] = useState(false);
@@ -945,7 +863,6 @@ export function WebDesignStudioApp() {
     const viewport = canvasScroll.current;
     if (!stage || !viewport || screen !== 'editor') return;
     const onWheel = (event: WheelEvent) => {
-      if (preview) return;
       const isPinchZoom = event.ctrlKey || event.metaKey;
       const target = event.target;
       const isInsideCanvasStage = target instanceof Node && stage.contains(target);
@@ -974,7 +891,7 @@ export function WebDesignStudioApp() {
     };
     window.addEventListener('wheel', onWheel, { capture: true, passive: false });
     return () => window.removeEventListener('wheel', onWheel, { capture: true });
-  }, [screen, preview]);
+  }, [screen]);
 
   const selected = useMemo(
     () => document?.components.find((component) => component.id === selectedId),
@@ -1012,21 +929,42 @@ export function WebDesignStudioApp() {
     [selected, device]
   );
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const activeWorkspaceArtboard = useMemo(
+    () => workspacePlacement?.artboards.find((artboard) => artboard.artboardId === activeArtboardId),
+    [activeArtboardId, workspacePlacement?.artboards]
+  );
   const breakpoint = useMemo(
     () => document ? breakpointFor(document, device) : { width: 1200, height: 940 },
     [document, device]
   );
-  const viewportPresets = useMemo(() => viewportPresetsForDevice(device), [device]);
-  const viewportSelection = viewportSelections[device];
+  const viewportPresets = useMemo(
+    () => sceneDocument ? WEB_DESIGN_ARTBOARD_SIZE_PRESETS : viewportPresetsForDevice(device),
+    [device, sceneDocument]
+  );
+  const configuredViewportSelection = viewportSelections[device];
+  const activeViewportWidth = sceneDocument && activeWorkspaceArtboard
+    ? activeWorkspaceArtboard.viewportWidth
+    : breakpoint.width;
+  const sceneViewportMatch = sceneDocument && activeWorkspaceArtboard
+    ? matchArtboardSizePreset(activeWorkspaceArtboard.viewportWidth, activeWorkspaceArtboard.viewportHeight)
+    : undefined;
+  const viewportSelection = sceneDocument && activeWorkspaceArtboard
+    ? {
+        presetId: sceneViewportMatch?.preset.id,
+        orientation: sceneViewportMatch?.orientation ?? 'default' as WebDesignViewportOrientation,
+        customHeight: activeWorkspaceArtboard.viewportHeight
+      }
+    : configuredViewportSelection;
   const viewportPreset = viewportPresets.find((preset) => preset.id === viewportSelection.presetId);
-  const previewViewportHeight = viewportPreset
+  const previewViewportHeight = sceneDocument && activeWorkspaceArtboard
+    ? activeWorkspaceArtboard.viewportHeight
+    : viewportPreset
     ? viewportDimensions(viewportPreset, viewportSelection.orientation).height
     : viewportSelection.customHeight;
   const renderedCanvasHeight = sceneDocument
-    ? sceneArtboardContentHeight(sceneDocument, pageId, breakpoint.width, Math.max(breakpoint.height, previewViewportHeight))
+    ? scenePreviewHeights[pageId]
+      ?? sceneArtboardContentHeight(sceneDocument, pageId, activeViewportWidth, Math.max(breakpoint.height, previewViewportHeight))
     : Math.max(breakpoint.height, previewViewportHeight);
-  const scaledCanvasWidth = breakpoint.width * zoom;
-  const scaledCanvasHeight = renderedCanvasHeight * zoom;
   const pages = useMemo(() => {
     if (sceneDocument) {
       const artboardsByPage = new Map(workspacePlacement?.artboards.map((artboard) => [artboard.pageId, artboard]));
@@ -1039,21 +977,8 @@ export function WebDesignStudioApp() {
     }
     return document ? pagesForDocument(document) : [];
   }, [document, sceneDocument, workspacePlacement?.artboards]);
-  const activeWorkspaceArtboard = useMemo(
-    () => workspacePlacement?.artboards.find((artboard) => artboard.artboardId === activeArtboardId),
-    [activeArtboardId, workspacePlacement?.artboards]
-  );
-  const routePages = useMemo(() => pages.filter((page) => (page.surfaceKind ?? 'page') === 'page'), [pages]);
   const previewOverlayPage = useMemo(() => pages.find((page) => page.id === previewOverlayPageId), [pages, previewOverlayPageId]);
   const previewOverlayArtboard = useMemo(() => workspacePlacement?.artboards.find((artboard) => artboard.pageId === previewOverlayPageId), [workspacePlacement?.artboards, previewOverlayPageId]);
-  const prototypeConnections = useMemo(() => {
-    if (!document || !workspacePlacement) return [];
-    if (!sceneDocument) return [];
-    return buildPrototypeFlowConnections(
-      scenePrototypeFlowSources(sceneDocument, workspacePlacement.artboards),
-      workspacePlacement.artboards
-    );
-  }, [device, document, sceneDocument, workspacePlacement]);
   const selectedPrototypeTarget = useMemo(() => {
     const targetPageId = selectedSceneNode?.prototypeLink?.targetPageId
       ?? (selected?.interaction?.type === 'page' ? selected.interaction.target : undefined);
@@ -1088,7 +1013,7 @@ export function WebDesignStudioApp() {
   }, [editingContainer, editingSlotDefinition, editingVisibleComponents, device]);
 
   useEffect(() => {
-    if (!editingSlot || !editingSlotCanvasSize || screen !== 'editor' || preview) return;
+    if (!editingSlot || !editingSlotCanvasSize || screen !== 'editor') return;
     const context = `${editingSlot.componentId}:${editingSlot.slotId}:${device}`;
     if (slotCameraContext.current === context) return;
     const frame = window.requestAnimationFrame(() => {
@@ -1103,7 +1028,7 @@ export function WebDesignStudioApp() {
       ));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [screen, preview, editingSlot?.componentId, editingSlot?.slotId, device, editingSlotCanvasSize?.width, editingSlotCanvasSize?.height]);
+  }, [screen, editingSlot?.componentId, editingSlot?.slotId, device, editingSlotCanvasSize?.width, editingSlotCanvasSize?.height]);
   const inspectedFrame = useMemo(() => {
     if (!selectedFrame || !editingContainer || !editingSlot || !selected || slotIdForDescendant(document!, selected, editingContainer.id) !== editingSlot.slotId) return selectedFrame;
     const containerFrame = resolveComponent(editingContainer, device);
@@ -1235,18 +1160,6 @@ export function WebDesignStudioApp() {
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
-      const activeArtboard = workspaceArtboardDrag.current;
-      if (activeArtboard) {
-        const dx = (event.clientX - activeArtboard.pointerX) / workspaceCamera.zoom;
-        const dy = (event.clientY - activeArtboard.pointerY) / workspaceCamera.zoom;
-        setWorkspacePlacement((current) => current ? {
-          ...current,
-          artboards: current.artboards.map((artboard) => artboard.artboardId === activeArtboard.artboardId
-            ? { ...artboard, x: Math.round(activeArtboard.x + dx), y: Math.round(activeArtboard.y + dy) }
-            : artboard)
-        } : current);
-        return;
-      }
       const activePan = canvasPan.current;
       if (activePan) {
         setWorkspaceCamera(panWorkspaceCamera(activePan.camera, {
@@ -1312,7 +1225,6 @@ export function WebDesignStudioApp() {
       }
     };
     const onUp = (event: PointerEvent) => {
-      if (workspaceArtboardDrag.current) workspaceArtboardDrag.current = undefined;
       if (canvasPan.current) {
         canvasPan.current = undefined;
         setCanvasPanning(false);
@@ -1348,7 +1260,7 @@ export function WebDesignStudioApp() {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
-      if (event.code === 'Space' && !preview) {
+      if (event.code === 'Space') {
         event.preventDefault();
         spacePressed.current = true;
         setCanvasPanReady(true);
@@ -1359,9 +1271,6 @@ export function WebDesignStudioApp() {
       if (event.key === 'Escape' && selectionCandidatePopover) {
         event.preventDefault();
         setSelectionCandidatePopover(undefined);
-      } else if (event.key === 'Escape' && preview) {
-        event.preventDefault();
-        toggleFullPreview();
       } else if (event.key === 'Escape' && interactionMode) {
         event.preventDefault();
         toggleInteractionMode();
@@ -1431,10 +1340,10 @@ export function WebDesignStudioApp() {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [selectedId, selectedIds, selectionCandidatePopover, past, future, dirty, saving, repository, persistedRevision, device, clipboard, sceneClipboard, sceneEditingActive, sceneDocument, pageId, preview, interactionMode, zoom, breakpoint.width, editingSlot]);
+  }, [selectedId, selectedIds, selectionCandidatePopover, past, future, dirty, saving, repository, persistedRevision, device, clipboard, sceneClipboard, sceneEditingActive, sceneDocument, pageId, interactionMode, zoom, breakpoint.width, editingSlot]);
 
   useEffect(() => {
-    if (screen !== 'editor' || preview || !document || !repository) {
+    if (screen !== 'editor' || !document || !repository) {
       workspaceCameraContext.current = undefined;
       setWorkspacePlacement(undefined);
       return;
@@ -1456,9 +1365,10 @@ export function WebDesignStudioApp() {
         : storedPlacement;
       if (cancelled) return;
       const viewport = canvasScroll.current;
-      const camera = storedPlacement.artboards.length === 0 && viewport
+      const first = placement.artboards[0];
+      const camera = first && viewport
         ? fitWorkspaceRect(
-            workspaceArtboardBounds(document, placement.artboards, sceneDocumentRef.current),
+            workspaceArtboardContentBounds(document, { ...first, x: 0, y: 0 }, sceneDocumentRef.current),
             { width: viewport.clientWidth, height: viewport.clientHeight },
             { top: 92, right: 64, bottom: 92, left: 64 }
           )
@@ -1466,7 +1376,6 @@ export function WebDesignStudioApp() {
       workspaceCameraContext.current = context;
       persistedWorkspaceArtboards.current = workspaceArtboardSignature(placement.artboards);
       setWorkspacePlacement(placement);
-      const first = placement.artboards[0];
       setActiveArtboardId(first?.artboardId);
       if (first) {
         setDevice(deviceForWorkspaceArtboard(document, first));
@@ -1475,10 +1384,10 @@ export function WebDesignStudioApp() {
       setWorkspaceCamera(camera);
     }).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
     return () => { cancelled = true; };
-  }, [screen, preview, editingSlot, document?.documentId, repository, sceneDocument, sceneLoadState]);
+  }, [screen, editingSlot, document?.documentId, repository, sceneDocument, sceneLoadState]);
 
   useEffect(() => {
-    if (!document || screen !== 'editor' || preview || editingSlot) return;
+    if (!document || screen !== 'editor' || editingSlot) return;
     if (!repository) return;
     const context = document.documentId;
     if (workspaceCameraContext.current !== context) return;
@@ -1487,10 +1396,10 @@ export function WebDesignStudioApp() {
         .catch((error) => showToast(error instanceof Error ? error.message : String(error)));
     }, 120);
     return () => window.clearTimeout(timeout);
-  }, [document?.documentId, repository, screen, preview, editingSlot, workspaceCamera]);
+  }, [document?.documentId, repository, screen, editingSlot, workspaceCamera]);
 
   useEffect(() => {
-    if (!document || !repository || !workspacePlacement || screen !== 'editor' || preview || editingSlot) return;
+    if (!document || !repository || !workspacePlacement || screen !== 'editor' || editingSlot) return;
     if (workspaceCameraContext.current !== document.documentId) return;
     const signature = workspaceArtboardSignature(workspacePlacement.artboards);
     if (signature === persistedWorkspaceArtboards.current) return;
@@ -1501,11 +1410,24 @@ export function WebDesignStudioApp() {
       }).catch((error) => showToast(error instanceof Error ? error.message : String(error)));
     }, 120);
     return () => window.clearTimeout(timeout);
-  }, [document?.documentId, repository, workspacePlacement?.artboards, screen, preview, editingSlot]);
+  }, [document?.documentId, repository, workspacePlacement?.artboards, screen, editingSlot]);
 
   function showToast(message: string) {
     setToast(message);
     window.setTimeout(() => setToast((current) => current === message ? undefined : current), 2600);
+  }
+
+  function updateScenePreviewHeight(targetPageId: string, height?: number) {
+    setScenePreviewHeights((current) => {
+      if (height === undefined) {
+        if (!(targetPageId in current)) return current;
+        const next = { ...current };
+        delete next[targetPageId];
+        return next;
+      }
+      if (current[targetPageId] === height) return current;
+      return { ...current, [targetPageId]: height };
+    });
   }
 
   function chooseLibraryTab(tab: LibraryTab) {
@@ -1690,30 +1612,35 @@ export function WebDesignStudioApp() {
     }
   }
 
-  async function commitSceneCommand(command: SceneEditorCommand, reason?: string): Promise<SceneDocument> {
-    const scene = sceneDocumentRef.current;
-    if (!repository || !scene) throw new Error('当前设计还没有可编辑的 Scene。');
-    try {
-      const result = await repository.editScene(scene.documentId, {
-        transactionId: `studio:${crypto.randomUUID()}`,
-        expectedRevision: scene.revision,
-        reason,
-        command
-      });
-      applySceneDocument(result.document);
-      await refreshSceneHistory(scene.documentId);
-      return result.document;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/revision|版本|更新到/i.test(message)) {
-        const latest = await repository.readScene(scene.documentId).catch(() => undefined);
-        if (latest) {
-          applySceneDocument(latest);
-          await refreshSceneHistory(scene.documentId).catch(() => undefined);
+  function commitSceneCommand(command: SceneEditorCommand, reason?: string): Promise<SceneDocument> {
+    const execute = async () => {
+      const scene = sceneDocumentRef.current;
+      if (!repository || !scene) throw new Error('当前设计还没有可编辑的 Scene。');
+      try {
+        const result = await repository.editScene(scene.documentId, {
+          transactionId: `studio:${crypto.randomUUID()}`,
+          expectedRevision: scene.revision,
+          reason,
+          command
+        });
+        applySceneDocument(result.document);
+        await refreshSceneHistory(scene.documentId);
+        return result.document;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/revision|版本|更新到/i.test(message)) {
+          const latest = await repository.readScene(scene.documentId).catch(() => undefined);
+          if (latest) {
+            applySceneDocument(latest);
+            await refreshSceneHistory(scene.documentId).catch(() => undefined);
+          }
         }
+        throw error;
       }
-      throw error;
-    }
+    };
+    const queued = sceneCommandQueue.current.then(execute, execute);
+    sceneCommandQueue.current = queued.then(() => undefined, () => undefined);
+    return queued;
   }
 
   async function undoScene() {
@@ -1985,7 +1912,7 @@ export function WebDesignStudioApp() {
   async function onSceneCanvasDrop(event: DragEvent<HTMLDivElement>, artboard: WorkspaceArtboardPlacement) {
     event.preventDefault();
     event.stopPropagation();
-    if (preview || interactionMode || !sceneDocumentRef.current) return;
+    if (interactionMode || !sceneDocumentRef.current) return;
     activateWorkspaceArtboard(artboard);
     const bounds = event.currentTarget.getBoundingClientRect();
     const scaleX = bounds.width / Math.max(1, artboard.viewportWidth);
@@ -2323,7 +2250,7 @@ export function WebDesignStudioApp() {
   function onCanvasDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     const current = documentRef.current;
-    if (!current || preview || interactionMode) return;
+    if (!current || interactionMode) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = Math.round((event.clientX - bounds.left) / zoom);
     const y = Math.round((event.clientY - bounds.top) / zoom);
@@ -2362,7 +2289,7 @@ export function WebDesignStudioApp() {
   }
 
   function beginInteraction(event: ReactPointerEvent, component: WebDesignComponent, kind: Interaction['kind']) {
-    if (preview || interactionMode) return;
+    if (interactionMode) return;
     if (spacePressed.current || event.button === 1) return;
     if (workspaceShell.activeTool === 'hand') return;
     event.preventDefault();
@@ -2424,7 +2351,7 @@ export function WebDesignStudioApp() {
 
   function beginCanvasPan(event: ReactPointerEvent<HTMLDivElement>) {
     const handTool = event.button === 0 && workspaceShell.activeTool === 'hand';
-    if (preview || (event.button !== 1 && !(event.button === 0 && spacePressed.current) && !handTool)) return;
+    if (event.button !== 1 && !(event.button === 0 && spacePressed.current) && !handTool) return;
     event.preventDefault();
     canvasPan.current = {
       pointerX: event.clientX,
@@ -2435,7 +2362,7 @@ export function WebDesignStudioApp() {
   }
 
   function beginCanvasMarquee(event: ReactPointerEvent<HTMLElement>) {
-    if (preview || interactionMode || event.button !== 0 || spacePressed.current) return;
+    if (interactionMode || event.button !== 0 || spacePressed.current) return;
     if (workspaceShell.activeTool === 'hand' || workspaceShell.activeTool === 'comment') return;
     const current = documentRef.current;
     if (!current) return;
@@ -2640,30 +2567,51 @@ export function WebDesignStudioApp() {
     setEditingSlot(undefined);
     setSelectedId(undefined);
     setSelectedIds([]);
+    fitWorkspaceArtboard(artboard);
   }
 
-  function beginWorkspaceArtboardMove(event: ReactPointerEvent, artboard: WorkspaceArtboardPlacement) {
-    if (event.button !== 0 || preview || editingSlot) return;
-    event.preventDefault();
-    event.stopPropagation();
-    activateWorkspaceArtboard(artboard);
-    workspaceArtboardDrag.current = {
-      artboardId: artboard.artboardId,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-      x: artboard.x,
-      y: artboard.y
-    };
-  }
-
-  function updateActiveWorkspaceViewport(width: number, height: number) {
-    if (!activeArtboardId) return;
+  async function updateActiveWorkspaceViewport(width: number, height: number) {
+    const targetArtboardId = activeArtboardId;
+    const target = workspacePlacement?.artboards.find((artboard) => artboard.artboardId === targetArtboardId);
+    if (!targetArtboardId || !target) return;
+    const safeWidth = Math.min(10000, Math.max(240, Math.round(width)));
+    const safeHeight = Math.min(50000, Math.max(240, Math.round(height)));
     setWorkspacePlacement((current) => current ? {
       ...current,
-      artboards: current.artboards.map((artboard) => artboard.artboardId === activeArtboardId
-        ? { ...artboard, viewportWidth: width, viewportHeight: height }
-        : artboard)
+      artboards: updateWorkspaceArtboardById(current.artboards, targetArtboardId, {
+        viewportWidth: safeWidth,
+        viewportHeight: safeHeight
+      })
     } : current);
+    const currentDocument = documentRef.current;
+    if (currentDocument) setDevice(deviceForWorkspaceArtboard(currentDocument, {
+      ...target,
+      viewportWidth: safeWidth,
+      viewportHeight: safeHeight
+    }));
+
+    const scene = sceneDocumentRef.current;
+    const root = scene?.pages.find((page) => page.id === target.pageId)?.children[0];
+    if (!root || root.frame.width === safeWidth && root.layout.sizingX === 'fill') return;
+    try {
+      await commitSceneCommand({
+        type: 'update-node',
+        nodeId: root.id,
+        patches: [
+          { path: ['frame', 'width'], value: safeWidth },
+          { path: ['layout', 'sizingX'], value: 'fill' }
+        ]
+      }, `用户把当前画板“${scene?.pages.find((page) => page.id === target.pageId)?.name ?? target.pageId}”宽度调整为 ${safeWidth}px。`);
+    } catch (error) {
+      setWorkspacePlacement((current) => current ? {
+        ...current,
+        artboards: updateWorkspaceArtboardById(current.artboards, targetArtboardId, {
+          viewportWidth: target.viewportWidth,
+          viewportHeight: target.viewportHeight
+        })
+      } : current);
+      showToast(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function addWorkspaceSurface(surfaceKind: WorkspaceSurfaceKind = newSurfaceKind) {
@@ -2682,16 +2630,13 @@ export function WebDesignStudioApp() {
     const fixedSize = surfaceKind === 'page' || surfaceKind === 'state' ? undefined : WORKSPACE_SURFACE_SIZES[surfaceKind];
     const width = fixedSize?.width ?? desktop.width;
     const height = fixedSize?.height ?? workspaceViewportHeight(current, 'desktop');
-    const right = workspacePlacement.artboards.length === 0
-      ? 0
-      : Math.max(...workspacePlacement.artboards.map((artboard) => artboard.x + artboard.viewportWidth)) + WORKSPACE_ARTBOARD_GAP;
     const artboard: WorkspaceArtboardPlacement = {
       artboardId: `artboard-${crypto.randomUUID().slice(0, 8)}`,
       pageId: nextPageId,
       surfaceKind,
       viewportWidth: width,
       viewportHeight: height,
-      x: right,
+      x: 0,
       y: 0
     };
     try {
@@ -2718,34 +2663,12 @@ export function WebDesignStudioApp() {
     showToast(`已创建独立${surfaceLabel}画板，可以分多次让 AI 继续设计`);
   }
 
-  function removeActiveWorkspaceArtboard() {
-    if (!workspacePlacement || !activeArtboardId || workspacePlacement.artboards.length <= 1) {
-      showToast('工作区至少保留一个画板');
-      return;
-    }
-    const remaining = workspacePlacement.artboards.filter((artboard) => artboard.artboardId !== activeArtboardId);
-    const next = remaining[0];
-    setWorkspacePlacement({ ...workspacePlacement, artboards: remaining });
-    if (next) activateWorkspaceArtboard(next);
-  }
-
-  function fitAllWorkspaceArtboards() {
-    const current = documentRef.current;
-    const viewport = canvasScroll.current;
-    if (!current || !viewport || !workspacePlacement?.artboards.length) return;
-    setWorkspaceCamera(fitWorkspaceRect(
-      workspaceArtboardBounds(current, workspacePlacement.artboards, sceneDocumentRef.current),
-      { width: viewport.clientWidth, height: viewport.clientHeight },
-      { top: 92, right: 64, bottom: 92, left: 64 }
-    ));
-  }
-
   function fitWorkspaceArtboard(artboard: WorkspaceArtboardPlacement) {
     const current = documentRef.current;
     const viewport = canvasScroll.current;
     if (!current || !viewport) return;
     setWorkspaceCamera(fitWorkspaceRect(
-      workspaceArtboardContentBounds(current, artboard, sceneDocumentRef.current),
+      workspaceArtboardContentBounds(current, { ...artboard, x: 0, y: 0 }, sceneDocumentRef.current),
       { width: viewport.clientWidth, height: viewport.clientHeight },
       { top: 92, right: 64, bottom: 92, left: 64 }
     ));
@@ -2797,10 +2720,11 @@ export function WebDesignStudioApp() {
     }
     if (!workspacePlacement) return;
     if (sceneDocument) {
-      const bounds = unionWorkspaceRects(workspacePlacement.artboards.flatMap((artboard) => {
-        const local = sceneArtboardSelectionBounds(sceneDocument, artboard.pageId, artboard.viewportWidth, selectedIds);
-        return local ? [{ x: artboard.x + local.x, y: artboard.y + local.y, width: local.width, height: local.height }] : [];
-      }));
+      const artboard = activeWorkspaceArtboard;
+      const local = artboard
+        ? sceneArtboardSelectionBounds(sceneDocument, artboard.pageId, artboard.viewportWidth, selectedIds)
+        : undefined;
+      const bounds = local ? { ...local } : undefined;
       if (!bounds) return;
       const padding = Math.max(24, Math.min(80, Math.max(bounds.width, bounds.height) * 0.12));
       setWorkspaceCamera(fitWorkspaceRect(
@@ -2811,16 +2735,13 @@ export function WebDesignStudioApp() {
       ));
       return;
     }
-    const firstPageId = pagesForDocument(current)[0].id;
-    const boardByPage = new Map(workspacePlacement.artboards.map((artboard) => [artboard.pageId, artboard]));
+    const artboard = activeWorkspaceArtboard;
+    if (!artboard) return;
     const bounds = unionWorkspaceRects(current.components.flatMap((component) => {
-      if (!selected.has(component.id)) return [];
-      const componentPageId = component.pageId ?? firstPageId;
-      const artboard = boardByPage.get(componentPageId);
-      if (!artboard) return [];
+      if (!selected.has(component.id) || (component.pageId ?? pagesForDocument(current)[0].id) !== artboard.pageId) return [];
       const frame = resolveComponent(component, deviceForWorkspaceArtboard(current, artboard));
       if (frame.hidden) return [];
-      return [{ x: artboard.x + frame.x, y: artboard.y + frame.y, width: frame.width, height: frame.height }];
+      return [{ x: frame.x, y: frame.y, width: frame.width, height: frame.height }];
     }));
     if (!bounds) return;
     const padding = Math.max(24, Math.min(80, Math.max(bounds.width, bounds.height) * 0.12));
@@ -2834,7 +2755,6 @@ export function WebDesignStudioApp() {
 
   function focusWorkspaceArtboard(artboard: WorkspaceArtboardPlacement) {
     activateWorkspaceArtboard(artboard);
-    fitWorkspaceArtboard(artboard);
   }
 
   function focusWorkspaceArtboardByPageId(targetPageId: string) {
@@ -2844,7 +2764,7 @@ export function WebDesignStudioApp() {
 
   function updateBreakpoint(width: number, height: number, previewSelection?: ViewportSelection, reflow = false) {
     const safeWidth = Math.min(10000, Math.max(320, Math.round(width)));
-    const safeHeight = Math.min(30000, Math.max(320, Math.round(height)));
+    const safeHeight = Math.min(50000, Math.max(240, Math.round(height)));
     commitWithCanvasGrowth((current) => {
       const previousWidth = breakpointFor(current, device).width;
       const reflowed = reflow && previousWidth !== safeWidth
@@ -2872,7 +2792,7 @@ export function WebDesignStudioApp() {
     });
   }
 
-  function selectViewportPreset(presetId: string) {
+  async function selectViewportPreset(presetId: string) {
     const preset = viewportPresets.find((candidate) => candidate.id === presetId);
     if (!preset) return;
     const dimensions = viewportDimensions(preset, 'default');
@@ -2881,65 +2801,37 @@ export function WebDesignStudioApp() {
       ...current,
       [device]: selection
     }));
-    updateActiveWorkspaceViewport(dimensions.width, dimensions.height);
+    await updateActiveWorkspaceViewport(dimensions.width, dimensions.height);
+    if (sceneDocumentRef.current) {
+      return;
+    }
     updateBreakpoint(dimensions.width, breakpoint.height, selection, true);
     window.setTimeout(() => fitCanvasToWidth(dimensions.width), 0);
   }
 
-  function rotateViewport() {
-    if (viewportPreset) {
-      const orientation: WebDesignViewportOrientation = viewportSelection.orientation === 'default' ? 'rotated' : 'default';
-      const dimensions = viewportDimensions(viewportPreset, orientation);
-      const selection: ViewportSelection = { ...viewportSelection, orientation, customHeight: dimensions.height };
-      setViewportSelections((current) => ({
-        ...current,
-        [device]: selection
-      }));
-      updateActiveWorkspaceViewport(dimensions.width, dimensions.height);
-      updateBreakpoint(dimensions.width, breakpoint.height, selection, true);
-      window.setTimeout(() => fitCanvasToWidth(dimensions.width), 0);
-      return;
-    }
-    const nextWidth = previewViewportHeight;
-    const nextViewportHeight = breakpoint.width;
-    const selection: ViewportSelection = { presetId: undefined, orientation: 'default', customHeight: nextViewportHeight };
-    setViewportSelections((current) => ({
-      ...current,
-      [device]: selection
-    }));
-    updateActiveWorkspaceViewport(nextWidth, nextViewportHeight);
-    updateBreakpoint(nextWidth, breakpoint.height, selection, true);
-    window.setTimeout(() => fitCanvasToWidth(nextWidth), 0);
-  }
-
   function updateCustomViewportWidth(width: number) {
+    if (!Number.isFinite(width)) return;
     const selection: ViewportSelection = { ...viewportSelection, presetId: undefined };
     setViewportSelections((current) => ({
       ...current,
       [device]: selection
     }));
-    updateActiveWorkspaceViewport(width, previewViewportHeight);
+    void updateActiveWorkspaceViewport(width, previewViewportHeight);
+    if (sceneDocumentRef.current) return;
     updateBreakpoint(width, breakpoint.height, selection, true);
   }
 
   function updateCustomViewportHeight(height: number) {
+    if (!Number.isFinite(height)) return;
     const safeHeight = Math.min(30000, Math.max(320, Math.round(height)));
     const selection: ViewportSelection = { presetId: undefined, orientation: 'default', customHeight: safeHeight };
     setViewportSelections((current) => ({
       ...current,
       [device]: selection
     }));
-    updateActiveWorkspaceViewport(breakpoint.width, safeHeight);
-    updateBreakpoint(breakpoint.width, breakpoint.height, selection);
-  }
-
-  function switchDevice(next: WebDesignDevice) {
-    setDevice(next);
-    const current = documentRef.current;
-    const responsive = current ? breakpointFor(current, next) : undefined;
-    if (responsive) updateActiveWorkspaceViewport(responsive.width, workspaceViewportHeight(current!, next));
-    setSelectedId(undefined);
-    setSelectedIds([]);
+    void updateActiveWorkspaceViewport(activeViewportWidth, safeHeight);
+    if (sceneDocumentRef.current) return;
+    updateBreakpoint(activeViewportWidth, breakpoint.height, selection);
   }
 
   function withGeneratedResponsiveLayouts(active: WebDesignDocument, targetPageId: string) {
@@ -2953,7 +2845,7 @@ export function WebDesignStudioApp() {
   function generateResponsiveLayouts() {
     if (!documentRef.current) return;
     commitWithCanvasGrowth((active) => withGeneratedResponsiveLayouts(active, pageId), ['tablet', 'mobile']);
-    showToast('已补齐平板和手机布局，已有人工调整保持不变');
+    showToast('已补齐中等与窄宽度布局，已有人工调整保持不变');
   }
 
   function fitCanvasToWidth(targetWidth: number) {
@@ -2967,7 +2859,7 @@ export function WebDesignStudioApp() {
   }
 
   function fitCanvasWidth() {
-    fitCanvasToWidth(breakpoint.width);
+    fitCanvasToWidth(activeViewportWidth);
   }
 
   function setCanvasZoom(nextZoom: number, anchor?: { x: number; y: number }) {
@@ -2980,30 +2872,6 @@ export function WebDesignStudioApp() {
       x: viewport.clientWidth / 2,
       y: viewport.clientHeight / 2
     }));
-  }
-
-  function toggleFullPreview() {
-    if (preview) {
-      setPreview(false);
-      setPreviewOverlayPageId(undefined);
-      setWorkspaceCamera((current) => ({ ...current, zoom: previewZoom.current }));
-      return;
-    }
-    const editorCamera = editingSlot ? workspaceCameraBeforeSlot.current ?? workspaceCamera : workspaceCamera;
-    previewZoom.current = interactionMode ? interactionZoom.current : editorCamera.zoom;
-    if (interactionMode) setInteractionMode(false);
-    resetSlotEditorCamera();
-    setEditingSlot(undefined);
-    setWorkspaceCamera(editorCamera);
-    setSelectedId(undefined);
-    setSelectedIds([]);
-    setPreview(true);
-    window.setTimeout(() => {
-      const scroller = canvasScroll.current;
-      if (!scroller) return;
-      setWorkspaceCamera((current) => ({ ...current, zoom: Math.max(.1, Math.min(8, scroller.clientWidth / breakpoint.width)) }));
-      scroller.scrollTo({ left: 0, top: 0 });
-    }, 0);
   }
 
   function toggleInteractionMode() {
@@ -3761,16 +3629,13 @@ export function WebDesignStudioApp() {
     try {
       await commitSceneCommand({ type: 'duplicate-page', pageId: sourcePage.id, newPageId, name }, '用户复制完整 Scene 画板。');
       const sourceArtboard = workspacePlacement?.artboards.find((candidate) => candidate.pageId === sourcePage.id);
-      const x = workspacePlacement?.artboards.length
-        ? Math.max(...workspacePlacement.artboards.map((artboard) => artboard.x + artboard.viewportWidth)) + WORKSPACE_ARTBOARD_GAP
-        : 0;
       const artboard: WorkspaceArtboardPlacement = {
         artboardId: `artboard-${crypto.randomUUID().slice(0, 8)}`,
         pageId: newPageId,
         surfaceKind: sourceArtboard?.surfaceKind ?? 'page',
         viewportWidth: sourceArtboard?.viewportWidth ?? breakpoint.width,
         viewportHeight: sourceArtboard?.viewportHeight ?? previewViewportHeight,
-        x,
+        x: 0,
         y: sourceArtboard?.y ?? 0
       };
       setWorkspacePlacement((current) => current ? { ...current, artboards: [...current.artboards, artboard] } : current);
@@ -3797,16 +3662,13 @@ export function WebDesignStudioApp() {
     commit((active) => ({ ...active, pages: [...pagesForDocument(active), page], components: [...active.components, ...cloned.components] }));
     const sourceArtboard = workspacePlacement?.artboards.find((candidate) => candidate.pageId === currentPage.id);
     if (workspacePlacement) {
-      const right = workspacePlacement.artboards.length === 0
-        ? 0
-        : Math.max(...workspacePlacement.artboards.map((artboard) => artboard.x + artboard.viewportWidth)) + WORKSPACE_ARTBOARD_GAP;
       const duplicateArtboard: WorkspaceArtboardPlacement = {
         artboardId: `artboard-${crypto.randomUUID().slice(0, 8)}`,
         pageId: id,
         surfaceKind: sourceArtboard?.surfaceKind ?? 'page',
         viewportWidth: sourceArtboard?.viewportWidth ?? breakpoint.width,
         viewportHeight: sourceArtboard?.viewportHeight ?? previewViewportHeight,
-        x: right,
+        x: 0,
         y: sourceArtboard?.y ?? 0
       };
       setWorkspacePlacement({ ...workspacePlacement, artboards: [...workspacePlacement.artboards, duplicateArtboard] });
@@ -4190,6 +4052,13 @@ export function WebDesignStudioApp() {
         <p>{plan.audience.join(' · ')}</p>
         <small>Plan r{plan.revision} · {plan.mode === 'auto-current-page' ? '当前页面自动推进' : '逐步审阅模式'}</small>
       </section>
+      {!plan.deliveryGate.taskCompletionAllowed && <section className={`generation-delivery-gate ${plan.deliveryGate.visibleSceneReady ? 'in-progress' : 'empty'}`}>
+        <strong>{plan.deliveryGate.visibleSceneReady ? '设计仍在进行，不能整体验收' : '当前只有规划，还没有可见设计'}</strong>
+        <span>{plan.deliveryGate.visibleSceneReady
+          ? `已接受 ${plan.deliveryGate.acceptedVisibleStepCount} 个视觉步骤，完成 ${plan.deliveryGate.completedArtboardCount}/${plan.deliveryGate.plannedArtboardCount} 个画板。`
+          : 'AI 必须继续生成并接受第一个可见 Scene 步骤，不能转去只改项目代码。'}</span>
+        <small>下一步：{String(plan.deliveryGate.requiredNextAction.tool ?? plan.deliveryGate.requiredNextAction.type ?? '继续当前画板')}</small>
+      </section>}
       <div className="generation-plan-pages">
         {plan.pages.map((plannedPage) => <article key={plannedPage.pageId} className={plannedPage.pageId === plan.activePage?.pageId ? 'active' : ''}>
           <span>{plannedPage.order + 1}</span><div><strong>{plannedPage.name}</strong><small>{plannedPage.purpose}</small></div><em>{statusLabel[plannedPage.status] ?? plannedPage.status}</em>
@@ -4236,7 +4105,8 @@ export function WebDesignStudioApp() {
     if (!currentDocument) return null;
     const targetDevice = deviceForWorkspaceArtboard(currentDocument, artboard);
     const targetCanvasHeight = sceneDocument
-      ? sceneArtboardContentHeight(sceneDocument, artboard.pageId, artboard.viewportWidth, artboard.viewportHeight)
+      ? scenePreviewHeights[artboard.pageId]
+        ?? sceneArtboardContentHeight(sceneDocument, artboard.pageId, artboard.viewportWidth, artboard.viewportHeight)
       : artboard.viewportHeight;
     const targetPage = pages.find((page) => page.id === artboard.pageId);
     const active = artboard.artboardId === activeArtboardId;
@@ -4246,7 +4116,7 @@ export function WebDesignStudioApp() {
     const renderTier = workspaceViewportReady(viewportSize)
       ? workspaceArtboardRenderTier(
           workspaceCamera,
-          workspaceArtboardContentBounds(currentDocument, artboard, sceneDocument),
+          workspaceArtboardContentBounds(currentDocument, { ...artboard, x: 0, y: 0 }, sceneDocument),
           viewportSize,
           active
         )
@@ -4254,7 +4124,7 @@ export function WebDesignStudioApp() {
     if (renderTier === 'anchor') return <div
       key={artboard.artboardId}
       className="workspace-artboard-anchor"
-      style={{ left: artboard.x, top: artboard.y, width: artboard.viewportWidth, height: targetCanvasHeight }}
+      style={{ left: 0, top: 0, width: artboard.viewportWidth, height: targetCanvasHeight }}
       data-artboard-id={artboard.artboardId}
       data-render-tier="anchor"
       aria-hidden="true"
@@ -4263,18 +4133,18 @@ export function WebDesignStudioApp() {
     return <div
       key={artboard.artboardId}
       className={`workspace-artboard surface-${artboard.surfaceKind} ${active ? 'active' : ''}`}
-      style={{ left: artboard.x, top: artboard.y, width: artboard.viewportWidth, height: targetCanvasHeight }}
+      style={{ left: 0, top: 0, width: artboard.viewportWidth, height: targetCanvasHeight }}
       data-artboard-id={artboard.artboardId}
       data-surface-kind={artboard.surfaceKind}
       data-render-tier={renderTier}
     >
-      <button className="workspace-artboard-header" onPointerDown={(event) => beginWorkspaceArtboardMove(event, artboard)} onClick={() => activateWorkspaceArtboard(artboard)}>
+      <div className="workspace-artboard-header">
         <span className="workspace-artboard-status" />
         <strong>{targetPage?.name ?? artboard.pageId}</strong>
         <span className="workspace-surface-kind">{surfaceLabel}</span>
-        <em>{artboard.viewportWidth} × {artboard.viewportHeight}</em>
-        <small>{active ? '当前画板' : '点击选择'}</small>
-      </button>
+        <em>{artboard.viewportWidth} × 自动 {Math.round(targetCanvasHeight)}</em>
+        <small>当前画板</small>
+      </div>
       <div className={`design-canvas workspace-projected-canvas device-${targetDevice}`} style={{
         width: artboard.viewportWidth,
         height: targetCanvasHeight,
@@ -4294,7 +4164,6 @@ export function WebDesignStudioApp() {
         data-artboard-id={artboard.artboardId}
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => { if (sceneDocument) void onSceneCanvasDrop(event, artboard); }}>
-        {artboard.viewportHeight < targetCanvasHeight && <div className="viewport-fold-line" style={{ top: artboard.viewportHeight }}><span>首屏结束 · {artboard.viewportWidth} × {artboard.viewportHeight}</span></div>}
         {contentVisible && sceneDocument && <SceneArtboardCanvas
           scene={sceneDocument}
           pageId={artboard.pageId}
@@ -4318,11 +4187,14 @@ export function WebDesignStudioApp() {
           onError={showToast}
           onPrototypeActivate={(link) => activateScenePrototype(link)}
           contentFocus={sceneContentFocus?.pageId === artboard.pageId ? sceneContentFocus : undefined}
+          onContentHeightChange={(height) => updateScenePreviewHeight(artboard.pageId, height)}
         />}
         {contentVisible && !sceneDocument && <div className={`scene-v2-load-state ${sceneLoadState}`} style={{ minHeight: artboard.viewportHeight }}>
           {sceneLoadState === 'loading'
             ? <><span className="loading-dot" /><strong>正在读取 AI 设计场景…</strong></>
-            : <><strong>这个设计还没有 Scene 画布</strong><span>请让 AI 先规划当前页面并生成第一个视觉步骤。</span></>}
+            : generationPlan
+              ? <><strong>AI 只完成了规划，还没有生成画面</strong><span>当前设计不能交付；AI 必须继续执行 {String(generationPlan.deliveryGate.requiredNextAction.tool ?? '下一个视觉步骤')}。</span></>
+              : <><strong>这个设计还没有 Scene 画布</strong><span>请让 AI 先规划当前页面并生成第一个视觉步骤。</span></>}
         </div>}
         {!active && <button className="workspace-artboard-activation" onClick={() => activateWorkspaceArtboard(artboard)}><span>选择此画板</span></button>}
       </div>
@@ -4375,7 +4247,7 @@ export function WebDesignStudioApp() {
   }
 
   return (
-    <div className={`studio-shell ${preview ? 'preview-active' : ''}`}>
+    <div className="studio-shell">
       <header className="topbar">
         <div className="brand editor-brand"><button className="web-home-button" onClick={goToActiveProject} aria-label="返回当前项目首页">‹</button><span className="brand-mark">W</span></div>
         <button className={`project-library-trigger ${projectLibraryOpen ? 'active' : ''}`} onClick={() => setProjectLibraryOpen((open) => !open)} aria-label="打开当前项目的设计列表">
@@ -4391,12 +4263,11 @@ export function WebDesignStudioApp() {
         <div className="topbar-spacer" />
         <span className={`service-pill ${repository?.mode === 'server' ? 'online' : ''}`}>{repository?.mode === 'server' ? '本地服务' : '浏览器存储'}</span>
         <button className="quiet-button" onClick={() => void refresh()}>刷新</button>
-        <button className={`quiet-button ${preview ? 'active' : ''}`} onClick={toggleFullPreview}>{preview ? '退出预览' : '全屏预览'}</button>
         <button className="ai-design-trigger" onClick={() => activateWorkspaceArea('ai')}>✦ AI 设计</button>
         <button className="primary-button" disabled={!dirty || saving} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '已保存'}</button>
       </header>
 
-      {projectLibraryOpen && !preview && <div className="project-library-popover">
+      {projectLibraryOpen && <div className="project-library-popover">
         <header><div><span className="eyebrow">当前网站项目</span><strong>{activeProject.name}</strong></div><button onClick={() => setProjectLibraryOpen(false)} aria-label="关闭项目设计列表">×</button></header>
         <div className="project-library-list">
           {activeProjectDocuments.map((item) => <div key={item.documentId} className={`project-library-item ${item.documentId === document.documentId ? 'active' : ''}`}>
@@ -4407,9 +4278,9 @@ export function WebDesignStudioApp() {
         <footer><button onClick={() => void createNew()}>＋ 在当前项目中新建设计</button><button onClick={goToActiveProject}>查看项目首页</button></footer>
       </div>}
 
-      <main className={`workspace workspace-v3-shell ${preview ? 'preview-mode' : ''}`} style={workspaceShellGridStyle(workspaceShell) as CSSProperties}>
-        {!preview && <WorkspaceNavigationBar activeArea={workspaceShell.activeArea} leftPanelOpen={workspaceShell.leftPanelOpen} onSelect={activateWorkspaceArea} onToggleLeft={() => dispatchWorkspaceShell({ type: 'toggle-left-panel' })} />}
-        {!preview && workspaceShell.leftPanelOpen && <aside className="palette-panel">
+      <main className="workspace workspace-v3-shell" style={workspaceShellGridStyle(workspaceShell) as CSSProperties}>
+        <WorkspaceNavigationBar activeArea={workspaceShell.activeArea} leftPanelOpen={workspaceShell.leftPanelOpen} onSelect={activateWorkspaceArea} onToggleLeft={() => dispatchWorkspaceShell({ type: 'toggle-left-panel' })} />
+        {workspaceShell.leftPanelOpen && <aside className="palette-panel">
           {workspaceShell.activeArea === 'assets' && <div className="library-tabs workspace-library-tabs">
             <button className={libraryTab === 'antd' ? 'active' : ''} onClick={() => chooseLibraryTab('antd')}>AntD</button>
             <button className={libraryTab === 'chakra' ? 'active' : ''} onClick={() => chooseLibraryTab('chakra')}>Chakra</button>
@@ -4473,16 +4344,21 @@ export function WebDesignStudioApp() {
                 </div>) : <div className="scene-sidebar-empty"><strong>等待 AI 建立 Scene</strong><span>先规划页面和视觉方向，再生成第一个有界步骤。</span></div>}
               </div>
 
-              <div className="panel-title section-title">设计面设置</div>
-              <label className="field-label">当前画板<select value={currentPage?.id} onChange={(event) => switchPage(event.target.value)}>{pages.map((page) => <option key={page.id} value={page.id}>{page.name} · {WORKSPACE_SURFACE_LABELS[page.surfaceKind ?? 'page']}</option>)}</select></label>
+              <div className="panel-title section-title layer-title"><span>画板目录</span><small>{pages.length}</small></div>
+              <div className="artboard-directory" role="list" aria-label="画板目录">{pages.map((page, index) => {
+                const artboard = workspacePlacement?.artboards.find((candidate) => candidate.pageId === page.id);
+                return <button key={page.id} role="listitem" className={page.id === currentPage?.id ? 'active' : ''} onClick={() => switchPage(page.id)}>
+                  <span>{index + 1}</span><div><strong>{page.name}</strong><small>{WORKSPACE_SURFACE_LABELS[page.surfaceKind ?? 'page']}{artboard ? ` · ${artboard.viewportWidth} × ${artboard.viewportHeight}` : ''}</small></div><em>{page.id === currentPage?.id ? '正在编辑' : '打开'}</em>
+                </button>;
+              })}</div>
               {sceneDocument ? <div className="page-actions"><button onClick={addPage}>＋ 新建设计面</button><button onClick={duplicatePage}>复制画板</button><button disabled={pages.length <= 1} onClick={deleteCurrentPage}>删除</button></div> : <p className="helper-text">页面清单由 AI 先写入 Plan；开始当前页后才建立可编辑 Scene 画板。</p>}
               {currentPage && <><label className="field-label">画板类型<select value={currentPage.surfaceKind ?? 'page'} onChange={(event) => updateCurrentPage({ surfaceKind: event.target.value as WorkspaceSurfaceKind })}>{(Object.keys(WORKSPACE_SURFACE_LABELS) as WorkspaceSurfaceKind[]).map((kind) => <option key={kind} value={kind}>{WORKSPACE_SURFACE_LABELS[kind]}</option>)}</select></label>{sceneDocument
                 ? <><label className="field-label">设计面名称<input key={`${currentPage.id}:${currentPage.name}`} defaultValue={currentPage.name} onBlur={(event) => updateCurrentPage({ name: event.currentTarget.value })} /></label><label className="field-label page-slug">稳定页面 ID<input value={currentPage.id} readOnly /></label></>
                 : <><label className="field-label">设计面名称<input value={currentPage.name} readOnly /></label><label className="field-label page-slug">等待 Scene 页面 ID<input value="由 AI Plan 创建" readOnly /></label></>}</>}
               <div className="panel-title section-title">视口与页面</div>
               {sceneDocument && activeWorkspaceArtboard ? <>
-                <div className="size-row"><NumberField label="画板宽" value={activeWorkspaceArtboard.viewportWidth} min={240} max={10000} onChange={(width) => updateActiveWorkspaceViewport(Math.max(240, width), activeWorkspaceArtboard.viewportHeight)} /><NumberField label="首屏高" value={activeWorkspaceArtboard.viewportHeight} min={240} max={50000} onChange={(height) => updateActiveWorkspaceViewport(activeWorkspaceArtboard.viewportWidth, Math.max(240, height))} /></div>
-                <p className="helper-text viewport-helper">画板尺寸只描述这个页面或弹层的设计表面；实际内容高度由 Scene 节点自动增长。</p>
+                <div className="size-row"><SceneNumberField label="当前宽度" value={activeWorkspaceArtboard.viewportWidth} min={240} max={10000} onCommit={updateCustomViewportWidth} /><SceneNumberField label="最小高度" value={activeWorkspaceArtboard.viewportHeight} min={240} max={50000} onCommit={updateCustomViewportHeight} /></div>
+                <p className="helper-text viewport-helper">尺寸不锁定：宽度可随时修改，内容超过最小高度时画板自动向下增长。画板类型不限制尺寸。</p>
               </> : <div className="scene-sidebar-empty"><strong>等待 Scene 画板</strong><span>画板尺寸会在 AI 开始当前页时建立，内容边界随后由真实 Scene 节点自动增长。</span></div>}
 
               <div className="panel-title section-title layer-title"><span>图片资源</span><small>{document.assets?.length ?? 0}</small></div>
@@ -4518,7 +4394,7 @@ export function WebDesignStudioApp() {
         </aside>}
 
         <section ref={canvasStage} className="canvas-stage">
-          {!preview && <div className="canvas-toolbar device-toolbar">
+          <div className="canvas-toolbar device-toolbar" role="toolbar" aria-label={editingSlot ? '容器内部编辑工具' : '当前画板工具'}>
             {editingSlot && editingContainer && editingSlotDefinition ? <>
               <button className="slot-editor-back" onClick={exitSlotEditor}>‹ 返回页面</button>
               <span className="slot-editor-path"><b>{editingContainer.library?.component}</b><i>/</i>{editingSlotDefinition.label}</span>
@@ -4534,40 +4410,27 @@ export function WebDesignStudioApp() {
               <button className="fit-button" onClick={() => insertSlotTemplate('form')}>＋ 表单模板</button>
               <button className="fit-button" onClick={() => insertSlotTemplate('details')}>＋ 详情模板</button>
             </> : <>
-              <div className="device-switcher">
-                {deviceOptions.map((item) => <button key={item.device} className={device === item.device ? 'active' : ''} title={item.label} onClick={() => switchDevice(item.device)}>{item.icon}<span>{item.label}</span></button>)}
-              </div>
+              {activeWorkspaceArtboard && <div className="toolbar-artboard-dimensions" aria-label="当前画板可编辑尺寸">
+                <label><span>布局宽度</span><input key={`w:${activeWorkspaceArtboard.artboardId}:${activeWorkspaceArtboard.viewportWidth}`} aria-label="当前画板布局宽度" type="number" min={240} max={10000} defaultValue={activeWorkspaceArtboard.viewportWidth} onBlur={(event) => updateCustomViewportWidth(Number(event.currentTarget.value))} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} /></label>
+                <span>×</span>
+                <output title="画板高度由当前画板内所有可见内容的最底边自动计算">高度自动 {Math.round(renderedCanvasHeight)}</output>
+              </div>}
               <span className="toolbar-divider" />
-              <select className="viewport-preset-select" aria-label="预览分辨率" value={viewportSelection.presetId ?? 'custom'} onChange={(event) => selectViewportPreset(event.target.value)}>
-                {!viewportSelection.presetId && <option value="custom">自定义 · {breakpoint.width} × {previewViewportHeight}</option>}
-                <optgroup label="常用 CSS 视口">{viewportPresets.filter((preset) => !preset.group).map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>
-                {viewportPresets.some((preset) => preset.group === 'large-display') && <optgroup label="超宽与原生高分辨率">{viewportPresets.filter((preset) => preset.group === 'large-display').map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>}
+              <select className="viewport-preset-select" aria-label="套用画板尺寸模板" value="" onChange={(event) => { if (event.target.value) void selectViewportPreset(event.target.value); }}>
+                <option value="">套用尺寸模板…</option>
+                <optgroup label="常用画板尺寸">{viewportPresets.filter((preset) => !preset.group).map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>
+                {viewportPresets.some((preset) => Boolean(preset.group)) && <optgroup label="大型画板尺寸">{viewportPresets.filter((preset) => Boolean(preset.group)).map((preset) => <option key={preset.id} value={preset.id}>{preset.label} · {preset.width} × {preset.height}</option>)}</optgroup>}
               </select>
-              <button className="rotate-viewport-button" title="旋转视口" onClick={rotateViewport}>↻</button>
-              <button className="fit-button responsive-generate-button" disabled={!sceneDocument} title="切换平板或手机后，对选中 Scene 图层设置该断点的布局覆盖；始终复用同一节点" onClick={() => { activateWorkspaceArea('layers'); showToast('切换到平板或手机，选中图层后在右侧编辑该断点布局'); }}>响应式编辑</button>
-              <span className="toolbar-divider" />
-              <div className="new-surface-control">
-                <select aria-label="新画板类型" value={newSurfaceKind} onChange={(event) => setNewSurfaceKind(event.target.value as WorkspaceSurfaceKind)}>
-                  {(Object.keys(WORKSPACE_SURFACE_LABELS) as WorkspaceSurfaceKind[]).map((kind) => <option key={kind} value={kind}>{WORKSPACE_SURFACE_LABELS[kind]}</option>)}
-                </select>
-                <button className="fit-button artboard-action-button" disabled={!sceneDocument} title="创建一个独立的页面、弹层或界面状态画板" onClick={() => void addWorkspaceSurface()}>＋ 画板</button>
-              </div>
-              <button className="fit-button artboard-action-button" disabled={(workspacePlacement?.artboards.length ?? 0) <= 1} title="从工作区移除当前画板，不删除其设计内容" onClick={removeActiveWorkspaceArtboard}>移出工作区</button>
-              <button className="fit-button artboard-action-button" title="在工作区中显示全部页面与界面状态" onClick={fitAllWorkspaceArtboards}>显示全部</button>
-              <button className={`fit-button prototype-flow-toggle ${prototypeLinksVisible ? 'active' : ''}`} title="显示或隐藏组件到目标画板的原型关系" onClick={() => setPrototypeLinksVisible((visible) => !visible)}>流程线 {prototypeConnections.length}</button>
-              <span className="toolbar-divider" />
-              <button title="缩小" onClick={() => setCanvasZoom(zoom / 1.2)}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button title="放大" onClick={() => setCanvasZoom(zoom * 1.2)}>＋</button>
+              <button className="fit-button responsive-generate-button" disabled={!sceneDocument} title="编辑当前画板内部的自适应布局、约束和宽度规则" onClick={() => { activateWorkspaceArea('layers'); showToast(`正在编辑“${currentPage?.name ?? '当前画板'}”的布局规则`); }}>布局规则</button>
               <span className="toolbar-divider" />
               <button className="fit-button" disabled={selectedIds.length === 0} title="将当前选中的一个或多个组件放到可见区域中心" onClick={fitWorkspaceSelection}>适应选择</button>
-              <button className="fit-button" title="完整显示当前画板及其实际内容" onClick={fitActiveWorkspaceArtboard}>适应画板</button>
-              <button className="fit-button" title="恢复 100%" onClick={() => setCanvasZoom(1)}>100%</button>
-              <span className="toolbar-divider" /><button className={`fit-button interaction-mode-button ${interactionMode ? 'active' : ''}`} title="操作输入框、选择器、抽屉、标签页等真实组件" onClick={toggleInteractionMode}>{interactionMode ? '退出交互' : '交互'}</button>
+              <button className="fit-button" title="完整显示正在编辑的当前画板" onClick={fitActiveWorkspaceArtboard}>聚焦当前画板</button>
+              <button className="fit-button" title="复制正在编辑的当前画板" onClick={duplicatePage}>复制画板</button>
+              <span className="toolbar-divider" /><button className={`fit-button interaction-mode-button ${interactionMode ? 'active' : ''}`} title="操作当前画板里的输入框、选择器、抽屉和标签页" onClick={toggleInteractionMode}>{interactionMode ? '退出交互' : '交互当前画板'}</button>
             </>}
-          </div>}
-          {preview && <button className="exit-fullscreen-preview" onClick={toggleFullPreview}>退出预览 <span>Esc</span></button>}
-          {interactionMode && !preview && <div className="interaction-mode-banner"><span>●</span> 交互模式：可以输入、选择、展开和打开弹层；退出后继续拖动编辑</div>}
-          {preview && routePages.length > 1 && <nav className="route-preview-bar">{routePages.map((page) => <button key={page.id} className={page.id === pageId ? 'active' : ''} onClick={() => switchPage(page.id)}><span>{page.name}</span><small>{page.slug}</small></button>)}</nav>}
-          {selected && !preview && <div className="selection-toolbar">
+          </div>
+          {interactionMode && <div className="interaction-mode-banner"><span>●</span> 交互模式：可以输入、选择、展开和打开弹层；退出后继续拖动编辑</div>}
+          {selected && <div className="selection-toolbar">
             <button title="左对齐" onClick={() => alignSelected('left')}>⇤</button><button title="水平居中" onClick={() => alignSelected('center')}>↔</button><button title="右对齐" onClick={() => alignSelected('right')}>⇥</button>
             <button title="顶部对齐" onClick={() => alignSelected('top')}>↥</button><button title="垂直居中" onClick={() => alignSelected('middle')}>↕</button><button title="底部对齐" onClick={() => alignSelected('bottom')}>↧</button>
             <span /><button title="置于顶层" onClick={() => reorderSelected('front')}>⤒</button><button title="上移一层" onClick={() => reorderSelected('forward')}>↑</button><button title="下移一层" onClick={() => reorderSelected('backward')}>↓</button><button title="置于底层" onClick={() => reorderSelected('back')}>⤓</button>
@@ -4575,7 +4438,7 @@ export function WebDesignStudioApp() {
             {selectedIds.length > 1 && <><span /><button className="wide-tool" title="创建可整体移动的分组 ⌘G" onClick={groupSelected}>创建分组</button></>}
             {canUngroup && <button className="wide-tool" title="取消当前分组 ⇧⌘G" onClick={ungroupSelected}>取消分组</button>}
           </div>}
-          {selectedSceneNode && !preview && <div className="selection-toolbar scene-selection-toolbar">
+          {selectedSceneNode && <div className="selection-toolbar scene-selection-toolbar">
             <span className="scene-selection-kind">{selectedSceneNode.type}</span>
             <button title="复制 Scene 图层 ⌘D" onClick={duplicateSceneSelection}>⧉</button>
             <button title="复制到剪贴板 ⌘C" onClick={copySceneSelection}>C</button>
@@ -4609,7 +4472,7 @@ export function WebDesignStudioApp() {
               && <button className="wide-tool" title="取消当前容器" onClick={() => void ungroupSceneSelection()}>取消容器</button>}
             <button title="删除选中图层" onClick={() => void deleteSceneSelection()}>⌫</button>
           </div>}
-          {selectionCandidatePopover && !preview && <div className="selection-candidate-popover" style={{
+          {selectionCandidatePopover && <div className="selection-candidate-popover" style={{
             left: Math.max(8, Math.min(window.innerWidth - 248, selectionCandidatePopover.clientX + 12)),
             top: Math.max(8, Math.min(window.innerHeight - 300, selectionCandidatePopover.clientY + 12))
           }} onPointerDown={(event) => event.stopPropagation()}>
@@ -4620,14 +4483,32 @@ export function WebDesignStudioApp() {
             }}><span>{index + 1}</span><div><strong>{candidate.name}</strong><small>{candidate.type}{candidate.depth > 0 ? ` · 第 ${candidate.depth + 1} 层` : ' · 外层'}</small></div>{candidate.locked && <em>已锁定</em>}</button>)}</div>
             <footer>Command / Ctrl 点击可再次查看候选</footer>
           </div>}
+          {!editingSlot && <nav className="artboard-directory-bar" aria-label="画板目录">
+            <div className="artboard-directory-heading"><strong>画板目录</strong><span>{pages.length}</span></div>
+            <div className="artboard-directory-scroll" role="tablist" aria-label="项目画板">
+              {pages.map((page, index) => <button
+                key={page.id}
+                type="button"
+                role="tab"
+                data-page-id={page.id}
+                className={`artboard-directory-item ${page.id === currentPage?.id ? 'active' : ''}`}
+                aria-selected={page.id === currentPage?.id}
+                onClick={() => switchPage(page.id)}
+              >
+                <b>{index + 1}</b>
+                <span><strong>{page.name}</strong><small>{WORKSPACE_SURFACE_LABELS[page.surfaceKind ?? 'page']}</small></span>
+              </button>)}
+            </div>
+            <button className="artboard-directory-add" type="button" disabled={!sceneDocument} onClick={() => void addWorkspaceSurface()} title="新建画板">＋</button>
+          </nav>}
           <div
             ref={canvasScroll}
-            className={`canvas-scroll ${preview ? 'preview-canvas-scroll' : 'workspace-camera-viewport'} ${editingSlot ? 'slot-editor-scroll' : ''} ${canvasPanReady || workspaceShell.activeTool === 'hand' ? 'pan-ready' : ''} ${canvasPanning ? 'panning' : ''}`}
-            style={!preview ? {
+            className={`canvas-scroll workspace-camera-viewport ${editingSlot ? 'slot-editor-scroll' : ''} ${canvasPanReady || workspaceShell.activeTool === 'hand' ? 'pan-ready' : ''} ${canvasPanning ? 'panning' : ''}`}
+            style={{
               '--workspace-grid-size': `${16 * zoom}px`,
               '--workspace-grid-x': `${workspaceCamera.x}px`,
               '--workspace-grid-y': `${workspaceCamera.y}px`
-            } as CSSProperties : undefined}
+            } as CSSProperties}
             onPointerDown={beginCanvasPan}
           >
           {editingSlot && editingContainer && editingSlotDefinition && editingSlotCanvasSize ? <div className="slot-editor-camera-world" style={{ transform: `translate3d(${workspaceCamera.x}px,${workspaceCamera.y}px,0) scale(${zoom})` }}><div className="slot-editor-frame">
@@ -4649,57 +4530,36 @@ export function WebDesignStudioApp() {
                   }} />
                 </div>
               </div>
-            </div></div> : preview ? <div className="preview-canvas-board"><div className="canvas-scale" style={{
-              width: scaledCanvasWidth,
-              height: scaledCanvasHeight
-            }}>
-              <div className={`design-canvas device-${device}`} style={{
-                width: breakpoint.width,
-                height: renderedCanvasHeight,
-                background: document.viewport.background,
-                transform: `scale(${zoom})`,
-                fontFamily: tokens?.typography.fontFamily,
-                fontSize: tokens?.typography.baseFontSize,
-                '--color-primary': tokens?.colors.primary,
-                '--color-accent': tokens?.colors.accent,
-                '--color-surface': tokens?.colors.surface,
-                '--color-text': tokens?.colors.text,
-                '--color-muted': tokens?.colors.muted,
-                '--radius-small': `${tokens?.radii.small ?? 8}px`,
-                '--radius-medium': `${tokens?.radii.medium ?? 16}px`,
-                '--radius-large': `${tokens?.radii.large ?? 28}px`
-              } as CSSProperties} onDragOver={(event) => event.preventDefault()} onDrop={onCanvasDrop} onPointerDown={() => { if (!interactionMode && workspaceShell.activeTool !== 'hand' && workspaceShell.activeTool !== 'comment') { setSelectedId(undefined); setSelectedIds([]); } }}>
-                {sceneDocument ? <SceneArtboardCanvas
-                  scene={sceneDocument}
-                  pageId={pageId}
-                  viewportWidth={breakpoint.width}
-                  viewportHeight={previewViewportHeight}
-                  active={false}
-                  interactive
-                  selectedIds={[]}
-                  onSelectionChange={() => undefined}
-                  onCommit={commitSceneCommand}
-                  onError={showToast}
-                  onPrototypeActivate={(link) => activateScenePrototype(link)}
-                /> : <div className="scene-v2-load-state missing"><strong>还没有可预览的 Scene 页面</strong><span>先让 AI 完成一个视觉步骤，再进入全屏预览。</span></div>}
-              </div>
-            </div>{renderPreviewSurfaceOverlay()}</div> : <div className="workspace-camera-world" style={{ transform: `translate3d(${workspaceCamera.x}px,${workspaceCamera.y}px,0) scale(${zoom})` }}>
-              {prototypeLinksVisible && prototypeConnections.length > 0 && <svg className="prototype-flow-layer" aria-hidden="true">
-                <defs><marker id="prototype-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
-                {prototypeConnections.map((connection) => <g key={connection.id} className={connection.componentId === selectedId ? 'active' : ''}>
-                  <path className="prototype-flow-halo" d={prototypeFlowPath(connection)} />
-                  <path className="prototype-flow-path" d={prototypeFlowPath(connection)} markerEnd="url(#prototype-flow-arrow)" />
-                  <circle cx={connection.start.x} cy={connection.start.y} r="6" />
-                  <text x={connection.label.x} y={connection.label.y - 10}>{WORKSPACE_SURFACE_LABELS[connection.targetSurfaceKind]}</text>
-                </g>)}
-              </svg>}
-              {workspacePlacement?.artboards.map(renderWorkspaceArtboard)}
+            </div></div> : <div className="workspace-camera-world" data-canvas-mode="single-artboard" style={{ transform: `translate3d(${workspaceCamera.x}px,${workspaceCamera.y}px,0) scale(${zoom})` }}>
+              {activeWorkspaceArtboard ? renderWorkspaceArtboard(activeWorkspaceArtboard) : null}
             </div>}
           </div>
-          {!preview && <WorkspaceBottomToolbar activeTool={workspaceShell.activeTool} leftPanelOpen={workspaceShell.leftPanelOpen} rightPanelOpen={workspaceShell.rightPanelOpen} canvasMaximized={workspaceShell.canvasMaximized} onSelectTool={activateWorkspaceTool} onToggleLeft={() => dispatchWorkspaceShell({ type: 'toggle-left-panel' })} onToggleRight={() => dispatchWorkspaceShell({ type: 'toggle-right-panel' })} onToggleMaximize={() => dispatchWorkspaceShell({ type: 'toggle-canvas-maximized' })} />}
+          {interactionMode && renderPreviewSurfaceOverlay()}
+          <WorkspaceBottomToolbar
+            activeTool={workspaceShell.activeTool}
+            leftPanelOpen={workspaceShell.leftPanelOpen}
+            rightPanelOpen={workspaceShell.rightPanelOpen}
+            canvasMaximized={workspaceShell.canvasMaximized}
+            workspaceActions={<>
+              <div className="workspace-new-artboard-control">
+                <select aria-label="新画板类型" value={newSurfaceKind} onChange={(event) => setNewSurfaceKind(event.target.value as WorkspaceSurfaceKind)}>
+                  {(Object.keys(WORKSPACE_SURFACE_LABELS) as WorkspaceSurfaceKind[]).map((kind) => <option key={kind} value={kind}>{WORKSPACE_SURFACE_LABELS[kind]}</option>)}
+                </select>
+                <button disabled={!sceneDocument} title="在工作区新建独立设计面" onClick={() => void addWorkspaceSurface()}><b>＋</b><em>画板</em></button>
+              </div>
+              <button title="缩小当前画板" onClick={() => setCanvasZoom(zoom / 1.2)}><b>−</b></button>
+              <output className="workspace-zoom-value" aria-label={`当前画板缩放 ${Math.round(zoom * 100)}%`}>{Math.round(zoom * 100)}%</output>
+              <button title="放大当前画板" onClick={() => setCanvasZoom(zoom * 1.2)}><b>＋</b></button>
+              <button title="当前画板恢复为 100%" onClick={() => setCanvasZoom(1)}><b>1:1</b></button>
+            </>}
+            onSelectTool={activateWorkspaceTool}
+            onToggleLeft={() => dispatchWorkspaceShell({ type: 'toggle-left-panel' })}
+            onToggleRight={() => dispatchWorkspaceShell({ type: 'toggle-right-panel' })}
+            onToggleMaximize={() => dispatchWorkspaceShell({ type: 'toggle-canvas-maximized' })}
+          />
         </section>
 
-        {!preview && workspaceShell.rightPanelOpen && <aside className="inspector-panel">
+        {workspaceShell.rightPanelOpen && <aside className="inspector-panel">
           <WorkspacePanelResizeHandle side="right" width={workspaceShell.rightPanelWidth} onResize={(width) => dispatchWorkspaceShell({ type: 'resize-right-panel', width })} />
           <div className="inspector-review-switch">
             <button className={inspectorTab === 'review' ? 'active' : ''} onClick={() => setInspectorTab(inspectorTab === 'review' ? 'design' : 'review')}><span>✦</span><strong>AI 设计进度</strong>{generationPlan?.activeStep?.status === 'awaiting-review' && <em>待审阅</em>}</button>
@@ -4764,7 +4624,7 @@ export function WebDesignStudioApp() {
             </div>
             <div className="size-row"><SceneNumberField label="行间距" value={selectedSceneNode.layout.gap.row} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['layout', 'gap', 'row'], value }])} /><SceneNumberField label="列间距" value={selectedSceneNode.layout.gap.column} min={0} disabled={selectedSceneNode.locked} onCommit={(value) => void updateSceneNode([{ path: ['layout', 'gap', 'column'], value }])} /></div>
             {sceneResponsiveRuleSpec && <section className="scene-responsive-editor">
-              <header><div><strong>{device === 'mobile' ? '手机' : '平板'}布局覆盖</strong><span>仍使用同一棵 Scene，不复制组件</span></div><button disabled={!selectedSceneResponsiveOverride} onClick={() => void clearSelectedSceneResponsiveOverride()}>恢复继承</button></header>
+              <header><div><strong>{device === 'mobile' ? '窄宽度' : '中等宽度'}布局覆盖</strong><span>仍使用当前画板的同一棵 Scene，不复制组件</span></div><button disabled={!selectedSceneResponsiveOverride} onClick={() => void clearSelectedSceneResponsiveOverride()}>恢复继承</button></header>
               <label className="field-label">此断点可见性<select value={selectedSceneResponsiveOverride?.visible === undefined ? 'inherit' : selectedSceneResponsiveOverride.visible ? 'visible' : 'hidden'} disabled={selectedSceneNode.locked} onChange={(event) => {
                 const value = event.target.value;
                 if (value === 'inherit') {
@@ -5000,7 +4860,7 @@ export function WebDesignStudioApp() {
             <div className="notes-list">{selected.annotations.length === 0 && <span className="empty-hint">还没有批注</span>}{selected.annotations.map((note) => <div key={note.id} className={`note-card ${note.status}`}><span>{note.text}</span><small>{note.status === 'open' ? '待处理' : '已完成'}</small></div>)}</div>
             <textarea className="composer" rows={3} placeholder="例如：这里的按钮再醒目一些" value={annotationText} onChange={(event) => setAnnotationText(event.target.value)} /><button className="secondary-button" onClick={addLegacyAnnotation}>添加批注</button>
             <div className="panel-title section-title">与 AI 交互</div>
-            <textarea className="composer" rows={4} placeholder={`告诉 AI 如何修改当前${device === 'desktop' ? '桌面' : device === 'tablet' ? '平板' : '手机'}组件…`} value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} /><button className="ai-button" onClick={() => void addAiRequest()}>提交给 AI</button>
+            <textarea className="composer" rows={4} placeholder="告诉 AI 如何修改当前画板里的选中组件…" value={aiInstruction} onChange={(event) => setAiInstruction(event.target.value)} /><button className="ai-button" onClick={() => void addAiRequest()}>提交给 AI</button>
             </>}
           </> : <div className="empty-inspector"><div className="empty-icon">↖</div><strong>选择一个组件</strong><p>在画布或图层中选择组件，然后编辑、对齐、锁定、批注或提交 AI 请求。</p></div>}
         </aside>}

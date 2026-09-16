@@ -8,6 +8,8 @@ using ChatOS.Presentation.Chat;
 using ChatOS.Presentation.Projects;
 using ChatOS.Presentation.Settings;
 using ChatOS.Presentation.Remote;
+using ChatOS.Connector.Remote;
+using ChatOS.Connector.Terminal;
 
 namespace ChatOS.Desktop.AppShell;
 
@@ -27,6 +29,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private CancellationTokenSource? _selectionCancellation;
     private readonly SemaphoreSlim _conversationPreparationGate = new(1, 1);
     private bool _suppressSelectionActivation;
+    private readonly TerminalSessionManager? _terminalSessions;
+    private readonly RemoteTerminalSessionManager? _remoteTerminalSessions;
 
     public MainWindowViewModel(
         IAuthenticationService authenticationService,
@@ -40,7 +44,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ProjectGitViewModel projectGit,
         ProjectRunViewModel projectRun,
         RemoteConnectionsViewModel remoteConnections,
-        LocalizationViewModel localization)
+        LocalizationViewModel localization,
+        TerminalSessionManager? terminalSessions = null,
+        RemoteTerminalSessionManager? remoteTerminalSessions = null)
     {
         _authenticationService = authenticationService;
         _workspaceRelations = workspaceRelations;
@@ -54,6 +60,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ProjectRun = projectRun;
         RemoteConnections = remoteConnections;
         Localization = localization;
+        _terminalSessions = terminalSessions;
+        _remoteTerminalSessions = remoteTerminalSessions;
         RemoteConnections.Connections.CollectionChanged += (_, _) => RebuildRemoteResources();
         Localization.PropertyChanged += (_, _) => RelocalizeResources();
         ApplicationResources.Add(CreateApplicationsResource());
@@ -358,6 +366,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
         LocalResources.Clear();
         RemoteResources.Clear();
         SelectedResource = null;
+        if (_terminalSessions is not null)
+        {
+            try
+            {
+                await _terminalSessions.CloseAllAsync(CancellationToken.None);
+            }
+            catch
+            {
+            }
+        }
+        if (_remoteTerminalSessions is not null)
+        {
+            try
+            {
+                await _remoteTerminalSessions.CloseAllAsync(CancellationToken.None);
+            }
+            catch
+            {
+            }
+        }
         await _authenticationService.LogoutAsync();
         await ProjectRun.CloseAsync();
         await ProjectGit.CloseAsync();

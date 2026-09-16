@@ -1,0 +1,47 @@
+.device {
+  position: relative;
+  display: flex;
+  min-height: 100rpx;
+  padding: 22rpx 18rpx 22rpx 22rpx;
+  align-items: center;
+  transition: background-color .15s ease;
+}
+
+.device + .device::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 112rpx;
+  height: 1rpx;
+  background: rgba(60, 60, 67, .12);
+  content: '';
+}
+
+.device-pressed { background: #ececf1; }
+
+.device-icon {
+  display: flex;
+  width: 70rpx;
+  height: 70rpx;
+  margin-right: 20rpx;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18rpx;
+  background: #e9f3ff;
+  color: #0a84ff;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.device-main { min-width: 0; flex: 1; }
+.device-heading { display: flex; align-items: center; }
+.device-name { overflow: hidden; font-size: 28rpx; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.device-heading .status-dot { margin-left: 14rpx; }
+.device-meta { margin-top: 5rpx; font-size: 23rpx; }
+.version { margin-top: 4rpx; color: #aaaab0; font-size: 20rpx; }
+.chevron { margin-left: 14rpx; color: #c4c4c8; font-size: 39rpx; font-weight: 300; }
+.opening { margin-left: 14rpx; color: #8e8e93; font-size: 22rpx; letter-spacing: 2rpx; }
+.error-card { margin-bottom: 18rpx; padding: 20rpx; border-radius: 18rpx; background: #fff; font-size: 23rpx; }
+.skeleton { height: 92rpx; background: linear-gradient(90deg,#fff,#f0f0f3,#fff); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }

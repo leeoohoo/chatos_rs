@@ -12,11 +12,11 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         let definition = AgentToolDefinition(name: request.toolName, description: "test", schema: request.schema)
         _ = try await model.complete(messages: [.init(role: .user, content: "story")], tools: [definition], timeout: 42)
         let calls = await transport.requests()
-        XCTAssertEqual(calls[1].url.absoluteString, "https://relay.example/prefix/v1/chat/completions")
+        XCTAssertEqual(calls[1].url.absoluteString, "https://relay.example/prefix/v1/responses")
         XCTAssertEqual(calls[1].timeoutInterval, 42)
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(calls[1].body)) as? [String: Any])
         XCTAssertEqual(body["tool_choice"] as? String, "auto")
-        XCTAssertEqual(body["max_tokens"] as? Int, 2_048)
+        XCTAssertEqual(body["max_output_tokens"] as? Int, 2_048)
         XCTAssertEqual(body["model"] as? String, "chosen-text-model")
     }
 
@@ -33,11 +33,43 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual(calls[1].headers["Accept"], "text/event-stream")
     }
 
-    func testAgentFactoryRejectsUnsupportedProviderAndOldAccountSession() async throws {
+    func testStoryAgentUsesOfficialResponsesCompaction() async throws {
+        let transport = StoryPlanningTransport(scenario: "official")
+        let model = try await makeService(transport).makeAgentModel(
+            configID: "text-model", policy: .init()
+        )
+        XCTAssertTrue(model.usesServerSideCompaction)
+        _ = try await model.complete(
+            messages: [.init(role: .user, content: "story")],
+            tools: [AgentToolDefinition(
+                name: request.toolName, description: "test", schema: request.schema
+            )],
+            timeout: 42
+        )
+        let calls = await transport.requests()
+        XCTAssertEqual(calls[1].url.absoluteString, "https://api.openai.com/v1/responses")
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: XCTUnwrap(calls[1].body)) as? [String: Any]
+        )
+        XCTAssertEqual(
+            ((body["context_management"] as? [[String: Any]])?.first?["compact_threshold"] as? Int),
+            200_000
+        )
+        XCTAssertNotNil(body["input"])
+        XCTAssertNil(body["messages"])
+    }
+
+    func testAgentFactoryUsesResponsesForEveryProviderAndRejectsOldAccountSession() async throws {
         let native = StoryPlanningTransport(scenario: "native")
-        do { _ = try await makeService(native).makeAgentModel(configID: "text", policy: .init()); XCTFail("Native protocol must not be guessed") } catch {}
+        let nativeModel = try await makeService(native).makeAgentModel(configID: "text", policy: .init())
+        _ = try await nativeModel.complete(
+            messages: [.init(role: .user, content: "story")],
+            tools: [.init(name: request.toolName, description: "test", schema: request.schema)],
+            timeout: 30
+        )
         let nativeCalls = await native.requests()
-        XCTAssertEqual(nativeCalls.count, 1)
+        XCTAssertEqual(nativeCalls.count, 2)
+        XCTAssertEqual(nativeCalls[1].url.path, "/prefix/v1/responses")
         let transport = StoryPlanningTransport()
         let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/api/chatos")!), accessToken: "alice", transport: transport)
         let model = try await ChatOSStoryPlanningService(client: client, transport: transport).makeAgentModel(configID: "text", policy: .init())
@@ -55,13 +87,13 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         let calls = await transport.requests()
         XCTAssertEqual(calls.count, 2)
         XCTAssertEqual(calls[0].url.query, "include_secret=true")
-        XCTAssertEqual(calls[1].url.absoluteString, "https://relay.example/prefix/v1/chat/completions")
+        XCTAssertEqual(calls[1].url.absoluteString, "https://relay.example/prefix/v1/responses")
         XCTAssertEqual(calls[1].headers["Authorization"], "Bearer model-secret")
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(calls[1].body)) as? [String: Any])
         XCTAssertEqual(body["model"] as? String, "chosen-text-model")
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
         XCTAssertEqual(tools.count, 1)
-        XCTAssertEqual((tools[0]["function"] as? [String: Any])?["name"] as? String, "story_save_outline")
+        XCTAssertEqual(tools[0]["name"] as? String, "story_save_outline")
         XCTAssertEqual(body["stream"] as? Bool, false)
         XCTAssertFalse(String(decoding: calls[1].body!, as: UTF8.self).contains("model-secret"))
     }
@@ -79,13 +111,13 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         }
     }
 
-    func testNativeProviderIsNotSilentlySentThroughWrongProtocol() async throws {
+    func testNativeProviderIsSentThroughConfiguredResponsesGateway() async throws {
         let transport = StoryPlanningTransport(scenario: "native")
-        do { _ = try await makeService(transport).plan(request); XCTFail("Should reject unsupported protocol") }
-        catch {
-            let calls = await transport.requests()
-            XCTAssertEqual(calls.count, 1)
-        }
+        let result = try await makeService(transport).plan(request)
+        XCTAssertEqual(String(decoding: result, as: UTF8.self), #"{"summary":"test"}"#)
+        let calls = await transport.requests()
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls[1].url.path, "/prefix/v1/responses")
     }
 
     private var request: StoryPlanningRequest {
@@ -107,11 +139,32 @@ private actor StoryPlanningTransport: HTTPTransport {
         calls.append(request)
         let body: [String: Any]
         if request.url.path.contains("ai-model-configs") {
-            body = ["enabled": true, "provider": scenario == "native" ? "anthropic" : "gpt", "model": "chosen-text-model", "base_url": "https://relay.example/prefix/v1/", "api_key": "model-secret"]
+            body = [
+                "enabled": true,
+                "provider": scenario == "native" ? "anthropic" : "gpt",
+                "model": "chosen-text-model",
+                "base_url": scenario == "official"
+                    ? "https://api.openai.com/v1"
+                    : "https://relay.example/prefix/v1/",
+                "api_key": "model-secret",
+            ]
+        } else if request.url.path.hasSuffix("/responses") {
+            let name = scenario == "wrong-tool" ? "generate_video" : "story_save_outline"
+            let call: [String: Any] = [
+                "type": "function_call", "call_id": "call_1", "name": name,
+                "arguments": scenario == "invalid-json" ? "not-json" : #"{"summary":"test"}"#,
+            ]
+            let output: [[String: Any]]
+            if scenario == "no-tool" { output = [] }
+            else if scenario == "multiple-tools" { output = [call, call] }
+            else { output = [call] }
+            body = [
+                "id": "resp_story",
+                "status": scenario == "truncated" ? "incomplete" : "completed",
+                "output": output,
+            ]
         } else {
-            let tool: [String: Any] = ["id": "call_1", "type": "function", "function": ["name": scenario == "wrong-tool" ? "generate_video" : "story_save_outline", "arguments": scenario == "invalid-json" ? "not-json" : #"{"summary":"test"}"#]]
-            let tools = scenario == "no-tool" ? [] : scenario == "multiple-tools" ? [tool, tool] : [tool]
-            body = ["choices": [["finish_reason": scenario == "truncated" ? "length" : "tool_calls", "message": ["tool_calls": tools]]]]
+            throw ChatOSAPIError.invalidEndpoint
         }
         return .init(statusCode: 200, headers: [:], body: try JSONSerialization.data(withJSONObject: body))
     }
@@ -120,9 +173,13 @@ private actor StoryPlanningTransport: HTTPTransport {
         calls.append(request)
         let pair = AsyncThrowingStream<Data, Error>.makeStream()
         let sse = """
-        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"story_save_outline","arguments":"{\\\"summary\\\":\\\"test\\\"}"}}]},"finish_reason":"tool_calls"}]}
+        data: {"type":"response.created","response":{"id":"resp_story"}}
 
-        data: [DONE]
+        data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"story_save_outline","arguments":""}}
+
+        data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\\\"summary\\\":\\\"test\\\"}"}
+
+        data: {"type":"response.completed","response":{"id":"resp_story","status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"story_save_outline","arguments":"{\\\"summary\\\":\\\"test\\\"}"}]}}
 
         """
         pair.continuation.yield(Data(sse.utf8)); pair.continuation.finish()

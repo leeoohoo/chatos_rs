@@ -27,7 +27,7 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
     public func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
         guard !entries.isEmpty, entries.count <= 32, Set(entries.map(\.id)).count == entries.count,
               entries.allSatisfy({ $0.index >= 0 && $0.id == scope.recordID(at: $0.index) }) else { throw AgentContextError.invalidHistory }
-        let records = entries.map(record)
+        let records = try entries.map(record)
         if reconciling {
             // Existing batch-sync overwrites summary_status, even for identical IDs. Never blindly
             // resend an unacknowledged batch: it could turn summarized records back into pending.
@@ -54,7 +54,7 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             "tenant_id": .string(scope.tenantID), "source_id": .string(scope.sourceID), "thread_id": .string(scope.threadID),
             "subject_id": .string(scope.subjectID),
             "policy": .object(["include_thread_summary": .bool(true), "include_recent_records": .bool(true),
-                               "include_subject_memory": .bool(true), "summary_limit": .number(2)]),
+                               "include_subject_memory": .bool(scope.includeSubjectMemory ?? true), "summary_limit": .number(2)]),
         ]
         let result: MemoryComposeDTO = try await request("/context/compose", method: "POST", body: body)
         guard result.thread_id == scope.threadID, result.meta.recent_record_count == result.recent_records.count else {
@@ -69,38 +69,17 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         )
     }
 
-    public func startSummary(reason: String) async throws -> AgentSummaryStatus {
-        guard ["active_context_budget", "context_overflow"].contains(reason) else { throw ChatOSAPIError.invalidEndpoint }
-        let body: [String: JSONValue] = ["tenant_id": .string(scope.tenantID), "source_id": .string(scope.sourceID),
-                                         "trigger_reason": .string(reason)]
-        let result: MemorySummaryDTO = try await request(threadPath + "/active-summary/run", method: "POST", body: body)
-        return try status(result)
-    }
-
-    public func summaryStatus(jobID: String?) async throws -> AgentSummaryStatus {
-        let result: MemorySummaryDTO = try await request(threadPath + "/active-summary/status" + query(jobID: jobID))
-        if let jobID, result.job_run_id != jobID { throw AgentRuntimeError.scopeMismatch }
-        return try status(result)
-    }
-
     private var threadPath: String { "/threads/" + encoded(scope.threadID) }
     private func encoded(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~")))!
     }
-    private func query(includeThread: Bool = false, jobID: String? = nil) -> String {
+    private func query(includeThread: Bool = false) -> String {
         var pairs = [("tenant_id", scope.tenantID), ("source_id", scope.sourceID)]
         if includeThread { pairs.append(("thread_id", scope.threadID)) }
-        if let jobID { pairs.append(("job_run_id", jobID)) }
         return "?" + pairs.map { encoded($0.0) + "=" + encoded($0.1) }.joined(separator: "&")
     }
     private func validate(tenant: String, source: String, thread: String) throws {
         guard tenant == scope.tenantID, source == scope.sourceID, thread == scope.threadID else { throw AgentRuntimeError.scopeMismatch }
-    }
-    private func status(_ value: MemorySummaryDTO) throws -> AgentSummaryStatus {
-        guard value.thread_id == scope.threadID, !(value.running && value.completed) else { throw AgentRuntimeError.scopeMismatch }
-        return .init(jobID: value.job_run_id, accepted: value.accepted, running: value.running,
-                     completed: value.completed, failed: value.failed, generated: value.generated,
-                     compacted: value.compacted, errorMessage: value.error_message)
     }
     private func contextRecord(_ value: MemoryRecordDTO) throws -> AgentMemoryContextRecord {
         guard let role = AgentMessage.Role(rawValue: value.role) else { throw ChatOSAPIError.invalidResponse }
@@ -109,8 +88,13 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             ? jsonString(value.metadata, keys: ["tool_call_id", "toolCallId", "tool_callId"])
                 ?? jsonString(value.structured_payload, keys: ["tool_call_id", "toolCallId", "tool_callId"])
             : nil
-        return .init(id: value.id, message: .init(role: role, content: value.content,
-                                                  toolCalls: calls, toolCallID: toolCallID))
+        let responseOutputJSON = try jsonValue(value.metadata, keys: ["responses_output", "response_output"])
+            .map { try JSONEncoder().encode($0) }
+        let usage = providerUsage(value.metadata)
+        return .init(id: value.id, message: .init(
+            role: role, content: value.content, toolCalls: calls, toolCallID: toolCallID,
+            responseOutputJSON: responseOutputJSON, usage: usage
+        ))
     }
     private func toolCalls(_ payload: JSONValue?, metadata: JSONValue?) -> [AgentToolCall] {
         let raw = jsonValue(payload, keys: ["tool_calls", "toolCalls"])
@@ -149,6 +133,17 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
             return string(object[key])
         }.first
     }
+    private func providerUsage(_ metadata: JSONValue?) -> AgentUsage? {
+        guard case let .object(object)? = jsonValue(metadata, keys: ["provider_usage", "providerUsage"]) else {
+            return nil
+        }
+        return .init(
+            inputTokens: object["input_tokens"]?.intValue ?? 0,
+            cachedTokens: object["cached_tokens"]?.intValue ?? 0,
+            outputTokens: object["output_tokens"]?.intValue ?? 0,
+            requests: object["requests"]?.intValue ?? 0
+        )
+    }
     private func string(_ value: JSONValue?) -> String? {
         guard case let .string(text)? = value else { return nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -165,7 +160,7 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         try await client.request(path, method: method, body: JSONEncoder().encode(body), timeoutInterval: 30,
                                  service: .memoryEngine, expectedAuthenticationSessionID: sessionID)
     }
-    private func record(_ entry: AgentMemoryEntry) -> MemoryRecordInput {
+    private func record(_ entry: AgentMemoryEntry) throws -> MemoryRecordInput {
         let calls = entry.message.toolCalls.map { call in
             JSONValue.object(["id": .string(call.id), "type": .string("function"),
                               "function": .object(["name": .string(call.name), "arguments": .string(call.arguments)])])
@@ -176,6 +171,17 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         var metadata: [String: JSONValue] = ["client_agent_run_id": .string(scope.runID.uuidString),
                                              "client_agent_message_index": .number(Double(entry.index))]
         if let id = entry.message.toolCallID { metadata["tool_call_id"] = .string(id) }
+        if let output = entry.message.responseOutputJSON {
+            metadata["responses_output"] = try JSONDecoder().decode(JSONValue.self, from: output)
+        }
+        if let usage = entry.message.usage {
+            metadata["provider_usage"] = .object([
+                "input_tokens": .number(Double(usage.inputTokens)),
+                "cached_tokens": .number(Double(usage.cachedTokens)),
+                "output_tokens": .number(Double(usage.outputTokens)),
+                "requests": .number(Double(usage.requests)),
+            ])
+        }
         let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return .init(id: entry.id, role: entry.message.role.rawValue, record_type: "message", content: entry.message.content,
                      structured_payload: payload.isEmpty ? nil : .object(payload), metadata: .object(metadata),

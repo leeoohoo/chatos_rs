@@ -15,6 +15,8 @@ pub use hub::{
 };
 pub use session_scope::{
     resolve_conversation_scope, RealtimeAckMessage, RealtimeClientControlMessage,
-    RealtimeErrorMessage, RealtimeSubscriptionSet,
+    RealtimeErrorMessage, RealtimeSubscriptionSet, RealtimeTopic, RealtimeTopicScope,
 };
-pub(crate) use types::AskUserPromptRealtimePayload;
+pub(crate) use types::{AskUserPromptRealtimePayload, SequencedRealtimeEventEnvelope};
+#[cfg(test)]
+pub(crate) use types::{ChatStreamRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload};

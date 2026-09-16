@@ -171,6 +171,52 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertEqual(parsed.workingDirectory, "/srv/project")
     }
 
+    func testInteractiveRemoteTerminalUsesTTYAndCleansCredentialRuntime() throws {
+        let session = try NativeRemoteTerminalSession(
+            connectionID: "connection-1",
+            draft: Self.passwordDraft
+        )
+        let runtimeDirectory = session.runtimeDirectoryURL
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: runtimeDirectory.path))
+        XCTAssertEqual(Array(session.launchArguments.prefix(2)), ["-tt", "-F"])
+        XCTAssertTrue(session.launchArguments.contains("chatos-target"))
+        XCTAssertFalse(session.launchArguments.joined().contains("local-secret"))
+        XCTAssertTrue(
+            session.launchArguments.last?.contains("cd -- '/srv/app'") == true
+        )
+
+        session.close()
+        session.close()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: runtimeDirectory.path))
+    }
+
+    func testSubmittedOneTimeCodeIsNotConsumedByAProbeConnection() async throws {
+        let upstream = RemoteConnectionUpstreamStub()
+        let tester = RemoteConnectionTesterSpy()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-remote-otp-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = NativeRemoteConnectionService(
+            upstream: upstream,
+            tester: tester,
+            credentialStore: NativeRemoteConnectionCredentialStore(
+                secretStore: NativeConnectorSecretStore(rootURL: root)
+            )
+        )
+        let connection = try await service.createConnection(Self.passwordDraft)
+
+        let session = try await service.makeRemoteTerminalSession(
+            connectionID: connection.id,
+            verificationCode: "123456"
+        )
+        session.close()
+
+        let requestCount = await tester.requestCount()
+        XCTAssertEqual(requestCount, 0)
+    }
+
     private static let passwordDraft = RemoteConnectionDraft(
         name: "Server",
         host: "server.example.com",
@@ -309,16 +355,22 @@ private actor RemoteConnectionUpstreamStub: RemoteConnectionServicing {
 
 private actor RemoteConnectionTesterSpy: NativeRemoteConnectionTesting {
     private var draft: RemoteConnectionDraft?
+    private var requests = 0
 
     func test(
         draft: RemoteConnectionDraft,
         verificationCode: String?
     ) async throws -> RemoteConnectionTestResult {
+        requests += 1
         self.draft = draft
         return .init(success: true, message: "ok")
     }
 
     func lastDraft() -> RemoteConnectionDraft? {
         draft
+    }
+
+    func requestCount() -> Int {
+        requests
     }
 }

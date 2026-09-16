@@ -14,6 +14,13 @@ pub const USER_ROLE_SUPER_ADMIN: &str = "super_admin";
 pub const USER_ROLE_USER: &str = "user";
 pub const PRINCIPAL_TYPE_HUMAN_USER: &str = "human_user";
 pub const PRINCIPAL_TYPE_AGENT_ACCOUNT: &str = "agent_account";
+pub const EXTERNAL_IDENTITY_PROVIDER_WECHAT_MINI_PROGRAM: &str = "wechat_mini_program";
+pub const CLIENT_TYPE_WECHAT_MINI_PROGRAM: &str = "wechat_mini_program";
+pub const WECHAT_BIND_STATUS_ISSUED: &str = "issued";
+pub const WECHAT_BIND_STATUS_CLAIMED: &str = "claimed";
+pub const WECHAT_BIND_STATUS_CONFIRMED: &str = "confirmed";
+pub const WECHAT_BIND_STATUS_CONSUMED: &str = "consumed";
+pub const WECHAT_BIND_STATUS_EXPIRED: &str = "expired";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserRecord {
@@ -81,6 +88,85 @@ pub struct LocalConnectorAuthTicketRecord {
     pub consumed_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserExternalIdentityRecord {
+    pub id: String,
+    pub user_id: String,
+    pub provider: String,
+    pub app_id: String,
+    pub open_id_hash: String,
+    pub union_id_hash: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_login_at: Option<String>,
+    pub revoked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeChatBindTicketRecord {
+    pub id: String,
+    pub ticket_hash: String,
+    pub user_id: String,
+    pub app_id: String,
+    pub status: String,
+    pub claimed_open_id_hash: Option<String>,
+    pub claimed_union_id_hash: Option<String>,
+    pub claim_id: Option<String>,
+    pub claim_secret_hash: Option<String>,
+    pub confirmed_external_identity_id: Option<String>,
+    pub expires_at_unix: i64,
+    pub claimed_at: Option<String>,
+    pub confirmed_at: Option<String>,
+    pub consumed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientSessionRecord {
+    pub id: String,
+    pub user_id: String,
+    pub client_type: String,
+    pub external_identity_id: Option<String>,
+    pub token_jti: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_seen_at: String,
+    pub expires_at_unix: i64,
+    pub revoked_at: Option<String>,
+    pub revoked_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientSessionSummary {
+    pub id: String,
+    pub client_type: String,
+    pub created_at: String,
+    pub last_seen_at: String,
+    pub expires_at_unix: i64,
+    pub revoked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeChatBindingStatusResponse {
+    pub bound: bool,
+    pub created_at: Option<String>,
+    pub last_login_at: Option<String>,
+}
+
+impl From<ClientSessionRecord> for ClientSessionSummary {
+    fn from(value: ClientSessionRecord) -> Self {
+        Self {
+            id: value.id,
+            client_type: value.client_type,
+            created_at: value.created_at,
+            last_seen_at: value.last_seen_at,
+            expires_at_unix: value.expires_at_unix,
+            revoked_at: value.revoked_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +384,83 @@ pub struct AuthUser {
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeChatMiniProgramLoginRequest {
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(debug_assertions)]
+pub struct WeChatMiniProgramDevelopmentLoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum WeChatMiniProgramLoginResponse {
+    Authenticated {
+        token: String,
+        user: AuthUser,
+        client_session_id: String,
+    },
+    BindingRequired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IssueWeChatBindTicketResponse {
+    pub ticket_id: String,
+    pub bind_ticket: String,
+    pub scene: String,
+    pub expires_in_seconds: i64,
+    pub expires_at_unix: i64,
+    pub qr_code_data_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimWeChatBindTicketRequest {
+    pub code: String,
+    pub bind_ticket: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimWeChatBindTicketResponse {
+    pub status: String,
+    pub claim_id: String,
+    pub claim_secret: String,
+    pub expires_at_unix: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeChatBindClaimResultRequest {
+    pub claim_secret: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum WeChatBindClaimResultResponse {
+    PendingDesktopConfirmation,
+    Authenticated {
+        token: String,
+        user: AuthUser,
+        client_session_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfirmWeChatBindTicketResponse {
+    pub status: String,
+    pub external_identity_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeChatBindTicketStatusResponse {
+    pub ticket_id: String,
+    pub status: String,
+    pub expires_at_unix: i64,
+    pub claimed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

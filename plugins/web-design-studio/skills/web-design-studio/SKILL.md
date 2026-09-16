@@ -1,88 +1,83 @@
 ---
 name: web-design-studio
-description: Route AI-first, visual-first, progressively generated website design work to Web Design Studio specialists while keeping interaction and code secondary.
+description: Primary entry point for creating or revising visually strong, editable website and interface artboards with Web Design Studio.
 metadata:
   chatos.role: router
-  chatos.related-skills: "web-design-progressive-generation,web-design-documents,web-design-components,web-design-responsive-layout,web-design-visual-system,web-design-validation-export"
+  chatos.related-skills: "web-design-planning,web-design-scene-building,web-design-candidate-review,web-design-documents,web-design-components,web-design-responsive-layout,web-design-visual-system,web-design-validation-export"
 ---
 
 # Web Design Studio
 
-Use Web Design Studio when the user wants an editable website, landing page, interface composition, or focused visual revision. The primary operator is AI. The primary output is a visually strong, coherent, human-editable design that AI can generate, inspect, and revise through stable semantic IDs. Interaction behavior and code export are secondary and happen only when required. Humans usually review screenshots, make small visual adjustments, or attach annotations and component requests. Treat those notes as the next AI work queue, preserve their manual edits, and resolve each request only after the corresponding visible change exists.
+Use this Skill as the entry point for website, landing-page, product-interface, menu, modal, Drawer, overlay, and important UI-state design. The primary deliverable is an editable visual Scene with stable semantic nodes. Code and interaction wiring are optional later phases, never substitutes for visual design.
 
-## Runtime scope
+## Hard delivery gate
 
-ChatOS binds the active document scope before the plugin starts. Use the document tools exactly as declared; all documents returned by them already belong to the current execution scope.
+Every planning and generation response includes `deliveryGate`. It is authoritative.
 
-For every AI generation or substantial AI redesign, activate `web-design-progressive-generation` first. Its Plan, Page, Step, Candidate, visual-evidence, and page-boundary workflow is the only generation path. Direct node tools may implement only the current bounded Step or a focused repair; they are never an alternative whole-page generator.
+- If `visibleSceneReady` is false, keep designing in the plugin. Do not edit application UI source or report a result.
+- If `projectImplementationAllowed` is false, no artboard has completed visual handoff. Do not implement it in product code.
+- Implement only artboards counted by `completedArtboardCount`.
+- Report the requested design scope complete only when `taskCompletionAllowed` is true.
 
-## Route the work
+A document, Site Plan, page plan, canonical root, successful mutation, or passing structural check is not visible delivery.
 
-- Activate `web-design-documents` for document discovery, reuse, Scene pages, annotations, and request queues.
-- Activate `web-design-progressive-generation` for site/page planning, resumable AI generation, visual Candidate review, retry, pause, and recovery.
-- Activate `web-design-components` before choosing library bindings, slots, nesting, symbols, interactions, or reusable components.
-- Activate `web-design-responsive-layout` for frames, constraints, Flex/Grid, auto layout, desktop/tablet/mobile behavior, and overflow repair.
-- Activate `web-design-visual-system` for tokens, typography, color, spacing, imagery, effects, states, and coherent art direction.
-- Activate `web-design-validation-export` before completion, conflict recovery, validation, preview, or HTML/React/Vue export.
+## One canvas, one semantic artboard
 
-Activate the specialist Skills that materially govern the requested edit. ChatOS associates them with this router internally. A substantial new page normally needs progressive generation, documents, components, visual system, validation, and responsive layout only when the brief requires responsive behavior. A focused text edit may need only documents and validation.
+A project may contain many artboards, but they form a directory rather than one world-space composition. The editor and AI mount exactly one chosen artboard canvas at a time. The human may click a directory entry, and the AI may choose the relevant `artboardId` itself from `web_design_get_active_context.artboardDirectory`.
 
-## Platform Skill protocol
+Artboards represent independently designed surfaces: a route, expanded menu, modal, Drawer, Popover, overlay, or meaningful state. Width and height are properties of an artboard. Do not create desktop, tablet, and mobile copies by default; responsive widths belong to the same semantic artboard unless the user requests independent variants.
 
-Activate this router through `skill_skill_activate`, then activate every leaf that materially governs the requested edit. ChatOS records the activation graph and validates business tools automatically. Call Web Design Studio tools only with their declared business arguments. Execution identity, scope, session, activation, and authentication context are supplied by the runtime. Use the platform resource tools only for references declared by an activated Skill.
+For focused work, choose one directory entry and pass that `artboardId` to Scene query/edit tools. Generation Steps use the one page selected by the Plan. Never load several artboards merely to decide what to edit, and preserve every non-target artboard unchanged.
 
-## AI-first operating loop
+## Load only the stage you need
 
-For a new website or substantial redesign:
+Activate leaf Skills just in time:
 
-1. Read active context and list documents so a retry resumes the intended design instead of creating a duplicate.
-2. Plan the site inventory without generating it. A destination page, menu destination, modal, Drawer, overlay, or important interface state is a separate artboard that can be designed independently and linked later.
-3. Select exactly one artboard and save its audience, purpose, art direction, focal hierarchy, composition, typography, color, imagery strategy, content hierarchy, and screenshot-based acceptance criteria.
-4. Start or resume that artboard. Execute only its current `nextAction` as one bounded visual Step. An artboard may and usually should remain incomplete across several calls or sessions.
-5. Decompose work into small passes such as composition skeleton, primary focal region, one supporting section, typography and color application, imagery treatment, responsive visual repair, and final polish. Do not interpret “work on one page” as “complete one page now.”
-6. Before and after every Step, inspect real rendered images and their grounding. Use direct node and component tools only inside that Step's target subtree.
-7. Run draft structural validation after the Step, but judge acceptance from the screenshot: focal point, hierarchy, rhythm, whitespace, brand relevance, legibility, and absence of accidental template or dashboard character.
-8. Commit, retry, reject, or pause only that Step. Continue only through a later invocation or explicit next action. Run the visual Design Gate and handoff validation only when the artboard is genuinely ready.
+- `web-design-documents`: locate or create the scoped document and handle pending human requests.
+- `web-design-planning`: define the semantic artboard inventory and plan one active artboard.
+- `web-design-components`: search the actual component, section, template, and theme supply; inspect selected component contracts.
+- `web-design-scene-building`: create or revise editable Scene nodes for one bounded Step.
+- `web-design-visual-system`: make typography, color, imagery, spacing, surface, and art-direction decisions.
+- `web-design-responsive-layout`: repair only the viewport widths required by the brief.
+- `web-design-candidate-review`: inspect Candidate and Diff images, accept/reject, resume, or handle an annotation.
+- `web-design-validation-export`: run final visual validation and optional export after handoff.
 
-Do not default a public-facing or expressive website to a sidebar, KPI cards, tables, settings panels, or a grid of interchangeable cards. Do not spend generation Steps proving that controls click. Unless the brief is specifically for an admin or data product, prioritize editorial composition, brand character, typography, imagery, visual storytelling, and deliberate whitespace.
+Do not activate every leaf at startup. Tool gates state which leaf is required.
 
-For a human-adjusted website:
+## Normal design loop
 
-1. Read the active context and pending requests. A `scene-annotation` request is authoritative and already includes its page, stable node, Scene revision, and `web_design_prepare_annotation_task` arguments.
-2. Prepare that Scene annotation before editing. Inspect the returned PNG crop and grounding; do not infer the requested visual change from node metadata alone.
-3. Treat current frames, styles, stable IDs, annotations, and manual edits as authoritative state. Apply the smallest revision-checked Scene edit inside the task scope.
-4. Capture the changed region and compare it with the prepared snapshot. Resolve the annotation only after the actual image shows the requested design result and validation passes.
+1. Activate `web-design-documents` and `web-design-planning`, then call `web_design_get_active_context`. Read its compact `artboardDirectory`, choose the one artboard relevant to the task, and resume any active Step or returned `resumeReview`; do not create duplicates.
+2. Build a short evidence map from the user's brief and in-scope project content: product, audience, promise, required content, existing visual cues, and unknowns. Runtime names, repository folder names, Skill prose, component demos, and test fixtures are not customer-brand evidence.
+3. Use `web_design_plan_site` for the semantic artboard inventory. Then use `web_design_plan_page` for exactly one artboard. Planning the page automatically selects it, starts it, and creates its canonical Scene root.
+4. Before construction, activate `web-design-components`. Read the small catalog summary, search only relevant kinds, and inspect the exact contract for every library component chosen. Catalog material informs the composition but never chooses the art direction.
+5. Activate `web-design-scene-building` and the visual-system or responsive leaf needed by the current Step. Call `web_design_execute_step` with the editable node changes. The plugin automatically captures the current revision at every required viewport and decides whether this is an initial run, retry, or repair.
+6. Prefer `insert-simple-tree` for a visible hierarchy. Every descendant remains an independent editable node. Use smaller operations for focused changes; never simulate a UI with whitespace, ASCII art, one giant text node, or a flattened screenshot.
+7. Activate `web-design-candidate-review`. Inspect every returned Candidate and Diff image. Mechanical layout success is necessary but not sufficient. Use `web_design_control_plan` to accept or reject the reviewed Candidate explicitly.
+8. Continue the returned next action. Accepting the handoff Step automatically completes that artboard and returns a compact context checkpoint. Move to the next semantic artboard only then, unless the user asks to pause.
 
-Never require the human to translate a visual request into component IDs or protocol fields. Inspect the document and pending request records yourself.
+## Visual quality bar
 
-## MCP tool directory
+Accept only when the screenshot demonstrates the intended improvement:
 
-- Documents: `web_design_list_documents` lists designs in the active scope. `web_design_create_document` creates a design in that same scope. List first and reuse a matching document before creating another one.
-- Progressive state: `web_design_get_active_context`, `web_design_get_plan`, and `web_design_inspect_step` are the authoritative resume and review reads. Use `web_design_query_scene` for bounded page, role, type, name, or stable-ID reads from the current Scene revision.
-- Visual evidence: `web_design_capture_page` and `web_design_capture_region` return real Chromium PNGs; `web_design_get_visual_grounding` maps pixels to stable Scene IDs; `web_design_inspect_at_point` resolves ambiguous image coordinates; `web_design_compare_snapshots` verifies the actual before/after impact. Use these for every progressive visual decision instead of judging from node metadata alone.
-- Components: `web_design_get_catalog` gives a compact library overview; `web_design_search_components` returns bounded candidates; `web_design_get_component_contract` returns the official library binding and Scene binding fields for the one chosen component. Insert it only as a `library-instance` node inside the current Step Candidate.
-- Focused editing: AI construction happens through the `operations` of `web_design_run_next_step`, `web_design_retry_step`, or `web_design_repair_step`. `web_design_edit_scene` is only for a small, already-scoped adjustment after a Scene read; it is not a generation bypass.
-- Requests: `web_design_list_requests` returns Scene annotations. Use `web_design_prepare_annotation_task` to bind one open annotation to its exact page, stable node, Scene revision, PNG crop, and grounding before editing.
-- Review and recovery: `web_design_accept_step`, `web_design_reject_step`, `web_design_rollback_step`, `web_design_pause_plan`, and `web_design_resume_plan` change only the current Plan/Step. Code export is not part of the design-completion path.
+- The focal point and reading order are obvious without reading layer names.
+- Typography, contrast, spacing, alignment, density, and whitespace form a deliberate hierarchy.
+- The composition has purposeful variation rather than equal cards or repeated demo rows.
+- Color, imagery, surfaces, and detail fit the actual product and audience.
+- The edited region belongs with its neighbors and remains legible at all required widths.
+- Nothing is accidentally empty, clipped, overlapping, overflowing, or generic.
 
-The old document `components[]` read, patch, template, auto-layout, symbol, request-resolution, and export tools are not an alternative API. Do not call them for new generation, revision, recovery, or handoff. Scene v2 is the only editable design truth.
+Public-facing and expressive sites should not default to sidebars, KPI tiles, dense tables, settings panels, or dashboard grids. Use those patterns only when the brief is genuinely administrative, analytical, operational, or data-heavy.
 
-## Invariants
+## Non-negotiable invariants
 
-- Read active context and Plan first, then query only the affected Scene page or subtree. Avoid complete legacy-document reads.
-- The injected scope is immutable. “Second version”, “redesign”, and alternative visual directions are document or page decisions inside the active scope.
-- Preserve stable IDs and unrelated user-authored content.
-- Never fabricate visual artifact IDs or claim visual completion without inspecting the returned PNG content.
-- Use one bounded Scene Candidate for one focused request.
-- Every visible object is an independent editable node. Text content represents one semantic text item only.
-- Never use spaces, tabs, ASCII art, Markdown tables, or many newline-separated labels inside a text node to simulate navigation, cards, tables, forms, buttons, or a complete screen.
-- Never send an entire multi-page design in one mutation. Work page by page and region by region.
-- Never attempt to finish even one complex page in one invocation. One invocation advances at most one bounded Step.
-- Never treat functional interaction, component count, or structural validation as proof of visual quality.
-- Do not let a component library or template determine the art direction. Components are editable visual materials inside a page-specific composition.
-- Do not default to admin-dashboard composition unless the user explicitly asks for an admin, operations, analytics, or data-management interface.
-- If a mutation is rejected, truncated, or too large, reread the current page and split the same intended structure into smaller batches. Never degrade to a text mockup, image mockup, or flattened replacement.
-- Repeated UI belongs in library instances or Scene component-main/component-instance structures. Use semantic layer names so AI and people can locate nodes later.
-- Use container hierarchy and Flex/Grid layout to preserve design intent, like Figma Frame and Auto Layout, rather than relying only on unrelated absolute coordinates.
-- Treat templates and sections as editable starting material, not a design boundary.
-- Use `draft` validation while building and mandatory `handoff` validation before completion or export.
+- Inspect real PNG content; never infer visual quality from JSON or successful tool status.
+- Preserve stable IDs, manual changes, locked fields, inactive artboards, and unrelated content.
+- One execution call prepares one bounded Step Candidate. Several sequential Steps may run in one user task.
+- Candidate generation and acceptance remain separate; visual review is never automated away.
+- Use semantic node names. One text node contains one semantic text item.
+- Use Frame, Auto Layout, Grid, and responsive overrides to encode design intent.
+- Do not use component libraries or templates as whole-page creative direction.
+- Never fabricate artifact IDs or reuse evidence from a stale Scene revision.
+- If a mutation is too large, use `insert-simple-tree` or split by semantic region. Do not reduce editability or visual content.
+- Do not perform dependency upgrades, audit fixes, lockfile rewrites, or unrelated source changes during design work.
+- For design plus implementation, complete the editable Scene artboard first, then implement only that accepted design.

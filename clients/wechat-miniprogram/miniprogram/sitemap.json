@@ -1,0 +1,4 @@
+{
+  "desc": "ChatOS Companion pages are account-private and must not be indexed.",
+  "rules": [{ "action": "disallow", "page": "*" }]
+}

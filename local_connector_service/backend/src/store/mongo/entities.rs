@@ -4,11 +4,102 @@
 use super::*;
 
 impl MongoConnectorStore {
-    pub async fn create_device(&self, device: &LocalConnectorDevice) -> Result<(), String> {
-        self.devices
-            .insert_one(device, None)
+    pub async fn register_device(
+        &self,
+        device: &LocalConnectorDevice,
+    ) -> Result<(LocalConnectorDevice, bool), String> {
+        let options = FindOneAndUpdateOptions::builder()
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .build();
+        let registered = self
+            .devices
+            .find_one_and_update(
+                doc! {
+                    "owner_user_id": &device.owner_user_id,
+                    "public_key": &device.public_key,
+                    "status": { "$in": [
+                        DEVICE_STATUS_REGISTERED,
+                        DEVICE_STATUS_ONLINE,
+                        DEVICE_STATUS_OFFLINE,
+                    ] },
+                },
+                doc! {
+                    "$set": {
+                        "display_name": &device.display_name,
+                        "client_version": &device.client_version,
+                        "os": &device.os,
+                        "updated_at": &device.updated_at,
+                    },
+                    "$setOnInsert": {
+                        "id": &device.id,
+                        "owner_user_id": &device.owner_user_id,
+                        "public_key": &device.public_key,
+                        "windows_user_sid": &device.windows_user_sid,
+                        "status": &device.status,
+                        "last_seen_at": &device.last_seen_at,
+                        "revoked_at": &device.revoked_at,
+                        "created_at": &device.created_at,
+                    },
+                },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "device registration did not return a record".to_string())?;
+        let created = registered.id == device.id;
+        Ok((registered, created))
+    }
+
+    pub(super) async fn reconcile_duplicate_devices(&self) -> Result<(), String> {
+        let options = FindOptions::builder()
+            .sort(doc! {
+                "owner_user_id": 1,
+                "public_key": 1,
+                "updated_at": -1,
+                "created_at": -1,
+            })
+            .build();
+        let devices: Vec<LocalConnectorDevice> = self
+            .devices
+            .find(
+                doc! {
+                    "status": { "$in": [
+                        DEVICE_STATUS_REGISTERED,
+                        DEVICE_STATUS_ONLINE,
+                        DEVICE_STATUS_OFFLINE,
+                    ] },
+                },
+                options,
+            )
+            .await
+            .map_err(|err| err.to_string())?
+            .try_collect()
             .await
             .map_err(|err| err.to_string())?;
+        let now = now_rfc3339();
+        let mut previous_identity: Option<(String, String)> = None;
+        for device in devices {
+            let identity = (device.owner_user_id.clone(), device.public_key.clone());
+            if previous_identity.as_ref() != Some(&identity) {
+                previous_identity = Some(identity);
+                continue;
+            }
+            self.devices
+                .update_one(
+                    doc! { "id": &device.id, "status": { "$ne": DEVICE_STATUS_REVOKED } },
+                    doc! {
+                        "$set": {
+                            "status": DEVICE_STATUS_REVOKED,
+                            "revoked_at": &now,
+                            "updated_at": &now,
+                        }
+                    },
+                    None,
+                )
+                .await
+                .map_err(|err| err.to_string())?;
+        }
         Ok(())
     }
 

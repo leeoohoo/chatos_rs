@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::memory_context::{MemoryContextComposer, MemoryScope};
-use crate::runtime::{
-    AiRuntime, AiRuntimeOptions, AiSingleStepOutcome, AiSingleStepRequest, IterativeContextRefresh,
-    MemoryContextOverflowRecovery,
-};
+use crate::runtime::{AiRuntime, AiRuntimeOptions, AiSingleStepOutcome, AiSingleStepRequest};
 #[cfg(feature = "local-agent-loop")]
 use crate::runtime::{AiRuntimeResult, AiTurnReport};
 use crate::traits::{ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput};
@@ -16,7 +13,6 @@ use crate::traits::{ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, Save
 pub struct ContextualTurnRunner {
     runtime: AiRuntime,
     memory_composer: Option<MemoryContextComposer>,
-    context_overflow_recovery: Option<MemoryContextOverflowRecovery>,
 }
 
 #[derive(Clone)]
@@ -48,7 +44,6 @@ impl ContextualTurnRunner {
         Self {
             runtime,
             memory_composer,
-            context_overflow_recovery: None,
         }
     }
 
@@ -66,21 +61,13 @@ impl ContextualTurnRunner {
             .await
     }
 
-    pub fn with_context_overflow_recovery(
-        mut self,
-        context_overflow_recovery: Option<MemoryContextOverflowRecovery>,
-    ) -> Self {
-        self.context_overflow_recovery = context_overflow_recovery;
-        self
-    }
-
     #[cfg(feature = "local-agent-loop")]
     pub async fn run_turn(
         &self,
         request: ContextualTurnRequest,
     ) -> Result<AiRuntimeResult, String> {
         let ContextualTurnRequest {
-            mut model_request,
+            model_request,
             runtime_options,
             memory_scope,
             prefixed_input_items,
@@ -96,25 +83,14 @@ impl ContextualTurnRunner {
             runtime_options.conversation_turn_id.as_deref(),
         )
         .await?;
-        let iterative_context_refresh = self.build_iterative_context_refresh(
-            &runtime_options,
-            memory_scope.as_ref(),
-            prefixed_input_items.as_slice(),
-            current_input_items.as_slice(),
-            &model_request.input,
-        );
-
         if let Some(user_record) = user_record.take() {
             self.runtime.save_record(user_record).await?;
         }
 
+        let mut model_request = model_request;
+        enable_openai_responses_protocol(&mut model_request);
         model_request.input = contextual_input;
-        self.runtime
-            .run_turn(
-                model_request,
-                runtime_options.with_iterative_context_refresh(iterative_context_refresh),
-            )
-            .await
+        self.runtime.run_turn(model_request, runtime_options).await
     }
 
     pub async fn execute_once(
@@ -141,21 +117,14 @@ impl ContextualTurnRunner {
             runtime_options.conversation_turn_id.as_deref(),
         )
         .await?;
-        let iterative_context_refresh = self.build_iterative_context_refresh(
-            &runtime_options,
-            memory_scope.as_ref(),
-            prefixed_input_items.as_slice(),
-            current_input_items.as_slice(),
-            &model_request.input,
-        );
         if let Some(user_record) = user_record {
             self.runtime.save_record(user_record).await?;
         }
+        enable_openai_responses_protocol(&mut model_request);
         model_request.input = contextual_input;
         let single_step = AiSingleStepRequest {
             model_request,
-            runtime_options: runtime_options
-                .with_iterative_context_refresh(iterative_context_refresh),
+            runtime_options,
             iteration,
             reason: reason.into(),
             model_attempt,
@@ -173,45 +142,11 @@ impl ContextualTurnRunner {
     }
 }
 
-impl ContextualTurnRunner {
-    fn build_iterative_context_refresh(
-        &self,
-        runtime_options: &AiRuntimeOptions,
-        memory_scope: Option<&MemoryScope>,
-        prefixed_input_items: &[Value],
-        current_input_items: &[Value],
-        fallback_input: &Value,
-    ) -> Option<IterativeContextRefresh> {
-        if self.memory_composer.is_none()
-            || memory_scope.is_none()
-            || !self.runtime.has_record_writer()
-            || !runtime_options.record_options.persist_assistant_records
-            || !runtime_options.record_options.persist_tool_records
-            || current_input_items.iter().any(is_durable_history_item)
-        {
-            return None;
-        }
-
-        // The current turn is the authoritative task contract. Memory context is
-        // supplemental and can be empty or summarized, so never rely on
-        // recomposition to restore the current task.
-        let sticky_input_items = if current_input_items.is_empty() {
-            input_value_to_items(fallback_input.clone())
-        } else {
-            current_input_items.to_vec()
-        };
-
-        Some(
-            IterativeContextRefresh::new(
-                self.memory_composer.clone(),
-                memory_scope.cloned(),
-                prefixed_input_items.to_vec(),
-            )
-            .with_sticky_input_items(sticky_input_items)
-            .with_tool_result_model_budget_limits(runtime_options.tool_result_model_budget_limits)
-            .with_context_overflow_recovery(self.context_overflow_recovery.clone()),
-        )
-    }
+fn enable_openai_responses_protocol(request: &mut ModelRequest) {
+    // Agent turns use one stable provider-owned Responses history for their
+    // entire lifetime. Memory Engine is composed only at the turn boundary;
+    // in-turn context management belongs to OpenAI Responses compaction.
+    request.supports_responses = true;
 }
 
 impl RuntimeTurnSpec {
@@ -441,34 +376,19 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use async_trait::async_trait;
     use axum::extract::State;
     use axum::routing::post;
     use axum::{Json, Router};
     use serde_json::{json, Value};
 
     use super::{
-        build_contextual_input, input_value_to_items, user_text_item, ContextualTurnRequest,
-        RuntimeTurnSpec,
+        build_contextual_input, enable_openai_responses_protocol, input_value_to_items,
+        user_text_item, ContextualTurnRequest, RuntimeTurnSpec,
     };
     use crate::{
         AiRuntime, AiRuntimeOptions, AiTurnStatus, MemoryContextComposer, MemoryScope,
-        ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput, SaveToolRecordInput,
+        ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveRecordInput,
     };
-
-    #[derive(Clone)]
-    struct NoopRecordWriter;
-
-    #[async_trait]
-    impl crate::MemoryRecordWriter for NoopRecordWriter {
-        async fn save_record(&self, _input: SaveRecordInput) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn save_tool_record(&self, _input: SaveToolRecordInput) -> Result<(), String> {
-            Ok(())
-        }
-    }
 
     #[tokio::test]
     async fn build_contextual_input_orders_prefix_memory_and_current_items() {
@@ -940,74 +860,27 @@ mod tests {
     }
 
     #[test]
-    fn contextual_turn_runner_enables_iterative_refresh_with_memory_and_records() {
-        let runtime = AiRuntime::new(None).with_record_writer(Some(Arc::new(NoopRecordWriter)));
-        let composer = MemoryContextComposer::new_direct(
-            "http://127.0.0.1:1",
-            Duration::from_millis(100),
-            "task_runner",
-        )
-        .expect("composer");
-        let runner = super::ContextualTurnRunner::new(runtime, Some(composer));
-        let runtime_options = AiRuntimeOptions::for_conversation("task_1")
-            .with_record_options(RuntimeRecordOptions::persist_all());
-        let refresh = runner.build_iterative_context_refresh(
-            &runtime_options,
-            Some(&MemoryScope::thread("tenant_1", "task_runner", "task_1")),
-            &[json!({"role":"system","content":"prefix"})],
-            &[json!({"role":"user","content":"current"})],
-            &Value::Null,
+    fn agent_turns_force_responses_for_every_gateway() {
+        let mut openai = ModelRequest::openai_compatible(
+            "https://api.openai.com/v1",
+            "secret",
+            "gpt-test",
+            "openai",
+            Value::Null,
+        );
+        let mut compatible = ModelRequest::openai_compatible(
+            "https://gateway.example.test/v1",
+            "secret",
+            "gpt-test",
+            "openai_compatible",
+            Value::Null,
         );
 
-        assert!(refresh.is_some());
-    }
+        enable_openai_responses_protocol(&mut openai);
+        enable_openai_responses_protocol(&mut compatible);
 
-    #[test]
-    fn contextual_turn_runner_skips_iterative_refresh_for_durable_history() {
-        let runtime = AiRuntime::new(None).with_record_writer(Some(Arc::new(NoopRecordWriter)));
-        let composer = MemoryContextComposer::new_direct(
-            "http://127.0.0.1:1",
-            Duration::from_millis(100),
-            "task_runner",
-        )
-        .expect("composer");
-        let runner = super::ContextualTurnRunner::new(runtime, Some(composer));
-        let runtime_options = AiRuntimeOptions::for_conversation("task_1")
-            .with_record_options(RuntimeRecordOptions::persist_all());
-        let refresh = runner.build_iterative_context_refresh(
-            &runtime_options,
-            Some(&MemoryScope::thread("tenant_1", "task_runner", "task_1")),
-            &[json!({"role":"system","content":"prefix"})],
-            &[
-                json!({"role":"user","content":"current"}),
-                json!({"type":"function_call","call_id":"call-1","name":"read_file","arguments":"{}"}),
-            ],
-            &Value::Null,
-        );
-
-        assert!(refresh.is_none());
-    }
-
-    #[test]
-    fn contextual_turn_runner_skips_iterative_refresh_without_record_writer() {
-        let composer = MemoryContextComposer::new_direct(
-            "http://127.0.0.1:1",
-            Duration::from_millis(100),
-            "task_runner",
-        )
-        .expect("composer");
-        let runner = super::ContextualTurnRunner::new(AiRuntime::new(None), Some(composer));
-        let runtime_options = AiRuntimeOptions::for_conversation("task_1")
-            .with_record_options(RuntimeRecordOptions::persist_all());
-        let refresh = runner.build_iterative_context_refresh(
-            &runtime_options,
-            Some(&MemoryScope::thread("tenant_1", "task_runner", "task_1")),
-            &[json!({"role":"system","content":"prefix"})],
-            &[json!({"role":"user","content":"current"})],
-            &Value::Null,
-        );
-
-        assert!(refresh.is_none());
+        assert!(openai.supports_responses);
+        assert!(compatible.supports_responses);
     }
 
     #[test]

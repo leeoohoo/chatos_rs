@@ -89,26 +89,42 @@ public sealed class TerminalRelayHandler : IRelayRequestHandler, IRelayOneWayHan
             return;
         }
 
-        switch (request.Type)
+        try
         {
-            case "terminal_input":
-                await session.WriteAsync(body.Data ?? string.Empty, cancellationToken)
-                    .ConfigureAwait(false);
-                break;
-            case "terminal_command":
-                // Command metadata is consumed by approval/history in the next layer; it is not shell input.
-                break;
-            case "terminal_resize":
-                await session.ResizeAsync(
-                    TerminalSize.Normalize(body.Columns ?? 80, body.Rows ?? 24),
-                    cancellationToken).ConfigureAwait(false);
-                break;
-            case "terminal_snapshot_request":
-                _events.Publish(new TerminalEvent(
-                    TerminalEventKind.Snapshot,
-                    sessionId,
-                    Data: session.Snapshot(body.Lines ?? 500)));
-                break;
+            switch (request.Type)
+            {
+                case "terminal_input":
+                    await session.WriteAsync(body.Data ?? string.Empty, cancellationToken)
+                        .ConfigureAwait(false);
+                    break;
+                case "terminal_command":
+                    // Command metadata is consumed by approval/history in the next layer; it is not shell input.
+                    break;
+                case "terminal_resize":
+                    await session.ResizeAsync(
+                        TerminalSize.Normalize(body.Columns ?? 80, body.Rows ?? 24),
+                        cancellationToken).ConfigureAwait(false);
+                    break;
+                case "terminal_snapshot_request":
+                    var snapshot = session.SnapshotState(body.Lines ?? 500);
+                    _events.Publish(new TerminalEvent(
+                        TerminalEventKind.Snapshot,
+                        sessionId,
+                        Data: snapshot.Data,
+                        Sequence: snapshot.Sequence,
+                        BaseSequence: snapshot.BaseSequence,
+                        Truncated: snapshot.Truncated));
+                    break;
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _events.Publish(new TerminalEvent(
+                TerminalEventKind.Error,
+                sessionId,
+                Data: exception.Message,
+                ErrorCode: "terminal_control_failed",
+                Recoverable: true));
         }
     }
 
@@ -135,15 +151,21 @@ public sealed class TerminalRelayHandler : IRelayRequestHandler, IRelayOneWayHan
             workspace.Id,
             paths.Root,
             workingDirectory,
-            ValidateControlledPolicyScope(body.NetworkPolicy, request));
+            ValidateControlledPolicyScope(body.NetworkPolicy, request),
+            RelayOwned: true);
         var session = await _sessions.EnsureSessionAsync(
             identity,
             TerminalSize.Normalize(body.Columns ?? 80, body.Rows ?? 24),
             cancellationToken).ConfigureAwait(false);
+        var snapshot = session.SnapshotState(500);
         return JsonSerializer.SerializeToElement(new
         {
             terminal_session_id = sessionId,
-            snapshot = session.Snapshot(500),
+            snapshot = snapshot.Data,
+            base_sequence = snapshot.BaseSequence,
+            sequence = snapshot.Sequence,
+            truncated = snapshot.Truncated,
+            protocol_version = 2,
             busy = session.IsBusy,
         }, JsonOptions);
     }

@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,6 +22,9 @@ use crate::valkey_coordination::{
 mod terminal;
 #[cfg(test)]
 mod tests;
+
+const MAX_PENDING_COMPANION_REQUESTS_PER_DEVICE: usize = 8;
+const MAX_PENDING_COMPANION_REQUESTS_PER_CLIENT_SESSION: usize = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayRequest {
@@ -219,7 +222,38 @@ struct ActiveConnectorSession {
 
 struct PendingRelayRequest {
     source: RelaySessionIdentity,
+    class: PendingRelayClass,
+    expires_at: Instant,
     sender: oneshot::Sender<RelayResponse>,
+}
+
+#[derive(Clone)]
+enum PendingRelayClass {
+    General,
+    Companion { client_session_id: String },
+}
+
+struct PendingRequestCleanupGuard {
+    relay: ConnectorRelay,
+    request_id: String,
+}
+
+impl PendingRequestCleanupGuard {
+    fn new(relay: ConnectorRelay, request_id: String) -> Self {
+        Self { relay, request_id }
+    }
+}
+
+impl Drop for PendingRequestCleanupGuard {
+    fn drop(&mut self) {
+        let relay = self.relay.clone();
+        let request_id = self.request_id.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                relay.cleanup_request(request_id.as_str()).await;
+            });
+        }
+    }
 }
 
 impl ActiveConnectorSession {
@@ -379,6 +413,32 @@ impl ConnectorRelay {
         request: RelayRequest,
         timeout_duration: Duration,
     ) -> Result<RelayResponse, RelayError> {
+        self.dispatch_with_class(request, timeout_duration, PendingRelayClass::General)
+            .await
+    }
+
+    pub async fn dispatch_companion(
+        &self,
+        request: RelayRequest,
+        timeout_duration: Duration,
+        client_session_id: &str,
+    ) -> Result<RelayResponse, RelayError> {
+        self.dispatch_with_class(
+            request,
+            timeout_duration,
+            PendingRelayClass::Companion {
+                client_session_id: client_session_id.to_string(),
+            },
+        )
+        .await
+    }
+
+    async fn dispatch_with_class(
+        &self,
+        request: RelayRequest,
+        timeout_duration: Duration,
+        class: PendingRelayClass,
+    ) -> Result<RelayResponse, RelayError> {
         let request_id = request.request_id.clone();
         let device_id = request.device_id.clone();
         let request = self.sign_request(request)?;
@@ -396,8 +456,14 @@ impl ConnectorRelay {
             .or_else(|| remote_presence.as_ref().map(DevicePresence::relay_identity))
             .ok_or(RelayError::Offline)?;
         let receiver = self
-            .insert_pending_request(request_id.as_str(), source.clone())
+            .insert_pending_request(
+                request_id.as_str(),
+                source.clone(),
+                class,
+                Instant::now() + timeout_duration,
+            )
             .await?;
+        let _pending_cleanup = PendingRequestCleanupGuard::new(self.clone(), request_id.clone());
 
         if let Some(session) = local_session {
             let text = match serde_json::to_string(&request) {
@@ -491,8 +557,14 @@ impl ConnectorRelay {
         let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
         let request_id = request.request_id.clone();
         let receiver = self
-            .insert_pending_request(request_id.as_str(), presence.relay_identity())
+            .insert_pending_request(
+                request_id.as_str(),
+                presence.relay_identity(),
+                PendingRelayClass::General,
+                Instant::now() + distributed.delivery_ack_timeout,
+            )
             .await?;
+        let _pending_cleanup = PendingRequestCleanupGuard::new(self.clone(), request_id.clone());
         let correlation = RelayCorrelation {
             requester_instance_id: distributed.instance_id.clone(),
             source: presence.relay_identity(),
@@ -831,6 +903,8 @@ impl ConnectorRelay {
         &self,
         request_id: &str,
         source: RelaySessionIdentity,
+        class: PendingRelayClass,
+        expires_at: Instant,
     ) -> Result<oneshot::Receiver<RelayResponse>, RelayError> {
         let runtime = self.runtime_config();
         let mut inner = self.inner.lock().await;
@@ -848,12 +922,86 @@ impl ConnectorRelay {
                 limit: runtime.limits.max_pending_requests_per_device,
             });
         }
+        if let PendingRelayClass::Companion { client_session_id } = &class {
+            let companion_device_count = inner
+                .pending
+                .values()
+                .filter(|pending| {
+                    pending.source.device_id == source.device_id
+                        && matches!(&pending.class, PendingRelayClass::Companion { .. })
+                })
+                .count();
+            if companion_device_count >= MAX_PENDING_COMPANION_REQUESTS_PER_DEVICE {
+                return Err(RelayError::TooManyPendingRequests {
+                    device_id: source.device_id.clone(),
+                    limit: MAX_PENDING_COMPANION_REQUESTS_PER_DEVICE,
+                });
+            }
+            let companion_client_count = inner
+                .pending
+                .values()
+                .filter(|pending| {
+                    matches!(
+                        &pending.class,
+                        PendingRelayClass::Companion {
+                            client_session_id: pending_client_session_id
+                        } if pending_client_session_id == client_session_id
+                    )
+                })
+                .count();
+            if companion_client_count >= MAX_PENDING_COMPANION_REQUESTS_PER_CLIENT_SESSION {
+                return Err(RelayError::TooManyPendingRequests {
+                    device_id: source.device_id.clone(),
+                    limit: MAX_PENDING_COMPANION_REQUESTS_PER_CLIENT_SESSION,
+                });
+            }
+        }
         let (sender, receiver) = oneshot::channel();
         inner.pending.insert(
             request_id.to_string(),
-            PendingRelayRequest { source, sender },
+            PendingRelayRequest {
+                source,
+                class,
+                expires_at,
+                sender,
+            },
         );
         Ok(receiver)
+    }
+
+    pub(crate) fn start_pending_reaper(&self, interval: Duration) {
+        let relay = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                let reaped = relay.reap_expired_pending().await;
+                if reaped > 0 {
+                    tracing::warn!(
+                        reaped,
+                        "reaped expired Local Connector pending relay requests"
+                    );
+                }
+            }
+        });
+    }
+
+    async fn reap_expired_pending(&self) -> usize {
+        let now = Instant::now();
+        let expired_request_ids = {
+            let inner = self.inner.lock().await;
+            inner
+                .pending
+                .iter()
+                .filter(|(_, pending)| pending.expires_at <= now)
+                .map(|(request_id, _)| request_id.clone())
+                .collect::<Vec<_>>()
+        };
+        for request_id in &expired_request_ids {
+            self.cleanup_request(request_id.as_str()).await;
+        }
+        expired_request_ids.len()
     }
 
     async fn remove_pending(&self, request_id: &str) {

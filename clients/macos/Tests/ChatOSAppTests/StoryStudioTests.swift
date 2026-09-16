@@ -13,7 +13,10 @@ final class StoryStudioTests: XCTestCase {
         let created = await vm.create(draft, availableModels: models)
         XCTAssertTrue(created)
         XCTAssertEqual(vm.selectedProjectID, draft.id)
-        XCTAssertEqual(vm.projects.first?.models, draft.models)
+        XCTAssertEqual(vm.projects.first?.models.textModelID, draft.models.textModelID)
+        XCTAssertEqual(vm.projects.first?.models.imageModelID, draft.models.imageModelID)
+        XCTAssertEqual(vm.projects.first?.models.videoModelID, draft.models.videoModelID)
+        XCTAssertEqual(vm.projects.first?.models.supportedVideoDurations, Array(4...15))
         XCTAssertTrue(vm.project?.segments.isEmpty == true)
         let calls = await service.events()
         XCTAssertTrue(calls.isEmpty, "Creating must not call text/image/video providers")
@@ -164,7 +167,7 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertEqual(last, events, "A completed segment cannot be resubmitted by batch")
     }
 
-    func testSelectedVideosRunConcurrentlyWithoutTakingTheGlobalBusyLock() async throws {
+    func testSelectedVideosRunSequentiallySoActualTailCanFeedTheNextRequest() async throws {
         let (vm, store, service) = try await fixture()
         await service.setDelay(true)
         let draft = try await readyProject(store)
@@ -174,13 +177,178 @@ final class StoryStudioTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(20))
         XCTAssertFalse(vm.isBusy, "Per-segment media must not lock the whole story workspace")
         XCTAssertTrue(vm.isGeneratingVideo("s1", projectID: draft.id))
-        XCTAssertTrue(vm.isGeneratingVideo("s2", projectID: draft.id))
+        XCTAssertFalse(vm.isGeneratingVideo("s2", projectID: draft.id))
         try await idle(vm)
         let maximumConcurrentVideoCalls = await service.maximumConcurrentVideoCalls()
-        XCTAssertGreaterThanOrEqual(maximumConcurrentVideoCalls, 2)
+        XCTAssertEqual(maximumConcurrentVideoCalls, 1)
         XCTAssertTrue(vm.project?.segments.allSatisfy { $0.video != nil } == true)
         let persisted = try await store.load(owner: "alice")
         XCTAssertTrue(persisted.projects[0].segments.allSatisfy { $0.video != nil })
+    }
+
+    func testPreviousVideoGuidanceSendsPreviousCutWithoutFrameInputs() async throws {
+        let (vm, store, service) = try await fixture()
+        var draft = makeProject()
+        draft.source = "测试"
+        let frame = try await store.saveImage(
+            Data("frame".utf8), mimeType: "image/png", projectID: draft.id, owner: "alice"
+        )
+        let previousBytes = Data("previous-video".utf8)
+        let previousVideo = try await store.saveVideo(
+            .init(id: "previous-job", modelConfigID: "video", modelName: "MiniMax-H3", createdAt: "",
+                  mimeType: "video/mp4", videoData: previousBytes),
+            projectID: draft.id, owner: "alice"
+        )
+        var previous = StorySegment(id: "s1", title: "上一段", synopsis: "上一段",
+                                    sourceRange: .init(start: 0, end: 1))
+        previous.detail = makeDetail()
+        previous.firstFrames.images = [frame]; previous.confirmedFrameID = frame.id
+        previous.video = previousVideo
+        var current = StorySegment(id: "s2", title: "当前段", synopsis: "当前段",
+                                   sourceRange: .init(start: 1, end: 2))
+        current.detail = makeDetail()
+        current.firstFrames.images = [frame]; current.confirmedFrameID = frame.id
+        current.videoGuidanceMode = .previousVideo
+        draft.segments = [previous, current]
+        let created = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(created)
+
+        vm.selectedSegments = ["s2"]
+        vm.generateBatch(availableModels: models)
+        try await idle(vm)
+
+        let capturedRequest = await service.lastVideoRequest()
+        let request = try XCTUnwrap(capturedRequest)
+        XCTAssertNil(request.inputImage)
+        XCTAssertNil(request.lastFrameImage)
+        XCTAssertEqual(Data(base64Encoded: try XCTUnwrap(request.referenceVideo?.base64Data)), previousBytes)
+        XCTAssertEqual(request.referencePurpose, .extend)
+        XCTAssertTrue(request.prompt.contains("参考视频1就是紧邻本段之前的完整成片"))
+    }
+
+    func testCompletedVideoCanBeReopenedForEditingWithoutLosingHistory() async throws {
+        let (vm, store, service) = try await fixture()
+        var draft = makeProject()
+        let frame = try await store.saveImage(
+            Data("frame".utf8), mimeType: "image/png", projectID: draft.id, owner: "alice"
+        )
+        let oldVideo = try await store.saveVideo(
+            .init(id: "old-job", modelConfigID: "video", modelName: "MiniMax-H3", createdAt: "",
+                  mimeType: "video/mp4", videoData: Data("old-video".utf8)),
+            projectID: draft.id, owner: "alice"
+        )
+        var attempt = StoryVideoAttempt(
+            modelConfigID: "video", prompt: "old prompt", size: "768P", ratio: "16:9"
+        )
+        attempt.jobID = "old-job"; attempt.status = "completed"
+        var segment = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
+        segment.detail = makeDetail()
+        segment.firstFrames.images = [frame]; segment.confirmedFrameID = frame.id
+        segment.attempt = attempt; segment.video = oldVideo
+        draft.segments = [segment]
+        let createdForEditing = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(createdForEditing)
+
+        vm.prepareCompletedVideoForEditing("s1")
+        try await idle(vm)
+
+        let saved = try XCTUnwrap(vm.project?.segments.first)
+        XCTAssertNil(saved.video)
+        XCTAssertNil(saved.attempt)
+        XCTAssertEqual(saved.archivedVideos.map(\.jobID), ["old-job"])
+        XCTAssertEqual(saved.previousAttempts.map(\.id), [attempt.id])
+        XCTAssertTrue(saved.isReady)
+        let group = try XCTUnwrap(vm.creationHistoryGroups.first)
+        XCTAssertEqual(group.videos.map(\.fileURL.lastPathComponent), [oldVideo.filename])
+        XCTAssertTrue(group.currentVideos.isEmpty)
+        XCTAssertFalse(group.isComplete)
+        let editingEvents = await service.events()
+        XCTAssertTrue(editingEvents.isEmpty)
+    }
+
+    func testCompletedVideoCanBeRegeneratedWhileOldVersionRemainsInHistory() async throws {
+        let (vm, store, service) = try await fixture()
+        var draft = makeProject()
+        let frame = try await store.saveImage(
+            Data("frame".utf8), mimeType: "image/png", projectID: draft.id, owner: "alice"
+        )
+        let oldVideo = try await store.saveVideo(
+            .init(id: "old-job", modelConfigID: "video", modelName: "MiniMax-H3", createdAt: "",
+                  mimeType: "video/mp4", videoData: Data("old-video".utf8)),
+            projectID: draft.id, owner: "alice"
+        )
+        var attempt = StoryVideoAttempt(
+            modelConfigID: "video", prompt: "old prompt", size: "768P", ratio: "16:9"
+        )
+        attempt.jobID = "old-job"; attempt.status = "completed"
+        var segment = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
+        segment.detail = makeDetail()
+        segment.firstFrames.images = [frame]; segment.confirmedFrameID = frame.id
+        segment.attempt = attempt; segment.video = oldVideo
+        draft.segments = [segment]
+        let createdForRegeneration = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(createdForRegeneration)
+
+        vm.regenerateCompletedVideo("s1", availableModels: models, userIdeas: "节奏更舒缓")
+        try await idle(vm)
+
+        let saved = try XCTUnwrap(vm.project?.segments.first)
+        XCTAssertEqual(saved.video?.jobID, "remote-job")
+        XCTAssertEqual(saved.archivedVideos.map(\.jobID), ["old-job"])
+        XCTAssertEqual(saved.previousAttempts.map(\.id), [attempt.id])
+        let group = try XCTUnwrap(vm.creationHistoryGroups.first)
+        XCTAssertEqual(group.videos.count, 2)
+        XCTAssertEqual(group.currentVideos.map(\.segmentID), ["s1"])
+        XCTAssertTrue(group.isComplete)
+        let regenerationEvents = await service.events()
+        XCTAssertEqual(regenerationEvents.filter { $0 == "video" }.count, 1)
+        let capturedRequest = await service.lastVideoRequest()
+        let request = try XCTUnwrap(capturedRequest)
+        XCTAssertNil(request.inputImage)
+        XCTAssertNil(request.lastFrameImage)
+        XCTAssertEqual(
+            Data(base64Encoded: try XCTUnwrap(request.referenceVideo?.base64Data)),
+            Data("old-video".utf8)
+        )
+        XCTAssertEqual(request.referencePurpose, .edit)
+        XCTAssertTrue(request.prompt.contains("参考视频1就是本段需要修改的原视频"))
+        XCTAssertTrue(request.prompt.contains("节奏更舒缓"))
+    }
+
+    func testCompletedSegmentPlanCanBeRegeneratedAndArchivesItsOldVideo() async throws {
+        let (vm, store, service) = try await fixture()
+        var draft = makeProject()
+        let frame = try await store.saveImage(
+            Data("frame".utf8), mimeType: "image/png", projectID: draft.id, owner: "alice"
+        )
+        let oldVideo = try await store.saveVideo(
+            .init(id: "old-plan-job", modelConfigID: "video", modelName: "MiniMax-H3", createdAt: "",
+                  mimeType: "video/mp4", videoData: Data("old-video".utf8)),
+            projectID: draft.id, owner: "alice"
+        )
+        var attempt = StoryVideoAttempt(
+            modelConfigID: "video", prompt: "old plan", size: "768P", ratio: "16:9"
+        )
+        attempt.jobID = "old-plan-job"; attempt.status = "completed"
+        var segment = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
+        segment.detail = makeDetail()
+        segment.firstFrames.images = [frame]; segment.confirmedFrameID = frame.id
+        segment.attempt = attempt; segment.video = oldVideo
+        draft.segments = [segment]
+        let created = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(created)
+
+        vm.regenerateSegmentPlans(["s1"], userIdeas: "换成近景")
+        try await idle(vm)
+
+        let saved = try XCTUnwrap(vm.project?.segments.first)
+        XCTAssertNil(saved.video)
+        XCTAssertNil(saved.attempt)
+        XCTAssertEqual(saved.archivedVideos.map(\.jobID), ["old-plan-job"])
+        XCTAssertEqual(saved.detail?.firstFramePrompt, "a girl")
+        XCTAssertNil(saved.confirmedFrameID)
+        let planningEvents = await service.events()
+        XCTAssertEqual(planningEvents.filter { $0 == "story_update_segment" }.count, 1)
     }
 
     func testUnsupportedDurationStopsBeforeSubmitting() async throws {
@@ -420,6 +588,24 @@ final class StoryStudioTests: XCTestCase {
             XCTAssertTrue(prompt.contains("一把旧铜钥匙"), "Linked prop text must remain even when its image is not selected")
             XCTAssertTrue(prompt.contains("推门进入"), "Frame generation must include explicit character-scene relations")
         }
+        let userIdeas = "使用低机位，并突出钥匙上的划痕"
+        let heroResource = try XCTUnwrap(project.resource(id: "hero"))
+        XCTAssertTrue(StoryGenerationContext.assetPrompt(
+            project, resource: heroResource, userIdeas: userIdeas
+        ).contains(userIdeas))
+        XCTAssertTrue(try StoryGenerationContext.framePrompt(
+            project, segment: segment, role: .first, referenceResourceIDs: ["hero"],
+            userIdeas: userIdeas
+        ).contains(userIdeas))
+        XCTAssertTrue(try StoryGenerationContext.videoPrompt(
+            project, segment: segment, userIdeas: userIdeas
+        ).contains(userIdeas))
+        var previousVideoSegment = segment
+        previousVideoSegment.videoGuidanceMode = .previousVideo
+        project.segments = [previousVideoSegment]
+        XCTAssertTrue(try StoryGenerationContext.videoPrompt(
+            project, segment: previousVideoSegment
+        ).contains("参考视频1就是紧邻本段之前的完整成片"))
 
         var verboseSegment = segment
         verboseSegment.detail = .init(
@@ -473,20 +659,162 @@ final class StoryStudioTests: XCTestCase {
         project.segments = [segment]
         project.relations = [.init(id: "r1", segmentID: "s1", characterID: "hero", sceneID: "room",
                                    action: "推门进入", position: "门口")]
-        let batch = try StoryMediaBatch(project: project, owner: "alice", kind: .pipeline, targets: ["s1"], models: models)
-        XCTAssertEqual(batch.steps.map(\.kind), [.assets, .assets, .frames, .lastFrames, .videos])
-        XCTAssertEqual(batch.steps.map(\.targetID), ["hero", "room", "s1", "s1", "s1"])
+        let batch = try StoryMediaBatch(project: project, owner: "alice", kind: .pipeline,
+                                        targets: ["s1"], models: models,
+                                        userIdeas: "整体使用温暖的晨光")
+        XCTAssertEqual(batch.steps.map(\.kind), [.assets, .assets, .frames, .videos])
+        XCTAssertEqual(batch.steps.map(\.targetID), ["hero", "room", "s1", "s1"])
+        XCTAssertEqual(batch.userIdeas, "整体使用温暖的晨光")
+
+        project.segments[0].useLastFrameForVideo = true
+        let withLastFrame = try StoryMediaBatch(project: project, owner: "alice", kind: .pipeline,
+                                                targets: ["s1"], models: models)
+        XCTAssertEqual(withLastFrame.steps.map(\.kind), [.assets, .assets, .frames, .lastFrames, .videos])
+        var legacyObject = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(batch)
+        ) as? [String: Any])
+        legacyObject.removeValue(forKey: "userIdeas")
+        let legacyBatch = try JSONDecoder().decode(
+            StoryMediaBatch.self, from: JSONSerialization.data(withJSONObject: legacyObject)
+        )
+        XCTAssertNil(legacyBatch.userIdeas)
+    }
+
+    func testCreationHistoryGroupsGeneratedMediaByStoryAndKeepsTimelineOrder() async throws {
+        let (vm, store, _) = try await fixture()
+        var project = makeProject()
+
+        let generatedAsset = try await store.saveImage(
+            Data("generated-asset".utf8), mimeType: "image/png", projectID: project.id, owner: "alice",
+            sourceResourceID: "key", generationAttemptID: UUID(), providerResultID: "asset-result"
+        )
+        let uploadedAsset = try await store.saveImage(
+            Data("uploaded-asset".utf8), mimeType: "image/png", projectID: project.id, owner: "alice"
+        )
+        var prop = StoryProp(id: "key", name: "钥匙", description: "旧铜钥匙")
+        prop.media.images = [generatedAsset, uploadedAsset]
+        prop.media.confirmedImageID = generatedAsset.id
+        project.props = [prop]
+
+        let firstFrame = try await store.saveImage(
+            Data("first".utf8), mimeType: "image/png", projectID: project.id, owner: "alice",
+            sourceResourceID: "s1", generationAttemptID: UUID(), providerResultID: "first-result"
+        )
+        let sharedTail = try await store.saveImage(
+            Data("tail".utf8), mimeType: "image/png", projectID: project.id, owner: "alice",
+            sourceResourceID: "s1", generationAttemptID: UUID(), providerResultID: "tail-result"
+        )
+        let videoOne = try await store.saveVideo(
+            .init(id: "video-one", modelConfigID: "video", modelName: "video-model", createdAt: "",
+                  mimeType: "video/mp4", videoData: Data("video-one".utf8)),
+            projectID: project.id, owner: "alice"
+        )
+        let videoTwo = try await store.saveVideo(
+            .init(id: "video-two", modelConfigID: "video", modelName: "video-model", createdAt: "",
+                  mimeType: "video/mp4", videoData: Data("video-two".utf8)),
+            projectID: project.id, owner: "alice"
+        )
+
+        var first = StorySegment(id: "s1", title: "开场", synopsis: "开场", sourceRange: .init(start: 0, end: 1))
+        first.detail = makeDetail()
+        first.firstFrames.images = [firstFrame]; first.confirmedFrameID = firstFrame.id
+        first.lastFrames.images = [sharedTail]; first.confirmedLastFrameID = sharedTail.id
+        first.actualVideoLastFrameID = sharedTail.id
+        first.attempt = .init(modelConfigID: "video", prompt: "开场视频", size: "768P", ratio: "16:9")
+        first.video = videoOne
+
+        var second = StorySegment(id: "s2", title: "结尾", synopsis: "结尾", sourceRange: .init(start: 1, end: 2))
+        second.detail = makeDetail()
+        second.firstFrames.images = [sharedTail]; second.confirmedFrameID = sharedTail.id
+        second.inheritedFirstFrameSourceSegmentID = "s1"
+        second.attempt = .init(modelConfigID: "video", prompt: "结尾视频", size: "768P", ratio: "16:9")
+        second.video = videoTwo
+        project.segments = [first, second]
+
+        let created = await vm.create(project, availableModels: models)
+        XCTAssertTrue(created)
+        let group = try XCTUnwrap(vm.creationHistoryGroups.first)
+        XCTAssertEqual(group.projectTitle, "Test Story")
+        XCTAssertEqual(group.totalSegmentCount, 2)
+        XCTAssertTrue(group.isComplete)
+        XCTAssertEqual(group.images.map(\.kind), [.prop, .firstFrame, .lastFrame])
+        XCTAssertFalse(group.images.contains { $0.asset.id == uploadedAsset.id.uuidString })
+        XCTAssertEqual(group.videos.map(\.segmentID), ["s1", "s2"])
+        XCTAssertEqual(group.videos.map(\.segmentNumber), [1, 2])
+        XCTAssertEqual(group.videos.map(\.fileURL.lastPathComponent), [videoOne.filename, videoTwo.filename])
+    }
+
+    func testReusableStoryImagesOnlyReturnsMatchingAssetsFromOtherStories() async throws {
+        let (vm, store, _) = try await fixture()
+        var source = makeProject()
+        source.title = "旧剧情"
+        let confirmedCharacter = try await store.saveImage(
+            Data("confirmed-character".utf8), mimeType: "image/png",
+            projectID: source.id, owner: "alice"
+        )
+        let newerCharacter = try await store.saveImage(
+            Data("newer-character".utf8), mimeType: "image/png",
+            projectID: source.id, owner: "alice"
+        )
+        let sceneImage = try await store.saveImage(
+            Data("scene".utf8), mimeType: "image/png",
+            projectID: source.id, owner: "alice"
+        )
+        var character = StoryCharacter(id: "hero", name: "旧主角", profile: characterProfile())
+        character.media.images = [confirmedCharacter, newerCharacter]
+        character.media.confirmedImageID = confirmedCharacter.id
+        var scene = StoryScene(id: "room", name: "旧房间", profile: sceneProfile())
+        scene.media.images = [sceneImage]
+        scene.media.confirmedImageID = sceneImage.id
+        source.characters = [character]
+        source.scenes = [scene]
+        let createdSource = await vm.create(source, availableModels: models)
+        XCTAssertTrue(createdSource)
+
+        var current = makeProject()
+        current.title = "当前剧情"
+        let createdCurrent = await vm.create(current, availableModels: models)
+        XCTAssertTrue(createdCurrent)
+
+        let characters = vm.reusableStoryImages(kind: .character, excluding: current.id)
+        XCTAssertEqual(characters.map(\.projectTitle), ["旧剧情"])
+        XCTAssertEqual(characters.map(\.resourceName), ["旧主角"])
+        XCTAssertEqual(characters.map(\.image.id), [confirmedCharacter.id],
+                       "The confirmed version should be offered instead of an unconfirmed newer attempt")
+        XCTAssertEqual(vm.reusableStoryImages(kind: .scene, excluding: current.id).map(\.resourceName), ["旧房间"])
+        XCTAssertTrue(vm.reusableStoryImages(kind: .prop, excluding: current.id).isEmpty)
+        XCTAssertFalse(characters.contains { $0.projectID == current.id })
     }
 
     func testLegacySegmentWithoutTailFrameFieldsStillDecodes() throws {
         let original = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        XCTAssertNil(object["archivedVideos"], "Empty video history must keep legacy project digests stable")
         object.removeValue(forKey: "lastFrames")
         object.removeValue(forKey: "useLastFrameForVideo")
+        object.removeValue(forKey: "videoGuidanceMode")
         let decoded = try JSONDecoder().decode(StorySegment.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertTrue(decoded.lastFrames.images.isEmpty)
         XCTAssertNil(decoded.lastFrameGenerationAttemptID)
-        XCTAssertTrue(decoded.useLastFrameForVideo)
+        XCTAssertFalse(decoded.useLastFrameForVideo)
+        XCTAssertTrue(decoded.archivedVideos.isEmpty)
+    }
+
+    func testVideoGuidanceModeRoundTripsAndMigratesLegacyTailFlag() throws {
+        var segment = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
+        segment.videoGuidanceMode = .previousVideo
+        let decoded = try JSONDecoder().decode(StorySegment.self, from: JSONEncoder().encode(segment))
+        XCTAssertEqual(decoded.videoGuidanceMode, .previousVideo)
+        XCTAssertFalse(decoded.useLastFrameForVideo)
+
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(segment)) as? [String: Any])
+        legacy.removeValue(forKey: "videoGuidanceMode")
+        legacy["useLastFrameForVideo"] = true
+        let migrated = try JSONDecoder().decode(
+            StorySegment.self, from: JSONSerialization.data(withJSONObject: legacy)
+        )
+        XCTAssertEqual(migrated.videoGuidanceMode, .firstAndLastFrames)
+        XCTAssertTrue(migrated.useLastFrameForVideo)
     }
 
     func testFirstAndLastFrameAttemptsMergeByRoleAndAttemptID() async throws {
@@ -595,6 +923,38 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertTrue(saved.isReady)
         let events = await service.events()
         XCTAssertTrue(events.isEmpty, "Confirming local versions must not call a provider")
+    }
+
+    func testConfirmedLastFrameCanBeRemovedWithoutDeletingItsImage() async throws {
+        let (vm, store, service) = try await fixture()
+        var project = makeProject()
+        let first = try await store.saveImage(Data("first".utf8), mimeType: "image/png",
+                                              projectID: project.id, owner: "alice")
+        let last = try await store.saveImage(Data("last".utf8), mimeType: "image/png",
+                                             projectID: project.id, owner: "alice")
+        var segment = StorySegment(id: "s1", title: "A", synopsis: "A",
+                                   sourceRange: .init(start: 0, end: 1))
+        segment.detail = makeDetail()
+        segment.firstFrames.images = [first]
+        segment.confirmedFrameID = first.id
+        segment.lastFrames.images = [last]
+        segment.confirmedLastFrameID = last.id
+        segment.useLastFrameForVideo = true
+        project.segments = [segment]
+        let created = await vm.create(project, availableModels: models)
+        XCTAssertTrue(created)
+
+        vm.clearConfirmedLastFrame("s1")
+        try await idle(vm)
+
+        let saved = try XCTUnwrap(vm.project?.segments.first)
+        XCTAssertNil(saved.confirmedLastFrameID)
+        XCTAssertNil(saved.lastFrame)
+        XCTAssertFalse(saved.useLastFrameForVideo)
+        XCTAssertEqual(saved.lastFrames.images.map(\.id), [last.id])
+        XCTAssertNotNil(saved.firstFrame)
+        let events = await service.events()
+        XCTAssertTrue(events.isEmpty)
     }
 
     func testAmbiguousImageFailurePersistsIntentAndBlocksResubmissionUntilVerified() async throws {
@@ -725,6 +1085,62 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNotNil(vm.project?.segments[1].lastFrame)
     }
 
+    func testFrameGenerationRemainsObservableAfterLeavingAndReopeningProject() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryFrameLoadingTests-\(UUID().uuidString)", isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) }
+        }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let service = ConcurrentStoryImageService(imageData: png)
+        let vm = StoryStudioViewModel(media: service, store: store)
+        vm.activate(userID: "alice")
+        try await idle(vm)
+
+        var project = makeProject()
+        let heroImage = try await store.saveImage(
+            png, mimeType: "image/png", projectID: project.id, owner: "alice"
+        )
+        var hero = StoryCharacter(id: "hero", name: "主角", profile: characterProfile())
+        hero.media.images = [heroImage]
+        hero.media.confirmedImageID = heroImage.id
+        project.characters = [hero]
+        var segment = StorySegment(id: "s1", title: "开场", synopsis: "主角入场",
+                                   sourceRange: .init(start: 0, end: 1), characterIDs: ["hero"])
+        segment.detail = makeDetail()
+        project.segments = [segment]
+        let created = await vm.create(project, availableModels: models)
+        XCTAssertTrue(created)
+
+        vm.generateFrame("s1", role: .first, referenceAssetIDs: ["hero"])
+        XCTAssertFalse(vm.isBusy, "Frame generation should not hide behind the global busy state")
+        XCTAssertTrue(vm.isGeneratingFrame("s1", role: .first, projectID: project.id))
+        XCTAssertFalse(vm.isGeneratingFrame("s1", role: .last, projectID: project.id))
+
+        vm.backToList()
+        vm.open(project.id)
+        XCTAssertTrue(vm.isGeneratingFrame("s1", role: .first, projectID: project.id),
+                      "Closing and reopening the project must retain its loading state")
+
+        for _ in 0..<100 {
+            if await service.callCount(resourceID: "s1:first") > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let frameCalls = await service.callCount(resourceID: "s1:first")
+        XCTAssertEqual(frameCalls, 1)
+        await service.finish(resourceID: "s1:first")
+        try await idle(vm)
+        XCTAssertFalse(vm.isGeneratingFrame("s1", role: .first, projectID: project.id))
+        XCTAssertNotNil(vm.project?.segments.first?.firstFrame)
+    }
+
     func testStoreRejectsCompletionForAnotherAttemptID() async throws {
         let (_, store, _) = try await fixture()
         var project = makeProject()
@@ -785,6 +1201,64 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertEqual(vm.project?.segments[0].attempt?.prompt, "original")
     }
 
+    func testOneTapDurationAdjustmentExtendsLastShotAndRelation() async throws {
+        let (vm, _, _) = try await fixture()
+        var draft = makeProject()
+        draft.characters = [.init(id: "hero", name: "主角", profile: characterProfile())]
+        draft.scenes = [.init(id: "room", name: "房间", profile: sceneProfile())]
+        var segment = StorySegment(id: "s1", title: "短片段", synopsis: "短片段",
+                                   sourceRange: .init(start: 0, end: 1), seconds: 2,
+                                   characterIDs: ["hero"], sceneIDs: ["room"])
+        segment.detail = .init(firstFramePrompt: "start",
+                               shots: [.init(start: 0, end: 2, prompt: "move")],
+                               continuityIn: "in", continuityOut: "out", audio: "", constraints: "")
+        draft.segments = [segment]
+        draft.relations = [.init(id: "r1", segmentID: "s1", characterID: "hero", sceneID: "room",
+                                 action: "走进房间", position: "门口", startSecond: 0, endSecond: 2)]
+        let created = await vm.create(draft, availableModels: models)
+        XCTAssertTrue(created)
+
+        let videoModel = try XCTUnwrap(models.first { $0.id == "video" })
+        vm.adjustSegmentDurationsForVideoModel(["s1"], model: videoModel)
+        try await idle(vm)
+
+        XCTAssertEqual(vm.project?.segments[0].seconds, 4)
+        XCTAssertEqual(vm.project?.segments[0].detail?.shots.last?.end, 4)
+        XCTAssertEqual(vm.project?.relations[0].endSecond, 4)
+        XCTAssertEqual(vm.project?.models.supportedVideoDurations, Array(4...15))
+    }
+
+    func testStaleVideoBatchIsCompletedWhenItsExactJobAlreadyExistsInProject() async throws {
+        let (_, store, _) = try await fixture()
+        let original = try await readyProject(store)
+        try await store.save(original, owner: "alice")
+
+        var batch = try StoryMediaBatch(project: original, owner: "alice", kind: .videos,
+                                        targets: ["s1"], models: models)
+        batch.status = .running
+        batch.jobs["videos:s1"] = .init(jobID: "provider-job-1", completed: false)
+        try await store.commitMediaBatch(batch)
+
+        var completedProject = original
+        completedProject.segments[0].attempt = .init(
+            modelConfigID: "video", prompt: "prompt", size: "768P", ratio: "16:9", seconds: 15
+        )
+        completedProject.segments[0].attempt?.jobID = "provider-job-1"
+        completedProject.segments[0].attempt?.status = "completed"
+        completedProject.segments[0].video = .init(
+            filename: "completed.mp4", jobID: "provider-job-1", modelName: "MiniMax-H3"
+        )
+        try await store.save(completedProject, owner: "alice")
+
+        let recoveryResult = try await store.reconcileCompletedVideoBatch(batch)
+        let recovered = try XCTUnwrap(recoveryResult)
+        XCTAssertTrue(recovered.finished)
+        XCTAssertEqual(recovered.status, .completed)
+        XCTAssertTrue(recovered.jobs["videos:s1"]?.completed == true)
+        XCTAssertEqual(recovered.draft.segments[0].video?.jobID, "provider-job-1")
+        XCTAssertNil(recovered.error)
+    }
+
     func testVariableDurationTransitionUsesExplicitKindAndZeroLengthSourceRange() throws {
         var project = makeProject()
         project.source = "前半后半"
@@ -830,7 +1304,7 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertTrue(firstFrame.usedWhen.contains("不会调用图片模型"))
     }
 
-    func testConfirmedTailIsDirectlyInheritedAndUserFirstFrameIsNotOverwritten() throws {
+    func testOnlyActualVideoTailIsInheritedAndUserFirstFrameIsNotOverwritten() throws {
         var project = makeProject()
         project.segments = [
             .init(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1)),
@@ -841,21 +1315,84 @@ final class StoryStudioTests: XCTestCase {
         project.segments[0].lastFrames.images = [firstTail, secondTail]
         project.segments[0].lastFrames.confirmedImageID = firstTail.id
 
+        XCTAssertFalse(StoryContinuityContext.reconcileInheritedFirstFrames(&project))
+        XCTAssertNil(project.segments[1].firstFrame)
+        XCTAssertNil(project.segments[1].inheritedFirstFrameSourceSegmentID)
+
+        project.segments[0].actualVideoLastFrameID = firstTail.id
         XCTAssertTrue(StoryContinuityContext.reconcileInheritedFirstFrames(&project))
         XCTAssertEqual(project.segments[1].firstFrame?.id, firstTail.id)
         XCTAssertEqual(project.segments[1].inheritedFirstFrameSourceSegmentID, "s1")
 
-        project.segments[0].lastFrames.confirmedImageID = secondTail.id
+        project.segments[0].actualVideoLastFrameID = secondTail.id
         XCTAssertTrue(StoryContinuityContext.reconcileInheritedFirstFrames(&project))
         XCTAssertEqual(project.segments[1].firstFrame?.id, secondTail.id)
+        XCTAssertEqual(project.segments[0].confirmedLastFrameID, firstTail.id,
+                       "The pre-generated provider guide must remain independently confirmed")
 
-        let custom = StoryImage(filename: "custom.png", mimeType: "image/png")
+        let custom = StoryImage(filename: "custom.png", mimeType: "image/png", generationAttemptID: UUID())
         project.segments[1].firstFrames.images.append(custom)
         project.segments[1].firstFrames.confirmedImageID = custom.id
+        project.segments[1].userSelectedFirstFrameID = custom.id
         project.segments[1].inheritedFirstFrameSourceSegmentID = nil
-        project.segments[0].lastFrames.confirmedImageID = firstTail.id
+        project.segments[0].actualVideoLastFrameID = firstTail.id
         _ = StoryContinuityContext.reconcileInheritedFirstFrames(&project)
         XCTAssertEqual(project.segments[1].firstFrame?.id, custom.id)
+    }
+
+    func testApplyingActualVideoTailIsIdempotentAndReplacesAIPregeneratedNextFirstFrame() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("StoryActualTailTests-\(UUID())")
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock { if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) } }
+        var project = makeProject(); project.source = "测试"
+        let guide = try await store.saveImage(Data("guide".utf8), mimeType: "image/png",
+                                              projectID: project.id, owner: "alice")
+        let generatedFirst = try await store.saveImage(
+            Data("generated-first".utf8), mimeType: "image/png", projectID: project.id, owner: "alice",
+            sourceResourceID: "s2", generationAttemptID: UUID(), providerResultID: "image-job"
+        )
+        let video = try await store.saveVideo(
+            .init(id: "video-job", modelConfigID: "video", modelName: "video-model", createdAt: "",
+                  mimeType: "video/mp4", videoData: Data("video".utf8)),
+            projectID: project.id, owner: "alice"
+        )
+        var first = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
+        first.lastFrames.images = [guide]; first.confirmedLastFrameID = guide.id; first.video = video
+        var second = StorySegment(id: "s2", title: "B", synopsis: "B", sourceRange: .init(start: 1, end: 2))
+        second.firstFrames.images = [generatedFirst]; second.confirmedFrameID = generatedFirst.id
+        project.segments = [first, second]
+        try await store.save(project, owner: "alice")
+
+        let firstApply = try await store.applyActualVideoLastFrame(
+            Data("actual-frame".utf8), projectID: project.id, segmentID: "s1",
+            videoJobID: video.jobID, owner: "alice"
+        )
+        let actual = firstApply.1
+        XCTAssertEqual(firstApply.0.segments[0].confirmedLastFrameID, guide.id)
+        XCTAssertEqual(firstApply.0.segments[0].actualVideoLastFrameID, actual.id)
+        XCTAssertEqual(firstApply.0.segments[1].confirmedFrameID, actual.id)
+        XCTAssertEqual(firstApply.0.segments[1].inheritedFirstFrameSourceSegmentID, "s1")
+
+        let secondApply = try await store.applyActualVideoLastFrame(
+            Data("ignored-duplicate".utf8), projectID: project.id, segmentID: "s1",
+            videoJobID: video.jobID, owner: "alice"
+        )
+        XCTAssertEqual(secondApply.1.id, actual.id)
+        XCTAssertEqual(secondApply.0.segments[0].lastFrames.images.filter {
+            $0.derivedFromVideoJobID == video.jobID
+        }.count, 1)
+    }
+
+    func testLegacySegmentWithoutActualVideoTailMetadataStillDecodes() throws {
+        let segment = StorySegment(id: "s1", title: "A", synopsis: "A", sourceRange: .init(start: 0, end: 1))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(segment)
+        ) as? [String: Any])
+        object.removeValue(forKey: "actualVideoLastFrameID")
+        let decoded = try JSONDecoder().decode(
+            StorySegment.self, from: JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertNil(decoded.actualVideoLastFrameID)
     }
 
     private var models: [MediaGenerationModel] {
@@ -902,11 +1439,13 @@ final class StoryStudioTests: XCTestCase {
         return (vm, store, service)
     }
     private func idle(_ vm: StoryStudioViewModel) async throws {
-        for _ in 0..<300 where vm.isBusy || vm.isLoading || vm.hasActiveAssetGenerations || vm.hasActiveVideoGenerations {
+        for _ in 0..<300 where vm.isBusy || vm.isLoading || vm.hasActiveAssetGenerations
+            || vm.hasActiveFrameGenerations || vm.hasActiveVideoGenerations {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(vm.isBusy); XCTAssertFalse(vm.isLoading)
-        XCTAssertFalse(vm.hasActiveAssetGenerations); XCTAssertFalse(vm.hasActiveVideoGenerations)
+        XCTAssertFalse(vm.hasActiveAssetGenerations); XCTAssertFalse(vm.hasActiveFrameGenerations)
+        XCTAssertFalse(vm.hasActiveVideoGenerations)
     }
 }
 
@@ -971,6 +1510,7 @@ private struct StoryTestPreflightError: LocalizedError, MediaGenerationSubmissio
 
 private actor StoryTestService: ResumableVideoGenerationServicing, StoryPlanningServicing {
     private var calls: [String] = []
+    private var videoRequests: [VideoGenerationRequest] = []
     private var failVideo = false
     private var preflightVideoFailure = false
     private var delayed = false
@@ -981,6 +1521,7 @@ private actor StoryTestService: ResumableVideoGenerationServicing, StoryPlanning
     func setPreflightVideoFailure(_ value: Bool) { preflightVideoFailure = value }
     func setDelay(_ value: Bool) { delayed = value }
     func maximumConcurrentVideoCalls() -> Int { maximumVideoCalls }
+    func lastVideoRequest() -> VideoGenerationRequest? { videoRequests.last }
     func fetchModels() async throws -> [MediaGenerationModel] { [] }
     func plan(_ request: StoryPlanningRequest) async throws -> Data {
         calls.append(request.toolName)
@@ -998,6 +1539,7 @@ private actor StoryTestService: ResumableVideoGenerationServicing, StoryPlanning
     }
     func generateVideo(_ request: VideoGenerationRequest, progress: @escaping @Sendable (VideoGenerationProgress) async -> Void) async throws -> VideoGenerationResult {
         calls.append("video")
+        videoRequests.append(request)
         if preflightVideoFailure { throw StoryTestPreflightError() }
         activeVideoCalls += 1
         maximumVideoCalls = max(maximumVideoCalls, activeVideoCalls)

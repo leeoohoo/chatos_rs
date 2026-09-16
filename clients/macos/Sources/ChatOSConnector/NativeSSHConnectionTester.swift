@@ -120,7 +120,7 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
         )
     }
 
-    private static func validate(_ draft: RemoteConnectionDraft) throws {
+    static func validate(_ draft: RemoteConnectionDraft) throws {
         guard draft.host.trimmedNonEmpty != nil else {
             throw NativeRemoteConnectionError("请输入远端主机地址。")
         }

@@ -3,6 +3,100 @@ import XCTest
 @testable import ChatOSAgentRuntime
 
 final class AgentChatModelClientTests: XCTestCase {
+    func testResponsesUsesCompactionAndStatelessFullOutputContinuation() async throws {
+        let recorder = ResponsesTransportRecorder()
+        let client = try AgentResponsesModelClient(
+            baseURL: URL(string: "https://api.openai.com/v1/chat/completions")!,
+            model: "gpt-test", apiKey: "secret", maximumOutputTokens: 1_200,
+            temperature: 0, transport: { request in try await recorder.send(request) }
+        )
+        let initial: [AgentMessage] = [
+            .init(role: .system, content: "Use tools"),
+            .init(role: .user, content: "Start"),
+        ]
+        let first = try await client.complete(
+            messages: initial, tools: runtimeTestTools, timeout: 20
+        )
+        let second = try await client.complete(
+            messages: initial + [first, .init(role: .tool, content: "done", toolCallID: "call_1")],
+            tools: runtimeTestTools, timeout: 20
+        )
+
+        XCTAssertEqual(second.toolCalls.first?.name, "finish")
+        let requests = await recorder.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[0].url?.absoluteString, "https://api.openai.com/v1/responses")
+        let firstBody = try Self.body(requests[0])
+        XCTAssertEqual(firstBody["max_output_tokens"] as? Int, 1_200)
+        XCTAssertNil(firstBody["max_tokens"])
+        XCTAssertEqual(
+            ((firstBody["context_management"] as? [[String: Any]])?.first?["compact_threshold"] as? Int),
+            200_000
+        )
+        XCTAssertEqual(
+            ((firstBody["tools"] as? [[String: Any]])?.first?["name"] as? String),
+            "work"
+        )
+        let secondBody = try Self.body(requests[1])
+        XCTAssertNil(secondBody["previous_response_id"])
+        let history = try XCTUnwrap(secondBody["input"] as? [[String: Any]])
+        XCTAssertEqual(history.count, 4)
+        XCTAssertEqual(history[2]["type"] as? String, "function_call")
+        XCTAssertEqual(history[2]["call_id"] as? String, "call_1")
+        XCTAssertEqual(history[3]["type"] as? String, "function_call_output")
+        XCTAssertEqual(history[3]["call_id"] as? String, "call_1")
+        XCTAssertEqual(secondBody["prompt_cache_key"] as? String, "chatos-native:gpt-test")
+    }
+
+    func testEverySafeGatewaySelectsResponsesCompaction() {
+        XCTAssertTrue(AgentResponsesModelClient.shouldUse(
+            provider: "openai", baseURL: URL(string: "https://api.openai.com/v1")!
+        ))
+        XCTAssertTrue(AgentResponsesModelClient.shouldUse(
+            provider: "openai", baseURL: URL(string: "https://relay.example/v1")!
+        ))
+        XCTAssertTrue(AgentResponsesModelClient.shouldUse(
+            provider: "deepseek", baseURL: URL(string: "https://api.openai.com/v1")!
+        ))
+    }
+
+    func testResponsesStreamingRequiresCompletedEventAndReturnsAuthoritativeToolCall() async throws {
+        let sse = """
+        data: {"type":"response.created","response":{"id":"resp_stream"}}
+
+        data: {"type":"response.output_text.delta","delta":"checking"}
+
+        data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_stream","name":"finish","arguments":""}}
+
+        data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}
+
+        data: {"type":"response.completed","response":{"id":"resp_stream","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_stream","name":"finish","arguments":"{}"}]}}
+
+        """
+        let client = try AgentResponsesModelClient(
+            baseURL: URL(string: "https://api.openai.com/v1")!, model: "gpt-test", apiKey: "secret",
+            streamTransport: { _ in
+                let pair = AsyncThrowingStream<Data, Error>.makeStream()
+                pair.continuation.yield(Data(sse.utf8)); pair.continuation.finish()
+                return .init(statusCode: 200, body: pair.stream)
+            }
+        )
+        let events = StreamEventCollector()
+        let message = try await client.stream(
+            messages: [.init(role: .user, content: "finish")], tools: runtimeTestTools,
+            timeout: 20, onEvent: { await events.append($0) }
+        )
+        XCTAssertEqual(message.content, "checking")
+        XCTAssertEqual(
+            message.toolCalls,
+            [.init(id: "call_stream", name: "finish", arguments: "{}")]
+        )
+        let captured = await events.values
+        XCTAssertEqual(captured.first, .responseCreated)
+        XCTAssertEqual(captured.last, .completed)
+        XCTAssertTrue(captured.contains(.textDelta("checking")))
+    }
+
     func testWireAdapterKeepsToolCallIDsAndHonorsOutputReserve() async throws {
         let client = try AgentChatModelClient(baseURL: URL(string: "https://model.example/prefix/v1/responses")!, model: "test", apiKey: "secret",
             maximumOutputTokens: 1_200, temperature: 0, transport: { request in
@@ -111,6 +205,29 @@ final class AgentChatModelClientTests: XCTestCase {
             _ = try await client.stream(messages: [], tools: [], timeout: 10, onEvent: { _ in })
             XCTFail("An interrupted stream cannot execute a partially assembled tool call")
         } catch { guard case AgentRuntimeError.invalidResponse = error else { return XCTFail("Expected invalid stream") } }
+    }
+
+    private static func body(_ request: URLRequest) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+    }
+}
+
+private actor ResponsesTransportRecorder {
+    var requests: [URLRequest] = []
+    func send(_ request: URLRequest) throws -> (Data, Int) {
+        requests.append(request)
+        let call = requests.count == 1 ? ("resp_1", "call_1", "work") : ("resp_2", "call_2", "finish")
+        let body: [String: Any] = [
+            "id": call.0,
+            "status": "completed",
+            "output": [[
+                "type": "function_call",
+                "call_id": call.1,
+                "name": call.2,
+                "arguments": "{}",
+            ]],
+        ]
+        return (try JSONSerialization.data(withJSONObject: body), 200)
     }
 }
 

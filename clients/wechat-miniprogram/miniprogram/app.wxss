@@ -1,0 +1,82 @@
+page {
+  min-height: 100%;
+  background: #f2f2f7;
+  color: #1c1c1e;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  font-size: 26rpx;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 24rpx 24rpx calc(40rpx + env(safe-area-inset-bottom));
+}
+
+.page-header {
+  margin: 4rpx 4rpx 28rpx;
+}
+
+.large-title {
+  margin: 0;
+  font-size: 50rpx;
+  font-weight: 700;
+  letter-spacing: -1.2rpx;
+  line-height: 1.18;
+}
+
+.page-caption {
+  margin-top: 7rpx;
+  color: #76767c;
+  font-size: 23rpx;
+  line-height: 1.45;
+}
+
+.card,
+.list-group {
+  border: 1rpx solid rgba(60, 60, 67, .07);
+  border-radius: 22rpx;
+  background: #fff;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, .025);
+}
+
+.card {
+  margin-bottom: 18rpx;
+  padding: 24rpx;
+}
+
+.list-group { overflow: hidden; }
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 82rpx;
+  border-radius: 18rpx;
+  font-size: 27rpx;
+  font-weight: 600;
+  line-height: 82rpx;
+}
+
+.primary-button { background: #0a84ff; color: #fff; }
+.secondary-button { background: #e9e9ee; color: #1c1c1e; }
+.danger-button { background: #fff; color: #ff3b30; }
+
+button::after { border: 0; }
+
+.muted { color: #76767c; }
+.error-text { color: #d70015; }
+
+.status-dot {
+  width: 13rpx;
+  height: 13rpx;
+  border-radius: 50%;
+  background: #8e8e93;
+}
+
+.status-dot.online {
+  background: #30d158;
+  box-shadow: 0 0 0 6rpx rgba(48, 209, 88, .11);
+}

@@ -6,7 +6,6 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::memory_context::{MemoryEngineRecordWriter, MemoryRecordScope};
-use crate::runtime::MemoryContextOverflowRecovery;
 
 use super::TaskRuntimeBuilder;
 
@@ -24,12 +23,6 @@ pub struct TaskMemoryRuntimeConfig {
     pub timeout_ms: u64,
     #[serde(default = "default_memory_compose_context")]
     pub compose_context: bool,
-    #[serde(default = "default_retry_on_context_overflow")]
-    pub retry_on_context_overflow: bool,
-    #[serde(default = "default_active_summary_poll_interval_ms")]
-    pub active_summary_poll_interval_ms: u64,
-    #[serde(default = "default_active_summary_poll_timeout_ms")]
-    pub active_summary_poll_timeout_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_scope: Option<MemoryRecordScope>,
 }
@@ -44,9 +37,6 @@ impl TaskMemoryRuntimeConfig {
             internal_caller: None,
             timeout_ms: default_memory_timeout_ms(),
             compose_context: default_memory_compose_context(),
-            retry_on_context_overflow: default_retry_on_context_overflow(),
-            active_summary_poll_interval_ms: default_active_summary_poll_interval_ms(),
-            active_summary_poll_timeout_ms: default_active_summary_poll_timeout_ms(),
             record_scope: None,
         }
     }
@@ -78,27 +68,6 @@ impl TaskMemoryRuntimeConfig {
     ) -> Self {
         self.internal_caller = normalize_optional_token(Some(caller.into()));
         self.internal_secret = normalize_optional_token(secret);
-        self
-    }
-
-    pub fn with_retry_on_context_overflow(mut self, retry_on_context_overflow: bool) -> Self {
-        self.retry_on_context_overflow = retry_on_context_overflow;
-        self
-    }
-
-    pub fn with_active_summary_poll_interval_ms(
-        mut self,
-        active_summary_poll_interval_ms: u64,
-    ) -> Self {
-        self.active_summary_poll_interval_ms = active_summary_poll_interval_ms;
-        self
-    }
-
-    pub fn with_active_summary_poll_timeout_ms(
-        mut self,
-        active_summary_poll_timeout_ms: u64,
-    ) -> Self {
-        self.active_summary_poll_timeout_ms = active_summary_poll_timeout_ms;
         self
     }
 
@@ -140,18 +109,6 @@ impl TaskMemoryRuntimeConfig {
             // history that the next model turn cannot recover.
             builder = builder.with_record_writer(writer);
         }
-        if self.retry_on_context_overflow {
-            builder = builder.with_context_overflow_recovery(Some(
-                MemoryContextOverflowRecovery::new()
-                    .with_trigger_reason("context_overflow")
-                    .with_poll_interval(Duration::from_millis(
-                        self.active_summary_poll_interval_ms.max(1_000),
-                    ))
-                    .with_poll_timeout(Duration::from_millis(
-                        self.active_summary_poll_timeout_ms.max(10_000),
-                    )),
-            ));
-        }
         builder
     }
 
@@ -191,18 +148,6 @@ fn default_memory_timeout_ms() -> u64 {
 
 fn default_memory_compose_context() -> bool {
     true
-}
-
-fn default_retry_on_context_overflow() -> bool {
-    true
-}
-
-fn default_active_summary_poll_interval_ms() -> u64 {
-    10_000
-}
-
-fn default_active_summary_poll_timeout_ms() -> u64 {
-    600_000
 }
 
 fn normalize_optional_token(token: Option<String>) -> Option<String> {

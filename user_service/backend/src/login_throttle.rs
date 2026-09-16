@@ -144,6 +144,14 @@ mod tests {
             login_max_failed_attempts: 3,
             login_failure_window_seconds: 300,
             login_lockout_seconds: 120,
+            wechat_mini_program_app_id: None,
+            wechat_mini_program_app_secret: None,
+            wechat_mini_program_identity_hash_secret: None,
+            wechat_mini_program_api_base_url: "https://api.weixin.qq.com".to_string(),
+            wechat_mini_program_env_version: "release".to_string(),
+            wechat_mini_program_request_timeout_ms: 5_000,
+            wechat_mini_program_bind_ticket_ttl_seconds: 120,
+            wechat_mini_program_client_session_ttl_seconds: 604_800,
         }
     }
 

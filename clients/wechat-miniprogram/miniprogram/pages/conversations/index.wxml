@@ -1,0 +1,24 @@
+<view class="page">
+  <view class="page-header">
+    <view class="large-title">会话</view>
+    <view class="page-caption" wx:if="{{device}}">{{device.display_name}} · 客户端侧边栏</view>
+    <view class="page-caption" wx:else>选择一台电脑继续对话</view>
+  </view>
+
+  <view class="error-text error-card" wx:if="{{error}}" bindtap="loadResources">{{error}}，轻触重试</view>
+  <view class="card skeleton" wx:if="{{loading}}"></view>
+  <empty-state wx:elif="{{!device}}" title="没有已连接设备" description="请先让桌面端保持在线" />
+  <empty-state wx:elif="{{resources.length === 0}}" title="客户端没有会话入口" description="这里会显示桌面端左侧栏中的联系人和项目" />
+
+  <view class="list-group" wx:if="{{device && !loading && resources.length}}">
+    <view class="conversation-row" wx:for="{{resources}}" wx:key="id" data-id="{{item.id}}" bindtap="openResource" hover-class="conversation-row-pressed">
+      <view class="conversation-icon {{item.kind === 'contact' ? 'contact-icon' : ''}}">{{item.initial}}</view>
+      <view class="conversation-main">
+        <view class="conversation-title">{{item.title}}</view>
+        <view class="conversation-meta">{{item.kindLabel}} · {{item.messageLabel}} · {{item.updatedLabel}}</view>
+      </view>
+      <view class="opening" wx:if="{{openingId === item.id}}">•••</view>
+      <view class="chevron" wx:else>›</view>
+    </view>
+  </view>
+</view>

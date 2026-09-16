@@ -245,6 +245,38 @@ actor StoryProjectStore {
         return (project, video)
     }
 
+    /// Saves the frame decoded from a completed local video without replacing the
+    /// pre-generated tail that was confirmed as guidance for the video provider.
+    func applyActualVideoLastFrame(_ data: Data, projectID: UUID, segmentID: String,
+                                   videoJobID: String, owner: String,
+                                   forceNew: Bool = false) throws -> (StoryProject, StoryImage) {
+        var project = try loadProject(projectID: projectID, owner: owner)
+        guard let index = project.segments.firstIndex(where: { $0.id == segmentID }),
+              project.segments[index].video?.jobID == videoJobID else {
+            throw StoryError.unresolvedSubmission
+        }
+        if !forceNew, let existing = project.segments[index].lastFrames.images.first(where: {
+            $0.derivedFromVideoJobID == videoJobID
+        }) {
+            project.segments[index].actualVideoLastFrameID = existing.id
+            StoryContinuityContext.reconcileInheritedFirstFrames(&project)
+            project.updatedAt = Date()
+            try save(project, owner: owner)
+            return (project, existing)
+        }
+        let image = try saveImage(
+            data, mimeType: "image/png", projectID: projectID, owner: owner,
+            sourceResourceID: segmentID, providerResultID: videoJobID,
+            providerAssetID: "video-last-frame", derivedFromVideoJobID: videoJobID
+        )
+        project.segments[index].lastFrames.images.append(image)
+        project.segments[index].actualVideoLastFrameID = image.id
+        StoryContinuityContext.reconcileInheritedFirstFrames(&project)
+        project.updatedAt = Date()
+        try save(project, owner: owner)
+        return (project, image)
+    }
+
     func failVideoGeneration(_ error: String, projectID: UUID, segmentID: String,
                              attemptID: UUID, owner: String) throws -> StoryProject {
         var project = try loadProject(projectID: projectID, owner: owner)
@@ -315,7 +347,8 @@ actor StoryProjectStore {
         let current = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: url))
         let digest = try StoryAgentRun.digest(current)
         let draftDigest = try StoryAgentRun.digest(run.draft)
-        guard digest == run.baseDigest || digest == draftDigest else { throw StoryAgentError.projectChanged }
+        guard try StoryAgentRun.matchesPersistedDigest(run.baseDigest, project: current)
+                || digest == draftDigest else { throw StoryAgentError.projectChanged }
         var next = run.draft
         StoryContinuityContext.reconcileInheritedFirstFrames(&next)
         next.updatedAt = Date()
@@ -339,7 +372,8 @@ actor StoryProjectStore {
         let current = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: url))
         let currentDigest = try StoryAgentRun.digest(current)
         let draftDigest = try StoryAgentRun.digest(input.draft)
-        guard currentDigest == input.baseDigest || currentDigest == draftDigest else { return nil }
+        guard try StoryAgentRun.matchesPersistedDigest(input.baseDigest, project: current)
+                || currentDigest == draftDigest else { return nil }
 
         var run = input
         let result = "本阶段规划完成，已通过客户端校验。"
@@ -356,13 +390,15 @@ actor StoryProjectStore {
 
     func saveImage(_ data: Data, mimeType: String, projectID: UUID, owner: String,
                    sourceResourceID: String? = nil, generationAttemptID: UUID? = nil,
-                   providerResultID: String? = nil, providerAssetID: String? = nil) throws -> StoryImage {
+                   providerResultID: String? = nil, providerAssetID: String? = nil,
+                   derivedFromVideoJobID: String? = nil) throws -> StoryImage {
         guard !data.isEmpty, data.count <= 20 * 1024 * 1024,
               ["image/png", "image/jpeg", "image/webp"].contains(mimeType) else { throw StoryError.unsafeFile }
         let ext = mimeType == "image/jpeg" ? "jpg" : mimeType == "image/webp" ? "webp" : "png"
         let image = StoryImage(filename: "\(UUID().uuidString).\(ext)", mimeType: mimeType,
                                sourceResourceID: sourceResourceID, generationAttemptID: generationAttemptID,
-                               providerResultID: providerResultID, providerAssetID: providerAssetID)
+                               providerResultID: providerResultID, providerAssetID: providerAssetID,
+                               derivedFromVideoJobID: derivedFromVideoJobID)
         try saveFile(data, filename: image.filename, projectID: projectID, owner: owner)
         return image
     }

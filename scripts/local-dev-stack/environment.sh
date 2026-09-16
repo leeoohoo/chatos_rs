@@ -222,6 +222,9 @@ export_local_env() {
   export CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL="https://127.0.0.1:${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT}"
   export USER_SERVICE_HARNESS_PROVISIONING_ENABLED="${CHATOS_LOCAL_DEV_HARNESS_PROVISIONING_ENABLED:-true}"
   export USER_SERVICE_HARNESS_BASE_URL="${CHATOS_LOCAL_DEV_HARNESS_BASE_URL:-http://127.0.0.1:3000}"
+  # Debug builds expose a password-authenticated Companion simulator route.
+  # Release binaries do not register that route, even if this value is copied.
+  export USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION="${CHATOS_LOCAL_DEV_WECHAT_MINI_PROGRAM_ENV_VERSION:-develop}"
 }
 
 config_center_caller_signing_secret() {

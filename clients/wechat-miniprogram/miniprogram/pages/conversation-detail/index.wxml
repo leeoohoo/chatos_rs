@@ -1,0 +1,158 @@
+<view class="detail-page">
+  <view class="state-banner error-banner" wx:if="{{error}}" bindtap="loadInitial">{{error}}，轻触重试</view>
+  <view class="state-banner running-banner" wx:elif="{{activeTurnId}}">
+    <view class="running-dot"></view>
+    <text>电脑正在执行 · 此时发送会作为追加指令</text>
+    <button class="stop-button" loading="{{stopping}}" bindtap="stopTurn">停止</button>
+  </view>
+
+  <scroll-view class="timeline" scroll-y scroll-anchoring enhanced show-scrollbar="{{false}}" scroll-into-view="{{scrollTarget}}">
+    <view class="timeline-content">
+      <button class="older-button" wx:if="{{hasMore}}" loading="{{loadingOlder}}" bindtap="loadOlder">加载更早消息</button>
+      <view class="loading-state muted" wx:if="{{loading}}">正在加载会话…</view>
+
+      <view class="message-row {{item.isUser ? 'user-row' : 'assistant-row'}}" wx:for="{{messages}}" wx:key="id">
+        <view class="message-stack {{item.isUser ? 'user-stack' : ''}}">
+          <view class="message-bubble {{item.isUser ? 'user-bubble' : 'assistant-bubble'}} {{item.pending ? 'pending-bubble' : ''}}">
+            <markdown-view content="{{item.text}}" variant="{{item.isUser ? 'inverse' : 'default'}}" compact />
+            <view class="pending-label" wx:if="{{item.pending}}">发送中</view>
+            <view
+              class="task-detail-trigger {{loadingTaskMessageId === item.id ? 'task-detail-loading' : ''}}"
+              wx:if="{{item.canInspectTask}}"
+              role="button"
+              aria-label="查看执行过程与详情"
+              hover-class="task-detail-trigger-pressed"
+              data-message-id="{{item.id}}"
+              data-task-id="{{item.task_id}}"
+              bindtap="openTaskDetail"
+            >
+              <text>{{loadingTaskMessageId === item.id ? '正在读取…' : '执行过程与详情'}}</text>
+              <text class="task-detail-chevron">›</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="approval-card" wx:for="{{approvals}}" wx:key="id" wx:for-item="approval">
+        <view class="approval-header">
+          <view class="approval-symbol">!</view>
+          <view class="approval-heading">
+            <view class="approval-title">本机操作等待审批</view>
+            <view class="approval-meta">{{approval.source}} · {{approval.context || '当前项目'}} · {{approval.createdLabel}}</view>
+          </view>
+          <view class="risk-pill risk-{{approval.risk}}">{{approval.riskLabel}}</view>
+        </view>
+        <view class="approval-reason" wx:if="{{approval.reason}}"><markdown-view content="{{approval.reason}}" compact /></view>
+        <view class="approval-command"><text user-select>{{approval.command}}</text></view>
+        <view class="approval-actions">
+          <button class="approval-deny" wx:if="{{approval.canDecline}}" disabled="{{approval.resolving}}" data-approval-id="{{approval.id}}" data-decision="decline" bindtap="resolveApproval">拒绝</button>
+          <button class="approval-session" wx:if="{{approval.canAcceptForSession}}" disabled="{{approval.resolving}}" data-approval-id="{{approval.id}}" data-decision="acceptForSession" bindtap="resolveApproval">本会话允许</button>
+          <button class="approval-accept" wx:if="{{approval.canAccept}}" loading="{{approval.resolving}}" disabled="{{approval.resolving}}" data-approval-id="{{approval.id}}" data-decision="accept" bindtap="resolveApproval">仅本次允许</button>
+        </view>
+      </view>
+
+      <view class="prompt-card" wx:for="{{prompts}}" wx:key="id" wx:for-item="prompt">
+        <view class="prompt-header">
+          <view class="prompt-symbol">?</view>
+          <view>
+            <view class="prompt-title">{{prompt.title}}</view>
+            <view class="prompt-kicker">任务正在等待你的答复</view>
+          </view>
+        </view>
+        <view class="prompt-message" wx:if="{{prompt.message}}"><markdown-view content="{{prompt.message}}" compact /></view>
+
+        <view class="prompt-field" wx:for="{{prompt.fields}}" wx:key="key" wx:for-item="field">
+          <view class="field-label">{{field.label}}<text class="required" wx:if="{{field.required}}"> *</text></view>
+          <view class="field-description" wx:if="{{field.description}}">{{field.description}}</view>
+          <textarea wx:if="{{field.multiline && !field.secret}}" class="field-input field-textarea" value="{{prompt.values[field.key]}}" placeholder="{{field.placeholder}}" maxlength="-1" data-prompt-id="{{prompt.id}}" data-field-key="{{field.key}}" bindinput="onPromptInput" />
+          <input wx:else class="field-input" value="{{prompt.values[field.key]}}" placeholder="{{field.placeholder}}" password="{{field.secret}}" maxlength="-1" data-prompt-id="{{prompt.id}}" data-field-key="{{field.key}}" bindinput="onPromptInput" />
+        </view>
+
+        <view class="choice-list" wx:if="{{prompt.choice}}">
+          <view class="field-label">{{prompt.choice.multiple ? '请选择（可多选）' : '请选择'}}</view>
+          <view class="choice-option {{option.selected ? 'choice-selected' : ''}}" wx:for="{{prompt.choice.options}}" wx:key="value" wx:for-item="option" data-prompt-id="{{prompt.id}}" data-value="{{option.value}}" bindtap="toggleChoice">
+            <view class="choice-indicator">{{option.selected ? '✓' : ''}}</view>
+            <view class="choice-copy">
+              <view class="choice-label">{{option.label}}</view>
+              <view class="field-description" wx:if="{{option.description}}">{{option.description}}</view>
+            </view>
+          </view>
+        </view>
+
+        <view class="prompt-actions">
+          <button class="prompt-cancel" wx:if="{{prompt.allowCancel}}" disabled="{{prompt.submitting}}" data-prompt-id="{{prompt.id}}" bindtap="cancelPrompt">取消</button>
+          <button class="prompt-submit" loading="{{prompt.submitting}}" disabled="{{!prompt.valid || prompt.submitting}}" data-prompt-id="{{prompt.id}}" bindtap="submitPrompt">确认提交</button>
+        </view>
+      </view>
+
+      <view id="timeline-bottom" class="timeline-bottom"></view>
+    </view>
+  </scroll-view>
+
+  <view class="composer-shell" style="padding-bottom: {{keyboardHeight > 0 ? '12px' : 'calc(12px + env(safe-area-inset-bottom))'}};">
+    <view class="action-error" wx:if="{{actionError}}">{{actionError}}</view>
+    <view class="composer">
+      <textarea class="composer-input" auto-height fixed="{{true}}" maxlength="20000" cursor-spacing="16" value="{{input}}" placeholder="{{activeTurnId ? '追加一条指令…' : '发送消息…'}}" bindinput="onInput" bindconfirm="submitMessage" confirm-type="send" />
+      <button class="send-button" loading="{{submitting}}" disabled="{{!canSend || submitting}}" bindtap="submitMessage">↑</button>
+    </view>
+  </view>
+
+  <view class="task-sheet-backdrop" wx:if="{{taskPanelVisible}}" bindtap="closeTaskPanel">
+    <view class="task-sheet" catchtap="stopEvent">
+      <view class="task-sheet-handle"></view>
+      <view class="task-sheet-header">
+        <view class="task-sheet-title">{{taskPanelTitle}}</view>
+        <view class="task-sheet-close" role="button" aria-label="关闭任务详情" hover-class="task-sheet-close-pressed" bindtap="closeTaskPanel">完成</view>
+      </view>
+      <scroll-view class="task-sheet-scroll" scroll-y enhanced show-scrollbar="{{false}}">
+        <view class="task-sheet-state" wx:if="{{taskPanelLoading}}">
+          <view class="task-loading-indicator"></view>
+          <view>正在读取执行过程…</view>
+        </view>
+        <view class="task-sheet-state task-sheet-error" wx:elif="{{taskPanelError}}">{{taskPanelError}}</view>
+        <block wx:else>
+        <view class="task-card" wx:for="{{taskPanelTasks}}" wx:key="id" wx:for-item="task">
+          <view class="task-card-header">
+            <view class="task-title">{{task.title}}</view>
+            <view class="task-status status-{{task.status}}">{{task.statusLabel}}</view>
+          </view>
+          <view class="task-field" wx:if="{{task.objective}}">
+            <view class="task-field-label">目标</view>
+            <markdown-view content="{{task.objective}}" compact />
+          </view>
+          <view class="task-field" wx:if="{{task.description}}">
+            <view class="task-field-label">描述</view>
+            <markdown-view content="{{task.description}}" compact />
+          </view>
+          <view class="task-field" wx:if="{{task.reportText}}">
+            <view class="task-field-label">模型输出</view>
+            <markdown-view content="{{task.reportText}}" compact />
+          </view>
+          <view class="task-field" wx:if="{{task.resultText}}">
+            <view class="task-field-label">结果摘要</view>
+            <markdown-view content="{{task.resultText}}" compact />
+          </view>
+          <view class="task-process" wx:if="{{task.timeline.length}}">
+            <view class="task-field-label">执行时间线</view>
+            <view class="process-item" wx:for="{{task.timeline}}" wx:key="id" wx:for-item="step">
+              <view class="process-rail">
+                <view class="process-dot process-{{step.status}}"></view>
+                <view class="process-line"></view>
+              </view>
+              <view class="process-content">
+                <view class="process-heading">
+                  <view class="process-title">{{step.title}}</view>
+                  <view class="process-status">{{step.statusLabel}}</view>
+                </view>
+                <view class="process-time" wx:if="{{step.occurredAt}}">{{step.occurredAt}}</view>
+                <view class="process-detail"><markdown-view content="{{step.detail}}" compact /></view>
+              </view>
+            </view>
+          </view>
+          <view class="task-empty-process" wx:else>任务尚未记录执行时间线</view>
+        </view>
+        </block>
+      </scroll-view>
+    </view>
+  </view>
+</view>

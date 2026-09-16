@@ -21,7 +21,7 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.processTimelineItems.count, 1)
     }
 
-    func testDetailWithCallbackRunLoadsOnlyRun() async throws {
+    func testDetailLoadsCurrentTaskBeforeItsLatestRun() async throws {
         let service = TaskReplyInspectorServiceStub()
         let viewModel = TaskReplyInspectorViewModel(
             selection: makeSelection(section: .detail),
@@ -32,9 +32,24 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         try await waitUntilLoaded(viewModel)
 
         let calls = await service.callCounts()
-        XCTAssertEqual(calls.fetchTask, 0)
+        XCTAssertEqual(calls.fetchTask, 1)
         XCTAssertEqual(calls.fetchRun, 1)
         XCTAssertEqual(viewModel.task?.lastRun?.reportContent, "模型输出")
+    }
+
+    func testDetailIgnoresHistoricalCallbackRunAfterRetry() async throws {
+        let service = TaskReplyInspectorServiceStub(latestRunID: "run-2")
+        let viewModel = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .detail),
+            service: service
+        )
+
+        viewModel.load()
+        try await waitUntilLoaded(viewModel)
+
+        let requestedRunIDs = await service.requestedRunIDs()
+        XCTAssertEqual(requestedRunIDs, ["run-2"])
+        XCTAssertEqual(viewModel.task?.lastRun?.id, "run-2")
     }
 
     func testSwitchingFromProcessToDetailReusesTaskAndLoadsOnlyRun() async throws {
@@ -50,12 +65,12 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         try await waitUntilLoaded(viewModel)
 
         var calls = await service.callCounts()
-        XCTAssertEqual(calls.fetchTask, 1)
+        XCTAssertEqual(calls.fetchTask, 2)
         XCTAssertEqual(calls.fetchRun, 1)
 
         viewModel.selectSection(.process)
         calls = await service.callCounts()
-        XCTAssertEqual(calls.fetchTask, 1)
+        XCTAssertEqual(calls.fetchTask, 2)
         XCTAssertEqual(calls.fetchRun, 1)
     }
 
@@ -118,15 +133,22 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
 
 private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     private let failRunRequest: Bool
+    private let latestRunID: String
     private var taskCalls = 0
     private var runCalls = 0
+    private var runIDs: [String] = []
 
-    init(failRunRequest: Bool = false) {
+    init(failRunRequest: Bool = false, latestRunID: String = "run-1") {
         self.failRunRequest = failRunRequest
+        self.latestRunID = latestRunID
     }
 
     func callCounts() -> (fetchTask: Int, fetchRun: Int) {
         (taskCalls, runCalls)
+    }
+
+    func requestedRunIDs() -> [String] {
+        runIDs
     }
 
     func fetchGraph(
@@ -159,6 +181,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         eventOffset: Int
     ) async throws -> MessageTaskRunDetail {
         runCalls += 1
+        runIDs.append(runID)
         if failRunRequest {
             throw TaskReplyInspectorStubError.runUnavailable
         }
@@ -197,7 +220,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
             title: "任务一",
             status: "succeeded",
             processLog: "[2026-09-08 10:00] 开始\n执行完成",
-            lastRunID: "run-1"
+            lastRunID: latestRunID
         )
     }
 }

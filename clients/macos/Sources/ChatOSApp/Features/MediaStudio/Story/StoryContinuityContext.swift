@@ -35,8 +35,15 @@ enum StoryContinuityContext {
         return (project.segments[index - 1], image)
     }
 
-    /// Directly reuses a confirmed tail as the next segment's confirmed first frame.
-    /// This is a local data reconciliation only: it never invokes an image model.
+    static func previousActualVideoTail(_ project: StoryProject, segmentID: String) -> (segment: StorySegment, image: StoryImage)? {
+        guard let index = project.segments.firstIndex(where: { $0.id == segmentID }), index > 0,
+              let image = project.segments[index - 1].actualVideoLastFrame else { return nil }
+        return (project.segments[index - 1], image)
+    }
+
+    /// Directly reuses the preceding completed video's decoded final frame as the next
+    /// segment's confirmed first frame. A pre-generated confirmed tail remains only a
+    /// generation guide for its own video and is never inherited here.
     @discardableResult
     static func reconcileInheritedFirstFrames(_ project: inout StoryProject) -> Bool {
         guard project.segments.count > 1 else { return false }
@@ -45,7 +52,7 @@ enum StoryContinuityContext {
             let previousSegmentID = project.segments[index - 1].id
             let currentConfirmedID = project.segments[index].firstFrames.confirmedImageID
             let currentIsInherited = project.segments[index].inheritedFirstFrameSourceSegmentID != nil
-            guard let tail = project.segments[index - 1].lastFrame else {
+            guard let tail = project.segments[index - 1].actualVideoLastFrame else {
                 if currentIsInherited {
                     project.segments[index].firstFrames.confirmedImageID = nil
                     project.segments[index].inheritedFirstFrameSourceSegmentID = nil
@@ -57,7 +64,10 @@ enum StoryContinuityContext {
                 project.segments[index].firstFrames.images.append(tail)
                 changed = true
             }
-            if currentConfirmedID == nil || currentIsInherited {
+            let currentConfirmed = project.segments[index].firstFrame
+            let currentIsAIGenerated = currentConfirmed?.generationAttemptID != nil
+                && project.segments[index].userSelectedFirstFrameID != currentConfirmed?.id
+            if currentConfirmedID == nil || currentIsInherited || currentIsAIGenerated {
                 if project.segments[index].firstFrames.confirmedImageID != tail.id {
                     project.segments[index].firstFrames.confirmedImageID = tail.id
                     changed = true

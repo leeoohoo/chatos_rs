@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solution Execution Plan"
+  short_description: "生成带前置关系、验收标准与交付物的任务 DAG"
+  default_prompt: "Use $solution-execution-plan to turn the current design into a dependency-aware task plan."

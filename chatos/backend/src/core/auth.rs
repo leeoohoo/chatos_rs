@@ -108,6 +108,14 @@ pub fn access_token_from_raw(token: &str) -> Result<String, AuthHeaderError> {
 pub async fn resolve_auth_user_via_user_service(
     access_token: &str,
 ) -> Result<AuthUser, AuthResolveError> {
+    resolve_auth_user_and_scopes_via_user_service(access_token)
+        .await
+        .map(|(user, _)| user)
+}
+
+pub async fn resolve_auth_user_and_scopes_via_user_service(
+    access_token: &str,
+) -> Result<(AuthUser, Vec<String>), AuthResolveError> {
     let cfg = Config::try_get().map_err(AuthResolveError::ConfigUnavailable)?;
     let base_url = cfg
         .user_service_base_url
@@ -140,7 +148,7 @@ pub async fn resolve_auth_user_via_user_service(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "user".to_string());
-    Ok(AuthUser { user_id, role })
+    Ok((AuthUser { user_id, role }, principal.scopes))
 }
 
 fn map_user_service_verify_error(detail: String) -> AuthResolveError {

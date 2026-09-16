@@ -159,32 +159,6 @@ impl MongoStore {
             .map_err(|err| err.to_string())
     }
 
-    pub(in crate::store) async fn mark_run_memory_summary_processed(
-        &self,
-        run_id: &str,
-        summary_job_run_id: Option<&str>,
-    ) -> Result<bool, String> {
-        let mut set_doc = doc! {
-            "memory_summary_processed": true,
-            "updated_at": now_rfc3339(),
-        };
-        if let Some(summary_job_run_id) = summary_job_run_id {
-            set_doc.insert("summary_job_run_id", summary_job_run_id);
-        }
-        self.runs
-            .update_one(
-                doc! {
-                    "id": run_id,
-                    "post_process_dead_lettered": { "$ne": true },
-                },
-                doc! { "$set": set_doc },
-                None,
-            )
-            .await
-            .map(|result| result.modified_count > 0)
-            .map_err(|err| err.to_string())
-    }
-
     pub(in crate::store) async fn mark_run_chatos_followup_processed(
         &self,
         run_id: &str,
@@ -314,7 +288,6 @@ impl MongoStore {
                         "post_process_completed": false,
                         "post_process_dead_lettered": false,
                         "post_process_attempt_count": 0_i64,
-                        "memory_summary_processed": false,
                         "chatos_followup_processed": false,
                         "updated_at": now_rfc3339(),
                     },
@@ -366,7 +339,6 @@ impl MongoStore {
                         "post_process_completed": false,
                         "post_process_dead_lettered": false,
                         "post_process_attempt_count": 0_i64,
-                        "memory_summary_processed": false,
                         "chatos_followup_processed": false,
                         "updated_at": now.as_str(),
                     },

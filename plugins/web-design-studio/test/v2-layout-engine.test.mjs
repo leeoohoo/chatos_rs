@@ -321,7 +321,7 @@ test('deterministic fallback measurement treats CJK and emoji as full-width glyp
   });
   const solved = solveSceneLayout(documentWithRoot(root), { rootNodeId: root.id, viewportWidth: 220 });
   assert.ok(solved.boxes.get('text-cjk-label').width > 28);
-  assert.equal(solved.boxes.get('text-cjk-label').height, 21);
+  assert.equal(solved.boxes.get('text-cjk-label').height, 23);
   assert.ok(solved.boxes.get('text-cjk-body').height > 24);
 });
 
@@ -341,7 +341,7 @@ test('deterministic fallback keeps compact ranges with Unicode dashes on one lin
   });
   const solved = solveSceneLayout(documentWithRoot(root), { rootNodeId: root.id, viewportWidth: 300 });
   assert.ok(solved.boxes.get('text-week').width >= 70);
-  assert.equal(solved.boxes.get('text-week').height, 24);
+  assert.equal(solved.boxes.get('text-week').height, 26);
 });
 
 test('a max-width fill child stays centered on 4K and 8K parents without false overflow', () => {
@@ -418,6 +418,19 @@ test('nested hugging containers are remeasured after their final column width is
   assert.ok(gridSolved.boxes.get('text-grid-copy').height > 24);
   assert.equal(gridSolved.boxes.get('frame-grid-copy').height, gridSolved.boxes.get('text-grid-copy').height + 24);
   assert.equal(gridSolved.boxes.get('frame-nested-grid').height, gridSolved.boxes.get('frame-grid-copy').height + 20);
+});
+
+test('horizontal wrapping containers include every row in their hugged height', () => {
+  const children = ['a', 'b', 'c'].map((suffix) => text(`text-wrap-${suffix}`, suffix, 'fixed', 'fixed', { width: 120, height: 40 }));
+  const root = frame('frame-wrap-hug', 'horizontal', children, {
+    width: 300, sizingX: 'fill', sizingY: 'hug', wrap: true,
+    padding: { top: 10, right: 10, bottom: 10, left: 10 },
+    gap: { row: 12, column: 10 }
+  });
+  const solved = solveSceneLayout(documentWithRoot(root), { rootNodeId: root.id, viewportWidth: 300 });
+  assert.equal(solved.boxes.get(root.id).height, 80);
+  assert.equal(solved.boxes.get('text-wrap-c').y, 46);
+  assert.equal(solved.boxes.get(root.id).overflowY, false);
 });
 
 test('a nested grid reports its natural row height to every hugging ancestor', () => {

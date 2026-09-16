@@ -1,0 +1,29 @@
+{
+  "name": "solution-studio",
+  "version": "0.1.0",
+  "description": "Turn project context into requirements, solution designs, and dependency-aware execution plans.",
+  "author": {
+    "name": "Chatos"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["requirements", "solution-design", "execution-plan", "dag", "project-planning", "ai"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Solution Studio",
+    "shortDescription": "Requirements, solution designs, and dependency plans.",
+    "longDescription": "An Apple-inspired project planning workbench that grounds requirements in existing project evidence or a greenfield brief, turns them into traceable solution designs, and renders executable plans as dependency graphs with clear deliverables and acceptance criteria.",
+    "developerName": "Chatos",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Analyze this project and create requirements, a solution design, and an execution plan.",
+      "Turn this product idea into a traceable design and dependency roadmap.",
+      "Review the current plan and show which tasks are ready to execute."
+    ],
+    "brandColor": "#5E5CE6",
+    "composerIcon": "./assets/logo.svg",
+    "logo": "./assets/logo.svg",
+    "logoDark": "./assets/logo.svg"
+  },
+  "mcpServers": "./.mcp.json"
+}

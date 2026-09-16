@@ -22,6 +22,33 @@ pub struct StatelessHistoryMessage {
     pub skip_in_input: bool,
 }
 
+/// Appends an exact Responses `response.output` plus any caller-generated
+/// continuation items to a stateless input history. When OpenAI emits a
+/// compaction item, everything before the latest such item is no longer
+/// required and must be discarded before the next request.
+pub fn append_responses_history_items(
+    input: Value,
+    response_output_items: &[Value],
+    continuation_items: &[Value],
+) -> Value {
+    let mut items = input.as_array().cloned().unwrap_or_else(|| vec![input]);
+    items.extend_from_slice(response_output_items);
+    items.extend_from_slice(continuation_items);
+    Value::Array(prune_items_before_latest_compaction(items))
+}
+
+pub fn prune_items_before_latest_compaction(mut items: Vec<Value>) -> Vec<Value> {
+    if let Some(index) = items
+        .iter()
+        .rposition(|item| item.get("type").and_then(Value::as_str) == Some("compaction"))
+    {
+        if index > 0 {
+            items.drain(..index);
+        }
+    }
+    items
+}
+
 pub fn build_stateless_history_items(
     leading_prefixed_input_items: &[Value],
     trailing_prefixed_input_items: &[Value],
@@ -171,9 +198,29 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        build_stateless_history_items_with_output_cap, splice_current_input_items,
-        StatelessHistoryMessage,
+        append_responses_history_items, build_stateless_history_items_with_output_cap,
+        splice_current_input_items, StatelessHistoryMessage,
     };
+
+    #[test]
+    fn stateless_responses_history_keeps_complete_output_and_prunes_compacted_prefix() {
+        let history = append_responses_history_items(
+            json!([{"type":"message","role":"user","content":"old"}]),
+            &[
+                json!({"type":"compaction","id":"cmp_1","encrypted_content":"opaque"}),
+                json!({"type":"reasoning","encrypted_content":"encrypted"}),
+                json!({"type":"function_call","call_id":"call_1","name":"read","arguments":"{}"}),
+            ],
+            &[json!({"type":"function_call_output","call_id":"call_1","output":"ok"})],
+        );
+
+        let items = history.as_array().expect("history array");
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0]["type"], "compaction");
+        assert_eq!(items[1]["type"], "reasoning");
+        assert_eq!(items[2]["type"], "function_call");
+        assert_eq!(items[3]["type"], "function_call_output");
+    }
 
     #[test]
     fn splice_current_input_items_replaces_latest_user_in_place() {

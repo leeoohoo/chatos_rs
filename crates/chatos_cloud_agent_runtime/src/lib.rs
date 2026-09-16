@@ -111,6 +111,8 @@ pub struct CloudAgentAtomicTransition {
     pub pending_tool_results: Vec<Value>,
     #[serde(default)]
     pub response_input_items: Vec<Value>,
+    #[serde(default)]
+    pub usage_accumulator: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_outcome: Option<Value>,
     #[serde(default)]
@@ -861,7 +863,11 @@ fn append_response_output_items(
     response_output_items: &[Value],
     fallback_tool_calls: Option<&Value>,
 ) -> Vec<Value> {
-    let mut items = request_input_items.to_vec();
+    // Tool-returned images are injected as transient user messages immediately
+    // after their function_call_output so the next model step can inspect them.
+    // Once that step has completed, carrying those base64 images into every later
+    // stateless Responses request causes unbounded durable-history growth.
+    let mut items = prune_consumed_transient_tool_images(request_input_items);
     if response_output_items.is_empty() {
         if let Some(calls) = fallback_tool_calls.and_then(Value::as_array) {
             items.extend(calls.iter().filter_map(|call| {
@@ -879,6 +885,43 @@ fn append_response_output_items(
         items.extend_from_slice(response_output_items);
     }
     prune_items_before_latest_compaction(items)
+}
+
+fn prune_consumed_transient_tool_images(items: &[Value]) -> Vec<Value> {
+    let mut follows_tool_output = false;
+    items
+        .iter()
+        .filter_map(|item| {
+            match item.get("type").and_then(Value::as_str) {
+                Some("function_call_output") => {
+                    follows_tool_output = true;
+                }
+                Some("message") if is_image_only_user_message(item) && follows_tool_output => {
+                    return None;
+                }
+                _ => {
+                    follows_tool_output = false;
+                }
+            }
+            Some(item.clone())
+        })
+        .collect()
+}
+
+fn is_image_only_user_message(item: &Value) -> bool {
+    if item.get("role").and_then(Value::as_str) != Some("user") {
+        return false;
+    }
+    let Some(content) = item.get("content").and_then(Value::as_array) else {
+        return false;
+    };
+    !content.is_empty()
+        && content.iter().all(|part| {
+            matches!(
+                part.get("type").and_then(Value::as_str),
+                Some("input_image" | "image_url")
+            )
+        })
 }
 
 /// OpenAI's stateless Responses protocol allows all items preceding the most
@@ -904,6 +947,40 @@ fn append_continuation_items(
     let mut items = append_response_output_items(request_input_items, response_output_items, None);
     items.extend_from_slice(continuation_items);
     items
+}
+
+fn accumulate_usage(current: &Value, usage: Option<&Value>) -> Value {
+    let mut input_tokens = current
+        .get("input_tokens")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let mut cached_tokens = current
+        .get("cached_tokens")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let mut output_tokens = current
+        .get("output_tokens")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let mut requests = current
+        .get("requests")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+
+    if let Some(usage) = usage {
+        let snapshot = chatos_ai_runtime::extract_usage_snapshot(usage);
+        input_tokens = input_tokens.saturating_add(snapshot.input_tokens.max(0));
+        cached_tokens = cached_tokens.saturating_add(snapshot.cached_tokens.max(0));
+        output_tokens = output_tokens.saturating_add(snapshot.output_tokens.max(0));
+        requests = requests.saturating_add(1);
+    }
+
+    serde_json::json!({
+        "input_tokens": input_tokens,
+        "cached_tokens": cached_tokens,
+        "output_tokens": output_tokens,
+        "requests": requests,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -976,6 +1053,10 @@ pub fn reduce_single_step(
                     response.response_output_items.as_slice(),
                     Some(&tool_calls),
                 ),
+                usage_accumulator: accumulate_usage(
+                    &run.usage_accumulator,
+                    response.usage.as_ref(),
+                ),
                 terminal_outcome: None,
                 outbox: vec![outbox_intent(
                     &claim.ordering,
@@ -1019,6 +1100,7 @@ pub fn reduce_single_step(
                 response.response_output_items.as_slice(),
                 input_items.as_slice(),
             ),
+            usage_accumulator: accumulate_usage(&run.usage_accumulator, response.usage.as_ref()),
             terminal_outcome: None,
             outbox: vec![outbox_intent(
                 &claim.ordering,
@@ -1047,7 +1129,7 @@ pub fn reduce_single_step(
             next_iteration: run.iteration,
             next_retry_count: u32::try_from(next_model_attempt.saturating_sub(1))
                 .unwrap_or(u32::MAX),
-            previous_response_id: run.previous_response_id.clone(),
+            previous_response_id: None,
             continuation_mode: run.continuation_mode.clone(),
             current_input_items_ref: run.current_input_items_ref.clone(),
             mcp_runtime_session_ref: run.mcp_runtime_session_ref.clone(),
@@ -1055,6 +1137,7 @@ pub fn reduce_single_step(
             pending_tool_calls: run.pending_tool_calls.clone(),
             pending_tool_results: run.pending_tool_results.clone(),
             response_input_items: run.response_input_items.clone(),
+            usage_accumulator: run.usage_accumulator.clone(),
             terminal_outcome: None,
             outbox: vec![retry_outbox_intent(
                 &claim.ordering,
@@ -1090,6 +1173,7 @@ pub fn reduce_single_step(
                 result.response_output_items.as_slice(),
                 result.tool_calls.as_ref(),
             ),
+            usage_accumulator: accumulate_usage(&run.usage_accumulator, result.usage.as_ref()),
             terminal_outcome: Some(serde_json::json!({
                 "content": result.content,
                 "reasoning": result.reasoning,
@@ -1114,6 +1198,7 @@ pub fn reduce_single_step(
             claim,
             run.input.clone(),
             run.mcp_runtime_session_ref.clone(),
+            run.usage_accumulator.clone(),
             CloudAgentRunStatus::Failed,
             next_step_seq,
             next_iteration,
@@ -1123,6 +1208,7 @@ pub fn reduce_single_step(
             claim,
             run.input.clone(),
             run.mcp_runtime_session_ref.clone(),
+            run.usage_accumulator.clone(),
             CloudAgentRunStatus::Cancelled,
             next_step_seq,
             next_iteration,
@@ -1215,6 +1301,7 @@ fn terminal_transition(
     claim: CloudAgentClaim,
     next_input: Value,
     mcp_runtime_session_ref: Option<String>,
+    usage_accumulator: Value,
     status: CloudAgentRunStatus,
     next_step_seq: u64,
     next_iteration: u32,
@@ -1246,6 +1333,7 @@ fn terminal_transition(
         pending_tool_calls: Vec::new(),
         pending_tool_results: Vec::new(),
         response_input_items: Vec::new(),
+        usage_accumulator,
         terminal_outcome: Some(terminal_outcome),
         outbox: vec![terminal_event],
     }
@@ -1607,6 +1695,56 @@ mod tests {
 
         assert_eq!(&batch_two[..batch_one.len()], batch_one.as_slice());
         assert_eq!(batch_two.last().unwrap()["call_id"], "call-2");
+    }
+
+    #[test]
+    fn consumed_tool_images_are_not_carried_into_later_model_steps() {
+        let request = serde_json::json!([
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"design the page"}]},
+            {"type":"function_call","call_id":"call-image","name":"capture","arguments":"{}"},
+            {"type":"function_call_output","call_id":"call-image","output":"captured"},
+            {"type":"message","role":"user","content":[
+                {"type":"input_image","image_url":"data:image/png;base64,large-candidate"},
+                {"type":"image_url","image_url":"data:image/png;base64,large-diff"}
+            ]}
+        ]);
+        let response = serde_json::json!([
+            {"type":"reasoning","id":"rs-after-review","summary":[]},
+            {"type":"function_call","call_id":"call-accept","name":"accept","arguments":"{}"}
+        ]);
+
+        let next = append_response_output_items(
+            request.as_array().unwrap(),
+            response.as_array().unwrap(),
+            None,
+        );
+        let serialized = serde_json::to_string(&next).unwrap();
+
+        assert!(serialized.contains("design the page"));
+        assert!(serialized.contains("call-accept"));
+        assert!(!serialized.contains("large-candidate"));
+        assert!(!serialized.contains("large-diff"));
+    }
+
+    #[test]
+    fn original_user_images_are_preserved() {
+        let request = serde_json::json!([
+            {"type":"message","role":"user","content":[
+                {"type":"input_image","image_url":"data:image/png;base64,user-reference"}
+            ]},
+            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will inspect it."}]},
+            {"type":"function_call","call_id":"call-read","name":"read","arguments":"{}"},
+            {"type":"function_call_output","call_id":"call-read","output":"done"},
+            {"type":"message","role":"user","content":[
+                {"type":"input_image","image_url":"data:image/png;base64,tool-capture"}
+            ]}
+        ]);
+
+        let next = append_response_output_items(request.as_array().unwrap(), &[], None);
+        let serialized = serde_json::to_string(&next).unwrap();
+
+        assert!(serialized.contains("user-reference"));
+        assert!(!serialized.contains("tool-capture"));
     }
 
     #[test]

@@ -16,6 +16,7 @@ struct SettingsView: View {
             List(selection: $selection) {
                 Section("ChatOS") {
                     settingsRow(.general)
+                    settingsRow(.wechatCompanion)
                     settingsRow(.pet)
                     settingsRow(.globalUtilities)
                     settingsRow(.cloudAI)
@@ -81,6 +82,8 @@ struct SettingsView: View {
         switch selection {
         case .general:
             generalSettings
+        case .wechatCompanion:
+            WeChatCompanionSettingsView(service: model.wechatCompanionService)
         case .pet:
             PetSettingsView(preferences: model.petPreferences)
         case .agentRuntime:
@@ -310,7 +313,7 @@ struct SettingsView: View {
         case .approvals: LocalConnectorApprovalsView(viewModel: model.localConnectorControl)
         case .runtime: LocalConnectorRuntimePermissionsView(viewModel: model.localConnectorControl)
         case .sandbox: LocalConnectorSandboxView(viewModel: model.localConnectorControl)
-        case .general, .pet, .globalUtilities, .agentRuntime: EmptyView()
+        case .general, .wechatCompanion, .pet, .globalUtilities, .agentRuntime: EmptyView()
         }
     }
 
@@ -348,12 +351,13 @@ struct SettingsView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Hashable {
-    case general, pet, globalUtilities, cloudAI, agentRuntime, connection, plugins, approvals, runtime, sandbox
+    case general, wechatCompanion, pet, globalUtilities, cloudAI, agentRuntime, connection, plugins, approvals, runtime, sandbox
 
     func title(language: ChatOSLanguage) -> String {
         if language == .english {
             switch self {
             case .general: return "General & Account"
+            case .wechatCompanion: return "WeChat Companion"
             case .pet: return "Pet"
             case .globalUtilities: return "Global Utilities"
             case .cloudAI: return "AI Models"
@@ -367,6 +371,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         }
         return switch self {
         case .general: "常规与账号"
+        case .wechatCompanion: "微信小程序"
         case .pet: "宠物"
         case .globalUtilities: "全局工具"
         case .cloudAI: "AI 模型配置"
@@ -382,6 +387,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
     var systemImage: String {
         return switch self {
         case .general: "gearshape"
+        case .wechatCompanion: "qrcode.viewfinder"
         case .pet: "pawprint.fill"
         case .globalUtilities: "command.square.fill"
         case .cloudAI: "sparkles"
@@ -406,6 +412,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         case .runtime: "SYSTEM ACCESS"
         case .sandbox: "PERMISSION POLICY"
         case .general: "SETTINGS"
+        case .wechatCompanion: "WECHAT COMPANION"
         }
     }
 
@@ -413,6 +420,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         if language == .english {
             switch self {
             case .general: return "Manage interface language and the current account."
+            case .wechatCompanion: return "Bind WeChat and manage Mini Program sessions."
             case .pet: return "Manage the global pet and event notifications outside the main window."
             case .globalUtilities: return "Manage global shortcuts, capture, clipboard history, and quick search."
             case .cloudAI: return "Manage ChatOS cloud models and the local approval model."
@@ -426,6 +434,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         }
         return switch self {
         case .general: "管理界面语言与当前账号。"
+        case .wechatCompanion: "绑定微信并管理小程序登录设备。"
         case .pet: "管理脱离主窗口显示的全局宠物与事件提醒。"
         case .globalUtilities: "管理全局快捷键、截屏录屏、剪贴板历史和快速搜索。"
         case .cloudAI: "管理 ChatOS 云端模型，并选择本机审批模型。"
@@ -440,7 +449,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
 
     var connectorTab: LocalConnectorControlTab? {
         switch self {
-        case .general, .pet, .globalUtilities, .agentRuntime: nil
+        case .general, .wechatCompanion, .pet, .globalUtilities, .agentRuntime: nil
         case .cloudAI: .models
         case .connection: .connection
         case .plugins: .plugins

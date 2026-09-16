@@ -21,10 +21,12 @@ Before construction, read active context and the current Plan, choose its single
 
 Use the catalog progressively instead of loading every component into model context:
 
-1. Call `web_design_get_catalog` once to choose a coherent design system, theme, template, or production section.
-2. Call `web_design_search_components` with the user's intent and an explicit limit to find a small candidate set.
+1. Call `web_design_get_catalog` for the small summary; request one catalog kind only when its index is needed.
+2. Call `web_design_search_catalog` with `kind: "components"` and an explicit limit to find a small candidate set. Search sections, templates, or themes through the same bounded tool only when relevant.
 3. Call `web_design_get_component_contract` only for the selected component.
 4. Copy the returned Scene binding fields—library, component, variant, properties, content, default size, and slots—exactly into one `library-instance` node. Never invent a binding.
+
+Use `insert-simple-node` for the contracted `library-instance`: copy `library`, `component`, `variant`, `properties`, `content`, `frame`, and `slots` from `sceneBindingTemplate`, then choose only its position and stable semantic ID/name. The plugin fills all remaining Scene v2 base fields. Raw `insert-node` is an advanced escape hatch, not the default component path.
 
 Choose components only after the current Step has a visual intention. A library is a source of reliable primitives and variants, not a page template or art director. Select the variant whose shape, density, emphasis, and state support the composition; do not insert several near-identical variants merely to demonstrate the catalog.
 

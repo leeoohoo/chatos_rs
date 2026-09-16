@@ -51,6 +51,7 @@ pub fn routes() -> Router {
         .merge(api::messages::router())
         .merge(api::pet_activities::router())
         .merge(api::realtime::router())
+        .merge(api::companion::router())
         .merge(api::sessions::router())
         .merge(api::task_runner_plugins::router())
         .merge(api::task_manager::router())

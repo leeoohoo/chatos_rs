@@ -6,6 +6,21 @@ import XCTest
 
 @MainActor
 final class StoryAgentTests: XCTestCase {
+    func testUserIdeasAreIncludedInPlanningGoalAndBounded() throws {
+        let ideas = "  更突出主角的孤独感，并保留结尾的停顿。  "
+        let run = try StoryAgentRun(project: project(), owner: "alice", stage: .outline,
+                                    targetIDs: [], policy: .init(), userIdeas: ideas)
+        let goal = try XCTUnwrap(run.checkpoint.messages.last?.content)
+        XCTAssertTrue(goal.contains("更突出主角的孤独感，并保留结尾的停顿。"))
+        XCTAssertFalse(goal.contains("  更突出主角"))
+
+        let oversized = String(repeating: "想", count: StoryAgentTools.maximumUserIdeasLength + 20)
+        let bounded = StoryAgentTools.goalPrompt(stage: .outline, sourceLength: 4,
+                                                 targetCount: 0, userIdeas: oversized)
+        XCTAssertTrue(bounded.hasSuffix(String(repeating: "想", count: StoryAgentTools.maximumUserIdeasLength)))
+        XCTAssertFalse(bounded.contains(String(repeating: "想", count: StoryAgentTools.maximumUserIdeasLength + 1)))
+    }
+
     func testRealLoopSavesWrittenProfilesAndMultipleSegmentsWithoutMediaCalls() async throws {
         let store = fixture()
         let project = project()
@@ -173,6 +188,36 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertTrue(otherAccount.runs.isEmpty)
     }
 
+    func testInterruptedRunWithLegacyCapabilityDigestCanStillBeApplied() async throws {
+        let store = fixture()
+        var original = project()
+        original.models.supportedVideoDurations = Array(4...15)
+        try await store.save(original, owner: "alice")
+
+        var completed = try run(original)
+        for toolCall in outlineCalls() {
+            let outcome = try StoryAgentTools.execute(toolCall, run: &completed)
+            completed.toolReceipts[toolCall.id] = .init(
+                name: toolCall.name, arguments: toolCall.arguments, outcome: outcome
+            )
+        }
+        completed.checkpoint.status = .completed
+
+        let legacyDigest = try StoryAgentRun.legacyDigestIncludingCapabilities(original)
+        XCTAssertNotEqual(legacyDigest, try StoryAgentRun.digest(original))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(completed)
+        ) as? [String: Any])
+        object["baseDigest"] = legacyDigest
+        completed = try JSONDecoder().decode(
+            StoryAgentRun.self, from: JSONSerialization.data(withJSONObject: object)
+        )
+
+        let (appliedRun, appliedProject) = try await store.applyRun(completed, owner: "alice")
+        XCTAssertTrue(appliedRun.applied)
+        XCTAssertEqual(appliedProject.segments.map(\.id), ["s1", "s2"])
+    }
+
     func testRefinementOnlyWritesFrozenTargetsAndRequiresAllOfThem() async throws {
         let store = fixture(); var project = project()
         project.scenes = [.init(id: "room", name: "旧屋", profile: sceneProfile())]
@@ -233,6 +278,13 @@ final class StoryAgentTests: XCTestCase {
         segment.firstFrames.confirmedImageID = first.id
         segment.lastFrames.images = [last]
         segment.lastFrames.confirmedImageID = last.id
+        var completedAttempt = StoryVideoAttempt(
+            modelConfigID: "video", prompt: "old prompt", size: "768P", ratio: "16:9"
+        )
+        completedAttempt.jobID = "old-job"; completedAttempt.status = "completed"
+        let completedVideo = StoryVideo(filename: "old.mp4", jobID: "old-job", modelName: "video-model")
+        segment.attempt = completedAttempt
+        segment.video = completedVideo
         value.segments = [segment]
 
         let run = try StoryAgentRun(
@@ -247,7 +299,12 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertNil(run.draft.segments[0].confirmedFrameID)
         XCTAssertNil(run.draft.segments[0].confirmedLastFrameID)
         XCTAssertFalse(run.draft.segments[0].useLastFrameForVideo)
+        XCTAssertNil(run.draft.segments[0].video)
+        XCTAssertNil(run.draft.segments[0].attempt)
+        XCTAssertEqual(run.draft.segments[0].archivedVideos, [completedVideo])
+        XCTAssertEqual(run.draft.segments[0].previousAttempts, [completedAttempt])
         XCTAssertEqual(value.segments[0].detail, segment.detail, "The canonical project must remain unchanged until the draft is applied")
+        XCTAssertEqual(value.segments[0].video, completedVideo)
     }
 
     func testReadSegmentReturnsNeighborShotPlansAndVisualContinuityState() throws {
@@ -380,7 +437,11 @@ final class StoryAgentTests: XCTestCase {
     }
 
     private var models: [MediaGenerationModel] {
-        ["text", "image", "video"].map { .init(id: $0, name: $0, provider: "gpt", modelName: $0, enabled: true, taskEnabled: false, hasAPIKey: true) }
+        ["text", "image", "video"].map {
+            .init(id: $0, name: $0, provider: "gpt",
+                  modelName: $0 == "video" ? "MiniMax-H3" : $0,
+                  enabled: true, taskEnabled: false, hasAPIKey: true)
+        }
     }
     private func idle(_ vm: StoryStudioViewModel) async throws {
         for _ in 0..<500 where vm.isBusy || vm.isLoading || vm.isLoadingAgentRuns { try await Task.sleep(for: .milliseconds(10)) }
@@ -413,6 +474,44 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertEqual(value.draft.segments.map(\.kind), [.story, .transition, .story])
         XCTAssertEqual(value.draft.segments.map(\.seconds), [8, 3, 6])
         XCTAssertEqual(value.draft.totalSeconds, 17)
+    }
+
+    func testPlanningUsesSelectedVideoModelDurationCapabilities() throws {
+        var h3Project = project()
+        h3Project.models.supportedVideoDurations = Array(4...15)
+        var rejectedH3 = try run(h3Project)
+        rejectedH3.readThrough = rejectedH3.draft.source.count
+        XCTAssertThrowsError(try StoryAgentTools.execute(call("story_append_segments", ["segments": [
+            ["id": "s1", "title": "开始", "synopsis": "开始", "kind": "story", "seconds": 4,
+             "sourceStart": 0, "sourceEnd": 2],
+            ["id": "t1", "title": "转场", "synopsis": "空间转场", "kind": "transition", "seconds": 3,
+             "sourceStart": 2, "sourceEnd": 2],
+            ["id": "s2", "title": "结束", "synopsis": "结束", "kind": "story", "seconds": 4,
+             "sourceStart": 2, "sourceEnd": 4],
+        ]]), run: &rejectedH3))
+
+        var acceptedH3 = try run(h3Project)
+        acceptedH3.readThrough = acceptedH3.draft.source.count
+        XCTAssertNoThrow(try StoryAgentTools.execute(call("story_append_segments", ["segments": [
+            ["id": "s1", "title": "开始", "synopsis": "开始", "kind": "story", "seconds": 4,
+             "sourceStart": 0, "sourceEnd": 2],
+            ["id": "t1", "title": "转场", "synopsis": "空间转场", "kind": "transition", "seconds": 4,
+             "sourceStart": 2, "sourceEnd": 2],
+            ["id": "s2", "title": "结束", "synopsis": "结束", "kind": "story", "seconds": 4,
+             "sourceStart": 2, "sourceEnd": 4],
+        ]]), run: &acceptedH3))
+        XCTAssertEqual(acceptedH3.draft.segments.map(\.seconds), [4, 4, 4])
+        XCTAssertTrue(StoryAgentTools.systemPrompt(for: h3Project).contains("不得低于 4 秒"))
+
+        var h3MaxProject = project()
+        h3MaxProject.models.supportedVideoDurations = Array(5...15)
+        var rejectedH3Max = try run(h3MaxProject)
+        rejectedH3Max.readThrough = rejectedH3Max.draft.source.count
+        XCTAssertThrowsError(try StoryAgentTools.execute(call("story_append_segments", ["segments": [
+            ["id": "s1", "title": "开始", "synopsis": "开始", "kind": "story", "seconds": 4,
+             "sourceStart": 0, "sourceEnd": 4],
+        ]]), run: &rejectedH3Max))
+        XCTAssertTrue(StoryAgentTools.systemPrompt(for: h3MaxProject).contains("不得低于 5 秒"))
     }
 
     func testTransitionPolicyIsSelectiveAndOwnedByPlanningAgent() {
@@ -519,6 +618,4 @@ private actor StoryLoopMemory: AgentMemoryServicing {
     func compose() async throws -> AgentMemoryContext {
         .init(blocks: [], recentRecords: entries.map { .init(id: $0.id, message: $0.message) })
     }
-    func startSummary(reason: String) async throws -> AgentSummaryStatus { throw AgentContextError.summaryFailed(nil) }
-    func summaryStatus(jobID: String?) async throws -> AgentSummaryStatus { throw AgentContextError.summaryFailed(nil) }
 }

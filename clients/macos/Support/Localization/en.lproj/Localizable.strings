@@ -180,6 +180,7 @@
 "正在读取 Git 状态…" = "Loading Git Status…";
 "正在读取本机目录…" = "Loading Local Folders…";
 "正在读取本次运行的模型输出…" = "Loading Model Output for This Run…";
+"本次运行仍在执行，模型输出将在完成后显示。" = "This run is still active. Model output will appear when it finishes.";
 "正在读取目录…" = "Loading Folder…";
 "此操作会直接删除服务器上的文件或目录。" = "This action permanently deletes the file or folder from the server.";
 "每次点击“启动新实例”都会在本机创建一个独立进程。展开实例即可查看持续更新的标准输出和错误日志。" = "Each click on Start New Instance creates a separate local process. Expand an instance to view continuously updated output and error logs.";

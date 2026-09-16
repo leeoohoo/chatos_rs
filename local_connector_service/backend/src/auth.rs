@@ -18,12 +18,15 @@ use crate::models::CurrentUser;
 
 #[derive(Debug, Deserialize)]
 struct UserServiceVerifiedPrincipal {
+    jti: String,
     principal_type: String,
     user_id: Option<String>,
     username: Option<String>,
     display_name: Option<String>,
     role: Option<String>,
     owner_user_id: Option<String>,
+    #[serde(default)]
+    scopes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +91,7 @@ fn current_user_from_principal(
         .ok_or_else(|| "user_service principal missing user_id".to_string())?;
     Ok(CurrentUser {
         principal_type,
+        token_jti: normalize_text(principal.jti),
         user_id,
         username: principal.username.and_then(normalize_text),
         display_name: principal.display_name.and_then(normalize_text),
@@ -96,5 +100,6 @@ fn current_user_from_principal(
             .and_then(normalize_text)
             .unwrap_or_else(|| "user".to_string()),
         owner_user_id: principal.owner_user_id.and_then(normalize_text),
+        scopes: principal.scopes,
     })
 }

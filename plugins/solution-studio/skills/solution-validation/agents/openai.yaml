@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solution Validation"
+  short_description: "检查追踪关系、版本新鲜度和依赖图完整性"
+  default_prompt: "Use $solution-validation to validate the current workspace and identify ready tasks."

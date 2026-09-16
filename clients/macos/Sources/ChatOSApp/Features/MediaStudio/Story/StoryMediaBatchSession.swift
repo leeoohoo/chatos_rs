@@ -58,7 +58,7 @@ actor StoryMediaBatchSession {
            project.segments.first(where: { $0.id == id })?.firstFrame != nil {
             var next = state
             next.jobs[key] = .init(completed: true)
-            next.events.append(.init(detail: "已直接承接上一段尾帧作为首帧：\(id)，未调用图片模型"))
+            next.events.append(.init(detail: "已承接上一段成片最后一帧作为首帧：\(id)，未调用图片模型"))
             try await persist(next)
             return
         }
@@ -70,20 +70,44 @@ actor StoryMediaBatchSession {
             guard profile.durations.contains(project.segments[index].seconds) else {
                 throw StoryError.unsupportedDuration
             }
-            let prompt = try StoryGenerationContext.videoPrompt(project, segment: project.segments[index])
+            let prompt = try StoryGenerationContext.videoPrompt(
+                project, segment: project.segments[index], userIdeas: state.userIdeas ?? ""
+            )
             var image: ImageGenerationInputImage?
             var lastFrameImage: ImageGenerationInputImage?
+            var referenceVideo: VideoGenerationInputVideo?
+            var referencePurpose: VideoGenerationReferencePurpose = .reference
             if oldJob == nil {
-                guard let frame = project.segments[index].firstFrame else { throw StoryError.invalidPlan }
-                image = try await input(frame, name: "first-frame.png")
-                if model.supportsVideoLastFrame, project.segments[index].useLastFrameForVideo,
+                switch project.segments[index].videoGuidanceMode {
+                case .firstFrame, .firstAndLastFrames:
+                    guard let frame = project.segments[index].firstFrame else { throw StoryError.invalidPlan }
+                    image = try await input(frame, name: "first-frame.png")
+                case .previousVideo:
+                    guard model.supportsVideoReference, index > 0,
+                          let previousVideo = project.segments[index - 1].video else {
+                        throw StoryError.invalidPlan
+                    }
+                    referenceVideo = try await input(previousVideo, name: "previous-segment.mp4")
+                    referencePurpose = .extend
+                case .sourceVideo:
+                    guard model.supportsVideoReference,
+                          let sourceVideo = project.segments[index].archivedVideos.last else {
+                        throw StoryError.invalidPlan
+                    }
+                    referenceVideo = try await input(sourceVideo, name: "source-video.mp4")
+                    referencePurpose = .edit
+                }
+                if model.supportsVideoLastFrame,
+                   project.segments[index].videoGuidanceMode == .firstAndLastFrames,
                    let tail = project.segments[index].lastFrame {
                     lastFrameImage = try await input(tail, name: "last-frame.png")
                 }
             }
             let request = VideoGenerationRequest(modelConfigID: model.id, prompt: prompt, size: profile.sizes[0],
                                                  seconds: project.segments[index].seconds,
-                                                 inputImage: image, lastFrameImage: lastFrameImage, ratio: project.ratio)
+                                                 inputImage: image, lastFrameImage: lastFrameImage,
+                                                 referenceVideo: referenceVideo,
+                                                 referencePurpose: referencePurpose, ratio: project.ratio)
             if oldJob == nil {
                 var next = state; next.jobs[key] = .init()
                 next.draft.segments[index].attempt = .init(modelConfigID: model.id, prompt: prompt, size: request.size,
@@ -102,10 +126,30 @@ actor StoryMediaBatchSession {
             if let progressError { throw progressError }
             try await check()
             let video = try await store.saveVideo(result, projectID: project.id, owner: state.owner)
+            var actualLastFrame: StoryImage?
+            do {
+                let videoURL = try store.fileURL(video.filename, projectID: project.id, owner: state.owner)
+                let png = try await StoryVideoFrameExtractor.lastFramePNG(from: videoURL)
+                actualLastFrame = try await store.saveImage(
+                    png, mimeType: "image/png", projectID: project.id, owner: state.owner,
+                    sourceResourceID: id, providerResultID: video.jobID,
+                    providerAssetID: "video-last-frame", derivedFromVideoJobID: video.jobID
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Saving a successfully generated video must not fail merely because its
+                // container cannot be decoded locally for continuity extraction.
+            }
             var next = state; next.jobs[key]?.completed = true; next.jobs[key]?.jobID = result.id
             next.draft.segments[index].video = video
             next.draft.segments[index].attempt?.jobID = result.id; next.draft.segments[index].attempt?.status = "completed"
             next.draft.segments[index].error = nil
+            if let actualLastFrame {
+                next.draft.segments[index].lastFrames.images.append(actualLastFrame)
+                next.draft.segments[index].actualVideoLastFrameID = actualLastFrame.id
+                StoryContinuityContext.reconcileInheritedFirstFrames(&next.draft)
+            }
             next.events.append(.init(detail: "视频已保存：\(project.segments[index].title)"))
             try await persist(next)
         } else {
@@ -113,7 +157,9 @@ actor StoryMediaBatchSession {
             if step.kind == .assets {
                 guard let asset = project.resource(id: id) else { throw StoryError.invalidPlan }
                 request = .init(modelConfigID: project.models.imageModelID,
-                                prompt: StoryGenerationContext.assetPrompt(project, resource: asset), size: nil, count: 1)
+                                prompt: StoryGenerationContext.assetPrompt(
+                                    project, resource: asset, userIdeas: state.userIdeas ?? ""
+                                ), size: nil, count: 1)
             } else {
                 guard let segment = project.segments.first(where: { $0.id == id }), segment.detail != nil else { throw StoryError.invalidPlan }
                 var references: [ImageGenerationInputImage] = []
@@ -136,7 +182,8 @@ actor StoryMediaBatchSession {
                                                                    role: step.kind == .frames ? .first : .last,
                                                                    referenceResourceIDs: segment.resourceIDs,
                                                                    previousTailReferenceIndex: previousTailReferenceIndex,
-                                                                   currentFirstFrameReferenceIndex: currentFirstFrameReferenceIndex),
+                                                                   currentFirstFrameReferenceIndex: currentFirstFrameReferenceIndex,
+                                                                   userIdeas: state.userIdeas ?? ""),
                     size: nil, count: 1, referenceImages: references)
             }
             var intent = state; let job = StoryMediaBatch.Job(); intent.jobs[key] = job
@@ -188,6 +235,11 @@ actor StoryMediaBatchSession {
         let url = try store.fileURL(image.filename, projectID: state.draft.id, owner: state.owner)
         let bytes = try await MediaStudioImageLoader.data(for: .init(id: image.id.uuidString, mimeType: image.mimeType, url: url))
         return .init(name: name, mimeType: image.mimeType, base64Data: bytes.base64EncodedString())
+    }
+    private func input(_ video: StoryVideo, name: String) async throws -> VideoGenerationInputVideo {
+        let url = try store.fileURL(video.filename, projectID: state.draft.id, owner: state.owner)
+        let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
+        return .init(name: name, mimeType: "video/mp4", base64Data: bytes.base64EncodedString())
     }
     private func progress(_ value: VideoGenerationProgress, step: StoryMediaBatch.Step) async {
         do {

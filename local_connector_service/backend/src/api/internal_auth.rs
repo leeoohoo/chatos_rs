@@ -122,11 +122,13 @@ pub(super) fn internal_service_auth_from_request(
     let service_name = caller.replace('-', "_");
     let user = CurrentUser {
         principal_type: "service".to_string(),
+        token_jti: None,
         user_id: format!("service:{caller}:{owner_user_id}"),
         username: Some(service_name.clone()),
         display_name: Some(service_name),
         role: "service".to_string(),
         owner_user_id: Some(owner_user_id.clone()),
+        scopes: Vec::new(),
     };
     Ok(Some((
         user,
@@ -687,11 +689,13 @@ mod tests {
 
         let human = CurrentUser {
             principal_type: "human_user".to_string(),
+            token_jti: None,
             user_id: "user-1".to_string(),
             username: None,
             display_name: None,
             role: "user".to_string(),
             owner_user_id: None,
+            scopes: Vec::new(),
         };
         assert!(require_chatos_service_caller(&human).is_err());
     }

@@ -341,7 +341,8 @@ extension NativeLocalConnectorService {
                     toolName: toolName,
                     requiredPermissions: requiredPermissions
                 ),
-                approvalScopeKey: "plugin:\(adapterSessionID)"
+                approvalScopeKey: "plugin:\(adapterSessionID)",
+                workspaceID: request.workspaceID
             )
             guard case .approve = approval else {
                 throw NativePluginRuntimeError.permissionDenied("用户未批准这次 Plugin 操作")

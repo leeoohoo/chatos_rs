@@ -14,12 +14,6 @@ use crate::runtime::{
 };
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 use std::sync::Arc;
-use std::time::Duration;
-
-// Local Connector MCP calls use the same platform-wide two-hour execution
-// budget as other normal MCP providers, independently of short control-plane
-// request timeouts.
-const STANDARD_LOCAL_CONNECTOR_TOOL_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 #[cfg(not(test))]
 const RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY: &str =
     "mcp_management.runtime.session_cache_max_entries";
@@ -108,9 +102,7 @@ impl AppState {
             config.local_connector_internal_api_secret.clone(),
             ProviderRuntimeConfig {
                 downstream_request_timeout: config.downstream_request_timeout,
-                local_connector_request_timeout: local_connector_tool_timeout(
-                    config.downstream_request_timeout,
-                ),
+                local_connector_request_timeout: config.local_connector_request_timeout,
                 response_limit_bytes: config.provider_response_limit_bytes,
             },
             skill_attestations.clone(),
@@ -176,10 +168,6 @@ impl AppState {
         };
         Ok(state)
     }
-}
-
-fn local_connector_tool_timeout(downstream_timeout: Duration) -> Duration {
-    downstream_timeout.max(STANDARD_LOCAL_CONNECTOR_TOOL_TIMEOUT)
 }
 
 fn task_runner_http_client(config: &AppConfig) -> Result<reqwest::Client, String> {
@@ -262,19 +250,4 @@ async fn load_runtime_managed_resources(
             100_000, 100_000, 100_000, 100_000,
         )?),
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_connector_tool_timeout_is_not_limited_by_short_control_plane_timeout() {
-        for seconds in [5, 90, 105, 180] {
-            assert_eq!(
-                local_connector_tool_timeout(Duration::from_secs(seconds)),
-                Duration::from_secs(2 * 60 * 60)
-            );
-        }
-    }
 }

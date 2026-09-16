@@ -9,7 +9,8 @@ public protocol NativeRemoteConnectionRuntimeProviding: Sendable {
 
 public actor NativeRemoteConnectionService: RemoteConnectionServicing,
     NativeRemoteConnectionRuntimeProviding,
-    RemoteTerminalCommandServicing {
+    RemoteTerminalCommandServicing,
+    NativeRemoteTerminalSessionProviding {
     public static let nativeDeviceID = "chatos-swift-native-client"
     public static let nativeWorkspaceID = "local-machine"
     private static let logger = Logger(
@@ -173,6 +174,25 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
             error: result.stderr.trimmingCharacters(in: .newlines),
             exitCode: Int32(clamping: result.exitCode),
             workingDirectory: parsed.workingDirectory
+        )
+    }
+
+    public func makeRemoteTerminalSession(
+        connectionID: String,
+        verificationCode: String?
+    ) async throws -> NativeRemoteTerminalSession {
+        // Probe authentication without a code so keyboard-interactive
+        // challenges reach the native secure sheet. A submitted one-time code
+        // is used only by the real PTY connection and is never consumed by a
+        // second probe connection.
+        if verificationCode?.trimmedNonEmpty == nil {
+            _ = try await testSaved(id: connectionID, verificationCode: nil)
+        }
+        let draft = try await resolvedDraft(id: connectionID)
+        return try NativeRemoteTerminalSession(
+            connectionID: connectionID,
+            draft: draft,
+            verificationCode: verificationCode
         )
     }
 

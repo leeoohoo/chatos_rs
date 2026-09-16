@@ -1,4 +1,5 @@
 import ChatOSAPI
+import ChatOSAgentRuntime
 import ChatOSConnector
 import ChatOSCore
 import AppKit
@@ -77,6 +78,7 @@ final class AppModel: ObservableObject {
     let petDefaultFileHandlerPrompt = PetDefaultFileHandlerPromptController()
     let petOverlayStore = PetOverlayStore()
     let globalUtilityPreferences = GlobalUtilityPreferencesStore()
+    let terminalWorkspace = TerminalWorkspaceViewModel()
     private(set) lazy var globalUtilityCoordinator = GlobalUtilityCoordinator(
         model: self,
         preferences: globalUtilityPreferences
@@ -114,8 +116,10 @@ final class AppModel: ObservableObject {
     let projectGitService: NativeProjectGitService
     let projectRunService: NativeProjectRunService
     let notepadService: ChatOSNotepadService
+    let wechatCompanionService: ChatOSWeChatCompanionService
     private let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
     private var conversationCache: [String: ConversationSessionViewModel] = [:]
+    private var projectConversationPreparationTasks: [String: Task<String, Error>] = [:]
     private var workspaceLoadGeneration: Int64 = 0
     private var pluginApplicationsLoadGeneration: Int64 = 0
     private var visualSessionExpansion: [String: Bool] = [:]
@@ -154,7 +158,15 @@ final class AppModel: ObservableObject {
                 stateURL: RuntimeConfiguration.nativeConnectorStateURL
             ),
             ticketProvider: connectorTicketProvider,
-            remoteConnectionRuntime: remoteConnectionService
+            remoteConnectionRuntime: remoteConnectionService,
+            approvalMemoryProviderFactory: { tenantID, workspaceID, runID, runtimeScope in
+                let scope = try AgentMemoryScope(
+                    tenantID: tenantID, profile: "approval", projectID: workspaceID,
+                    runID: runID, runtimeScope: runtimeScope
+                )
+                let memory = try await ChatOSMemoryEngineService(client: apiClient, scope: scope)
+                return AgentMemoryContextProvider(scope: scope, service: memory)
+            }
         )
 
         self.historyStore = historyStore
@@ -186,6 +198,7 @@ final class AppModel: ObservableObject {
         self.projectCodeNavigationService = NativeProjectCodeNavigationService(connector: localConnectorService)
         self.projectGitService = NativeProjectGitService(connector: localConnectorService)
         self.notepadService = ChatOSNotepadService(client: apiClient)
+        self.wechatCompanionService = ChatOSWeChatCompanionService(client: apiClient)
         self.userLanguagePreferencesService = ChatOSUserLanguagePreferencesService(client: apiClient)
         self.projectRunService = NativeProjectRunService(
             connector: localConnectorService,
@@ -269,6 +282,10 @@ final class AppModel: ObservableObject {
                 self?.applyPluginVisualSessions(sessions)
                 try? await Task.sleep(for: .milliseconds(450))
             }
+        }
+        Task { [weak self, localConnectorService] in
+            guard let self else { return }
+            await localConnectorService.setCompanionRuntime(self)
         }
         authentication.start()
     }
@@ -493,6 +510,11 @@ final class AppModel: ObservableObject {
             taskID: taskID,
             lookup: lookup
         )
+        let existingProcess = task.processLog?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !existingProcess.isEmpty {
+            return task
+        }
         guard let runID = (activity.route.runID ?? task.lastRunID)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !runID.isEmpty else {
@@ -508,9 +530,9 @@ final class AppModel: ObservableObject {
         )
         guard let runDetail else { return task }
         var mergedTask = runDetail.task.merging(run: runDetail.run)
-        let existingProcess = mergedTask.processLog?
+        let mergedProcess = mergedTask.processLog?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if existingProcess.isEmpty, !runDetail.events.isEmpty {
+        if mergedProcess.isEmpty, !runDetail.events.isEmpty {
             let formatter = ISO8601DateFormatter()
             mergedTask.processLog = runDetail.events.map { event in
                 let timestamp = event.createdAt.map(formatter.string(from:)) ?? "事件"
@@ -847,6 +869,7 @@ final class AppModel: ObservableObject {
             workspaceContacts = []
             workspaceConversations = []
             remoteConnections = []
+            terminalWorkspace.closeAllTerminals()
             remoteConnectionWorkspaceStore.removeAllWorkspaces()
             pluginApplicationsLoadGeneration += 1
             pluginApplications = []
@@ -860,6 +883,11 @@ final class AppModel: ObservableObject {
         case .restoring, .authenticating:
             break
         }
+    }
+
+    func prepareForApplicationTermination() {
+        terminalWorkspace.closeAllTerminals()
+        remoteConnectionWorkspaceStore.removeAllWorkspaces()
     }
 
     private func loadLanguagePreferences() {
@@ -1153,39 +1181,62 @@ final class AppModel: ObservableObject {
     }
 
     private func prepareProjectConversationIfNeeded(projectID: String, force: Bool = false) {
-        guard let owner = authenticatedUserID else { return }
-        let accountGeneration = workspaceAccountGeneration
         guard !preparingProjectConversationIDs.contains(projectID) else { return }
         guard force || projectConversationPreparationErrors[projectID] == nil else { return }
-        guard var project = workspaceProject(id: projectID),
-              let contact = defaultProjectContact else { return }
+        guard workspaceProject(id: projectID) != nil,
+              defaultProjectContact != nil else { return }
 
         preparingProjectConversationIDs.insert(projectID)
         projectConversationPreparationErrors[projectID] = nil
         Task {
             do {
-                project.projectContext = try await localProjectsService.projectContext(
-                    ownerUserID: owner,
-                    projectID: projectID
-                )
-                let conversationID = try await projectConversationService.ensureConversation(
-                    project: project,
-                    contact: contact
-                )
-                guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration,
-                      workspaceProject(id: projectID) != nil else { return }
-                applyPreparedConversation(
-                    conversationID,
-                    projectID: projectID,
-                    contactName: contact.name
-                )
+                _ = try await ensureProjectConversation(projectID: projectID)
             } catch {
-                guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration,
-                      workspaceProject(id: projectID) != nil else { return }
-                projectConversationPreparationErrors[projectID] = error.localizedDescription
+                if workspaceProject(id: projectID) != nil {
+                    projectConversationPreparationErrors[projectID] = error.localizedDescription
+                }
             }
             preparingProjectConversationIDs.remove(projectID)
         }
+    }
+
+    private func ensureProjectConversation(projectID: String) async throws -> String {
+        if let existing = projects.first(where: { $0.id == projectID })?.conversationID {
+            return existing
+        }
+        if let task = projectConversationPreparationTasks[projectID] {
+            return try await task.value
+        }
+        guard let owner = authenticatedUserID,
+              var project = workspaceProject(id: projectID),
+              let contact = defaultProjectContact else {
+            throw LocalConnectorCompanionResourceError.unavailable
+        }
+        let accountGeneration = workspaceAccountGeneration
+        let task = Task { @MainActor [localProjectsService, projectConversationService] in
+            project.projectContext = try await localProjectsService.projectContext(
+                ownerUserID: owner,
+                projectID: projectID
+            )
+            return try await projectConversationService.ensureConversation(
+                project: project,
+                contact: contact
+            )
+        }
+        projectConversationPreparationTasks[projectID] = task
+        defer { projectConversationPreparationTasks.removeValue(forKey: projectID) }
+        let conversationID = try await task.value
+        guard owner == authenticatedUserID,
+              accountGeneration == workspaceAccountGeneration,
+              workspaceProject(id: projectID) != nil else {
+            throw CancellationError()
+        }
+        applyPreparedConversation(
+            conversationID,
+            projectID: projectID,
+            contactName: contact.name
+        )
+        return conversationID
     }
 
     private func applyPreparedConversation(
@@ -1234,6 +1285,72 @@ final class AppModel: ObservableObject {
         )
         conversationCache[sessionID] = created
         return created
+    }
+}
+
+extension AppModel: LocalConnectorCompanionRuntimeProviding {
+    func companionResources() -> [LocalConnectorCompanionResource] {
+        let contacts = contacts.map { resource in
+            companionResource(resource, kind: .contact)
+        }
+        let projects = projects.map { resource in
+            companionResource(resource, kind: .project)
+        }
+        return contacts + projects
+    }
+
+    func resolveCompanionResource(id: String) async throws -> LocalConnectorCompanionResource {
+        let parts = id.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[1].isEmpty else {
+            throw LocalConnectorCompanionResourceError.notFound
+        }
+        let sourceID = String(parts[1])
+        switch parts[0] {
+        case "contact":
+            guard let resource = contacts.first(where: { $0.id == sourceID }),
+                  resource.conversationID != nil else {
+                throw LocalConnectorCompanionResourceError.unavailable
+            }
+            return companionResource(resource, kind: .contact)
+        case "project":
+            _ = try await ensureProjectConversation(projectID: sourceID)
+            guard let resource = projects.first(where: { $0.id == sourceID }) else {
+                throw LocalConnectorCompanionResourceError.notFound
+            }
+            return companionResource(resource, kind: .project)
+        default:
+            throw LocalConnectorCompanionResourceError.notFound
+        }
+    }
+
+    private func companionResource(
+        _ resource: ResourceItem,
+        kind: LocalConnectorCompanionResourceKind
+    ) -> LocalConnectorCompanionResource {
+        let conversation = resource.conversationID.flatMap { id in
+            workspaceConversations.first(where: { $0.id == id })
+        }
+        return LocalConnectorCompanionResource(
+            id: "\(kind.rawValue):\(resource.id)",
+            kind: kind,
+            title: resource.title,
+            subtitle: kind == .contact ? resource.subtitle : resource.contactName,
+            conversationID: resource.conversationID,
+            messageCount: conversation?.messageCount ?? 0,
+            updatedAt: conversation.map { ISO8601DateFormatter().string(from: $0.updatedAt) }
+        )
+    }
+}
+
+private enum LocalConnectorCompanionResourceError: LocalizedError {
+    case notFound
+    case unavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .notFound: "桌面客户端中没有这个会话入口。"
+        case .unavailable: "这个会话入口暂时还不能开始对话。"
+        }
     }
 }
 

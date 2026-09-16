@@ -180,23 +180,6 @@ impl AppStore {
         }
     }
 
-    pub(crate) async fn mark_run_memory_summary_processed(
-        &self,
-        run_id: &str,
-        summary_job_run_id: Option<&str>,
-    ) -> Result<bool, String> {
-        match self {
-            Self::InMemory(store) => {
-                Ok(store.mark_run_memory_summary_processed(run_id, summary_job_run_id))
-            }
-            Self::Mongo(store) => {
-                store
-                    .mark_run_memory_summary_processed(run_id, summary_job_run_id)
-                    .await
-            }
-        }
-    }
-
     pub(crate) async fn mark_run_chatos_followup_processed(
         &self,
         run_id: &str,

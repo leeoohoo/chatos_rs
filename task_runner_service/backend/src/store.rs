@@ -113,11 +113,7 @@ fn merge_run_async_progress(run: &mut TaskRunRecord, current: &TaskRunRecord) {
     );
     run.post_process_completed |= current.post_process_completed;
     run.post_process_dead_lettered |= current.post_process_dead_lettered;
-    run.memory_summary_processed |= current.memory_summary_processed;
     run.chatos_followup_processed |= current.chatos_followup_processed;
-    if run.summary_job_run_id.is_none() {
-        run.summary_job_run_id = current.summary_job_run_id.clone();
-    }
     run.post_process_event_enqueued |= current.post_process_event_enqueued;
     run.post_process_attempt_count = run
         .post_process_attempt_count

@@ -1,7 +1,15 @@
+import ChatOSAgentRuntime
 import ChatOSCore
 import CryptoKit
 import Foundation
 import OSLog
+
+public typealias NativeApprovalMemoryProviderFactory = @Sendable (
+    _ tenantID: String,
+    _ workspaceID: String,
+    _ runID: UUID,
+    _ runtimeScope: String
+) async throws -> AgentMemoryContextProvider
 
 public struct NativeConnectorConfiguration: Sendable {
     public var gatewayBaseURL: URL
@@ -33,6 +41,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
+    let approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory?
+    weak var companionRuntime: (any LocalConnectorCompanionRuntimeProviding)?
     private let secretStore = NativeConnectorSecretStore()
     var state: NativeConnectorPersistentState
     private var cachedAccessToken: String?
@@ -62,11 +72,15 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     ] = [:]
     var sessionApprovalAllowlist: Set<String> = []
     var seenRelayNonces: [String: Int64] = [:]
+    var terminalRelaySessions: [String: any NativeTerminalRelaySessionProtocol] = [:]
+    let terminalRelayEventPump = NativeTerminalRelayEventPump()
+    var terminalRelayEventTask: Task<Void, Never>?
 
     public init(
         configuration: NativeConnectorConfiguration,
         ticketProvider: any LocalConnectorPairingTicketProviding,
-        remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)? = nil
+        remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)? = nil,
+        approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory? = nil
     ) {
         self.configuration = configuration
         self.ticketProvider = ticketProvider
@@ -81,6 +95,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             .deletingLastPathComponent()
             .appendingPathComponent("PluginRuntime", isDirectory: true)
         self.remoteConnectionRuntime = remoteConnectionRuntime
+        self.approvalMemoryProviderFactory = approvalMemoryProviderFactory
         self.state = (try? stateStore.load()) ?? .empty
     }
 
@@ -89,6 +104,12 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             try? await connectGateway()
         }
         return statusSnapshot()
+    }
+
+    public func setCompanionRuntime(
+        _ runtime: (any LocalConnectorCompanionRuntimeProviding)?
+    ) {
+        companionRuntime = runtime
     }
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {
@@ -150,6 +171,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         invalidateManagedRuntimeConfig()
         shouldMaintainGatewayConnection = false
         gatewayReconnectFailureCount = 0
+        closeAllTerminalRelaySessions()
         await stopGatewayConnection()
     }
 
@@ -529,7 +551,18 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                                     ?? envelope.code
                                     ?? "Local Connector 网关会话异常"
                             )
-                        case "terminal_exec_request":
+                        case "terminal_exec_request",
+                             "terminal_session_create_request",
+                             "terminal_input",
+                             "terminal_command",
+                             "terminal_resize",
+                             "terminal_snapshot_request",
+                             "terminal_close",
+                             "remote_terminal_session_create_request",
+                             "remote_terminal_input",
+                             "remote_terminal_resize",
+                             "remote_terminal_snapshot_request",
+                             "remote_terminal_close":
                             Task { [weak self] in
                                 await self?.handleTerminalRelayMessage(data, socket: socket)
                             }
@@ -548,6 +581,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                              "workspace_filesystem_request":
                             Task { [weak self] in
                                 await self?.handleWorkspaceRelayMessage(data, socket: socket)
+                            }
+                        case let messageType where Self.isCompanionRelayMessageType(messageType):
+                            Task { [weak self] in
+                                await self?.handleCompanionRelayMessage(data, socket: socket)
                             }
                         default:
                             break

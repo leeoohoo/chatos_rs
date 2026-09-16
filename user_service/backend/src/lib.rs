@@ -14,6 +14,7 @@ mod secrets;
 mod state;
 mod store;
 mod trace_context;
+mod wechat;
 
 pub use api::{build_internal_router, build_public_router};
 pub use config::{load_user_service_dotenv, AppConfig};

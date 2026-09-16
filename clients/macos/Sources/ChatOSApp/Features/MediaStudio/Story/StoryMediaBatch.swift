@@ -26,6 +26,7 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
     let steps: [Step]
     let models: [MediaGenerationModel]
     let consentAt: Date
+    let userIdeas: String?
     var status: Status = .ready
     var draft: StoryProject
     var expectedProjectDigest: String
@@ -36,7 +37,8 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
     var finished: Bool { status == .completed || status == .abandoned }
     var completedCount: Int { jobs.values.filter(\.completed).count }
 
-    init(project: StoryProject, owner: String, kind: Kind, targets: [String], models: [MediaGenerationModel]) throws {
+    init(project: StoryProject, owner: String, kind: Kind, targets: [String], models: [MediaGenerationModel],
+         userIdeas: String = "") throws {
         try project.validate()
         guard !targets.isEmpty, Set(targets).count == targets.count else { throw StoryAgentError.forbiddenTarget }
         var steps: [Step] = []
@@ -62,7 +64,7 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
                     guard segment.firstFrames.images.isEmpty else { throw StoryBatchError.unconfirmedVersions }
                     steps.append(.init(kind: .frames, targetID: segment.id))
                 }
-                if segment.lastFrame == nil {
+                if segment.useLastFrameForVideo, segment.lastFrame == nil {
                     guard segment.lastFrames.images.isEmpty else { throw StoryBatchError.unconfirmedVersions }
                     steps.append(.init(kind: .lastFrames, targetID: segment.id))
                 }
@@ -93,13 +95,34 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
             guard let model = models.first(where: { $0.id == id }), model.enabled, model.hasAPIKey else { throw StoryError.missingModel }
             if type == .videos {
                 let durations = VideoGenerationProfile(modelName: model.modelName).durations
-                guard steps.filter({ $0.kind == .videos }).allSatisfy({ step in
+                let videoSteps = steps.filter { $0.kind == .videos }
+                guard videoSteps.allSatisfy({ step in
                     project.segments.first(where: { $0.id == step.targetID }).map { durations.contains($0.seconds) } == true
                 }) else { throw StoryError.unsupportedDuration }
+                let referenceVideoIndexes = videoSteps.compactMap { step in
+                    project.segments.firstIndex(where: { $0.id == step.targetID })
+                }.filter {
+                    project.segments[$0].videoGuidanceMode == .previousVideo
+                        || project.segments[$0].videoGuidanceMode == .sourceVideo
+                }
+                guard referenceVideoIndexes.isEmpty || model.supportsVideoReference else {
+                    throw StoryBatchError.unsupportedPreviousVideo
+                }
+                guard referenceVideoIndexes.allSatisfy({ index in
+                    switch project.segments[index].videoGuidanceMode {
+                    case .previousVideo: index > 0 && project.segments[index - 1].video != nil
+                    case .sourceVideo: project.segments[index].archivedVideos.last != nil
+                    case .firstFrame, .firstAndLastFrames: true
+                    }
+                }) else {
+                    throw StoryBatchError.missingPreviousVideo
+                }
             }
         }
         self.id = UUID(); self.owner = owner; self.kind = kind; self.steps = steps; self.models = models
         self.consentAt = Date(); self.draft = project; self.expectedProjectDigest = try StoryAgentRun.digest(project)
+        let normalizedIdeas = StoryGenerationContext.normalizedUserIdeas(userIdeas)
+        self.userIdeas = normalizedIdeas.isEmpty ? nil : normalizedIdeas
     }
     static func candidates(_ project: StoryProject, kind: Kind) -> [String] {
         switch kind {
@@ -113,17 +136,20 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
     func validate(owner: String, projectID: UUID) throws {
         guard self.owner == owner, draft.id == projectID, !steps.isEmpty, steps.count <= 500,
               Set(steps.map(\.id)).count == steps.count, steps.allSatisfy({ $0.kind != .pipeline }),
-              jobs.keys.allSatisfy(Set(steps.map(\.id)).contains), events.count <= 20_000 else { throw StoryAgentError.invalidRun }
+              jobs.keys.allSatisfy(Set(steps.map(\.id)).contains), events.count <= 20_000,
+              (userIdeas?.count ?? 0) <= StoryGenerationContext.maximumUserIdeasLength else { throw StoryAgentError.invalidRun }
         try draft.validate()
     }
 }
 
 enum StoryBatchError: LocalizedError {
-    case unconfirmedVersions, activeBatch
+    case unconfirmedVersions, activeBatch, unsupportedPreviousVideo, missingPreviousVideo
     var errorDescription: String? {
         switch self {
         case .unconfirmedVersions: "已有图片尚未确认版本。请先确认已有素材或首帧；一键执行仅自动采用本次新生成的图片，不替你选择已有版本。"
         case .activeBatch: "还有未结束的制作批次。请先恢复，或核对原任务后结束旧批次，避免重复生成。"
+        case .unsupportedPreviousVideo: "当前视频模型不支持视频参考输入。"
+        case .missingPreviousVideo: "所选分段找不到可用的上一段成片或重做原视频。"
         }
     }
 }
@@ -151,10 +177,36 @@ extension StoryProjectStore {
         let current = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: manifest))
         let digest = try StoryAgentRun.digest(current)
         let draftDigest = try StoryAgentRun.digest(batch.draft)
-        guard digest == batch.expectedProjectDigest || digest == draftDigest else { throw StoryAgentError.projectChanged }
+        guard try StoryAgentRun.matchesPersistedDigest(batch.expectedProjectDigest, project: current)
+                || digest == draftDigest else { throw StoryAgentError.projectChanged }
         let data = try JSONEncoder().encode(batch)
         guard data.count <= 32 * 1024 * 1024 else { throw StoryAgentError.invalidRun }
         try data.write(to: try fileURL("media-batch-\(batch.id).json", projectID: batch.draft.id, owner: batch.owner), options: .atomic)
         if digest != draftDigest { try save(batch.draft, owner: batch.owner) }
+    }
+
+    /// Older video queues could finish writing the generated clip to the canonical project
+    /// before their final queue checkpoint was persisted. On reopen, recognize the exact
+    /// provider job IDs instead of treating that successful write as an unrelated edit.
+    func reconcileCompletedVideoBatch(_ input: StoryMediaBatch) throws -> StoryMediaBatch? {
+        guard !input.finished, input.steps.allSatisfy({ $0.kind == .videos }) else { return nil }
+        try input.validate(owner: input.owner, projectID: input.draft.id)
+        let manifest = try fileURL("project.json", projectID: input.draft.id, owner: input.owner)
+        let current = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: manifest))
+        guard input.steps.allSatisfy({ step in
+            guard let jobID = input.jobs[step.id]?.jobID else { return false }
+            return current.segments.first(where: { $0.id == step.targetID })?.video?.jobID == jobID
+        }) else { return nil }
+
+        var batch = input
+        for step in batch.steps { batch.jobs[step.id]?.completed = true }
+        batch.draft = current
+        batch.expectedProjectDigest = try StoryAgentRun.digest(current)
+        batch.status = .completed
+        batch.error = nil
+        batch.events.append(.init(detail: "已确认本批视频均已保存，恢复记录已自动完成"))
+        batch.updatedAt = Date()
+        try commitMediaBatch(batch)
+        return batch
     }
 }

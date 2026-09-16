@@ -25,6 +25,7 @@ use crate::services::summary;
 use crate::state::AppState;
 
 const SUMMARY_QUEUE_TRIGGER: &str = "queue";
+const SUMMARY_DISPATCH_PUBLISH_LEASE_SECS: i64 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct SummaryRequestedEnvelope {
@@ -134,6 +135,45 @@ pub async fn archive_summary_dead_letter(
             .map_err(|err| err.to_string())?;
     }
     Ok(archived)
+}
+
+pub async fn dead_letter_current_summary_dispatch(
+    state: &AppState,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    error: &str,
+) -> Result<bool, String> {
+    let Some(event) =
+        threads::get_summary_dispatch_state(&state.pool, tenant_id, source_id, thread_id).await?
+    else {
+        return Ok(false);
+    };
+    if event.summary_dispatch_version <= 0
+        || event.summary_dispatch_consumed_version >= event.summary_dispatch_version
+    {
+        return Ok(false);
+    }
+
+    let (_connection, channel) = open_publisher(&state.config).await?;
+    let mut envelope = SummaryRequestedEnvelope::from_outbox(&event);
+    envelope.attempt = state.config.summary_max_delivery_attempts;
+    publish_envelope(
+        &channel,
+        &state.config,
+        state.config.summary_dead_letter_queue.as_str(),
+        &envelope,
+    )
+    .await?;
+    threads::mark_summary_dispatch_dead_lettered(&state.pool, &event, error).await?;
+    warn!(
+        thread_id,
+        version = event.summary_dispatch_version,
+        error,
+        dead_letter_queue = state.config.summary_dead_letter_queue.as_str(),
+        "Memory Engine Cloud Agent summary failure entered the DLQ"
+    );
+    Ok(true)
 }
 
 pub fn start(state: Arc<AppState>) {
@@ -368,14 +408,27 @@ async fn process_summary_event(
         SUMMARY_QUEUE_TRIGGER,
     )
     .await;
-    match run_result {
-        Ok(_) => {}
+    let run_response = match run_result {
+        Ok(response) => response,
         Err(error) if error.contains("summary slot already occupied") => {
             return Err(
                 crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED.to_string(),
             );
         }
         Err(error) => return Err(error),
+    };
+
+    // A no-op means the authoritative record query found nothing to summarize even though the
+    // denormalized thread counters crossed the dispatch threshold. Reconcile those counters before
+    // consuming the event so a stale thread cannot be rearmed and republished forever.
+    if !run_response.generated {
+        threads::refresh_summary_queue_state(
+            &state.pool,
+            envelope.tenant_id.as_str(),
+            envelope.source_id.as_str(),
+            envelope.thread_id.as_str(),
+        )
+        .await?;
     }
     threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
     let _ = threads::rearm_summary_dispatch_if_eligible(
@@ -626,6 +679,29 @@ async fn run_outbox_reconciler(state: Arc<AppState>) {
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
+        match recover_stale_published_summary_dispatches(&state).await {
+            Ok(count) if count > 0 => info!(
+                recovered_count = count,
+                lease_seconds = SUMMARY_DISPATCH_PUBLISH_LEASE_SECS,
+                "Memory Engine recovered stale published summary dispatches"
+            ),
+            Ok(_) => {}
+            Err(err) => warn!(
+                error = err.as_str(),
+                "Memory Engine failed to recover stale published summary dispatches"
+            ),
+        }
+        match arm_automatic_summary_dispatches(&state).await {
+            Ok(count) if count > 0 => info!(
+                armed_count = count,
+                "Memory Engine armed automatic summary Outbox events"
+            ),
+            Ok(_) => {}
+            Err(err) => warn!(
+                error = err.as_str(),
+                "Memory Engine failed to arm automatic summary Outbox events"
+            ),
+        }
         match publish_pending_outbox_batch(&state).await {
             Ok(count) if count > 0 => info!(
                 published_count = count,
@@ -638,6 +714,69 @@ async fn run_outbox_reconciler(state: Arc<AppState>) {
             ),
         }
     }
+}
+
+async fn recover_stale_published_summary_dispatches(state: &AppState) -> Result<usize, String> {
+    let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
+    if !policy.enabled {
+        return Ok(0);
+    }
+    let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
+    let stale_before = (chrono::Utc::now()
+        - chrono::Duration::seconds(SUMMARY_DISPATCH_PUBLISH_LEASE_SECS))
+    .to_rfc3339();
+    let candidates = threads::list_stale_published_summary_dispatches(
+        &state.pool,
+        token_threshold,
+        stale_before.as_str(),
+        state.config.summary_outbox_batch_size,
+    )
+    .await?;
+    let mut recovered = 0usize;
+    for candidate in candidates {
+        if threads::rearm_stale_published_summary_dispatch(
+            &state.pool,
+            &candidate,
+            token_threshold,
+            stale_before.as_str(),
+        )
+        .await?
+        .is_some()
+        {
+            recovered += 1;
+        }
+    }
+    Ok(recovered)
+}
+
+async fn arm_automatic_summary_dispatches(state: &AppState) -> Result<usize, String> {
+    let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
+    if !policy.enabled {
+        return Ok(0);
+    }
+    let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
+    let candidates = threads::list_eligible_summary_dispatches(
+        &state.pool,
+        token_threshold,
+        state.config.summary_outbox_batch_size,
+    )
+    .await?;
+    let mut armed = 0usize;
+    for candidate in candidates {
+        if threads::rearm_summary_dispatch_if_eligible(
+            &state.pool,
+            candidate.tenant_id.as_str(),
+            candidate.source_id.as_str(),
+            candidate.thread_id.as_str(),
+            token_threshold,
+        )
+        .await?
+        .is_some()
+        {
+            armed += 1;
+        }
+    }
+    Ok(armed)
 }
 
 async fn publish_pending_outbox_batch(state: &AppState) -> Result<usize, String> {

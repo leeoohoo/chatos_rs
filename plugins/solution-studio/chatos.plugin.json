@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 3,
+  "name": "chatos-solution-studio",
+  "version": "0.1.0",
+  "description": "Create traceable requirements, solution designs, and dependency-aware execution plans.",
+  "author": { "name": "Chatos" },
+  "license": "Apache-2.0",
+  "keywords": ["requirements", "solution-design", "execution-plan", "dag", "project-planning", "mcp"],
+  "mcpServers": {
+    "solution-studio-mcp": {
+      "type": "stdio",
+      "bin": "chatos-solution-studio",
+      "args": ["mcp"],
+      "env": {}
+    }
+  },
+  "skills": [
+    "./skills/solution-studio",
+    "./skills/solution-discovery",
+    "./skills/solution-design",
+    "./skills/solution-execution-plan",
+    "./skills/solution-validation"
+  ],
+  "ui": [
+    {
+      "componentKey": "solution-workbench",
+      "source": "./ui/index.html",
+      "title": "Solution Studio",
+      "surface": "workbench",
+      "assets": ["./ui/assets/app.js", "./ui/assets/app.css"],
+      "bridgeCapabilities": ["host.context.read", "artifact.create"],
+      "artifactMimeTypes": ["application/vnd.chatos.solution-workspace+json", "text/markdown"],
+      "runtime": {
+        "type": "local_http",
+        "bin": "chatos-solution-studio",
+        "args": ["studio"],
+        "healthPath": "/api/health",
+        "launchTimeoutMs": 15000
+      }
+    }
+  ],
+  "interface": {
+    "displayName": "Solution Studio",
+    "shortDescription": "Requirements, solution designs, and dependency plans",
+    "longDescription": "An Apple-inspired project planning workbench for evidence-backed requirements, traceable solution designs, dependency graphs, and acceptance criteria.",
+    "developerName": "Chatos",
+    "category": "Productivity",
+    "capabilities": ["Existing-project and greenfield discovery", "Structured requirements with evidence and acceptance criteria", "Traceable solution design documents", "Dependency-aware execution plan DAGs", "Computed ready-to-execute task sets", "Markdown and structured JSON export"],
+    "defaultPrompt": [
+      "Analyze this project and create requirements, a solution design, and an execution plan.",
+      "Turn this product idea into a traceable design and dependency roadmap.",
+      "Review the current plan and show which tasks are ready to execute."
+    ],
+    "brandColor": "#5E5CE6",
+    "logo": "./assets/logo.svg",
+    "logoDark": "./assets/logo.svg"
+  },
+  "dependencies": { "minimumHostVersion": ">=2.2.0", "supportedPlatforms": ["macos", "windows", "linux"] },
+  "runtimeContext": {
+    "scope": "project",
+    "components": ["solution-studio-mcp", "solution-workbench"],
+    "required": [],
+    "optional": ["project.id", "workspace.id", "workspace.root"],
+    "storageIsolation": "project",
+    "missingContext": "device"
+  },
+  "permissions": [
+    { "permission": "process.spawn", "required": true, "reason": "Launch the installed Solution Studio MCP and local application service.", "components": ["solution-studio-mcp", "solution-workbench"] },
+    { "permission": "artifact.create", "required": true, "reason": "Export requirements, solution designs, execution plans, and graph snapshots.", "components": ["solution-studio-mcp", "solution-workbench"] }
+  ]
+}

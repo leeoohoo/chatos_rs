@@ -16,6 +16,7 @@ impl MongoConnectorStore {
             false,
         )
         .await?;
+        ensure_active_device_identity_index(&self.devices).await?;
         ensure_mongo_index(&self.devices, doc! { "status": 1 }, false).await?;
 
         ensure_mongo_index(&self.workspaces, doc! { "id": 1 }, true).await?;
@@ -90,6 +91,28 @@ impl MongoConnectorStore {
         .await?;
         Ok(())
     }
+}
+
+async fn ensure_active_device_identity_index<T>(collection: &Collection<T>) -> Result<(), String>
+where
+    T: Send + Sync,
+{
+    let options = IndexOptions::builder()
+        .name("unique_active_device_identity".to_string())
+        .unique(true)
+        .partial_filter_expression(doc! {
+            "status": { "$in": ["registered", "online", "offline"] },
+        })
+        .build();
+    let model = IndexModel::builder()
+        .keys(doc! { "owner_user_id": 1, "public_key": 1 })
+        .options(options)
+        .build();
+    collection
+        .create_index(model, None)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 async fn ensure_mongo_index<T>(

@@ -53,9 +53,9 @@ pub(super) struct PageQuery {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct CompactHistoryQuery {
-    pub(super) limit: Option<String>,
-    pub(super) before: Option<String>,
+pub(crate) struct CompactHistoryQuery {
+    pub(crate) limit: Option<String>,
+    pub(crate) before: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

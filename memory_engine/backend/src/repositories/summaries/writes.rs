@@ -38,6 +38,15 @@ pub async fn delete_thread_summary(
         .await
         .map_err(|err| err.to_string())?;
 
+    if reset_count > 0 {
+        if let (Some(tenant_id), Some(source_id)) = (normalized_tenant_id, normalized_source_id) {
+            crate::repositories::threads::refresh_summary_queue_state(
+                db, tenant_id, source_id, thread_id,
+            )
+            .await?;
+        }
+    }
+
     if result.deleted_count > 0 || reset_count > 0 {
         Ok(reset_count)
     } else {

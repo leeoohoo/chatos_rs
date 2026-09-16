@@ -43,6 +43,7 @@ __pycache__/
 
 .idea/
 .vscode/
+clients/wechat-miniprogram/project.private.config.json
 *.suo
 *.ntvs*
 *.njsproj

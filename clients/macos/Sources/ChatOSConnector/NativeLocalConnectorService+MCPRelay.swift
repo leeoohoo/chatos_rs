@@ -286,7 +286,8 @@ extension NativeLocalConnectorService {
                 cwd: cwd,
                 projectRoot: projectRoot,
                 source: source,
-                risk: risk
+                risk: risk,
+                workspaceID: request.workspaceID
             )
         }
 

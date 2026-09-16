@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "会话",
+  "disableScroll": true,
+  "usingComponents": {
+    "markdown-view": "/components/markdown-view/index"
+  }
+}

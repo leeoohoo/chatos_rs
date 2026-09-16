@@ -13,8 +13,40 @@ public struct AgentMessage: Codable, Equatable, Sendable {
     public var content: String
     public var toolCalls: [AgentToolCall]
     public var toolCallID: String?
+    /// Exact JSON-encoded Responses `response.output` array. Persisting this
+    /// preserves encrypted reasoning and compaction items across stateless calls.
+    public var responseOutputJSON: Data?
+    public var usage: AgentUsage?
     public init(role: Role, content: String = "", toolCalls: [AgentToolCall] = [], toolCallID: String? = nil) {
-        self.role = role; self.content = content; self.toolCalls = toolCalls; self.toolCallID = toolCallID
+        self.role = role; self.content = content; self.toolCalls = toolCalls
+        self.toolCallID = toolCallID; self.responseOutputJSON = nil; self.usage = nil
+    }
+    public init(
+        role: Role, content: String, toolCalls: [AgentToolCall],
+        toolCallID: String? = nil, responseOutputJSON: Data?, usage: AgentUsage?
+    ) {
+        self.role = role; self.content = content; self.toolCalls = toolCalls
+        self.toolCallID = toolCallID; self.responseOutputJSON = responseOutputJSON; self.usage = usage
+    }
+}
+
+public struct AgentUsage: Codable, Equatable, Sendable {
+    public var inputTokens: Int
+    public var cachedTokens: Int
+    public var outputTokens: Int
+    public var requests: Int
+
+    public init(inputTokens: Int = 0, cachedTokens: Int = 0, outputTokens: Int = 0, requests: Int = 0) {
+        self.inputTokens = inputTokens; self.cachedTokens = cachedTokens
+        self.outputTokens = outputTokens; self.requests = requests
+    }
+
+    mutating func add(_ usage: AgentUsage?) {
+        guard let usage else { return }
+        inputTokens += usage.inputTokens
+        cachedTokens += usage.cachedTokens
+        outputTokens += usage.outputTokens
+        requests += usage.requests
     }
 }
 
@@ -126,6 +158,7 @@ public struct AgentRunCheckpoint: Codable, Equatable, Sendable {
     public var completionResult: String?
     public var stopReason: String?
     public var memory: AgentMemoryCheckpoint?
+    public var usage: AgentUsage?
     public init(scope: String, messages: [AgentMessage]) { self.scope = scope; self.messages = messages }
 }
 
@@ -148,12 +181,15 @@ public enum AgentModelStreamEvent: Equatable, Sendable {
 }
 
 public protocol AgentModelClient: Sendable {
+    var usesServerSideCompaction: Bool { get }
     func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage
     func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
                 onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage
 }
 
 public extension AgentModelClient {
+    var usesServerSideCompaction: Bool { false }
+
     func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
                 onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage {
         await onEvent(.responseCreated)

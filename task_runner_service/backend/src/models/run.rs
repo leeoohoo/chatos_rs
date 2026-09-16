@@ -312,10 +312,7 @@ pub struct TaskRunRecord {
     #[serde(default)]
     pub post_process_last_error: Option<String>,
     #[serde(default)]
-    pub memory_summary_processed: bool,
-    #[serde(default)]
     pub chatos_followup_processed: bool,
-    pub summary_job_run_id: Option<String>,
     #[serde(default)]
     pub worker_id: Option<String>,
     #[serde(default)]
@@ -417,9 +414,7 @@ impl TaskRunRecord {
             post_process_dead_lettered: false,
             post_process_attempt_count: 0,
             post_process_last_error: None,
-            memory_summary_processed: false,
             chatos_followup_processed: false,
-            summary_job_run_id: None,
             worker_id: None,
             claim_token: None,
             claim_until: None,

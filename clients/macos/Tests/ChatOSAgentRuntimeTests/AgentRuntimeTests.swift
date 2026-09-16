@@ -11,9 +11,6 @@ final class AgentRuntimeTests: XCTestCase {
         let context = try XCTUnwrap(settings.global.context ?? AgentContextPolicy())
         XCTAssertEqual(context.windowTokens, 250_000)
         XCTAssertEqual(context.outputReserveTokens, 30_000)
-        XCTAssertEqual(context.compactionThresholdTokens, 220_000)
-        XCTAssertEqual(context.maximumCompactionPasses, 8)
-        XCTAssertEqual(context.summaryPollSeconds, 10)
         try settings.validate()
     }
 
@@ -26,7 +23,6 @@ final class AgentRuntimeTests: XCTestCase {
         var context = AgentContextPolicy()
         context.windowTokens = 2_000_000
         context.outputReserveTokens = 30_000
-        context.compactionThresholdTokens = 200_000
         old.global.context = context
         defaults.set(try JSONEncoder().encode(old), forKey: "chatos.agent-runtime.settings.v1")
 

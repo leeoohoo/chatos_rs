@@ -19,7 +19,10 @@ internal sealed record ApprovalModelRuntimeConfiguration(
     string SystemPrompt,
     long PromptRevision,
     long PromptBundleVersion,
-    string CapabilityPolicyRevision);
+    string CapabilityPolicyRevision,
+    Uri GatewayBaseUri,
+    string ConnectorAccessToken,
+    string OwnerUserId);
 
 internal sealed class ApprovalModelRuntimeConfigurationService(
     IConnectorModelSettingsStore settingsStore,
@@ -102,7 +105,10 @@ internal sealed class ApprovalModelRuntimeConfigurationService(
             prompt.Content,
             prompt.Revision,
             bundle.BundleVersion,
-            capability.PolicyRevision);
+            capability.PolicyRevision,
+            session.GatewayBaseUri,
+            session.AccessToken,
+            owner);
     }
 
     private static Uri ResolveBaseUri(string? value, string provider)

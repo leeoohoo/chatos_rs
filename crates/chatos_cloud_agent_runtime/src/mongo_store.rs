@@ -593,6 +593,7 @@ impl MongoCloudAgentRunStore {
                         "record.pending_tool_calls": bson::to_bson(&transition.pending_tool_calls).map_err(|error| error.to_string())?,
                         "record.pending_tool_results": bson::to_bson(&transition.pending_tool_results).map_err(|error| error.to_string())?,
                         "record.response_input_items": bson::to_bson(&transition.response_input_items).map_err(|error| error.to_string())?,
+                        "record.usage_accumulator": bson::to_bson(&transition.usage_accumulator).map_err(|error| error.to_string())?,
                         "record.terminal_outcome": bson::to_bson(&transition.terminal_outcome).map_err(|error| error.to_string())?,
                         "record.updated_at": chrono::Utc::now().to_rfc3339(),
                         "claim_token": bson::Bson::Null,

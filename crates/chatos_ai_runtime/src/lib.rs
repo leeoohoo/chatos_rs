@@ -12,7 +12,6 @@ pub mod memory_context;
 pub mod model_config;
 pub mod request;
 pub mod request_payload;
-pub mod request_retry;
 pub mod response_parse;
 pub mod runtime;
 pub mod simple_prompt;
@@ -69,7 +68,8 @@ pub use simple_prompt::{
     wrap_prompt_with_system_context, SimplePromptOptions,
 };
 pub use stateless_history::{
-    build_stateless_history_items, build_stateless_history_items_with_output_cap,
+    append_responses_history_items, build_stateless_history_items,
+    build_stateless_history_items_with_output_cap, prune_items_before_latest_compaction,
     splice_current_input_items, StatelessHistoryMessage,
 };
 #[cfg(feature = "local-agent-loop")]

@@ -38,12 +38,60 @@ final class ScreenshotCoordinator {
         }
 
         isRunning = true
+        freezeScreensAndPresentSelection()
+    }
+
+    private func freezeScreensAndPresentSelection() {
+        // Freeze the desktop before presenting or interacting with any ChatOS
+        // window. Popovers, menus, and other transient windows may disappear as
+        // soon as focus changes or the user starts dragging the selection.
+        let targets = NSScreen.screens.compactMap { screen -> NativeScreenCaptureRegion? in
+            guard let displayID = screen.deviceDescription[
+                NSDeviceDescriptionKey("NSScreenNumber")
+            ] as? NSNumber else { return nil }
+            let scale = screen.backingScaleFactor
+            return NativeScreenCaptureRegion(
+                displayID: CGDirectDisplayID(displayID.uint32Value),
+                sourceRect: CGRect(origin: .zero, size: screen.frame.size),
+                outputSize: CGSize(
+                    width: screen.frame.width * scale,
+                    height: screen.frame.height * scale
+                )
+            )
+        }
+
+        captureTask?.cancel()
+        captureTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let captures = try await self.captureService.capture(regions: targets)
+                try Task.checkCancellation()
+                self.captureTask = nil
+                self.presentSelection(frozenCaptures: captures)
+            } catch is CancellationError {
+                self.captureTask = nil
+                self.finishWorkflow()
+            } catch {
+                self.captureTask = nil
+                self.presentError(
+                    self.localized(
+                        "无法完成截图：\(error.localizedDescription)",
+                        "Unable to capture screenshot: \(error.localizedDescription)"
+                    )
+                )
+                self.finishWorkflow()
+            }
+        }
+    }
+
+    private func presentSelection(frozenCaptures: [CGDirectDisplayID: CGImage]) {
         let controller = ScreenSelectionOverlayController(
-            isEnglish: model?.interfaceLanguage == .english
+            isEnglish: model?.interfaceLanguage == .english,
+            frozenCaptures: frozenCaptures
         )
         controller.onComplete = { [weak self] selection in
             self?.selectionController = nil
-            self?.capture(selection)
+            self?.presentInlineAnnotation(image: selection.image, selection: selection)
         }
         controller.onCancel = { [weak self] in
             self?.selectionController = nil
@@ -71,45 +119,11 @@ final class ScreenshotCoordinator {
         finishWorkflow()
     }
 
-    private func capture(_ selection: ScreenSelection) {
-        selectedScreen = selection.screen
-        captureTask?.cancel()
-        captureTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                // orderOut() updates AppKit immediately, but WindowServer can
-                // retain the previous composited frame briefly. Capturing on
-                // the next compositor beat prevents the selection mask from
-                // being baked into the screenshot preview.
-                try await Task.sleep(for: .milliseconds(120))
-                try Task.checkCancellation()
-                let image = try await self.captureService.capture(region: selection.captureRegion)
-                try Task.checkCancellation()
-                self.captureTask = nil
-                self.presentInlineAnnotation(
-                    image: image,
-                    selection: selection
-                )
-            } catch is CancellationError {
-                self.captureTask = nil
-                self.finishWorkflow()
-            } catch {
-                self.captureTask = nil
-                self.presentError(
-                    self.localized(
-                        "无法完成截图：\(error.localizedDescription)",
-                        "Unable to capture screenshot: \(error.localizedDescription)"
-                    )
-                )
-                self.finishWorkflow()
-            }
-        }
-    }
-
     private func presentInlineAnnotation(
         image: CGImage,
         selection: ScreenSelection
     ) {
+        selectedScreen = selection.screen
         let controller = ScreenshotInlineAnnotationController(
             image: image,
             selection: selection,

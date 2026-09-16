@@ -3,13 +3,14 @@
 
 use axum::http::StatusCode;
 use axum::{
-    extract::{Path, Query},
+    extract::{DefaultBodyLimit, Path, Query},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::api::RequestClientScopes;
 use crate::config::Config;
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
@@ -25,6 +26,8 @@ use crate::services::task_runner_api_client::{
 };
 use tracing::warn;
 
+const ASK_USER_REQUEST_BODY_LIMIT_BYTES: usize = 64 * 1024;
+
 pub fn router() -> Router {
     Router::new()
         .route("/api/ask-user-prompts", get(list_ask_user_prompts))
@@ -36,6 +39,7 @@ pub fn router() -> Router {
             "/api/ask-user-prompts/{prompt_id}/cancel",
             post(cancel_ask_user_prompt),
         )
+        .layer(DefaultBodyLimit::max(ASK_USER_REQUEST_BODY_LIMIT_BYTES))
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +69,7 @@ struct CancelAskUserPromptApiRequest {
 
 async fn list_ask_user_prompts(
     auth: AuthUser,
+    client_scopes: Option<Extension<RequestClientScopes>>,
     Query(query): Query<AskUserPromptListQuery>,
 ) -> (StatusCode, Json<Value>) {
     let conversation_id = query.conversation_id.trim();
@@ -83,6 +88,19 @@ async fn list_ask_user_prompts(
                 sync_task_runner_pending_prompt_records(prompts).await
             } else {
                 prompts
+            };
+            let companion = is_wechat_companion(client_scopes.as_ref());
+            let prompts = if companion {
+                prompts
+                    .into_iter()
+                    .filter(|prompt| prompt.status == AskUserPromptStatus::Pending)
+                    .map(companion_prompt_record)
+                    .collect::<Vec<_>>()
+            } else {
+                prompts
+                    .into_iter()
+                    .map(|prompt| serde_json::to_value(prompt).unwrap_or_else(|_| json!({})))
+                    .collect::<Vec<_>>()
             };
             (
                 StatusCode::OK,
@@ -216,6 +234,7 @@ fn task_runner_prompt_response_from_value(
 
 async fn submit_ask_user_prompt(
     auth: AuthUser,
+    client_scopes: Option<Extension<RequestClientScopes>>,
     Path(prompt_id): Path<String>,
     Json(req): Json<SubmitAskUserPromptApiRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -245,18 +264,19 @@ async fn submit_ask_user_prompt(
     if matches!(next_status, AskUserPromptStatus::Pending) {
         return bad_request("status must not be pending");
     }
-    if matches!(next_status, AskUserPromptStatus::Canceled) {
-        return cancel_ask_user_prompt_record(record, submission.reason.clone()).await;
-    }
-
-    if record.source == "task_runner" {
-        return submit_task_runner_ask_user_prompt(record, submission).await;
-    }
-    submit_local_ask_user_prompt(record, submission, next_status).await
+    let response = if matches!(next_status, AskUserPromptStatus::Canceled) {
+        cancel_ask_user_prompt_record(record, submission.reason.clone()).await
+    } else if record.source == "task_runner" {
+        submit_task_runner_ask_user_prompt(record, submission).await
+    } else {
+        submit_local_ask_user_prompt(record, submission, next_status).await
+    };
+    sanitize_companion_response(response, is_wechat_companion(client_scopes.as_ref()))
 }
 
 async fn cancel_ask_user_prompt(
     auth: AuthUser,
+    client_scopes: Option<Extension<RequestClientScopes>>,
     Path(prompt_id): Path<String>,
     Json(req): Json<CancelAskUserPromptApiRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -268,7 +288,8 @@ async fn cancel_ask_user_prompt(
     if record.status != AskUserPromptStatus::Pending {
         return bad_request("ask user prompt is already resolved");
     }
-    cancel_ask_user_prompt_record(record, req.reason).await
+    let response = cancel_ask_user_prompt_record(record, req.reason).await;
+    sanitize_companion_response(response, is_wechat_companion(client_scopes.as_ref()))
 }
 
 async fn submit_local_ask_user_prompt(
@@ -643,6 +664,49 @@ fn ok_prompt_with_remote(
     )
 }
 
+fn is_wechat_companion(scopes: Option<&Extension<RequestClientScopes>>) -> bool {
+    scopes.is_some_and(|Extension(scopes)| scopes.is_wechat_companion())
+}
+
+fn companion_prompt_record(record: AskUserPromptRecord) -> Value {
+    let prompt = payload_from_record(&record);
+    json!({
+        "id": record.id,
+        "conversation_id": record.conversation_id,
+        "conversation_turn_id": record.conversation_turn_id,
+        "kind": record.kind,
+        "status": record.status,
+        "prompt": {
+            "title": prompt.title,
+            "message": prompt.message,
+            "allow_cancel": prompt.allow_cancel,
+            "payload": prompt.payload,
+        },
+        "expires_at": record.expires_at,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    })
+}
+
+fn sanitize_companion_response(
+    response: (StatusCode, Json<Value>),
+    companion: bool,
+) -> (StatusCode, Json<Value>) {
+    if !companion {
+        return response;
+    }
+    let (status, Json(mut body)) = response;
+    if let Some(object) = body.as_object_mut() {
+        object.remove("task_runner_prompt");
+        if let Some(prompt) = object.remove("prompt") {
+            if let Ok(record) = serde_json::from_value::<AskUserPromptRecord>(prompt) {
+                object.insert("prompt".to_string(), companion_prompt_record(record));
+            }
+        }
+    }
+    (status, Json(body))
+}
+
 fn bad_request(message: impl Into<String>) -> (StatusCode, Json<Value>) {
     (
         StatusCode::BAD_REQUEST,
@@ -660,6 +724,9 @@ fn not_found(message: impl Into<String>) -> (StatusCode, Json<Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
 
     #[test]
     fn detects_task_runner_cancelled_prompt_errors() {
@@ -727,5 +794,84 @@ mod tests {
 
         assert_eq!(response.status, "canceled");
         assert_eq!(response.reason.as_deref(), Some("run cancelled"));
+    }
+
+    #[test]
+    fn companion_prompt_removes_internal_and_external_execution_ids() {
+        let record = AskUserPromptRecord {
+            id: "prompt-1".to_string(),
+            conversation_id: "conversation-1".to_string(),
+            conversation_turn_id: "turn-1".to_string(),
+            tool_call_id: Some("tool-call-secret".to_string()),
+            kind: "form".to_string(),
+            status: AskUserPromptStatus::Pending,
+            prompt: json!({
+                "prompt_id": "prompt-1",
+                "conversation_id": "conversation-1",
+                "conversation_turn_id": "turn-1",
+                "tool_call_id": "tool-call-secret",
+                "kind": "form",
+                "title": "Choose",
+                "message": "Select one",
+                "allow_cancel": true,
+                "payload": { "fields": [{ "key": "answer", "label": "Answer" }] }
+            }),
+            response: Some(json!({ "values": { "answer": "private" } })),
+            expires_at: Some("2026-09-14T00:00:00Z".to_string()),
+            source: "task_runner".to_string(),
+            external_prompt_id: Some("external-prompt".to_string()),
+            external_task_id: Some("external-task".to_string()),
+            external_run_id: Some("external-run".to_string()),
+            external_project_id: Some("external-project".to_string()),
+            created_at: "2026-09-14T00:00:00Z".to_string(),
+            updated_at: "2026-09-14T00:00:00Z".to_string(),
+        };
+
+        let safe = companion_prompt_record(record);
+        assert_eq!(safe["prompt"]["title"], "Choose");
+        assert_eq!(safe["prompt"]["payload"]["fields"][0]["key"], "answer");
+        for forbidden in [
+            "tool_call_id",
+            "response",
+            "source",
+            "external_prompt_id",
+            "external_task_id",
+            "external_run_id",
+            "external_project_id",
+        ] {
+            assert!(safe.get(forbidden).is_none(), "must remove {forbidden}");
+        }
+        assert!(safe["prompt"].get("tool_call_id").is_none());
+    }
+
+    #[test]
+    fn companion_response_removes_raw_task_runner_payload() {
+        let response = (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "task_runner_prompt": { "project_id": "private-project" }
+            })),
+        );
+        let (_, Json(safe)) = sanitize_companion_response(response, true);
+        assert!(safe.get("task_runner_prompt").is_none());
+    }
+
+    #[tokio::test]
+    async fn ask_user_mutations_reject_oversized_request_bodies() {
+        let mut request = Request::post("/api/ask-user-prompts/prompt-1/submit")
+            .header("content-type", "application/json")
+            .body(Body::from(format!(
+                "{{\"conversation_id\":\"conversation-1\",\"values\":{{\"answer\":\"{}\"}}}}",
+                "a".repeat(ASK_USER_REQUEST_BODY_LIMIT_BYTES)
+            )))
+            .expect("request");
+        request.extensions_mut().insert(AuthUser {
+            user_id: "user-1".to_string(),
+            role: "user".to_string(),
+        });
+
+        let response = router().oneshot(request).await.expect("route response");
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

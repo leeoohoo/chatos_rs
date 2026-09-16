@@ -51,9 +51,13 @@ struct TaskProcessTimelineView: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(item.title).appFont(.callout.weight(.semibold))
                     Spacer()
-                    if let occurredAt = item.occurredAt {
+                    if let occurredAt = item.occurredAtDate {
+                        Text(occurredAt.formatted(date: .omitted, time: .standard))
+                            .appFont(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else if let occurredAt = item.occurredAt {
                         Text(occurredAt)
-                            .appFont(.caption2.monospaced())
+                            .appFont(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                 }

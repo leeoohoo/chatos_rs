@@ -329,26 +329,6 @@ impl InMemoryStore {
         true
     }
 
-    pub(in crate::store) fn mark_run_memory_summary_processed(
-        &self,
-        run_id: &str,
-        summary_job_run_id: Option<&str>,
-    ) -> bool {
-        let mut data = self.inner.write();
-        let Some(run) = data.runs.get_mut(run_id) else {
-            return false;
-        };
-        if run.post_process_dead_lettered {
-            return false;
-        }
-        run.memory_summary_processed = true;
-        if let Some(summary_job_run_id) = summary_job_run_id {
-            run.summary_job_run_id = Some(summary_job_run_id.to_string());
-        }
-        run.updated_at = now_rfc3339();
-        true
-    }
-
     pub(in crate::store) fn mark_run_chatos_followup_processed(&self, run_id: &str) -> bool {
         let mut data = self.inner.write();
         let Some(run) = data.runs.get_mut(run_id) else {
@@ -440,7 +420,6 @@ impl InMemoryStore {
         run.post_process_dead_lettered = false;
         run.post_process_attempt_count = 0;
         run.post_process_last_error = None;
-        run.memory_summary_processed = false;
         run.chatos_followup_processed = false;
         execution.integration_status = WorkspaceIntegrationStatus::Pending;
         execution.integration_started_at = None;
@@ -476,7 +455,6 @@ impl InMemoryStore {
         run.post_process_dead_lettered = false;
         run.post_process_attempt_count = 0;
         run.post_process_last_error = None;
-        run.memory_summary_processed = false;
         run.chatos_followup_processed = false;
         execution.integration_status = WorkspaceIntegrationStatus::Waived;
         execution.waived_at = Some(now.clone());

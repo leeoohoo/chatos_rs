@@ -179,7 +179,7 @@ async fn handle_local_connector_terminal_socket(
             };
             match message {
                 Message::Text(text) => {
-                    persist_local_connector_terminal_input(&terminal_for_input.id, text.as_str())
+                    track_local_connector_terminal_activity(&terminal_for_input.id, text.as_str())
                         .await;
                     if connector_sender
                         .send(ConnectorMessage::Text(text.to_string().into()))
@@ -191,8 +191,7 @@ async fn handle_local_connector_terminal_socket(
                 }
                 Message::Binary(bytes) => {
                     if !bytes.is_empty() {
-                        let data = String::from_utf8_lossy(&bytes).to_string();
-                        persist_terminal_input(&terminal_for_input.id, data.as_str()).await;
+                        let _ = terminals::touch_terminal(&terminal_for_input.id).await;
                     }
                     if connector_sender
                         .send(ConnectorMessage::Binary(bytes.to_vec().into()))
@@ -234,12 +233,6 @@ async fn handle_local_connector_terminal_socket(
     }
 }
 
-async fn persist_terminal_input(id: &str, data: &str) {
-    let log = TerminalLog::new(id.to_string(), "input".to_string(), data.to_string());
-    let _ = TerminalLogService::create(log).await;
-    let _ = terminals::touch_terminal(id).await;
-}
-
 async fn persist_terminal_command(id: &str, command: &str) {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -265,29 +258,43 @@ fn local_connector_terminal_ws_url(root_ref: &LocalConnectorRootRef, terminal_id
     local_connector_websocket_url(path.as_str())
 }
 
-async fn persist_local_connector_terminal_input(id: &str, text: &str) {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
-        if !text.trim().is_empty() {
-            persist_terminal_input(id, text).await;
+async fn track_local_connector_terminal_activity(id: &str, text: &str) {
+    match classify_local_connector_terminal_activity(text) {
+        LocalConnectorTerminalActivity::Ignore => {}
+        LocalConnectorTerminalActivity::Touch => {
+            let _ = terminals::touch_terminal(id).await;
         }
-        return;
+        LocalConnectorTerminalActivity::ExplicitCommand(command) => {
+            persist_terminal_command(id, command.as_str()).await;
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum LocalConnectorTerminalActivity {
+    Ignore,
+    Touch,
+    ExplicitCommand(String),
+}
+
+fn classify_local_connector_terminal_activity(text: &str) -> LocalConnectorTerminalActivity {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return if text.trim().is_empty() {
+            LocalConnectorTerminalActivity::Ignore
+        } else {
+            LocalConnectorTerminalActivity::Touch
+        };
     };
     match value.get("type").and_then(serde_json::Value::as_str) {
-        Some("input") => {
-            let data = value
-                .get("data")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            persist_terminal_input(id, data).await;
-        }
-        Some("command") => {
-            let command = value
+        Some("input") => LocalConnectorTerminalActivity::Touch,
+        Some("command") => LocalConnectorTerminalActivity::ExplicitCommand(
+            value
                 .get("command")
                 .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            persist_terminal_command(id, command).await;
-        }
-        _ => {}
+                .unwrap_or_default()
+                .to_string(),
+        ),
+        _ => LocalConnectorTerminalActivity::Ignore,
     }
 }
 
@@ -302,12 +309,6 @@ async fn handle_local_connector_terminal_output_event(terminal: &Terminal, text:
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
             if !data.is_empty() {
-                let _ = TerminalLogService::create(TerminalLog::new(
-                    terminal.id.clone(),
-                    "output".to_string(),
-                    data.to_string(),
-                ))
-                .await;
                 let _ = terminals::touch_terminal(terminal.id.as_str()).await;
             }
         }
@@ -343,5 +344,34 @@ async fn handle_local_connector_terminal_output_event(terminal: &Terminal, text:
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_terminal_input_is_activity_only_and_never_a_persisted_command() {
+        assert_eq!(
+            classify_local_connector_terminal_activity(
+                r#"{"type":"input","data":"super-secret-password\\r"}"#
+            ),
+            LocalConnectorTerminalActivity::Touch
+        );
+        assert_eq!(
+            classify_local_connector_terminal_activity("raw keystrokes"),
+            LocalConnectorTerminalActivity::Touch
+        );
+    }
+
+    #[test]
+    fn only_explicit_command_metadata_is_classified_for_audit_persistence() {
+        assert_eq!(
+            classify_local_connector_terminal_activity(
+                r#"{"type":"command","command":"git status"}"#
+            ),
+            LocalConnectorTerminalActivity::ExplicitCommand("git status".to_string())
+        );
     }
 }

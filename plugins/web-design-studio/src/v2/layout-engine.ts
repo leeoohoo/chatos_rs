@@ -45,8 +45,16 @@ export interface SolvedSceneBox extends SceneRect {
 
 export interface SceneLayoutDiagnostic {
   nodeId: string;
+  relatedNodeId?: string;
   severity: 'warning' | 'error';
-  code: 'overflow-x' | 'overflow-y' | 'fill-in-hug-axis' | 'grid-placement-collision' | 'grid-placement-out-of-bounds';
+  code:
+    | 'overflow-x'
+    | 'overflow-y'
+    | 'fill-in-hug-axis'
+    | 'grid-placement-collision'
+    | 'grid-placement-out-of-bounds'
+    | 'child-outside-container'
+    | 'flow-overlap';
   message: string;
 }
 
@@ -109,7 +117,7 @@ function lineHeight(node: SceneNode): number {
   const typography = node.appearance.typography;
   const fontSize = typography?.fontSize ?? 16;
   const configured = typography?.lineHeight ?? 1.4;
-  return configured <= 4 ? fontSize * configured : configured;
+  return fontSize * configured;
 }
 
 function isFullWidthCodePoint(codePoint: number): boolean {
@@ -173,7 +181,7 @@ function textNaturalSize(node: Extract<SceneNode, { type: 'text' }>, availableWi
   const width = Math.min(unwrappedWidth, widthLimit);
   const lines = paragraphWidths.reduce((total, paragraphWidth) => total + Math.max(1, Math.ceil(paragraphWidth / width)), 0);
   const configuredLineHeight = lineHeight(node);
-  const glyphOverflowAllowance = Math.max(0, fontSize * 1.1 - configuredLineHeight);
+  const glyphOverflowAllowance = Math.max(2, fontSize * 1.1 - configuredLineHeight);
   return { width: clampWidth(node, width), height: clampHeight(node, lines * configuredLineHeight + glyphOverflowAllowance) };
 }
 
@@ -263,11 +271,21 @@ function measureNatural(node: SceneNode, availableWidth?: number, textMeasurer?:
   if (node.layout.mode === 'grid') return measureNaturalGrid(node, availableWidth, textMeasurer);
   if (node.layout.mode === 'auto') {
     const flow = children.filter((child) => child.layout.position === 'flow');
-    const measurements = flow.map((child) => {
+    const measurements: ChildMeasurement[] = flow.map((child) => {
       const natural = measureNatural(child, childAvailableWidth, textMeasurer);
-      return { width: fixedOrNaturalWidth(child, natural), height: fixedOrNaturalHeight(child, natural) };
+      return { node: child, natural, width: fixedOrNaturalWidth(child, natural), height: fixedOrNaturalHeight(child, natural) };
     });
     if (node.layout.direction === 'horizontal') {
+      if (node.layout.wrap && childAvailableWidth !== undefined) {
+        const lines = buildLines(measurements, 'horizontal', childAvailableWidth, node.layout.gap.column, true);
+        const contentWidth = Math.max(0, ...lines.map((line) => line.mainSize));
+        const contentHeight = lines.reduce((total, line) => total + line.crossSize, 0)
+          + Math.max(0, lines.length - 1) * node.layout.gap.row;
+        return {
+          width: clampWidth(node, contentWidth + padding.left + padding.right),
+          height: clampHeight(node, contentHeight + padding.top + padding.bottom)
+        };
+      }
       const width = padding.left + padding.right + measurements.reduce((total, size) => total + size.width, 0)
         + Math.max(0, measurements.length - 1) * node.layout.gap.column;
       const height = padding.top + padding.bottom + Math.max(0, ...measurements.map((size) => size.height));

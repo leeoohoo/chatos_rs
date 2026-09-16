@@ -616,7 +616,6 @@ mod tests {
             worker_id: "test-worker".to_string(),
             worker_claim_ttl: Duration::from_millis(120_000),
             worker_concurrency: 1,
-            auto_memory_summary: false,
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1000,
             default_tool_results_model_total_max_chars: 2000,

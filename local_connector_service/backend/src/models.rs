@@ -41,11 +41,15 @@ pub const MANAGED_REQUIREMENTS_SCOPE_USER: &str = "user";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrentUser {
     pub principal_type: String,
+    #[serde(default, skip_serializing)]
+    pub token_jti: Option<String>,
     pub user_id: String,
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub role: String,
     pub owner_user_id: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 impl CurrentUser {
@@ -59,6 +63,10 @@ impl CurrentUser {
 
     pub fn is_super_admin(&self) -> bool {
         self.principal_type == "human_user" && self.role == USER_ROLE_SUPER_ADMIN
+    }
+
+    pub fn is_wechat_companion(&self) -> bool {
+        self.scopes.iter().any(|scope| scope == "wechat_companion")
     }
 }
 
@@ -127,6 +135,18 @@ pub struct LocalConnectorDevice {
     pub last_seen_at: Option<String>,
     pub revoked_at: Option<String>,
     pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompanionDeviceSummary {
+    pub id: String,
+    pub display_name: String,
+    pub client_version: Option<String>,
+    pub os: Option<String>,
+    pub status: String,
+    pub is_online: bool,
+    pub last_seen_at: Option<String>,
     pub updated_at: String,
 }
 

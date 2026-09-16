@@ -6,10 +6,64 @@ import Foundation
 
 @MainActor
 final class StoryStudioViewModel: ObservableObject {
+    private static let imageGenerationLockNotice = "还有图片版本正在后台生成。已确认的素材仍可继续生成视频；项目结构与模型设置将在图片完成后恢复修改。"
     struct SourceDraft { var source: String; var style: String; var ratio: String }
+    struct CreationHistoryImage: Identifiable, Sendable {
+        enum Kind: String, Sendable { case character, scene, prop, firstFrame, lastFrame, videoLastFrame }
+        var id: String
+        var title: String
+        var prompt: String
+        var kind: Kind
+        var asset: GeneratedMediaAsset
+    }
+    struct CreationHistoryVideo: Identifiable, Sendable {
+        var id: String
+        var segmentID: String
+        var segmentNumber: Int
+        var title: String
+        var prompt: String
+        var modelName: String
+        var createdAt: Date
+        var seconds: Int
+        var fileURL: URL
+        var isCurrentVersion = true
+    }
+    struct CreationHistoryGroup: Identifiable, Sendable {
+        var id: UUID { projectID }
+        var projectID: UUID
+        var projectTitle: String
+        var updatedAt: Date
+        var totalSegmentCount: Int
+        var images: [CreationHistoryImage]
+        var videos: [CreationHistoryVideo]
+
+        var currentVideos: [CreationHistoryVideo] { videos.filter(\.isCurrentVersion) }
+        var isComplete: Bool {
+            totalSegmentCount > 0 && Set(currentVideos.map(\.segmentID)).count == totalSegmentCount
+        }
+    }
+    struct ReusableStoryImage: Identifiable, Sendable {
+        var id: String
+        var projectID: UUID
+        var projectTitle: String
+        var resourceID: String
+        var resourceName: String
+        var kind: StoryResource.Kind
+        var image: StoryImage
+        var asset: GeneratedMediaAsset
+    }
     struct AssetGenerationKey: Hashable, Sendable {
         var projectID: UUID
         var resourceID: String
+    }
+    struct FrameGenerationKey: Hashable, Sendable {
+        var projectID: UUID
+        var segmentID: String
+        var role: String
+
+        init(projectID: UUID, segmentID: String, role: StoryFrameRole) {
+            self.projectID = projectID; self.segmentID = segmentID; self.role = role.rawValue
+        }
     }
     struct VideoGenerationKey: Hashable, Sendable {
         var projectID: UUID
@@ -37,8 +91,11 @@ final class StoryStudioViewModel: ObservableObject {
     @Published private(set) var streamingToolName: String?
     @Published private(set) var activeAssetGenerations: Set<AssetGenerationKey> = []
     @Published private(set) var assetGenerationErrors: [AssetGenerationKey: String] = [:]
+    @Published private(set) var activeFrameGenerations: Set<FrameGenerationKey> = []
+    @Published private(set) var frameGenerationErrors: [FrameGenerationKey: String] = [:]
     @Published private(set) var activeVideoGenerations: Set<VideoGenerationKey> = []
     @Published private(set) var videoGenerationProgress: [VideoGenerationKey: VideoGenerationProgress] = [:]
+    @Published private(set) var activeVideoFrameExtractions: Set<VideoGenerationKey> = []
     private let store: StoryProjectStore
     private let media: any MediaGenerationServicing
     private let planner: (any StoryPlanningServicing)?
@@ -50,7 +107,10 @@ final class StoryStudioViewModel: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var historyTask: Task<Void, Never>?
     private var assetGenerationTasks: [AssetGenerationKey: Task<Void, Never>] = [:]
+    private var frameGenerationTasks: [FrameGenerationKey: Task<Void, Never>] = [:]
     private var videoGenerationTasks: [VideoGenerationKey: Task<Void, Never>] = [:]
+    private var videoFrameExtractionTasks: [VideoGenerationKey: Task<Void, Never>] = [:]
+    private var videoBatchTask: Task<Void, Never>?
     private var sourceDrafts: [UUID: SourceDraft] = [:]
 
     init(media: any MediaGenerationServicing, planner: (any StoryPlanningServicing)? = nil,
@@ -63,13 +123,108 @@ final class StoryStudioViewModel: ObservableObject {
 
     var project: StoryProject? { projects.first { $0.id == selectedProjectID } }
     var segment: StorySegment? { project?.segments.first { $0.id == selectedSegmentID } }
-    var canCreate: Bool { owner != nil && !isLoading && !isBusy && activeAssetGenerations.isEmpty }
+    var canCreate: Bool {
+        owner != nil && !isLoading && !isBusy
+            && activeAssetGenerations.isEmpty && activeFrameGenerations.isEmpty
+    }
     var supportsAgentPlanning: Bool { agentServices != nil }
     var projectAgentRuns: [StoryAgentRun] { agentRuns.filter { $0.projectID == selectedProjectID } }
     var latestAgentRun: StoryAgentRun? { projectAgentRuns.first }
     var projectMediaBatches: [StoryMediaBatch] { mediaBatches.filter { $0.draft.id == selectedProjectID } }
+    var creationHistoryGroups: [CreationHistoryGroup] {
+        projects.compactMap { project in
+            var images: [CreationHistoryImage] = []
+            for resource in project.resources {
+                for image in resource.images where isGenerated(image) {
+                    guard let asset = mediaAsset(image, projectID: project.id) else { continue }
+                    let kind: CreationHistoryImage.Kind = switch resource.kind {
+                    case .character: .character
+                    case .scene: .scene
+                    case .prop: .prop
+                    }
+                    images.append(.init(
+                        id: "\(project.id):resource:\(resource.id):\(image.id)",
+                        title: resource.name, prompt: resource.prompt, kind: kind, asset: asset
+                    ))
+                }
+            }
+            for segment in project.segments {
+                for image in segment.firstFrames.images where isGenerated(image) {
+                    if image.derivedFromVideoJobID != nil { continue }
+                    if segment.inheritedFirstFrameSourceSegmentID != nil,
+                       image.id == segment.confirmedFrameID { continue }
+                    guard let asset = mediaAsset(image, projectID: project.id) else { continue }
+                    images.append(.init(
+                        id: "\(project.id):first:\(segment.id):\(image.id)",
+                        title: segment.title, prompt: segment.detail?.firstFramePrompt ?? segment.synopsis,
+                        kind: .firstFrame, asset: asset
+                    ))
+                }
+                for image in segment.lastFrames.images where isGenerated(image) {
+                    guard let asset = mediaAsset(image, projectID: project.id) else { continue }
+                    images.append(.init(
+                        id: "\(project.id):last:\(segment.id):\(image.id)",
+                        title: segment.title,
+                        prompt: image.derivedFromVideoJobID == nil
+                            ? segment.detail?.effectiveLastFramePrompt ?? segment.synopsis
+                            : segment.synopsis,
+                        kind: image.derivedFromVideoJobID == nil ? .lastFrame : .videoLastFrame,
+                        asset: asset
+                    ))
+                }
+            }
+            var videos: [CreationHistoryVideo] = []
+            for (index, segment) in project.segments.enumerated() {
+                for video in segment.archivedVideos {
+                    guard let fileURL = videoURL(video, projectID: project.id) else { continue }
+                    let attempt = segment.previousAttempts.last { $0.jobID == video.jobID }
+                    videos.append(.init(
+                        id: "\(project.id):archived-video:\(segment.id):\(video.jobID)",
+                        segmentID: segment.id, segmentNumber: index + 1, title: segment.title,
+                        prompt: attempt?.prompt ?? segment.detail?.videoPrompt ?? segment.synopsis,
+                        modelName: video.modelName, createdAt: attempt?.createdAt ?? project.updatedAt,
+                        seconds: attempt?.seconds ?? segment.seconds, fileURL: fileURL,
+                        isCurrentVersion: false
+                    ))
+                }
+                if let video = segment.video, let fileURL = videoURL(video, projectID: project.id) {
+                    videos.append(.init(
+                        id: "\(project.id):video:\(segment.id):\(video.jobID)",
+                        segmentID: segment.id, segmentNumber: index + 1, title: segment.title,
+                        prompt: segment.attempt?.prompt ?? segment.detail?.videoPrompt ?? segment.synopsis,
+                        modelName: video.modelName, createdAt: segment.attempt?.createdAt ?? project.updatedAt,
+                        seconds: segment.seconds, fileURL: fileURL
+                    ))
+                }
+            }
+            guard !images.isEmpty || !videos.isEmpty else { return nil }
+            return .init(projectID: project.id, projectTitle: project.title, updatedAt: project.updatedAt,
+                         totalSegmentCount: project.segments.count,
+                         images: images, videos: videos)
+        }
+        .sorted { $0.updatedAt > $1.updatedAt }
+    }
+    func reusableStoryImages(kind: StoryResource.Kind, excluding projectID: UUID) -> [ReusableStoryImage] {
+        projects
+            .filter { $0.id != projectID }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .flatMap { sourceProject in
+                sourceProject.resources.compactMap { resource in
+                    guard resource.kind == kind,
+                          let image = resource.confirmedImage ?? resource.images.last,
+                          let asset = mediaAsset(image, projectID: sourceProject.id) else { return nil }
+                    return .init(
+                        id: "\(sourceProject.id):\(resource.id):\(image.id)",
+                        projectID: sourceProject.id, projectTitle: sourceProject.title,
+                        resourceID: resource.id, resourceName: resource.name,
+                        kind: resource.kind, image: image, asset: asset
+                    )
+                }
+            }
+    }
     var hasActiveAssetGenerations: Bool { !activeAssetGenerations.isEmpty }
-    var hasActiveVideoGenerations: Bool { !activeVideoGenerations.isEmpty }
+    var hasActiveFrameGenerations: Bool { !activeFrameGenerations.isEmpty }
+    var hasActiveVideoGenerations: Bool { !activeVideoGenerations.isEmpty || videoBatchTask != nil }
     func hasActiveAssetGenerations(projectID: UUID) -> Bool {
         activeAssetGenerations.contains { $0.projectID == projectID }
     }
@@ -79,14 +234,29 @@ final class StoryStudioViewModel: ObservableObject {
     func assetGenerationError(_ resourceID: String, projectID: UUID) -> String? {
         assetGenerationErrors[.init(projectID: projectID, resourceID: resourceID)]
     }
+    func hasActiveFrameGenerations(projectID: UUID) -> Bool {
+        activeFrameGenerations.contains { $0.projectID == projectID }
+    }
+    func isGeneratingFrame(_ segmentID: String, role: StoryFrameRole, projectID: UUID) -> Bool {
+        activeFrameGenerations.contains(.init(projectID: projectID, segmentID: segmentID, role: role))
+    }
+    func frameGenerationError(_ segmentID: String, role: StoryFrameRole, projectID: UUID) -> String? {
+        frameGenerationErrors[.init(projectID: projectID, segmentID: segmentID, role: role)]
+    }
     func isGeneratingVideo(_ segmentID: String, projectID: UUID) -> Bool {
         activeVideoGenerations.contains(.init(projectID: projectID, segmentID: segmentID))
+    }
+    func isExtractingVideoLastFrame(_ segmentID: String, projectID: UUID) -> Bool {
+        activeVideoFrameExtractions.contains(.init(projectID: projectID, segmentID: segmentID))
     }
     func videoProgress(_ segmentID: String, projectID: UUID) -> VideoGenerationProgress? {
         videoGenerationProgress[.init(projectID: projectID, segmentID: segmentID)]
     }
     func activeVideoGenerationCount(projectID: UUID) -> Int {
         activeVideoGenerations.filter { $0.projectID == projectID }.count
+    }
+    private func isGenerated(_ image: StoryImage) -> Bool {
+        image.generationAttemptID != nil || image.providerResultID != nil || image.providerAssetID != nil
     }
     func effectiveAgentPolicy() throws -> AgentRunPolicy { try agentSettings.load().effective(.story) }
 
@@ -110,7 +280,7 @@ final class StoryStudioViewModel: ObservableObject {
               let canonicalDigest = try? StoryAgentRun.digest(canonical) else { return nil }
         return agentRuns.first { run in
             guard run.projectID == projectID, !run.applied, run.abandonedAt == nil,
-                  run.baseDigest == canonicalDigest,
+                  (try? StoryAgentRun.matchesPersistedDigest(run.baseDigest, project: canonical)) == true,
                   let draftDigest = try? StoryAgentRun.digest(run.draft) else { return false }
             return draftDigest != canonicalDigest
         }
@@ -124,7 +294,7 @@ final class StoryStudioViewModel: ObservableObject {
         return agentRuns.first { run in
             guard run.id == activeAgentRunID, run.projectID == canonical.id,
                   !run.applied, run.abandonedAt == nil,
-                  run.baseDigest == canonicalDigest,
+                  (try? StoryAgentRun.matchesPersistedDigest(run.baseDigest, project: canonical)) == true,
                   let draftDigest = try? StoryAgentRun.digest(run.draft) else { return false }
             return draftDigest != canonicalDigest
         }
@@ -155,8 +325,13 @@ final class StoryStudioViewModel: ObservableObject {
         task?.cancel(); loadTask?.cancel(); task = nil; loadTask = nil
         for generationTask in assetGenerationTasks.values { generationTask.cancel() }
         assetGenerationTasks = [:]; activeAssetGenerations = []; assetGenerationErrors = [:]
+        for generationTask in frameGenerationTasks.values { generationTask.cancel() }
+        frameGenerationTasks = [:]; activeFrameGenerations = []; frameGenerationErrors = [:]
         for generationTask in videoGenerationTasks.values { generationTask.cancel() }
+        videoBatchTask?.cancel(); videoBatchTask = nil
         videoGenerationTasks = [:]; activeVideoGenerations = []; videoGenerationProgress = [:]
+        for extractionTask in videoFrameExtractionTasks.values { extractionTask.cancel() }
+        videoFrameExtractionTasks = [:]; activeVideoFrameExtractions = []
         historyTask?.cancel(); historyTask = nil; agentRuns = []; mediaBatches = []; isLoadingAgentRuns = false
         projects = []; selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = []
         sourceDrafts = [:]; optimizationSuggestion = nil; optimizationTarget = nil
@@ -207,9 +382,11 @@ final class StoryStudioViewModel: ObservableObject {
         defer { if session == token { isBusy = false } }
         do {
             try validateModels(draft.models, available: availableModels)
-            try await commit(draft, owner: owner, token: token)
+            var next = draft
+            next.models = modelSelectionWithCapabilities(draft.models, available: availableModels)
+            try await commit(next, owner: owner, token: token)
             guard session == token else { return false }
-            selectedProjectID = draft.id; selectedSegmentID = nil; selectedSegments = []
+            selectedProjectID = next.id; selectedSegmentID = nil; selectedSegments = []
             return true
         } catch {
             if session == token { errorMessage = error.localizedDescription }
@@ -218,7 +395,8 @@ final class StoryStudioViewModel: ObservableObject {
     }
 
     func updateSettings(_ draft: StoryProject, availableModels: [MediaGenerationModel]) async -> Bool {
-        guard !isBusy, activeAssetGenerations.isEmpty, let current = project, let owner, draft.id == current.id else { return false }
+        guard !isBusy, activeAssetGenerations.isEmpty, activeFrameGenerations.isEmpty,
+              let current = project, let owner, draft.id == current.id else { return false }
         let token = session
         isBusy = true; errorMessage = nil
         defer { if session == token { isBusy = false } }
@@ -229,7 +407,8 @@ final class StoryStudioViewModel: ObservableObject {
             guard !current.hasUnresolvedImageJobs || draft.models.imageModelID == current.models.imageModelID else { throw StoryError.unresolvedSubmission }
             var next = current
             next.title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            next.description = draft.description; next.models = draft.models
+            next.description = draft.description
+            next.models = modelSelectionWithCapabilities(draft.models, available: availableModels)
             try await commit(next, owner: owner, token: token)
             return session == token
         } catch {
@@ -244,12 +423,12 @@ final class StoryStudioViewModel: ObservableObject {
         run("保存剧情") { owner, token in try await self.commit(next, owner: owner, token: token) }
     }
 
-    func planOutline() {
+    func planOutline(userIdeas: String = "") {
         guard let project, project.segments.isEmpty, !project.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if supportsAgentPlanning { startAgent(stage: .outline, targets: []); return }
+        if supportsAgentPlanning { startAgent(stage: .outline, targets: [], userIdeas: userIdeas); return }
         run("正在分析完整剧情并规划分段") { owner, token in
             guard let planner = self.planner else { throw StoryError.unavailable }
-            let request = try StoryPlanningTools.outlineRequest(project)
+            let request = try StoryPlanningTools.outlineRequest(project, userIdeas: userIdeas)
             let data = try await planner.plan(request)
             let next = try StoryPlanningTools.applyOutline(data, to: project)
             try await self.commit(next, owner: owner, token: token)
@@ -257,14 +436,14 @@ final class StoryStudioViewModel: ObservableObject {
         }
     }
 
-    func refineSegments(_ ids: [String]) {
+    func refineSegments(_ ids: [String], userIdeas: String = "") {
         guard let project else { return }
         let targets = project.segments.filter {
             ids.contains($0.id) && $0.detail == nil && $0.attempt == nil && $0.video == nil
         }.map(\.id)
         guard !targets.isEmpty else { return }
         if supportsAgentPlanning {
-            startAgent(stage: .refine, targets: targets); return
+            startAgent(stage: .refine, targets: targets, userIdeas: userIdeas); return
         }
         run("逐段细化镜头计划") { owner, token in
             guard let planner = self.planner else { throw StoryError.unavailable }
@@ -275,7 +454,7 @@ final class StoryStudioViewModel: ObservableObject {
                       let index = next.segments.firstIndex(where: { $0.id == id }), next.segments[index].detail == nil,
                       next.segments[index].attempt == nil, next.segments[index].video == nil else { continue }
                 self.operation = "细化第 \(index + 1) / \(next.segments.count) 段"
-                let request = try StoryPlanningTools.detailRequest(next, segmentID: id)
+                let request = try StoryPlanningTools.detailRequest(next, segmentID: id, userIdeas: userIdeas)
                 next.segments[index].detail = try StoryPlanningTools.decodeDetail(
                     await planner.plan(request), duration: next.segments[index].seconds
                 )
@@ -287,14 +466,15 @@ final class StoryStudioViewModel: ObservableObject {
         }
     }
 
-    func regenerateSegmentPlans(_ ids: [String]) {
+    func regenerateSegmentPlans(_ ids: [String], userIdeas: String = "") {
         guard let project else { return }
         let targets = project.segments.filter {
-            ids.contains($0.id) && $0.detail != nil && $0.attempt == nil && $0.video == nil
+            ids.contains($0.id) && $0.detail != nil
+                && ($0.video != nil || ($0.attempt == nil && $0.video == nil))
         }.map(\.id)
         guard !targets.isEmpty else { return }
         if supportsAgentPlanning {
-            startAgent(stage: .refine, targets: targets)
+            startAgent(stage: .refine, targets: targets, userIdeas: userIdeas)
             return
         }
         run("重新生成分段镜头计划") { owner, token in
@@ -305,9 +485,12 @@ final class StoryStudioViewModel: ObservableObject {
                 guard var next = self.projects.first(where: { $0.id == project.id }),
                       let index = next.segments.firstIndex(where: { $0.id == id }),
                       next.segments[index].detail != nil,
-                      next.segments[index].attempt == nil, next.segments[index].video == nil else { continue }
+                      next.segments[index].video != nil
+                        || (next.segments[index].attempt == nil && next.segments[index].video == nil) else { continue }
                 self.operation = "重新生成第 \(index + 1) / \(next.segments.count) 段"
-                let request = try StoryPlanningTools.detailRequest(next, segmentID: id)
+                // This mutation remains local until the new plan succeeds and commits.
+                next.segments[index].archiveCompletedVideoForRegeneration()
+                let request = try StoryPlanningTools.detailRequest(next, segmentID: id, userIdeas: userIdeas)
                 next.segments[index].detail = try StoryPlanningTools.decodeDetail(
                     await planner.plan(request), duration: next.segments[index].seconds
                 )
@@ -345,7 +528,7 @@ final class StoryStudioViewModel: ObservableObject {
             next.segments[index].characterIDs = edited.characterIDs
             next.segments[index].sceneIDs = edited.sceneIDs
             next.segments[index].propIDs = edited.propIDs
-            next.segments[index].useLastFrameForVideo = edited.useLastFrameForVideo
+            next.segments[index].videoGuidanceMode = edited.videoGuidanceMode
             next.relations.removeAll { $0.segmentID == edited.id }
             next.relations.append(contentsOf: relations)
             next.segments[index].confirmedFrameID = nil
@@ -356,11 +539,58 @@ final class StoryStudioViewModel: ObservableObject {
     }
 
     func setUseLastFrameForVideo(_ enabled: Bool, segmentID: String) {
+        setVideoGuidanceMode(enabled ? .firstAndLastFrames : .firstFrame, segmentID: segmentID)
+    }
+
+    func setVideoGuidanceMode(_ mode: StoryVideoGuidanceMode, segmentID: String) {
         guard var next = project, let index = next.segments.firstIndex(where: { $0.id == segmentID }),
               next.segments[index].attempt == nil, next.segments[index].video == nil,
-              next.segments[index].useLastFrameForVideo != enabled else { return }
-        next.segments[index].useLastFrameForVideo = enabled
-        run("保存尾帧视频设置") { owner, token in
+              next.segments[index].videoGuidanceMode != mode else { return }
+        switch mode {
+        case .firstFrame:
+            break
+        case .firstAndLastFrames:
+            guard next.segments[index].lastFrame != nil else { return }
+        case .previousVideo:
+            guard index > 0, next.segments[index - 1].video != nil else { return }
+        case .sourceVideo:
+            guard next.segments[index].archivedVideos.last != nil else { return }
+        }
+        next.segments[index].videoGuidanceMode = mode
+        run("保存视频衔接方式") { owner, token in
+            try await self.commit(next, owner: owner, token: token)
+        }
+    }
+
+    func adjustSegmentDurationsForVideoModel(_ segmentIDs: Set<String>, model: MediaGenerationModel) {
+        guard var next = project, model.id == next.models.videoModelID,
+              !segmentIDs.isEmpty else { return }
+        let supported = VideoGenerationProfile(modelName: model.modelName).durations.sorted()
+        var changed = false
+        for index in next.segments.indices where segmentIDs.contains(next.segments[index].id) {
+            guard next.segments[index].attempt == nil, next.segments[index].video == nil,
+                  next.segments[index].imageGenerationAttemptID == nil,
+                  next.segments[index].lastFrameGenerationAttemptID == nil,
+                  !supported.contains(next.segments[index].seconds),
+                  let adjusted = supported.first(where: { $0 >= next.segments[index].seconds }) else { continue }
+            let original = next.segments[index].seconds
+            next.segments[index].seconds = adjusted
+            if var detail = next.segments[index].detail,
+               let lastIndex = detail.shots.indices.last,
+               detail.shots[lastIndex].end == original {
+                detail.shots[lastIndex].end = adjusted
+                next.segments[index].detail = detail
+            }
+            for relationIndex in next.relations.indices
+                where next.relations[relationIndex].segmentID == next.segments[index].id
+                    && next.relations[relationIndex].endSecond == original {
+                next.relations[relationIndex].endSecond = adjusted
+            }
+            changed = true
+        }
+        guard changed else { return }
+        next.models.supportedVideoDurations = supported
+        run("调整为视频模型支持的时长") { owner, token in
             try await self.commit(next, owner: owner, token: token)
         }
     }
@@ -406,7 +636,7 @@ final class StoryStudioViewModel: ObservableObject {
         }
     }
 
-    func generateAsset(_ assetID: String) {
+    func generateAsset(_ assetID: String, userIdeas: String = "") {
         guard !isBusy, !isLoading, let owner, let project, let asset = project.resource(id: assetID) else { return }
         let key = AssetGenerationKey(projectID: project.id, resourceID: assetID)
         guard !activeAssetGenerations.contains(key) else { return }
@@ -417,16 +647,19 @@ final class StoryStudioViewModel: ObservableObject {
         assetGenerationErrors[key] = nil
         let generationTask = Task { [weak self] in
             guard let self else { return }
-            await self.performAssetGeneration(key: key, attemptID: attemptID, owner: owner, token: token)
+            await self.performAssetGeneration(key: key, attemptID: attemptID, owner: owner, token: token,
+                                              userIdeas: userIdeas)
         }
         assetGenerationTasks[key] = generationTask
     }
 
-    private func performAssetGeneration(key: AssetGenerationKey, attemptID: UUID, owner: String, token: UUID) async {
+    private func performAssetGeneration(key: AssetGenerationKey, attemptID: UUID, owner: String, token: UUID,
+                                        userIdeas: String) async {
         defer {
             if session == token {
                 activeAssetGenerations.remove(key)
                 assetGenerationTasks[key] = nil
+                clearImageGenerationLockNoticeIfNeeded()
             }
         }
         do {
@@ -439,7 +672,8 @@ final class StoryStudioViewModel: ObservableObject {
             let service = try await boundMedia(token)
             let result = try await service.generateImage(.init(
                 modelConfigID: intent.project.models.imageModelID,
-                prompt: StoryGenerationContext.assetPrompt(intent.project, resource: intent.resource), size: nil, count: 1,
+                prompt: StoryGenerationContext.assetPrompt(intent.project, resource: intent.resource,
+                                                           userIdeas: userIdeas), size: nil, count: 1,
                 clientRequestID: attemptID.uuidString, projectID: key.projectID.uuidString,
                 resourceID: key.resourceID
             ))
@@ -480,11 +714,13 @@ final class StoryStudioViewModel: ObservableObject {
         run("保存素材描述") { owner, token in try await self.commit(next, owner: owner, token: token) }
     }
 
-    func importImage(_ image: GeneratedMediaAsset, assetID: String?, segmentID: String?, frameRole: StoryFrameRole = .first) {
+    func importImage(_ image: GeneratedMediaAsset, assetID: String?, segmentID: String?,
+                     frameRole: StoryFrameRole = .first, confirmImported: Bool = true) {
         guard let project else { return }
         run("保存参考图片") { owner, token in
             try await self.attach(image, assetID: assetID, segmentID: segmentID, frameRole: frameRole,
-                                  projectID: project.id, owner: owner, token: token)
+                                  projectID: project.id, owner: owner, token: token,
+                                  confirmsImportedImage: confirmImported)
         }
     }
 
@@ -505,7 +741,8 @@ final class StoryStudioViewModel: ObservableObject {
 
     private func attach(_ image: GeneratedMediaAsset, assetID: String?, segmentID: String?, frameRole: StoryFrameRole = .first,
                         projectID: UUID, owner: String, token: UUID,
-                        clearsGenerationAttempt: Bool = false) async throws {
+                        clearsGenerationAttempt: Bool = false,
+                        confirmsImportedImage: Bool = false) async throws {
         let data = try await MediaStudioImageLoader.data(for: image)
         try check(token)
         guard let nsImage = NSImage(data: data), let tiff = nsImage.tiffRepresentation,
@@ -516,7 +753,7 @@ final class StoryStudioViewModel: ObservableObject {
         if let assetID, var resource = next.resource(id: assetID) {
             resource.media.images.append(stored)
             if clearsGenerationAttempt { resource.media.generationAttemptID = nil }
-            let automaticallyConfirmed = resource.confirmedImageID == nil
+            let automaticallyConfirmed = confirmsImportedImage || resource.confirmedImageID == nil
             if automaticallyConfirmed { resource.media.confirmedImageID = stored.id }
             try next.replaceResource(resource)
             if automaticallyConfirmed {
@@ -532,14 +769,15 @@ final class StoryStudioViewModel: ObservableObject {
             case .first:
                 next.segments[index].firstFrames.images.append(stored)
                 if clearsGenerationAttempt { next.segments[index].firstFrames.generationAttemptID = nil }
-                if next.segments[index].confirmedFrameID == nil {
+                if confirmsImportedImage || next.segments[index].confirmedFrameID == nil {
                     next.segments[index].confirmedFrameID = stored.id
+                    next.segments[index].userSelectedFirstFrameID = stored.id
                     next.segments[index].inheritedFirstFrameSourceSegmentID = nil
                 }
             case .last:
                 next.segments[index].lastFrames.images.append(stored)
                 if clearsGenerationAttempt { next.segments[index].lastFrames.generationAttemptID = nil }
-                if next.segments[index].confirmedLastFrameID == nil {
+                if confirmsImportedImage || next.segments[index].confirmedLastFrameID == nil {
                     next.segments[index].confirmedLastFrameID = stored.id
                 }
             }
@@ -565,6 +803,7 @@ final class StoryStudioViewModel: ObservableObject {
             case .first:
                 guard next.segments[index].firstFrames.images.contains(image) else { return }
                 next.segments[index].confirmedFrameID = image.id
+                next.segments[index].userSelectedFirstFrameID = image.id
                 next.segments[index].inheritedFirstFrameSourceSegmentID = nil
             case .last:
                 guard next.segments[index].lastFrames.images.contains(image) else { return }
@@ -572,6 +811,19 @@ final class StoryStudioViewModel: ObservableObject {
             }
         } else { return }
         run("确认素材版本") { owner, token in try await self.commit(next, owner: owner, token: token) }
+    }
+
+    func clearConfirmedLastFrame(_ segmentID: String) {
+        guard var next = project,
+              let index = next.segments.firstIndex(where: { $0.id == segmentID }),
+              next.segments[index].attempt == nil, next.segments[index].video == nil,
+              next.segments[index].confirmedLastFrameID != nil
+                || next.segments[index].useLastFrameForVideo else { return }
+        next.segments[index].confirmedLastFrameID = nil
+        next.segments[index].useLastFrameForVideo = false
+        run("取消尾帧") { owner, token in
+            try await self.commit(next, owner: owner, token: token)
+        }
     }
 
     func confirmLatestAssetImages(_ assetIDs: [String]) {
@@ -614,6 +866,7 @@ final class StoryStudioViewModel: ObservableObject {
         if next.segments[index].confirmedFrameID == nil,
                   let latest = next.segments[index].firstFrames.images.last {
             next.segments[index].confirmedFrameID = latest.id
+            next.segments[index].userSelectedFirstFrameID = latest.id
             next.segments[index].inheritedFirstFrameSourceSegmentID = nil
             changed = true
         }
@@ -651,22 +904,28 @@ final class StoryStudioViewModel: ObservableObject {
         run("核对后允许重新生成图片") { owner, token in try await self.commit(next, owner: owner, token: token) }
     }
 
-    func generateFirstFrame(_ id: String) {
+    func generateFirstFrame(_ id: String, userIdeas: String = "") {
         guard let segment = project?.segments.first(where: { $0.id == id }) else { return }
-        generateFirstFrame(id, referenceAssetIDs: segment.resourceIDs)
+        generateFirstFrame(id, referenceAssetIDs: segment.resourceIDs, userIdeas: userIdeas)
     }
 
-    func generateFirstFrame(_ id: String, referenceAssetIDs requestedReferenceAssetIDs: [String]) {
-        generateFrame(id, role: .first, referenceAssetIDs: requestedReferenceAssetIDs)
+    func generateFirstFrame(_ id: String, referenceAssetIDs requestedReferenceAssetIDs: [String],
+                            userIdeas: String = "") {
+        generateFrame(id, role: .first, referenceAssetIDs: requestedReferenceAssetIDs,
+                      userIdeas: userIdeas)
     }
 
-    func generateLastFrame(_ id: String) {
+    func generateLastFrame(_ id: String, userIdeas: String = "") {
         guard let segment = project?.segments.first(where: { $0.id == id }) else { return }
-        generateFrame(id, role: .last, referenceAssetIDs: segment.resourceIDs)
+        generateFrame(id, role: .last, referenceAssetIDs: segment.resourceIDs, userIdeas: userIdeas)
     }
 
-    func generateFrame(_ id: String, role: StoryFrameRole, referenceAssetIDs requestedReferenceAssetIDs: [String]) {
-        guard let project, let segment = project.segments.first(where: { $0.id == id }), segment.detail != nil, segment.attempt == nil else { return }
+    func generateFrame(_ id: String, role: StoryFrameRole,
+                       referenceAssetIDs requestedReferenceAssetIDs: [String], userIdeas: String = "") {
+        guard !isBusy, !isLoading, activeAssetGenerations.isEmpty, activeFrameGenerations.isEmpty,
+              let owner, let project,
+              let segment = project.segments.first(where: { $0.id == id }),
+              segment.detail != nil, segment.attempt == nil else { return }
         let referenceAssetIDs = segment.resourceIDs.filter(requestedReferenceAssetIDs.contains)
         guard !referenceAssetIDs.isEmpty, Set(referenceAssetIDs) == Set(requestedReferenceAssetIDs) else {
             errorMessage = "请选择至少一个属于当前分段且已确认图片的素材。"
@@ -674,19 +933,47 @@ final class StoryStudioViewModel: ObservableObject {
         }
         let frameAttempt = role == .first ? segment.firstFrames.generationAttemptID : segment.lastFrames.generationAttemptID
         guard frameAttempt == nil else { errorMessage = StoryError.unresolvedSubmission.localizedDescription; return }
-        run(role == .first ? "生成分段首帧" : "生成分段尾帧") { owner, token in
-            let service = try await self.boundMedia(token)
+        let key = FrameGenerationKey(projectID: project.id, segmentID: id, role: role)
+        let attemptID = UUID()
+        let token = session
+        activeFrameGenerations.insert(key)
+        frameGenerationErrors[key] = nil
+        let generationTask = Task { [weak self] in
+            guard let self else { return }
+            await self.performFrameGeneration(
+                key: key, role: role, referenceAssetIDs: referenceAssetIDs,
+                attemptID: attemptID, owner: owner, token: token,
+                project: project, segment: segment, userIdeas: userIdeas
+            )
+        }
+        frameGenerationTasks[key] = generationTask
+    }
+
+    private func performFrameGeneration(key: FrameGenerationKey, role: StoryFrameRole,
+                                        referenceAssetIDs: [String], attemptID: UUID,
+                                        owner: String, token: UUID, project: StoryProject,
+                                        segment: StorySegment, userIdeas: String) async {
+        defer {
+            if session == token {
+                activeFrameGenerations.remove(key)
+                frameGenerationTasks[key] = nil
+                clearImageGenerationLockNoticeIfNeeded()
+            }
+        }
+        do {
+            try check(token)
+            let service = try await boundMedia(token)
             var references: [ImageGenerationInputImage] = []
             for assetID in referenceAssetIDs {
                 guard let asset = project.resource(id: assetID), let image = asset.confirmedImage else { throw StoryError.invalidPlan }
-                let url = try self.store.fileURL(image.filename, projectID: project.id, owner: owner)
+                let url = try store.fileURL(image.filename, projectID: project.id, owner: owner)
                 let data = try await MediaStudioImageLoader.data(for: .init(id: image.id.uuidString, mimeType: image.mimeType, url: url))
                 references.append(.init(name: asset.name + ".png", mimeType: image.mimeType, base64Data: data.base64EncodedString()))
             }
             var previousTailReferenceIndex: Int?
             var currentFirstFrameReferenceIndex: Int?
-            if role == .first, let previous = StoryContinuityContext.previousTail(project, segmentID: id) {
-                let url = try self.store.fileURL(previous.image.filename, projectID: project.id, owner: owner)
+            if role == .first, let previous = StoryContinuityContext.previousTail(project, segmentID: key.segmentID) {
+                let url = try store.fileURL(previous.image.filename, projectID: project.id, owner: owner)
                 let data = try await MediaStudioImageLoader.data(for: .init(
                     id: previous.image.id.uuidString, mimeType: previous.image.mimeType, url: url
                 ))
@@ -695,7 +982,7 @@ final class StoryStudioViewModel: ObservableObject {
                                         base64Data: data.base64EncodedString()))
                 previousTailReferenceIndex = references.count
             } else if role == .last, let firstFrame = segment.firstFrame {
-                let url = try self.store.fileURL(firstFrame.filename, projectID: project.id, owner: owner)
+                let url = try store.fileURL(firstFrame.filename, projectID: project.id, owner: owner)
                 let data = try await MediaStudioImageLoader.data(for: .init(
                     id: firstFrame.id.uuidString, mimeType: firstFrame.mimeType, url: url
                 ))
@@ -704,40 +991,49 @@ final class StoryStudioViewModel: ObservableObject {
                                         base64Data: data.base64EncodedString()))
                 currentFirstFrameReferenceIndex = references.count
             }
-            try self.check(token)
-            let attemptID = UUID()
-            let intent = try await self.store.beginFrameImageGeneration(projectID: project.id, segmentID: id,
-                                                                         role: role, attemptID: attemptID, owner: owner)
-            try self.check(token)
-            self.publishProject(intent.project, token: token)
+            try check(token)
+            let intent = try await store.beginFrameImageGeneration(projectID: project.id,
+                                                                    segmentID: key.segmentID,
+                                                                    role: role, attemptID: attemptID,
+                                                                    owner: owner)
+            try check(token)
+            publishProject(intent.project, token: token)
             let result = try await service.generateImage(.init(modelConfigID: project.models.imageModelID,
                 prompt: StoryGenerationContext.framePrompt(intent.project, segment: intent.segment, role: role,
                                                            referenceResourceIDs: referenceAssetIDs,
                                                            previousTailReferenceIndex: previousTailReferenceIndex,
-                                                           currentFirstFrameReferenceIndex: currentFirstFrameReferenceIndex),
+                                                           currentFirstFrameReferenceIndex: currentFirstFrameReferenceIndex,
+                                                           userIdeas: userIdeas),
                 size: nil, count: 1, referenceImages: references,
                 clientRequestID: attemptID.uuidString, projectID: project.id.uuidString,
-                resourceID: "\(id):\(role.rawValue)"))
-            try self.check(token)
+                resourceID: "\(key.segmentID):\(role.rawValue)"))
+            try check(token)
             guard result.clientRequestID == nil || result.clientRequestID == attemptID.uuidString,
                   result.projectID == nil || result.projectID == project.id.uuidString,
-                  result.resourceID == nil || result.resourceID == "\(id):\(role.rawValue)" else { throw StoryError.invalidPlan }
+                  result.resourceID == nil || result.resourceID == "\(key.segmentID):\(role.rawValue)" else {
+                throw StoryError.invalidPlan
+            }
             guard let image = result.images.first else { throw StoryError.unsafeFile }
             let data = try await MediaStudioImageLoader.data(for: image)
             guard let nsImage = NSImage(data: data), let tiff = nsImage.tiffRepresentation,
                   let bitmap = NSBitmapImageRep(data: tiff),
                   let png = bitmap.representation(using: .png, properties: [:]) else { throw StoryError.unsafeFile }
-            let completed = try await self.store.completeFrameImageGeneration(
-                png, mimeType: "image/png", projectID: project.id, segmentID: id, role: role,
+            let completed = try await store.completeFrameImageGeneration(
+                png, mimeType: "image/png", projectID: project.id, segmentID: key.segmentID, role: role,
                 attemptID: attemptID, providerResultID: result.id, providerAssetID: image.id, owner: owner
             )
-            try self.check(token)
-            self.publishProject(completed.0, token: token)
+            try check(token)
+            publishProject(completed.0, token: token)
+        } catch is CancellationError {
+            // Keep a provider-owned attempt unresolved when the app/session is interrupted.
+        } catch {
+            guard session == token else { return }
+            frameGenerationErrors[key] = error.localizedDescription
         }
     }
 
-    func generateBatch(availableModels: [MediaGenerationModel]) {
-        guard !isBusy, !isLoading, let owner, let project else { return }
+    func generateBatch(availableModels: [MediaGenerationModel], userIdeas: String = "") {
+        guard !isBusy, !isLoading, videoBatchTask == nil, let owner, let project else { return }
         let ids = project.segments.filter { selectedSegments.contains($0.id) && $0.isReady }.map(\.id)
         guard !ids.isEmpty else { return }
         guard let model = availableModels.first(where: { $0.id == project.models.videoModelID }) else {
@@ -754,23 +1050,135 @@ final class StoryStudioViewModel: ObservableObject {
                 + unsupported.map { "\($0.title)（\($0.seconds)秒）" }.joined(separator: "、")
             return
         }
+        let referenceVideoSegments = project.segments.filter {
+            ids.contains($0.id)
+                && ($0.videoGuidanceMode == .previousVideo || $0.videoGuidanceMode == .sourceVideo)
+        }
+        let unavailablePreviousVideo = project.segments.enumerated().compactMap { index, segment -> String? in
+            guard referenceVideoSegments.contains(where: { $0.id == segment.id }),
+                  segment.videoGuidanceMode == .previousVideo else { return nil }
+            return index > 0 && project.segments[index - 1].video != nil ? nil : segment.title
+        }
+        let unavailableSourceVideo = referenceVideoSegments.filter {
+            $0.videoGuidanceMode == .sourceVideo && $0.archivedVideos.last == nil
+        }
+        guard referenceVideoSegments.isEmpty || model.supportsVideoReference else {
+            errorMessage = "当前视频模型不支持视频参考输入。"
+            return
+        }
+        guard unavailablePreviousVideo.isEmpty else {
+            errorMessage = "请先完成上一段视频，再为以下分段选择“上一段视频”："
+                + unavailablePreviousVideo.joined(separator: "、")
+            return
+        }
+        guard unavailableSourceVideo.isEmpty else {
+            errorMessage = "找不到要重做的原视频："
+                + unavailableSourceVideo.map(\.title).joined(separator: "、")
+            return
+        }
         errorMessage = nil
         let token = session
-        for id in ids {
-            startVideoGeneration(project: project, segmentID: id, model: model, size: size,
-                                 owner: owner, token: token)
+        // Adjacent videos must be submitted in story order: the preceding completed clip's
+        // decoded final frame becomes the next request's first frame.
+        videoBatchTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.session == token { self.videoBatchTask = nil } }
+            for id in ids {
+                guard !Task.isCancelled, self.session == token,
+                      let latest = self.projects.first(where: { $0.id == project.id }) else { return }
+                self.startVideoGeneration(
+                    project: latest, segmentID: id, model: model, size: size,
+                    owner: owner, token: token, userIdeas: userIdeas
+                )
+                let key = VideoGenerationKey(projectID: project.id, segmentID: id)
+                if let generation = self.videoGenerationTasks[key] { await generation.value }
+            }
+        }
+    }
+
+    /// Keeps the completed cut in creation history and reopens the segment controls without
+    /// submitting a billable request. The user can then change either frame before generating.
+    func prepareCompletedVideoForEditing(_ segmentID: String) {
+        guard var next = project,
+              let index = next.segments.firstIndex(where: { $0.id == segmentID }),
+              next.segments[index].video != nil else { return }
+        next.segments[index].archiveCompletedVideoForRegeneration()
+        run("保留旧视频并开放重新制作") { owner, token in
+            try await self.commit(next, owner: owner, token: token)
+        }
+    }
+
+    /// Regenerates one completed segment only after the user confirms the charge in the UI.
+    /// The old cut is archived before the provider request, so failure never destroys it.
+    func regenerateCompletedVideo(_ segmentID: String, availableModels: [MediaGenerationModel],
+                                  useOriginalVideo: Bool = true, userIdeas: String = "") {
+        guard !isBusy, !isLoading, videoBatchTask == nil, let owner, var next = project,
+              let index = next.segments.firstIndex(where: { $0.id == segmentID }),
+              next.segments[index].video != nil else { return }
+        guard let model = availableModels.first(where: { $0.id == next.models.videoModelID }),
+              model.enabled, model.hasAPIKey else {
+            errorMessage = StoryError.missingModel.localizedDescription
+            return
+        }
+        if useOriginalVideo {
+            guard model.supportsVideoReference else {
+                errorMessage = "当前视频模型不支持参考原视频重新生成。"
+                return
+            }
+            guard !StoryGenerationContext.normalizedUserIdeas(userIdeas).isEmpty else {
+                errorMessage = "请先填写原视频哪里需要调整。"
+                return
+            }
+        }
+        next.segments[index].archiveCompletedVideoForRegeneration()
+        if useOriginalVideo {
+            next.segments[index].videoGuidanceMode = .sourceVideo
+        } else if next.segments[index].videoGuidanceMode == .sourceVideo {
+            next.segments[index].videoGuidanceMode = .firstFrame
+        }
+        guard next.segments[index].isReady else {
+            errorMessage = StoryError.invalidPlan.localizedDescription
+            return
+        }
+        let profile = VideoGenerationProfile(modelName: model.modelName)
+        guard profile.durations.contains(next.segments[index].seconds), let size = profile.sizes.first else {
+            errorMessage = StoryError.unsupportedDuration.localizedDescription
+            return
+        }
+        let token = session
+        let projectID = next.id
+        errorMessage = nil
+        selectedSegments = [segmentID]
+        videoBatchTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.session == token { self.videoBatchTask = nil } }
+            do {
+                try await self.commit(next, owner: owner, token: token)
+                guard !Task.isCancelled, self.session == token,
+                      let latest = self.projects.first(where: { $0.id == projectID }) else { return }
+                self.startVideoGeneration(
+                    project: latest, segmentID: segmentID, model: model, size: size,
+                    owner: owner, token: token, userIdeas: userIdeas
+                )
+                let key = VideoGenerationKey(projectID: projectID, segmentID: segmentID)
+                if let generation = self.videoGenerationTasks[key] { await generation.value }
+            } catch is CancellationError {
+                return
+            } catch {
+                if self.session == token { self.errorMessage = error.localizedDescription }
+            }
         }
     }
 
     private func startVideoGeneration(project: StoryProject, segmentID: String,
                                       model: MediaGenerationModel, size: String,
-                                      owner: String, token: UUID) {
+                                      owner: String, token: UUID, userIdeas: String = "") {
         guard let segment = project.segments.first(where: { $0.id == segmentID }),
               segment.isReady else { return }
         let key = VideoGenerationKey(projectID: project.id, segmentID: segmentID)
         guard !activeVideoGenerations.contains(key) else { return }
         let prompt: String
-        do { prompt = try StoryGenerationContext.videoPrompt(project, segment: segment) }
+        do { prompt = try StoryGenerationContext.videoPrompt(project, segment: segment, userIdeas: userIdeas) }
         catch { errorMessage = error.localizedDescription; return }
         let attempt = StoryVideoAttempt(
             modelConfigID: project.models.videoModelID,
@@ -787,13 +1195,49 @@ final class StoryStudioViewModel: ObservableObject {
             try self.check(token)
             self.publishProject(intent.project, token: token)
 
-            guard let frame = intent.segment.firstFrame else { throw StoryError.invalidPlan }
-            let firstURL = try self.store.fileURL(frame.filename, projectID: project.id, owner: owner)
-            let firstData = try await MediaStudioImageLoader.data(for: .init(
-                id: frame.id.uuidString, mimeType: frame.mimeType, url: firstURL
-            ))
+            var firstFrameInput: ImageGenerationInputImage?
             var lastFrameInput: ImageGenerationInputImage?
-            if model.supportsVideoLastFrame, intent.segment.useLastFrameForVideo,
+            var referenceVideoInput: VideoGenerationInputVideo?
+            var referencePurpose: VideoGenerationReferencePurpose = .reference
+            switch intent.segment.videoGuidanceMode {
+            case .firstFrame, .firstAndLastFrames:
+                guard let frame = intent.segment.firstFrame else { throw StoryError.invalidPlan }
+                let firstURL = try self.store.fileURL(frame.filename, projectID: project.id, owner: owner)
+                let firstData = try await MediaStudioImageLoader.data(for: .init(
+                    id: frame.id.uuidString, mimeType: frame.mimeType, url: firstURL
+                ))
+                firstFrameInput = .init(
+                    name: "first-frame.png", mimeType: frame.mimeType,
+                    base64Data: firstData.base64EncodedString()
+                )
+            case .previousVideo, .sourceVideo:
+                guard model.supportsVideoReference,
+                      let index = intent.project.segments.firstIndex(where: { $0.id == segmentID }) else {
+                    throw StoryError.invalidPlan
+                }
+                let referenceVideo: StoryVideo?
+                if intent.segment.videoGuidanceMode == .previousVideo {
+                    referenceVideo = index > 0 ? intent.project.segments[index - 1].video : nil
+                } else {
+                    referenceVideo = intent.segment.archivedVideos.last
+                }
+                guard let referenceVideo else { throw StoryError.invalidPlan }
+                let previousURL = try self.store.fileURL(
+                    referenceVideo.filename, projectID: project.id, owner: owner
+                )
+                let previousData = try await Task.detached(priority: .userInitiated) {
+                    try Data(contentsOf: previousURL, options: .mappedIfSafe)
+                }.value
+                referenceVideoInput = .init(
+                    name: intent.segment.videoGuidanceMode == .previousVideo
+                        ? "previous-segment.mp4" : "source-video.mp4",
+                    mimeType: "video/mp4",
+                    base64Data: previousData.base64EncodedString()
+                )
+                referencePurpose = intent.segment.videoGuidanceMode == .previousVideo ? .extend : .edit
+            }
+            if model.supportsVideoLastFrame,
+               intent.segment.videoGuidanceMode == .firstAndLastFrames,
                let lastFrame = intent.segment.lastFrame {
                 let lastURL = try self.store.fileURL(lastFrame.filename, projectID: project.id, owner: owner)
                 let lastData = try await MediaStudioImageLoader.data(for: .init(
@@ -810,11 +1254,10 @@ final class StoryStudioViewModel: ObservableObject {
                 prompt: attempt.prompt,
                 size: attempt.size,
                 seconds: attempt.seconds,
-                inputImage: .init(
-                    name: "first-frame.png", mimeType: frame.mimeType,
-                    base64Data: firstData.base64EncodedString()
-                ),
+                inputImage: firstFrameInput,
                 lastFrameImage: lastFrameInput,
+                referenceVideo: referenceVideoInput,
+                referencePurpose: referencePurpose,
                 ratio: attempt.ratio
             )
             try await self.executeParallelVideo(
@@ -907,8 +1350,24 @@ final class StoryStudioViewModel: ObservableObject {
             result, projectID: projectID, segmentID: segmentID,
             attemptID: attemptID, owner: owner
         )
+        var finalProject = completed.0
+        do {
+            let videoURL = try store.fileURL(completed.1.filename, projectID: projectID, owner: owner)
+            let finalFrame = try await StoryVideoFrameExtractor.lastFramePNG(from: videoURL)
+            try check(token)
+            let applied = try await store.applyActualVideoLastFrame(
+                finalFrame, projectID: projectID, segmentID: segmentID,
+                videoJobID: completed.1.jobID, owner: owner
+            )
+            finalProject = applied.0
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // The provider video is already complete and remains usable. Frame extraction is
+            // a local continuity enhancement, so a malformed/unsupported file is non-fatal.
+        }
         try check(token)
-        publishProject(completed.0, token: token)
+        publishProject(finalProject, token: token)
         selectedSegments.remove(segmentID)
     }
 
@@ -981,9 +1440,52 @@ final class StoryStudioViewModel: ObservableObject {
         guard let owner else { return nil }
         return try? store.fileURL(video.filename, projectID: projectID, owner: owner)
     }
+    func reextractVideoLastFrame(_ segmentID: String) {
+        guard let owner, let project,
+              let segment = project.segments.first(where: { $0.id == segmentID }),
+              let video = segment.video else { return }
+        let key = VideoGenerationKey(projectID: project.id, segmentID: segmentID)
+        guard !activeVideoFrameExtractions.contains(key) else { return }
+        let token = session
+        activeVideoFrameExtractions.insert(key)
+        errorMessage = nil
+        videoFrameExtractionTasks[key] = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.session == token {
+                    self.activeVideoFrameExtractions.remove(key)
+                    self.videoFrameExtractionTasks[key] = nil
+                }
+            }
+            do {
+                let url = try self.store.fileURL(video.filename, projectID: project.id, owner: owner)
+                let png = try await StoryVideoFrameExtractor.lastFramePNG(from: url)
+                try self.check(token)
+                let applied = try await self.store.applyActualVideoLastFrame(
+                    png, projectID: project.id, segmentID: segmentID,
+                    videoJobID: video.jobID, owner: owner, forceNew: true
+                )
+                try self.check(token)
+                self.publishProject(applied.0, token: token)
+            } catch is CancellationError {
+            } catch {
+                guard self.session == token else { return }
+                self.errorMessage = "无法从当前视频提取末帧：\(error.localizedDescription)"
+            }
+        }
+    }
     private func validateModels(_ selection: StoryModelSelection, available: [MediaGenerationModel]) throws {
         let ids = Set(available.filter { $0.enabled && $0.hasAPIKey }.map(\.id))
         guard [selection.textModelID, selection.imageModelID, selection.videoModelID].allSatisfy(ids.contains) else { throw StoryError.missingModel }
+    }
+    private func modelSelectionWithCapabilities(
+        _ selection: StoryModelSelection, available: [MediaGenerationModel]
+    ) -> StoryModelSelection {
+        var result = selection
+        if let model = available.first(where: { $0.id == selection.videoModelID }) {
+            result.supportedVideoDurations = VideoGenerationProfile(modelName: model.modelName).durations
+        }
+        return result
     }
 
     private func loadAgentHistory(_ projectID: UUID) {
@@ -997,20 +1499,28 @@ final class StoryStudioViewModel: ObservableObject {
                 let batches = try await store.loadMediaBatches(owner: owner, projectID: projectID)
                 guard session == token, selectedProjectID == projectID, !Task.isCancelled else { return }
                 var runs = result.runs
+                var loadedBatches = batches.batches
                 if let canonical = projects.first(where: { $0.id == projectID }) {
                     let canonicalDigest = try StoryAgentRun.digest(canonical)
                     if let candidateIndex = runs.firstIndex(where: {
                         !$0.applied && $0.abandonedAt == nil
-                            && ($0.baseDigest == canonicalDigest || (try? StoryAgentRun.digest($0.draft)) == canonicalDigest)
+                            && ((try? StoryAgentRun.matchesPersistedDigest($0.baseDigest, project: canonical)) == true
+                                || (try? StoryAgentRun.digest($0.draft)) == canonicalDigest)
                     }), let recovered = try await store.applyValidatedRunIfPossible(runs[candidateIndex], owner: owner) {
                         runs[candidateIndex] = recovered.0
                         if let projectIndex = projects.firstIndex(where: { $0.id == projectID }) {
                             projects[projectIndex] = recovered.1
                         }
                     }
+                    for index in loadedBatches.indices {
+                        if let recovered = try await store.reconcileCompletedVideoBatch(loadedBatches[index]) {
+                            guard session == token, selectedProjectID == projectID, !Task.isCancelled else { return }
+                            loadedBatches[index] = recovered
+                        }
+                    }
                 }
                 for run in runs { publishAgentRun(run, token: token) }
-                for batch in batches.batches { publishMediaBatch(batch, token: token, updateProject: false) }
+                for batch in loadedBatches { publishMediaBatch(batch, token: token, updateProject: false) }
                 if result.unreadable > 0 { errorMessage = "有 \(result.unreadable) 条规划运行记录无法读取，原文件已保留。" }
                 if batches.unreadable > 0 { errorMessage = "有 \(batches.unreadable) 条制作批次无法读取，原文件已保留。" }
             } catch { if session == token { errorMessage = error.localizedDescription } }
@@ -1026,11 +1536,11 @@ final class StoryStudioViewModel: ObservableObject {
         if isBusy, activeProjectID == value.projectID, let event = value.events.last { operation = event.detail }
     }
 
-    private func startAgent(stage: StoryAgentRun.Stage, targets: [String]) {
+    private func startAgent(stage: StoryAgentRun.Stage, targets: [String], userIdeas: String = "") {
         guard let project else { return }
         run("启动分步剧情规划") { owner, token in
             let draft = try StoryAgentRun(project: project, owner: owner, stage: stage, targetIDs: targets,
-                                           policy: self.effectiveAgentPolicy())
+                                           policy: self.effectiveAgentPolicy(), userIdeas: userIdeas)
             try await self.executeAgent(draft, resume: false, owner: owner, token: token)
         }
     }
@@ -1044,7 +1554,10 @@ final class StoryStudioViewModel: ObservableObject {
                   !saved.applied, saved.abandonedAt == nil else { throw StoryAgentError.invalidRun }
             let digest = try StoryAgentRun.digest(project)
             let draftDigest = try StoryAgentRun.digest(saved.draft)
-            guard digest == saved.baseDigest || (saved.checkpoint.status == .completed && digest == draftDigest) else { throw StoryAgentError.projectChanged }
+            guard try StoryAgentRun.matchesPersistedDigest(saved.baseDigest, project: project)
+                    || (saved.checkpoint.status == .completed && digest == draftDigest) else {
+                throw StoryAgentError.projectChanged
+            }
             try await self.executeAgent(saved, resume: true, owner: owner, token: token)
         }
     }
@@ -1139,14 +1652,24 @@ final class StoryStudioViewModel: ObservableObject {
         }
     }
 
-    func previewMediaBatch(kind: StoryMediaBatch.Kind, targets: [String], models: [MediaGenerationModel]) throws -> StoryMediaBatch {
+    func previewMediaBatch(kind: StoryMediaBatch.Kind, targets: [String], models: [MediaGenerationModel],
+                           userIdeas: String = "") throws -> StoryMediaBatch {
         guard let project, let owner else { throw StoryError.invalidProject }
-        return try .init(project: project, owner: owner, kind: kind, targets: targets, models: models)
+        return try .init(project: project, owner: owner, kind: kind, targets: targets,
+                         models: models, userIdeas: userIdeas)
     }
     func startMediaBatch(_ batch: StoryMediaBatch) {
         guard let project, batch.draft.id == project.id else { return }
+        if batch.kind == .videos {
+            selectedSegments = Set(batch.steps.map(\.targetID))
+            generateBatch(availableModels: batch.models, userIdeas: batch.userIdeas ?? "")
+            return
+        }
         run("准备批量制作") { owner, token in
-            guard owner == batch.owner, try StoryAgentRun.digest(project) == batch.expectedProjectDigest else { throw StoryAgentError.projectChanged }
+            guard owner == batch.owner,
+                  try StoryAgentRun.matchesPersistedDigest(batch.expectedProjectDigest, project: project) else {
+                throw StoryAgentError.projectChanged
+            }
             let existing = try await self.store.loadMediaBatches(owner: owner, projectID: project.id)
             guard existing.unreadable == 0, !existing.batches.contains(where: { !$0.finished }) else { throw StoryBatchError.activeBatch }
             try await self.executeMediaBatch(batch, token: token)
@@ -1223,9 +1746,10 @@ final class StoryStudioViewModel: ObservableObject {
         }
     }
     private func run(_ label: String, body: @escaping @MainActor (String, UUID) async throws -> Void) {
-        guard !isBusy, !isLoading, activeAssetGenerations.isEmpty, let owner else {
-            if !activeAssetGenerations.isEmpty {
-                errorMessage = "图片正在并行生成。生成期间可以继续启动其它素材，但项目结构与模型设置暂时不能修改。"
+        guard !isBusy, !isLoading, activeAssetGenerations.isEmpty, activeFrameGenerations.isEmpty,
+              let owner else {
+            if !activeAssetGenerations.isEmpty || !activeFrameGenerations.isEmpty {
+                errorMessage = Self.imageGenerationLockNotice
             }
             return
         }
@@ -1239,6 +1763,11 @@ final class StoryStudioViewModel: ObservableObject {
             guard session == token else { return }
             isBusy = false; operation = ""; task = nil; progress = nil; activeSegmentID = nil; activeProjectID = nil
         }
+    }
+    private func clearImageGenerationLockNoticeIfNeeded() {
+        guard activeAssetGenerations.isEmpty, activeFrameGenerations.isEmpty,
+              errorMessage == Self.imageGenerationLockNotice else { return }
+        errorMessage = nil
     }
     private func check(_ token: UUID) throws {
         try Task.checkCancellation()

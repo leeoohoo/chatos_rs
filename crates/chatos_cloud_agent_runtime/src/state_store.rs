@@ -348,6 +348,7 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
             run.pending_tool_calls = transition.pending_tool_calls;
             run.pending_tool_results = transition.pending_tool_results;
             run.response_input_items = transition.response_input_items;
+            run.usage_accumulator = transition.usage_accumulator;
             run.terminal_outcome = transition.terminal_outcome;
             run.version = run.version.saturating_add(1);
             run.updated_at = chrono::Utc::now();
@@ -685,6 +686,7 @@ mod tests {
                 pending_tool_calls: Vec::new(),
                 pending_tool_results: Vec::new(),
                 response_input_items: Vec::new(),
+                usage_accumulator: Value::Null,
                 terminal_outcome: Some(serde_json::json!({"ok": true})),
                 outbox: Vec::new(),
             })

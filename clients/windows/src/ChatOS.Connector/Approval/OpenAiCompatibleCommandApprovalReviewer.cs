@@ -10,7 +10,8 @@ namespace ChatOS.Connector.Approval;
 internal sealed class OpenAiCompatibleCommandApprovalReviewer(
     ApprovalModelRuntimeConfigurationService configuration,
     IConnectorWorkspaceCatalog workspaces,
-    IHttpClientFactory httpClientFactory) : ICommandApprovalAiReviewer
+    IHttpClientFactory httpClientFactory,
+    IApprovalMemoryEngineRecorder memoryRecorder) : ICommandApprovalAiReviewer
 {
     internal const string HttpClientName = "ChatOS.WindowsApprovalReviewer";
     private const int MaximumResponseBytes = 256 * 1024;
@@ -23,12 +24,19 @@ internal sealed class OpenAiCompatibleCommandApprovalReviewer(
     {
         var runtime = await configuration.ResolveAsync(cancellationToken).ConfigureAwait(false);
         var userPrompt = BuildUserPrompt(request, risk);
+        var memoryRun = await memoryRecorder.BeginAsync(
+            runtime,
+            request,
+            runtime.SystemPrompt,
+            userPrompt,
+            cancellationToken).ConfigureAwait(false);
         Exception? lastError = null;
         for (var attempt = 0; attempt <= runtime.MaximumTransientRetries; attempt++)
         {
             try
             {
-                return await SendAsync(runtime, userPrompt, cancellationToken).ConfigureAwait(false);
+                return await SendAsync(runtime, request, userPrompt, memoryRun, cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (ApprovalReviewerTransientException exception) when (attempt < runtime.MaximumTransientRetries)
             {
@@ -41,53 +49,53 @@ internal sealed class OpenAiCompatibleCommandApprovalReviewer(
 
     private async Task<CommandApprovalAiReview> SendAsync(
         ApprovalModelRuntimeConfiguration runtime,
+        CommandApprovalRequest approvalRequest,
         string userPrompt,
+        ApprovalMemoryRun memoryRun,
         CancellationToken cancellationToken)
     {
-        var endpoint = new Uri(runtime.BaseUri, "chat/completions");
+        var endpoint = new Uri(runtime.BaseUri, "responses");
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", runtime.ApiKey);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Content = JsonContent.Create(new
+        var input = new List<object>
         {
-            model = runtime.Model,
-            temperature = runtime.Temperature,
-            max_tokens = runtime.MaxOutputTokens,
-            messages = new object[]
-            {
-                new { role = "system", content = runtime.SystemPrompt },
-                new { role = "user", content = userPrompt },
-            },
-            tools = new[]
+            new { role = "system", content = runtime.SystemPrompt },
+        };
+        input.AddRange(memoryRun.ContextBlocks.Select(block =>
+            (object)new { role = "system", content = block }));
+        input.Add(new { role = "user", content = userPrompt });
+        var requestPayload = new Dictionary<string, object?>
+        {
+            ["model"] = runtime.Model,
+            ["temperature"] = runtime.Temperature,
+            ["max_output_tokens"] = runtime.MaxOutputTokens,
+            ["input"] = input,
+            ["tools"] = new[]
             {
                 new
                 {
                     type = "function",
-                    function = new
-                    {
-                        name = "approval_decision",
-                        description = "Return the authoritative local command approval decision.",
-                        parameters = new
-                        {
-                            type = "object",
-                            additionalProperties = false,
-                            required = new[] { "decision", "reason" },
-                            properties = new
-                            {
-                                decision = new { type = "string", @enum = new[] { "approve", "deny", "ask_user" } },
-                                reason = new { type = "string", minLength = 1, maxLength = 2000 },
-                                remember_allow = new { type = "boolean" },
-                            },
-                        },
-                    },
+                    name = "approval_decision",
+                    description = "Return the authoritative local command approval decision.",
+                    parameters = ApprovalDecisionParameters(),
                 },
             },
-            tool_choice = new
+            ["tool_choice"] = new { type = "function", name = "approval_decision" },
+            ["store"] = false,
+            ["prompt_cache_key"] = $"approval-agent:{runtime.ModelConfigId}",
+            ["context_management"] = new[]
             {
-                type = "function",
-                function = new { name = "approval_decision" },
+                new { type = "compaction", compact_threshold = 200_000 },
             },
-        }, options: JsonOptions);
+        };
+        var thinking = runtime.ThinkingLevel?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrEmpty(thinking) && thinking is not ("none" or "auto"))
+        {
+            requestPayload["reasoning"] = new { effort = thinking };
+            requestPayload["include"] = new[] { "reasoning.encrypted_content" };
+        }
+        request.Content = JsonContent.Create(requestPayload, options: JsonOptions);
 
         using var response = await httpClientFactory.CreateClient(HttpClientName)
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
@@ -107,7 +115,14 @@ internal sealed class OpenAiCompatibleCommandApprovalReviewer(
         }
 
         var payload = await ReadBoundedTextAsync(response, cancellationToken).ConfigureAwait(false);
-        return ParseDecision(payload);
+        var decision = ParseDecision(payload);
+        await memoryRecorder.CompleteAsync(
+            memoryRun,
+            approvalRequest,
+            payload,
+            decision,
+            cancellationToken).ConfigureAwait(false);
+        return decision;
     }
 
     private string BuildUserPrompt(CommandApprovalRequest request, ConnectorApprovalRisk risk)
@@ -133,17 +148,40 @@ internal sealed class OpenAiCompatibleCommandApprovalReviewer(
             """;
     }
 
+    private static object ApprovalDecisionParameters() => new
+    {
+        type = "object",
+        additionalProperties = false,
+        required = new[] { "decision", "reason" },
+        properties = new
+        {
+            decision = new { type = "string", @enum = new[] { "approve", "deny", "ask_user" } },
+            reason = new { type = "string", minLength = 1, maxLength = 2000 },
+            remember_allow = new { type = "boolean" },
+        },
+    };
+
     private static CommandApprovalAiReview ParseDecision(string payload)
     {
         try
         {
             using var document = JsonDocument.Parse(payload);
-            var toolCalls = document.RootElement.GetProperty("choices")[0]
-                .GetProperty("message").GetProperty("tool_calls");
+            if (!document.RootElement.TryGetProperty("status", out var status) ||
+                !string.Equals(status.GetString(), "completed", StringComparison.Ordinal))
+            {
+                throw new JsonException("Approval response did not complete.");
+            }
+            var toolCalls = document.RootElement.GetProperty("output");
             foreach (var toolCall in toolCalls.EnumerateArray())
             {
-                var function = toolCall.GetProperty("function");
-                if (!string.Equals(function.GetProperty("name").GetString(), "approval_decision", StringComparison.Ordinal))
+                var function = toolCall;
+                if (!toolCall.TryGetProperty("type", out var type) ||
+                    !string.Equals(type.GetString(), "function_call", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                if (!string.Equals(function.GetProperty("name").GetString(),
+                    "approval_decision", StringComparison.Ordinal))
                 {
                     continue;
                 }

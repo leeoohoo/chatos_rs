@@ -18,13 +18,14 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use chatos_mcp_runtime::{ToolCallContext, ToolCallerModelRuntime, ToolResult, ToolResultCallback};
 
-use super::input_items::append_runtime_input_items;
+use super::input_items::{
+    append_runtime_input_items, merge_current_turn_tool_history_into_input,
+    merge_pending_tool_turn_into_input,
+};
 use super::{
-    bounded_provider_usage_metadata, empty_final_response_followup_item, estimated_json_tokens,
-    merge_current_turn_tool_history_into_input, merge_pending_tool_turn_into_input,
-    merge_record_metadata, prepare_iteration_request, should_persist_tool_result,
-    IterativeContextRefresh, ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
-    DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS, EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
+    bounded_provider_usage_metadata, empty_final_response_followup_item, merge_record_metadata,
+    prepare_iteration_request, should_persist_tool_result, IterativeContextRefresh,
+    EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
 };
 use crate::{
     AiResponse, AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepRequest, AiTurnReport,
@@ -49,23 +50,6 @@ impl MemoryRecordWriter for RecordingWriter {
 struct TestLifecycleHook;
 
 struct PagingToolExecutor;
-
-#[test]
-fn active_summary_budget_does_not_compact_a_176k_turn_but_catches_the_200k_threshold() {
-    let below = json!([{"role": "user", "content": "x".repeat(704_000)}]);
-    let above = json!([{"role": "user", "content": "x".repeat(900_000)}]);
-
-    assert!(estimated_json_tokens(&below) < ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS);
-    assert!(estimated_json_tokens(&above) > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS);
-}
-
-#[test]
-fn active_summary_soft_budget_is_not_the_failure_limit() {
-    let just_over_soft_budget = ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS + 3_262;
-    assert!(just_over_soft_budget < DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS);
-    assert!(just_over_soft_budget <= DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS);
-    assert!(DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS + 1 > DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS);
-}
 
 #[async_trait]
 impl ToolExecutor for PagingToolExecutor {
@@ -192,7 +176,7 @@ async fn lifecycle_hook_does_not_duplicate_an_existing_runtime_item() {
 }
 
 #[tokio::test]
-async fn durable_history_without_memory_refresh_still_hits_the_token_guard() {
+async fn durable_history_is_dispatched_without_a_local_token_guard() {
     let request = ModelRequest::openai_compatible(
         "http://127.0.0.1:9",
         "key",
@@ -211,13 +195,13 @@ async fn durable_history_without_memory_refresh_still_hits_the_token_guard() {
             force_identity_encoding: false,
         })
         .await
-        .expect("guard outcome");
+        .expect("dispatch outcome");
 
     match outcome {
-        crate::runtime::AiSingleStepOutcome::Failed { error } => {
-            assert!(error.contains("超过模型上下文硬限制"));
+        crate::runtime::AiSingleStepOutcome::Retry { error, .. } => {
+            assert!(error.contains("127.0.0.1:9/responses"));
         }
-        other => panic!("expected token guard failure, got {other:?}"),
+        other => panic!("expected provider dispatch, got {other:?}"),
     }
 }
 
@@ -398,7 +382,17 @@ async fn single_step_persists_the_runtime_supplied_assistant_message_id() {
     let (base_url, _requests, _headers, server) = start_lifecycle_mock_provider(vec![json!({
         "id": "response-final",
         "status": "completed",
-        "output_text": "done"
+        "output": [
+            {"type": "reasoning", "encrypted_content": "opaque-state"},
+            {"type": "message", "id": "message-final", "role": "assistant", "content": [
+                {"type": "output_text", "text": "done"}
+            ]}
+        ],
+        "usage": {
+            "input_tokens": 12,
+            "input_tokens_details": {"cached_tokens": 8},
+            "output_tokens": 4
+        }
     })])
     .await;
     let writer = RecordingWriter::default();
@@ -430,6 +424,13 @@ async fn single_step_persists_the_runtime_supplied_assistant_message_id() {
         records[0].message_id.as_deref(),
         Some("cloud-run:1:assistant")
     );
+    let metadata = records[0].packed_metadata().expect("assistant metadata");
+    assert_eq!(metadata["responses_output"][0]["type"], "reasoning");
+    assert_eq!(
+        metadata["responses_output"][0]["encrypted_content"],
+        "opaque-state"
+    );
+    assert_eq!(metadata["provider_usage"]["cached_tokens"], 8);
 }
 
 #[tokio::test]
@@ -629,7 +630,7 @@ async fn iterative_context_refresh_keeps_prior_tool_batches_in_later_model_reque
 }
 
 #[tokio::test]
-async fn responses_tool_loop_uses_previous_response_id_and_delta_input() {
+async fn responses_tool_loop_uses_stateless_full_output_history() {
     let (base_url, requests, _connection_headers, server) = start_lifecycle_mock_provider(vec![
         json!({
             "id": "response-page-1",
@@ -673,12 +674,7 @@ async fn responses_tool_loop_uses_previous_response_id_and_delta_input() {
     assert_eq!(result.content, "done");
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(Value::as_str),
-        Some("response-page-1")
-    );
+    assert!(requests[1].get("previous_response_id").is_none());
     assert_eq!(
         requests[0].get("prompt_cache_key").and_then(Value::as_str),
         Some("conversation:session-continuation")
@@ -691,12 +687,16 @@ async fn responses_tool_loop_uses_previous_response_id_and_delta_input() {
         .get("input")
         .and_then(Value::as_array)
         .expect("continuation input");
-    assert_eq!(continuation_input.len(), 1);
+    assert_eq!(continuation_input.len(), 3);
     assert_eq!(
-        continuation_input[0].get("type").and_then(Value::as_str),
+        continuation_input[1].get("type").and_then(Value::as_str),
+        Some("function_call")
+    );
+    assert_eq!(
+        continuation_input[2].get("type").and_then(Value::as_str),
         Some("function_call_output")
     );
-    assert!(!requests[1].to_string().contains("verify every page"));
+    assert!(requests[1].to_string().contains("verify every page"));
 }
 
 #[derive(Clone, Default)]
@@ -742,7 +742,7 @@ async fn mock_continuation_fallback_provider(
 }
 
 #[tokio::test]
-async fn unsupported_continuation_falls_back_to_full_input_once() {
+async fn stateless_continuation_sends_full_input_without_fallback() {
     let state = ContinuationFallbackProviderState::default();
     let requests = Arc::clone(&state.requests);
     let app = Router::new()
@@ -776,11 +776,10 @@ async fn unsupported_continuation_falls_back_to_full_input_once() {
 
     assert_eq!(result.content, "fallback complete");
     let requests = requests.lock().await;
-    assert_eq!(requests.len(), 3);
-    assert!(requests[1].get("previous_response_id").is_some());
-    assert!(requests[2].get("previous_response_id").is_none());
-    assert!(requests[2].to_string().contains("keep the full prompt"));
-    assert!(requests[2].to_string().contains("result-call-1"));
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[1].to_string().contains("keep the full prompt"));
+    assert!(requests[1].to_string().contains("result-call-1"));
 }
 
 #[derive(Clone, Default)]
@@ -966,12 +965,7 @@ async fn lifecycle_continuation_runs_hidden_review_and_restores_visible_response
         .is_none_or(Vec::is_empty));
     assert!(captured[1].to_string().contains("visible summary"));
     assert!(captured[1].to_string().contains("TASK_REVIEW: pass"));
-    assert_eq!(
-        captured[1]
-            .get("previous_response_id")
-            .and_then(Value::as_str),
-        Some("response-visible")
-    );
+    assert!(captured[1].get("previous_response_id").is_none());
 }
 
 #[tokio::test]

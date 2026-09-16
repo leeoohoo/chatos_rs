@@ -6,7 +6,7 @@ namespace ChatOS.Connector.Terminal;
 public sealed class ConnectorOutboundEventHub
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly Channel<string> _events = Channel.CreateBounded<string>(new BoundedChannelOptions(4_096)
+    private readonly Channel<string> _events = Channel.CreateBounded<string>(new BoundedChannelOptions(256)
     {
         FullMode = BoundedChannelFullMode.DropOldest,
         SingleReader = true,
@@ -26,11 +26,34 @@ public sealed class ConnectorOutboundEventHub
         };
         object body = value.Kind switch
         {
-            TerminalEventKind.Output => new { data = value.Data ?? string.Empty },
-            TerminalEventKind.Snapshot => new { data = value.Data ?? string.Empty },
-            TerminalEventKind.Exit => new { code = value.ExitCode ?? 0 },
-            TerminalEventKind.State => new { busy = value.Busy ?? false },
-            TerminalEventKind.Error => new { error = value.Data ?? "Terminal session failed." },
+            TerminalEventKind.Output => new
+            {
+                data = value.Data ?? string.Empty,
+                sequence = value.Sequence,
+                protocol_version = 2,
+            },
+            TerminalEventKind.Snapshot => new
+            {
+                data = value.Data ?? string.Empty,
+                base_sequence = value.BaseSequence ?? 0,
+                sequence = value.Sequence ?? 0,
+                truncated = value.Truncated ?? false,
+                protocol_version = 2,
+            },
+            TerminalEventKind.Exit => new { code = value.ExitCode },
+            TerminalEventKind.State => new
+            {
+                state = value.State ?? "ready",
+                busy = value.Busy ?? false,
+                protocol_version = 2,
+            },
+            TerminalEventKind.Error => new
+            {
+                error = value.Data ?? "Terminal session failed.",
+                code = value.ErrorCode,
+                prompt = value.Prompt,
+                recoverable = value.Recoverable ?? true,
+            },
             _ => new { },
         };
         _events.Writer.TryWrite(JsonSerializer.Serialize(new

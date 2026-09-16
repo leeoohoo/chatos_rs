@@ -1,0 +1,37 @@
+<view class="page">
+  <view class="page-header">
+    <view class="large-title">设置</view>
+  </view>
+
+  <view class="profile-card card">
+    <view class="avatar">{{avatarInitial}}</view>
+    <view class="profile-copy">
+      <view class="profile-name">{{displayName}}</view>
+      <view class="muted profile-username" wx:if="{{username}}">{{username}}</view>
+    </view>
+    <view class="wechat-badge">微信已绑定</view>
+  </view>
+
+  <view class="section-title">小程序登录</view>
+  <view class="section-help muted">管理使用当前账号登录的小程序设备</view>
+  <view class="error-text error-card" wx:if="{{error}}" bindtap="loadSessions">{{error}}，轻触重试</view>
+  <view class="card skeleton" wx:if="{{loading}}"></view>
+  <empty-state wx:elif="{{sessions.length === 0}}" title="没有登录记录" description="当前账号暂时没有可显示的小程序会话" />
+
+  <view class="list-group" wx:if="{{!loading && sessions.length}}">
+    <view class="session-card" wx:for="{{sessions}}" wx:key="id">
+      <view class="phone-icon">▯</view>
+      <view class="session-main">
+        <view class="session-heading">
+          <text>{{item.current ? '这台微信设备' : '微信小程序'}}</text>
+          <text class="session-state {{item.revoked_at ? 'revoked' : ''}}">{{item.stateLabel}}</text>
+        </view>
+        <view class="session-meta">最近活动 {{item.seenLabel}} · {{item.expiresLabel}} 到期</view>
+      </view>
+      <button class="revoke-button" wx:if="{{!item.revoked_at}}" loading="{{item.revoking}}" data-id="{{item.id}}" bindtap="revokeSession">{{item.current ? '退出' : '撤销'}}</button>
+    </view>
+  </view>
+
+  <button class="danger-button logout-button" loading="{{loggingOut}}" bindtap="logout">退出当前小程序</button>
+  <view class="privacy-copy">小程序仅访问 ChatOS 设备状态与会话，不读取微信聊天、通讯录或本地项目文件。解除微信绑定请前往桌面端。</view>
+</view>

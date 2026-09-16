@@ -1,24 +1,18 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::model_config::{
-    effective_responses_support, normalize_provider, supports_previous_response_id,
-};
 #[cfg(test)]
 use crate::request_payload::response_items_to_chat_messages;
 use crate::request_payload::{
     build_chat_completions_request_payload, build_responses_request_payload,
 };
-use crate::request_retry::should_retry_without_prompt_cache_options;
 use http::{
     log_preview, read_error_response_text_limited, retry_after_delay_ms, send_json_request,
     serialize_request_payload, validate_request_payload_size,
@@ -49,7 +43,6 @@ use streaming::emit_finalized_stream_callbacks;
 pub struct AiRequestHandler {
     client: reqwest::Client,
     read_timeout: Option<Duration>,
-    input_token_count_capabilities: Arc<RwLock<HashMap<String, bool>>>,
 }
 
 impl AiRequestHandler {
@@ -72,7 +65,6 @@ impl AiRequestHandler {
         Self {
             client,
             read_timeout: Some(read_timeout),
-            input_token_count_capabilities: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -80,7 +72,6 @@ impl AiRequestHandler {
         Self {
             client,
             read_timeout: None,
-            input_token_count_capabilities: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -93,73 +84,6 @@ impl AiRequestHandler {
         self.read_timeout
             .map(Self::new_with_read_timeout)
             .unwrap_or_else(Self::new)
-    }
-
-    pub async fn count_responses_input_tokens(
-        &self,
-        base_url: &str,
-        api_key: &str,
-        payload: Value,
-        abort_token: Option<CancellationToken>,
-    ) -> Result<Option<usize>, String> {
-        let capability_key = base_url.trim().trim_end_matches('/').to_ascii_lowercase();
-        if self
-            .input_token_count_capabilities
-            .read()
-            .await
-            .get(capability_key.as_str())
-            .is_some_and(|supported| !supported)
-        {
-            return Ok(None);
-        }
-        let payload_body = serialize_request_payload(&payload)?;
-        let url = format!("{}/responses/input_tokens", base_url.trim_end_matches('/'));
-        let response = send_json_request(
-            &self.client,
-            url.as_str(),
-            api_key,
-            payload_body,
-            abort_token,
-            false,
-        )
-        .await?;
-        if matches!(response.status().as_u16(), 400 | 404 | 405 | 422 | 501) {
-            self.input_token_count_capabilities
-                .write()
-                .await
-                .insert(capability_key, false);
-            warn!(
-                url = url.as_str(),
-                status = response.status().as_u16(),
-                "provider does not support Responses input token counting; using local estimate"
-            );
-            return Ok(None);
-        }
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = read_error_response_text_limited(response).await;
-            return Err(format!(
-                "input token count request failed with status {status}: {body}"
-            ));
-        }
-        let value = response
-            .json::<Value>()
-            .await
-            .map_err(|err| format!("failed to decode input token count response: {err}"))?;
-        let tokens = value
-            .get("input_tokens")
-            .and_then(|value| {
-                value
-                    .as_u64()
-                    .or_else(|| value.as_i64().and_then(|v| u64::try_from(v).ok()))
-            })
-            .and_then(|value| usize::try_from(value).ok())
-            .ok_or_else(|| "input token count response is missing input_tokens".to_string())?;
-        self.input_token_count_capabilities
-            .write()
-            .await
-            .insert(capability_key, true);
-        Ok(Some(tokens))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -204,7 +128,7 @@ impl AiRequestHandler {
         base_url: &str,
         api_key: &str,
         input: Value,
-        supports_responses: bool,
+        _supports_responses: bool,
         model: String,
         instructions: Option<String>,
         tools: Option<Vec<Value>>,
@@ -217,19 +141,8 @@ impl AiRequestHandler {
         mut options: AiRequestOptions,
     ) -> Result<AiResponse, String> {
         let provider = effective_provider_for_request(base_url, provider);
-        let supports_responses = effective_responses_support(
-            provider.as_deref().unwrap_or("gpt"),
-            base_url,
-            supports_responses,
-        );
-        if !supports_previous_response_id(provider.as_deref().unwrap_or("gpt"), base_url) {
-            options.previous_response_id = None;
-        }
-        let transport = if supports_responses {
-            AiTransport::Responses
-        } else {
-            AiTransport::ChatCompletions
-        };
+        options.previous_response_id = None;
+        let transport = AiTransport::Responses;
 
         let first_payload = build_request_payload(
             transport,
@@ -243,60 +156,21 @@ impl AiRequestHandler {
             thinking_level.clone(),
             &options,
         );
-        let first_attempt = self
-            .send_payload(
-                base_url,
-                api_key,
-                transport,
-                first_payload.clone(),
-                callbacks.clone(),
-                provider.clone(),
-                thinking_level.clone(),
-                on_before_send_model_request.clone(),
-                options.request_body_limit_bytes,
-                options.abort_token.clone(),
-                options.force_identity_encoding,
-                options.stream,
-            )
-            .await;
-
-        if transport == AiTransport::Responses
-            && should_retry_without_prompt_cache_options(&first_attempt, &first_payload)
-        {
-            let mut retry_options = options.clone();
-            retry_options.prompt_cache_key = None;
-            retry_options.include_prompt_cache_retention = false;
-            let retry_payload = build_request_payload(
-                transport,
-                input,
-                model,
-                instructions,
-                tools,
-                temperature,
-                max_output_tokens,
-                provider.clone(),
-                thinking_level.clone(),
-                &retry_options,
-            );
-            return self
-                .send_payload(
-                    base_url,
-                    api_key,
-                    transport,
-                    retry_payload,
-                    callbacks,
-                    provider,
-                    thinking_level,
-                    on_before_send_model_request,
-                    options.request_body_limit_bytes,
-                    options.abort_token,
-                    options.force_identity_encoding,
-                    retry_options.stream,
-                )
-                .await;
-        }
-
-        first_attempt
+        self.send_payload(
+            base_url,
+            api_key,
+            transport,
+            first_payload.clone(),
+            callbacks.clone(),
+            provider.clone(),
+            thinking_level.clone(),
+            on_before_send_model_request.clone(),
+            options.request_body_limit_bytes,
+            options.abort_token.clone(),
+            options.force_identity_encoding,
+            options.stream,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -542,17 +416,8 @@ fn parse_timeout_seconds(value: Option<&str>, default_seconds: u64) -> u64 {
 }
 
 fn effective_provider_for_request(base_url: &str, provider: Option<String>) -> Option<String> {
-    let provider = provider?;
-    let normalized = normalize_provider(provider.as_str());
-    if normalized == "gpt" && !is_openai_api_base_url(base_url) {
-        return Some("openai_compatible".to_string());
-    }
-    Some(provider)
-}
-
-fn is_openai_api_base_url(base_url: &str) -> bool {
-    let value = base_url.trim().to_ascii_lowercase();
-    value.is_empty() || value.contains("api.openai.com")
+    let _ = base_url;
+    provider
 }
 
 fn transport_label(transport: AiTransport) -> &'static str {

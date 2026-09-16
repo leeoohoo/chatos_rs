@@ -15,6 +15,21 @@ public sealed class TerminalSessionManagerTests
     }
 
     [Fact]
+    public void OutputJournalReportsSequenceAndUtf8SafeTransportTruncation()
+    {
+        var buffer = new TerminalOutputBuffer(maximumCharacters: 64);
+        Assert.Equal(1, buffer.Append("first\n"));
+        Assert.Equal(2, buffer.Append("中文末尾"));
+
+        var snapshot = buffer.SnapshotState(maximumLines: 500, maximumTransportBytes: 7);
+
+        Assert.Equal(2, snapshot.Sequence);
+        Assert.True(snapshot.Truncated);
+        Assert.DoesNotContain('\uFFFD', snapshot.Data);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(snapshot.Data) <= 7);
+    }
+
+    [Fact]
     public async Task ConcurrentEnsureCreatesOneNativeSession()
     {
         var factory = new FakeFactory();
@@ -62,6 +77,32 @@ public sealed class TerminalSessionManagerTests
         Assert.True(second.Stopped);
         Assert.True(second.Disposed);
         Assert.False(await manager.CloseAsync(Identity().SessionId));
+    }
+
+    [Fact]
+    public async Task ClosingRelaySessionsPreservesDesktopOwnedSession()
+    {
+        var factory = new FakeFactory();
+        await using var manager = new TerminalSessionManager(factory);
+        var desktop = (FakeSession)await manager.EnsureSessionAsync(
+            Identity(),
+            TerminalSize.Normalize(80, 24));
+        var relayIdentity = Identity() with
+        {
+            SessionId = "relay-session",
+            RelayOwned = true,
+        };
+        var relay = (FakeSession)await manager.EnsureSessionAsync(
+            relayIdentity,
+            TerminalSize.Normalize(80, 24));
+
+        await manager.CloseRelaySessionsAsync();
+
+        Assert.False(desktop.Stopped);
+        Assert.Same(desktop, await manager.GetAsync(desktop.Identity.SessionId));
+        Assert.True(relay.Stopped);
+        Assert.True(relay.Disposed);
+        Assert.Null(await manager.GetAsync(relay.Identity.SessionId));
     }
 
     [Theory]

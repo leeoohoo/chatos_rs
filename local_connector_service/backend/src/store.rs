@@ -35,9 +35,12 @@ impl ConnectorStore {
         ))
     }
 
-    pub async fn create_device(&self, device: &LocalConnectorDevice) -> Result<(), String> {
+    pub async fn register_device(
+        &self,
+        device: &LocalConnectorDevice,
+    ) -> Result<(LocalConnectorDevice, bool), String> {
         match self {
-            Self::Mongo(store) => store.create_device(device).await,
+            Self::Mongo(store) => store.register_device(device).await,
         }
     }
 

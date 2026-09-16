@@ -14,13 +14,15 @@ use uuid::Uuid;
 use crate::auth::{hash_password, normalize_display_name, normalize_username};
 use crate::config::AppConfig;
 use crate::models::{
-    AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, InviteCodePublicRecord,
-    InviteCodeRecord, LocalConnectorAuthTicketRecord, RegistrationEmailCodeRecord,
-    UserModelConfigRecord, UserModelProviderRecord, UserModelSettingsRecord, UserOptionRecord,
-    UserRecord, UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
+    AgentAccountListItem, AgentAccountRecord, ClientSessionRecord, HarnessProvisioningRecord,
+    InviteCodePublicRecord, InviteCodeRecord, LocalConnectorAuthTicketRecord,
+    RegistrationEmailCodeRecord, UserExternalIdentityRecord, UserModelConfigRecord,
+    UserModelProviderRecord, UserModelSettingsRecord, UserOptionRecord, UserRecord,
+    UserSummaryPageResponse, UserSummaryRecord, WeChatBindTicketRecord, USER_ROLE_SUPER_ADMIN,
 };
 
 mod model_configs;
+pub(crate) mod wechat_auth;
 
 #[derive(Clone)]
 pub struct AppStore {
@@ -34,6 +36,9 @@ pub struct AppStore {
     registration_email_codes: Collection<RegistrationEmailCodeRecord>,
     invite_codes: Collection<InviteCodeRecord>,
     local_connector_auth_tickets: Collection<LocalConnectorAuthTicketRecord>,
+    user_external_identities: Collection<UserExternalIdentityRecord>,
+    wechat_bind_tickets: Collection<WeChatBindTicketRecord>,
+    client_sessions: Collection<ClientSessionRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +69,9 @@ impl AppStore {
             registration_email_codes: db.collection("registration_email_codes"),
             invite_codes: db.collection("invite_codes"),
             local_connector_auth_tickets: db.collection("local_connector_auth_tickets"),
+            user_external_identities: db.collection("user_external_identities"),
+            wechat_bind_tickets: db.collection("wechat_bind_tickets"),
+            client_sessions: db.collection("client_sessions"),
         }
     }
 
@@ -103,6 +111,7 @@ impl AppStore {
             .await?;
         self.create_index(&self.local_connector_auth_tickets, "expires_at_unix")
             .await?;
+        self.initialize_wechat_auth_indexes().await?;
         self.cleanup_expired_revocations().await?;
         Ok(())
     }

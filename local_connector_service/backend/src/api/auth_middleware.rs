@@ -204,6 +204,43 @@ pub(super) async fn require_internal_auth(
     Ok(next.run(request).await)
 }
 
+fn enforce_client_scope(
+    user: &crate::models::CurrentUser,
+    method: &Method,
+    path: &str,
+) -> Result<(), ApiError> {
+    if !user.is_wechat_companion() {
+        return Ok(());
+    }
+    if companion_request_allowed(method, path) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(
+            "WeChat Companion session is not allowed to access this Local Connector endpoint",
+        ))
+    }
+}
+
+fn companion_request_allowed(method: &Method, path: &str) -> bool {
+    if method == Method::GET && path == "/api/local-connectors/companion/devices" {
+        return true;
+    }
+    let Some(suffix) = path.strip_prefix("/api/local-connectors/companion/devices/") else {
+        return false;
+    };
+    let segments = suffix.split('/').collect::<Vec<_>>();
+    matches!((method, segments.as_slice()),
+        (&Method::GET, [device_id, "resources"]) if !device_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::POST, [device_id, "resources", "resolve"]) if !device_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::GET, [device_id, "approvals"]) if !device_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::POST, [device_id, "approvals", approval_id, "resolve"])
+            if !device_id.is_empty() && !approval_id.is_empty()
+    )
+}
+
 pub(super) async fn require_public_auth(
     State(state): State<AuthState>,
     mut request: Request<axum::body::Body>,
@@ -217,6 +254,7 @@ pub(super) async fn require_public_auth(
         verify_token_via_user_service(&state.config, &state.user_service_http, token.as_str())
             .await
             .map_err(ApiError::unauthorized)?;
+    enforce_client_scope(&user, request.method(), request.uri().path())?;
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
 }
@@ -259,6 +297,81 @@ mod tests {
             .uri(uri)
             .body(axum::body::Body::empty())
             .expect("test request should be valid")
+    }
+
+    fn companion_user() -> crate::models::CurrentUser {
+        crate::models::CurrentUser {
+            principal_type: "human_user".to_string(),
+            token_jti: Some("companion-session-1".to_string()),
+            user_id: "user-1".to_string(),
+            username: Some("user".to_string()),
+            display_name: Some("User".to_string()),
+            role: "user".to_string(),
+            owner_user_id: None,
+            scopes: vec!["wechat_companion".to_string()],
+        }
+    }
+
+    #[test]
+    fn companion_scope_only_allows_sanitized_device_summary() {
+        let user = companion_user();
+        assert!(enforce_client_scope(
+            &user,
+            &Method::GET,
+            "/api/local-connectors/companion/devices",
+        )
+        .is_ok());
+        assert!(enforce_client_scope(
+            &user,
+            &Method::GET,
+            "/api/local-connectors/companion/devices/device-1/resources",
+        )
+        .is_ok());
+        assert!(enforce_client_scope(
+            &user,
+            &Method::POST,
+            "/api/local-connectors/companion/devices/device-1/resources/resolve",
+        )
+        .is_ok());
+        assert!(enforce_client_scope(
+            &user,
+            &Method::GET,
+            "/api/local-connectors/companion/devices/device-1/approvals",
+        )
+        .is_ok());
+        assert!(enforce_client_scope(
+            &user,
+            &Method::POST,
+            "/api/local-connectors/companion/devices/device-1/approvals/approval-1/resolve",
+        )
+        .is_ok());
+        for (method, path) in [
+            (Method::GET, "/api/local-connectors/devices"),
+            (Method::POST, "/api/local-connectors/devices"),
+            (Method::GET, "/api/local-connectors/workspaces"),
+            (Method::POST, "/api/local-connectors/relay/device-1/mcp"),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/resources/extra",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/resources",
+            ),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/approvals/approval-1",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/approvals//resolve",
+            ),
+        ] {
+            assert!(
+                enforce_client_scope(&user, &method, path).is_err(),
+                "path={path}"
+            );
+        }
     }
 
     #[test]

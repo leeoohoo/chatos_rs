@@ -5,6 +5,7 @@ use crate::config::AppConfig;
 use crate::db::connect_database;
 use crate::login_throttle::LoginThrottle;
 use crate::store::AppStore;
+use crate::wechat::WeChatMiniProgramClient;
 use tracing::info;
 
 #[derive(Clone)]
@@ -12,6 +13,7 @@ pub struct AppState {
     pub config: AppConfig,
     pub store: AppStore,
     pub login_throttle: LoginThrottle,
+    pub wechat_mini_program: Option<WeChatMiniProgramClient>,
 }
 
 impl AppState {
@@ -27,10 +29,12 @@ impl AppState {
             );
         }
         store.ensure_default_super_admin(&config).await?;
+        let wechat_mini_program = WeChatMiniProgramClient::from_config(&config)?;
         Ok(Self {
             config,
             store,
             login_throttle: LoginThrottle::default(),
+            wechat_mini_program,
         })
     }
 
@@ -39,10 +43,12 @@ impl AppState {
         config: AppConfig,
     ) -> Result<Self, String> {
         let db = connect_database(&config).await?;
+        let wechat_mini_program = WeChatMiniProgramClient::from_config(&config)?;
         Ok(Self {
             config,
             store: AppStore::new(db),
             login_throttle: LoginThrottle::default(),
+            wechat_mini_program,
         })
     }
 }

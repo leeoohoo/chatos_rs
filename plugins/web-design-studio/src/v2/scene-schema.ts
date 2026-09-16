@@ -300,8 +300,10 @@ function assertIdentifier(value: unknown, label: string): asserts value is strin
   if (typeof value !== 'string' || !identifierPattern.test(value)) throw new Error(`${label} is invalid.`);
 }
 
-function assertFinite(value: unknown, label: string, minimum?: number): asserts value is number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || (minimum !== undefined && value < minimum)) {
+function assertFinite(value: unknown, label: string, minimum?: number, maximum?: number): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value)
+    || (minimum !== undefined && value < minimum)
+    || (maximum !== undefined && value > maximum)) {
     throw new Error(`${label} is invalid.`);
   }
 }
@@ -310,32 +312,42 @@ function assertTimestamp(value: unknown, label: string): asserts value is string
   if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) throw new Error(`${label} is invalid.`);
 }
 
-function assertRect(rect: SceneRect, label: string): void {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function assertRect(rect: unknown, label: string): asserts rect is SceneRect {
+  if (!isRecord(rect)) throw new Error(`${label} is required and must be an object.`);
   assertFinite(rect.x, `${label}.x`);
   assertFinite(rect.y, `${label}.y`);
   assertFinite(rect.width, `${label}.width`, 0);
   assertFinite(rect.height, `${label}.height`, 0);
 }
 
-function assertLayout(layout: SceneLayout, label: string): void {
-  if (!['free', 'auto', 'grid'].includes(layout.mode)) throw new Error(`${label}.mode is invalid.`);
-  if (!['fixed', 'hug', 'fill'].includes(layout.sizingX) || !['fixed', 'hug', 'fill'].includes(layout.sizingY)) {
+function assertLayout(layout: unknown, label: string): asserts layout is SceneLayout {
+  if (!isRecord(layout)) throw new Error(`${label} is required and must be an object.`);
+  if (!['free', 'auto', 'grid'].includes(String(layout.mode))) throw new Error(`${label}.mode is invalid.`);
+  if (!['fixed', 'hug', 'fill'].includes(String(layout.sizingX)) || !['fixed', 'hug', 'fill'].includes(String(layout.sizingY))) {
     throw new Error(`${label} sizing is invalid.`);
   }
-  if (!['flow', 'absolute'].includes(layout.position)) throw new Error(`${label}.position is invalid.`);
-  for (const [side, value] of Object.entries(layout.padding)) assertFinite(value, `${label}.padding.${side}`, 0);
-  for (const [axis, value] of Object.entries(layout.gap)) assertFinite(value, `${label}.gap.${axis}`, 0);
+  if (!['flow', 'absolute'].includes(String(layout.position))) throw new Error(`${label}.position is invalid.`);
+  if (!isRecord(layout.padding)) throw new Error(`${label}.padding is required and must contain top, right, bottom, and left.`);
+  for (const side of ['top', 'right', 'bottom', 'left'] as const) assertFinite(layout.padding[side], `${label}.padding.${side}`, 0);
+  if (!isRecord(layout.gap)) throw new Error(`${label}.gap is required and must contain row and column.`);
+  for (const axis of ['row', 'column'] as const) assertFinite(layout.gap[axis], `${label}.gap.${axis}`, 0);
+  if (typeof layout.clipContent !== 'boolean') throw new Error(`${label}.clipContent must be a boolean.`);
+  if (layout.wrap !== undefined && typeof layout.wrap !== 'boolean') throw new Error(`${label}.wrap must be a boolean.`);
   for (const [name, value] of Object.entries({ minWidth: layout.minWidth, maxWidth: layout.maxWidth, minHeight: layout.minHeight, maxHeight: layout.maxHeight })) {
     if (value !== undefined) assertFinite(value, `${label}.${name}`, 0);
   }
-  if (layout.minWidth !== undefined && layout.maxWidth !== undefined && layout.minWidth > layout.maxWidth) throw new Error(`${label} width bounds are invalid.`);
-  if (layout.minHeight !== undefined && layout.maxHeight !== undefined && layout.minHeight > layout.maxHeight) throw new Error(`${label} height bounds are invalid.`);
+  if (layout.minWidth !== undefined && layout.maxWidth !== undefined && Number(layout.minWidth) > Number(layout.maxWidth)) throw new Error(`${label} width bounds are invalid.`);
+  if (layout.minHeight !== undefined && layout.maxHeight !== undefined && Number(layout.minHeight) > Number(layout.maxHeight)) throw new Error(`${label} height bounds are invalid.`);
   if (layout.mode === 'auto' && !layout.direction) throw new Error(`${label}.direction is required for auto layout.`);
   if (layout.mode === 'grid') {
-    if (!layout.grid) throw new Error(`${label}.grid is required for grid layout.`);
-    if (!['row', 'column', 'dense'].includes(layout.grid.autoFlow)) throw new Error(`${label}.grid.autoFlow is invalid.`);
-    assertSceneGridTracks(layout.grid.columns, `${label}.grid.columns`);
-    assertSceneGridTracks(layout.grid.rows, `${label}.grid.rows`, true);
+    if (!isRecord(layout.grid)) throw new Error(`${label}.grid is required for grid layout.`);
+    if (!['row', 'column', 'dense'].includes(String(layout.grid.autoFlow))) throw new Error(`${label}.grid.autoFlow is invalid.`);
+    assertSceneGridTracks(layout.grid.columns as string[], `${label}.grid.columns`);
+    assertSceneGridTracks(layout.grid.rows as string[], `${label}.grid.rows`, true);
   }
   if (layout.gridPlacement) {
     for (const [property, value] of Object.entries(layout.gridPlacement)) {
@@ -343,8 +355,9 @@ function assertLayout(layout: SceneLayout, label: string): void {
     }
   }
   if (layout.constraints) {
-    if (!['left', 'center', 'right', 'stretch', 'scale'].includes(layout.constraints.horizontal)) throw new Error(`${label}.constraints.horizontal is invalid.`);
-    if (!['top', 'center', 'bottom', 'stretch', 'scale'].includes(layout.constraints.vertical)) throw new Error(`${label}.constraints.vertical is invalid.`);
+    if (!isRecord(layout.constraints)) throw new Error(`${label}.constraints must be an object.`);
+    if (!['left', 'center', 'right', 'stretch', 'scale'].includes(String(layout.constraints.horizontal))) throw new Error(`${label}.constraints.horizontal is invalid.`);
+    if (!['top', 'center', 'bottom', 'stretch', 'scale'].includes(String(layout.constraints.vertical))) throw new Error(`${label}.constraints.vertical is invalid.`);
   }
 }
 
@@ -360,19 +373,73 @@ export function mergeSceneLayout(base: SceneLayout, override: Partial<SceneLayou
   };
 }
 
-function assertAppearance(appearance: SceneAppearance, label: string): void {
+function assertColor(value: unknown, label: string): asserts value is string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} is required and must be a color string.`);
+}
+
+function assertPaint(paint: unknown, label: string): asserts paint is ScenePaint {
+  if (!isRecord(paint)) throw new Error(`${label} must be an object.`);
+  if (!['solid', 'linear-gradient', 'radial-gradient', 'image'].includes(String(paint.type))) throw new Error(`${label}.type is invalid.`);
+  if (typeof paint.visible !== 'boolean') throw new Error(`${label}.visible is required and must be a boolean.`);
+  assertFinite(paint.opacity, `${label}.opacity`, 0);
+  if (paint.opacity > 1) throw new Error(`${label}.opacity is invalid.`);
+  if (paint.type === 'solid') assertColor(paint.color, `${label}.color`);
+  if (paint.type === 'linear-gradient' || paint.type === 'radial-gradient') {
+    if (!Array.isArray(paint.stops) || paint.stops.length < 2) throw new Error(`${label}.stops must contain at least two color stops.`);
+    for (const [index, stop] of paint.stops.entries()) {
+      if (!isRecord(stop)) throw new Error(`${label}.stops[${index}] must be an object.`);
+      assertFinite(stop.offset, `${label}.stops[${index}].offset`, 0);
+      if (stop.offset > 1) throw new Error(`${label}.stops[${index}].offset is invalid.`);
+      assertColor(stop.color, `${label}.stops[${index}].color`);
+    }
+  }
+  if (paint.type === 'image') {
+    assertIdentifier(paint.imageAssetId, `${label}.imageAssetId`);
+    if (!['fill', 'fit', 'crop', 'tile'].includes(String(paint.imageFit))) throw new Error(`${label}.imageFit is invalid.`);
+  }
+}
+
+function assertAppearance(appearance: unknown, label: string): asserts appearance is SceneAppearance {
+  if (!isRecord(appearance)) throw new Error(`${label} is required and must be an object.`);
   assertFinite(appearance.opacity, `${label}.opacity`, 0);
   if (appearance.opacity > 1) throw new Error(`${label}.opacity is invalid.`);
-  for (const [corner, value] of Object.entries(appearance.radius)) assertFinite(value, `${label}.radius.${corner}`, 0);
-  for (const [index, paint] of appearance.fills.entries()) {
-    assertFinite(paint.opacity, `${label}.fills[${index}].opacity`, 0);
-    if (paint.opacity > 1) throw new Error(`${label}.fills[${index}].opacity is invalid.`);
+  if (!['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten'].includes(String(appearance.blendMode))) throw new Error(`${label}.blendMode is invalid.`);
+  if (!isRecord(appearance.radius)) throw new Error(`${label}.radius is required and must contain all four corners.`);
+  for (const corner of ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'] as const) assertFinite(appearance.radius[corner], `${label}.radius.${corner}`, 0);
+  if (!Array.isArray(appearance.fills)) throw new Error(`${label}.fills is required and must be an array.`);
+  for (const [index, paint] of appearance.fills.entries()) assertPaint(paint, `${label}.fills[${index}]`);
+  if (!Array.isArray(appearance.strokes)) throw new Error(`${label}.strokes is required and must be an array.`);
+  for (const [index, stroke] of appearance.strokes.entries()) {
+    const strokeLabel = `${label}.strokes[${index}]`;
+    if (!isRecord(stroke)) throw new Error(`${strokeLabel} must be an object.`);
+    assertPaint(stroke.paint, `${strokeLabel}.paint`);
+    if (!isRecord(stroke.width)) throw new Error(`${strokeLabel}.width must contain top, right, bottom, and left.`);
+    for (const side of ['top', 'right', 'bottom', 'left'] as const) assertFinite(stroke.width[side], `${strokeLabel}.width.${side}`, 0);
+    if (!['solid', 'dashed', 'dotted'].includes(String(stroke.style))) throw new Error(`${strokeLabel}.style is invalid.`);
+  }
+  if (!Array.isArray(appearance.effects)) throw new Error(`${label}.effects is required and must be an array.`);
+  for (const [index, effect] of appearance.effects.entries()) {
+    const effectLabel = `${label}.effects[${index}]`;
+    if (!isRecord(effect)) throw new Error(`${effectLabel} must be an object.`);
+    if (!['drop-shadow', 'inner-shadow', 'layer-blur', 'background-blur'].includes(String(effect.type))) throw new Error(`${effectLabel}.type is invalid.`);
+    if (typeof effect.visible !== 'boolean') throw new Error(`${effectLabel}.visible is required and must be a boolean.`);
+    assertFinite(effect.radius, `${effectLabel}.radius`, 0);
+    if (effect.color !== undefined) assertColor(effect.color, `${effectLabel}.color`);
+    if (effect.offset !== undefined) {
+      if (!isRecord(effect.offset)) throw new Error(`${effectLabel}.offset must be an object.`);
+      assertFinite(effect.offset.x, `${effectLabel}.offset.x`);
+      assertFinite(effect.offset.y, `${effectLabel}.offset.y`);
+    }
+    if (effect.spread !== undefined) assertFinite(effect.spread, `${effectLabel}.spread`);
   }
   if (appearance.typography) {
+    if (!isRecord(appearance.typography)) throw new Error(`${label}.typography must be an object.`);
+    if (typeof appearance.typography.fontFamily !== 'string' || !appearance.typography.fontFamily.trim()) throw new Error(`${label}.typography.fontFamily is required.`);
     assertFinite(appearance.typography.fontSize, `${label}.typography.fontSize`, 0);
     assertFinite(appearance.typography.fontWeight, `${label}.typography.fontWeight`, 1);
-    assertFinite(appearance.typography.lineHeight, `${label}.typography.lineHeight`, 0);
+    assertFinite(appearance.typography.lineHeight, `${label}.typography.lineHeight`, 0.5, 4);
     assertFinite(appearance.typography.letterSpacing, `${label}.typography.letterSpacing`);
+    if (!['left', 'center', 'right', 'justify'].includes(String(appearance.typography.textAlign))) throw new Error(`${label}.typography.textAlign is invalid.`);
   }
 }
 
@@ -578,15 +645,28 @@ export function isSceneSlotContainer(node: SceneNode): node is SceneSlotContaine
 }
 
 function visitNode(node: SceneNode, parentId: string, pageId: string, path: number[], ids: Set<string>, objects: WeakSet<object>, index?: Map<string, SceneIndexEntry>): void {
+  if (!isRecord(node)) throw new Error(`Scene node at ${pageId}/${path.join('.')} must be an object.`);
   if (objects.has(node)) throw new Error(`Scene graph contains an object cycle at ${node.id}.`);
   objects.add(node);
   assertIdentifier(node.id, 'node.id');
+  if (!sceneNodeTypeSet.has(node.type)) throw new Error(`Scene node ${node.id} type is invalid.`);
   if (ids.has(node.id)) throw new Error(`Duplicate scene id: ${node.id}`);
   ids.add(node.id);
-  if (!node.name.trim()) throw new Error(`Scene node ${node.id} needs a name.`);
+  if (typeof node.name !== 'string' || !node.name.trim()) throw new Error(`Scene node ${node.id} needs a name.`);
+  if (typeof node.visible !== 'boolean') throw new Error(`Scene node ${node.id} visible is required and must be a boolean.`);
+  if (typeof node.locked !== 'boolean') throw new Error(`Scene node ${node.id} locked is required and must be a boolean.`);
   assertRect(node.frame, `node.${node.id}.frame`);
+  if (!isRecord(node.transform)) throw new Error(`node.${node.id}.transform is required and must be an object.`);
+  for (const field of ['rotation', 'scaleX', 'scaleY', 'skewX', 'skewY'] as const) assertFinite(node.transform[field], `node.${node.id}.transform.${field}`);
   assertLayout(node.layout, `node.${node.id}.layout`);
   assertAppearance(node.appearance, `node.${node.id}.appearance`);
+  if (!isRecord(node.variableBindings)) throw new Error(`Node ${node.id} variableBindings is required and must be an object.`);
+  if (!Array.isArray(node.annotations)) throw new Error(`Node ${node.id} annotations is required and must be an array.`);
+  if (!isRecord(node.aiPolicy)) throw new Error(`Node ${node.id} aiPolicy is required and must be an object.`);
+  if (typeof node.aiPolicy.editable !== 'boolean') throw new Error(`Node ${node.id} aiPolicy.editable is required and must be a boolean.`);
+  if (!Array.isArray(node.aiPolicy.lockedFields) || node.aiPolicy.lockedFields.some((field) => typeof field !== 'string')) throw new Error(`Node ${node.id} aiPolicy.lockedFields is required and must be a string array.`);
+  if (typeof node.createdBy !== 'string' || !node.createdBy.trim()) throw new Error(`Node ${node.id} createdBy is required.`);
+  if (typeof node.updatedBy !== 'string' || !node.updatedBy.trim()) throw new Error(`Node ${node.id} updatedBy is required.`);
   assertTimestamp(node.createdAt, `node.${node.id}.createdAt`);
   assertTimestamp(node.updatedAt, `node.${node.id}.updatedAt`);
   if (node.prototypeLink !== undefined) {
@@ -621,6 +701,7 @@ function visitNode(node: SceneNode, parentId: string, pageId: string, path: numb
   }
   index?.set(node.id, { node, parentId, pageId, path });
   if (isSceneContainer(node)) {
+    if (!Array.isArray(node.children)) throw new Error(`Scene container ${node.id} children is required and must be an array.`);
     for (const [childIndex, child] of node.children.entries()) {
       if (node.type === 'component-set' && child.type !== 'component-main') throw new Error(`Component set ${node.id} can contain only main components.`);
       if (child.type === 'section' && !(node.type === 'frame' && node.role === 'page-root')) {
@@ -630,6 +711,7 @@ function visitNode(node: SceneNode, parentId: string, pageId: string, path: numb
     }
   }
   if (isSceneSlotContainer(node)) {
+    if (!isRecord(node.slots)) throw new Error(`Scene instance ${node.id} slots is required and must be an object.`);
     for (const [slotName, children] of Object.entries(node.slots)) {
       if (!slotName.trim()) throw new Error(`Scene instance ${node.id} has an unnamed slot.`);
       if (!Array.isArray(children)) throw new Error(`Scene instance ${node.id} slot ${slotName} is invalid.`);
@@ -655,10 +737,12 @@ export function assertSceneDocument(value: unknown): asserts value is SceneDocum
   const ids = new Set<string>([document.documentId]);
   const objects = new WeakSet<object>();
   for (const [pageIndex, page] of document.pages.entries()) {
+    if (!isRecord(page)) throw new Error(`pages[${pageIndex}] must be an object.`);
     assertIdentifier(page.id, `pages[${pageIndex}].id`);
     if (ids.has(page.id)) throw new Error(`Duplicate scene id: ${page.id}`);
     ids.add(page.id);
-    if (!page.name.trim()) throw new Error(`Page ${page.id} needs a name.`);
+    if (typeof page.name !== 'string' || !page.name.trim()) throw new Error(`Page ${page.id} needs a name.`);
+    if (!Array.isArray(page.children)) throw new Error(`Page ${page.id} children is required and must be an array.`);
     for (const [childIndex, child] of page.children.entries()) visitNode(child, page.id, page.id, [pageIndex, childIndex], ids, objects);
   }
   if (!Array.isArray(document.variableCollections)) throw new Error('Scene document variableCollections are invalid.');

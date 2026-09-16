@@ -13,19 +13,14 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let composed = try await service.compose()
         XCTAssertEqual(composed.recentRecords.map(\.id), entries.map(\.id))
         XCTAssertEqual(composed.recentRecords.map(\.message), entries.map(\.message))
-        let started = try await service.startSummary(reason: "active_context_budget")
-        let status = try await service.summaryStatus(jobID: started.jobID)
-        XCTAssertTrue(status.completed)
         let calls = await transport.requests
-        XCTAssertEqual(calls.count, 5)
+        XCTAssertEqual(calls.count, 3)
         XCTAssertEqual(calls.map(\.url.path), [
             "/prefix/api/memory/threads/\(scope.threadID)",
             "/prefix/api/memory/threads/\(scope.threadID)/records/batch-sync",
             "/prefix/api/memory/context/compose",
-            "/prefix/api/memory/threads/\(scope.threadID)/active-summary/run",
-            "/prefix/api/memory/threads/\(scope.threadID)/active-summary/status",
         ])
-        XCTAssertEqual(calls.map(\.method), ["PUT", "PUT", "POST", "POST", "GET"])
+        XCTAssertEqual(calls.map(\.method), ["PUT", "PUT", "POST"])
         XCTAssertTrue(calls.allSatisfy { $0.headers["Authorization"] == "Bearer user-token" })
         XCTAssertFalse(calls.contains { $0.url.path.contains("/api/chatos/") || $0.url.path.contains("/sdk/") || $0.url.path.contains("/api/memory-engine/") })
         XCTAssertFalse(calls.contains { $0.headers.keys.contains { $0.lowercased().hasPrefix("x-memory-") } })
@@ -37,6 +32,9 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let firstPayload = try XCTUnwrap(records[0]["structured_payload"] as? [String: Any])
         XCTAssertEqual((firstPayload["tool_calls"] as? [[String: Any]])?.first?["id"] as? String, "call-a")
         XCTAssertEqual((records[1]["structured_payload"] as? [String: Any])?["tool_call_id"] as? String, "call-a")
+        let firstMetadata = try XCTUnwrap(records[0]["metadata"] as? [String: Any])
+        XCTAssertEqual((firstMetadata["responses_output"] as? [[String: Any]])?.first?["type"] as? String, "compaction")
+        XCTAssertEqual((firstMetadata["provider_usage"] as? [String: Any])?["cached_tokens"] as? Int, 7)
         XCTAssertNil(records[0]["summary_status"])
         let policy = try XCTUnwrap(try object(calls[2].body)["policy"] as? [String: Any])
         XCTAssertEqual(policy["include_subject_memory"] as? Bool, true)
@@ -101,19 +99,6 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         }
     }
 
-    func testSummaryFailurePreservesServerErrorMessage() async throws {
-        let detail = "user_service model runtime request failed: 404"
-        let (scope, _, client) = try fixture(summaryError: detail)
-        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
-
-        let status = try await service.startSummary(reason: "active_context_budget")
-
-        XCTAssertTrue(status.failed)
-        XCTAssertEqual(status.errorMessage, detail)
-        XCTAssertEqual(AgentContextError.summaryFailed(status.errorMessage).localizedDescription,
-                       "Memory Engine 摘要任务失败：\(detail)")
-    }
-
     func testUnsupportedBasePathDoesNotGuessOrLeakToken() async throws {
         let (scope, transport, _) = try fixture()
         let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/unknown-api")!), accessToken: "token", transport: transport)
@@ -133,8 +118,14 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         return (scope, transport, client)
     }
     private func records(_ scope: AgentMemoryScope) -> [AgentMemoryEntry] {
-        let messages: [AgentMessage] = [.init(role: .assistant, toolCalls: [.init(id: "call-a", name: "work", arguments: "{}")]),
-                                        .init(role: .tool, content: "done", toolCallID: "call-a")]
+        let messages: [AgentMessage] = [
+            .init(
+                role: .assistant, content: "", toolCalls: [.init(id: "call-a", name: "work", arguments: "{}")],
+                responseOutputJSON: Data(#"[{"type":"compaction"}]"#.utf8),
+                usage: .init(inputTokens: 11, cachedTokens: 7, outputTokens: 3, requests: 1)
+            ),
+            .init(role: .tool, content: "done", toolCallID: "call-a"),
+        ]
         return messages.enumerated().map { .init(id: scope.recordID(at: $0.offset), index: $0.offset, message: $0.element,
                                                 createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double($0.offset) / 1_000)) }
     }

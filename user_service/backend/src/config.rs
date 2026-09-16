@@ -49,6 +49,14 @@ pub struct AppConfig {
     pub login_max_failed_attempts: i64,
     pub login_failure_window_seconds: i64,
     pub login_lockout_seconds: i64,
+    pub wechat_mini_program_app_id: Option<String>,
+    pub wechat_mini_program_app_secret: Option<String>,
+    pub wechat_mini_program_identity_hash_secret: Option<String>,
+    pub wechat_mini_program_api_base_url: String,
+    pub wechat_mini_program_env_version: String,
+    pub wechat_mini_program_request_timeout_ms: i64,
+    pub wechat_mini_program_bind_ticket_ttl_seconds: i64,
+    pub wechat_mini_program_client_session_ttl_seconds: i64,
 }
 
 impl AppConfig {
@@ -164,9 +172,43 @@ impl AppConfig {
                 "USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS",
             )?,
             login_lockout_seconds: require_config_center_i64("USER_SERVICE_LOGIN_LOCKOUT_SECONDS")?,
+            wechat_mini_program_app_id: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_ID",
+            ),
+            wechat_mini_program_app_secret: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_SECRET",
+            ),
+            wechat_mini_program_identity_hash_secret: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_IDENTITY_HASH_SECRET",
+            ),
+            wechat_mini_program_api_base_url: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_API_BASE_URL",
+            )
+            .unwrap_or_else(|| "https://api.weixin.qq.com".to_string()),
+            wechat_mini_program_env_version: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION",
+            )
+            .unwrap_or_else(|| "release".to_string())
+            .to_ascii_lowercase(),
+            wechat_mini_program_request_timeout_ms: optional_config_center_i64(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_REQUEST_TIMEOUT_MS",
+            )?
+            .unwrap_or(5_000)
+            .max(500),
+            wechat_mini_program_bind_ticket_ttl_seconds: optional_config_center_i64(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_BIND_TICKET_TTL_SECONDS",
+            )?
+            .unwrap_or(120)
+            .clamp(60, 300),
+            wechat_mini_program_client_session_ttl_seconds: optional_config_center_i64(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_CLIENT_SESSION_TTL_SECONDS",
+            )?
+            .unwrap_or(604_800)
+            .clamp(900, 2_592_000),
         };
 
         validate_login_throttle_config(&config)?;
+        validate_wechat_mini_program_config(&config)?;
 
         validate_production_secret(
             "USER_SERVICE_JWT_SECRET",
@@ -230,6 +272,47 @@ fn validate_login_throttle_config(config: &AppConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_wechat_mini_program_config(config: &AppConfig) -> Result<(), String> {
+    if !matches!(
+        config.wechat_mini_program_env_version.as_str(),
+        "release" | "trial" | "develop"
+    ) {
+        return Err(
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION must be release, trial, or develop"
+                .to_string(),
+        );
+    }
+    let configured = [
+        config.wechat_mini_program_app_id.as_deref(),
+        config.wechat_mini_program_app_secret.as_deref(),
+        config.wechat_mini_program_identity_hash_secret.as_deref(),
+    ];
+    let configured_count = configured.iter().filter(|value| value.is_some()).count();
+    if configured_count != 0 && configured_count != configured.len() {
+        return Err(
+            "WeChat Mini Program requires APP_ID, APP_SECRET, and IDENTITY_HASH_SECRET together"
+                .to_string(),
+        );
+    }
+    if configured_count == configured.len() {
+        require_http_endpoint(
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_API_BASE_URL",
+            config.wechat_mini_program_api_base_url.as_str(),
+        )?;
+        validate_production_secret(
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_SECRET",
+            config.wechat_mini_program_app_secret.as_deref(),
+            &["change_me_wechat_mini_program_secret"],
+        )?;
+        validate_production_secret(
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_IDENTITY_HASH_SECRET",
+            config.wechat_mini_program_identity_hash_secret.as_deref(),
+            &["change_me_wechat_identity_hash_secret"],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn load_user_service_dotenv() {
     chatos_service_runtime::load_service_dotenv(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
 }
@@ -252,6 +335,12 @@ fn require_config_center_i64(key: &str) -> Result<i64, String> {
     require_config_center_text(key)?
         .parse()
         .map_err(|err| format!("invalid {key}: {err}"))
+}
+
+fn optional_config_center_i64(key: &str) -> Result<Option<i64>, String> {
+    optional_config_center_text(key)
+        .map(|value| value.parse().map_err(|err| format!("invalid {key}: {err}")))
+        .transpose()
 }
 
 fn require_config_center_u16(key: &str) -> Result<u16, String> {

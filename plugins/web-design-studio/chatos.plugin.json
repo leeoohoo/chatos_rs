@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-web-design-studio",
-  "version": "3.0.3",
+  "version": "3.0.20",
   "description": "AI-first visual website design with editable Scene artboards, visual review, and human collaboration.",
   "author": {
     "name": "Chatos"
@@ -18,7 +18,9 @@
   },
   "skills": [
     "./skills/web-design-studio",
-    "./skills/web-design-progressive-generation",
+    "./skills/web-design-planning",
+    "./skills/web-design-scene-building",
+    "./skills/web-design-candidate-review",
     "./skills/web-design-documents",
     "./skills/web-design-components",
     "./skills/web-design-responsive-layout",
@@ -70,7 +72,7 @@
       "Chromium screenshots, stable visual grounding, visual Diffs, and Design Gate review",
       "Editable recursive Scene layers with stable IDs and exact revision history",
       "Independent page, modal, drawer, popover, menu, and state artboards",
-      "Prototype links and visible flow arrows between artboards",
+      "One focused canvas per semantic artboard with prototype links stored in Scene data",
       "Drag, resize, align, distribute, group, reorder, lock, hide, copy, paste, undo, and redo",
       "Figma-like Auto Layout, Grid, constraints, and content-sized frames",
       "Responsive overrides on the same Scene nodes without device-specific duplication",

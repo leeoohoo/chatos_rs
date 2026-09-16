@@ -1,0 +1,55 @@
+<view class="page bind-page">
+  <view class="brand-mark">C</view>
+  <view class="large-title">连接 ChatOS</view>
+  <view class="subtitle">用微信安全绑定你已登录的桌面账号</view>
+
+  <view class="card state-card" wx:if="{{state === 'claiming'}}">
+    <view class="spinner"></view>
+    <view class="state-title">正在验证绑定请求</view>
+  </view>
+
+  <view class="card development-card" wx:elif="{{developmentMode && !scene && state !== 'waiting'}}">
+    <view class="development-badge">仅本地开发</view>
+    <view class="state-title">进入测试通道</view>
+    <view class="state-copy">使用本地 ChatOS 账号签发受限 Companion 会话，无需微信扫码。</view>
+    <input
+      class="development-input"
+      value="{{developmentUsername}}"
+      placeholder="ChatOS 用户名"
+      bindinput="onDevelopmentUsernameInput"
+    />
+    <input
+      class="development-input"
+      value="{{developmentPassword}}"
+      password
+      placeholder="ChatOS 密码"
+      bindinput="onDevelopmentPasswordInput"
+      confirm-type="go"
+      bindconfirm="startDevelopmentLogin"
+    />
+    <view class="error-text development-error" wx:if="{{error}}">{{error}}</view>
+    <button
+      class="primary-button"
+      loading="{{state === 'development_login'}}"
+      disabled="{{state === 'development_login'}}"
+      bindtap="startDevelopmentLogin"
+    >进入本地测试</button>
+    <view class="development-note">该入口不会出现在体验版或正式版。</view>
+  </view>
+
+  <view class="card state-card" wx:elif="{{state === 'waiting'}}">
+    <view class="waiting-symbol">✓</view>
+    <view class="state-title">请在桌面端确认</view>
+    <view class="state-copy">为防止二维码截图被他人使用，完成前必须在原设备再次确认。</view>
+    <view class="transient-state" wx:if="{{error}}">{{error}}</view>
+  </view>
+
+  <view class="card state-card" wx:else>
+    <view class="state-title">{{scene ? '准备绑定' : '请从桌面端扫码进入'}}</view>
+    <view class="state-copy">在 ChatOS 桌面端打开“设置 → 微信小程序”，扫描两分钟内有效的小程序码。</view>
+    <view class="error-text error" wx:if="{{error}}">{{error}}</view>
+    <button class="primary-button" wx:if="{{scene}}" bindtap="startClaim">重新尝试</button>
+  </view>
+
+  <view class="privacy">微信身份只用于登录绑定，ChatOS 不会读取你的微信聊天和通讯录。</view>
+</view>

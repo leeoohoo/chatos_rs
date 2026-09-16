@@ -21,6 +21,8 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.System.Power;
 using ChatOS.Connector.Runtime;
+using ChatOS.Connector.Remote;
+using ChatOS.Connector.Terminal;
 
 namespace ChatOS.Desktop;
 
@@ -93,7 +95,29 @@ public partial class App : Application
         ApplySystemSuspendStatus();
 
         _window = _host.Services.GetRequiredService<MainWindow>();
+        _window.Closed += OnMainWindowClosed;
         _window.Activate();
+    }
+
+    private void OnMainWindowClosed(object sender, WindowEventArgs args)
+    {
+        PowerManager.SystemSuspendStatusChanged -= OnSystemSuspendStatusChanged;
+        try
+        {
+            _host.Services.GetRequiredService<TerminalSessionManager>()
+                .CloseAllAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
+        try
+        {
+            _host.Services.GetRequiredService<RemoteTerminalSessionManager>()
+                .CloseAllAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
     }
 
     private void OnSystemSuspendStatusChanged(object? sender, object args) => ApplySystemSuspendStatus();

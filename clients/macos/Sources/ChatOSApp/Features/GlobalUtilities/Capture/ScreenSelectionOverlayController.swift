@@ -42,6 +42,7 @@ struct ScreenSelection {
     let screen: NSScreen
     let globalRect: CGRect
     let captureRegion: NativeScreenCaptureRegion
+    let image: CGImage
 }
 
 /// Applies the common behavior for windows that must stay above every normal
@@ -81,9 +82,14 @@ final class ScreenSelectionOverlayController {
     private var escapeHotKeyMonitor: ScreenshotEscapeHotKeyMonitor?
     private var isFinishing = false
     private let isEnglish: Bool
+    private let frozenCaptures: [CGDirectDisplayID: CGImage]
 
-    init(isEnglish: Bool) {
+    init(
+        isEnglish: Bool,
+        frozenCaptures: [CGDirectDisplayID: CGImage]
+    ) {
         self.isEnglish = isEnglish
+        self.frozenCaptures = frozenCaptures
     }
 
     func present() {
@@ -91,6 +97,8 @@ final class ScreenSelectionOverlayController {
         isFinishing = false
 
         for screen in NSScreen.screens {
+            guard let displayID = Self.displayID(for: screen),
+                  let frozenImage = frozenCaptures[displayID] else { continue }
             let window = ScreenSelectionWindow(
                 contentRect: screen.frame,
                 styleMask: [.borderless, .nonactivatingPanel],
@@ -98,7 +106,10 @@ final class ScreenSelectionOverlayController {
                 defer: false,
                 screen: screen
             )
-            let view = ScreenSelectionOverlayView(isEnglish: isEnglish)
+            let view = ScreenSelectionOverlayView(
+                frozenImage: frozenImage,
+                isEnglish: isEnglish
+            )
             view.frame = NSRect(origin: .zero, size: screen.frame.size)
             view.autoresizingMask = [.width, .height]
             view.onSelectionBegan = { [weak self] view, point in
@@ -129,11 +140,15 @@ final class ScreenSelectionOverlayController {
         escapeHotKeyMonitor.start()
         self.escapeHotKeyMonitor = escapeHotKeyMonitor
 
-        windows.forEach { $0.orderFrontRegardless() }
-        let mouse = NSEvent.mouseLocation
-        let keyWindow = windows.first { $0.frame.contains(mouse) } ?? windows.first
-        keyWindow?.makeKeyAndOrderFront(nil)
         NSCursor.crosshair.push()
+        guard !windows.isEmpty else {
+            cancel()
+            return
+        }
+
+        // Do not make the selection panel key. Transient windows in the app
+        // being captured commonly close as soon as their key window resigns.
+        windows.forEach { $0.orderFrontRegardless() }
     }
 
     func cancel() {
@@ -181,9 +196,8 @@ final class ScreenSelectionOverlayController {
         screen: NSScreen
     ) {
         let globalRect = window.convertToScreen(localRect)
-        guard let displayID = screen.deviceDescription[
-            NSDeviceDescriptionKey("NSScreenNumber")
-        ] as? NSNumber else {
+        guard let displayID = Self.displayID(for: screen),
+              let frozenImage = frozenCaptures[displayID] else {
             cancel()
             return
         }
@@ -196,17 +210,26 @@ final class ScreenSelectionOverlayController {
         )
         let scale = screen.backingScaleFactor
         let captureRegion = NativeScreenCaptureRegion(
-            displayID: CGDirectDisplayID(displayID.uint32Value),
+            displayID: displayID,
             sourceRect: sourceRect,
             outputSize: CGSize(
                 width: globalRect.width * scale,
                 height: globalRect.height * scale
             )
         )
+        guard let image = Self.crop(
+            frozenImage,
+            to: captureRegion.sourceRect,
+            displaySize: screen.frame.size
+        ) else {
+            cancel()
+            return
+        }
         let result = ScreenSelection(
             screen: screen,
             globalRect: globalRect,
-            captureRegion: captureRegion
+            captureRegion: captureRegion,
+            image: image
         )
 
         isFinishing = true
@@ -238,6 +261,38 @@ final class ScreenSelectionOverlayController {
             width: abs(end.x - start.x),
             height: abs(end.y - start.y)
         )
+    }
+
+    static func crop(
+        _ image: CGImage,
+        to sourceRect: CGRect,
+        displaySize: CGSize
+    ) -> CGImage? {
+        guard displaySize.width > 0, displaySize.height > 0 else { return nil }
+        let scaleX = CGFloat(image.width) / displaySize.width
+        let scaleY = CGFloat(image.height) / displaySize.height
+        let pixelRect = CGRect(
+            x: sourceRect.minX * scaleX,
+            y: sourceRect.minY * scaleY,
+            width: sourceRect.width * scaleX,
+            height: sourceRect.height * scaleY
+        ).integral.intersection(CGRect(
+            x: 0,
+            y: 0,
+            width: image.width,
+            height: image.height
+        ))
+        guard !pixelRect.isNull, pixelRect.width > 0, pixelRect.height > 0 else {
+            return nil
+        }
+        return image.cropping(to: pixelRect)
+    }
+
+    private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        guard let number = screen.deviceDescription[
+            NSDeviceDescriptionKey("NSScreenNumber")
+        ] as? NSNumber else { return nil }
+        return CGDirectDisplayID(number.uint32Value)
     }
 }
 
@@ -317,10 +372,10 @@ final class ScreenshotEscapeHotKeyMonitor {
     }
 }
 
-private final class ScreenSelectionWindow: NSPanel {
+final class ScreenSelectionWindow: NSPanel {
     var onCancel: (() -> Void)?
 
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
     override func cancelOperation(_ sender: Any?) {

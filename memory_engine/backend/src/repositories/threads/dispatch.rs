@@ -80,6 +80,46 @@ pub async fn list_pending_summary_dispatches(
         .map_err(|err| err.to_string())
 }
 
+pub async fn list_eligible_summary_dispatches(
+    db: &Db,
+    token_threshold: i64,
+    limit: i64,
+) -> Result<Vec<SummaryDispatchOutbox>, String> {
+    collection(db)
+        .find(doc! {
+            "summary_status": "pending",
+            "pending_summary_tokens": { "$gte": token_threshold.max(1) },
+            "$expr": eligible_summary_dispatch_expr(),
+        })
+        .sort(doc! {"updated_at": 1})
+        .limit(limit.clamp(1, 10_000))
+        .await
+        .map_err(|err| err.to_string())?
+        .try_collect()
+        .await
+        .map_err(|err| err.to_string())
+}
+
+pub async fn list_stale_published_summary_dispatches(
+    db: &Db,
+    token_threshold: i64,
+    stale_before: &str,
+    limit: i64,
+) -> Result<Vec<SummaryDispatchOutbox>, String> {
+    collection(db)
+        .find(stale_published_summary_dispatch_filter(
+            token_threshold,
+            stale_before,
+        ))
+        .sort(doc! {"summary_dispatch_published_at": 1, "updated_at": 1})
+        .limit(limit.clamp(1, 10_000))
+        .await
+        .map_err(|err| err.to_string())?
+        .try_collect()
+        .await
+        .map_err(|err| err.to_string())
+}
+
 pub async fn defer_summary_dispatch_until_unlock(
     db: &Db,
     event: &SummaryDispatchOutbox,
@@ -227,22 +267,7 @@ pub async fn rearm_summary_dispatch_if_eligible(
                 "id": thread_id,
                 "summary_status": "pending",
                 "pending_summary_tokens": { "$gte": token_threshold.max(1) },
-                "$expr": {
-                    "$and": [
-                        {
-                            "$gte": [
-                                { "$ifNull": ["$summary_dispatch_consumed_version", 0] },
-                                { "$ifNull": ["$summary_dispatch_version", 0] },
-                            ]
-                        },
-                        {
-                            "$lt": [
-                                { "$ifNull": ["$summary_dispatch_dead_letter_version", -1] },
-                                { "$ifNull": ["$summary_dispatch_version", 0] },
-                            ]
-                        },
-                    ]
-                },
+                "$expr": eligible_summary_dispatch_expr(),
             },
             doc! {
                 "$inc": { "summary_dispatch_version": 1 },
@@ -256,6 +281,99 @@ pub async fn rearm_summary_dispatch_if_eligible(
         .return_document(mongodb::options::ReturnDocument::After)
         .await
         .map_err(|err| err.to_string())
+}
+
+pub async fn rearm_stale_published_summary_dispatch(
+    db: &Db,
+    event: &SummaryDispatchOutbox,
+    token_threshold: i64,
+    stale_before: &str,
+) -> Result<Option<SummaryDispatchOutbox>, String> {
+    let now = now_rfc3339();
+    let mut filter = stale_published_summary_dispatch_filter(token_threshold, stale_before);
+    filter.insert("tenant_id", event.tenant_id.as_str());
+    filter.insert("source_id", event.source_id.as_str());
+    filter.insert("id", event.thread_id.as_str());
+    filter.insert("summary_dispatch_version", event.summary_dispatch_version);
+
+    collection(db)
+        .find_one_and_update(
+            filter,
+            doc! {
+                "$inc": {
+                    "summary_dispatch_version": 1,
+                    "summary_dispatch_recovery_count": 1,
+                },
+                "$set": {
+                    "summary_dispatch_requested_at": &now,
+                    "summary_dispatch_recovered_at": &now,
+                    "summary_dispatch_last_error": Bson::Null,
+                    "summary_dispatch_pending": true,
+                }
+            },
+        )
+        .return_document(mongodb::options::ReturnDocument::After)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+fn stale_published_summary_dispatch_filter(
+    token_threshold: i64,
+    stale_before: &str,
+) -> mongodb::bson::Document {
+    doc! {
+        "summary_status": "pending",
+        "pending_summary_tokens": { "$gte": token_threshold.max(1) },
+        "summary_dispatch_pending": { "$ne": true },
+        "summary_dispatch_published_at": { "$lte": stale_before },
+        "$expr": {
+            "$and": [
+                {
+                    "$gt": [
+                        { "$ifNull": ["$summary_dispatch_version", 0] },
+                        0,
+                    ]
+                },
+                {
+                    "$gte": [
+                        { "$ifNull": ["$summary_dispatch_published_version", 0] },
+                        { "$ifNull": ["$summary_dispatch_version", 0] },
+                    ]
+                },
+                {
+                    "$lt": [
+                        { "$ifNull": ["$summary_dispatch_consumed_version", 0] },
+                        { "$ifNull": ["$summary_dispatch_version", 0] },
+                    ]
+                },
+                {
+                    "$lt": [
+                        { "$ifNull": ["$summary_dispatch_dead_letter_version", -1] },
+                        { "$ifNull": ["$summary_dispatch_version", 0] },
+                    ]
+                },
+            ]
+        },
+    }
+}
+
+fn eligible_summary_dispatch_expr() -> mongodb::bson::Document {
+    doc! {
+        "$and": [
+            {
+                "$gte": [
+                    { "$ifNull": ["$summary_dispatch_consumed_version", 0] },
+                    { "$ifNull": ["$summary_dispatch_version", 0] },
+                ]
+            },
+            {
+                "$lt": [
+                    { "$ifNull": ["$summary_dispatch_dead_letter_version", -1] },
+                    { "$ifNull": ["$summary_dispatch_version", 0] },
+                ]
+            },
+        ]
+    }
 }
 
 pub async fn replay_dead_lettered_summary_dispatch(
@@ -316,4 +434,53 @@ fn unlocked_summary_thread_filter(now: &str) -> Vec<mongodb::bson::Document> {
         doc! {"summary_lock_expires_at": Bson::Null},
         doc! {"summary_lock_expires_at": {"$lte": now}},
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use mongodb::bson::{doc, Bson};
+
+    use super::stale_published_summary_dispatch_filter;
+
+    #[test]
+    fn stale_published_filter_requires_unconsumed_non_dead_lettered_delivery() {
+        let filter = stale_published_summary_dispatch_filter(160_000, "2026-09-15T00:00:00Z");
+
+        assert_eq!(filter.get_str("summary_status"), Ok("pending"));
+        assert_eq!(
+            filter
+                .get_document("pending_summary_tokens")
+                .and_then(|value| value.get_i64("$gte")),
+            Ok(160_000)
+        );
+        assert_eq!(
+            filter
+                .get_document("summary_dispatch_pending")
+                .and_then(|value| value.get_bool("$ne")),
+            Ok(true)
+        );
+        assert_eq!(
+            filter
+                .get_document("summary_dispatch_published_at")
+                .and_then(|value| value.get_str("$lte")),
+            Ok("2026-09-15T00:00:00Z")
+        );
+        let conditions = filter
+            .get_document("$expr")
+            .and_then(|value| value.get_array("$and"))
+            .expect("stale dispatch expression");
+        assert_eq!(conditions.len(), 4);
+        assert!(conditions
+            .iter()
+            .all(|value| matches!(value, Bson::Document(_))));
+        assert_eq!(
+            conditions[1],
+            Bson::Document(doc! {
+                "$gte": [
+                    { "$ifNull": ["$summary_dispatch_published_version", 0] },
+                    { "$ifNull": ["$summary_dispatch_version", 0] },
+                ]
+            })
+        );
+    }
 }

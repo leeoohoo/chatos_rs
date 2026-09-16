@@ -8,8 +8,9 @@ use crate::models::{
     LocalConnectorDevice, LocalConnectorProjectBinding, LocalConnectorSandboxPairing,
     LocalConnectorSession, LocalConnectorStoreStats, LocalConnectorWorkspace,
     ManagedRequirementsAssignment, ManagedRequirementsPolicy, DEVICE_STATUS_OFFLINE,
-    DEVICE_STATUS_ONLINE, DEVICE_STATUS_REVOKED, MANAGED_REQUIREMENTS_SCOPE_GLOBAL,
-    MANAGED_REQUIREMENTS_SCOPE_ROLE, MANAGED_REQUIREMENTS_SCOPE_USER, SESSION_STATUS_CONNECTED,
+    DEVICE_STATUS_ONLINE, DEVICE_STATUS_REGISTERED, DEVICE_STATUS_REVOKED,
+    MANAGED_REQUIREMENTS_SCOPE_GLOBAL, MANAGED_REQUIREMENTS_SCOPE_ROLE,
+    MANAGED_REQUIREMENTS_SCOPE_USER, SESSION_STATUS_CONNECTED,
 };
 use crate::store::SessionAcquireError;
 use futures::TryStreamExt;
@@ -50,6 +51,7 @@ impl MongoConnectorStore {
             managed_requirements_assignments: database
                 .collection("local_connector_managed_requirements_assignments"),
         };
+        store.reconcile_duplicate_devices().await?;
         store.ensure_indexes().await?;
         Ok(store)
     }

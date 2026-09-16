@@ -225,7 +225,7 @@ async fn reconcile_contact_async_runtime_statuses(conversation_id: &str, message
     }
 }
 
-pub(in crate::api::sessions) async fn get_session_compact_history(
+pub(crate) async fn get_session_compact_history(
     auth: AuthUser,
     Path(conversation_id): Path<String>,
     Query(query): Query<CompactHistoryQuery>,

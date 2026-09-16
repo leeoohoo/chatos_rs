@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+use axum::{routing::post, Json, Router};
 use serde_json::{json, Value};
 
 use super::{
@@ -14,14 +13,6 @@ use super::{
     AiRequestOptions, AiTransport, StreamCallbacks,
 };
 use crate::stream_parse::FinalizedStreamState;
-
-async fn token_count_success(Json(payload): Json<Value>) -> Json<Value> {
-    assert!(payload.get("tools").is_some());
-    Json(json!({
-        "object": "response.input_tokens",
-        "input_tokens": 12_345
-    }))
-}
 
 #[test]
 fn responses_payload_can_enable_server_side_compaction() {
@@ -49,13 +40,6 @@ fn responses_payload_can_enable_server_side_compaction() {
         payload.pointer("/context_management/0/compact_threshold"),
         Some(&json!(200_000))
     );
-}
-
-async fn token_count_unsupported(
-    State(hits): State<Arc<AtomicUsize>>,
-) -> (StatusCode, Json<Value>) {
-    hits.fetch_add(1, Ordering::SeqCst);
-    (StatusCode::NOT_FOUND, Json(json!({"error": "unsupported"})))
 }
 
 async fn delayed_provider_response() -> Json<Value> {
@@ -150,53 +134,6 @@ async fn cancellation_interrupts_a_pending_provider_request_immediately() {
 
     assert_eq!(error, "aborted");
     assert!(started_at.elapsed() < std::time::Duration::from_secs(1));
-}
-
-#[tokio::test]
-async fn counts_responses_input_tokens_and_caches_unsupported_capability() {
-    let (supported_url, supported_server) = start_request_test_server(
-        Router::new().route("/responses/input_tokens", post(token_count_success)),
-    )
-    .await;
-    let handler = AiRequestHandler::new();
-    let count = handler
-        .count_responses_input_tokens(
-            supported_url.as_str(),
-            "test-key",
-            json!({
-                "model": "gpt-test",
-                "input": "hello",
-                "tools": [{"type": "function", "name": "lookup"}]
-            }),
-            None,
-        )
-        .await
-        .expect("count input tokens");
-    assert_eq!(count, Some(12_345));
-    supported_server.abort();
-
-    let hits = Arc::new(AtomicUsize::new(0));
-    let (unsupported_url, unsupported_server) = start_request_test_server(
-        Router::new()
-            .route("/responses/input_tokens", post(token_count_unsupported))
-            .with_state(Arc::clone(&hits)),
-    )
-    .await;
-    let handler = AiRequestHandler::new();
-    for _ in 0..2 {
-        let count = handler
-            .count_responses_input_tokens(
-                unsupported_url.as_str(),
-                "test-key",
-                json!({"model": "gpt-test", "input": "hello"}),
-                None,
-            )
-            .await
-            .expect("unsupported falls back");
-        assert_eq!(count, None);
-    }
-    assert_eq!(hits.load(Ordering::SeqCst), 1);
-    unsupported_server.abort();
 }
 
 #[test]
@@ -426,10 +363,7 @@ fn responses_payload_supports_prompt_cache_and_cwd() {
         payload.get("prompt_cache_retention"),
         Some(&Value::String("24h".to_string()))
     );
-    assert_eq!(
-        payload.get("previous_response_id"),
-        Some(&Value::String("resp_1".to_string()))
-    );
+    assert!(payload.get("previous_response_id").is_none());
     assert_eq!(
         payload.get("cwd"),
         Some(&Value::String("/workspace".to_string()))
@@ -551,14 +485,14 @@ fn responses_payload_omits_summary_for_generic_compatible_model() {
 }
 
 #[test]
-fn custom_openai_base_url_uses_compatible_provider() {
+fn custom_openai_base_url_preserves_configured_provider() {
     assert_eq!(
         effective_provider_for_request(
             "https://gateway.example.test/v1",
             Some("openai".to_string()),
         )
         .as_deref(),
-        Some("openai_compatible")
+        Some("openai")
     );
     assert_eq!(
         effective_provider_for_request("https://api.openai.com/v1", Some("openai".to_string()),)

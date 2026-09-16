@@ -8,9 +8,16 @@ final class ScreenSelectionOverlayView: NSView {
 
     private(set) var selectionRect: NSRect?
     private(set) var isActiveSelection = false
+    private let frozenImage: NSImage?
     private let instructionText: String
 
-    init(isEnglish: Bool) {
+    init(frozenImage: CGImage? = nil, isEnglish: Bool) {
+        self.frozenImage = frozenImage.map {
+            NSImage(
+                cgImage: $0,
+                size: NSSize(width: $0.width, height: $0.height)
+            )
+        }
         instructionText = isEnglish
             ? "Drag to select an area  ·  Esc to cancel"
             : "拖动选择截图区域  ·  Esc 取消"
@@ -52,6 +59,11 @@ final class ScreenSelectionOverlayView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+
+        if let frozenImage {
+            NSGraphicsContext.current?.imageInterpolation = .high
+            frozenImage.draw(in: bounds)
+        }
 
         let mask = NSBezierPath(rect: bounds)
         if let selectionRect, !selectionRect.isEmpty {

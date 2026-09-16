@@ -184,6 +184,12 @@ async fn ensure_thread_indexes(db: &Db) -> Result<(), String> {
       .await?;
     ensure_named_index(
         db.collection("engine_threads"),
+        "idx_engine_threads_auto_summary_pending_tokens_updated_at",
+        doc! {"summary_status": 1, "pending_summary_tokens": 1, "updated_at": 1},
+    )
+    .await?;
+    ensure_named_index(
+        db.collection("engine_threads"),
         "idx_engine_threads_summary_dispatch_pending_requested_at",
         doc! {"summary_dispatch_pending": 1, "summary_dispatch_requested_at": 1, "updated_at": 1},
     )

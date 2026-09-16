@@ -29,6 +29,14 @@
 21. [独立用户偏好设置窗口](./screens/21-user-preferences.svg)
 22. [浅色原生全宽本地终端](./screens/22-local-terminal.svg)
 
+## 架构图
+
+- [微信小程序伴随控制端架构](./screens/wechat-mini-program-companion-architecture.svg)
+
+## 微信小程序设计稿
+
+- [Apple 风格设备、会话与会话详情](./screens/wechat-mini-program-apple-ui.svg)
+
 ## 视觉方向
 
 ![AI 视觉方向板](./assets/visual-direction-ai.png)

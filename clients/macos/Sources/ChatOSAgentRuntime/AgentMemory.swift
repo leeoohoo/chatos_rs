@@ -9,9 +9,21 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     public let subjectID: String
     public let runID: UUID
     public let runtimeScope: String
+    /// `nil` preserves the original story behavior (subject recall enabled).
+    /// Approval runs are isolated so prior approval content cannot influence a
+    /// later security decision, while their complete records are still stored.
+    public let includeSubjectMemory: Bool?
 
     public init(tenantID: String, profile: String, projectID: UUID, runID: UUID, runtimeScope: String) throws {
+        try self.init(
+            tenantID: tenantID, profile: profile, projectID: projectID.uuidString,
+            runID: runID, runtimeScope: runtimeScope
+        )
+    }
+
+    public init(tenantID: String, profile: String, projectID: String, runID: UUID, runtimeScope: String) throws {
         guard !tenantID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !projectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               ["approval", "story"].contains(profile), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
@@ -19,6 +31,7 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         self.subjectID = "client-agent:\(profile):\(projectID)"
         self.runID = runID
         self.runtimeScope = runtimeScope
+        self.includeSubjectMemory = profile == "approval" ? false : nil
     }
 
     public func recordID(at index: Int) -> String { "client-agent:\(runID):message:\(index)" }
@@ -57,32 +70,10 @@ public struct AgentMemoryContext: Sendable {
     }
 }
 
-public struct AgentSummaryStatus: Sendable {
-    public var jobID: String?
-    public var accepted: Bool
-    public var running: Bool
-    public var completed: Bool
-    public var failed: Bool
-    public var generated: Bool
-    public var compacted: Bool
-    public var errorMessage: String?
-    public init(jobID: String? = nil, accepted: Bool = false, running: Bool = false,
-                completed: Bool = false, failed: Bool = false, generated: Bool = false,
-                compacted: Bool = false, errorMessage: String? = nil) {
-        self.jobID = jobID; self.accepted = accepted; self.running = running
-        self.completed = completed; self.failed = failed; self.generated = generated
-        self.compacted = compacted; self.errorMessage = errorMessage
-    }
-
-    public var changedContext: Bool { generated || compacted }
-}
-
 public protocol AgentMemoryServicing: Sendable {
     func ensureThread() async throws
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws
     func compose() async throws -> AgentMemoryContext
-    func startSummary(reason: String) async throws -> AgentSummaryStatus
-    func summaryStatus(jobID: String?) async throws -> AgentSummaryStatus
 }
 
 /// The full audit transcript stays in AgentRunCheckpoint.messages, not in each model request.
@@ -94,49 +85,33 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
     public var syncedDigest: String = ""
     public var threadCreated = false
     public var syncInFlightEnd: Int?
-    public var compactions = 0
     public init(scope: AgentMemoryScope, pinnedMessageCount: Int, recordEpoch: Date = Date()) {
         self.scope = scope; self.pinnedMessageCount = pinnedMessageCount; self.recordEpoch = recordEpoch
     }
 }
 
 public struct AgentContextPolicy: Codable, Equatable, Sendable {
-    /// These defaults intentionally match `chatos_ai_runtime` so Task Runner and native
-    /// Agents use the same soft/hard budget semantics. Users can override them for a model.
+    /// The first request in a run/resume must fit this local safety budget.
+    /// Official OpenAI Responses owns subsequent in-run compaction.
     public var windowTokens = 250_000
     public var outputReserveTokens = 30_000
-    public var compactionThresholdTokens = 220_000
-    public var maximumCompactionPasses = 8
-    public var summaryTimeoutSeconds = 120
-    public var summaryPollSeconds = 10
     public init() {}
-    /// Same distinction as Task Runner: the reserve defines the proactive compaction point;
-    /// the model window itself remains the hard failure limit.
-    public var reservedInputLimit: Int { windowTokens - outputReserveTokens }
     public var hardInputLimit: Int { windowTokens }
     public func validate() throws {
-        guard (2_048...2_000_000).contains(windowTokens), (256..<windowTokens).contains(outputReserveTokens),
-              (512...reservedInputLimit).contains(compactionThresholdTokens),
-              (1...16).contains(maximumCompactionPasses), (5...1_800).contains(summaryTimeoutSeconds),
-              (1...30).contains(summaryPollSeconds) else { throw AgentRuntimeError.invalidPolicy }
+        guard (2_048...2_000_000).contains(windowTokens),
+              (256..<windowTokens).contains(outputReserveTokens) else {
+            throw AgentRuntimeError.invalidPolicy
+        }
     }
 }
 
 public enum AgentContextError: LocalizedError, Sendable {
-    case unavailable, invalidHistory, syncUncertain, summaryFailed(String?), summaryTimedOut, noImprovement, budgetExceeded
+    case unavailable, invalidHistory, syncUncertain, budgetExceeded
     public var errorDescription: String? {
         switch self {
         case .unavailable: "Memory Engine 同步或上下文服务不可用，运行已暂停。"
         case .invalidHistory: "运行历史或记忆范围不一致，已暂停，不能丢弃记录或重放工具。"
         case .syncUncertain: "部分运行记录尚未确认写入，已暂停。请稍后恢复核对；不会自动重发并重置已有摘要。"
-        case let .summaryFailed(detail):
-            if let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty {
-                "Memory Engine 摘要任务失败：\(detail)"
-            } else {
-                "Memory Engine 摘要任务失败，请检查摘要 Agent 模型与策略配置。"
-            }
-        case .summaryTimedOut: "等待上下文压缩超时，已保存摘要任务，可稍后继续。"
-        case .noImprovement: "压缩没有缩小上下文，已暂停；请检查摘要配置或缩小单次输入。"
         case .budgetExceeded: "上下文仍超过设置的窗口预算，已暂停，未继续调用模型。"
         }
     }

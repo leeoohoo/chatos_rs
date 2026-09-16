@@ -87,6 +87,11 @@ impl PreparedSingleModelStep {
             trigger,
             chatos_cloud_agent_runtime::CloudAgentModelTrigger::RunStarted { .. }
         ) {
+            // The first model attempt already persisted the fully composed
+            // input. Retries and continuations must replay that exact array so
+            // Memory Engine and static prefixes are not composed a second time.
+            self.run_spec.memory_scope = None;
+            self.run_spec.prefixed_input_items.clear();
             self.run_spec.user_record = None;
         }
         Ok(self)

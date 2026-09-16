@@ -74,7 +74,7 @@ struct RootView: View {
                     PluginApplicationsView()
                 }
             case .terminal:
-                TerminalWorkspaceView()
+                TerminalWorkspaceView(workspace: model.terminalWorkspace)
             case let .remote(remoteID):
                 RemoteConnectionDetailView(connectionID: remoteID)
                     .id(remoteID)

@@ -62,6 +62,7 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "task_runner.downstream.sandbox_manager_base_url",
     "task_runner.downstream.sandbox_manager_internal_api_secret",
     "task_runner.execution.environment_mode",
+    "task_runner.memory.auto_summary_enabled",
     "task_runner.queue.run_dispatch_mode",
     "task_runner.queue.run_dispatch_outbox_batch_size",
     "task_runner.queue.run_dispatch_outbox_reconcile_ms",

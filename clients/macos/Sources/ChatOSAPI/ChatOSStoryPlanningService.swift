@@ -21,65 +21,70 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
                                                      expectedAuthenticationSessionID: session)
         guard config.enabled, let key = config.apiKey, !key.isEmpty,
               let raw = config.baseURL, let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)) else { throw StoryError.missingModel }
-        guard ["gpt", "openai", "deepseek", "qwen", "ollama"].contains(config.provider?.lowercased() ?? "gpt") else { throw StoryError.unavailable }
-        let model = try AgentChatModelClient(baseURL: url, model: config.model, apiKey: key,
-            maximumOutputTokens: (policy.context ?? .init()).outputReserveTokens, transport: { request in
-                guard let url = request.url else { throw ChatOSAPIError.invalidEndpoint }
-                let response = try await transport.send(.init(url: url, method: "POST", headers: request.allHTTPHeaderFields ?? [:],
-                    body: request.httpBody, timeoutInterval: request.timeoutInterval))
-                return (response.body, response.statusCode)
-            }, streamTransport: { request in
-                guard let url = request.url else { throw ChatOSAPIError.invalidEndpoint }
-                let response = try await transport.stream(.init(url: url, method: "POST",
-                    headers: request.allHTTPHeaderFields ?? [:], body: request.httpBody,
-                    timeoutInterval: request.timeoutInterval))
-                return .init(statusCode: response.statusCode, headers: response.headers, body: response.body)
-            })
+        let send: AgentResponsesModelClient.Transport = { request in
+            guard let url = request.url else { throw ChatOSAPIError.invalidEndpoint }
+            let response = try await transport.send(.init(url: url, method: "POST", headers: request.allHTTPHeaderFields ?? [:],
+                body: request.httpBody, timeoutInterval: request.timeoutInterval))
+            return (response.body, response.statusCode)
+        }
+        let stream: AgentResponsesModelClient.StreamTransport = { request in
+            guard let url = request.url else { throw ChatOSAPIError.invalidEndpoint }
+            let response = try await transport.stream(.init(url: url, method: "POST",
+                headers: request.allHTTPHeaderFields ?? [:], body: request.httpBody,
+                timeoutInterval: request.timeoutInterval))
+            return .init(statusCode: response.statusCode, headers: response.headers, body: response.body)
+        }
+        let model: any AgentModelClient = try AgentResponsesModelClient(
+            baseURL: url, model: config.model, apiKey: key,
+            maximumOutputTokens: (policy.context ?? .init()).outputReserveTokens,
+            promptCacheKey: "story-agent:\(configID)",
+            transport: send, streamTransport: stream
+        )
         return StorySessionBoundModel(model: model, client: client, session: session)
     }
 
     public func plan(_ request: StoryPlanningRequest) async throws -> Data {
         let config: Config = try await client.request("/ai-model-configs/\(request.modelConfigID.urlPathEncoded)?include_secret=true")
         guard config.enabled, let key = config.apiKey, !key.isEmpty,
-              let raw = config.baseURL, var url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let raw = config.baseURL, let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
               url.user == nil, url.password == nil else { throw StoryError.missingModel }
-        // Protocol selection follows the provider configuration, never the model's marketing name.
-        guard ["gpt", "openai", "deepseek", "qwen", "ollama"].contains(config.provider?.lowercased() ?? "gpt") else {
-            throw StoryError.unavailable
+        let send: AgentResponsesModelClient.Transport = { urlRequest in
+            guard let requestURL = urlRequest.url else { throw ChatOSAPIError.invalidEndpoint }
+            let response = try await transport.send(.init(
+                url: requestURL, method: "POST", headers: urlRequest.allHTTPHeaderFields ?? [:],
+                body: urlRequest.httpBody, timeoutInterval: urlRequest.timeoutInterval
+            ))
+            return (response.body, response.statusCode)
         }
-        if url.path.hasSuffix("/responses") { url.deleteLastPathComponent() }
-        if !url.path.hasSuffix("/chat/completions") { url.appendPathComponent("chat/completions") }
-        let schema = try JSONSerialization.jsonObject(with: request.schema)
-        let body = try JSONSerialization.data(withJSONObject: [
-            "model": config.model,
-            "messages": [["role": "system", "content": request.systemPrompt], ["role": "user", "content": request.context]],
-            "tools": [["type": "function", "function": ["name": request.toolName, "description": "保存当前规划步骤的结构化结果", "parameters": schema]]],
-            "tool_choice": ["type": "function", "function": ["name": request.toolName]],
-            "stream": false,
-        ])
-        let response = try await transport.send(.init(url: url, method: "POST",
-            headers: ["Authorization": "Bearer \(key)", "Content-Type": "application/json"], body: body, timeoutInterval: 180))
-        guard (200..<300).contains(response.statusCode) else { throw PlanningError.rejected(response.statusCode) }
-        guard response.body.count <= 2 * 1024 * 1024,
-              let root = try JSONSerialization.jsonObject(with: response.body) as? [String: Any],
-              let choices = root["choices"] as? [[String: Any]],
-              let choice = choices.first, choice["finish_reason"] as? String != "length",
-              let message = choice["message"] as? [String: Any],
-              let calls = message["tool_calls"] as? [[String: Any]], calls.count == 1,
-              let function = calls[0]["function"] as? [String: Any],
-              function["name"] as? String == request.toolName,
-              let arguments = function["arguments"] as? String,
-              let data = arguments.data(using: .utf8),
+        let model = try AgentResponsesModelClient(
+            baseURL: url, model: config.model, apiKey: key,
+            promptCacheKey: "story-plan:\(request.modelConfigID)", transport: send
+        )
+        let response = try await model.complete(
+            messages: [
+                .init(role: .system, content: request.systemPrompt),
+                .init(role: .user, content: request.context),
+            ],
+            tools: [.init(
+                name: request.toolName, description: "保存当前规划步骤的结构化结果",
+                schema: request.schema, effect: .terminal
+            )],
+            timeout: 180
+        )
+        guard response.toolCalls.count == 1,
+              response.toolCalls[0].name == request.toolName,
+              let data = response.toolCalls[0].arguments.data(using: .utf8),
               (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { throw StoryError.invalidPlan }
         return data
     }
 }
 
 private struct StorySessionBoundModel: AgentModelClient {
-    let model: AgentChatModelClient
+    let model: any AgentModelClient
     let client: ChatOSAPIClient
     let session: UUID
+    var usesServerSideCompaction: Bool { model.usesServerSideCompaction }
     func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage {
         guard try await client.currentAuthenticationSessionID() == session else { throw ChatOSAPIError.unauthorized }
         try Task.checkCancellation()
@@ -107,12 +112,4 @@ private struct Config: Decodable {
     var apiKey: String?
     var baseURL: String?
     enum CodingKeys: String, CodingKey { case enabled, model, provider; case apiKey = "api_key", baseURL = "base_url" }
-}
-private enum PlanningError: LocalizedError {
-    case rejected(Int)
-    var errorDescription: String? {
-        switch self {
-        case .rejected(let status): "文本规划请求失败（HTTP \(status)），请检查模型权限、余额及工具调用支持。未自动重试。"
-        }
-    }
 }

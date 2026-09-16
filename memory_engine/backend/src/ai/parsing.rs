@@ -14,6 +14,7 @@ pub(crate) fn extract_chat_completion_text(value: &Value) -> Option<String> {
     extract_textish_value(message.get("content")?)
 }
 
+#[cfg(test)]
 pub(crate) fn extract_chat_completion_stream_text(value: &Value) -> Option<String> {
     let choice = value
         .get("choices")
@@ -166,6 +167,7 @@ pub(crate) fn trimmed_non_empty(text: &str) -> Option<String> {
     }
 }
 
+#[cfg(test)]
 fn extract_textish_value(value: &Value) -> Option<String> {
     if let Some(text) = value.as_str().and_then(trimmed_non_empty) {
         return Some(text);

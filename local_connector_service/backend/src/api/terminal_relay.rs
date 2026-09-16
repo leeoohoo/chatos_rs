@@ -530,6 +530,7 @@ async fn handle_terminal_relay_socket(
     };
     let create_response =
         dispatch_relay(&state, create_request, state.config.relay_request_timeout).await;
+    let initial_sequence;
     match create_response {
         Ok(response) if (200..300).contains(&response.status) => {
             let snapshot = response
@@ -537,12 +538,35 @@ async fn handle_terminal_relay_socket(
                 .get("snapshot")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
+            let base_sequence = response
+                .body
+                .get("base_sequence")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let sequence = response
+                .body
+                .get("sequence")
+                .and_then(Value::as_u64)
+                .unwrap_or(base_sequence);
+            initial_sequence = sequence;
+            let truncated = response
+                .body
+                .get("truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             if !snapshot.is_empty()
                 && socket
                     .send(Message::Text(
-                        json!({"type": "snapshot", "data": snapshot})
-                            .to_string()
-                            .into(),
+                        json!({
+                            "type": "snapshot",
+                            "data": snapshot,
+                            "base_sequence": base_sequence,
+                            "sequence": sequence,
+                            "truncated": truncated,
+                            "protocol_version": 2,
+                        })
+                        .to_string()
+                        .into(),
                     ))
                     .await
                     .is_err()
@@ -562,9 +586,15 @@ async fn handle_terminal_relay_socket(
                 .unwrap_or(false);
             if socket
                 .send(Message::Text(
-                    json!({"type": "state", "busy": busy, "snapshot_paging": true})
-                        .to_string()
-                        .into(),
+                    json!({
+                        "type": "state",
+                        "state": "ready",
+                        "busy": busy,
+                        "snapshot_paging": true,
+                        "protocol_version": 2,
+                    })
+                    .to_string()
+                    .into(),
                 ))
                 .await
                 .is_err()
@@ -621,14 +651,60 @@ async fn handle_terminal_relay_socket(
     let relay = state.relay.clone();
     let subscriber_terminal_session_id = terminal_session_id.clone();
     let subscriber_id = subscription_id.clone();
+    let event_state = state.clone();
+    let event_owner_user_id = owner_user_id.clone();
+    let event_device_id = device_id.clone();
+    let event_workspace_id = workspace_id.clone();
     let refresh_interval = state.config.terminal_subscriber_refresh_interval;
     let mut event_task = tokio::spawn(async move {
         let mut refresh = tokio::time::interval(refresh_interval);
+        let mut last_sequence = initial_sequence;
+        let mut awaiting_snapshot = false;
+        let mut pending_exit = None;
         refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 event = events.recv() => match event {
                     Ok(event) => {
+                        if awaiting_snapshot && event.message_type == "terminal_exit" {
+                            pending_exit = Some(event);
+                            continue;
+                        }
+                        if event.message_type == "terminal_snapshot" {
+                            last_sequence = event.body
+                                .get("sequence")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(last_sequence);
+                            awaiting_snapshot = false;
+                        } else if event.message_type == "terminal_output" {
+                            let sequence = event.body.get("sequence").and_then(Value::as_u64);
+                            if awaiting_snapshot {
+                                continue;
+                            }
+                            if let Some(sequence) = sequence {
+                                if sequence <= last_sequence {
+                                    continue;
+                                }
+                                if last_sequence > 0 && sequence != last_sequence.saturating_add(1) {
+                                    awaiting_snapshot = true;
+                                    if !send_terminal_control(
+                                        &event_state,
+                                        event_owner_user_id.as_str(),
+                                        event_device_id.as_str(),
+                                        event_workspace_id.as_str(),
+                                        "terminal_snapshot_request",
+                                        subscriber_terminal_session_id.as_str(),
+                                        json!({ "lines": 500 }),
+                                    ).await {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                last_sequence = sequence;
+                            }
+                        }
+                        let is_snapshot = event.message_type == "terminal_snapshot";
+                        let is_exit = event.message_type == "terminal_exit";
                         let payload =
                             terminal_event_to_ws_payload(event.message_type.as_str(), &event.body);
                         let Some(payload) = payload else {
@@ -641,11 +717,38 @@ async fn handle_terminal_relay_socket(
                         {
                             break;
                         }
-                        if event.message_type == "terminal_exit" {
+                        if is_snapshot {
+                            if let Some(exit) = pending_exit.take() {
+                                let Some(payload) = terminal_event_to_ws_payload(
+                                    exit.message_type.as_str(),
+                                    &exit.body,
+                                ) else {
+                                    continue;
+                                };
+                                let _ = sender
+                                    .send(Message::Text(payload.to_string().into()))
+                                    .await;
+                                break;
+                            }
+                        }
+                        if is_exit {
                             break;
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        awaiting_snapshot = true;
+                        if !send_terminal_control(
+                            &event_state,
+                            event_owner_user_id.as_str(),
+                            event_device_id.as_str(),
+                            event_workspace_id.as_str(),
+                            "terminal_snapshot_request",
+                            subscriber_terminal_session_id.as_str(),
+                            json!({ "lines": 500 }),
+                        ).await {
+                            break;
+                        }
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 },
                 _ = refresh.tick() => {
@@ -720,16 +823,6 @@ async fn handle_terminal_relay_socket(
         }
     }
 
-    let _ = send_terminal_control(
-        &state,
-        owner_user_id.as_str(),
-        device_id.as_str(),
-        workspace_id.as_str(),
-        "terminal_close",
-        terminal_session_id.as_str(),
-        json!({}),
-    )
-    .await;
     event_task.abort();
     drop_terminal_subscription(
         &state,
@@ -843,6 +936,19 @@ async fn handle_terminal_ws_input(
             )
             .await
         }
+        "close" => {
+            let _ = send_terminal_control(
+                state,
+                owner_user_id,
+                device_id,
+                workspace_id,
+                "terminal_close",
+                terminal_session_id,
+                json!({}),
+            )
+            .await;
+            false
+        }
         "ping" => true,
         _ => true,
     }
@@ -887,10 +993,16 @@ pub(super) fn terminal_event_to_ws_payload(message_type: &str, body: &Value) -> 
         "terminal_output" => Some(json!({
             "type": "output",
             "data": body.get("data").and_then(Value::as_str).unwrap_or_default(),
+            "sequence": body.get("sequence").and_then(Value::as_u64),
+            "protocol_version": body.get("protocol_version").and_then(Value::as_u64).unwrap_or(1),
         })),
         "terminal_snapshot" => Some(json!({
             "type": "snapshot",
             "data": body.get("data").and_then(Value::as_str).unwrap_or_default(),
+            "base_sequence": body.get("base_sequence").and_then(Value::as_u64).unwrap_or(0),
+            "sequence": body.get("sequence").and_then(Value::as_u64).unwrap_or(0),
+            "truncated": body.get("truncated").and_then(Value::as_bool).unwrap_or(false),
+            "protocol_version": body.get("protocol_version").and_then(Value::as_u64).unwrap_or(1),
         })),
         "terminal_exit" => Some(json!({
             "type": "exit",
@@ -898,13 +1010,58 @@ pub(super) fn terminal_event_to_ws_payload(message_type: &str, body: &Value) -> 
         })),
         "terminal_state" => Some(json!({
             "type": "state",
+            "state": body.get("state").and_then(Value::as_str).unwrap_or("ready"),
             "busy": body.get("busy").and_then(Value::as_bool).unwrap_or(false),
             "snapshot_paging": true,
+            "protocol_version": body.get("protocol_version").and_then(Value::as_u64).unwrap_or(1),
         })),
         "terminal_error" => Some(json!({
             "type": "error",
             "error": body.get("error").and_then(Value::as_str).unwrap_or("Local Connector terminal error"),
+            "code": body.get("code").and_then(Value::as_str),
+            "prompt": body.get("prompt").and_then(Value::as_str),
+            "recoverable": body.get("recoverable").and_then(Value::as_bool).unwrap_or(false),
         })),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_output_forwards_v2_sequence_metadata() {
+        let payload = terminal_event_to_ws_payload(
+            "terminal_output",
+            &json!({ "data": "hello", "sequence": 42, "protocol_version": 2 }),
+        )
+        .expect("terminal output payload");
+
+        assert_eq!(payload["type"], "output");
+        assert_eq!(payload["data"], "hello");
+        assert_eq!(payload["sequence"], 42);
+        assert_eq!(payload["protocol_version"], 2);
+    }
+
+    #[test]
+    fn terminal_snapshot_forwards_recovery_cursor_and_truncation() {
+        let payload = terminal_event_to_ws_payload(
+            "terminal_snapshot",
+            &json!({
+                "data": "tail",
+                "base_sequence": 37,
+                "sequence": 42,
+                "truncated": true,
+                "protocol_version": 2,
+            }),
+        )
+        .expect("terminal snapshot payload");
+
+        assert_eq!(payload["type"], "snapshot");
+        assert_eq!(payload["base_sequence"], 37);
+        assert_eq!(payload["sequence"], 42);
+        assert_eq!(payload["truncated"], true);
+        assert_eq!(payload["protocol_version"], 2);
     }
 }

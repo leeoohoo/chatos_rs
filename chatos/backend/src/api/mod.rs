@@ -20,7 +20,7 @@ use tracing::{debug, info_span};
 
 use crate::config::Config;
 use crate::core::auth::{
-    access_token_from_headers, resolve_auth_user_via_user_service, AuthHeaderError,
+    access_token_from_headers, resolve_auth_user_and_scopes_via_user_service, AuthHeaderError,
 };
 use crate::core::websocket_ticket::{consume_websocket_ticket, WebSocketTicketRecord};
 use crate::modules;
@@ -28,6 +28,28 @@ use crate::services::access_token_scope;
 
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
+
+#[derive(Clone, Default)]
+pub(crate) struct RequestClientScopes(Vec<String>);
+
+impl RequestClientScopes {
+    pub(crate) fn is_wechat_companion(&self) -> bool {
+        self.0.iter().any(|scope| scope == "wechat_companion")
+    }
+
+    pub(crate) fn as_slice(&self) -> &[String] {
+        self.0.as_slice()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct RequestAccessToken(String);
+
+impl RequestAccessToken {
+    pub(crate) fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
 
 pub mod agent_chat;
 pub mod agents;
@@ -37,6 +59,7 @@ pub mod attachments;
 pub mod auth;
 pub(crate) mod chat_stream_common;
 pub mod code_nav;
+pub mod companion;
 pub mod configs;
 pub mod contacts;
 mod conversation_semantics;
@@ -409,27 +432,89 @@ async fn require_auth(
     next: middleware::Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     // 在中间件只解析一次 token，并把登录用户注入 request extensions。
-    let (access_token, auth_user) = match access_token_from_headers(req.headers()) {
+    let (access_token, auth_user, scopes) = match access_token_from_headers(req.headers()) {
         Ok(token) => {
-            let auth_user = resolve_auth_user_via_user_service(token.as_str())
+            let (auth_user, scopes) = resolve_auth_user_and_scopes_via_user_service(token.as_str())
                 .await
                 .map_err(|err| err.into_response())?;
-            (token, auth_user)
+            (token, auth_user, scopes)
         }
         // Browser WebSocket cannot set Authorization headers directly.
         // Allow websocket auth via a short-lived `?ws_ticket=...` credential only.
         Err(AuthHeaderError::MissingAuthorization) => {
             match websocket_auth_from_query(&req).map_err(|err| err.into_response())? {
-                WebSocketQueryAuth::Ticket(record) => (record.access_token, record.auth_user),
+                WebSocketQueryAuth::Ticket(record) => {
+                    (record.access_token, record.auth_user, record.scopes)
+                }
             }
         }
         Err(err) => return Err(err.into_response()),
     };
 
+    enforce_client_scope(req.method(), req.uri().path(), scopes.as_slice())?;
+
     req.extensions_mut().insert(auth_user);
+    req.extensions_mut().insert(RequestClientScopes(scopes));
+    req.extensions_mut()
+        .insert(RequestAccessToken(access_token.clone()));
     let response =
         access_token_scope::with_access_token_scope(Some(access_token), next.run(req)).await;
     Ok(response)
+}
+
+fn enforce_client_scope(
+    method: &Method,
+    path: &str,
+    scopes: &[String],
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if !scopes.iter().any(|scope| scope == "wechat_companion") {
+        return Ok(());
+    }
+    let allowed = (method == Method::GET
+        && (path == "/api/auth/me"
+            || path == "/api/realtime/ws"
+            || companion_conversation_read_path(path)
+            || companion_task_read_path(path)
+            || path == "/api/ask-user-prompts"))
+        || (method == Method::POST
+            && matches!(
+                path,
+                "/api/auth/ws-ticket"
+                    | "/api/agent/chat/send"
+                    | "/api/agent/chat/guidance"
+                    | "/api/agent/chat/stop"
+            ))
+        || (method == Method::POST
+            && path.starts_with("/api/ask-user-prompts/")
+            && (path.ends_with("/submit") || path.ends_with("/cancel")));
+    if allowed {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "WeChat Companion session is not allowed to access this ChatOS endpoint"
+            })),
+        ))
+    }
+}
+
+fn companion_conversation_read_path(path: &str) -> bool {
+    let Some(suffix) = path.strip_prefix("/api/companion/conversations/") else {
+        return false;
+    };
+    let segments = suffix.split('/').collect::<Vec<_>>();
+    !segments[0].is_empty()
+        && (segments.len() == 1
+            || (segments.len() == 2 && matches!(segments[1], "compact-history" | "state")))
+}
+
+fn companion_task_read_path(path: &str) -> bool {
+    let Some(suffix) = path.strip_prefix("/api/companion/messages/") else {
+        return false;
+    };
+    let segments = suffix.split('/').collect::<Vec<_>>();
+    matches!(segments.as_slice(), [message_id, "tasks"] if !message_id.is_empty())
 }
 
 #[derive(Debug)]
@@ -466,6 +551,7 @@ fn is_websocket_upgrade(req: &Request<Body>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
+        companion_conversation_read_path, companion_task_read_path, enforce_client_scope,
         internal_router, plugin_ui_resource_namespace_allowed,
         remove_plugin_ui_resource_cors_headers, sanitize_request_uri, websocket_auth_from_query,
         WebSocketQueryAuth,
@@ -488,6 +574,83 @@ mod tests {
         AuthUser {
             user_id: "user_1".to_string(),
             role: "user".to_string(),
+        }
+    }
+
+    #[test]
+    fn wechat_companion_scope_allows_only_conversation_control_surface() {
+        let scopes = vec!["wechat_companion".to_string()];
+        for (method, path) in [
+            (Method::GET, "/api/companion/conversations/c1"),
+            (
+                Method::GET,
+                "/api/companion/conversations/c1/compact-history",
+            ),
+            (Method::GET, "/api/companion/conversations/c1/state"),
+            (Method::GET, "/api/companion/messages/m1/tasks"),
+            (Method::GET, "/api/realtime/ws"),
+            (Method::POST, "/api/agent/chat/send"),
+            (Method::POST, "/api/agent/chat/guidance"),
+            (Method::POST, "/api/agent/chat/stop"),
+            (Method::POST, "/api/auth/ws-ticket"),
+        ] {
+            assert!(enforce_client_scope(&method, path, scopes.as_slice()).is_ok());
+        }
+        for (method, path) in [
+            (Method::GET, "/api/companion/conversations"),
+            (Method::POST, "/api/conversations"),
+            (Method::GET, "/api/conversations"),
+            (Method::GET, "/api/conversations/c1/runtime-settings"),
+            (
+                Method::GET,
+                "/api/companion/conversations/c1/runtime-settings",
+            ),
+            (Method::GET, "/api/companion/messages/m1/tasks/extra"),
+            (Method::GET, "/api/fs/list"),
+            (Method::GET, "/api/terminals/terminal-1/ws"),
+            (Method::POST, "/api/terminals"),
+            (Method::GET, "/api/model-configs"),
+        ] {
+            assert!(enforce_client_scope(&method, path, scopes.as_slice()).is_err());
+        }
+        assert!(enforce_client_scope(
+            &Method::POST,
+            "/api/terminals",
+            &["user_service".to_string()],
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn companion_conversation_paths_are_matched_by_complete_segments() {
+        for path in [
+            "/api/companion/conversations/c1",
+            "/api/companion/conversations/c1/compact-history",
+            "/api/companion/conversations/c1/state",
+        ] {
+            assert!(companion_conversation_read_path(path), "path={path}");
+        }
+        for path in [
+            "/api/companion/conversations",
+            "/api/companion/conversations/",
+            "/api/companion/conversations/c1/runtime-settings",
+            "/api/companion/conversations/c1/state/extra",
+            "/api/companion/conversations-malicious",
+        ] {
+            assert!(!companion_conversation_read_path(path), "path={path}");
+        }
+    }
+
+    #[test]
+    fn companion_task_paths_are_matched_by_complete_segments() {
+        assert!(companion_task_read_path("/api/companion/messages/m1/tasks"));
+        for path in [
+            "/api/companion/messages/m1",
+            "/api/companion/messages//tasks",
+            "/api/companion/messages/m1/tasks/extra",
+            "/api/companion/messages-malicious/m1/tasks",
+        ] {
+            assert!(!companion_task_read_path(path), "path={path}");
         }
     }
 
@@ -569,8 +732,12 @@ mod tests {
 
     #[test]
     fn websocket_auth_from_query_accepts_ws_ticket() {
-        let ticket =
-            issue_websocket_ticket("access_token_1", &auth_user()).expect("issue websocket ticket");
+        let ticket = issue_websocket_ticket(
+            "access_token_1",
+            &auth_user(),
+            &["wechat_companion".to_string()],
+        )
+        .expect("issue websocket ticket");
         let request =
             websocket_request(format!("/api/realtime/ws?ws_ticket={}", ticket.ticket).as_str());
 
@@ -579,6 +746,7 @@ mod tests {
             WebSocketQueryAuth::Ticket(record) => {
                 assert_eq!(record.access_token, "access_token_1");
                 assert_eq!(record.auth_user.user_id, "user_1");
+                assert_eq!(record.scopes, vec!["wechat_companion"]);
             }
         }
     }
