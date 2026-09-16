@@ -34,6 +34,31 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         self.includeSubjectMemory = profile == "approval" ? false : nil
     }
 
+    /// Project-chat Agents use a stable Agent identity rather than a caller-selected profile.
+    /// The subject shape is understood by Memory Engine's existing agent-project mapper and
+    /// prevents one room member from inheriting another member's private project memory.
+    public init(
+        tenantID: String,
+        agentID: String,
+        projectID: String,
+        runID: UUID,
+        runtimeScope: String
+    ) throws {
+        let identifiers = [tenantID, agentID, projectID]
+        guard identifiers.allSatisfy({ value in
+            !value.isEmpty
+                && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+                && value.rangeOfCharacter(from: .controlCharacters) == nil
+        }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        self.tenantID = tenantID
+        self.sourceID = "chatos"
+        self.threadID = "client-agent:group-chat:\(agentID):\(projectID):\(runID)"
+        self.subjectID = "agent_project:\(agentID):\(projectID)"
+        self.runID = runID
+        self.runtimeScope = runtimeScope
+        self.includeSubjectMemory = nil
+    }
+
     public func recordID(at index: Int) -> String { "client-agent:\(runID):message:\(index)" }
 }
 

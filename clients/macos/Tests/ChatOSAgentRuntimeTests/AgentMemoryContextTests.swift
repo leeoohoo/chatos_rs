@@ -3,6 +3,29 @@ import XCTest
 @testable import ChatOSAgentRuntime
 
 final class AgentMemoryContextTests: XCTestCase {
+    func testProjectChatMemoryIsPrivateToAgentAndProject() throws {
+        let runID = UUID()
+        let first = try AgentMemoryScope(
+            tenantID: "user-a",
+            agentID: "agent-a",
+            projectID: "project-1",
+            runID: runID,
+            runtimeScope: "account:user-a:project:project-1:agent:agent-a"
+        )
+        let second = try AgentMemoryScope(
+            tenantID: "user-a",
+            agentID: "agent-b",
+            projectID: "project-1",
+            runID: runID,
+            runtimeScope: "account:user-a:project:project-1:agent:agent-b"
+        )
+        XCTAssertEqual(first.subjectID, "agent_project:agent-a:project-1")
+        XCTAssertEqual(second.subjectID, "agent_project:agent-b:project-1")
+        XCTAssertNotEqual(first.subjectID, second.subjectID)
+        XCTAssertNotEqual(first.threadID, second.threadID)
+        XCTAssertNil(first.includeSubjectMemory)
+    }
+
     func test600ResponsesCallsComposeMemoryOnceAndKeepAuditHistoryComplete() async throws {
         let (checkpoint, scope) = try fixture()
         let memory = TestMemory(scope: scope)

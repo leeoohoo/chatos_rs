@@ -115,6 +115,7 @@ final class AppModel: ObservableObject {
     let projectCodeNavigationService: NativeProjectCodeNavigationService
     let projectGitService: NativeProjectGitService
     let projectRunService: NativeProjectRunService
+    let agentGroupChatService: NativeAgentGroupChatService
     let notepadService: ChatOSNotepadService
     let wechatCompanionService: ChatOSWeChatCompanionService
     private let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
@@ -186,6 +187,10 @@ final class AppModel: ObservableObject {
             connector: localConnectorService,
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("Projects.sqlite3")
+        )
+        self.agentGroupChatService = NativeAgentGroupChatService(
+            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                .appendingPathComponent("AgentGroupChat.sqlite3")
         )
         let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService
