@@ -16,6 +16,34 @@ public struct LocalAgentProfessionDefinition: Codable, Sendable, Equatable, Iden
 
     public var id: String { key }
 
+    public init(
+        key: String,
+        label: String,
+        labelEN: String,
+        description: String,
+        descriptionEN: String,
+        categoryKey: String,
+        categoryLabel: String,
+        categoryLabelEN: String,
+        skillName: String,
+        skillMarkdown: String,
+        skillMarkdownEN: String,
+        canCreateTasks: Bool
+    ) {
+        self.key = key
+        self.label = label
+        self.labelEN = labelEN
+        self.description = description
+        self.descriptionEN = descriptionEN
+        self.categoryKey = categoryKey
+        self.categoryLabel = categoryLabel
+        self.categoryLabelEN = categoryLabelEN
+        self.skillName = skillName
+        self.skillMarkdown = skillMarkdown
+        self.skillMarkdownEN = skillMarkdownEN
+        self.canCreateTasks = canCreateTasks
+    }
+
     enum CodingKeys: String, CodingKey {
         case key, label, description
         case labelEN = "label_en"
@@ -47,6 +75,30 @@ public struct LocalProjectTypeDefinition: Codable, Sendable, Equatable, Identifi
     public let ruleMarkdownEN: String
 
     public var id: String { key }
+
+    public init(
+        key: String,
+        label: String,
+        labelEN: String,
+        description: String,
+        descriptionEN: String,
+        categoryKey: String,
+        categoryLabel: String,
+        categoryLabelEN: String,
+        ruleMarkdown: String,
+        ruleMarkdownEN: String
+    ) {
+        self.key = key
+        self.label = label
+        self.labelEN = labelEN
+        self.description = description
+        self.descriptionEN = descriptionEN
+        self.categoryKey = categoryKey
+        self.categoryLabel = categoryLabel
+        self.categoryLabelEN = categoryLabelEN
+        self.ruleMarkdown = ruleMarkdown
+        self.ruleMarkdownEN = ruleMarkdownEN
+    }
 
     enum CodingKeys: String, CodingKey {
         case key, label, description

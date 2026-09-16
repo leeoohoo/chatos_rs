@@ -116,6 +116,7 @@ final class AppModel: ObservableObject {
     let projectGitService: NativeProjectGitService
     let projectRunService: NativeProjectRunService
     let agentGroupChatService: NativeAgentGroupChatService
+    let agentSkillLibrary: LocalAgentSkillLibrary
     let agentGroupChatScheduler: LocalAgentGroupChatScheduler
     let agentGroupChatBuilderService: LocalAgentBuilderService
     let notepadService: ChatOSNotepadService
@@ -196,7 +197,12 @@ final class AppModel: ObservableObject {
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("AgentGroupChat.sqlite3")
         )
+        let agentSkillLibrary = LocalAgentSkillLibrary(
+            fileURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                .appendingPathComponent("AgentSkillOverrides.json")
+        )
         self.agentGroupChatService = agentGroupChatService
+        self.agentSkillLibrary = agentSkillLibrary
         self.agentGroupChatScheduler = LocalAgentGroupChatScheduler(
             service: agentGroupChatService,
             services: agentServices,
@@ -205,6 +211,15 @@ final class AppModel: ObservableObject {
                     ownerUserID: ownerUserID,
                     id: projectID
                 )?.draft.projectTypeKey
+            },
+            professionProvider: { ownerUserID, key in
+                agentSkillLibrary.profession(ownerUserID: ownerUserID, key: key)
+            },
+            projectTypeProvider: { ownerUserID, key in
+                agentSkillLibrary.projectType(ownerUserID: ownerUserID, key: key)
+            },
+            professionCatalogProvider: { ownerUserID in
+                agentSkillLibrary.professions(ownerUserID: ownerUserID)
             },
             additionalToolProviders: { profile, member, runContext in
                 var providers: [any AgentToolProvider] = []
@@ -218,6 +233,9 @@ final class AppModel: ObservableObject {
                     providers.append(LocalAgentProjectToolProvider(
                         store: store,
                         projects: projects,
+                        projectTypes: agentSkillLibrary.projectTypes(
+                            ownerUserID: runContext.ownerUserID
+                        ),
                         context: runContext
                     ))
                 }
@@ -239,7 +257,8 @@ final class AppModel: ObservableObject {
             groupChatService: agentGroupChatService,
             projectsService: localProjectsService,
             connectorService: localConnectorService,
-            agentServices: agentServices
+            agentServices: agentServices,
+            skillLibrary: agentSkillLibrary
         )
         let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService

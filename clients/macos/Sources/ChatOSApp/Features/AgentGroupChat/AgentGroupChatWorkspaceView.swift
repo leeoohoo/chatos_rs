@@ -4,6 +4,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let agentGroupChatRoomsDidChange = Notification.Name("ChatOS.AgentGroupChatRoomsDidChange")
+    static let agentSkillLibraryDidChange = Notification.Name("ChatOS.AgentSkillLibraryDidChange")
 }
 
 private enum AgentGroupChatWorkspaceDestination: Hashable {
@@ -209,17 +210,20 @@ struct AgentGroupChatWorkspaceView: View {
     private let service: NativeAgentGroupChatService
     private let scheduler: LocalAgentGroupChatScheduler
     private let builderService: LocalAgentBuilderService
+    private let skillLibrary: LocalAgentSkillLibrary
 
     init(
         ownerUserID: String,
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
-        builderService: LocalAgentBuilderService
+        builderService: LocalAgentBuilderService,
+        skillLibrary: LocalAgentSkillLibrary
     ) {
         self.ownerUserID = ownerUserID
         self.service = service
         self.scheduler = scheduler
         self.builderService = builderService
+        self.skillLibrary = skillLibrary
         _viewModel = StateObject(
             wrappedValue: AgentGroupChatWorkspaceViewModel(
                 ownerUserID: ownerUserID,
@@ -391,7 +395,11 @@ struct AgentGroupChatWorkspaceView: View {
     @ViewBuilder
     private var detail: some View {
         if destination == .agents {
-            AgentManagementView(viewModel: viewModel) { agent in
+            AgentManagementView(
+                viewModel: viewModel,
+                ownerUserID: ownerUserID,
+                skillLibrary: skillLibrary
+            ) { agent in
                 Task {
                     if let conversation = await viewModel.openDirect(with: agent) {
                         destination = .direct(conversation.id)
@@ -447,8 +455,12 @@ private enum AgentProfileEditorTarget: Identifiable {
 
 private struct AgentManagementView: View {
     @ObservedObject var viewModel: AgentGroupChatWorkspaceViewModel
+    let ownerUserID: String
+    let skillLibrary: LocalAgentSkillLibrary
     let openDirect: (LocalAgentProfile) -> Void
     @State private var editorTarget: AgentProfileEditorTarget?
+    @State private var showsSkillManager = false
+    @State private var skillRevision = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -461,6 +473,10 @@ private struct AgentManagementView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button("Skill 管理", systemImage: "books.vertical") {
+                    showsSkillManager = true
+                }
+                .buttonStyle(.bordered)
                 Button("创建 Agent", systemImage: "person.badge.plus") {
                     editorTarget = .create
                 }
@@ -496,7 +512,20 @@ private struct AgentManagementView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .sheet(item: $editorTarget) { target in
-            AgentProfileEditorSheet(viewModel: viewModel, target: target)
+            AgentProfileEditorSheet(
+                viewModel: viewModel,
+                target: target,
+                professions: professions
+            )
+        }
+        .sheet(isPresented: $showsSkillManager) {
+            AgentSkillManagementSheet(
+                ownerUserID: ownerUserID,
+                skillLibrary: skillLibrary
+            )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .agentSkillLibraryDidChange)) { _ in
+            skillRevision += 1
         }
     }
 
@@ -553,7 +582,7 @@ private struct AgentManagementView: View {
             }
             .font(.caption)
             LabeledContent("职业") {
-                Text(LocalAgentSkillCatalog.profession(key: agent.draft.professionKey)?.label
+                Text(professions.first(where: { $0.key == agent.draft.professionKey })?.label
                     ?? agent.draft.professionKey)
             }
             .font(.caption)
@@ -587,12 +616,18 @@ private struct AgentManagementView: View {
         guard let model = viewModel.availableModels.first(where: { $0.id == id }) else { return id }
         return "\(model.name) · \(model.modelName)"
     }
+
+    private var professions: [LocalAgentProfessionDefinition] {
+        _ = skillRevision
+        return skillLibrary.professions(ownerUserID: ownerUserID)
+    }
 }
 
 private struct AgentProfileEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: AgentGroupChatWorkspaceViewModel
     let target: AgentProfileEditorTarget
+    let professions: [LocalAgentProfessionDefinition]
 
     @State private var name: String
     @State private var description: String
@@ -602,9 +637,14 @@ private struct AgentProfileEditorSheet: View {
     @State private var canManageStaff: Bool
     @State private var canAccessLocalProjects: Bool
 
-    init(viewModel: AgentGroupChatWorkspaceViewModel, target: AgentProfileEditorTarget) {
+    init(
+        viewModel: AgentGroupChatWorkspaceViewModel,
+        target: AgentProfileEditorTarget,
+        professions: [LocalAgentProfessionDefinition]
+    ) {
         self.viewModel = viewModel
         self.target = target
+        self.professions = professions
         let profile: LocalAgentProfile?
         switch target {
         case .create:
@@ -662,13 +702,13 @@ private struct AgentProfileEditorSheet: View {
                     editorField("职业") {
                         VStack(alignment: .leading, spacing: 5) {
                             Picker("", selection: $professionKey) {
-                                ForEach(LocalAgentSkillCatalog.professions) { profession in
+                                ForEach(professions) { profession in
                                     Text("\(profession.categoryLabel) · \(profession.label)")
                                         .tag(profession.key)
                                 }
                             }
                             .labelsHidden()
-                            if let selected = LocalAgentSkillCatalog.profession(key: professionKey) {
+                            if let selected = professions.first(where: { $0.key == professionKey }) {
                                 Text(selected.description)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)

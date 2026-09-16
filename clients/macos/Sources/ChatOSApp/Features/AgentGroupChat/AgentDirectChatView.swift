@@ -255,6 +255,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
 }
 
 struct AgentDirectChatView: View {
+    @EnvironmentObject private var model: AppModel
     @StateObject private var viewModel: AgentDirectChatViewModel
 
     init(
@@ -382,7 +383,7 @@ struct AgentDirectChatView: View {
                 .font(.headline)
             Text(proposal.draft.teamName)
             if let key = proposal.draft.newProjectTypeKey,
-               let type = LocalAgentSkillCatalog.projectType(key: key) {
+               let type = projectType(key) {
                 Text("项目类型：\(type.label)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -411,7 +412,7 @@ struct AgentDirectChatView: View {
             Label("创建 Agent", systemImage: "person.badge.plus")
                 .font(.headline)
             Text("\(proposal.draft.name) · \(proposal.draft.role)")
-            Text("职业：\(LocalAgentSkillCatalog.profession(key: proposal.draft.professionKey)?.label ?? proposal.draft.professionKey)")
+            Text("职业：\(profession(proposal.draft.professionKey)?.label ?? proposal.draft.professionKey)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !proposal.draft.responsibility.isEmpty {
@@ -431,6 +432,16 @@ struct AgentDirectChatView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func profession(_ key: String) -> LocalAgentProfessionDefinition? {
+        guard let owner = model.localProjectOwnerUserID else { return nil }
+        return model.agentSkillLibrary.profession(ownerUserID: owner, key: key)
+    }
+
+    private func projectType(_ key: String) -> LocalProjectTypeDefinition? {
+        guard let owner = model.localProjectOwnerUserID else { return nil }
+        return model.agentSkillLibrary.projectType(ownerUserID: owner, key: key)
     }
 
     private var composer: some View {

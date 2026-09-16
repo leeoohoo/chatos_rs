@@ -148,7 +148,7 @@ struct ProjectAgentGroupChatView: View {
                         Text("\(proposal.draft.name) · \(proposal.draft.role)")
                             .appFont(.body)
                             .fontWeight(.medium)
-                        Text("职业：\(LocalAgentSkillCatalog.profession(key: proposal.draft.professionKey)?.label ?? proposal.draft.professionKey)")
+                        Text("职业：\(profession(proposal.draft.professionKey)?.label ?? proposal.draft.professionKey)")
                             .appFont(.caption)
                             .foregroundStyle(.secondary)
                         if !proposal.draft.responsibility.isEmpty {
@@ -233,7 +233,7 @@ struct ProjectAgentGroupChatView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                             if let key = proposal.draft.newProjectTypeKey,
-                               let type = LocalAgentSkillCatalog.projectType(key: key) {
+                               let type = projectType(key) {
                                 Text("类型：\(type.label)")
                                     .appFont(.caption)
                                     .foregroundStyle(.secondary)
@@ -280,6 +280,16 @@ struct ProjectAgentGroupChatView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(Color.accentColor.opacity(0.07))
+    }
+
+    private func profession(_ key: String) -> LocalAgentProfessionDefinition? {
+        guard let owner = model.localProjectOwnerUserID else { return nil }
+        return model.agentSkillLibrary.profession(ownerUserID: owner, key: key)
+    }
+
+    private func projectType(_ key: String) -> LocalProjectTypeDefinition? {
+        guard let owner = model.localProjectOwnerUserID else { return nil }
+        return model.agentSkillLibrary.projectType(ownerUserID: owner, key: key)
     }
 
     private var interruptedRuns: some View {
@@ -773,6 +783,7 @@ private struct CreateAgentRoomSheet: View {
 
 private struct CreateLocalAgentSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     @ObservedObject var viewModel: AgentGroupChatViewModel
     @State private var name = ""
     @State private var role = ""
@@ -801,12 +812,12 @@ private struct CreateLocalAgentSheet: View {
                     }
                 }
                 Picker("职业", selection: $professionKey) {
-                    ForEach(LocalAgentSkillCatalog.professions) { profession in
+                    ForEach(professions) { profession in
                         Text("\(profession.categoryLabel) · \(profession.label)")
                             .tag(profession.key)
                     }
                 }
-                if let selected = LocalAgentSkillCatalog.profession(key: professionKey) {
+                if let selected = professions.first(where: { $0.key == professionKey }) {
                     Text(selected.description).font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -844,10 +855,18 @@ private struct CreateLocalAgentSheet: View {
             }
         }
     }
+
+    private var professions: [LocalAgentProfessionDefinition] {
+        guard let owner = model.localProjectOwnerUserID else {
+            return LocalAgentSkillCatalog.professions
+        }
+        return model.agentSkillLibrary.professions(ownerUserID: owner)
+    }
 }
 
 private struct LocalAgentBuilderSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     @ObservedObject var viewModel: AgentGroupChatViewModel
     @State private var brief = ""
     @State private var builderModelConfigID = ""
@@ -967,7 +986,7 @@ private struct LocalAgentBuilderSheet: View {
                 draftField("职责", draft.responsibility.isEmpty ? "未单独设置" : draft.responsibility)
                 draftField(
                     "职业",
-                    LocalAgentSkillCatalog.profession(key: draft.professionKey)?.label
+                    profession(draft.professionKey)?.label
                         ?? draft.professionKey
                 )
                 draftField("模型", modelName(draft.modelConfigID))
@@ -986,6 +1005,11 @@ private struct LocalAgentBuilderSheet: View {
             }
         }
         .frame(minHeight: 360, maxHeight: 560)
+    }
+
+    private func profession(_ key: String) -> LocalAgentProfessionDefinition? {
+        guard let owner = model.localProjectOwnerUserID else { return nil }
+        return model.agentSkillLibrary.profession(ownerUserID: owner, key: key)
     }
 
     private func draftField(_ title: String, _ value: String) -> some View {

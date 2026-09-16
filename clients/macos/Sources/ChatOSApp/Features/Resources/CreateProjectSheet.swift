@@ -9,6 +9,7 @@ struct CreateProjectSheetHost: View {
         connectorStatus: LocalConnectorStatus?,
         filesystemService: any ProjectFilesystemServicing,
         creationService: any LocalProjectCreating,
+        projectTypes: [LocalProjectTypeDefinition] = LocalAgentSkillCatalog.projectTypes,
         suggestedName: String = "",
         suggestedDescription: String = "",
         onCreated: @escaping (WorkspaceProject) -> Void
@@ -17,6 +18,7 @@ struct CreateProjectSheetHost: View {
             connectorStatus: connectorStatus,
             filesystemService: filesystemService,
             creationService: creationService,
+            projectTypes: projectTypes,
             suggestedName: suggestedName,
             suggestedDescription: suggestedDescription
         ))
@@ -120,15 +122,15 @@ struct CreateProjectSheet: View {
                     .appFont(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Picker("项目类型", selection: $viewModel.selectedProjectTypeKey) {
-                    ForEach(LocalAgentSkillCatalog.projectTypes) { type in
+                    ForEach(viewModel.projectTypes) { type in
                         Text("\(type.categoryLabel) · \(type.label)").tag(type.key)
                     }
                 }
                 .labelsHidden()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                if let selected = LocalAgentSkillCatalog.projectType(
-                    key: viewModel.selectedProjectTypeKey
-                ) {
+                if let selected = viewModel.projectTypes.first(where: {
+                    $0.key == viewModel.selectedProjectTypeKey
+                }) {
                     Text(selected.description)
                         .appFont(.caption)
                         .foregroundStyle(.secondary)

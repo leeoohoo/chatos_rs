@@ -10,12 +10,14 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
 
     private let store: any AgentGroupChatStore
     private let projects: [LocalProjectRecord]
+    private let projectTypes: [LocalProjectTypeDefinition]
     private let context: LocalAgentChatRunContext
     private let now: @Sendable () -> Int64
 
     public init(
         store: any AgentGroupChatStore,
         projects: [LocalProjectRecord],
+        projectTypes: [LocalProjectTypeDefinition] = LocalAgentSkillCatalog.projectTypes,
         context: LocalAgentChatRunContext,
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
@@ -26,6 +28,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
             ($0.draft.name.localizedStandardCompare($1.draft.name) == .orderedAscending)
                 || ($0.draft.name == $1.draft.name && $0.id < $1.id)
         }
+        self.projectTypes = projectTypes
         self.context = context
         self.now = now
     }
@@ -46,8 +49,8 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                 "new_project_description": ["type": "string", "maxLength": 8_000],
                 "new_project_type": [
                     "type": "string",
-                    "enum": LocalAgentSkillCatalog.projectTypes.map(\.key),
-                    "description": LocalAgentSkillCatalog.projectTypes.map {
+                    "enum": projectTypes.map(\.key),
+                    "description": projectTypes.map {
                         "\($0.key)=\($0.label)"
                     }.joined(separator: "；"),
                 ],
@@ -96,7 +99,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                 throw AgentGroupChatError.invalidField("new_project_name")
             }
             guard let projectTypeKey = arguments.newProjectType,
-                  LocalAgentSkillCatalog.projectType(key: projectTypeKey) != nil else {
+                  projectTypes.contains(where: { $0.key == projectTypeKey }) else {
                 throw AgentGroupChatError.invalidField("new_project_type")
             }
             draft = .init(

@@ -37,12 +37,14 @@ public struct LocalAgentBuilderService: Sendable {
     private let agentServices: any AgentServiceProviding
     private let settings: AgentSettingsStore
     private let runtime: AgentRuntime
+    private let skillLibrary: LocalAgentSkillLibrary?
 
     public init(
         groupChatService: NativeAgentGroupChatService,
         projectsService: NativeLocalProjectsService,
         connectorService: NativeLocalConnectorService,
         agentServices: any AgentServiceProviding,
+        skillLibrary: LocalAgentSkillLibrary? = nil,
         settings: AgentSettingsStore = .init(),
         runtime: AgentRuntime = .init()
     ) {
@@ -50,6 +52,7 @@ public struct LocalAgentBuilderService: Sendable {
         self.projectsService = projectsService
         self.connectorService = connectorService
         self.agentServices = agentServices
+        self.skillLibrary = skillLibrary
         self.settings = settings
         self.runtime = runtime
     }
@@ -117,7 +120,8 @@ public struct LocalAgentBuilderService: Sendable {
         let provider = try LocalAgentBuilderToolProvider(
             project: snapshot,
             models: resources.models,
-            professions: LocalAgentSkillCatalog.professions
+            professions: skillLibrary?.professions(ownerUserID: ownerUserID)
+                ?? LocalAgentSkillCatalog.professions
         )
         let registry = try await AgentToolProviderRegistry(providers: [provider])
         let runID = UUID()

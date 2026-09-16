@@ -478,3 +478,12 @@
 "创建后可以直接私聊，也可以加入项目团队。" = "Start a direct message or add the agent to a project team.";
 "私聊与项目团队" = "Direct messages and project teams";
 "管理 Agent、模型和权限。" = "Manage agents, models, and permissions.";
+"Skill 名称" = "Skill Name";
+"Skill 管理" = "Skill Management";
+"已修改" = "Modified";
+"恢复内置版本" = "Restore Built-in Version";
+"搜索 Skill" = "Search Skills";
+"用途说明" = "Description";
+"管理 Agent 职业与项目类型的完整运行规则。" = "Manage complete runtime rules for agent professions and project types.";
+"类型" = "Type";
+"选择一个 Skill" = "Select a Skill";

@@ -30,6 +30,16 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let delivery = try XCTUnwrap(post.deliveries.first)
         let settingsSuite = "local-agent-direct-skill-tests-\(UUID().uuidString)"
         defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let skillLibrary = LocalAgentSkillLibrary(
+            fileURL: folder.appendingPathComponent("skill-overrides.json")
+        )
+        try skillLibrary.updateProfession(
+            ownerUserID: "alice",
+            key: "research_specialist",
+            label: "专项研究员",
+            description: "完成专项研究",
+            skillMarkdown: "# 当前账户自定义职业规则\n必须给出可核验结论。"
+        )
         let scheduler = LocalAgentGroupChatScheduler(
             service: service,
             services: SchedulerTestServices(),
@@ -37,6 +47,12 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
             projectTypeKeyProvider: { _, _ in
                 XCTFail("私聊不应读取项目类型")
                 return "web_application"
+            },
+            professionProvider: { ownerUserID, key in
+                skillLibrary.profession(ownerUserID: ownerUserID, key: key)
+            },
+            professionCatalogProvider: { ownerUserID in
+                skillLibrary.professions(ownerUserID: ownerUserID)
             }
         )
         _ = try await scheduler.drainConversation(ownerUserID: "alice", roomID: room.id)
@@ -44,6 +60,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let run = try XCTUnwrap(storedRun)
         let system = run.checkpoint.messages.first?.content ?? ""
         XCTAssertTrue(system.contains(#"name="chatos-profession-research-specialist""#))
+        XCTAssertTrue(system.contains("当前账户自定义职业规则"))
         XCTAssertFalse(system.contains("chatos-project-type-"))
     }
 

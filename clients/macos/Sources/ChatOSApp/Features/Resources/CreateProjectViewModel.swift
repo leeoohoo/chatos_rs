@@ -17,6 +17,7 @@ final class CreateProjectViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     let workspaces: [LocalConnectorWorkspace]
+    let projectTypes: [LocalProjectTypeDefinition]
 
     private let filesystemService: any ProjectFilesystemServicing
     private let creationService: any LocalProjectCreating
@@ -27,12 +28,14 @@ final class CreateProjectViewModel: ObservableObject {
         connectorStatus: LocalConnectorStatus?,
         filesystemService: any ProjectFilesystemServicing,
         creationService: any LocalProjectCreating,
+        projectTypes: [LocalProjectTypeDefinition] = LocalAgentSkillCatalog.projectTypes,
         suggestedName: String = "",
         suggestedDescription: String = ""
     ) {
         workspaces = connectorStatus?.workspaces ?? []
         self.filesystemService = filesystemService
         self.creationService = creationService
+        self.projectTypes = projectTypes
         projectName = suggestedName
         projectDescription = suggestedDescription
         userEditedProjectName = !suggestedName.isEmpty

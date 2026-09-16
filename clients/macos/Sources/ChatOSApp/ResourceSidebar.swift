@@ -221,6 +221,7 @@ struct ResourceSidebar: View {
                         connectorStatus: model.localConnectorControl.status,
                         filesystemService: model.projectFilesystemService,
                         creationService: creator,
+                        projectTypes: model.agentSkillLibrary.projectTypes(ownerUserID: owner),
                         onCreated: { project in
                             guard owner == model.localProjectOwnerUserID else { return }
                             model.registerCreatedProject(project)

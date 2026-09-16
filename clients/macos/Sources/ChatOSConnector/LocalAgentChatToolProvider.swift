@@ -70,11 +70,15 @@ public actor LocalAgentRelayMCPServer {
         self.now = now
     }
 
-    public func connect(context: LocalAgentChatRunContext) async throws -> LocalAgentChatToolProvider {
+    public func connect(
+        context: LocalAgentChatRunContext,
+        professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions
+    ) async throws -> LocalAgentChatToolProvider {
         let store = try await service.store()
         return try LocalAgentChatToolProvider(
             store: store,
             context: context,
+            professions: professions,
             limits: limits,
             now: now
         )
@@ -98,12 +102,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     private let store: any AgentGroupChatStore
     private let context: LocalAgentChatRunContext
+    private let professions: [LocalAgentProfessionDefinition]
     private let limits: AgentGroupChatRoutingLimits
     private let now: @Sendable () -> Int64
 
     public init(
         store: any AgentGroupChatStore,
         context: LocalAgentChatRunContext,
+        professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions,
         limits: AgentGroupChatRoutingLimits = .init(),
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
@@ -112,6 +118,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         try limits.validate()
         self.store = store
         self.context = context
+        self.professions = professions
         self.limits = limits
         self.now = now
     }
@@ -125,7 +132,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             }
         } else {
             definitions.removeAll { $0.name == Self.proposeMemberToolName }
-            definitions.append(try Self.memberProposalDefinition())
+            definitions.append(try memberProposalDefinition())
             if try await store.room(
                 ownerUserID: context.ownerUserID,
                 roomID: context.roomID
@@ -651,7 +658,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             effect: .write
         ),
         .init(
-            name: proposeMemberToolName,
+            name: Self.proposeMemberToolName,
             description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。该工具只持久化待确认提案，绝不会直接创建 Agent；私聊中确认后只创建独立 Agent，团队会话中确认后才加入当前团队。model_config_id 省略时继承当前 Agent。",
             schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"model_config_id":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
             effect: .write
@@ -670,8 +677,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ),
     ]
 
-    private static func memberProposalDefinition() throws -> AgentToolDefinition {
-        let professions = LocalAgentSkillCatalog.professions
+    private func memberProposalDefinition() throws -> AgentToolDefinition {
         let schema: [String: Any] = [
             "type": "object",
             "properties": [
@@ -691,7 +697,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             "additionalProperties": false,
         ]
         return .init(
-            name: proposeMemberToolName,
+            name: Self.proposeMemberToolName,
             description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。必须从客户端目录选择职业；该工具只持久化待确认提案，绝不会直接创建 Agent。",
             schema: try JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
             effect: .write
