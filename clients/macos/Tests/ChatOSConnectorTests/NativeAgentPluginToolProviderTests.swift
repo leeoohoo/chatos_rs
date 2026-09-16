@@ -27,7 +27,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
               printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"local_echo","description":"Echo locally","inputSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false},"annotations":{"readOnlyHint":true}}]}}'
               ;;
             *'"method":"tools/call"'*)
-              printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"local-plugin-ok"}]}}'
+              printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"local-plugin-ok project-1"}]}}'
               ;;
           esac
         done
@@ -121,6 +121,49 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ))
         XCTAssertFalse(outcome.isError)
         XCTAssertTrue(outcome.content.contains("local-plugin-ok"))
+
+        let broker = try await service.makeAgentCapabilityToolProvider(
+            ownerUserID: "alice",
+            runContext: runContext,
+            projectContext: .init(
+                projectID: "project-1",
+                projectName: "Test",
+                projectRoot: project.path
+            )
+        )
+        let brokerDefinitions = try await broker.definitions()
+        XCTAssertEqual(
+            Set(brokerDefinitions.map(\.name)),
+            ["capability_search", "capability_describe", "capability_invoke"]
+        )
+
+        let search = try await broker.execute(.init(
+            id: "search-1",
+            name: "capability_search",
+            arguments: #"{"query":"test"}"#
+        ))
+        XCTAssertTrue(search.content.contains("plugin_1"))
+        XCTAssertTrue(search.content.contains("test-agent-plugin"))
+        XCTAssertFalse(search.content.contains("plugin-1"))
+
+        let description = try await broker.execute(.init(
+            id: "describe-1",
+            name: "capability_describe",
+            arguments: #"{"plugin_option":"plugin_1"}"#
+        ))
+        XCTAssertTrue(description.content.contains("tool_1"))
+        XCTAssertTrue(description.content.contains("local_echo"))
+        XCTAssertFalse(description.content.contains("project-1"))
+
+        let invoked = try await broker.execute(.init(
+            id: "invoke-1",
+            name: "capability_invoke",
+            arguments: #"{"plugin_option":"plugin_1","tool_option":"tool_1","arguments":{"value":"hello"}}"#
+        ))
+        XCTAssertFalse(invoked.isError)
+        XCTAssertTrue(invoked.content.contains("local-plugin-ok"))
+        XCTAssertFalse(invoked.content.contains("project-1"))
+        XCTAssertTrue(invoked.content.contains("[internal-project]"))
     }
 }
 

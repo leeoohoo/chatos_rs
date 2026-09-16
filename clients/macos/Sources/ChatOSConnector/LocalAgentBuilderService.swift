@@ -70,15 +70,7 @@ public struct LocalAgentBuilderService: Sendable {
             }
             return $0.id < $1.id
         }
-        let plugins = try await connectorService.installedAgentPlugins(ownerUserID: ownerUserID)
-            .map {
-                LocalAgentBuilderPluginOption(
-                    id: $0.id,
-                    name: $0.displayName,
-                    description: $0.description
-                )
-            }
-        return .init(models: models, plugins: plugins)
+        return .init(models: models, plugins: [])
     }
 
     public func generateDraft(
@@ -124,8 +116,7 @@ public struct LocalAgentBuilderService: Sendable {
         )
         let provider = try LocalAgentBuilderToolProvider(
             project: snapshot,
-            models: resources.models,
-            plugins: resources.plugins
+            models: resources.models
         )
         let registry = try await AgentToolProviderRegistry(providers: [provider])
         let runID = UUID()
@@ -214,9 +205,9 @@ public struct LocalAgentBuilderService: Sendable {
         return agent
     }
 
-    /// Confirms a proposal submitted by a room Agent. Live model and Plugin allowlists are checked
-    /// before the store atomically creates the profile, joins it to the room and resolves the
-    /// proposal, so a stale or partially retried confirmation cannot create duplicate members.
+    /// Confirms a proposal submitted by a room Agent. The live model is checked before the store
+    /// atomically creates the profile, joins it to the room and resolves the proposal. Plugin
+    /// access is deliberately absent from the profile and is discovered lazily at run time.
     public func approveProposal(
         ownerUserID: String,
         projectID: String,
@@ -248,16 +239,12 @@ public struct LocalAgentBuilderService: Sendable {
         guard resources.models.contains(where: { $0.id == draft.modelConfigID }) else {
             throw LocalAgentBuilderError.modelUnavailable
         }
-        let installedPluginIDs = Set(resources.plugins.map(\.id))
-        if let unavailable = draft.pluginIDs.first(where: { !installedPluginIDs.contains($0) }) {
-            throw LocalAgentBuilderError.pluginUnavailable(unavailable)
-        }
     }
 
     private static func initialMessages(brief: String) -> [AgentMessage] {
         let system = """
         你是 ChatOS 客户端内置的 Agent Builder。你的唯一任务是为当前项目群聊设计一个普通 Agent 草案。
-        先调用 project_inspect、model_list 和 plugin_list_installed 获取客户端提供的受控快照，然后单独调用 agent_draft 提交草案。只能选择 model_list 和 plugin_list_installed 返回的 id。不要创建公司、组织或账号；不要假设未提供的权限；不要把 Agent Builder、创建 Agent 或管理成员的能力写入普通 Agent。角色 Prompt 要明确职责、边界、如何使用项目群聊和已授权 Plugin。
+        先调用 project_inspect 和 model_list 获取客户端提供的受控快照，然后单独调用 agent_draft 提交草案。只能选择 model_list 返回的模型配置。不要创建公司、组织或账号；不要假设未提供的高风险权限；不要把 Agent Builder、创建 Agent 或管理成员的能力写入普通 Agent。不要为 Agent 预选 Plugin 或文件能力：运行时会由专门的能力发现 Skill 引导 Agent 按任务自主发现和调用本机工具。
         agent_draft 只会生成等待用户确认的结构化草案，不会创建 Agent。
         """
         return [
@@ -285,27 +272,21 @@ struct LocalAgentBuilderProjectSnapshot: Codable, Sendable, Equatable {
 actor LocalAgentBuilderToolProvider: AgentToolProvider {
     static let projectInspectToolName = "project_inspect"
     static let modelListToolName = "model_list"
-    static let pluginListToolName = "plugin_list_installed"
     static let agentDraftToolName = "agent_draft"
 
     private let project: LocalAgentBuilderProjectSnapshot
     private let models: [LocalAgentBuilderModelOption]
-    private let plugins: [LocalAgentBuilderPluginOption]
     private var draft: LocalAgentDraft?
 
     init(
         project: LocalAgentBuilderProjectSnapshot,
-        models: [LocalAgentBuilderModelOption],
-        plugins: [LocalAgentBuilderPluginOption]
+        models: [LocalAgentBuilderModelOption]
     ) throws {
-        guard !models.isEmpty,
-              Set(models.map(\.id)).count == models.count,
-              Set(plugins.map(\.id)).count == plugins.count else {
+        guard !models.isEmpty, Set(models.map(\.id)).count == models.count else {
             throw LocalAgentBuilderError.noAvailableModel
         }
         self.project = project
         self.models = models
-        self.plugins = plugins
     }
 
     func currentDraft() -> LocalAgentDraft? { draft }
@@ -323,14 +304,9 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
                 schema: Self.emptyObjectSchema
             ),
             .init(
-                name: Self.pluginListToolName,
-                description: "列出本机已经安装、启用并可供 Agent 使用的 Plugin。",
-                schema: Self.emptyObjectSchema
-            ),
-            .init(
                 name: Self.agentDraftToolName,
                 description: "提交一个等待用户确认的 Agent 草案；这不会创建 Agent 或修改群聊。",
-                schema: try Self.draftSchema(models: models, plugins: plugins),
+                schema: try Self.draftSchema(models: models),
                 effect: .terminal
             ),
         ]
@@ -344,9 +320,6 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
         case Self.modelListToolName:
             try Self.requireEmptyArguments(call)
             return try Self.outcome(models)
-        case Self.pluginListToolName:
-            try Self.requireEmptyArguments(call)
-            return try Self.outcome(plugins)
         case Self.agentDraftToolName:
             let proposed = try JSONDecoder().decode(
                 LocalAgentDraft.self,
@@ -355,10 +328,6 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
             try proposed.validate()
             guard models.contains(where: { $0.id == proposed.modelConfigID }) else {
                 return .failure(LocalAgentBuilderError.modelUnavailable.localizedDescription)
-            }
-            let installed = Set(plugins.map(\.id))
-            if let unavailable = proposed.pluginIDs.first(where: { !installed.contains($0) }) {
-                return .failure(LocalAgentBuilderError.pluginUnavailable(unavailable).localizedDescription)
             }
             draft = proposed
             return try Self.outcome(proposed)
@@ -371,10 +340,7 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
         #"{"type":"object","properties":{},"additionalProperties":false}"#.utf8
     )
 
-    private static func draftSchema(
-        models: [LocalAgentBuilderModelOption],
-        plugins: [LocalAgentBuilderPluginOption]
-    ) throws -> Data {
+    private static func draftSchema(models: [LocalAgentBuilderModelOption]) throws -> Data {
         let schema: [String: Any] = [
             "type": "object",
             "properties": [
@@ -383,17 +349,11 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
                 "responsibility": ["type": "string", "maxLength": 8_000],
                 "rolePrompt": ["type": "string", "minLength": 1, "maxLength": 32_000],
                 "modelConfigID": ["type": "string", "enum": models.map(\.id)],
-                "pluginIDs": [
-                    "type": "array",
-                    "items": ["type": "string", "enum": plugins.map(\.id)],
-                    "maxItems": min(plugins.count, 100),
-                    "uniqueItems": true,
-                ],
                 "rationale": ["type": "string", "maxLength": 4_000],
             ],
             "required": [
                 "name", "role", "responsibility", "rolePrompt",
-                "modelConfigID", "pluginIDs", "rationale",
+                "modelConfigID", "rationale",
             ],
             "additionalProperties": false,
         ]

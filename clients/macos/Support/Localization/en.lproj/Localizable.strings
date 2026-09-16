@@ -462,3 +462,10 @@
 "团队：%@" = "Team: %@";
 "交接：%@" = "Handoff: %@";
 "移出团队 · %@" = "Remove from Team · %@";
+"Builder 只能读取当前项目、群成员和可用模型；它只能提交草案，不能直接创建成员，也不会预选 Plugin。" = "Builder can read only the current project, team members, and available models. It can submit a draft, but cannot create members directly or preselect plugins.";
+"工具与 Plugin" = "Tools and Plugins";
+"工具与 Plugin 无需在 Agent profile 中预选；运行时由能力发现 Skill 按任务加载，项目文件边界由 ChatOS 控制。" = "Tools and plugins do not need to be preselected in the agent profile. The capability-discovery skill loads them on demand, while ChatOS enforces project file boundaries.";
+"工具与 Plugin 无需预选；Agent 会在运行时通过能力发现 Skill 按任务加载。" = "Tools and plugins do not need to be preselected. The agent loads them on demand through the capability-discovery skill.";
+"按任务自主发现" = "Discovered on Demand";
+"无需预先选择。Agent 会通过内置能力发现 Skill 按任务搜索、展开并调用本机工具；项目目录与授权边界由 ChatOS 控制。" = "No preselection is required. The built-in capability-discovery skill lets the agent search, inspect, and invoke local tools on demand, while ChatOS controls project and authorization boundaries.";
+"点击确认前不会创建 Agent。确认时客户端会重新校验模型是否仍然可用。" = "The agent is not created until you confirm. The client revalidates the selected model at confirmation time.";

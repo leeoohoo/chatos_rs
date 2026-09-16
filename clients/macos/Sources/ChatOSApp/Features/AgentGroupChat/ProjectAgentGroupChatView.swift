@@ -19,7 +19,6 @@ struct ProjectAgentGroupChatView: View {
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
         builderService: LocalAgentBuilderService,
-        pluginService: NativeLocalConnectorService,
         projectsService: NativeLocalProjectsService
     ) {
         _viewModel = StateObject(
@@ -29,7 +28,6 @@ struct ProjectAgentGroupChatView: View {
                 service: service,
                 scheduler: scheduler,
                 builderService: builderService,
-                pluginService: pluginService,
                 projectsService: projectsService
             )
         )
@@ -580,7 +578,6 @@ private struct EditLocalAgentSheet: View {
     @State private var responsibility: String
     @State private var rolePrompt: String
     @State private var modelConfigID: String
-    @State private var selectedPluginIDs: Set<String>
     @State private var isSaving = false
 
     init(
@@ -595,11 +592,6 @@ private struct EditLocalAgentSheet: View {
         _responsibility = State(initialValue: item.member.draft.responsibility)
         _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? "")
         _modelConfigID = State(initialValue: profile?.draft.modelConfigID ?? "")
-        let plugins = item.member.draft.pluginAllowlist.isEmpty
-            ? (profile?.draft.defaultPluginIDs ?? [])
-            : item.member.draft.pluginAllowlist
-        let installedPluginIDs = Set(viewModel.installedPlugins.map(\.id))
-        _selectedPluginIDs = State(initialValue: Set(plugins).intersection(installedPluginIDs))
     }
 
     var body: some View {
@@ -622,33 +614,8 @@ private struct EditLocalAgentSheet: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-                Section("本地 Plugin") {
-                    if viewModel.installedPlugins.isEmpty {
-                        Text("没有可用于 Agent 的本机 Plugin")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(viewModel.installedPlugins) { plugin in
-                        Toggle(isOn: Binding(
-                            get: { selectedPluginIDs.contains(plugin.id) },
-                            set: { selected in
-                                if selected {
-                                    selectedPluginIDs.insert(plugin.id)
-                                } else {
-                                    selectedPluginIDs.remove(plugin.id)
-                                }
-                            }
-                        )) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(plugin.displayName)
-                                Text(plugin.description.isEmpty ? plugin.id : plugin.description)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
             }
-            Text("名称、Prompt 和模型属于 Agent profile；角色、职责和 Plugin allowlist 同时更新到当前项目成员配置。")
+            Text("工具与 Plugin 无需在 Agent profile 中预选；运行时由能力发现 Skill 按任务加载，项目文件边界由 ChatOS 控制。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
@@ -663,8 +630,7 @@ private struct EditLocalAgentSheet: View {
                             role: role,
                             responsibility: responsibility,
                             rolePrompt: rolePrompt,
-                            modelConfigID: modelConfigID,
-                            pluginIDs: selectedPluginIDs.sorted()
+                            modelConfigID: modelConfigID
                         ) { dismiss() }
                         isSaving = false
                     }
@@ -807,7 +773,6 @@ private struct CreateLocalAgentSheet: View {
     @State private var responsibility = ""
     @State private var rolePrompt = ""
     @State private var modelConfigID = ""
-    @State private var selectedPluginIDs: Set<String> = []
     @State private var isSaving = false
 
     var body: some View {
@@ -828,34 +793,8 @@ private struct CreateLocalAgentSheet: View {
                         }
                     }
                 }
-                if viewModel.installedPlugins.isEmpty {
-                    Text("没有可用于 Agent 的本机 Plugin")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Section("本地 Plugin") {
-                        ForEach(viewModel.installedPlugins) { plugin in
-                            Toggle(isOn: Binding(
-                                get: { selectedPluginIDs.contains(plugin.id) },
-                                set: { selected in
-                                    if selected {
-                                        selectedPluginIDs.insert(plugin.id)
-                                    } else {
-                                        selectedPluginIDs.remove(plugin.id)
-                                    }
-                                }
-                            )) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(plugin.displayName)
-                                    Text(plugin.description.isEmpty ? plugin.id : plugin.description)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                }
             }
-            Text("Agent 只会直接启动这里明确选择、且已在本机安装并启用的 Plugin。")
+            Text("工具与 Plugin 无需预选；Agent 会在运行时通过能力发现 Skill 按任务加载。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
@@ -868,8 +807,7 @@ private struct CreateLocalAgentSheet: View {
                             role: role,
                             responsibility: responsibility,
                             rolePrompt: rolePrompt,
-                            modelConfigID: modelConfigID,
-                            pluginIDs: selectedPluginIDs.sorted()
+                            modelConfigID: modelConfigID
                         ) { dismiss() }
                         isSaving = false
                     }
@@ -993,7 +931,7 @@ private struct LocalAgentBuilderSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Text("Builder 只能读取当前项目、群成员、可用模型和本机 Plugin 清单；它只能提交草案，不能直接创建成员。")
+            Text("Builder 只能读取当前项目、群成员和可用模型；它只能提交草案，不能直接创建成员，也不会预选 Plugin。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1017,12 +955,7 @@ private struct LocalAgentBuilderSheet: View {
                 draftField("群聊角色", draft.role)
                 draftField("职责", draft.responsibility.isEmpty ? "未单独设置" : draft.responsibility)
                 draftField("模型", modelName(draft.modelConfigID))
-                draftField(
-                    "本地 Plugin",
-                    draft.pluginIDs.isEmpty
-                        ? "无"
-                        : draft.pluginIDs.map(pluginName).joined(separator: "、")
-                )
+                draftField("工具与 Plugin", "运行时按任务自主发现")
                 draftField("创建理由", draft.rationale.isEmpty ? "未说明" : draft.rationale)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("角色 Prompt").font(.caption).foregroundStyle(.secondary)
@@ -1032,7 +965,7 @@ private struct LocalAgentBuilderSheet: View {
                         .padding(10)
                         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                 }
-                Text("点击确认前不会创建 Agent。确认时客户端会重新校验模型与本机 Plugin 是否仍然可用。")
+                Text("点击确认前不会创建 Agent。确认时客户端会重新校验模型是否仍然可用。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1054,7 +987,4 @@ private struct LocalAgentBuilderSheet: View {
         return "\(model.name) · \(model.modelName)"
     }
 
-    private func pluginName(_ id: String) -> String {
-        viewModel.installedPlugins.first(where: { $0.id == id })?.displayName ?? id
-    }
 }

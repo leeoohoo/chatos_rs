@@ -9,22 +9,20 @@ final class LocalAgentDraftTests: XCTestCase {
             responsibility: "验证项目群聊",
             rolePrompt: "先读取群聊，再执行验证。",
             modelConfigID: "model-1",
-            pluginIDs: ["plugin.test"],
             rationale: "补齐测试职责"
         )
         try draft.validate()
-        XCTAssertEqual(draft.profileDraft.defaultPluginIDs, ["plugin.test"])
-        XCTAssertEqual(draft.memberDraft.pluginAllowlist, ["plugin.test"])
+        XCTAssertTrue(draft.profileDraft.defaultPluginIDs.isEmpty)
+        XCTAssertTrue(draft.memberDraft.pluginAllowlist.isEmpty)
         XCTAssertEqual(draft.memberDraft.role, "质量保障")
     }
 
-    func testDraftRejectsDuplicatePluginIDs() {
+    func testDraftRejectsEmptyRole() {
         let draft = LocalAgentDraft(
             name: "测试工程师",
-            role: "质量保障",
+            role: "",
             rolePrompt: "执行验证。",
-            modelConfigID: "model-1",
-            pluginIDs: ["plugin.test", "plugin.test"]
+            modelConfigID: "model-1"
         )
         XCTAssertThrowsError(try draft.validate())
     }

@@ -153,6 +153,27 @@ extension NativeLocalConnectorService {
         return providers
     }
 
+    /// Creates a compact, run-scoped capability broker. It exposes only discovery/invocation
+    /// tools to the model and starts a concrete Plugin only after the Agent selects it.
+    public func makeAgentCapabilityToolProvider(
+        ownerUserID: String,
+        runContext: LocalAgentChatRunContext,
+        projectContext: LocalConnectorPluginApplicationContext
+    ) throws -> any AgentToolProvider {
+        guard state.user?.id == ownerUserID,
+              runContext.ownerUserID == ownerUserID,
+              projectContext.projectID == runContext.projectID else {
+            throw NativePluginRuntimeError.invalidRequest("本地 Agent 能力目录与当前账户或项目不匹配")
+        }
+        return NativeAgentCapabilityToolProvider(
+            service: self,
+            ownerUserID: ownerUserID,
+            runContext: runContext,
+            projectContext: projectContext,
+            installedPlugins: try installedAgentPlugins(ownerUserID: ownerUserID)
+        )
+    }
+
     func approveAgentPluginTool(
         callID: String,
         componentKey: String,
@@ -225,6 +246,223 @@ extension NativeLocalConnectorService {
             ($0.jsonObject?["name"]?.jsonString ?? "")
                 < ($1.jsonObject?["name"]?.jsonString ?? "")
         }
+    }
+}
+
+/// Built-in Skill used by local Agents to keep the normal tool surface small. Installed Plugin
+/// metadata, schemas and processes are revealed lazily and only for the current run.
+enum LocalAgentCapabilityDiscoverySkill {
+    static let instructions = """
+    <skill name="chatos-capability-discovery">
+    当任务需要 Relay 之外的本机工具、项目文件或 Plugin 时，按以下顺序工作：
+    1. 使用 capability_search，用简短任务关键词搜索能力；不要为了探索而列出全部 Plugin。
+    2. 只对最匹配的一个 plugin_option 调用 capability_describe，读取它在本轮可用的工具和参数。
+    3. 使用 capability_invoke 调用选中的 tool_option。只有需要另一类能力时才继续搜索。
+    4. Plugin、项目 ID、项目根目录和本机授权由 ChatOS 内部绑定；不得猜测、索要或回显这些内部值。
+    5. 文件操作默认限定在当前项目；写入、删除、计费或其他高风险动作仍可能要求 Human 确认。
+    </skill>
+    """
+}
+
+private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
+    static let searchToolName = "capability_search"
+    static let describeToolName = "capability_describe"
+    static let invokeToolName = "capability_invoke"
+
+    private struct PluginOption: Sendable {
+        let token: String
+        let plugin: NativeInstalledAgentPlugin
+    }
+
+    private struct SearchArguments: Decodable {
+        let query: String?
+    }
+
+    private struct SelectionArguments: Decodable {
+        let pluginOption: String
+    }
+
+    private struct InvokeArguments: Decodable {
+        let pluginOption: String
+        let toolOption: String
+        let arguments: NativeJSONValue
+    }
+
+    private struct PluginSummary: Encodable {
+        let pluginOption: String
+        let name: String
+        let description: String
+    }
+
+    private struct SearchResponse: Encodable {
+        let matches: [PluginSummary]
+    }
+
+    private struct ToolSummary: Encodable {
+        let toolOption: String
+        let name: String
+        let description: String
+        let inputSchema: NativeJSONValue
+        let effect: String
+    }
+
+    private struct DescribeResponse: Encodable {
+        let pluginOption: String
+        let name: String
+        let tools: [ToolSummary]
+    }
+
+    private let service: NativeLocalConnectorService
+    private let ownerUserID: String
+    private let runContext: LocalAgentChatRunContext
+    private let projectContext: LocalConnectorPluginApplicationContext
+    private let options: [PluginOption]
+    private var registries: [String: AgentToolProviderRegistry] = [:]
+    private var toolNamesByOption: [String: [String: String]] = [:]
+
+    init(
+        service: NativeLocalConnectorService,
+        ownerUserID: String,
+        runContext: LocalAgentChatRunContext,
+        projectContext: LocalConnectorPluginApplicationContext,
+        installedPlugins: [NativeInstalledAgentPlugin]
+    ) {
+        self.service = service
+        self.ownerUserID = ownerUserID
+        self.runContext = runContext
+        self.projectContext = projectContext
+        self.options = installedPlugins.enumerated().map { offset, plugin in
+            .init(token: "plugin_\(offset + 1)", plugin: plugin)
+        }
+    }
+
+    func definitions() async throws -> [AgentToolDefinition] {
+        [
+            .init(
+                name: Self.searchToolName,
+                description: "按任务关键词搜索本机已安装能力。只返回匹配 Plugin 的本轮临时选项和简介，不启动 Plugin，也不展开全部工具。",
+                schema: Data(#"{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":200}},"required":["query"],"additionalProperties":false}"#.utf8)
+            ),
+            .init(
+                name: Self.describeToolName,
+                description: "按 capability_search 返回的临时 plugin_option，惰性启动一个 Plugin，并读取它在本轮可用的工具说明。",
+                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80}},"required":["plugin_option"],"additionalProperties":false}"#.utf8)
+            ),
+            .init(
+                name: Self.invokeToolName,
+                description: "调用已经通过 capability_describe 展开的一个工具。plugin_option 和 tool_option 都必须使用本轮临时选项；真实 Plugin、项目和路径上下文由客户端内部绑定。",
+                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"tool_option":{"type":"string","minLength":1,"maxLength":80},"arguments":{"type":"object"}},"required":["plugin_option","tool_option","arguments"],"additionalProperties":false}"#.utf8),
+                effect: .write
+            ),
+        ]
+    }
+
+    func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        switch call.name {
+        case Self.searchToolName:
+            let arguments = try decode(SearchArguments.self, from: call.arguments)
+            let query = arguments.query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !query.isEmpty else {
+                return .failure("请提供当前任务需要的能力关键词，不要枚举全部 Plugin。")
+            }
+            let terms = query.lowercased().split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            let matches = options.filter { option in
+                let searchable = "\(option.plugin.displayName) \(option.plugin.description)".lowercased()
+                return terms.contains(where: searchable.contains)
+            }.prefix(12).map { option in
+                PluginSummary(
+                    pluginOption: option.token,
+                    name: option.plugin.displayName,
+                    description: option.plugin.description
+                )
+            }
+            return try outcome(SearchResponse(matches: Array(matches)))
+
+        case Self.describeToolName:
+            let arguments = try decode(SelectionArguments.self, from: call.arguments)
+            guard let option = options.first(where: { $0.token == arguments.pluginOption }) else {
+                return .failure("能力选项无效或已经过期，请重新搜索。")
+            }
+            let registry = try await registry(for: option)
+            var names: [String: String] = [:]
+            let tools = try registry.definitions.enumerated().map { offset, definition in
+                let token = "tool_\(offset + 1)"
+                names[token] = definition.name
+                let schemaText = redact(String(decoding: definition.schema, as: UTF8.self))
+                let schema = try JSONDecoder().decode(NativeJSONValue.self, from: Data(schemaText.utf8))
+                return ToolSummary(
+                    toolOption: token,
+                    name: definition.name,
+                    description: redact(definition.description),
+                    inputSchema: schema,
+                    effect: definition.effect.rawValue
+                )
+            }
+            toolNamesByOption[option.token] = names
+            return try outcome(DescribeResponse(
+                pluginOption: option.token,
+                name: option.plugin.displayName,
+                tools: tools
+            ))
+
+        case Self.invokeToolName:
+            let arguments = try decode(InvokeArguments.self, from: call.arguments)
+            guard let option = options.first(where: { $0.token == arguments.pluginOption }),
+                  let toolName = toolNamesByOption[option.token]?[arguments.toolOption] else {
+                return .failure("请先搜索并查看该能力，再使用本轮返回的工具选项调用。")
+            }
+            guard arguments.arguments.jsonObject != nil else {
+                return .failure("能力工具参数必须是 JSON 对象。")
+            }
+            let registry = try await registry(for: option)
+            let result = try await registry.execute(.init(
+                id: call.id,
+                name: toolName,
+                arguments: arguments.arguments.canonicalJSONString
+            ))
+            return .init(
+                redact(result.content),
+                madeProgress: result.madeProgress,
+                isError: result.isError
+            )
+
+        default:
+            return .failure("能力发现工具不可用：\(call.name)")
+        }
+    }
+
+    private func registry(for option: PluginOption) async throws -> AgentToolProviderRegistry {
+        if let existing = registries[option.token] { return existing }
+        let providers = try await service.makeAgentPluginToolProviders(
+            ownerUserID: ownerUserID,
+            runContext: runContext,
+            pluginIDs: [option.plugin.id],
+            projectContext: projectContext
+        )
+        let registry = try await AgentToolProviderRegistry(providers: providers)
+        registries[option.token] = registry
+        return registry
+    }
+
+    private func decode<Value: Decodable>(_ type: Value.Type, from json: String) throws -> Value {
+        do {
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(Value.self, from: Data(json.utf8))
+        } catch {
+            throw NativePluginRuntimeError.invalidRequest("能力发现工具参数无效")
+        }
+    }
+
+    private func outcome<Value: Encodable>(_ value: Value) throws -> AgentToolOutcome {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return .init(redact(String(decoding: try encoder.encode(value), as: UTF8.self)))
+    }
+
+    private func redact(_ value: String) -> String {
+        value.replacingOccurrences(of: runContext.projectID, with: "[internal-project]")
     }
 }
 

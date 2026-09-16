@@ -215,23 +215,15 @@ final class AppModel: ObservableObject {
                         context: runContext
                     ))
                 }
-                let profilePluginIDs = Set(profile.draft.defaultPluginIDs)
-                let memberAllowlist = Set(member.draft.pluginAllowlist)
-                let selectedPluginIDs = memberAllowlist.isEmpty
-                    ? profilePluginIDs
-                    : profilePluginIDs.intersection(memberAllowlist)
-                if !selectedPluginIDs.isEmpty {
-                    let projectContext = try await localProjectsService.pluginContext(
-                        ownerUserID: runContext.ownerUserID,
-                        projectID: runContext.projectID
-                    )
-                    providers += try await localConnectorService.makeAgentPluginToolProviders(
-                        ownerUserID: runContext.ownerUserID,
-                        runContext: runContext,
-                        pluginIDs: selectedPluginIDs.sorted(),
-                        projectContext: projectContext
-                    )
-                }
+                let projectContext = try await localProjectsService.pluginContext(
+                    ownerUserID: runContext.ownerUserID,
+                    projectID: runContext.projectID
+                )
+                providers.append(try await localConnectorService.makeAgentCapabilityToolProvider(
+                    ownerUserID: runContext.ownerUserID,
+                    runContext: runContext,
+                    projectContext: projectContext
+                ))
                 return providers
             }
         )

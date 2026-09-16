@@ -36,7 +36,6 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var agents: [LocalAgentProfile] = []
     @Published private(set) var members: [ProjectAgentRoomMember] = []
     @Published private(set) var messages: [ProjectAgentMessage] = []
-    @Published private(set) var installedPlugins: [NativeInstalledAgentPlugin] = []
     @Published private(set) var availableModels: [LocalAgentBuilderModelOption] = []
     @Published private(set) var interruptedRuns: [InterruptedRunPresentation] = []
     @Published private(set) var pendingProposals: [LocalAgentCreationProposal] = []
@@ -58,7 +57,6 @@ final class AgentGroupChatViewModel: ObservableObject {
     private let service: NativeAgentGroupChatService
     private let scheduler: LocalAgentGroupChatScheduler
     private let builderService: LocalAgentBuilderService
-    private let pluginService: NativeLocalConnectorService
     private let projectsService: NativeLocalProjectsService
     private var openedStore: SQLiteAgentGroupChatStore?
     private var schedulerTask: Task<Void, Never>?
@@ -70,7 +68,6 @@ final class AgentGroupChatViewModel: ObservableObject {
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
         builderService: LocalAgentBuilderService,
-        pluginService: NativeLocalConnectorService,
         projectsService: NativeLocalProjectsService
     ) {
         self.projectID = projectID
@@ -78,7 +75,6 @@ final class AgentGroupChatViewModel: ObservableObject {
         self.service = service
         self.scheduler = scheduler
         self.builderService = builderService
-        self.pluginService = pluginService
         self.projectsService = projectsService
     }
 
@@ -171,9 +167,6 @@ final class AgentGroupChatViewModel: ObservableObject {
             self.pendingProposals = pendingProposals
             self.pendingRemovalProposals = pendingRemovalProposals
             self.pendingTeamProposals = pendingTeamProposals
-            self.installedPlugins = (try? await pluginService.installedAgentPlugins(
-                ownerUserID: ownerUserID
-            )) ?? []
             let builderResources = try? await builderService.loadResources(
                 ownerUserID: ownerUserID
             )
@@ -216,8 +209,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         role: String,
         responsibility: String,
         rolePrompt: String,
-        modelConfigID: String,
-        pluginIDs: [String]
+        modelConfigID: String
     ) async -> Bool {
         guard let room else {
             errorMessage = AgentGroupChatError.notFound.localizedDescription
@@ -237,7 +229,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     modelConfigID: normalizedModelConfigID,
-                    defaultPluginIDs: pluginIDs
+                    defaultPluginIDs: []
                 )
             )
             _ = try await store.addMember(
@@ -247,7 +239,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                 draft: .init(
                     role: role.trimmingCharacters(in: .whitespacesAndNewlines),
                     responsibility: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
-                    pluginAllowlist: pluginIDs
+                    pluginAllowlist: []
                 )
             )
             if members.isEmpty {
@@ -271,7 +263,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         responsibility: String
     ) async -> Bool {
         guard let room,
-              let profile = profilesByID[agentID],
+              profilesByID[agentID] != nil,
               !members.contains(where: { $0.agentID == agentID }) else {
             errorMessage = AgentGroupChatError.conflict.localizedDescription
             return false
@@ -285,7 +277,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                 draft: .init(
                     role: role.trimmingCharacters(in: .whitespacesAndNewlines),
                     responsibility: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
-                    pluginAllowlist: profile.draft.defaultPluginIDs
+                    pluginAllowlist: []
                 )
             )
             if members.isEmpty {
@@ -309,8 +301,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         role: String,
         responsibility: String,
         rolePrompt: String,
-        modelConfigID: String,
-        pluginIDs: [String]
+        modelConfigID: String
     ) async -> Bool {
         guard let room, let existingProfile = profilesByID[agentID] else {
             errorMessage = AgentGroupChatError.notFound.localizedDescription
@@ -319,11 +310,6 @@ final class AgentGroupChatViewModel: ObservableObject {
         let normalizedModelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard availableModels.contains(where: { $0.id == normalizedModelConfigID }) else {
             errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription
-            return false
-        }
-        let installedPluginIDs = Set(installedPlugins.map(\.id))
-        guard pluginIDs.allSatisfy(installedPluginIDs.contains) else {
-            errorMessage = "选择的本机 Plugin 已停用或卸载，请刷新后重试。"
             return false
         }
         do {
@@ -337,13 +323,13 @@ final class AgentGroupChatViewModel: ObservableObject {
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     modelConfigID: normalizedModelConfigID,
-                    defaultPluginIDs: pluginIDs,
+                    defaultPluginIDs: [],
                     defaultSkillIDs: existingProfile.draft.defaultSkillIDs
                 ),
                 memberDraft: .init(
                     role: role.trimmingCharacters(in: .whitespacesAndNewlines),
                     responsibility: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
-                    pluginAllowlist: pluginIDs
+                    pluginAllowlist: []
                 )
             )
             await load()

@@ -16,7 +16,6 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     @Published private(set) var rooms: [ProjectAgentRoom] = []
     @Published private(set) var agents: [LocalAgentProfile] = []
     @Published private(set) var availableModels: [LocalAgentBuilderModelOption] = []
-    @Published private(set) var installedPlugins: [LocalAgentBuilderPluginOption] = []
     @Published var selectedRoomID: String?
     @Published private(set) var isLoading = false
     @Published private(set) var isCreating = false
@@ -50,7 +49,6 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             self.rooms = rooms
             self.agents = agents
             self.availableModels = resources?.models ?? []
-            self.installedPlugins = resources?.plugins ?? []
             if let selectedRoomID, rooms.contains(where: { $0.id == selectedRoomID }) {
                 self.selectedRoomID = selectedRoomID
             } else {
@@ -68,7 +66,6 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         description: String,
         rolePrompt: String,
         modelConfigID: String,
-        pluginIDs: [String],
         canManageStaff: Bool,
         canAccessLocalProjects: Bool
     ) async -> Bool {
@@ -76,11 +73,6 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         let modelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard availableModels.contains(where: { $0.id == modelConfigID }) else {
             errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription
-            return false
-        }
-        let installedPluginIDs = Set(installedPlugins.map(\.id))
-        guard pluginIDs.allSatisfy(installedPluginIDs.contains) else {
-            errorMessage = "选择的本机 Plugin 已停用或卸载，请刷新后重试。"
             return false
         }
         let permissions = LocalAgentPermission.normalized(
@@ -93,7 +85,7 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             modelConfigID: modelConfigID,
-            defaultPluginIDs: pluginIDs,
+            defaultPluginIDs: [],
             defaultSkillIDs: permissions
         )
         isSavingAgent = true
@@ -131,7 +123,7 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
                 draft: .init(
                     role: agent.draft.name,
                     responsibility: agent.draft.description,
-                    pluginAllowlist: agent.draft.defaultPluginIDs
+                    pluginAllowlist: []
                 )
             )
             if members.isEmpty {
@@ -189,20 +181,17 @@ struct AgentGroupChatWorkspaceView: View {
     private let service: NativeAgentGroupChatService
     private let scheduler: LocalAgentGroupChatScheduler
     private let builderService: LocalAgentBuilderService
-    private let pluginService: NativeLocalConnectorService
 
     init(
         ownerUserID: String,
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
-        builderService: LocalAgentBuilderService,
-        pluginService: NativeLocalConnectorService
+        builderService: LocalAgentBuilderService
     ) {
         self.ownerUserID = ownerUserID
         self.service = service
         self.scheduler = scheduler
         self.builderService = builderService
-        self.pluginService = pluginService
         _viewModel = StateObject(
             wrappedValue: AgentGroupChatWorkspaceViewModel(
                 ownerUserID: ownerUserID,
@@ -349,7 +338,6 @@ struct AgentGroupChatWorkspaceView: View {
                 service: service,
                 scheduler: scheduler,
                 builderService: builderService,
-                pluginService: pluginService,
                 projectsService: model.localProjectsService
             )
             .id(room.id)
@@ -481,8 +469,8 @@ private struct AgentManagementView: View {
                     .lineLimit(1)
             }
             .font(.caption)
-            LabeledContent("本机 Plugin") {
-                Text(agent.draft.defaultPluginIDs.isEmpty ? "未启用" : "\(agent.draft.defaultPluginIDs.count) 个")
+            LabeledContent("工具与 Plugin") {
+                Text("按任务自主发现")
             }
             .font(.caption)
             if canManageStaff || canAccessLocalProjects {
@@ -522,7 +510,6 @@ private struct AgentProfileEditorSheet: View {
     @State private var description: String
     @State private var rolePrompt: String
     @State private var modelConfigID: String
-    @State private var selectedPluginIDs: Set<String>
     @State private var canManageStaff: Bool
     @State private var canAccessLocalProjects: Bool
 
@@ -540,7 +527,6 @@ private struct AgentProfileEditorSheet: View {
         _description = State(initialValue: profile?.draft.description ?? "")
         _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? Self.defaultPrompt)
         _modelConfigID = State(initialValue: profile?.draft.modelConfigID ?? "")
-        _selectedPluginIDs = State(initialValue: Set(profile?.draft.defaultPluginIDs ?? []))
         _canManageStaff = State(initialValue: profile.map {
             LocalAgentPermission.canManageStaff($0.draft.defaultSkillIDs)
         } ?? false)
@@ -605,29 +591,12 @@ private struct AgentProfileEditorSheet: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    if !viewModel.installedPlugins.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("本机 Plugin")
-                                .font(.subheadline.weight(.medium))
-                            ForEach(viewModel.installedPlugins) { plugin in
-                                Toggle(isOn: Binding(
-                                    get: { selectedPluginIDs.contains(plugin.id) },
-                                    set: { selected in
-                                        if selected { selectedPluginIDs.insert(plugin.id) }
-                                        else { selectedPluginIDs.remove(plugin.id) }
-                                    }
-                                )) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(plugin.name)
-                                        if !plugin.description.isEmpty {
-                                            Text(plugin.description)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("工具与 Plugin")
+                            .font(.subheadline.weight(.medium))
+                        Text("无需预先选择。Agent 会通过内置能力发现 Skill 按任务搜索、展开并调用本机工具；项目目录与授权边界由 ChatOS 控制。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -643,7 +612,6 @@ private struct AgentProfileEditorSheet: View {
                             description: description,
                             rolePrompt: rolePrompt,
                             modelConfigID: modelConfigID,
-                            pluginIDs: selectedPluginIDs.sorted(),
                             canManageStaff: canManageStaff,
                             canAccessLocalProjects: canAccessLocalProjects
                         ) { dismiss() }

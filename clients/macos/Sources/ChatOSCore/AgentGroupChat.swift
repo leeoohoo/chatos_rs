@@ -67,7 +67,6 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
     public let responsibility: String
     public let rolePrompt: String
     public let modelConfigID: String
-    public let pluginIDs: [String]
     public let rationale: String
 
     public init(
@@ -76,7 +75,6 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
         responsibility: String = "",
         rolePrompt: String,
         modelConfigID: String,
-        pluginIDs: [String] = [],
         rationale: String = ""
     ) {
         self.name = name
@@ -84,7 +82,6 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
         self.responsibility = responsibility
         self.rolePrompt = rolePrompt
         self.modelConfigID = modelConfigID
-        self.pluginIDs = pluginIDs
         self.rationale = rationale
     }
 
@@ -98,7 +95,6 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
         )
         try AgentGroupChatValidation.text(rolePrompt, field: "rolePrompt", maximumLength: 32_000)
         try AgentGroupChatValidation.identifier(modelConfigID, field: "modelConfigID")
-        try AgentGroupChatValidation.identifiers(pluginIDs, field: "pluginIDs", maximumCount: 100)
         try AgentGroupChatValidation.optionalText(rationale, field: "rationale", maximumLength: 4_000)
     }
 
@@ -107,13 +103,12 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
             name: name,
             description: responsibility,
             rolePrompt: rolePrompt,
-            modelConfigID: modelConfigID,
-            defaultPluginIDs: pluginIDs
+            modelConfigID: modelConfigID
         )
     }
 
     public var memberDraft: ProjectAgentRoomMemberDraft {
-        .init(role: role, responsibility: responsibility, pluginAllowlist: pluginIDs)
+        .init(role: role, responsibility: responsibility)
     }
 }
 

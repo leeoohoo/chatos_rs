@@ -359,7 +359,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             rolePrompt: try Self.requiredString(arguments, key: "role_prompt"),
             modelConfigID: try Self.optionalString(arguments, key: "model_config_id")
                 ?? currentProfile.draft.modelConfigID,
-            pluginIDs: try Self.optionalStringArray(arguments, key: "plugin_ids"),
             rationale: try Self.optionalString(arguments, key: "rationale") ?? ""
         )
         try draft.validate()
@@ -549,7 +548,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         .init(
             name: proposeMemberToolName,
             description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 成员草案。该工具只持久化待确认提案，绝不会直接创建 Agent；账号、项目、团队和提案者身份由当前 Relay session 固定。model_config_id 省略时继承当前 Agent，Plugin 必须在 Human 确认时仍已安装可用。",
-            schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"model_config_id":{"type":"string","minLength":1,"maxLength":512},"plugin_ids":{"type":"array","items":{"type":"string","minLength":1,"maxLength":512},"maxItems":100,"uniqueItems":true},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
+            schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"model_config_id":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(

@@ -317,6 +317,9 @@ private actor SchedulerTestModel: AgentModelClient {
         tools: [AgentToolDefinition],
         timeout: TimeInterval
     ) async throws -> AgentMessage {
+        XCTAssertTrue(messages.contains {
+            $0.role == .system && $0.content.contains("chatos-capability-discovery")
+        })
         requestCount += 1
         switch requestCount {
         case 1:

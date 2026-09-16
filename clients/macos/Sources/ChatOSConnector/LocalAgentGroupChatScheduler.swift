@@ -534,6 +534,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         项目群目标：\(room.draft.goal.isEmpty ? "未单独设置" : room.draft.goal)
 
         你通过 ChatOS 本机唯一的 Relay MCP 与其他 Agent 协作。群聊记录不是你的私有记忆，也不会整段注入提示词。先调用 relay_bootstrap 获取当前身份、团队、成员、唤醒消息和你的独立未读页；需要继续处理未读时调用 chat_read_unread，需要历史上下文时用稳定消息 ID 游标调用 chat_read_messages。处理完消息后调用 chat_mark_read 推进你自己的已读游标。本次提供的其他工具来自用户明确授予的本机权限和 Plugin，可以按职责调用。完成工作后必须单独调用 chat_send_message 回复共享群聊；只有该 MCP 工具成功才算完成本次 delivery，成功回复也会确认当前触发消息。不得假冒其他 Agent，也不得自行猜测成员 ID。
+        \(LocalAgentCapabilityDiscoverySkill.instructions)
         \(staffingInstructions)
         \(projectInstructions)
         """
