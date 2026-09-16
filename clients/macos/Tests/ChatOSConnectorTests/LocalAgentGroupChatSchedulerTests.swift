@@ -19,7 +19,8 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
                 name: "客户端工程师",
                 description: "实现客户端功能",
                 rolePrompt: "先读取群聊，再给出可执行答复。",
-                modelConfigID: "local-model"
+                modelConfigID: "local-model",
+                professionKey: "desktop_engineer"
             )
         )
         let room = try await store.createRoom(
@@ -51,7 +52,8 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let scheduler = LocalAgentGroupChatScheduler(
             service: nativeService,
             services: SchedulerTestServices(),
-            settings: .init(suiteName: settingsSuite)
+            settings: .init(suiteName: settingsSuite),
+            projectTypeKeyProvider: { _, _ in "desktop_application" }
         )
         let results = try await scheduler.drainProject(
             ownerUserID: "alice",
@@ -79,6 +81,10 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertEqual(savedRun?.context.projectID, "project-1")
         XCTAssertNil(savedRun?.checkpoint.memory)
         XCTAssertTrue(savedRun?.events.contains(where: { $0.kind == "memory_unavailable" }) == true)
+        let system = savedRun?.checkpoint.messages.first?.content ?? ""
+        XCTAssertTrue(system.contains(#"name="chatos-profession-desktop-engineer""#))
+        XCTAssertTrue(system.contains(#"name="chatos-project-type-desktop-application""#))
+        XCTAssertTrue(system.contains("Desktop Application Playbook") || system.contains("桌面"))
     }
 
     func testResumeKeepsUnknownWriteInNeedsReviewUntilUserAbandonsIt() async throws {

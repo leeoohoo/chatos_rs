@@ -29,16 +29,19 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     assert.equal(context.scope.projectName, '示例项目');
     assert.equal(context.scope.connectorWorkspaceId, 'workspace-mcp-456');
     assert.equal(context.scope.projectRoot, '/workspace/example');
+    assert.equal(context.workspace, null);
 
     const requirementResult = await call(client, 'solution_upsert_requirements', {
-      artifactKey: 'mcp-plan', title: 'MCP 方案', sourceMode: 'existing-project',
+      title: 'MCP 方案',
       requirements: { status: 'approved', revision: 0, summary: '需求', goals: [], users: [], inScope: [], outOfScope: [], constraints: [], assumptions: [], openQuestions: [], evidence: [], items: [{ id: 'R-001', title: '能力', description: '提供能力。', priority: 'must', acceptanceCriteria: ['可以验证'], evidenceIds: [], selectedDesignSectionId: 'D-001' }], updatedAt: now() }
     });
     assert.equal(requirementResult.workspace.hostProjectId, 'project-mcp-123');
     await call(client, 'solution_upsert_design', {
-      artifactKey: 'mcp-plan', title: 'MCP 方案', sourceMode: 'existing-project',
+      artifactKey: 'ignored-parallel-plan', title: 'MCP 方案', sourceMode: 'existing-project',
       design: { status: 'approved', revision: 0, basedOnRequirementsRevision: 1, summary: '方案', blocks: [{ id: 'D-000-B-001', type: 'text', title: '技术基线', content: 'TypeScript' }, { id: 'D-000-B-002', type: 'architecture', title: '总体架构', content: '<svg viewBox="0 0 100 100"><text x="5" y="10">Architecture</text></svg>' }], sections: [{ id: 'D-001', title: '核心设计', body: '设计内容', requirementIds: ['R-001'], evidenceIds: [], blocks: [{ id: 'D-001-B-001', type: 'text', title: '详细设计', content: '模块与接口。' }] }], decisions: [], risks: [], validationStrategy: [], updatedAt: now() }
     });
+    const afterDesign = await call(client, 'solution_get_active_context', {});
+    assert.equal(afterDesign.workspace.workspaceId, requirementResult.workspace.workspaceId);
 
     const invalidPlan = {
       status: 'approved', revision: 0, basedOnDesignRevision: 1, objective: '执行', positions: {}, viewport: { x: 0, y: 0, zoom: 1 }, updatedAt: now(),
@@ -47,14 +50,14 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
         { id: 'T-002', title: 'B', description: '', type: 'task', phase: '实现', dependsOn: ['T-001'], status: 'planned', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: [], acceptanceCriteria: ['B 完成'], sourceReferences: [] }
       ]
     };
-    const rejected = await client.callTool({ name: 'solution_upsert_execution_plan', arguments: { artifactKey: 'mcp-plan', title: 'MCP 方案', sourceMode: 'existing-project', executionPlan: invalidPlan } });
+    const rejected = await client.callTool({ name: 'solution_upsert_execution_plan', arguments: { title: 'MCP 方案', executionPlan: invalidPlan } });
     assert.equal(rejected.isError, true);
     assert.match(rejected.structuredContent.error, /循环依赖/);
-    const afterReject = await call(client, 'solution_get_workspace', { artifactKey: 'mcp-plan' });
+    const afterReject = await call(client, 'solution_get_workspace', {});
     assert.equal(afterReject.workspace.executionPlan.tasks.length, 0);
 
     invalidPlan.tasks[0].dependsOn = [];
-    const accepted = await call(client, 'solution_upsert_execution_plan', { artifactKey: 'mcp-plan', title: 'MCP 方案', sourceMode: 'existing-project', executionPlan: invalidPlan });
+    const accepted = await call(client, 'solution_upsert_execution_plan', { title: 'MCP 方案', executionPlan: invalidPlan });
     assert.equal(accepted.validation.valid, true);
     assert.deepEqual(accepted.validation.topologicalOrder, ['T-001', 'T-002']);
   } finally {

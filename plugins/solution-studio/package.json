@@ -1,12 +1,27 @@
 {
   "name": "@chatos/solution-studio",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "description": "Apple-inspired workbench for requirements, solution design, and dependency-aware execution planning.",
   "license": "Apache-2.0",
   "type": "module",
-  "engines": { "node": ">=18" },
-  "bin": { "chatos-solution-studio": "bin/chatos-solution-studio" },
-  "files": ["assets/", "bin/", "dist/", "!dist/*.test.mjs", "skills/", "ui/", ".codex-plugin/", ".mcp.json", "chatos.plugin.json", "README.md"],
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "chatos-solution-studio": "bin/chatos-solution-studio"
+  },
+  "files": [
+    "assets/",
+    "bin/",
+    "dist/",
+    "!dist/*.test.mjs",
+    "skills/",
+    "ui/",
+    ".codex-plugin/",
+    ".mcp.json",
+    "chatos.plugin.json",
+    "README.md"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/build.mjs",
@@ -24,7 +39,8 @@
     "express": "5.1.0",
     "proper-lockfile": "4.1.2",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "react-markdown": "10.1.0"
   },
   "devDependencies": {
     "@types/express": "5.0.3",

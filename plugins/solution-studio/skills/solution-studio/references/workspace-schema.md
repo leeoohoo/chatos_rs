@@ -1,8 +1,10 @@
 # Workspace document shapes
 
-Use complete objects for each upsert. The service owns workspace-level revision and timestamps; still include the document header fields shown below because each document is independently versioned.
+Use complete objects for each upsert. The active ChatOS project owns exactly one workspace envelope: one `projectProfile`, one `RequirementsDocument`, one `SolutionDesignDocument`, and one `ExecutionPlan`. Upserts revise those documents in place and must never create parallel project backgrounds or competing total plans.
 
-The workspace envelope may contain a server-owned `hostProject` object with `projectId`, `projectName`, `connectorWorkspaceId`, and `contextScopeId`. Do not send or edit this object in upsert payloads. ChatOS injects the active project context at runtime and the service stamps the binding automatically. A Solution Studio `workspaceId` identifies the planning document and is unrelated to the host `connectorWorkspaceId`.
+The service owns workspace-level revision and timestamps; still include the document header fields shown below because each document is independently versioned.
+
+The workspace envelope may contain a server-owned `hostProject` object with `projectId`, `projectName`, `connectorWorkspaceId`, and `contextScopeId`. Do not send or edit this object in upsert payloads. ChatOS injects the active project context at runtime and the service stamps the binding automatically. A Solution Studio `workspaceId` identifies the project's single planning document and is unrelated to the host `connectorWorkspaceId`. `artifactKey` and `sourceMode` remain optional compatibility fields; do not use them to branch the project into multiple plans.
 
 ## RequirementsDocument
 

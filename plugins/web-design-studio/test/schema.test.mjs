@@ -194,7 +194,7 @@ test('viewport presets expose real CSS viewport sizes and support rotation', () 
   assert.deepEqual(matchViewportPreset('mobile', 852), { preset: iphone, orientation: 'rotated' });
   assert.equal(matchViewportPreset('mobile', 401), undefined);
 
-  const desktopDesign = WEB_DESIGN_VIEWPORT_PRESETS.find((preset) => preset.id === 'desktop-design-1440');
+  const desktopDesign = WEB_DESIGN_VIEWPORT_PRESETS.find((preset) => preset.id === 'desktop-responsive');
   assert.deepEqual(viewportDimensions(desktopDesign, 'default'), { width: 1440, height: 900 });
 
   const eightK = WEB_DESIGN_VIEWPORT_PRESETS.find((preset) => preset.id === 'desktop-8k');
@@ -215,10 +215,10 @@ test('artboard size presets are semantic and independent from device categories'
       { label: '窄画板 360', width: 360, height: 800 },
       { label: '窄画板 390', width: 390, height: 844 },
       { label: '中型画板 768', width: 768, height: 1024 },
-      { label: '标准画板 1200', width: 1200, height: 900 },
-      { label: '宽画板 1440', width: 1440, height: 900 },
-      { label: '宽画板 1920', width: 1920, height: 1080 },
-      { label: '大型画板 2560', width: 2560, height: 1080 }
+      { label: '紧凑画板 1200', width: 1200, height: 900 },
+      { label: '标准桌面画板 1440', width: 1440, height: 900 },
+      { label: '宽屏画板 1920', width: 1920, height: 1080 },
+      { label: '2K QHD 画板 2560', width: 2560, height: 1440 }
     ]
   );
   assert.equal(WEB_DESIGN_ARTBOARD_SIZE_PRESETS.some((preset) => 'device' in preset), false);

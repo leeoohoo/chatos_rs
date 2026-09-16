@@ -151,7 +151,9 @@ private final class AgentDirectChatViewModel: ObservableObject {
                 let project = try await projectsService.createInDefaultWorkspace(
                     ownerUserID: ownerUserID,
                     name: newProjectName,
-                    description: proposal.draft.newProjectDescription
+                    description: proposal.draft.newProjectDescription,
+                    projectTypeKey: proposal.draft.newProjectTypeKey
+                        ?? LocalAgentSkillCatalog.legacyProjectTypeKey
                 )
                 resolvedProjectID = project.id
             } else {

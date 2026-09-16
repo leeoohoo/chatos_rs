@@ -44,6 +44,13 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                 ],
                 "new_project_name": ["type": "string", "minLength": 1, "maxLength": 160],
                 "new_project_description": ["type": "string", "maxLength": 8_000],
+                "new_project_type": [
+                    "type": "string",
+                    "enum": LocalAgentSkillCatalog.projectTypes.map(\.key),
+                    "description": LocalAgentSkillCatalog.projectTypes.map {
+                        "\($0.key)=\($0.label)"
+                    }.joined(separator: "；"),
+                ],
                 "team_name": ["type": "string", "minLength": 1, "maxLength": 160],
                 "team_goal": ["type": "string", "maxLength": 8_000],
             ],
@@ -75,7 +82,8 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         let draft: LocalAgentTeamCreationProposalDraft
         if let projectID = selected.projectID {
             guard arguments.newProjectName == nil,
-                  arguments.newProjectDescription == nil else {
+                  arguments.newProjectDescription == nil,
+                  arguments.newProjectType == nil else {
                 throw AgentGroupChatError.invalidField("new_project")
             }
             draft = .init(
@@ -87,9 +95,14 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
             guard let name = arguments.newProjectName else {
                 throw AgentGroupChatError.invalidField("new_project_name")
             }
+            guard let projectTypeKey = arguments.newProjectType,
+                  LocalAgentSkillCatalog.projectType(key: projectTypeKey) != nil else {
+                throw AgentGroupChatError.invalidField("new_project_type")
+            }
             draft = .init(
                 newProjectName: name,
                 newProjectDescription: arguments.newProjectDescription ?? "",
+                newProjectTypeKey: projectTypeKey,
                 teamName: arguments.teamName,
                 teamGoal: arguments.teamGoal ?? ""
             )
@@ -121,6 +134,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         let projectOption: String
         let newProjectName: String?
         let newProjectDescription: String?
+        let newProjectType: String?
         let teamName: String
         let teamGoal: String?
     }

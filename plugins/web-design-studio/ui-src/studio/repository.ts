@@ -6,6 +6,10 @@ import type { SceneDocument } from '../../src/v2/scene-schema';
 import type { SceneHistoryStatus } from '../../src/v2/scene-store';
 import type { AnnotationAiTask } from '../../src/v2/annotation-ai-protocol';
 import type { WorkspaceArtboardPlacement, WorkspacePlacementDocument } from '../../src/v2/workspace-placement-store';
+import {
+  CURRENT_WORKSPACE_VIEWPORT_DEFAULTS_VERSION,
+  migrateWorkspaceViewportDefaults
+} from '../../src/v2/workspace-viewport-defaults';
 
 export interface DesignSummary {
   documentId: string;
@@ -169,7 +173,16 @@ const workspacePrefix = 'chatos.web-design-studio.workspace.v4.';
 
 function createLocalWorkspace(documentId: string, camera: WorkspaceCamera = { x: 0, y: 0, zoom: 1 }): WorkspacePlacementDocument {
   const now = new Date().toISOString();
-  return { schemaVersion: 2, documentId, revision: 1, camera, artboards: [], createdAt: now, updatedAt: now };
+  return {
+    schemaVersion: 2,
+    viewportDefaultsVersion: CURRENT_WORKSPACE_VIEWPORT_DEFAULTS_VERSION,
+    documentId,
+    revision: 1,
+    camera,
+    artboards: [],
+    createdAt: now,
+    updatedAt: now
+  };
 }
 
 function projectSummary(project: WebDesignProject): WebDesignProjectSummary {
@@ -304,7 +317,11 @@ class LocalRepository implements DesignRepository {
 
   async readWorkspace(documentId: string): Promise<WorkspacePlacementDocument> {
     const raw = localStorage.getItem(`${workspacePrefix}${documentId}`);
-    if (raw) return JSON.parse(raw) as WorkspacePlacementDocument;
+    if (raw) {
+      const migrated = migrateWorkspaceViewportDefaults(JSON.parse(raw) as WorkspacePlacementDocument);
+      if (migrated.changed) localStorage.setItem(`${workspacePrefix}${documentId}`, JSON.stringify(migrated.value));
+      return structuredClone(migrated.value);
+    }
     const created = createLocalWorkspace(documentId);
     localStorage.setItem(`${workspacePrefix}${documentId}`, JSON.stringify(created));
     return structuredClone(created);

@@ -57,11 +57,11 @@ fn task_process_log_prompt_text(
 ) -> String {
     if locale.is_english() {
         format!(
-            "[Task Execution Process]\nThe run-scoped system MCP tools `{tool_name}` and `{outcome_tool_name}` are available during this Task Runner run. Use `{tool_name}` to append short visible breadcrumbs at meaningful milestones: selected approach, reused existing code or platform capability, root-cause finding, implementation completion, verification result, blocker, or next step. After all implementation and verification work is finished, you must call `{outcome_tool_name}` exactly once with `succeeded`, `failed`, or `blocked` and a concrete reason. That outcome call must be your final tool call immediately before the user-facing final response. The runtime will reject a final response when no outcome has been reported. Keep entries concise. Do not record hidden chain-of-thought, credentials, secrets, raw dumps, or unrelated drafts. This MCP is mounted only inside the current Task Runner execution and is not part of the external Task Runner management API."
+            "[Task Execution Process]\nThe run-scoped system MCP tools `{tool_name}` and `{outcome_tool_name}` are available during this Task Runner run. Keep the visible process updated across the task instead of writing only one opening note. Record key steps and phase changes: task start, approach or root cause, completion of a major phase or artifact, important verification results, a changed path after failure, blockers, and next step. Do not log every tool call, every file, or each read/search/edit within the same phase; combine operations with one purpose into one clear update and add another update when the phase changes or a material result appears. After all implementation and verification work is finished, you must call `{outcome_tool_name}` exactly once with `succeeded`, `failed`, or `blocked` and a concrete reason. That outcome call must be your final tool call immediately before the user-facing final response. The runtime will reject a final response when no outcome has been reported. Keep entries concise. Do not record hidden chain-of-thought, credentials, secrets, raw dumps, or unrelated drafts. This MCP is mounted only inside the current Task Runner execution and is not part of the external Task Runner management API."
         )
     } else {
         format!(
-            "[任务执行过程]\n本次 Task Runner 运行期间提供运行期系统 MCP 工具 `{tool_name}` 和 `{outcome_tool_name}`。使用 `{tool_name}` 在有意义的里程碑追加简短、可展示的执行路标：选择的方案、复用的已有代码或平台能力、根因发现、实现完成、验证结果、阻塞和下一步。全部实现与验证结束后，你必须且只能调用一次 `{outcome_tool_name}`，明确上报 `succeeded`、`failed` 或 `blocked`，并给出具体理由。该终态上报必须是最终用户答复之前的最后一次工具调用；未上报终态时，运行时不会接受最终答复。记录要简洁。不要记录隐藏思维链、凭证、密钥、原始大段输出或无关草稿。这个 MCP 只挂载在当前 Task Runner 执行内部，不属于对外的 Task Runner 管理 API。"
+            "[任务执行过程]\n本次 Task Runner 运行期间提供运行期系统 MCP 工具 `{tool_name}` 和 `{outcome_tool_name}`。过程记录应贯穿任务，不能只留一条开场说明。请在关键步骤和阶段变化时记录：任务开始、方案或根因确定、一个主要阶段或产物完成、关键验证结果、失败后的路径调整、阻塞与下一步。不要为每次工具调用、每个文件或同一阶段内的连续读取/搜索/编辑逐条记录；相同目的的操作合并成一条清晰进展，在阶段变化或出现实质结果时再更新。全部实现与验证结束后，你必须且只能调用一次 `{outcome_tool_name}`，明确上报 `succeeded`、`failed` 或 `blocked`，并给出具体理由。该终态上报必须是最终用户答复之前的最后一次工具调用；未上报终态时，运行时不会接受最终答复。记录要简洁。不要记录隐藏思维链、凭证、密钥、原始大段输出或无关草稿。这个 MCP 只挂载在当前 Task Runner 执行内部，不属于对外的 Task Runner 管理 API。"
         )
     }
 }
@@ -117,5 +117,23 @@ impl RunService {
         );
         self.store.append_run_event(event.clone()).await?;
         Ok((event, false))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_prompt_requires_updates_across_action_phases() {
+        let chinese = task_process_log_preview_text(BuiltinMcpPromptLocale::ZhCn);
+        assert!(chinese.contains("过程记录应贯穿任务"));
+        assert!(chinese.contains("关键步骤和阶段变化"));
+        assert!(chinese.contains("不要为每次工具调用"));
+
+        let english = task_process_log_preview_text(BuiltinMcpPromptLocale::EnUs);
+        assert!(english.contains("updated across the task"));
+        assert!(english.contains("key steps and phase changes"));
+        assert!(english.contains("Do not log every tool call"));
     }
 }

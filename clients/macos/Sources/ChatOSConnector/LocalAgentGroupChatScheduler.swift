@@ -35,6 +35,10 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         _ member: ProjectAgentRoomMember,
         _ context: LocalAgentChatRunContext
     ) async throws -> [any AgentToolProvider]
+    public typealias ProjectTypeKeyProvider = @Sendable (
+        _ ownerUserID: String,
+        _ projectID: String
+    ) async throws -> String?
 
     private let service: NativeAgentGroupChatService
     private let services: any AgentServiceProviding
@@ -43,6 +47,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     private let limits: AgentGroupChatRoutingLimits
     private let relayMCP: LocalAgentRelayMCPServer
     private let additionalToolProviders: AdditionalToolProviderFactory
+    private let projectTypeKeyProvider: ProjectTypeKeyProvider
     private let now: @Sendable () -> Int64
 
     public init(
@@ -51,6 +56,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         settings: AgentSettingsStore = .init(),
         runtime: AgentRuntime = .init(),
         limits: AgentGroupChatRoutingLimits = .init(),
+        projectTypeKeyProvider: @escaping ProjectTypeKeyProvider = { _, _ in nil },
         additionalToolProviders: @escaping AdditionalToolProviderFactory = { _, _, _ in [] },
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
@@ -62,6 +68,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.runtime = runtime
         self.limits = limits
         self.relayMCP = LocalAgentRelayMCPServer(service: service, limits: limits, now: now)
+        self.projectTypeKeyProvider = projectTypeKeyProvider
         self.additionalToolProviders = additionalToolProviders
         self.now = now
     }
@@ -419,7 +426,11 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                     profile: profile,
                     member: member,
                     room: room,
-                    delivery: delivery
+                    delivery: delivery,
+                    projectTypeKey: room.conversationKind == .projectTeam
+                        ? try await projectTypeKeyProvider(ownerUserID, projectID)
+                            ?? LocalAgentSkillCatalog.legacyProjectTypeKey
+                        : nil
                 )
             )
             initial.id = runID
@@ -583,7 +594,8 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         profile: LocalAgentProfile,
         member: ProjectAgentRoomMember,
         room: ProjectAgentRoom,
-        delivery: ProjectAgentDelivery
+        delivery: ProjectAgentDelivery,
+        projectTypeKey: String?
     ) -> [AgentMessage] {
         let conversationRole: String
         let conversationContext: String
@@ -610,6 +622,29 @@ public struct LocalAgentGroupChatScheduler: Sendable {
 
         Human 已明确授予你本地项目与团队创建权限。需要创建团队时调用 team_propose，并从工具 schema 提供的项目单选项中选择已有项目或“新建项目”。真实项目 ID 与本机路径由 ChatOS 内部映射，不会提供给你，也不得猜测或要求用户提供。该工具只生成提案，必须等待 Human 确认。
         """ : ""
+        let profession = LocalAgentSkillCatalog.profession(key: profile.draft.professionKey)
+            ?? LocalAgentSkillCatalog.profession(key: LocalAgentSkillCatalog.legacyProfessionKey)!
+        let professionSkill = """
+        <skill name="\(profession.chatOSSkillName)" binding="program-owned" key="\(profession.key)">
+        这是 ChatOS 根据当前 Agent 持久职业绑定自动注入的完整职业 Skill。模型不得更改、替换或声称选择了其他职业。内容迁移自 Relay；其中对旧 Relay Trigger、company/task 工具和公司组织的引用只表示协作方法与质量门禁，实际通信、身份、任务和权限必须使用本轮 ChatOS Relay MCP 及客户端提供的工具，未提供的旧工具不得调用。
+
+        \(profession.skillMarkdown)
+        </skill>
+        """
+        let projectSkill: String
+        if let projectTypeKey,
+           let projectType = LocalAgentSkillCatalog.projectType(key: projectTypeKey) {
+            projectSkill = """
+
+            <skill name="\(projectType.skillName)" binding="program-owned" key="\(projectType.key)">
+            这是 ChatOS 根据当前项目持久类型绑定自动注入的完整项目 Rule。模型不得更改项目类型或用其他规则替代。规则中的流程与质量门禁按当前任务范围执行；实际工具和权限以 ChatOS 本轮提供内容为准。
+
+            \(projectType.ruleMarkdown)
+            </skill>
+            """
+        } else {
+            projectSkill = ""
+        }
         let system = """
         你是\(conversationRole)中的本地 Agent「\(profile.draft.name)」。
         你的角色：\(member.draft.role)
@@ -621,6 +656,9 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         \(LocalAgentCapabilityDiscoverySkill.instructions)
         \(staffingInstructions)
         \(projectInstructions)
+
+        \(professionSkill)
+        \(projectSkill)
         """
         let envelope = """
         你收到一个本地会话 delivery：

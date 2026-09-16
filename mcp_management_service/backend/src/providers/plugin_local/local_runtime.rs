@@ -611,6 +611,9 @@ impl PluginLocalProvider {
 
 pub(super) fn is_recoverable_adapter_session_error(error: &ProviderCallError) -> bool {
     error.message.contains("Plugin 本机会话不存在或已经结束")
+        || error
+            .message
+            .contains("Plugin local session does not exist or has ended")
         || error.message.contains("no active control subscriber")
 }
 

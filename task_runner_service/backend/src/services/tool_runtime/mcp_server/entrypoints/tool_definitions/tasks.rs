@@ -110,7 +110,7 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "wait_for_task_completion",
-            "Use after the requested Task Runner tasks have been created or adjusted. It confirms that the arranged tasks should continue through Task Runner's normal background execution flow.",
+            "Use exactly once after the requested Task Runner tasks have been created or adjusted. This is a background-handoff signal, not a polling wait. After it succeeds, call no more task tools, do not inspect task status, and immediately return a concise user-facing handoff summary; the final result arrives through the normal callback.",
             empty_object_schema(),
         ),
         tool_definition(

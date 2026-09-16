@@ -22,7 +22,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "ChatOSAgentRuntime"),
-        .target(name: "ChatOSCore"),
+        .target(
+            name: "ChatOSCore",
+            resources: [.process("Resources")]
+        ),
         .target(
             name: "ChatOSAPI",
             dependencies: ["ChatOSCore", "ChatOSAgentRuntime"]

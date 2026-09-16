@@ -324,7 +324,23 @@ function assertDesignBlocks(blocks: DesignContentBlock[], label: string): void {
     if (!['text', 'architecture', 'flowchart', 'ui-svg'].includes(block.type)) throw new Error(`design block ${block.id} type is invalid.`);
     assertText(block.title, `design.block.${block.id}.title`);
     assertText(block.content, `design.block.${block.id}.content`);
-    if (block.type !== 'text' && !/<svg[\s>]/i.test(block.content)) throw new Error(`design block ${block.id} must contain self-contained SVG code.`);
+    if (block.type !== 'text') assertRenderableSvg(block.content, block.id);
+  }
+}
+
+function assertRenderableSvg(content: string, blockId: string): void {
+  const svg = content.trim();
+  if (!/^<svg[\s>][\s\S]*<\/svg>$/i.test(svg)) throw new Error(`design block ${blockId} must contain standalone SVG code.`);
+  const openingTag = svg.match(/^<svg\b[^>]*>/i)?.[0] ?? '';
+  if (!/\bviewBox\s*=\s*["'][^"']+["']/i.test(openingTag)) throw new Error(`design block ${blockId} SVG must declare a viewBox.`);
+  if (/<script\b|<foreignObject\b|\son[a-z]+\s*=|\b(?:href|src)\s*=\s*["'](?:https?:|\/\/|data:)/i.test(svg)) {
+    throw new Error(`design block ${blockId} SVG must be self-contained and inert.`);
+  }
+  const visibleBody = svg
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(?:defs|style|title|desc|metadata)\b[^>]*>[\s\S]*?<\/(?:defs|style|title|desc|metadata)>/gi, '');
+  if (!/<(?:path|rect|circle|ellipse|line|polyline|polygon|text|image|use)\b/i.test(visibleBody)) {
+    throw new Error(`design block ${blockId} SVG does not contain visible diagram content.`);
   }
 }
 

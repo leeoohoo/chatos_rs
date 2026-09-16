@@ -452,6 +452,67 @@ async fn review_iteration_disables_streaming_and_tools() {
 }
 
 #[tokio::test]
+async fn completed_async_handoff_disables_tools_and_requests_only_a_handoff_summary() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        async_handoff_confirmed: true,
+        ..TaskTurnLifecycleState::default()
+    });
+
+    let directive = hook
+        .before_model_request(RuntimeIterationContext {
+            conversation_id: Some("session-1".to_string()),
+            conversation_turn_id: Some("turn-1".to_string()),
+            iteration: 2,
+            reason: "tool_results".to_string(),
+            input: json!([]),
+        })
+        .await
+        .expect("handoff directive");
+
+    assert!(!directive.tools_enabled);
+    assert!(directive.stream_output);
+    let guidance = Value::Array(directive.input_items).to_string();
+    assert!(guidance.contains("Task Runner Background Handoff"));
+    assert!(guidance.contains("Do not call any tool"));
+    assert!(guidance.contains("normal task callback"));
+}
+
+#[tokio::test]
+async fn completed_async_handoff_accepts_summary_without_task_follow_up() {
+    let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {
+        async_handoff_confirmed: true,
+        mode: Some(TaskTurnFollowUpMode::ContinueExecution),
+        ..TaskTurnLifecycleState::default()
+    });
+
+    let action = hook
+        .after_final_response(final_response_context(ai_response("任务已开始执行。")))
+        .await
+        .expect("handoff summary action");
+
+    assert!(matches!(action, RuntimeFinalResponseAction::Accept));
+    assert!(hook.task_turn_state().expect("state").mode.is_none());
+}
+
+#[test]
+fn async_handoff_state_survives_cloud_step_serialization_and_defaults_for_old_runs() {
+    let state = TaskTurnLifecycleState {
+        async_handoff_confirmed: true,
+        ..TaskTurnLifecycleState::default()
+    };
+    let encoded = serde_json::to_value(&state).expect("serialize lifecycle state");
+    let restored: TaskTurnLifecycleState =
+        serde_json::from_value(encoded.clone()).expect("restore lifecycle state");
+    assert!(restored.async_handoff_confirmed);
+
+    let mut legacy = encoded.as_object().expect("lifecycle object").clone();
+    legacy.remove("async_handoff_confirmed");
+    let restored_legacy: TaskTurnLifecycleState =
+        serde_json::from_value(Value::Object(legacy)).expect("restore legacy lifecycle state");
+    assert!(!restored_legacy.async_handoff_confirmed);
+}
+
+#[tokio::test]
 async fn passing_review_restores_last_visible_response() {
     let visible = ai_response("visible completion");
     let hook = lifecycle_hook_with_state(TaskTurnLifecycleState {

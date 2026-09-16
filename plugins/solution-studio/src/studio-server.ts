@@ -1,7 +1,10 @@
 import express from 'express';
-import { watch } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promises as fs, watch } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { assertSolutionWorkspace, validateWorkspace, workspaceToMarkdown, type SourceMode } from './schema.js';
 import { RevisionConflictError, SolutionWorkspaceStore } from './store.js';
 import { readHostRuntimeContext } from './runtime-context.js';
@@ -10,6 +13,7 @@ const port = Number.parseInt(process.env.CHATOS_PLUGIN_APP_PORT ?? process.env.S
 const host = process.env.CHATOS_PLUGIN_APP_HOST ?? process.env.SOLUTION_STUDIO_HOST ?? '127.0.0.1';
 const store = new SolutionWorkspaceStore();
 const runtimeContext = readHostRuntimeContext();
+const execFileAsync = promisify(execFile);
 await store.initialize();
 
 const app = express();
@@ -61,9 +65,29 @@ app.get('/api/workspaces/:workspaceId/validation', async (request, response, nex
 app.get('/api/workspaces/:workspaceId/markdown', async (request, response, next) => {
   try {
     const workspace = await store.read(request.params.workspaceId);
+    response.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeMarkdownName(workspace.title))}"`);
     response.type('text/markdown; charset=utf-8').send(workspaceToMarkdown(workspace));
   } catch (error) { next(error); }
 });
+
+app.post('/api/workspaces/:workspaceId/markdown/copy-file', async (request, response, next) => {
+  try {
+    if (process.platform !== 'darwin') throw new Error('当前系统暂不支持把文件直接复制到剪贴板。');
+    const workspace = await store.read(request.params.workspaceId);
+    const directory = path.resolve(process.env.CHATOS_PLUGIN_ARTIFACT_DIR ?? process.env.SOLUTION_STUDIO_EXPORT_DIR ?? path.join(os.tmpdir(), 'solution-studio-exports'));
+    await fs.mkdir(directory, { recursive: true });
+    const fileName = safeMarkdownName(workspace.title);
+    const filePath = path.join(directory, fileName);
+    await fs.writeFile(filePath, workspaceToMarkdown(workspace), { encoding: 'utf8', mode: 0o600 });
+    await execFileAsync('/usr/bin/osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv) as alias)', '-e', 'end run', filePath]);
+    response.json({ copied: true, fileName });
+  } catch (error) { next(error); }
+});
+
+function safeMarkdownName(title: string) {
+  const base = title.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]+/g, '-').replace(/^-+|-+$/g, '') || 'solution-studio-plan';
+  return `${base}.md`;
+}
 
 app.put('/api/workspaces/:workspaceId', async (request, response, next) => {
   try {

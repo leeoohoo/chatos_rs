@@ -37,7 +37,9 @@ test('studio serves the Apple-style workbench and persists workspaces', async ()
     assert.deepEqual(created.hostProject, { projectId: 'project-test-123', projectName: 'chatos_rs', connectorWorkspaceId: 'workspace-test-456', contextScopeId: 'scope-test-123' });
     const listed = await fetch(`${base}/api/workspaces`).then((response) => response.json());
     assert.equal(listed.items.length, 1);
-    const markdown = await fetch(`${base}/api/workspaces/${created.workspaceId}/markdown`).then((response) => response.text());
+    const markdownResponse = await fetch(`${base}/api/workspaces/${created.workspaceId}/markdown`);
+    assert.match(markdownResponse.headers.get('content-disposition') ?? '', /^attachment; filename=/);
+    const markdown = await markdownResponse.text();
     assert.match(markdown, /^# 插件能力升级/);
   } finally {
     if (child.exitCode === null) {

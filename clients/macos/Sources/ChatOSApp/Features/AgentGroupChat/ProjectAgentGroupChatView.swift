@@ -770,6 +770,7 @@ private struct CreateLocalAgentSheet: View {
     @State private var responsibility = ""
     @State private var rolePrompt = ""
     @State private var modelConfigID = ""
+    @State private var professionKey = LocalAgentSkillCatalog.legacyProfessionKey
     @State private var isSaving = false
 
     var body: some View {
@@ -790,6 +791,15 @@ private struct CreateLocalAgentSheet: View {
                         }
                     }
                 }
+                Picker("职业", selection: $professionKey) {
+                    ForEach(LocalAgentSkillCatalog.professions) { profession in
+                        Text("\(profession.categoryLabel) · \(profession.label)")
+                            .tag(profession.key)
+                    }
+                }
+                if let selected = LocalAgentSkillCatalog.profession(key: professionKey) {
+                    Text(selected.description).font(.caption).foregroundStyle(.secondary)
+                }
             }
             HStack {
                 Spacer()
@@ -802,7 +812,8 @@ private struct CreateLocalAgentSheet: View {
                             role: role,
                             responsibility: responsibility,
                             rolePrompt: rolePrompt,
-                            modelConfigID: modelConfigID
+                            modelConfigID: modelConfigID,
+                            professionKey: professionKey
                         ) { dismiss() }
                         isSaving = false
                     }

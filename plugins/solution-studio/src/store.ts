@@ -35,7 +35,15 @@ export class SolutionWorkspaceStore {
       try { workspaces.push(await this.read(entry.name.slice(0, -'.solution.json'.length))); }
       catch { /* A malformed workspace remains visible through its direct read error. */ }
     }
-    return workspaces.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map(workspaceSummary);
+    return workspaces
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 1)
+      .map(workspaceSummary);
+  }
+
+  async getCurrent(): Promise<SolutionWorkspace | undefined> {
+    const current = (await this.list())[0];
+    return current ? this.read(current.workspaceId) : undefined;
   }
 
   async findByArtifactKey(artifactKey: string): Promise<SolutionWorkspace | undefined> {
@@ -55,11 +63,9 @@ export class SolutionWorkspaceStore {
 
   async create(title: string, sourceMode: SourceMode = 'existing-project', artifactKey?: string): Promise<SolutionWorkspace> {
     return this.withLock(async () => {
+      const current = await this.getCurrent();
+      if (current) return current;
       const key = artifactKey?.trim();
-      if (key) {
-        const existing = await this.findByArtifactKey(key);
-        if (existing) return existing;
-      }
       const workspace = createSolutionWorkspace(title, sourceMode, key, this.hostProject);
       const now = new Date().toISOString();
       workspace.revision = 1;
@@ -90,7 +96,7 @@ export class SolutionWorkspaceStore {
   async upsert(artifactKey: string, title: string, sourceMode: SourceMode, updater: (workspace: SolutionWorkspace) => SolutionWorkspace): Promise<{ workspace: SolutionWorkspace; created: boolean }> {
     assertIdentifier(artifactKey, 'artifactKey');
     return this.withLock(async () => {
-      const existing = await this.findByArtifactKey(artifactKey);
+      const existing = await this.getCurrent();
       const base = existing ?? createSolutionWorkspace(title, sourceMode, artifactKey, this.hostProject);
       const next = updater(structuredClone(base));
       next.title = title.trim().slice(0, 240) || base.title;

@@ -1,4 +1,12 @@
-import { DEFAULT_WEB_DESIGN_BREAKPOINTS, DEFAULT_WEB_DESIGN_TOKENS, type WebComponentType, type WebDesignComponent, type WebDesignDocument } from './schema.js';
+import {
+  DEFAULT_DESKTOP_ARTBOARD_MIN_HEIGHT,
+  DEFAULT_DESKTOP_ARTBOARD_WIDTH,
+  DEFAULT_WEB_DESIGN_BREAKPOINTS,
+  DEFAULT_WEB_DESIGN_TOKENS,
+  type WebComponentType,
+  type WebDesignComponent,
+  type WebDesignDocument
+} from './schema.js';
 import { scaleFrameForBreakpoint } from './editor-model.js';
 
 const antdPlaceholderImage = 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=900&q=80';
@@ -142,7 +150,7 @@ export function createLandingPage(title = 'AI 产品落地页'): WebDesignDocume
     description: 'Web Design Studio 默认落地页模板。',
     createdAt: now,
     updatedAt: now,
-    viewport: { width: 1200, height: 940, background: '#F8FAFC' },
+    viewport: { width: DEFAULT_DESKTOP_ARTBOARD_WIDTH, height: DEFAULT_DESKTOP_ARTBOARD_MIN_HEIGHT, background: '#F8FAFC' },
     breakpoints: {
       desktop: { ...DEFAULT_WEB_DESIGN_BREAKPOINTS.desktop },
       tablet: { ...DEFAULT_WEB_DESIGN_BREAKPOINTS.tablet },
@@ -167,7 +175,7 @@ export function createBlankWebsite(title = '未命名网站'): WebDesignDocument
     description: '空白网站设计。',
     createdAt: now,
     updatedAt: now,
-    viewport: { width: 1200, height: 940, background: '#FFFFFF' },
+    viewport: { width: DEFAULT_DESKTOP_ARTBOARD_WIDTH, height: DEFAULT_DESKTOP_ARTBOARD_MIN_HEIGHT, background: '#FFFFFF' },
     breakpoints: structuredClone(DEFAULT_WEB_DESIGN_BREAKPOINTS),
     pages: [{ id: 'home', name: '首页', slug: '/', surfaceKind: 'page' }],
     assets: [],

@@ -44,7 +44,10 @@ export function sceneArtboardContentBounds(
 
     return {
       width: Math.max(1, Math.ceil(right)),
-      height: Math.max(1, Math.ceil(bottom || fallbackHeight)),
+      // viewportHeight is a minimum visible editing surface, not a fixed
+      // canvas height. Content can always extend it, but a short/full-screen
+      // composition must not collapse below the selected artboard minimum.
+      height: Math.max(1, Math.ceil(fallbackHeight), Math.ceil(bottom)),
       nodeCount
     };
   } catch {

@@ -104,6 +104,7 @@ public struct LocalAgentBuilderService: Sendable {
             projectID: project.id,
             projectName: project.draft.name,
             projectDescription: project.draft.description,
+            projectTypeKey: project.draft.projectTypeKey,
             roomName: room.draft.name,
             roomGoal: room.draft.goal,
             members: members.map {
@@ -116,7 +117,8 @@ public struct LocalAgentBuilderService: Sendable {
         )
         let provider = try LocalAgentBuilderToolProvider(
             project: snapshot,
-            models: resources.models
+            models: resources.models,
+            professions: LocalAgentSkillCatalog.professions
         )
         let registry = try await AgentToolProviderRegistry(providers: [provider])
         let runID = UUID()
@@ -271,7 +273,7 @@ public struct LocalAgentBuilderService: Sendable {
     private static func initialMessages(brief: String) -> [AgentMessage] {
         let system = """
         你是 ChatOS 客户端内置的 Agent Builder。你的唯一任务是为当前项目群聊设计一个普通 Agent 草案。
-        先调用 project_inspect 和 model_list 获取客户端提供的受控快照，然后单独调用 agent_draft 提交草案。只能选择 model_list 返回的模型配置。不要创建公司、组织或账号；不要假设未提供的高风险权限；不要把 Agent Builder、创建 Agent 或管理成员的能力写入普通 Agent。不要为 Agent 预选 Plugin 或文件能力：运行时会由专门的能力发现 Skill 引导 Agent 按任务自主发现和调用本机工具。
+        先调用 project_inspect、model_list 和 profession_list 获取客户端提供的受控快照，然后单独调用 agent_draft 提交草案。只能选择返回的模型配置和职业 key；职业是持久身份，ChatOS 会在运行时自动注入该职业的完整 Skill。不要创建公司、组织或账号；不要假设未提供的高风险权限；不要把 Agent Builder、创建 Agent 或管理成员的能力写入普通 Agent。不要为 Agent 预选 Plugin 或文件能力：运行时会由专门的能力发现 Skill 引导 Agent 按任务自主发现和调用本机工具。
         agent_draft 只会生成等待用户确认的结构化草案，不会创建 Agent。
         """
         return [
@@ -291,6 +293,7 @@ struct LocalAgentBuilderProjectSnapshot: Codable, Sendable, Equatable {
     let projectID: String
     let projectName: String
     let projectDescription: String
+    let projectTypeKey: String
     let roomName: String
     let roomGoal: String
     let members: [Member]
@@ -299,21 +302,25 @@ struct LocalAgentBuilderProjectSnapshot: Codable, Sendable, Equatable {
 actor LocalAgentBuilderToolProvider: AgentToolProvider {
     static let projectInspectToolName = "project_inspect"
     static let modelListToolName = "model_list"
+    static let professionListToolName = "profession_list"
     static let agentDraftToolName = "agent_draft"
 
     private let project: LocalAgentBuilderProjectSnapshot
     private let models: [LocalAgentBuilderModelOption]
+    private let professions: [LocalAgentProfessionDefinition]
     private var draft: LocalAgentDraft?
 
     init(
         project: LocalAgentBuilderProjectSnapshot,
-        models: [LocalAgentBuilderModelOption]
+        models: [LocalAgentBuilderModelOption],
+        professions: [LocalAgentProfessionDefinition]
     ) throws {
         guard !models.isEmpty, Set(models.map(\.id)).count == models.count else {
             throw LocalAgentBuilderError.noAvailableModel
         }
         self.project = project
         self.models = models
+        self.professions = professions
     }
 
     func currentDraft() -> LocalAgentDraft? { draft }
@@ -331,9 +338,14 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
                 schema: Self.emptyObjectSchema
             ),
             .init(
+                name: Self.professionListToolName,
+                description: "列出 ChatOS 内置职业及稳定 key。Agent 必须选择一个职业。",
+                schema: Self.emptyObjectSchema
+            ),
+            .init(
                 name: Self.agentDraftToolName,
                 description: "提交一个等待用户确认的 Agent 草案；这不会创建 Agent 或修改群聊。",
-                schema: try Self.draftSchema(models: models),
+                schema: try Self.draftSchema(models: models, professions: professions),
                 effect: .terminal
             ),
         ]
@@ -347,6 +359,16 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
         case Self.modelListToolName:
             try Self.requireEmptyArguments(call)
             return try Self.outcome(models)
+        case Self.professionListToolName:
+            try Self.requireEmptyArguments(call)
+            return try Self.outcome(professions.map {
+                ProfessionOption(
+                    key: $0.key,
+                    label: $0.label,
+                    category: $0.categoryLabel,
+                    description: $0.description
+                )
+            })
         case Self.agentDraftToolName:
             let proposed = try JSONDecoder().decode(
                 LocalAgentDraft.self,
@@ -355,6 +377,9 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
             try proposed.validate()
             guard models.contains(where: { $0.id == proposed.modelConfigID }) else {
                 return .failure(LocalAgentBuilderError.modelUnavailable.localizedDescription)
+            }
+            guard professions.contains(where: { $0.key == proposed.professionKey }) else {
+                return .failure("职业已不可用，请重新读取 profession_list。")
             }
             draft = proposed
             return try Self.outcome(proposed)
@@ -367,7 +392,17 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
         #"{"type":"object","properties":{},"additionalProperties":false}"#.utf8
     )
 
-    private static func draftSchema(models: [LocalAgentBuilderModelOption]) throws -> Data {
+    private struct ProfessionOption: Encodable {
+        let key: String
+        let label: String
+        let category: String
+        let description: String
+    }
+
+    private static func draftSchema(
+        models: [LocalAgentBuilderModelOption],
+        professions: [LocalAgentProfessionDefinition]
+    ) throws -> Data {
         let schema: [String: Any] = [
             "type": "object",
             "properties": [
@@ -376,11 +411,12 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
                 "responsibility": ["type": "string", "maxLength": 8_000],
                 "rolePrompt": ["type": "string", "minLength": 1, "maxLength": 32_000],
                 "modelConfigID": ["type": "string", "enum": models.map(\.id)],
+                "professionKey": ["type": "string", "enum": professions.map(\.key)],
                 "rationale": ["type": "string", "maxLength": 4_000],
             ],
             "required": [
                 "name", "role", "responsibility", "rolePrompt",
-                "modelConfigID", "rationale",
+                "modelConfigID", "professionKey", "rationale",
             ],
             "additionalProperties": false,
         ]

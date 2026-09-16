@@ -94,7 +94,8 @@ public actor NativeLocalProjectsService {
     public func createInDefaultWorkspace(
         ownerUserID: String,
         name: String,
-        description: String = ""
+        description: String = "",
+        projectTypeKey: String = LocalAgentSkillCatalog.legacyProjectTypeKey
     ) async throws -> WorkspaceProject {
         try ProjectRegistryValidation.identifier(name, field: "name")
         let status = try await connector.fetchStatus()
@@ -122,7 +123,8 @@ public actor NativeLocalProjectsService {
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                 description: description.trimmingCharacters(in: .whitespacesAndNewlines),
                 workspaceID: workspace.id,
-                relativeRoot: directoryName
+                relativeRoot: directoryName,
+                projectTypeKey: projectTypeKey
             )
         )
     }
@@ -131,7 +133,8 @@ public actor NativeLocalProjectsService {
         guard let old = try await registry().get(ownerUserID: ownerUserID, id: id) else { throw ProjectRegistryError.notFound }
         let draft = LocalProjectDraft(name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                                       description: old.draft.description, workspaceID: old.draft.workspaceID,
-                                      relativeRoot: old.draft.relativeRoot)
+                                      relativeRoot: old.draft.relativeRoot,
+                                      projectTypeKey: old.draft.projectTypeKey)
         _ = try await registry().update(ownerUserID: ownerUserID, id: id, expectedRevision: expectedRevision,
                                        draft: draft, status: old.status)
     }
@@ -166,7 +169,8 @@ public actor NativeLocalProjectsService {
                 name: record.draft.name,
                 description: record.draft.description,
                 workspaceID: resolved.workspace.id,
-                relativeRoot: resolved.relativePath == "." ? "" : resolved.relativePath
+                relativeRoot: resolved.relativePath == "." ? "" : resolved.relativePath,
+                projectTypeKey: record.draft.projectTypeKey
             )
             return try await registry.update(
                 ownerUserID: ownerUserID,

@@ -29,6 +29,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
     public let description: String
     public let rolePrompt: String
     public let modelConfigID: String
+    public let professionKey: String
     public let defaultPluginIDs: [String]
     public let defaultSkillIDs: [String]
 
@@ -37,6 +38,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
         description: String = "",
         rolePrompt: String,
         modelConfigID: String,
+        professionKey: String = LocalAgentSkillCatalog.legacyProfessionKey,
         defaultPluginIDs: [String] = [],
         defaultSkillIDs: [String] = []
     ) {
@@ -44,6 +46,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
         self.description = description
         self.rolePrompt = rolePrompt
         self.modelConfigID = modelConfigID
+        self.professionKey = professionKey
         self.defaultPluginIDs = defaultPluginIDs
         self.defaultSkillIDs = defaultSkillIDs
     }
@@ -53,8 +56,28 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
         try AgentGroupChatValidation.optionalText(description, field: "description", maximumLength: 2_000)
         try AgentGroupChatValidation.text(rolePrompt, field: "rolePrompt", maximumLength: 32_000)
         try AgentGroupChatValidation.identifier(modelConfigID, field: "modelConfigID")
+        _ = try LocalAgentSkillCatalog.requireProfession(key: professionKey)
         try AgentGroupChatValidation.identifiers(defaultPluginIDs, field: "defaultPluginIDs", maximumCount: 100)
         try AgentGroupChatValidation.identifiers(defaultSkillIDs, field: "defaultSkillIDs", maximumCount: 100)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, description, rolePrompt, modelConfigID, professionKey
+        case defaultPluginIDs, defaultSkillIDs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            name: try values.decode(String.self, forKey: .name),
+            description: try values.decodeIfPresent(String.self, forKey: .description) ?? "",
+            rolePrompt: try values.decode(String.self, forKey: .rolePrompt),
+            modelConfigID: try values.decode(String.self, forKey: .modelConfigID),
+            professionKey: try values.decodeIfPresent(String.self, forKey: .professionKey)
+                ?? LocalAgentSkillCatalog.legacyProfessionKey,
+            defaultPluginIDs: try values.decodeIfPresent([String].self, forKey: .defaultPluginIDs) ?? [],
+            defaultSkillIDs: try values.decodeIfPresent([String].self, forKey: .defaultSkillIDs) ?? []
+        )
     }
 }
 
@@ -67,6 +90,7 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
     public let responsibility: String
     public let rolePrompt: String
     public let modelConfigID: String
+    public let professionKey: String
     public let rationale: String
 
     public init(
@@ -75,6 +99,7 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
         responsibility: String = "",
         rolePrompt: String,
         modelConfigID: String,
+        professionKey: String = LocalAgentSkillCatalog.legacyProfessionKey,
         rationale: String = ""
     ) {
         self.name = name
@@ -82,6 +107,7 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
         self.responsibility = responsibility
         self.rolePrompt = rolePrompt
         self.modelConfigID = modelConfigID
+        self.professionKey = professionKey
         self.rationale = rationale
     }
 
@@ -95,7 +121,26 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
         )
         try AgentGroupChatValidation.text(rolePrompt, field: "rolePrompt", maximumLength: 32_000)
         try AgentGroupChatValidation.identifier(modelConfigID, field: "modelConfigID")
+        _ = try LocalAgentSkillCatalog.requireProfession(key: professionKey)
         try AgentGroupChatValidation.optionalText(rationale, field: "rationale", maximumLength: 4_000)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, role, responsibility, rolePrompt, modelConfigID, professionKey, rationale
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            name: try values.decode(String.self, forKey: .name),
+            role: try values.decode(String.self, forKey: .role),
+            responsibility: try values.decodeIfPresent(String.self, forKey: .responsibility) ?? "",
+            rolePrompt: try values.decode(String.self, forKey: .rolePrompt),
+            modelConfigID: try values.decode(String.self, forKey: .modelConfigID),
+            professionKey: try values.decodeIfPresent(String.self, forKey: .professionKey)
+                ?? LocalAgentSkillCatalog.legacyProfessionKey,
+            rationale: try values.decodeIfPresent(String.self, forKey: .rationale) ?? ""
+        )
     }
 
     public var profileDraft: LocalAgentProfileDraft {
@@ -103,7 +148,8 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
             name: name,
             description: responsibility,
             rolePrompt: rolePrompt,
-            modelConfigID: modelConfigID
+            modelConfigID: modelConfigID,
+            professionKey: professionKey
         )
     }
 
@@ -325,6 +371,7 @@ public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable 
     public let existingProjectID: String?
     public let newProjectName: String?
     public let newProjectDescription: String
+    public let newProjectTypeKey: String?
     public let teamName: String
     public let teamGoal: String
 
@@ -336,6 +383,7 @@ public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable 
         self.existingProjectID = existingProjectID
         newProjectName = nil
         newProjectDescription = ""
+        newProjectTypeKey = nil
         self.teamName = teamName
         self.teamGoal = teamGoal
     }
@@ -343,12 +391,14 @@ public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable 
     public init(
         newProjectName: String,
         newProjectDescription: String = "",
+        newProjectTypeKey: String = LocalAgentSkillCatalog.legacyProjectTypeKey,
         teamName: String,
         teamGoal: String = ""
     ) {
         existingProjectID = nil
         self.newProjectName = newProjectName
         self.newProjectDescription = newProjectDescription
+        self.newProjectTypeKey = newProjectTypeKey
         self.teamName = teamName
         self.teamGoal = teamGoal
     }
@@ -362,6 +412,9 @@ public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable 
             guard newProjectDescription.isEmpty else {
                 throw AgentGroupChatError.invalidField("newProjectDescription")
             }
+            guard newProjectTypeKey == nil else {
+                throw AgentGroupChatError.invalidField("newProjectTypeKey")
+            }
         }
         if let newProjectName {
             try AgentGroupChatValidation.text(
@@ -374,6 +427,13 @@ public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable 
                 field: "newProjectDescription",
                 maximumLength: 8_000
             )
+            if let newProjectTypeKey {
+                do {
+                    _ = try LocalAgentSkillCatalog.requireProjectType(key: newProjectTypeKey)
+                } catch {
+                    throw AgentGroupChatError.invalidField("newProjectTypeKey")
+                }
+            }
         }
         try AgentGroupChatValidation.text(teamName, field: "teamName", maximumLength: 160)
         try AgentGroupChatValidation.optionalText(teamGoal, field: "teamGoal", maximumLength: 8_000)
@@ -457,10 +517,16 @@ public enum LocalProjectCreationProposalStatus: String, Codable, Sendable {
 public struct LocalProjectCreationProposalDraft: Codable, Sendable, Equatable {
     public let name: String
     public let description: String
+    public let projectTypeKey: String
 
-    public init(name: String, description: String = "") {
+    public init(
+        name: String,
+        description: String = "",
+        projectTypeKey: String = LocalAgentSkillCatalog.legacyProjectTypeKey
+    ) {
         self.name = name
         self.description = description
+        self.projectTypeKey = projectTypeKey
     }
 
     public func validate() throws {
@@ -470,6 +536,23 @@ public struct LocalProjectCreationProposalDraft: Codable, Sendable, Equatable {
               !description.contains("\0") else {
             throw AgentGroupChatError.invalidField("projectProposal")
         }
+        do {
+            _ = try LocalAgentSkillCatalog.requireProjectType(key: projectTypeKey)
+        } catch {
+            throw AgentGroupChatError.invalidField("projectTypeKey")
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, description, projectTypeKey }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            name: try values.decode(String.self, forKey: .name),
+            description: try values.decodeIfPresent(String.self, forKey: .description) ?? "",
+            projectTypeKey: try values.decodeIfPresent(String.self, forKey: .projectTypeKey)
+                ?? LocalAgentSkillCatalog.legacyProjectTypeKey
+        )
     }
 }
 

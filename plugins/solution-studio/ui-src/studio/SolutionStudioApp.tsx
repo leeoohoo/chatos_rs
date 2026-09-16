@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import type { DesignContentBlock, DesignContentType, DesignSection, ExecutionTask, PlanNodePosition, RequirementItem, RequirementPriority, SolutionWorkspace, SolutionWorkspaceSummary, SourceMode, TaskStatus, WorkspaceValidation } from '../../src/schema';
+import ReactMarkdown from 'react-markdown';
+import type { DesignContentBlock, DesignContentType, DesignSection, ExecutionTask, PlanNodePosition, RequirementItem, RequirementPriority, SolutionWorkspace, SolutionWorkspaceSummary, TaskStatus, WorkspaceValidation } from '../../src/schema';
 import { createRepository, type RuntimeContext, type SolutionRepository } from './repository';
 import { PlanGraph } from './PlanGraph';
 
 type Area = 'overview' | 'requirements';
 type DirtyPart = 'requirements' | 'design' | 'plan' | 'workspace';
 type RequirementPanelTab = 'detail' | 'design' | 'plan';
+type UiScale = 'compact' | 'comfortable' | 'large';
 type CreateModalState = { kind: 'requirement' } | { kind: 'design'; requirementId: string } | { kind: 'designBlock'; requirementId: string; designId: string } | { kind: 'task'; requirementId: string };
 
 const navigation: Array<{ id: Area; icon: string; label: string; caption: string }> = [
@@ -37,7 +39,13 @@ export function SolutionStudioApp() {
   const [toast, setToast] = useState<string>();
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newMode, setNewMode] = useState<SourceMode>('existing-project');
+  const [openingWorkspaceId, setOpeningWorkspaceId] = useState<string>();
+  const [markdownPreview, setMarkdownPreview] = useState<{ title: string; content: string }>();
+  const [loadingMarkdown, setLoadingMarkdown] = useState(false);
+  const [uiScale, setUiScale] = useState<UiScale>(() => {
+    const saved = window.localStorage.getItem('solution-studio-ui-scale');
+    return saved === 'compact' || saved === 'large' ? saved : 'comfortable';
+  });
 
   useEffect(() => {
     void (async () => {
@@ -46,12 +54,21 @@ export function SolutionStudioApp() {
       const workspaces = await repo.list();
       setRepository(repo);
       setContext(runtime);
-      setNewMode(runtime.sourceModeHint);
       setNewTitle(runtime.projectName ? `${runtime.projectName} 方案` : '新项目方案');
       setItems(workspaces);
-      if (workspaces.length > 0) await openWorkspace(repo, workspaces[0].workspaceId);
     })().catch((error) => notify(error instanceof Error ? error.message : String(error)));
   }, []);
+
+  useEffect(() => {
+    if (!repository || !context || workspace || openingWorkspaceId || items.length === 0) return;
+    const workspaceId = items[0].workspaceId;
+    setOpeningWorkspaceId(workspaceId);
+    void openWorkspace(repository, workspaceId)
+      .catch((error) => {
+        notify(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => setOpeningWorkspaceId(undefined));
+  }, [context, items, openingWorkspaceId, repository, workspace]);
 
   useEffect(() => {
     if (!repository || repository.mode !== 'server') return;
@@ -59,6 +76,10 @@ export function SolutionStudioApp() {
     events.addEventListener('workspaces-changed', () => void repository.list().then(setItems));
     return () => events.close();
   }, [repository]);
+
+  useEffect(() => {
+    window.localStorage.setItem('solution-studio-ui-scale', uiScale);
+  }, [uiScale]);
 
   function notify(message: string) {
     setToast(message);
@@ -73,15 +94,15 @@ export function SolutionStudioApp() {
     setSelectedTaskId(undefined);
     setActiveRequirementId(undefined);
     setCreateModal(undefined);
-    setArea('requirements');
+    setArea('overview');
     if (repo.mode === 'server') setValidation(await repo.validate(workspaceId));
   }
 
   async function createWorkspace() {
-    if (!repository || !newTitle.trim()) return;
+    if (!repository || !context || !newTitle.trim()) return;
     setCreating(true);
     try {
-      const created = await repository.create(newTitle.trim(), newMode);
+      const created = await repository.create(newTitle.trim(), context.sourceModeHint);
       setItems(await repository.list());
       await openWorkspace(repository, created.workspaceId);
     } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
@@ -118,9 +139,20 @@ export function SolutionStudioApp() {
     finally { setSaving(false); }
   }
 
+  async function openMarkdownPreview() {
+    if (!workspace || !repository || loadingMarkdown) return;
+    setLoadingMarkdown(true);
+    try {
+      setMarkdownPreview({ title: workspace.title, content: await repository.markdown(workspace.workspaceId) });
+    } catch (error) { notify(error instanceof Error ? error.message : String(error)); }
+    finally { setLoadingMarkdown(false); }
+  }
+
   if (!repository || !context) return <div className="launch-screen"><LogoMark/><span className="spinner"/><strong>正在准备 Solution Studio…</strong></div>;
 
-  if (!workspace) return <Landing context={context} items={items} title={newTitle} mode={newMode} creating={creating} onTitle={setNewTitle} onMode={setNewMode} onCreate={() => void createWorkspace()} onOpen={(id) => void openWorkspace(repository, id)} />;
+  if (!workspace && items.length > 0) return <div className="launch-screen"><LogoMark/><span className="spinner"/><strong>正在打开项目规划…</strong></div>;
+
+  if (!workspace) return <Landing context={context} title={newTitle} creating={creating} onTitle={setNewTitle} onCreate={() => void createWorkspace()} />;
 
   const currentWorkspace = workspace;
   const activeRequirement = workspace.requirements.items.find((item) => item.id === activeRequirementId);
@@ -198,23 +230,23 @@ export function SolutionStudioApp() {
     });
   }
 
-  return <div className={`solution-shell ${activeRequirement ? 'with-requirement-sheet' : ''}`}>
+  return <div className={`solution-shell ui-scale-${uiScale} ${activeRequirement ? 'with-requirement-sheet' : ''}`}>
     <header className="topbar">
       <div className="traffic-lights" aria-hidden="true"><i/><i/><i/></div>
-      <button className="brand-button" onClick={() => setWorkspace(undefined)}><LogoMark/><span><strong>Solution Studio</strong><small>{context.projectName ?? '独立方案工作区'}</small></span></button>
+      <div className="brand-button"><LogoMark/><span><strong>Solution Studio</strong><small>{context.projectName ?? '项目规划'}</small></span></div>
       <div className="document-title"><input value={workspace.title} onChange={(event) => updateWorkspace('workspace', (draft) => { draft.title = event.target.value; })}/><small>{dirtyParts.size > 0 ? '有未保存修改' : `已保存 · v${persistedRevision}`}</small></div>
       <div className="topbar-actions">
+        <div className="display-scale" role="group" aria-label="调整界面大小">
+          <span>显示</span>
+          {([['compact', '小'], ['comfortable', '中'], ['large', '大']] as const).map(([value, label]) => <button key={value} className={uiScale === value ? 'active' : ''} aria-pressed={uiScale === value} onClick={() => setUiScale(value)}>{label}</button>)}
+        </div>
         <span className={`service-badge ${repository.mode}`}><i/>{repository.mode === 'server' ? '本地服务' : '浏览器存储'}</span>
-        <a className="button secondary" href={repository.markdownUrl(workspace.workspaceId)} download={`${workspace.title}.md`}>导出 Markdown</a>
+        <button className="button secondary" disabled={loadingMarkdown} onClick={() => void openMarkdownPreview()}>{loadingMarkdown ? '正在生成…' : 'Markdown'}</button>
         <button className="button primary" disabled={dirtyParts.size === 0 || saving} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button>
       </div>
     </header>
 
-    <aside className="sidebar">
-      <div className="sidebar-project"><span>{workspace.sourceMode === 'existing-project' ? '现有项目' : '全新项目'}</span><strong>{workspace.title}</strong><p>{workspace.description || '从需求到执行，保持每个决策可追踪。'}</p>{context.projectId && <div className="host-project-binding" title={`ChatOS 项目 ID：${context.projectId}${context.projectRoot ? `\n项目目录：${context.projectRoot}` : ''}`}><i/><div><small>已关联 ChatOS 项目</small><b>{context.projectName ?? context.projectId}</b><em>{context.projectId}</em></div></div>}</div>
-      <nav>{navigation.map((item) => <button key={item.id} className={area === item.id ? 'active' : ''} onClick={() => setArea(item.id)}><b>{item.icon}</b><span><strong>{item.label}</strong><small>{item.caption}</small></span></button>)}</nav>
-      <div className="sidebar-footer"><button onClick={() => setWorkspace(undefined)}>‹ 所有方案</button><span>结构化资产 · 自动版本控制</span></div>
-    </aside>
+    <nav className="workspace-nav" aria-label="规划视图"><div>{navigation.map((item) => <button key={item.id} className={area === item.id ? 'active' : ''} onClick={() => setArea(item.id)}><b>{item.icon}</b><span><strong>{item.label}</strong><small>{item.caption}</small></span></button>)}{context.projectId && <div className="workspace-binding" title={`ChatOS 项目 ID：${context.projectId}${context.projectRoot ? `\n项目目录：${context.projectRoot}` : ''}`}><i/><span>已关联 {context.projectName ?? context.projectId}</span></div>}</div></nav>
 
     <main className={`content area-${area}`}>
       {area === 'overview' && <Overview workspace={workspace} validation={validation} requirementTrace={requirementsWithDesign} taskTrace={requirementsWithTasks} doneCount={doneCount} readyCount={readyCount} onNavigate={setArea}/>}
@@ -223,21 +255,53 @@ export function SolutionStudioApp() {
 
     {activeRequirement && <RequirementSheet workspace={workspace} requirement={activeRequirement} tab={requirementPanelTab} selectedTaskId={selectedTaskId} onTab={setRequirementPanelTab} onSelectTask={setSelectedTaskId} onClose={() => { setActiveRequirementId(undefined); setSelectedTaskId(undefined); }} onAddDesign={() => setCreateModal({ kind: 'design', requirementId: activeRequirement.id })} onAddDesignBlock={(designId) => setCreateModal({ kind: 'designBlock', requirementId: activeRequirement.id, designId })} onAddTask={() => setCreateModal({ kind: 'task', requirementId: activeRequirement.id })} onUpdateDesign={(designId, updater) => updateWorkspace('design', (draft) => { const target = draft.design.sections.find((item) => item.id === designId); if (target) updater(target); })} onUpdateTask={updateTask} onPositionsChange={(positions) => updateWorkspace('plan', (draft) => { draft.executionPlan.positions = { ...draft.executionPlan.positions, ...positions }; })}/>}
     {createModal && <CreateModal state={createModal} workspace={workspace} onClose={() => setCreateModal(undefined)} onCreateRequirement={addRequirement} onCreateDesign={addDesignSection} onCreateDesignBlock={addDesignBlock} onCreateTask={addTask}/>}
+    {markdownPreview && <MarkdownPreview title={markdownPreview.title} content={markdownPreview.content} onClose={() => setMarkdownPreview(undefined)} onNotify={notify} onCopyFile={async () => {
+      const result = await repository.copyMarkdownFile(workspace.workspaceId);
+      notify(`已复制文件 ${result.fileName}`);
+    }}/>}
     {toast && <div className="toast">{toast}</div>}
   </div>;
 }
 
-function Landing({ context, items, title, mode, creating, onTitle, onMode, onCreate, onOpen }: {
-  context: RuntimeContext; items: SolutionWorkspaceSummary[]; title: string; mode: SourceMode; creating: boolean;
-  onTitle: (value: string) => void; onMode: (value: SourceMode) => void; onCreate: () => void; onOpen: (id: string) => void;
+function MarkdownPreview({ title, content, onClose, onNotify, onCopyFile }: { title: string; content: string; onClose: () => void; onNotify: (message: string) => void; onCopyFile: () => Promise<void> }) {
+  const [showSource, setShowSource] = useState(false);
+  const [copyingFile, setCopyingFile] = useState(false);
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+  async function copyContent() {
+    try { await navigator.clipboard.writeText(content); onNotify('已复制 Markdown 内容'); }
+    catch { onNotify('复制失败，请检查剪贴板权限。'); }
+  }
+  async function copyFile() {
+    if (copyingFile) return;
+    setCopyingFile(true);
+    try { await onCopyFile(); }
+    catch (error) { onNotify(error instanceof Error ? error.message : String(error)); }
+    finally { setCopyingFile(false); }
+  }
+  return <div className="markdown-preview-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="markdown-preview" role="dialog" aria-modal="true" aria-label={`${title} Markdown 预览`}>
+      <header><div><span>MARKDOWN</span><h2>{title}</h2><p>在工作台内预览、复制文件或复制原始内容。</p></div><button aria-label="关闭 Markdown 预览" onClick={onClose}>×</button></header>
+      <nav><button className={!showSource ? 'active' : ''} onClick={() => setShowSource(false)}>排版预览</button><button className={showSource ? 'active' : ''} onClick={() => setShowSource(true)}>Markdown 源码</button></nav>
+      <main>{showSource ? <pre className="markdown-source">{content}</pre> : <article className="markdown-document"><ReactMarkdown components={{ code({ node: _node, className, children, ...props }) { const value = String(children).replace(/\n$/, ''); return className === 'language-svg' && value.trim().startsWith('<svg') ? <img className="markdown-svg" src={svgPreviewUrl(value)} alt="SVG 设计图"/> : <code className={className} {...props}>{children}</code>; } }}>{content}</ReactMarkdown></article>}</main>
+      <footer><span>“复制文件”可直接粘贴到 Finder、聊天或上传区域。</span><div><button onClick={() => void copyContent()}>复制内容</button><button className="primary" disabled={copyingFile} onClick={() => void copyFile()}>{copyingFile ? '正在复制…' : '复制文件'}</button></div></footer>
+    </section>
+  </div>;
+}
+
+function Landing({ context, title, creating, onTitle, onCreate }: {
+  context: RuntimeContext; title: string; creating: boolean;
+  onTitle: (value: string) => void; onCreate: () => void;
 }) {
   return <div className="landing-shell">
     <header><div className="traffic-lights" aria-hidden="true"><i/><i/><i/></div><div className="landing-brand"><LogoMark/><strong>Solution Studio</strong></div><span className="service-badge server"><i/>Apple-inspired workspace</span></header>
     <main>
       <section className="hero"><span className="eyebrow">FROM INTENT TO EXECUTION</span><h1>把模糊想法，变成<br/><em>可以执行的方案。</em></h1><p>结合现有项目或全新需求，生成可追踪的需求文档、设计方案和前置依赖计划。</p>
-        <div className="create-card"><div className="mode-switch"><button className={mode === 'existing-project' ? 'active' : ''} onClick={() => onMode('existing-project')}><span>⌘</span><strong>现有项目</strong><small>基于代码与文档证据</small></button><button className={mode === 'greenfield' ? 'active' : ''} onClick={() => onMode('greenfield')}><span>✦</span><strong>全新项目</strong><small>从目标与约束开始</small></button></div><div className="create-row"><input value={title} onChange={(event) => onTitle(event.target.value)} placeholder="方案名称"/><button disabled={!title.trim() || creating} onClick={onCreate}>{creating ? '正在创建…' : '开始规划'} <span>→</span></button></div>{context.projectName && <small>当前关联项目：{context.projectName}</small>}</div>
+        <div className="create-card"><div className="create-row"><input value={title} onChange={(event) => onTitle(event.target.value)} placeholder="方案名称"/><button disabled={!title.trim() || creating} onClick={onCreate}>{creating ? '正在创建…' : '开始规划'} <span>→</span></button></div>{context.projectName && <small>当前关联项目：{context.projectName}</small>}</div>
       </section>
-      {items.length > 0 && <section className="recent"><header><div><span className="eyebrow">RECENT</span><h2>最近方案</h2></div><span>{items.length} 个工作区</span></header><div className="recent-grid">{items.map((item) => <button key={item.workspaceId} onClick={() => onOpen(item.workspaceId)}><span className="recent-icon">◇</span><div><strong>{item.title}</strong><small>{item.requirementCount} 项需求 · {item.designSectionCount} 个设计章节 · {item.completedTaskCount}/{item.taskCount} 个任务</small></div><em>›</em></button>)}</div></section>}
     </main>
   </div>;
 }
@@ -324,14 +388,14 @@ function RequirementsView({ workspace, onAdd, onOpen }: { workspace: SolutionWor
   </div>;
 }
 
-function svgPreviewDocument(svg: string) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><style>html,body{margin:0;width:100%;height:100%;overflow:auto;background:transparent}body{display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}svg{max-width:100%;max-height:100%;height:auto}</style></head><body>${svg}</body></html>`;
+function svgPreviewUrl(svg: string) {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 function DesignBlockPreview({ block }: { block: DesignContentBlock }) {
   return <section className={`design-content-block type-${block.type}`}>
     <header><span>{designTypeLabels[block.type]}</span><strong>{block.title}</strong></header>
-    {block.type === 'text' ? <div className="design-text-content">{block.content}</div> : <><iframe title={block.title} sandbox="" referrerPolicy="no-referrer" srcDoc={svgPreviewDocument(block.content)}/><details><summary>查看 SVG 源码</summary><pre>{block.content}</pre></details></>}
+    {block.type === 'text' ? <div className="design-text-content">{block.content}</div> : <><img className="svg-preview" src={svgPreviewUrl(block.content)} alt={`${block.title} SVG 预览`}/><details><summary>查看 SVG 源码</summary><pre>{block.content}</pre></details></>}
   </section>;
 }
 
@@ -368,7 +432,7 @@ function RequirementSheet({ workspace, requirement, tab, selectedTaskId, onTab, 
   const externalDependencyCount = scopedTasks.length - tasks.length;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const directTaskIds = new Set(tasks.map((task) => task.id));
-  const directGraphTasks = tasks.map((task) => ({ ...task, dependsOn: task.dependsOn.filter((id) => directTaskIds.has(id) || taskById.get(id)?.status !== 'done') }));
+  const directGraphTasks = tasks.map((task) => ({ ...task, dependsOn: task.dependsOn.filter((id) => directTaskIds.has(id)) }));
   const graphTasks = planScope === 'complete' ? scopedTasks : directGraphTasks;
   const scopedPlan = { ...workspace.executionPlan, tasks: graphTasks, positions: Object.fromEntries(graphTasks.flatMap((task) => workspace.executionPlan.positions[task.id] ? [[task.id, workspace.executionPlan.positions[task.id]]] : [])) };
   const readyCount = tasks.filter((task) => task.status === 'planned' && task.dependsOn.every((id) => taskById.get(id)?.status === 'done')).length;

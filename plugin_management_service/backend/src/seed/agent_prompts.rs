@@ -335,6 +335,9 @@ mod tests {
             assert!(content.contains("读取成功不等于当前需求已经完成"));
             assert!(content.contains("不得把旧 Task 的完成状态"));
             assert!(content.contains("项目绑定本身不是创建 Task 的条件"));
+            assert!(content.contains("`wait_for_task_completion` 表示"));
+            assert!(content.contains("不得等待任务终态或产物"));
+            assert!(content.contains("然后结束当前轮"));
         }
 
         let run_prompt = prompts
@@ -348,6 +351,9 @@ mod tests {
         assert!(run_prompt.contains("`requires_execution=false`"));
         assert!(run_prompt.contains("不能据此推断任务是“仅文件处理任务”"));
         assert!(run_prompt.contains("本轮实际注册并暴露的工具"));
+        assert!(run_prompt.contains("有节奏的用户可见任务过程记录"));
+        assert!(run_prompt.contains("关键验证得出结果"));
+        assert!(run_prompt.contains("不要为每次工具调用"));
     }
 
     #[test]

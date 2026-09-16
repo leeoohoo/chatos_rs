@@ -73,6 +73,7 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         description: String,
         rolePrompt: String,
         modelConfigID: String,
+        professionKey: String,
         canManageStaff: Bool,
         canAccessLocalProjects: Bool
     ) async -> Bool {
@@ -92,6 +93,7 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             modelConfigID: modelConfigID,
+            professionKey: professionKey,
             defaultPluginIDs: [],
             defaultSkillIDs: permissions
         )
@@ -550,6 +552,11 @@ private struct AgentManagementView: View {
                     .lineLimit(1)
             }
             .font(.caption)
+            LabeledContent("职业") {
+                Text(LocalAgentSkillCatalog.profession(key: agent.draft.professionKey)?.label
+                    ?? agent.draft.professionKey)
+            }
+            .font(.caption)
             LabeledContent("工具与 Plugin") {
                 Text("按任务自主发现")
             }
@@ -591,6 +598,7 @@ private struct AgentProfileEditorSheet: View {
     @State private var description: String
     @State private var rolePrompt: String
     @State private var modelConfigID: String
+    @State private var professionKey: String
     @State private var canManageStaff: Bool
     @State private var canAccessLocalProjects: Bool
 
@@ -608,6 +616,8 @@ private struct AgentProfileEditorSheet: View {
         _description = State(initialValue: profile?.draft.description ?? "")
         _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? Self.defaultPrompt)
         _modelConfigID = State(initialValue: profile?.draft.modelConfigID ?? "")
+        _professionKey = State(initialValue: profile?.draft.professionKey
+            ?? LocalAgentSkillCatalog.legacyProfessionKey)
         _canManageStaff = State(initialValue: profile.map {
             LocalAgentPermission.canManageStaff($0.draft.defaultSkillIDs)
         } ?? false)
@@ -649,6 +659,22 @@ private struct AgentProfileEditorSheet: View {
                         .labelsHidden()
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    editorField("职业") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Picker("", selection: $professionKey) {
+                                ForEach(LocalAgentSkillCatalog.professions) { profession in
+                                    Text("\(profession.categoryLabel) · \(profession.label)")
+                                        .tag(profession.key)
+                                }
+                            }
+                            .labelsHidden()
+                            if let selected = LocalAgentSkillCatalog.profession(key: professionKey) {
+                                Text(selected.description)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                     editorField("角色 Prompt") {
                         TextField("角色 Prompt", text: $rolePrompt, axis: .vertical)
                             .lineLimit(5...10)
@@ -686,6 +712,7 @@ private struct AgentProfileEditorSheet: View {
                             description: description,
                             rolePrompt: rolePrompt,
                             modelConfigID: modelConfigID,
+                            professionKey: professionKey,
                             canManageStaff: canManageStaff,
                             canAccessLocalProjects: canAccessLocalProjects
                         ) { dismiss() }

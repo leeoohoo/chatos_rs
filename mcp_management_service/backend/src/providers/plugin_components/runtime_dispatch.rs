@@ -33,10 +33,26 @@ impl PluginComponentProvider {
     }
 
     pub(in crate::providers) async fn close_session(&self, snapshot: &RuntimeSessionSnapshot) {
+        let mut effective = snapshot.plugin_local_tool_component_bindings.clone();
+        let prefix = format!("{}\n", snapshot.session_id);
+        let recovered = {
+            let mut bindings = self.recovered_bindings.write().await;
+            let keys = bindings
+                .keys()
+                .filter(|key| key.starts_with(prefix.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            keys.into_iter()
+                .filter_map(|key| bindings.remove(key.as_str()))
+                .collect::<Vec<_>>()
+        };
+        for binding in recovered {
+            effective.insert(binding.runtime.resource_id.clone(), binding);
+        }
         self.close_local_bindings(
             snapshot.owner_user_id.as_str(),
             snapshot.session_id.as_str(),
-            &snapshot.plugin_local_tool_component_bindings,
+            &effective,
         )
         .await;
     }

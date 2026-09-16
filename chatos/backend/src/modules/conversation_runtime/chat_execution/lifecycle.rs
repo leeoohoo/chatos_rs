@@ -31,6 +31,8 @@ pub(crate) struct TaskTurnLifecycleState {
     pub(crate) follow_up_rounds: usize,
     #[serde(default)]
     pub(crate) rejected_provider_tool_rounds: usize,
+    #[serde(default)]
+    pub(crate) async_handoff_confirmed: bool,
     pub(crate) mode: Option<TaskTurnFollowUpMode>,
     pub(crate) last_visible_response: Option<AiResponse>,
     pub(crate) review_locale: Option<InternalContextLocale>,
@@ -191,7 +193,16 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
         &self,
         _context: RuntimeIterationContext,
     ) -> Result<RuntimeBeforeModelRequest, String> {
-        let input_items =
+        let (review_mode, async_handoff_confirmed) = {
+            let state = self.task_turn_state()?;
+            (
+                matches!(state.mode, Some(TaskTurnFollowUpMode::ReviewExecution)),
+                state.async_handoff_confirmed,
+            )
+        };
+        let mut input_items = if async_handoff_confirmed {
+            Vec::new()
+        } else {
             crate::services::runtime_guidance_input::load_runtime_guidance_input_items(
                 Some(self.session_id.as_str()),
                 Some(self.turn_id.as_str()),
@@ -200,15 +211,17 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
                 self.supports_images,
                 &self.callbacks,
             )
-            .await;
-        let review_mode = matches!(
-            self.task_turn_state()?.mode,
-            Some(TaskTurnFollowUpMode::ReviewExecution)
-        );
+            .await
+        };
+        if async_handoff_confirmed {
+            input_items.extend(follow_up_message_items(
+                "[Task Runner Background Handoff]\n`wait_for_task_completion` has succeeded. The requested background task is accepted and continues independently. Do not call any tool, inspect task status, wait for completion, or claim that the task deliverables are finished. Immediately give the user one concise handoff summary stating that the task has started and its final result will arrive through the normal task callback.",
+            ));
+        }
         Ok(RuntimeBeforeModelRequest::unchanged()
             .with_input_items(input_items)
             .with_stream_output(!review_mode)
-            .with_tools_enabled(!review_mode))
+            .with_tools_enabled(!review_mode && !async_handoff_confirmed))
     }
 
     async fn after_final_response(
@@ -219,6 +232,14 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
             unauthorized_provider_tool_types(&context.response.response_output_items);
         if !unauthorized_provider_tools.is_empty() {
             return self.handle_unauthorized_provider_tools(context, unauthorized_provider_tools);
+        }
+
+        // `wait_for_task_completion` is the explicit boundary between the foreground
+        // conversation and the independently running Task Runner job. Once its result has
+        // been accepted, never turn an unfinished background task into a same-turn follow-up.
+        if self.task_turn_state()?.async_handoff_confirmed {
+            self.task_turn_state()?.mode = None;
+            return Ok(RuntimeFinalResponseAction::Accept);
         }
 
         if matches!(
@@ -310,6 +331,7 @@ pub(crate) fn task_turn_review_metadata(state: &TaskTurnLifecycleState) -> Value
             "attempted": state.review_attempted,
             "outcome": outcome,
             "rounds": state.follow_up_rounds,
+            "async_handoff_confirmed": state.async_handoff_confirmed,
         }
     })
 }

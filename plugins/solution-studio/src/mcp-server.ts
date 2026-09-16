@@ -26,7 +26,7 @@ const gate = (...skills: string[]) => ({
 });
 
 const workspaceIdentityProperties = {
-  artifactKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$', description: 'Stable logical identity for one solution workspace inside the injected project scope.' },
+  artifactKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$', description: 'Optional compatibility key. The active ChatOS project always owns exactly one planning workspace.' },
   title: { type: 'string', minLength: 1, maxLength: 240 },
   sourceMode: { type: 'string', enum: ['existing-project', 'greenfield'] }
 } as const;
@@ -34,13 +34,13 @@ const workspaceIdentityProperties = {
 const TOOL_DEFINITIONS = [
   {
     name: 'solution_get_active_context',
-    description: 'Read the injected project context and list existing Solution Studio workspaces. Use this before creating or revising planning artifacts.',
+    description: 'Read the injected project context and its single current project plan. Use this before creating or revising planning artifacts.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     _meta: policy
   },
   {
     name: 'solution_get_workspace',
-    description: 'Read one complete requirements, design, and execution-plan workspace by workspaceId or artifactKey.',
+    description: 'Read the current project plan, optionally checking it by workspaceId or legacy artifactKey.',
     inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' }, artifactKey: { type: 'string' } }, additionalProperties: false },
     _meta: policy
   },
@@ -49,7 +49,7 @@ const TOOL_DEFINITIONS = [
     description: 'Create or revise the structured requirements for an existing or greenfield project. Preserve verified evidence separately from assumptions and open questions.',
     inputSchema: {
       type: 'object', properties: { ...workspaceIdentityProperties, requirements: { type: 'object', description: 'Complete RequirementsDocument business content.' } },
-      required: ['artifactKey', 'title', 'sourceMode', 'requirements'], additionalProperties: false
+      required: ['title', 'requirements'], additionalProperties: false
     },
     _meta: gate('solution-discovery')
   },
@@ -58,7 +58,7 @@ const TOOL_DEFINITIONS = [
     description: 'Create or revise the solution design, linked to a concrete requirements revision and requirement IDs.',
     inputSchema: {
       type: 'object', properties: { ...workspaceIdentityProperties, design: { type: 'object', description: 'Complete SolutionDesignDocument business content.' } },
-      required: ['artifactKey', 'title', 'sourceMode', 'design'], additionalProperties: false
+      required: ['title', 'design'], additionalProperties: false
     },
     _meta: gate('solution-design')
   },
@@ -67,7 +67,7 @@ const TOOL_DEFINITIONS = [
     description: 'Create or revise a dependency-aware execution plan. tasks[].dependsOn is canonical; the service rejects unknown references, self-dependencies, and dependency cycles.',
     inputSchema: {
       type: 'object', properties: { ...workspaceIdentityProperties, executionPlan: { type: 'object', description: 'Complete ExecutionPlan business content including tasks and dependsOn relationships.' } },
-      required: ['artifactKey', 'title', 'sourceMode', 'executionPlan'], additionalProperties: false
+      required: ['title', 'executionPlan'], additionalProperties: false
     },
     _meta: gate('solution-execution-plan')
   },
@@ -114,12 +114,19 @@ async function resolveWorkspace(argumentsValue: Record<string, unknown>) {
     const workspace = await store.findByArtifactKey(argumentsValue.artifactKey);
     if (workspace) return workspace;
   }
-  throw new Error('A matching Solution Studio workspace was not found.');
+  const current = await store.getCurrent();
+  if (current) return current;
+  throw new Error('The active ChatOS project does not have a Solution Studio plan yet.');
 }
 
-function requiredSourceMode(value: unknown): SourceMode {
+function effectiveSourceMode(value: unknown): SourceMode {
+  if (value === undefined) return runtimeContext.sourceModeHint;
   if (value !== 'existing-project' && value !== 'greenfield') throw new Error('sourceMode is invalid.');
   return value;
+}
+
+function effectiveArtifactKey(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : 'project-plan';
 }
 
 async function exportWorkspace(workspaceId: string, format: 'json' | 'markdown') {
@@ -146,14 +153,14 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
   const input = objectArguments(rawArguments);
   switch (name) {
     case 'solution_get_active_context':
-      return { scope: runtimeScope(), workspaces: await store.list() };
+      return { scope: runtimeScope(), workspace: await store.getCurrent().then((workspace) => workspace ? workspaceSummary(workspace) : null) };
     case 'solution_get_workspace': {
       const workspace = await resolveWorkspace(input);
       return { workspace, validation: validateWorkspace(workspace) };
     }
     case 'solution_upsert_requirements': {
       const requirements = input.requirements as RequirementsDocument;
-      const result = await store.upsert(String(input.artifactKey), String(input.title), requiredSourceMode(input.sourceMode), (workspace) => {
+      const result = await store.upsert(effectiveArtifactKey(input.artifactKey), String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
         workspace.requirements = { ...requirements, revision: workspace.requirements.revision + 1, updatedAt: new Date().toISOString() };
         return workspace;
       });
@@ -161,7 +168,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     }
     case 'solution_upsert_design': {
       const design = input.design as SolutionDesignDocument;
-      const result = await store.upsert(String(input.artifactKey), String(input.title), requiredSourceMode(input.sourceMode), (workspace) => {
+      const result = await store.upsert(effectiveArtifactKey(input.artifactKey), String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
         workspace.design = { ...design, revision: workspace.design.revision + 1, updatedAt: new Date().toISOString() };
         return workspace;
       });
@@ -169,7 +176,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     }
     case 'solution_upsert_execution_plan': {
       const executionPlan = input.executionPlan as ExecutionPlan;
-      const result = await store.upsert(String(input.artifactKey), String(input.title), requiredSourceMode(input.sourceMode), (workspace) => {
+      const result = await store.upsert(effectiveArtifactKey(input.artifactKey), String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
         workspace.executionPlan = { ...executionPlan, revision: workspace.executionPlan.revision + 1, updatedAt: new Date().toISOString() };
         const validation = validateWorkspace(workspace);
         const dependencyIssues = validation.issues.filter((issue) => ['unknown_dependency', 'self_dependency', 'dependency_cycle'].includes(issue.code));
@@ -215,7 +222,7 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: 'chatos-solution-studio', version: '0.1.0' }, { capabilities: { tools: {} } });
+const server = new Server({ name: 'chatos-solution-studio', version: '0.1.5' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

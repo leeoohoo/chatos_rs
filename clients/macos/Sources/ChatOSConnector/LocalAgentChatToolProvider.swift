@@ -123,11 +123,15 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 $0.name != Self.proposeMemberToolName
                     && $0.name != Self.proposeMemberRemovalToolName
             }
-        } else if try await store.room(
-            ownerUserID: context.ownerUserID,
-            roomID: context.roomID
-        )?.conversationKind.isDirect == true {
-            definitions = definitions.filter { $0.name != Self.proposeMemberRemovalToolName }
+        } else {
+            definitions.removeAll { $0.name == Self.proposeMemberToolName }
+            definitions.append(try Self.memberProposalDefinition())
+            if try await store.room(
+                ownerUserID: context.ownerUserID,
+                roomID: context.roomID
+            )?.conversationKind.isDirect == true {
+                definitions = definitions.filter { $0.name != Self.proposeMemberRemovalToolName }
+            }
         }
         return definitions
     }
@@ -423,6 +427,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             rolePrompt: try Self.requiredString(arguments, key: "role_prompt"),
             modelConfigID: try Self.optionalString(arguments, key: "model_config_id")
                 ?? currentProfile.draft.modelConfigID,
+            professionKey: try Self.requiredString(arguments, key: "profession_key"),
             rationale: try Self.optionalString(arguments, key: "rationale") ?? ""
         )
         try draft.validate()
@@ -664,4 +669,32 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             effect: .write
         ),
     ]
+
+    private static func memberProposalDefinition() throws -> AgentToolDefinition {
+        let professions = LocalAgentSkillCatalog.professions
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "name": ["type": "string", "minLength": 1, "maxLength": 120],
+                "role": ["type": "string", "minLength": 1, "maxLength": 160],
+                "responsibility": ["type": "string", "maxLength": 8_000],
+                "role_prompt": ["type": "string", "minLength": 1, "maxLength": 32_000],
+                "model_config_id": ["type": "string", "minLength": 1, "maxLength": 512],
+                "profession_key": [
+                    "type": "string",
+                    "enum": professions.map(\.key),
+                    "description": professions.map { "\($0.key)=\($0.label)" }.joined(separator: "；"),
+                ],
+                "rationale": ["type": "string", "maxLength": 4_000],
+            ],
+            "required": ["name", "role", "role_prompt", "profession_key"],
+            "additionalProperties": false,
+        ]
+        return .init(
+            name: proposeMemberToolName,
+            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。必须从客户端目录选择职业；该工具只持久化待确认提案，绝不会直接创建 Agent。",
+            schema: try JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
+            effect: .write
+        )
+    }
 }

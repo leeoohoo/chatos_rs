@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { Background, BackgroundVariant, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, useReactFlow, type NodeProps } from '@xyflow/react';
 import type { ExecutionPlan, ExecutionTask, PlanNodePosition } from '../../src/schema';
 
 type TaskNodeData = { task: ExecutionTask; ready: boolean };
 const elk = new ELK();
+const NODE_WIDTH = 288;
+const NODE_HEIGHT = 176;
+const COLLISION_GAP = 20;
 
 function statusLabel(task: ExecutionTask, ready: boolean) {
   if (ready) return '可以开始';
@@ -31,19 +35,39 @@ function readyIds(plan: ExecutionPlan): Set<string> {
 }
 
 async function automaticPositions(plan: ExecutionPlan): Promise<Record<string, PlanNodePosition>> {
+  const taskIds = new Set(plan.tasks.map((task) => task.id));
   const graph = await elk.layout({
     id: 'root',
     layoutOptions: {
       'elk.algorithm': 'layered',
       'elk.direction': 'RIGHT',
-      'elk.spacing.nodeNode': '34',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '74',
-      'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX'
+      'elk.padding': '[top=40,left=40,bottom=40,right=40]',
+      'elk.spacing.nodeNode': '72',
+      'elk.spacing.edgeNode': '28',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '126',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '34',
+      'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+      'elk.layered.nodePlacement.favorStraightEdges': 'true'
     },
-    children: plan.tasks.map((task) => ({ id: task.id, width: 268, height: 154 })),
-    edges: plan.tasks.flatMap((task) => task.dependsOn.map((dependency) => ({ id: `${dependency}->${task.id}`, sources: [dependency], targets: [task.id] })))
+    children: plan.tasks.map((task) => ({ id: task.id, width: NODE_WIDTH, height: NODE_HEIGHT })),
+    edges: plan.tasks.flatMap((task) => task.dependsOn.filter((dependency) => taskIds.has(dependency)).map((dependency) => ({ id: `${dependency}->${task.id}`, sources: [dependency], targets: [task.id] })))
   });
   return Object.fromEntries((graph.children ?? []).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]));
+}
+
+function positionsOverlap(plan: ExecutionPlan, transientPositions: Record<string, PlanNodePosition>): boolean {
+  const positioned = plan.tasks.flatMap((task) => {
+    const position = transientPositions[task.id] ?? plan.positions[task.id];
+    return position ? [{ id: task.id, ...position }] : [];
+  });
+  for (let index = 0; index < positioned.length; index += 1) {
+    for (let candidateIndex = index + 1; candidateIndex < positioned.length; candidateIndex += 1) {
+      const first = positioned[index];
+      const second = positioned[candidateIndex];
+      if (Math.abs(first.x - second.x) < NODE_WIDTH + COLLISION_GAP && Math.abs(first.y - second.y) < NODE_HEIGHT + COLLISION_GAP) return true;
+    }
+  }
+  return false;
 }
 
 export function PlanGraph({ plan, selectedTaskId, onSelect, onPositionsChange }: {
@@ -54,25 +78,44 @@ export function PlanGraph({ plan, selectedTaskId, onSelect, onPositionsChange }:
 }) {
   const [layouting, setLayouting] = useState(false);
   const [transientPositions, setTransientPositions] = useState<Record<string, PlanNodePosition>>({});
+  const [expanded, setExpanded] = useState(false);
   const { fitView } = useReactFlow();
   const ready = useMemo(() => readyIds(plan), [plan]);
   const missingPositions = plan.tasks.some((task) => !plan.positions[task.id] && !transientPositions[task.id]);
+  const overlappingPositions = positionsOverlap(plan, transientPositions);
+  const taskSignature = plan.tasks.map((task) => task.id).sort().join('|');
 
   function showAutomaticPositions(positions: Record<string, PlanNodePosition>) {
     setTransientPositions(positions);
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => void fitView({ padding: 0.22, duration: 240 })));
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => void fitView({ padding: 0.2, duration: 280 })));
   }
 
+  useEffect(() => setTransientPositions({}), [taskSignature]);
+
   useEffect(() => {
-    if (!missingPositions || plan.tasks.length === 0 || layouting) return;
+    if (!expanded) return;
+    function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') setExpanded(false); }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [expanded]);
+
+  useEffect(() => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => void fitView({ padding: expanded ? 0.12 : 0.2, duration: 260 })));
+  }, [expanded, fitView]);
+
+  useEffect(() => {
+    if ((!missingPositions && !overlappingPositions) || plan.tasks.length === 0 || layouting) return;
     setLayouting(true);
-    void automaticPositions(plan).then(showAutomaticPositions).finally(() => setLayouting(false));
-  }, [missingPositions, plan.tasks.length]);
+    void automaticPositions(plan).then((positions) => {
+      showAutomaticPositions(positions);
+      if (overlappingPositions) onPositionsChange(positions);
+    }).finally(() => setLayouting(false));
+  }, [missingPositions, overlappingPositions, taskSignature]);
 
   const nodes = plan.tasks.map((task, index) => ({
     id: task.id,
     type: 'taskNode',
-    position: plan.positions[task.id] ?? transientPositions[task.id] ?? { x: (index % 3) * 330, y: Math.floor(index / 3) * 210 },
+    position: transientPositions[task.id] ?? plan.positions[task.id] ?? { x: (index % 3) * (NODE_WIDTH + 90), y: Math.floor(index / 3) * (NODE_HEIGHT + 72) },
     selected: task.id === selectedTaskId,
     data: { task, ready: ready.has(task.id) }
   }));
@@ -96,10 +139,10 @@ export function PlanGraph({ plan, selectedTaskId, onSelect, onPositionsChange }:
     finally { setLayouting(false); }
   }
 
-  return <section className="plan-graph-shell">
+  const graph = <section className={`plan-graph-shell ${expanded ? 'is-expanded' : ''}`}>
     <div className="plan-graph-toolbar">
       <div><strong>依赖关系图</strong><span>{ready.size} 个任务可以开始</span></div>
-      <button onClick={() => void relayout()} disabled={layouting}>{layouting ? '正在整理…' : '自动整理'}</button>
+      <div className="plan-graph-actions"><button onClick={() => void relayout()} disabled={layouting}>{layouting ? '正在整理…' : '自动整理'}</button><button onClick={() => setExpanded((value) => !value)}>{expanded ? '退出全屏' : '全屏'}</button></div>
     </div>
     <div className="plan-graph-canvas">
       {plan.tasks.length === 0 ? <div className="empty-canvas"><span>⌘</span><strong>还没有执行任务</strong><p>添加任务后，前置关系会自动渲染成可浏览的流程图。</p></div> : <ReactFlow
@@ -113,7 +156,11 @@ export function PlanGraph({ plan, selectedTaskId, onSelect, onPositionsChange }:
         nodesConnectable={false}
         onPaneClick={() => onSelect(undefined)}
         onNodeClick={(_event, node) => onSelect(node.id)}
-        onNodeDragStop={(_event, node) => onPositionsChange({ ...transientPositions, ...plan.positions, [node.id]: node.position })}
+        onNodeDragStop={(_event, node) => {
+          const positions = { ...plan.positions, ...transientPositions, [node.id]: node.position };
+          setTransientPositions(positions);
+          onPositionsChange(positions);
+        }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--grid-dot)" />
         <MiniMap pannable zoomable className="plan-minimap" nodeColor={(node) => {
@@ -124,4 +171,5 @@ export function PlanGraph({ plan, selectedTaskId, onSelect, onPositionsChange }:
       </ReactFlow>}
     </div>
   </section>;
+  return expanded ? createPortal(graph, document.body) : graph;
 }

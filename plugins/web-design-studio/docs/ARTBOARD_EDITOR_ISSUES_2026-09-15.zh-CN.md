@@ -119,3 +119,10 @@
 - 根因：删除流程依赖浏览器原生 `window.confirm`；插件运行在受限制的嵌入式页面时，宿主可能禁止原生 JavaScript 对话框，确认调用会直接失败或返回取消，导致删除接口从未执行。
 - 修复：改用插件自身的 `alertdialog` 确认弹窗，不再依赖宿主原生对话框；确认后显示“正在删除”，禁用重复提交，完成后重新读取项目和设计目录。服务端回归测试同时验证文档文件被删除、项目 `designIds` 移除对应条目。
 - 验收：项目首页和编辑器内的设计目录都能打开同一删除确认弹窗；取消不改变数据；确认后卡片消失、刷新不恢复，连续点击不会重复请求。
+
+### 17. App 重启后长任务无法继续激活 Plugin Skill
+
+- 现象：设计任务已经完成部分画板后重启 App，任务继续执行时反复提示“Plugin Skill 会话不存在或已经结束”；模型重新激活 Router 或 Scene Building Skill 仍使用旧会话并最终阻塞。
+- 根因：Plugin Skill adapter session 只保存在 Local Connector 进程内存中，App 重启后必然丢失；MCP Management 原来只会自动恢复普通 Plugin MCP session，没有为独立 Skill component 建立相同的恢复链路。
+- 修复：Skill component execute 遇到 macOS 中文或 Windows 英文的明确 session-missing 错误，或 Connector 控制订阅刚重建时，使用 Runtime Session 中不可变的 component snapshot 自动重新 `prepare`，校验 Plugin、Release、Skill snapshot、工具目录与作用域完全未变，然后只重放一次原激活/资源读取请求；后续调用复用新 adapter session，关闭任务时也只清理新 session。
+- 验收：准备 Skill 后重启 App，第一次继续激活会自动产生新 adapter session 并成功返回；第二次激活不再 prepare；恢复前后 `skill_snapshot` 完全一致；超时等“不确定是否已执行”的错误不得自动重放。

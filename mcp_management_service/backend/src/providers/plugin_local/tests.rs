@@ -993,6 +993,11 @@ fn only_definitely_unexecuted_adapter_failures_are_recoverable() {
     ));
     assert!(local_runtime::is_recoverable_adapter_session_error(
         &ProviderCallError::provider_unavailable(
+            "Plugin Local Provider rejected execute with HTTP 400: Plugin local session does not exist or has ended.",
+        )
+    ));
+    assert!(local_runtime::is_recoverable_adapter_session_error(
+        &ProviderCallError::provider_unavailable(
             "Local Connector target instance old has no active control subscriber",
         )
     ));

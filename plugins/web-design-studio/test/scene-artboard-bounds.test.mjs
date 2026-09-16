@@ -41,9 +41,9 @@ test('an absolute component below the old root grows the artboard to its real bo
   assert.equal(bounds.nodeCount, 2);
 });
 
-test('stored viewport height is only a fallback and does not pin a populated artboard', () => {
+test('stored viewport height remains the minimum while populated artboards can grow', () => {
   const scene = sceneWithButton(700);
-  assert.equal(sceneArtboardContentHeight(scene, 'page-login', 1440, 900), 768);
+  assert.equal(sceneArtboardContentHeight(scene, 'page-login', 1440, 900), 900);
 });
 
 test('measuring one page ignores content on every other artboard', () => {

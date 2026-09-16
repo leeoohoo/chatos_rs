@@ -28,10 +28,10 @@ export const WEB_DESIGN_ARTBOARD_SIZE_PRESETS: WebDesignArtboardSizePreset[] = [
   { id: 'artboard-narrow-360', label: '窄画板 360', width: 360, height: 800 },
   { id: 'artboard-narrow-390', label: '窄画板 390', width: 390, height: 844 },
   { id: 'artboard-medium-768', label: '中型画板 768', width: 768, height: 1024 },
-  { id: 'artboard-standard-1200', label: '标准画板 1200', width: 1200, height: 900 },
-  { id: 'artboard-wide-1440', label: '宽画板 1440', width: 1440, height: 900 },
-  { id: 'artboard-wide-1920', label: '宽画板 1920', width: 1920, height: 1080 },
-  { id: 'artboard-large-2560', label: '大型画板 2560', width: 2560, height: 1080, group: 'large-surface' }
+  { id: 'artboard-standard-1200', label: '紧凑画板 1200', width: 1200, height: 900 },
+  { id: 'artboard-wide-1440', label: '标准桌面画板 1440', width: 1440, height: 900 },
+  { id: 'artboard-wide-1920', label: '宽屏画板 1920', width: 1920, height: 1080 },
+  { id: 'artboard-large-2560', label: '2K QHD 画板 2560', width: 2560, height: 1440, group: 'large-surface' }
 ];
 
 export function matchArtboardSizePreset(
@@ -46,8 +46,8 @@ export function matchArtboardSizePreset(
 }
 
 export const WEB_DESIGN_VIEWPORT_PRESETS: WebDesignViewportPreset[] = [
-  { id: 'desktop-responsive', device: 'desktop', label: '响应式桌面', width: 1200, height: 900 },
-  { id: 'desktop-design-1440', device: 'desktop', label: '桌面设计 1440', width: 1440, height: 900 },
+  { id: 'desktop-responsive', device: 'desktop', label: '默认桌面 1440', width: 1440, height: 900 },
+  { id: 'desktop-compact-1200', device: 'desktop', label: '紧凑桌面 1200', width: 1200, height: 900 },
   { id: 'desktop-hd', device: 'desktop', label: '笔记本 HD', width: 1366, height: 768 },
   { id: 'macbook-air-13', device: 'desktop', label: 'MacBook Air 13″', width: 1470, height: 956 },
   { id: 'macbook-pro-14', device: 'desktop', label: 'MacBook Pro 14″', width: 1512, height: 982 },

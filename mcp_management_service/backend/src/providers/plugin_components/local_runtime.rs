@@ -59,6 +59,93 @@ fn skill_scope(
 }
 
 impl PluginComponentProvider {
+    fn recovered_binding_key(snapshot: &RuntimeSessionSnapshot, resource_id: &str) -> String {
+        format!("{}\n{resource_id}", snapshot.session_id)
+    }
+
+    async fn effective_binding(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        prepared: &PluginLocalToolComponentBinding,
+    ) -> PluginLocalToolComponentBinding {
+        self.recovered_bindings
+            .read()
+            .await
+            .get(
+                Self::recovered_binding_key(snapshot, prepared.runtime.resource_id.as_str())
+                    .as_str(),
+            )
+            .cloned()
+            .unwrap_or_else(|| prepared.clone())
+    }
+
+    async fn recover_binding(
+        &self,
+        snapshot: &RuntimeSessionSnapshot,
+        failed_binding: &PluginLocalToolComponentBinding,
+    ) -> Result<PluginLocalToolComponentBinding, ProviderCallError> {
+        let _guard = self.recovery_lock.lock().await;
+        let resource_id = failed_binding.runtime.resource_id.as_str();
+        let prepared = snapshot
+            .plugin_local_tool_component_bindings
+            .get(resource_id)
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "Plugin Local tool component binding is missing",
+                )
+            })?;
+        let current = self.effective_binding(snapshot, prepared).await;
+        if current.adapter_session_id != failed_binding.adapter_session_id {
+            return Ok(current);
+        }
+        let immutable = snapshot
+            .plugin_tool_component_bindings
+            .get(resource_id)
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "immutable Plugin tool component binding is missing",
+                )
+            })?;
+        let route = snapshot
+            .routes
+            .iter()
+            .find(|candidate| candidate.resource_id == resource_id)
+            .ok_or_else(|| {
+                ProviderCallError::provider_unavailable(
+                    "Plugin tool component route is missing from the Runtime Session",
+                )
+            })?;
+        let mut recovered = self
+            .prepare_local(
+                immutable,
+                route,
+                &snapshot.project_context,
+                snapshot.session_id.as_str(),
+                snapshot.owner_user_id.as_str(),
+                snapshot.expires_at_unix,
+            )
+            .await?;
+        // Tool publication and prepared instruction/static results belong to the immutable
+        // Runtime Session snapshot. A direct component re-prepare validates the packaged
+        // component again, then retains those original session-facing values.
+        recovered.tools = prepared.tools.clone();
+        recovered.instruction_items = prepared.instruction_items.clone();
+        recovered.static_result = prepared.static_result.clone();
+        validate_recovered_binding(prepared, &recovered)?;
+        self.recovered_bindings.write().await.insert(
+            Self::recovered_binding_key(snapshot, resource_id),
+            recovered.clone(),
+        );
+        tracing::info!(
+            session_id = snapshot.session_id.as_str(),
+            resource_id,
+            previous_adapter_session_id = failed_binding.adapter_session_id.as_str(),
+            adapter_session_id = recovered.adapter_session_id.as_str(),
+            "recovered Plugin Local tool component binding"
+        );
+        Ok(recovered)
+    }
+
     fn skill_binding_by_ref<'a>(
         &self,
         snapshot: &'a RuntimeSessionSnapshot,
@@ -151,7 +238,7 @@ impl PluginComponentProvider {
                 response_bytes,
             });
         }
-        let (binding, verified_claims) = if host_binding.runtime.skill_snapshot.is_some() {
+        let (prepared_binding, verified_claims) = if host_binding.runtime.skill_snapshot.is_some() {
             match original_tool_name {
                 SKILL_ACTIVATE_TOOL_NAME => {
                     let requested_ref = arguments
@@ -182,10 +269,17 @@ impl PluginComponentProvider {
         } else {
             (host_binding, None)
         };
-        let progressive_skill = binding.runtime.skill_snapshot.as_ref();
-        if progressive_skill.is_some() && original_tool_name == SKILL_LIST_RESOURCES_TOOL_NAME {
+        let mut binding = self.effective_binding(snapshot, prepared_binding).await;
+        let is_progressive_skill = binding.runtime.skill_snapshot.is_some();
+        if is_progressive_skill && original_tool_name == SKILL_LIST_RESOURCES_TOOL_NAME {
             let claims = verified_claims.expect("resource listing verifies active Skill state");
-            let resources = progressive_skill.unwrap().resources.clone();
+            let resources = binding
+                .runtime
+                .skill_snapshot
+                .as_ref()
+                .unwrap()
+                .resources
+                .clone();
             let result = json!({
                 "content": [{
                     "type": "text",
@@ -208,20 +302,18 @@ impl PluginComponentProvider {
                 response_bytes,
             });
         }
-        let execution_operation = if progressive_skill.is_some()
-            && original_tool_name == SKILL_ACTIVATE_TOOL_NAME
-        {
-            super::SKILL_ACTIVATE_OPERATION
-        } else if progressive_skill.is_some() && original_tool_name == SKILL_READ_RESOURCE_TOOL_NAME
-        {
-            super::SKILL_READ_RESOURCE_OPERATION
-        } else if progressive_skill.is_some() {
-            return Err(ProviderCallError::invalid_response(
-                "Plugin Skill runtime tool name is invalid",
-            ));
-        } else {
-            binding.operation.as_str()
-        };
+        let execution_operation =
+            if is_progressive_skill && original_tool_name == SKILL_ACTIVATE_TOOL_NAME {
+                super::SKILL_ACTIVATE_OPERATION.to_string()
+            } else if is_progressive_skill && original_tool_name == SKILL_READ_RESOURCE_TOOL_NAME {
+                super::SKILL_READ_RESOURCE_OPERATION.to_string()
+            } else if is_progressive_skill {
+                return Err(ProviderCallError::invalid_response(
+                    "Plugin Skill runtime tool name is invalid",
+                ));
+            } else {
+                binding.operation.clone()
+            };
         let relay_arguments = if execution_operation == super::SKILL_READ_RESOURCE_OPERATION {
             let relative_path = arguments
                 .get("relative_path")
@@ -292,7 +384,7 @@ impl PluginComponentProvider {
                 ))
             }
         }
-        let bytes = self
+        let first = self
             .request_local(
                 snapshot.owner_user_id.as_str(),
                 binding.device_id.as_str(),
@@ -303,18 +395,42 @@ impl PluginComponentProvider {
                     .as_ref()
                     .and_then(|workspace| workspace.relative_root.as_deref()),
                 "execute",
-                Value::Object(body),
+                Value::Object(body.clone()),
             )
-            .await?;
+            .await;
+        let bytes = match first {
+            Ok(bytes) => bytes,
+            Err(error) if is_recoverable_component_session_error(&error) => {
+                binding = self.recover_binding(snapshot, &binding).await?;
+                body.insert(
+                    "adapter_session_id".to_string(),
+                    json!(binding.adapter_session_id),
+                );
+                self.request_local(
+                    snapshot.owner_user_id.as_str(),
+                    binding.device_id.as_str(),
+                    binding.workspace_id.as_deref(),
+                    snapshot
+                        .project_context
+                        .workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.relative_root.as_deref()),
+                    "execute",
+                    Value::Object(body),
+                )
+                .await?
+            }
+            Err(error) => return Err(error),
+        };
         let response: Value = serde_json::from_slice(bytes.as_slice()).map_err(|error| {
             ProviderCallError::invalid_response(format!(
                 "Plugin Local component execute returned invalid JSON: {error}"
             ))
         })?;
         validate_execute_identity_for_operation(
-            binding,
+            &binding,
             &response,
-            execution_operation,
+            execution_operation.as_str(),
             invocation_id,
         )?;
         let result = response.get("result").ok_or_else(|| {
@@ -322,17 +438,18 @@ impl PluginComponentProvider {
                 "Plugin Local component execute response is missing result",
             )
         })?;
+        let progressive_skill = binding.runtime.skill_snapshot.as_ref();
         let result = match binding.runtime.component.kind {
             PluginComponentKind::SkillCollection
                 if progressive_skill.is_some()
                     && execution_operation == super::SKILL_ACTIVATE_OPERATION =>
             {
                 let instructions = validate_local_skill_activation(&binding.runtime, result)?;
-                self.skill_activation_result(snapshot, binding, &arguments, instructions.as_str())
+                self.skill_activation_result(snapshot, &binding, &arguments, instructions.as_str())
                     .await?
             }
             PluginComponentKind::SkillCollection if progressive_skill.is_some() => {
-                self.skill_resource_result(snapshot, binding, &arguments, result)
+                self.skill_resource_result(snapshot, &binding, &arguments, result)
                     .await?
             }
             PluginComponentKind::SkillCollection => result.clone(),
@@ -674,6 +791,34 @@ impl PluginComponentProvider {
             );
         }
     }
+}
+
+pub(super) fn is_recoverable_component_session_error(error: &ProviderCallError) -> bool {
+    error.message.contains("Plugin Skill 会话不存在或已经结束")
+        || error
+            .message
+            .contains("Plugin Skill session does not exist or has ended")
+        || error.message.contains("no active control subscriber")
+}
+
+fn validate_recovered_binding(
+    prepared: &PluginLocalToolComponentBinding,
+    recovered: &PluginLocalToolComponentBinding,
+) -> Result<(), ProviderCallError> {
+    if recovered.runtime != prepared.runtime
+        || recovered.run_id != prepared.run_id
+        || recovered.device_id != prepared.device_id
+        || recovered.workspace_id != prepared.workspace_id
+        || recovered.operation != prepared.operation
+        || recovered.tools != prepared.tools
+        || recovered.instruction_items != prepared.instruction_items
+        || recovered.static_result != prepared.static_result
+    {
+        return Err(ProviderCallError::invalid_response(
+            "recovered Plugin Local tool component binding changed its immutable snapshot",
+        ));
+    }
+    Ok(())
 }
 
 fn skill_activation_payload(

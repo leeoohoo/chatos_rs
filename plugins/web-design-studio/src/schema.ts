@@ -293,8 +293,11 @@ export const DEFAULT_WEB_DESIGN_TOKENS: WebDesignTokens = {
   typography: { fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif', baseFontSize: 16 }
 };
 
+export const DEFAULT_DESKTOP_ARTBOARD_WIDTH = 1440;
+export const DEFAULT_DESKTOP_ARTBOARD_MIN_HEIGHT = 900;
+
 export const DEFAULT_WEB_DESIGN_BREAKPOINTS: WebDesignBreakpoints = {
-  desktop: { width: 1200, height: 940 },
+  desktop: { width: DEFAULT_DESKTOP_ARTBOARD_WIDTH, height: DEFAULT_DESKTOP_ARTBOARD_MIN_HEIGHT },
   tablet: { width: 768, height: 1100 },
   mobile: { width: 390, height: 844 }
 };

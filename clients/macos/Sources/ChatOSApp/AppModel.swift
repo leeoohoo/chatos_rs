@@ -200,6 +200,12 @@ final class AppModel: ObservableObject {
         self.agentGroupChatScheduler = LocalAgentGroupChatScheduler(
             service: agentGroupChatService,
             services: agentServices,
+            projectTypeKeyProvider: { ownerUserID, projectID in
+                try await localProjectsService.registry().get(
+                    ownerUserID: ownerUserID,
+                    id: projectID
+                )?.draft.projectTypeKey
+            },
             additionalToolProviders: { profile, member, runContext in
                 var providers: [any AgentToolProvider] = []
                 if LocalAgentPermission.canAccessLocalProjects(profile.draft.defaultSkillIDs) {

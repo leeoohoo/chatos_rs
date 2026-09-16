@@ -5,23 +5,25 @@ description: Turn an existing codebase or a greenfield product idea into traceab
 
 # Solution Studio
 
-Build one coherent planning workspace whose requirements, design sections, and tasks can be traced to one another.
+Build the active ChatOS project's single coherent plan whose requirements, design sections, and tasks can be traced to one another.
 
 ## Route the work
 
-1. Call `solution_get_active_context`, then reuse the requested workspace or choose one stable `artifactKey` for the planning effort.
+1. Call `solution_get_active_context`. If `workspace` exists, update that project plan; otherwise create it through the first upsert. Never create a second plan for the same ChatOS project.
 2. Use `solution-discovery` to establish requirements. For an existing project, inspect relevant code and documentation before drafting; for a greenfield effort, separate user-stated facts from assumptions and open questions.
 3. Use `solution-design` only after the requirement set is coherent enough to design against.
 4. Use `solution-execution-plan` to derive tasks and explicit `dependsOn` relationships from the approved direction.
 5. Use `solution-validation` before presenting the result. Resolve blocking structural issues; surface unresolved product questions instead of inventing answers.
+6. Report the saved artifact honestly: list the document statuses and concrete requirement/design/task counts, and say whether SVG previews were actually rendered. A generation turn finishing is not the same as the project plan being approved or its execution tasks being completed.
 
 Read [references/workspace-schema.md](references/workspace-schema.md) before writing a complete workspace document.
 
 ## Invariants
 
-- Preserve the same `artifactKey`, `title`, and `sourceMode` across the three upsert calls.
+- One ChatOS project has exactly one project profile, one total requirements document, one overall design, and one execution plan. Different requests or `artifactKey` values update that plan; they do not define parallel workspaces.
+- `artifactKey` and `sourceMode` are optional compatibility inputs. Prefer the host context and omit them unless maintaining an older caller.
 - Treat `scope.projectId`, `scope.projectName`, `scope.connectorWorkspaceId`, and `scope.projectRoot` as host-supplied context. Never ask the user to enter them, invent them, or add them to upsert arguments. The service binds newly created workspaces to the active ChatOS project.
-- Do not confuse a Solution Studio `workspaceId` with `scope.connectorWorkspaceId`: the former identifies one planning document; the latter identifies the ChatOS connector workspace carrying the project root.
+- Do not confuse the Solution Studio `workspaceId` with `scope.connectorWorkspaceId`: the former identifies the project's single planning document; the latter identifies the ChatOS connector workspace carrying the project root.
 - Use stable IDs: `E-*` for evidence, `R-*` for requirements, `D-000-B-*` for project-level design blocks, `D-*` for requirement designs, `D-*-B-*` for typed design blocks, `ADR-*` for decisions, and `T-*` for tasks.
 - The requirements document contains the project background and total requirements before its structured child requirements.
 - The design document contains one project-level technical baseline and overall architecture. Each requirement then owns exactly one detailed design section and one execution-plan slice. Alternatives belong in design decisions, not parallel solution sections.

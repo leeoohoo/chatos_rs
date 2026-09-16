@@ -115,6 +115,26 @@ struct CreateProjectSheet: View {
                     .textFieldStyle(.roundedBorder)
             }
 
+            VStack(alignment: .leading, spacing: 7) {
+                Text("项目类型")
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Picker("项目类型", selection: $viewModel.selectedProjectTypeKey) {
+                    ForEach(LocalAgentSkillCatalog.projectTypes) { type in
+                        Text("\(type.categoryLabel) · \(type.label)").tag(type.key)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if let selected = LocalAgentSkillCatalog.projectType(
+                    key: viewModel.selectedProjectTypeKey
+                ) {
+                    Text(selected.description)
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Label("不会上传代码或创建托管仓库，也不要求 Git remote 或默认联系人。", systemImage: "internaldrive")
                 .appFont(.caption)
                 .foregroundStyle(.secondary)

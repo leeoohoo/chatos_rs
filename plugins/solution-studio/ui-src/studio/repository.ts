@@ -20,7 +20,8 @@ export interface SolutionRepository {
   read(workspaceId: string): Promise<SolutionWorkspace>;
   save(workspace: SolutionWorkspace, expectedRevision: number): Promise<SolutionWorkspace>;
   validate(workspaceId: string): Promise<WorkspaceValidation>;
-  markdownUrl(workspaceId: string): string;
+  markdown(workspaceId: string): Promise<string>;
+  copyMarkdownFile(workspaceId: string): Promise<{ copied: boolean; fileName: string }>;
   remove(workspaceId: string): Promise<void>;
 }
 
@@ -79,7 +80,17 @@ class ServerRepository implements SolutionRepository {
     if (!response.ok) throw new Error('无法校验方案。');
     return response.json() as Promise<WorkspaceValidation>;
   }
-  markdownUrl(workspaceId: string) { return `/api/workspaces/${encodeURIComponent(workspaceId)}/markdown`; }
+  async markdown(workspaceId: string) {
+    const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/markdown`, { cache: 'no-store' });
+    if (!response.ok) throw new Error('无法生成 Markdown。');
+    return response.text();
+  }
+  async copyMarkdownFile(workspaceId: string) {
+    const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/markdown/copy-file`, { method: 'POST' });
+    const body = await response.json().catch(() => ({ copied: false, fileName: '', error: '无法复制文件。' })) as { copied: boolean; fileName: string; error?: string };
+    if (!response.ok) throw new Error(body.error ?? '无法复制文件。');
+    return body;
+  }
   async remove(workspaceId: string) {
     const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' });
     if (!response.ok) throw new Error('无法删除方案。');
@@ -95,9 +106,11 @@ class LocalRepository implements SolutionRepository {
       const raw = localStorage.getItem(`${workspacePrefix}${id}`);
       if (!raw) return [];
       try { return [summary(JSON.parse(raw) as SolutionWorkspace)]; } catch { return []; }
-    }).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    }).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).slice(0, 1);
   }
   async create(title: string, sourceMode: SourceMode): Promise<SolutionWorkspace> {
+    const current = (await this.list())[0];
+    if (current) return this.read(current.workspaceId);
     const now = new Date().toISOString();
     const workspaceId = `solution-${crypto.randomUUID().slice(0, 8)}`;
     const workspace: SolutionWorkspace = {
@@ -126,7 +139,11 @@ class LocalRepository implements SolutionRepository {
   async validate(_workspaceId: string): Promise<WorkspaceValidation> {
     throw new Error('完整校验需要通过 Solution Studio 本地服务运行。');
   }
-  markdownUrl(_workspaceId: string) { return '#'; }
+  async markdown(workspaceId: string) {
+    const workspace = await this.read(workspaceId);
+    return `# ${workspace.title}\n\n${workspace.description}\n\n## 项目总需求\n\n${workspace.requirements.summary}\n`;
+  }
+  async copyMarkdownFile(_workspaceId: string): Promise<{ copied: boolean; fileName: string }> { throw new Error('浏览器存储模式不支持复制文件。'); }
   async remove(workspaceId: string) {
     localStorage.removeItem(`${workspacePrefix}${workspaceId}`);
     const ids = JSON.parse(localStorage.getItem(indexKey) ?? '[]') as string[];

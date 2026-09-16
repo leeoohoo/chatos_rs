@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -11,6 +11,7 @@ test('workspace placement persists camera separately from design data and isolat
     const store = new WorkspacePlacementStore(root);
     const created = await store.readOrCreate('scope-a', 'document-a');
     assert.equal(created.schemaVersion, 2);
+    assert.equal(created.viewportDefaultsVersion, 2);
     assert.deepEqual(created.camera, { x: 0, y: 0, zoom: 1 });
     const updated = await store.updateCamera('scope-a', 'document-a', { x: -4200, y: 7300, zoom: 2.5 });
     assert.equal(updated.revision, 2);
@@ -27,6 +28,35 @@ test('workspace placement persists camera separately from design data and isolat
     await assert.rejects(() => store.updateArtboards('scope-a', 'document-a', [
       { projectionId: 'legacy-mobile', pageId: 'home', viewportWidth: 390, viewportHeight: 844, x: 0, y: 0 }
     ]), /artboardId is invalid/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('legacy 1200 page defaults migrate once to the 1440 desktop baseline', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-workspace-migration-'));
+  try {
+    const store = new WorkspacePlacementStore(root);
+    await store.updateArtboards('scope-a', 'document-a', [
+      { artboardId: 'legacy-page', pageId: 'home', surfaceKind: 'page', viewportWidth: 1200, viewportHeight: 940, x: 0, y: 0 },
+      { artboardId: 'legacy-modal', pageId: 'dialog', surfaceKind: 'modal', viewportWidth: 1200, viewportHeight: 900, x: 0, y: 0 }
+    ]);
+    const directory = path.join(root, 'workspace-placements-v4');
+    const [fileName] = await readdir(directory);
+    const filePath = path.join(directory, fileName);
+    const legacy = JSON.parse(await readFile(filePath, 'utf8'));
+    delete legacy.viewportDefaultsVersion;
+    await writeFile(filePath, JSON.stringify(legacy), 'utf8');
+
+    const migrated = await new WorkspacePlacementStore(root).readOrCreate('scope-a', 'document-a');
+    assert.equal(migrated.viewportDefaultsVersion, 2);
+    assert.deepEqual(migrated.artboards.map(({ surfaceKind, viewportWidth, viewportHeight }) => ({ surfaceKind, viewportWidth, viewportHeight })), [
+      { surfaceKind: 'page', viewportWidth: 1440, viewportHeight: 900 },
+      { surfaceKind: 'modal', viewportWidth: 1200, viewportHeight: 900 }
+    ]);
+
+    const reread = await new WorkspacePlacementStore(root).readOrCreate('scope-a', 'document-a');
+    assert.equal(reread.revision, migrated.revision);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

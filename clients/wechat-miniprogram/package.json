@@ -4,14 +4,14 @@
   "private": true,
   "description": "ChatOS Companion native WeChat Mini Program",
   "scripts": {
+    "build:crypto": "esbuild scripts/device-crypto-entry.js --bundle --platform=browser --format=cjs --target=es2018 --minify --legal-comments=inline --outfile=miniprogram/vendor/device-crypto.js",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck"
+    "check": "npm run build:crypto && npm run typecheck"
   },
   "devDependencies": {
+    "esbuild": "^0.25.9",
     "miniprogram-api-typings": "^4.0.8",
+    "tweetnacl": "^1.0.3",
     "typescript": "^5.9.2"
-  },
-  "dependencies": {
-    "tweetnacl": "^1.0.3"
   }
 }

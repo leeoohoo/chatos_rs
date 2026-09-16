@@ -13,6 +13,7 @@ final class CreateProjectViewModel: ObservableObject {
     private(set) var selectedWorkspaceID: String
     @Published var projectName = ""
     @Published var projectDescription = ""
+    @Published var selectedProjectTypeKey = LocalAgentSkillCatalog.legacyProjectTypeKey
     @Published var errorMessage: String?
 
     let workspaces: [LocalConnectorWorkspace]
@@ -123,7 +124,8 @@ final class CreateProjectViewModel: ObservableObject {
             name: normalizedProjectName,
             description: projectDescription.trimmingCharacters(in: .whitespacesAndNewlines),
             workspaceID: workspace.id,
-            relativeRoot: currentRelativePath ?? ""
+            relativeRoot: currentRelativePath ?? "",
+            projectTypeKey: selectedProjectTypeKey
         )
         isSaving = true
         defer { isSaving = false }

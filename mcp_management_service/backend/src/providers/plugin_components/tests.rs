@@ -2,10 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use chatos_agent::SystemAgentKey;
@@ -23,6 +25,7 @@ use serde_json::json;
 
 use super::validation::{sha256_text, validate_command_snapshot};
 use super::*;
+use crate::providers::ProviderCallError;
 use crate::runtime::{
     PluginLocalToolComponentBinding, PluginToolComponentRuntimeBinding, RuntimeSessionSnapshot,
 };
@@ -640,6 +643,181 @@ async fn progressive_local_skill_prepare_returns_catalog_without_preloading_inst
     assert!(resource_request["arguments"].get("skill_ref").is_none());
     assert_eq!(requests.lock().unwrap()[1].0, "execute");
     server.abort();
+}
+
+#[tokio::test]
+async fn progressive_skill_recovers_after_connector_restart_and_reuses_new_session() {
+    const SECRET: &str = "plugin-component-recover-skill-test-secret";
+
+    #[derive(Clone)]
+    struct TestState {
+        binding: PluginToolComponentRuntimeBinding,
+        requests: Arc<Mutex<Vec<(String, Value)>>>,
+        prepare_count: Arc<AtomicUsize>,
+    }
+
+    async fn handler(
+        State(state): State<TestState>,
+        Path(action): Path<String>,
+        Json(body): Json<Value>,
+    ) -> Response {
+        state
+            .requests
+            .lock()
+            .unwrap()
+            .push((action.clone(), body.clone()));
+        let binding = &state.binding;
+        match action.as_str() {
+            "prepare" => {
+                let prepare_number = state.prepare_count.fetch_add(1, Ordering::SeqCst) + 1;
+                Json(json!({
+                    "run_id": "session-1",
+                    "plugin_id": binding.plugin_id,
+                    "release_id": binding.release_id,
+                    "version": binding.version,
+                    "artifact_sha256": binding.artifact_sha256,
+                    "component_key": binding.component.component_key,
+                    "skills": [binding.skill_snapshot],
+                    "operations": [SKILL_ACTIVATE_OPERATION, SKILL_READ_RESOURCE_OPERATION],
+                    "adapter_session_id": format!("adapter-progressive-skill-{prepare_number}"),
+                    "session_sha256": "e".repeat(64),
+                    "expires_at": chrono::Utc::now().timestamp() + 7200
+                }))
+                .into_response()
+            }
+            "execute" if body["adapter_session_id"] == "adapter-progressive-skill-1" => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Plugin Skill 会话不存在或已经结束"})),
+            )
+                .into_response(),
+            "execute" => Json(json!({
+                "plugin_id": binding.plugin_id,
+                "release_id": binding.release_id,
+                "version": binding.version,
+                "artifact_sha256": binding.artifact_sha256,
+                "component_key": binding.component.component_key,
+                "adapter_session_id": body["adapter_session_id"],
+                "invocation_id": body["invocation_id"],
+                "operation": SKILL_ACTIVATE_OPERATION,
+                "result": {
+                    "skill_id": "review-skill",
+                    "instructions": "progressive instructions",
+                    "instructions_sha256": binding.skill_snapshot.as_ref().unwrap().instructions_sha256,
+                    "resource_manifest_sha256": binding.skill_snapshot.as_ref().unwrap().resource_manifest_sha256,
+                    "snapshot_sha256": binding.skill_snapshot.as_ref().unwrap().snapshot_sha256,
+                    "resources": binding.skill_snapshot.as_ref().unwrap().resources
+                }
+            }))
+            .into_response(),
+            "cancel" => Json(json!({"cancelled": true})).into_response(),
+            _ => StatusCode::NOT_FOUND.into_response(),
+        }
+    }
+
+    let immutable = progressive_skill_binding();
+    let requests = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route(
+            "/api/local-connectors/relay/device-1/plugins/{action}",
+            post(handler),
+        )
+        .with_state(TestState {
+            binding: immutable.clone(),
+            requests: requests.clone(),
+            prepare_count: Arc::new(AtomicUsize::new(0)),
+        });
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = PluginComponentProvider::new(
+        reqwest::Client::new(),
+        format!("http://{address}"),
+        Duration::from_secs(5),
+        Some(SECRET.to_string()),
+        1024 * 1024,
+        Arc::new(SkillActivationAttestationService::new(SECRET).unwrap()),
+    )
+    .unwrap();
+    let mut routes = vec![route(&immutable)];
+    let expires_at_unix = chrono::Utc::now().timestamp() + 600;
+    let (local_bindings, _) = provider
+        .prepare_routes(
+            &HashMap::from([(immutable.resource_id.clone(), immutable.clone())]),
+            routes.as_mut_slice(),
+            &local_context(),
+            "session-1",
+            "user-1",
+            expires_at_unix,
+        )
+        .await;
+    let local = local_bindings[&immutable.resource_id].clone();
+    let runtime = snapshot(
+        &immutable,
+        local.clone(),
+        routes[0].clone(),
+        expires_at_unix,
+    );
+    let skill_ref = skill_ref(&local);
+
+    for invocation_id in ["invocation-after-restart-1", "invocation-after-restart-2"] {
+        let outcome = provider
+            .call_tool(
+                &runtime,
+                &routes[0],
+                SKILL_ACTIVATE_TOOL_NAME,
+                json!({"skill_ref": skill_ref}),
+                invocation_id,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome.result["structuredContent"]["activated"], true);
+    }
+
+    provider.close_session(&runtime).await;
+    let requests = requests.lock().unwrap();
+    let actions = requests
+        .iter()
+        .map(|(action, body)| {
+            format!(
+                "{action}:{}",
+                body.get("adapter_session_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("prepare")
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actions,
+        [
+            "prepare:prepare",
+            "execute:adapter-progressive-skill-1",
+            "prepare:prepare",
+            "execute:adapter-progressive-skill-2",
+            "execute:adapter-progressive-skill-2",
+            "cancel:adapter-progressive-skill-2",
+        ]
+    );
+    assert_eq!(
+        requests[0].1["skill_snapshot"],
+        requests[2].1["skill_snapshot"]
+    );
+    server.abort();
+}
+
+#[test]
+fn only_definitely_unexecuted_component_failures_are_recoverable() {
+    for message in [
+        "Plugin Component Provider rejected execute with HTTP 400: Plugin Skill 会话不存在或已经结束",
+        "Plugin Component Provider rejected execute with HTTP 400: Plugin Skill session does not exist or has ended.",
+        "Local Connector target instance old has no active control subscriber",
+    ] {
+        assert!(local_runtime::is_recoverable_component_session_error(
+            &ProviderCallError::provider_unavailable(message)
+        ));
+    }
+    assert!(!local_runtime::is_recoverable_component_session_error(
+        &ProviderCallError::provider_unavailable("Plugin Skill 调用超时")
+    ));
 }
 
 #[test]

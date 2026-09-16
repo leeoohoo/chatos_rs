@@ -82,7 +82,17 @@ test('exports requirements, design, and dependency details to Markdown', () => {
 test('requires standalone SVG for visual design blocks', () => {
   const workspace = completeWorkspace();
   workspace.design.sections[0].blocks = [{ id: 'D-001-B-001', type: 'flowchart', title: '刷新流程', content: 'not an svg' }];
-  assert.throws(() => validateWorkspace(workspace), /must contain self-contained SVG code/);
+  assert.throws(() => validateWorkspace(workspace), /must contain standalone SVG code/);
+});
+
+test('rejects empty SVG shells and SVGs without a viewBox', () => {
+  const empty = completeWorkspace();
+  empty.design.blocks[1].content = '<svg viewBox="0 0 400 200"></svg>';
+  assert.throws(() => validateWorkspace(empty), /does not contain visible diagram content/);
+
+  const noViewBox = completeWorkspace();
+  noViewBox.design.blocks[1].content = '<svg><rect width="100" height="100"/></svg>';
+  assert.throws(() => validateWorkspace(noViewBox), /must declare a viewBox/);
 });
 
 export { completeWorkspace };

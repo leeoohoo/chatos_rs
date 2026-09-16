@@ -209,7 +209,8 @@ final class AgentGroupChatViewModel: ObservableObject {
         role: String,
         responsibility: String,
         rolePrompt: String,
-        modelConfigID: String
+        modelConfigID: String,
+        professionKey: String
     ) async -> Bool {
         guard let room else {
             errorMessage = AgentGroupChatError.notFound.localizedDescription
@@ -229,6 +230,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     modelConfigID: normalizedModelConfigID,
+                    professionKey: professionKey,
                     defaultPluginIDs: []
                 )
             )
@@ -323,6 +325,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     modelConfigID: normalizedModelConfigID,
+                    professionKey: existingProfile.draft.professionKey,
                     defaultPluginIDs: [],
                     defaultSkillIDs: existingProfile.draft.defaultSkillIDs
                 ),
@@ -460,7 +463,9 @@ final class AgentGroupChatViewModel: ObservableObject {
                 let project = try await projectsService.createInDefaultWorkspace(
                     ownerUserID: ownerUserID,
                     name: newProjectName,
-                    description: proposal.draft.newProjectDescription
+                    description: proposal.draft.newProjectDescription,
+                    projectTypeKey: proposal.draft.newProjectTypeKey
+                        ?? LocalAgentSkillCatalog.legacyProjectTypeKey
                 )
                 createdProject = project
                 resolvedProjectID = project.id

@@ -28,19 +28,44 @@ public struct LocalProjectDraft: Codable, Sendable, Equatable {
     public let description: String
     public let workspaceID: String
     public let relativeRoot: String
+    public let projectTypeKey: String
 
-    public init(name: String, description: String = "", workspaceID: String, relativeRoot: String = "") {
+    public init(
+        name: String,
+        description: String = "",
+        workspaceID: String,
+        relativeRoot: String = "",
+        projectTypeKey: String = LocalAgentSkillCatalog.legacyProjectTypeKey
+    ) {
         self.name = name
         self.description = description
         self.workspaceID = workspaceID
         self.relativeRoot = relativeRoot
+        self.projectTypeKey = projectTypeKey
     }
 
     public func validate() throws {
         try ProjectRegistryValidation.identifier(name, field: "name")
         try ProjectRegistryValidation.routeIdentifier(workspaceID, field: "workspaceID")
         try ProjectRegistryValidation.relativeRoot(relativeRoot)
+        _ = try LocalAgentSkillCatalog.requireProjectType(key: projectTypeKey)
         guard !description.contains("\0") else { throw ProjectRegistryError.invalidField("description") }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, description, workspaceID, relativeRoot, projectTypeKey
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            name: try values.decode(String.self, forKey: .name),
+            description: try values.decodeIfPresent(String.self, forKey: .description) ?? "",
+            workspaceID: try values.decode(String.self, forKey: .workspaceID),
+            relativeRoot: try values.decodeIfPresent(String.self, forKey: .relativeRoot) ?? "",
+            projectTypeKey: try values.decodeIfPresent(String.self, forKey: .projectTypeKey)
+                ?? LocalAgentSkillCatalog.legacyProjectTypeKey
+        )
     }
 }
 

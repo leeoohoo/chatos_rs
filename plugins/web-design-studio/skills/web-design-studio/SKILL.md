@@ -27,6 +27,10 @@ A project may contain many artboards, but they form a directory rather than one 
 
 Artboards represent independently designed surfaces: a route, expanded menu, modal, Drawer, Popover, overlay, or meaningful state. Width and height are properties of an artboard. Do not create desktop, tablet, and mobile copies by default; responsive widths belong to the same semantic artboard unless the user requests independent variants.
 
+When the brief does not specify a desktop width, use 1440 CSS px as the working artboard width. Treat 1200 as an explicitly chosen compact compatibility width, not the standard default. For products expected on 2K/QHD displays, keep the same semantic artboard and also validate its responsive behavior at 1920 and 2560 CSS px when those widths are relevant; do not confuse physical monitor pixels with the browser's CSS viewport.
+
+Artboard height is content-driven. Use the selected height only as the initial minimum visible editing surface (900px for the default 1440 desktop artboard), and let the artboard grow immediately to the lowest visible node. Do not lock a page, inner full-page frame, or application shell to 768/900px merely because that is a familiar screen height. Fixed dimensions are appropriate only for a deliberately bounded surface such as a modal, Drawer, or device-specific state requested by the user.
+
 For focused work, choose one directory entry and pass that `artboardId` to Scene query/edit tools. Generation Steps use the one page selected by the Plan. Never load several artboards merely to decide what to edit, and preserve every non-target artboard unchanged.
 
 ## Load only the stage you need

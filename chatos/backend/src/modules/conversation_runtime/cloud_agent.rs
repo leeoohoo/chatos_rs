@@ -298,6 +298,12 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
                 items.as_slice(),
             )
             .await?;
+            if completed_async_task_handoff(run.pending_tool_calls.as_slice(), items.as_slice()) {
+                lifecycle_state
+                    .lock()
+                    .map_err(|_| "ChatOS lifecycle state lock poisoned".to_string())?
+                    .async_handoff_confirmed = true;
+            }
             if let Some(on_start) = callbacks.on_tools_start.as_ref() {
                 on_start(Value::Array(run.pending_tool_calls.clone()));
             }
@@ -419,6 +425,14 @@ impl CloudAgentProfile for ChatosCloudAgentAdapter {
     async fn finalize_terminal(&self, run: &CloudAgentRunRecord) -> Result<(), String> {
         finalize_terminal(run).await
     }
+}
+
+fn completed_async_task_handoff(calls: &[Value], results: &[Value]) -> bool {
+    calls.iter().zip(results).any(|(call, result)| {
+        chatos_ai_runtime::tool_call::extract_tool_call_name(call)
+            == Some("task_runner_service_wait_for_task_completion")
+            && result.get("status").and_then(Value::as_str) == Some("completed")
+    })
 }
 
 fn runtime() -> Result<CloudAgentServiceRuntime<CloudAgentProfileRegistry>, String> {
@@ -645,4 +659,57 @@ async fn persist_mcp_tool_results(
     ChatosMemoryRecordWriterAdapter::new(MessageManager::new())
         .save_tool_records(records)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::completed_async_task_handoff;
+    use serde_json::json;
+
+    #[test]
+    fn completed_wait_tool_result_confirms_async_handoff() {
+        let calls = vec![json!({
+            "id": "call-1",
+            "type": "function",
+            "function": {
+                "name": "task_runner_service_wait_for_task_completion",
+                "arguments": "{}"
+            }
+        })];
+        let results = vec![json!({
+            "status": "completed",
+            "result": {"accepted": true, "mode": "background"}
+        })];
+
+        assert!(completed_async_task_handoff(&calls, &results));
+    }
+
+    #[test]
+    fn failed_wait_or_other_tool_does_not_confirm_async_handoff() {
+        let wait = json!({
+            "id": "call-1",
+            "type": "function",
+            "function": {
+                "name": "task_runner_service_wait_for_task_completion",
+                "arguments": "{}"
+            }
+        });
+        let get_task = json!({
+            "id": "call-2",
+            "type": "function",
+            "function": {
+                "name": "task_runner_service_get_task",
+                "arguments": "{}"
+            }
+        });
+
+        assert!(!completed_async_task_handoff(
+            std::slice::from_ref(&wait),
+            &[json!({"status": "failed", "error": "unavailable"})],
+        ));
+        assert!(!completed_async_task_handoff(
+            &[get_task],
+            &[json!({"status": "completed", "result": {}})],
+        ));
+    }
 }

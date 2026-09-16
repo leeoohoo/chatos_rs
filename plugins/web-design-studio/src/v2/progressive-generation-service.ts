@@ -381,7 +381,7 @@ function summarizeGenerationPlanState(plan: GenerationPlan): Record<string, unkn
 
 function rootFrame(pageId: string, width: number): SceneFrameNode {
   const root: SceneFrameNode = {
-    ...createSceneNodeBase('frame', 'Page root', { x: 0, y: 0, width, height: 768 }, 'system'),
+    ...createSceneNodeBase('frame', 'Page root', { x: 0, y: 0, width, height: 1 }, 'system'),
     type: 'frame',
     id: rootNodeId(pageId),
     role: 'page-root',

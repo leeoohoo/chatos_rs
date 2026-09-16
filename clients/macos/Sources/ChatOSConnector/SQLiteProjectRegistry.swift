@@ -22,6 +22,7 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
             guard sqlite3_exec(handle, Self.schema, nil, nil, nil) == SQLITE_OK else {
                 throw ProjectRegistryError.storage(String(cString: sqlite3_errmsg(handle)))
             }
+            try Self.migrateSchema(handle)
             database = handle
         } catch {
             sqlite3_close(handle)
@@ -76,10 +77,11 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
             try record.validate()
             try execute("""
                 UPDATE local_project_records SET name = ?, description = ?, workspace_id = ?,
-                relative_root = ?, revision = ?, status = ?, updated_at_unix_ms = ?
+                relative_root = ?, project_type_key = ?, revision = ?, status = ?, updated_at_unix_ms = ?
                 WHERE owner_user_id = ? AND id = ? AND revision = ?
                 """, [
                     .text(draft.name), .text(draft.description), .text(draft.workspaceID), .text(draft.relativeRoot),
+                    .text(draft.projectTypeKey),
                     .integer(record.revision), .text(status.rawValue), .integer(record.updatedAtUnixMs),
                     .text(ownerUserID), .text(id), .integer(expectedRevision),
                 ])
@@ -89,23 +91,24 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
     }
 
     private func insert(_ record: LocalProjectRecord) throws {
-        try execute("INSERT INTO local_project_records (\(Self.columns)) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+        try execute("INSERT INTO local_project_records (\(Self.columns)) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
             .text(record.ownerUserID), .text(record.id), .text(record.draft.name), .text(record.draft.description),
-            .text(record.draft.workspaceID), .text(record.draft.relativeRoot), .integer(record.revision),
+            .text(record.draft.workspaceID), .text(record.draft.relativeRoot), .text(record.draft.projectTypeKey), .integer(record.revision),
             .text(record.status.rawValue), .integer(record.createdAtUnixMs), .integer(record.updatedAtUnixMs),
         ])
     }
 
     private func readRecord(_ statement: OpaquePointer) throws -> LocalProjectRecord {
-        guard let status = LocalProjectStatus(rawValue: Self.string(statement, 7)) else {
+        guard let status = LocalProjectStatus(rawValue: Self.string(statement, 8)) else {
             throw ProjectRegistryError.storage("invalid project status")
         }
         let record = LocalProjectRecord(
             id: Self.string(statement, 1), ownerUserID: Self.string(statement, 0),
             draft: LocalProjectDraft(name: Self.string(statement, 2), description: Self.string(statement, 3),
-                                     workspaceID: Self.string(statement, 4), relativeRoot: Self.string(statement, 5)),
-            revision: sqlite3_column_int64(statement, 6), status: status,
-            createdAtUnixMs: sqlite3_column_int64(statement, 8), updatedAtUnixMs: sqlite3_column_int64(statement, 9)
+                                     workspaceID: Self.string(statement, 4), relativeRoot: Self.string(statement, 5),
+                                     projectTypeKey: Self.string(statement, 6)),
+            revision: sqlite3_column_int64(statement, 7), status: status,
+            createdAtUnixMs: sqlite3_column_int64(statement, 9), updatedAtUnixMs: sqlite3_column_int64(statement, 10)
         )
         try record.validate()
         return record
@@ -163,13 +166,14 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
 
     private static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
 
-    private static let columns = "owner_user_id, id, name, description, workspace_id, relative_root, revision, status, created_at_unix_ms, updated_at_unix_ms"
+    private static let columns = "owner_user_id, id, name, description, workspace_id, relative_root, project_type_key, revision, status, created_at_unix_ms, updated_at_unix_ms"
     private static let schema = """
         PRAGMA journal_mode = WAL;
         BEGIN IMMEDIATE;
         CREATE TABLE IF NOT EXISTS local_project_records (
             owner_user_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
             description TEXT NOT NULL, workspace_id TEXT NOT NULL, relative_root TEXT NOT NULL,
+            project_type_key TEXT NOT NULL DEFAULT 'software_development',
             revision INTEGER NOT NULL CHECK(revision > 0),
             status TEXT NOT NULL CHECK(status IN ('active', 'archived', 'removed')),
             created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
@@ -179,4 +183,36 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
         INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (1);
         COMMIT;
         """
+
+    private static func migrateSchema(_ handle: OpaquePointer?) throws {
+        guard let handle else { throw ProjectRegistryError.storage("database unavailable") }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, "PRAGMA table_info(local_project_records)", -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            throw ProjectRegistryError.storage(String(cString: sqlite3_errmsg(handle)))
+        }
+        var hasProjectType = false
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let value = sqlite3_column_text(statement, 1),
+               String(cString: value) == "project_type_key" {
+                hasProjectType = true
+            }
+        }
+        sqlite3_finalize(statement)
+        if !hasProjectType,
+           sqlite3_exec(
+               handle,
+               "ALTER TABLE local_project_records ADD COLUMN project_type_key TEXT NOT NULL DEFAULT 'software_development'",
+               nil, nil, nil
+           ) != SQLITE_OK {
+            throw ProjectRegistryError.storage(String(cString: sqlite3_errmsg(handle)))
+        }
+        guard sqlite3_exec(
+            handle,
+            "INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (2)",
+            nil, nil, nil
+        ) == SQLITE_OK else {
+            throw ProjectRegistryError.storage(String(cString: sqlite3_errmsg(handle)))
+        }
+    }
 }
