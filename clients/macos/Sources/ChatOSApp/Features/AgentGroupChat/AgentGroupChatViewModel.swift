@@ -232,6 +232,57 @@ final class AgentGroupChatViewModel: ObservableObject {
         }
     }
 
+    func updateAgentMembership(
+        agentID: String,
+        name: String,
+        role: String,
+        responsibility: String,
+        rolePrompt: String,
+        modelConfigID: String,
+        pluginIDs: [String]
+    ) async -> Bool {
+        guard let room, let existingProfile = profilesByID[agentID] else {
+            errorMessage = AgentGroupChatError.notFound.localizedDescription
+            return false
+        }
+        let normalizedModelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard availableModels.contains(where: { $0.id == normalizedModelConfigID }) else {
+            errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription
+            return false
+        }
+        let installedPluginIDs = Set(installedPlugins.map(\.id))
+        guard pluginIDs.allSatisfy(installedPluginIDs.contains) else {
+            errorMessage = "选择的本机 Plugin 已停用或卸载，请刷新后重试。"
+            return false
+        }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.updateAgentMembership(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                agentID: agentID,
+                profileDraft: .init(
+                    name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
+                    rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                    modelConfigID: normalizedModelConfigID,
+                    defaultPluginIDs: pluginIDs,
+                    defaultSkillIDs: existingProfile.draft.defaultSkillIDs
+                ),
+                memberDraft: .init(
+                    role: role.trimmingCharacters(in: .whitespacesAndNewlines),
+                    responsibility: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
+                    pluginAllowlist: pluginIDs
+                )
+            )
+            await load()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func generateAgentDraft(brief: String, builderModelConfigID: String) async -> LocalAgentDraft? {
         do {
             let draft = try await builderService.generateDraft(

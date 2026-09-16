@@ -8,6 +8,7 @@ struct ProjectAgentGroupChatView: View {
     @State private var showsCreateAgent = false
     @State private var showsAgentBuilder = false
     @State private var showsStopAllConfirmation = false
+    @State private var editingMember: AgentGroupChatViewModel.MemberPresentation?
     @State private var abandonDeliveryID: String?
 
     init(
@@ -49,6 +50,9 @@ struct ProjectAgentGroupChatView: View {
         }
         .sheet(isPresented: $showsAgentBuilder) {
             LocalAgentBuilderSheet(viewModel: viewModel)
+        }
+        .sheet(item: $editingMember) { item in
+            EditLocalAgentSheet(viewModel: viewModel, item: item)
         }
         .alert(
             "Agent 群聊错误",
@@ -370,20 +374,30 @@ struct ProjectAgentGroupChatView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(viewModel.activeMembers) { item in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Image(systemName: "person.crop.circle.fill")
-                            .foregroundStyle(.tint)
-                        Text(item.profile?.draft.name ?? item.member.agentID)
-                            .appFont(.body).fontWeight(.medium)
+                Button {
+                    editingMember = item
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Image(systemName: "person.crop.circle.fill")
+                                .foregroundStyle(.tint)
+                            Text(item.profile?.draft.name ?? item.member.agentID)
+                                .appFont(.body).fontWeight(.medium)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        Text(item.member.draft.role)
+                            .appFont(.caption).foregroundStyle(.secondary)
+                        if viewModel.room?.defaultAgentID == item.member.agentID {
+                            Text("默认 Agent")
+                                .appFont(.caption2).foregroundStyle(.tint)
+                        }
                     }
-                    Text(item.member.draft.role)
-                        .appFont(.caption).foregroundStyle(.secondary)
-                    if viewModel.room?.defaultAgentID == item.member.agentID {
-                        Text("默认 Agent")
-                            .appFont(.caption2).foregroundStyle(.tint)
-                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .padding(.vertical, 5)
             }
             Spacer()
@@ -402,6 +416,118 @@ struct ProjectAgentGroupChatView: View {
         }
         .padding(14)
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+}
+
+private struct EditLocalAgentSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var viewModel: AgentGroupChatViewModel
+    let item: AgentGroupChatViewModel.MemberPresentation
+    @State private var name: String
+    @State private var role: String
+    @State private var responsibility: String
+    @State private var rolePrompt: String
+    @State private var modelConfigID: String
+    @State private var selectedPluginIDs: Set<String>
+    @State private var isSaving = false
+
+    init(
+        viewModel: AgentGroupChatViewModel,
+        item: AgentGroupChatViewModel.MemberPresentation
+    ) {
+        self.viewModel = viewModel
+        self.item = item
+        let profile = item.profile
+        _name = State(initialValue: profile?.draft.name ?? item.member.agentID)
+        _role = State(initialValue: item.member.draft.role)
+        _responsibility = State(initialValue: item.member.draft.responsibility)
+        _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? "")
+        _modelConfigID = State(initialValue: profile?.draft.modelConfigID ?? "")
+        let plugins = item.member.draft.pluginAllowlist.isEmpty
+            ? (profile?.draft.defaultPluginIDs ?? [])
+            : item.member.draft.pluginAllowlist
+        let installedPluginIDs = Set(viewModel.installedPlugins.map(\.id))
+        _selectedPluginIDs = State(initialValue: Set(plugins).intersection(installedPluginIDs))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("编辑本地 Agent").font(.title2).fontWeight(.semibold)
+            Form {
+                TextField("名称", text: $name)
+                TextField("当前项目角色", text: $role)
+                TextField("当前项目职责", text: $responsibility, axis: .vertical)
+                    .lineLimit(2...4)
+                TextField("角色 Prompt", text: $rolePrompt, axis: .vertical)
+                    .lineLimit(4...8)
+                Picker("模型", selection: $modelConfigID) {
+                    ForEach(viewModel.availableModels) { model in
+                        Text("\(model.name) · \(model.modelName)").tag(model.id)
+                    }
+                }
+                if !viewModel.availableModels.contains(where: { $0.id == modelConfigID }) {
+                    Text("原模型当前不可用，请选择新的模型后保存。")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Section("本地 Plugin") {
+                    if viewModel.installedPlugins.isEmpty {
+                        Text("没有可用于 Agent 的本机 Plugin")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(viewModel.installedPlugins) { plugin in
+                        Toggle(isOn: Binding(
+                            get: { selectedPluginIDs.contains(plugin.id) },
+                            set: { selected in
+                                if selected {
+                                    selectedPluginIDs.insert(plugin.id)
+                                } else {
+                                    selectedPluginIDs.remove(plugin.id)
+                                }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(plugin.displayName)
+                                Text(plugin.description.isEmpty ? plugin.id : plugin.description)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            Text("名称、Prompt 和模型属于 Agent profile；角色、职责和 Plugin allowlist 同时更新到当前项目成员配置。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                Button("保存") {
+                    isSaving = true
+                    Task {
+                        if await viewModel.updateAgentMembership(
+                            agentID: item.member.agentID,
+                            name: name,
+                            role: role,
+                            responsibility: responsibility,
+                            rolePrompt: rolePrompt,
+                            modelConfigID: modelConfigID,
+                            pluginIDs: selectedPluginIDs.sorted()
+                        ) { dismiss() }
+                        isSaving = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    isSaving
+                        || [name, role, rolePrompt, modelConfigID].contains {
+                            $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        }
+                )
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
     }
 }
 

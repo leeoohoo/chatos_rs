@@ -483,4 +483,47 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         )
         XCTAssertTrue(unfinished.isEmpty)
     }
+
+    func testAgentProfileAndProjectMembershipUpdateTogether() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "旧名称")
+        let room = try await makeRoom(store)
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "旧角色", pluginAllowlist: ["plugin.old"])
+        )
+
+        let result = try await store.updateAgentMembership(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            profileDraft: .init(
+                name: "新名称",
+                description: "新职责",
+                rolePrompt: "使用新的角色指令。",
+                modelConfigID: "model-2",
+                defaultPluginIDs: ["plugin.new"],
+                defaultSkillIDs: ["skill.keep"]
+            ),
+            memberDraft: .init(
+                role: "新角色",
+                responsibility: "新职责",
+                pluginAllowlist: ["plugin.new"]
+            )
+        )
+
+        XCTAssertEqual(result.profile.draft.name, "新名称")
+        XCTAssertEqual(result.profile.draft.modelConfigID, "model-2")
+        XCTAssertEqual(result.profile.draft.defaultSkillIDs, ["skill.keep"])
+        XCTAssertEqual(result.member.draft.role, "新角色")
+        XCTAssertEqual(result.member.draft.pluginAllowlist, ["plugin.new"])
+        let profiles = try await store.listAgents(ownerUserID: "alice", includeArchived: false)
+        let members = try await store.listMembers(ownerUserID: "alice", roomID: room.id)
+        XCTAssertEqual(profiles.first(where: { $0.id == agent.id }), result.profile)
+        XCTAssertEqual(members.first(where: { $0.agentID == agent.id }), result.member)
+    }
 }

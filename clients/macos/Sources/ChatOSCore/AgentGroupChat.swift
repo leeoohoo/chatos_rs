@@ -313,6 +313,16 @@ public struct ProjectAgentRoomMember: Codable, Sendable, Equatable, Identifiable
     }
 }
 
+public struct LocalAgentMembershipUpdateResult: Codable, Sendable, Equatable {
+    public let profile: LocalAgentProfile
+    public let member: ProjectAgentRoomMember
+
+    public init(profile: LocalAgentProfile, member: ProjectAgentRoomMember) {
+        self.profile = profile
+        self.member = member
+    }
+}
+
 public enum ProjectAgentMessageSenderKind: String, Codable, Sendable {
     case human, agent, system
 }
@@ -510,6 +520,13 @@ public struct AgentGroupChatPostResult: Codable, Sendable, Equatable {
 public protocol AgentGroupChatStore: Sendable {
     func createAgent(ownerUserID: String, draft: LocalAgentProfileDraft) async throws -> LocalAgentProfile
     func listAgents(ownerUserID: String, includeArchived: Bool) async throws -> [LocalAgentProfile]
+    func updateAgentMembership(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        profileDraft: LocalAgentProfileDraft,
+        memberDraft: ProjectAgentRoomMemberDraft
+    ) async throws -> LocalAgentMembershipUpdateResult
     func createRoom(
         ownerUserID: String,
         projectID: String,

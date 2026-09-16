@@ -86,6 +86,70 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         )
     }
 
+    public func updateAgentMembership(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        profileDraft: LocalAgentProfileDraft,
+        memberDraft: ProjectAgentRoomMemberDraft
+    ) throws -> LocalAgentMembershipUpdateResult {
+        try validateOwnerRoomAgent(ownerUserID: ownerUserID, roomID: roomID, agentID: agentID)
+        try profileDraft.validate()
+        try memberDraft.validate()
+        return try transaction {
+            guard let room = try readRoom(ownerUserID: ownerUserID, roomID: roomID),
+                  room.status == .active,
+                  let profile = try readAgent(ownerUserID: ownerUserID, agentID: agentID),
+                  profile.status == .active,
+                  let member = try readMember(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: agentID
+                  ), member.status == .active else {
+                throw AgentGroupChatError.notFound
+            }
+            let now = max(Self.now(), profile.updatedAtUnixMs)
+            try execute(
+                """
+                UPDATE local_agent_profiles
+                SET name = ?, description = ?, role_prompt = ?, model_config_id = ?,
+                    default_plugin_ids_json = ?, default_skill_ids_json = ?, updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ? AND status = 'active'
+                """,
+                [
+                    .text(profileDraft.name), .text(profileDraft.description),
+                    .text(profileDraft.rolePrompt), .text(profileDraft.modelConfigID),
+                    .text(try encodeStrings(profileDraft.defaultPluginIDs)),
+                    .text(try encodeStrings(profileDraft.defaultSkillIDs)), .integer(now),
+                    .text(ownerUserID), .text(agentID),
+                ]
+            )
+            guard sqlite3_changes(database) == 1 else { throw AgentGroupChatError.conflict }
+            try execute(
+                """
+                UPDATE project_agent_room_members
+                SET role = ?, responsibility = ?, plugin_allowlist_json = ?
+                WHERE owner_user_id = ? AND room_id = ? AND agent_id = ? AND status = 'active'
+                """,
+                [
+                    .text(memberDraft.role), .text(memberDraft.responsibility),
+                    .text(try encodeStrings(memberDraft.pluginAllowlist)), .text(ownerUserID),
+                    .text(roomID), .text(agentID),
+                ]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let updatedProfile = try readAgent(ownerUserID: ownerUserID, agentID: agentID),
+                  let updatedMember = try readMember(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: agentID
+                  ) else {
+                throw AgentGroupChatError.conflict
+            }
+            return .init(profile: updatedProfile, member: updatedMember)
+        }
+    }
+
     public func createRoom(
         ownerUserID: String,
         projectID: String,
