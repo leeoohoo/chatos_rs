@@ -87,6 +87,44 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         return results
     }
 
+    /// Explicitly resumes one durable running delivery. This is intentionally not automatic:
+    /// a checkpoint may contain an in-flight side-effecting Plugin call, and AgentRuntime must
+    /// surface that as `needsReview` instead of replaying it after a crash.
+    public func resumeDelivery(
+        ownerUserID: String,
+        projectID: String,
+        deliveryID: String
+    ) async throws -> RunResult {
+        let store = try await service.store()
+        guard let room = try await store.activeRoom(
+            ownerUserID: ownerUserID,
+            projectID: projectID
+        ), let delivery = try await store.delivery(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+        ), delivery.roomID == room.id,
+           delivery.status == .running,
+           let member = try await store.listMembers(
+            ownerUserID: ownerUserID,
+            roomID: room.id
+           ).first(where: { $0.agentID == delivery.targetAgentID }),
+           let savedRun = try await store.run(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+           ) else {
+            throw AgentGroupChatError.conflict
+        }
+        return try await runClaimedDelivery(
+            store: store,
+            ownerUserID: ownerUserID,
+            projectID: projectID,
+            room: room,
+            member: member,
+            delivery: delivery,
+            savedRun: savedRun
+        )
+    }
+
     private func runNext(
         store: SQLiteAgentGroupChatStore,
         ownerUserID: String,
@@ -148,7 +186,8 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         projectID: String,
         room: ProjectAgentRoom,
         member: ProjectAgentRoomMember,
-        delivery: ProjectAgentDelivery
+        delivery: ProjectAgentDelivery,
+        savedRun: LocalAgentGroupChatRun? = nil
     ) async throws -> RunResult {
         guard room.ownerUserID == ownerUserID,
               room.projectID == projectID,
@@ -164,63 +203,99 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             throw AgentGroupChatError.notFound
         }
 
-        let runID = UUID()
-        let context = try LocalAgentChatRunContext(
-            ownerUserID: ownerUserID,
-            projectID: projectID,
-            roomID: room.id,
-            agentID: profile.id,
-            deliveryID: delivery.id,
-            triggerMessageID: delivery.messageID,
-            rootMessageID: delivery.rootMessageID,
-            runID: runID.uuidString.lowercased(),
-            hopCount: delivery.hopCount
-        )
-        let scope = LocalAgentGroupChatRun.runtimeScope(for: context)
-        let policy = try settings.load().global
-        try policy.validate()
-
-        var checkpoint = AgentRunCheckpoint(
-            scope: scope,
-            messages: Self.initialMessages(
-                profile: profile,
-                member: member,
-                room: room,
-                delivery: delivery
+        let run: LocalAgentGroupChatRun
+        if let savedRun {
+            guard savedRun.context.ownerUserID == ownerUserID,
+                  savedRun.context.projectID == projectID,
+                  savedRun.context.roomID == room.id,
+                  savedRun.context.agentID == profile.id,
+                  savedRun.context.deliveryID == delivery.id,
+                  savedRun.context.triggerMessageID == delivery.messageID,
+                  savedRun.context.rootMessageID == delivery.rootMessageID,
+                  savedRun.checkpoint.status != .completed else {
+                throw AgentGroupChatError.conflict
+            }
+            run = savedRun
+        } else {
+            let runID = UUID()
+            let context = try LocalAgentChatRunContext(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                roomID: room.id,
+                agentID: profile.id,
+                deliveryID: delivery.id,
+                triggerMessageID: delivery.messageID,
+                rootMessageID: delivery.rootMessageID,
+                runID: runID.uuidString.lowercased(),
+                hopCount: delivery.hopCount
             )
-        )
-        checkpoint.id = runID
-        let createdAt = now()
-        let run = try LocalAgentGroupChatRun(
-            id: runID,
-            context: context,
-            modelConfigID: profile.draft.modelConfigID,
-            policy: policy,
-            checkpoint: checkpoint,
-            createdAtUnixMs: createdAt,
-            updatedAtUnixMs: createdAt
-        )
-        try await store.saveRun(run)
+            let scope = LocalAgentGroupChatRun.runtimeScope(for: context)
+            let policy = try settings.load().global
+            try policy.validate()
+            var initial = AgentRunCheckpoint(
+                scope: scope,
+                messages: Self.initialMessages(
+                    profile: profile,
+                    member: member,
+                    room: room,
+                    delivery: delivery
+                )
+            )
+            initial.id = runID
+            let createdAt = now()
+            run = try LocalAgentGroupChatRun(
+                id: runID,
+                context: context,
+                modelConfigID: profile.draft.modelConfigID,
+                policy: policy,
+                checkpoint: initial,
+                createdAtUnixMs: createdAt,
+                updatedAtUnixMs: createdAt
+            )
+            try await store.saveRun(run)
+        }
+        let runID = run.id
+        let context = run.context
+        let scope = run.checkpoint.scope
+        let policy = run.policy
+        var checkpoint = run.checkpoint
         let session = LocalAgentGroupChatRunSession(run: run, store: store, now: now)
 
         var memoryProvider: AgentMemoryContextProvider?
         do {
-            let memoryScope = try AgentMemoryScope(
-                tenantID: ownerUserID,
-                agentID: profile.id,
-                projectID: projectID,
-                runID: runID,
-                runtimeScope: scope
-            )
+            let memoryScope = try checkpoint.memory?.scope ?? AgentMemoryScope(
+                    tenantID: ownerUserID,
+                    agentID: profile.id,
+                    projectID: projectID,
+                    runID: runID,
+                    runtimeScope: scope
+                )
             let memory = try await services.makeAgentMemory(scope: memoryScope)
             let provider = AgentMemoryContextProvider(scope: memoryScope, service: memory)
-            checkpoint = try provider.bind(checkpoint)
+            if checkpoint.memory == nil {
+                checkpoint = try provider.bind(checkpoint)
+            }
             memoryProvider = provider
             try await session.record(
                 checkpoint: checkpoint,
-                event: .init(kind: "memory_bound", detail: "已绑定当前 Agent 的独立项目 Memory", modelCalls: 0)
+                event: .init(
+                    kind: savedRun == nil ? "memory_bound" : "memory_reconnected",
+                    detail: "已绑定当前 Agent 的独立项目 Memory",
+                    modelCalls: checkpoint.modelCalls
+                )
             )
         } catch {
+            if savedRun != nil, checkpoint.memory != nil {
+                checkpoint.status = .paused
+                checkpoint.stopReason = "恢复运行前无法连接原有 Memory：\(Self.failureDetail(error))"
+                _ = try await session.finish(checkpoint: checkpoint)
+                return .init(
+                    deliveryID: delivery.id,
+                    agentID: delivery.targetAgentID,
+                    outcome: .suspended,
+                    detail: checkpoint.stopReason
+                )
+            }
             // A fresh local run remains usable when Memory Engine is temporarily unreachable.
             // The checkpoint records that no remote memory was bound; it never shares another
             // Agent's subject or silently substitutes room transcript as memory.
@@ -245,7 +320,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             providers: [chatProvider] + extraProviders
         )
         let model = try await services.makeAgentModel(
-            configID: profile.draft.modelConfigID,
+            configID: run.modelConfigID,
             policy: policy
         )
         var finalCheckpoint = try await runtime.run(

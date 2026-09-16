@@ -52,6 +52,7 @@ public struct LocalAgentGroupChatRun: Codable, Sendable, Equatable, Identifiable
 public protocol LocalAgentGroupChatRunStoring: Sendable {
     func saveRun(_ run: LocalAgentGroupChatRun) async throws
     func run(ownerUserID: String, deliveryID: String) async throws -> LocalAgentGroupChatRun?
+    func listRuns(ownerUserID: String, projectID: String) async throws -> [LocalAgentGroupChatRun]
 }
 
 actor LocalAgentGroupChatRunSession {

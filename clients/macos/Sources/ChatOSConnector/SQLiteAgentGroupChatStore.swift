@@ -589,6 +589,23 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         return try readRun(ownerUserID: ownerUserID, deliveryID: deliveryID)
     }
 
+    public func listRuns(
+        ownerUserID: String,
+        projectID: String
+    ) throws -> [LocalAgentGroupChatRun] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(projectID, field: "projectID")
+        let values: [String] = try query(
+            """
+            SELECT run_json FROM local_agent_group_chat_runs
+            WHERE owner_user_id = ? AND project_id = ?
+            ORDER BY updated_at_unix_ms DESC, id DESC
+            """,
+            [.text(ownerUserID), .text(projectID)]
+        ) { Self.string($0, 0) }
+        return try values.map(Self.decodeRun)
+    }
+
     private func readActiveRoom(ownerUserID: String, projectID: String) throws -> ProjectAgentRoom? {
         try query(
             """
@@ -659,6 +676,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             [.text(ownerUserID), .text(deliveryID)]
         ) { Self.string($0, 0) }
         guard let json = values.first else { return nil }
+        return try Self.decodeRun(json)
+    }
+
+    private static func decodeRun(_ json: String) throws -> LocalAgentGroupChatRun {
         do {
             let run = try JSONDecoder().decode(LocalAgentGroupChatRun.self, from: Data(json.utf8))
             try run.validate()
