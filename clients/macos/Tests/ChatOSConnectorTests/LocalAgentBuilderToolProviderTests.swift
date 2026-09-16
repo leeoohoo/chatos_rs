@@ -8,7 +8,6 @@ final class LocalAgentBuilderToolProviderTests: XCTestCase {
     func testBuilderProducesAgentWithoutPreselectingPlugins() async throws {
         let provider = try LocalAgentBuilderToolProvider(
             project: .init(
-                projectID: "project-1",
                 projectName: "客户端",
                 projectDescription: "macOS 客户端",
                 projectTypeKey: "desktop_application",
@@ -36,6 +35,7 @@ final class LocalAgentBuilderToolProviderTests: XCTestCase {
         )
         XCTAssertTrue(project.content.contains("客户端"))
         XCTAssertTrue(project.content.contains("架构师"))
+        XCTAssertFalse(project.content.contains("project-1"))
 
         let accepted = try await provider.execute(
             .init(

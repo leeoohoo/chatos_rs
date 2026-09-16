@@ -148,6 +148,9 @@ struct ProjectAgentGroupChatView: View {
                         Text("\(proposal.draft.name) · \(proposal.draft.role)")
                             .appFont(.body)
                             .fontWeight(.medium)
+                        Text("职业：\(LocalAgentSkillCatalog.profession(key: proposal.draft.professionKey)?.label ?? proposal.draft.professionKey)")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
                         if !proposal.draft.responsibility.isEmpty {
                             Text(proposal.draft.responsibility)
                                 .appFont(.caption)
@@ -229,6 +232,12 @@ struct ProjectAgentGroupChatView: View {
                                 .appFont(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
+                            if let key = proposal.draft.newProjectTypeKey,
+                               let type = LocalAgentSkillCatalog.projectType(key: key) {
+                                Text("类型：\(type.label)")
+                                    .appFont(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         } else if let projectID = proposal.draft.existingProjectID {
                             Text("项目：\(model.workspaceProjects.first(where: { $0.id == projectID })?.name ?? "本地项目")")
                                 .appFont(.caption)
@@ -956,6 +965,11 @@ private struct LocalAgentBuilderSheet: View {
                 draftField("名称", draft.name)
                 draftField("群聊角色", draft.role)
                 draftField("职责", draft.responsibility.isEmpty ? "未单独设置" : draft.responsibility)
+                draftField(
+                    "职业",
+                    LocalAgentSkillCatalog.profession(key: draft.professionKey)?.label
+                        ?? draft.professionKey
+                )
                 draftField("模型", modelName(draft.modelConfigID))
                 draftField("创建理由", draft.rationale.isEmpty ? "未说明" : draft.rationale)
                 VStack(alignment: .leading, spacing: 5) {

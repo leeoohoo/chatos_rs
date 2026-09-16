@@ -36,6 +36,12 @@ fi
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$TOOLS_DIR" "$RIPGREP_NOTICE_DIR" "$SWIFTTERM_NOTICE_DIR" "$PET_DIR" "$EN_LOCALIZATION_DIR" "$ZH_HANS_LOCALIZATION_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/ChatOSSwift"
+CORE_RESOURCE_BUNDLE="$BIN_DIR/ChatOSSwift_ChatOSCore.bundle"
+if [[ ! -d "$CORE_RESOURCE_BUNDLE" ]]; then
+  echo "ChatOSCore resource bundle not found at $CORE_RESOURCE_BUNDLE" >&2
+  exit 1
+fi
+cp -R "$CORE_RESOURCE_BUNDLE" "$RESOURCES_DIR/"
 cp "$PROJECT_DIR/Support/ChatOSSwift-Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$PROJECT_DIR/Support/Tools/darwin-arm64/rg" "$TOOLS_DIR/rg"
 cp "$PROJECT_DIR/Support/ThirdParty/ripgrep/LICENSE-MIT" "$RIPGREP_NOTICE_DIR/LICENSE-MIT"

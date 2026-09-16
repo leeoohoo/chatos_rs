@@ -337,6 +337,8 @@
 "请选择一种代码托管方式后再创建项目。" = "Choose a Git hosting option before creating the project.";
 "不会上传代码或创建托管仓库，也不要求 Git remote 或默认联系人。" = "No code is uploaded or hosted repository created. A Git remote or default contact is not required.";
 "创建项目" = "Create Project";
+"项目类型" = "Project Type";
+"职业" = "Profession";
 "请先授权本机工作区" = "Authorize a local workspace first";
 "选择 JSON 清单…" = "Choose JSON List…";
 "重命名本地项目" = "Rename Local Project";

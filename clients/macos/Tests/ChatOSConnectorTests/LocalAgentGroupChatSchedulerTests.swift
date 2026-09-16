@@ -5,6 +5,48 @@ import Foundation
 import XCTest
 
 final class LocalAgentGroupChatSchedulerTests: XCTestCase {
+    func testDirectConversationInjectsProfessionWithoutProjectType() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-direct-skill-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(databaseURL: folder.appendingPathComponent("chat.db"))
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "研究员",
+                rolePrompt: "完成研究任务。",
+                modelConfigID: "local-model",
+                professionKey: "research_specialist"
+            )
+        )
+        let room = try await store.openHumanAgentDirect(ownerUserID: "alice", agentID: agent.id)
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "开始研究"),
+            limits: .init()
+        )
+        let delivery = try XCTUnwrap(post.deliveries.first)
+        let settingsSuite = "local-agent-direct-skill-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: SchedulerTestServices(),
+            settings: .init(suiteName: settingsSuite),
+            projectTypeKeyProvider: { _, _ in
+                XCTFail("私聊不应读取项目类型")
+                return "web_application"
+            }
+        )
+        _ = try await scheduler.drainConversation(ownerUserID: "alice", roomID: room.id)
+        let storedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
+        let run = try XCTUnwrap(storedRun)
+        let system = run.checkpoint.messages.first?.content ?? ""
+        XCTAssertTrue(system.contains(#"name="chatos-profession-research-specialist""#))
+        XCTAssertFalse(system.contains("chatos-project-type-"))
+    }
+
     func testSchedulerRunsDeliveryLocallyAndPersistsCompletedRun() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-scheduler-\(UUID().uuidString)")

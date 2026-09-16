@@ -101,7 +101,6 @@ public struct LocalAgentBuilderService: Sendable {
         let profiles = try await store.listAgents(ownerUserID: ownerUserID, includeArchived: false)
         let profilesByID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
         let snapshot = LocalAgentBuilderProjectSnapshot(
-            projectID: project.id,
             projectName: project.draft.name,
             projectDescription: project.draft.description,
             projectTypeKey: project.draft.projectTypeKey,
@@ -290,7 +289,6 @@ struct LocalAgentBuilderProjectSnapshot: Codable, Sendable, Equatable {
         let responsibility: String
     }
 
-    let projectID: String
     let projectName: String
     let projectDescription: String
     let projectTypeKey: String

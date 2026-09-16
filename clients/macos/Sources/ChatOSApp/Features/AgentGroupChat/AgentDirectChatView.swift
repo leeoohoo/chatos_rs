@@ -381,6 +381,12 @@ struct AgentDirectChatView: View {
             Label("创建团队", systemImage: "person.3.sequence.fill")
                 .font(.headline)
             Text(proposal.draft.teamName)
+            if let key = proposal.draft.newProjectTypeKey,
+               let type = LocalAgentSkillCatalog.projectType(key: key) {
+                Text("项目类型：\(type.label)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if !proposal.draft.teamGoal.isEmpty {
                 Text(proposal.draft.teamGoal).font(.caption).foregroundStyle(.secondary)
             }
@@ -405,6 +411,9 @@ struct AgentDirectChatView: View {
             Label("创建 Agent", systemImage: "person.badge.plus")
                 .font(.headline)
             Text("\(proposal.draft.name) · \(proposal.draft.role)")
+            Text("职业：\(LocalAgentSkillCatalog.profession(key: proposal.draft.professionKey)?.label ?? proposal.draft.professionKey)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if !proposal.draft.responsibility.isEmpty {
                 Text(proposal.draft.responsibility).font(.caption).foregroundStyle(.secondary)
             }
