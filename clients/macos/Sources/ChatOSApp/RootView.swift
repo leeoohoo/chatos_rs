@@ -63,6 +63,22 @@ struct RootView: View {
                 PluginApplicationsView()
             case .mediaStudio:
                 MediaStudioView(viewModel: model.mediaStudio)
+            case .agentGroupChat:
+                if let ownerUserID = model.localProjectOwnerUserID {
+                    AgentGroupChatWorkspaceView(
+                        ownerUserID: ownerUserID,
+                        service: model.agentGroupChatService,
+                        scheduler: model.agentGroupChatScheduler,
+                        builderService: model.agentGroupChatBuilderService,
+                        pluginService: model.localConnectorService
+                    )
+                    .id(ownerUserID)
+                } else {
+                    ContentUnavailableView(
+                        model.localized("请先登录", english: "Sign in required"),
+                        systemImage: "person.crop.circle.badge.exclamationmark"
+                    )
+                }
             case let .pluginApplication(pluginID, componentKey):
                 if let application = model.pluginApplication(
                     pluginID: pluginID,

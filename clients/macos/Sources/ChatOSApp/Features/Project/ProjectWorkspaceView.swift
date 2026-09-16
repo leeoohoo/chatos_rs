@@ -50,23 +50,6 @@ struct ProjectWorkspaceView: View {
                 .id(project?.rootPath ?? projectID)
             case .messages:
                 ProjectMessagesView(projectID: projectID)
-            case .agentChat:
-                if let ownerUserID = model.localProjectOwnerUserID {
-                    ProjectAgentGroupChatView(
-                        projectID: projectID,
-                        ownerUserID: ownerUserID,
-                        service: model.agentGroupChatService,
-                        scheduler: model.agentGroupChatScheduler,
-                        builderService: model.agentGroupChatBuilderService,
-                        pluginService: model.localConnectorService
-                    )
-                    .id("\(ownerUserID):\(projectID)")
-                } else {
-                    ContentUnavailableView(
-                        model.localized("请先登录", english: "Sign in required"),
-                        systemImage: "person.crop.circle.badge.exclamationmark"
-                    )
-                }
             case .settings:
                 ProjectRunSettingsView(
                     projectID: projectID,

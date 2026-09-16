@@ -79,6 +79,14 @@ struct ResourceSidebar: View {
                     tint: .purple
                 )
                 .tag(SidebarSelection.mediaStudio)
+
+                resourceRow(
+                    title: model.localized("Agent 群聊", english: "Agent Group Chat"),
+                    subtitle: model.localized("按项目创建本地 Agent 团队", english: "Create local agent teams by project"),
+                    systemImage: "person.3.sequence.fill",
+                    tint: .indigo
+                )
+                .tag(SidebarSelection.agentGroupChat)
             }
 
             Section {

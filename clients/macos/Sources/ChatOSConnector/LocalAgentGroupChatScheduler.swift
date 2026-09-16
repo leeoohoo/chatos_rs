@@ -19,6 +19,17 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         public let detail: String?
     }
 
+    private struct ClaimedWork: Sendable {
+        let order: Int
+        let member: ProjectAgentRoomMember
+        let delivery: ProjectAgentDelivery
+    }
+
+    private struct OrderedRunResult: Sendable {
+        let order: Int
+        let result: RunResult
+    }
+
     public typealias AdditionalToolProviderFactory = @Sendable (
         _ profile: LocalAgentProfile,
         _ member: ProjectAgentRoomMember,
@@ -30,6 +41,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     private let settings: AgentSettingsStore
     private let runtime: AgentRuntime
     private let limits: AgentGroupChatRoutingLimits
+    private let relayMCP: LocalAgentRelayMCPServer
     private let additionalToolProviders: AdditionalToolProviderFactory
     private let now: @Sendable () -> Int64
 
@@ -49,12 +61,15 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.settings = settings
         self.runtime = runtime
         self.limits = limits
+        self.relayMCP = LocalAgentRelayMCPServer(service: service, limits: limits, now: now)
         self.additionalToolProviders = additionalToolProviders
         self.now = now
     }
 
-    /// Drains all currently reachable deliveries in one project. Re-reading the member queue
-    /// after each round lets an Agent's `@mention` wake another Agent without server polling.
+    /// Drains all currently reachable deliveries in one project. Each round first claims at most
+    /// one delivery per Agent, then runs different Agents concurrently. Waiting for the round to
+    /// finish before claiming again preserves per-Agent serialization while re-reading the member
+    /// queue lets an Agent's `@mention` wake another Agent without server polling.
     public func drainProject(
         ownerUserID: String,
         projectID: String,
@@ -71,20 +86,46 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         while results.count < maximumRuns {
             if Task.isCancelled { break }
             let members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
-            var madeProgress = false
-            for member in members where results.count < maximumRuns {
+            let remainingCapacity = maximumRuns - results.count
+            var claimedWork: [ClaimedWork] = []
+            claimedWork.reserveCapacity(min(remainingCapacity, members.count))
+            for member in members where claimedWork.count < remainingCapacity {
                 if Task.isCancelled { break }
-                guard let result = try await runNext(
-                    store: store,
+                guard let delivery = try await store.claimNextDelivery(
                     ownerUserID: ownerUserID,
-                    projectID: projectID,
-                    room: room,
-                    member: member
+                    agentID: member.agentID,
+                    nowUnixMs: now()
                 ) else { continue }
-                results.append(result)
-                madeProgress = true
+                claimedWork.append(.init(
+                    order: claimedWork.count,
+                    member: member,
+                    delivery: delivery
+                ))
             }
-            if !madeProgress { break }
+            if claimedWork.isEmpty { break }
+
+            let round = try await withThrowingTaskGroup(of: OrderedRunResult.self) { group in
+                for work in claimedWork {
+                    group.addTask {
+                        let result = try await runClaimedDeliveryHandlingFailure(
+                            store: store,
+                            ownerUserID: ownerUserID,
+                            projectID: projectID,
+                            room: room,
+                            member: work.member,
+                            delivery: work.delivery
+                        )
+                        return .init(order: work.order, result: result)
+                    }
+                }
+                var completed: [OrderedRunResult] = []
+                completed.reserveCapacity(claimedWork.count)
+                for try await result in group {
+                    completed.append(result)
+                }
+                return completed.sorted { $0.order < $1.order }
+            }
+            results.append(contentsOf: round.map(\.result))
         }
         return results
     }
@@ -199,19 +240,14 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         )
     }
 
-    private func runNext(
+    private func runClaimedDeliveryHandlingFailure(
         store: SQLiteAgentGroupChatStore,
         ownerUserID: String,
         projectID: String,
         room: ProjectAgentRoom,
-        member: ProjectAgentRoomMember
-    ) async throws -> RunResult? {
-        guard let delivery = try await store.claimNextDelivery(
-            ownerUserID: ownerUserID,
-            agentID: member.agentID,
-            nowUnixMs: now()
-        ) else { return nil }
-
+        member: ProjectAgentRoomMember,
+        delivery: ProjectAgentDelivery
+    ) async throws -> RunResult {
         do {
             return try await runClaimedDelivery(
                 store: store,
@@ -393,12 +429,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             )
         }
 
-        let chatProvider = try LocalAgentChatToolProvider(
-            store: store,
-            context: context,
-            limits: limits,
-            now: now
-        )
+        let chatProvider = try await relayMCP.connect(context: context)
         let extraProviders = try await additionalToolProviders(profile, member, context)
         let toolRegistry = try await AgentToolProviderRegistry(
             providers: [chatProvider] + extraProviders
@@ -439,7 +470,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         )
         if finalCheckpoint.status == .completed, currentDelivery?.status != .completed {
             finalCheckpoint.status = .failed
-            finalCheckpoint.stopReason = "Agent 未通过 chat_send_message 完成当前群聊回复。"
+            finalCheckpoint.stopReason = "Agent 未通过本地 Relay MCP 的 chat_send_message 完成当前群聊回复。"
         }
         _ = try await session.finish(checkpoint: finalCheckpoint)
 
@@ -490,7 +521,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         角色指令：\(profile.draft.rolePrompt)
         项目群目标：\(room.draft.goal.isEmpty ? "未单独设置" : room.draft.goal)
 
-        群聊记录不是你的私有记忆，也不会整段注入提示词。先调用 chat_get_trigger 读取本次消息；需要上下文时再调用 chat_read_messages，需要成员身份时调用 chat_list_members。本次提供的其他工具来自用户为你明确选择的本机 Plugin，可以按职责调用。完成工作后必须单独调用 chat_send_message 回复群聊；只有该工具成功才算完成本次 delivery。不得假冒其他 Agent，也不得自行猜测成员 ID。
+        你通过 ChatOS 本机唯一的 Relay MCP 与其他 Agent 协作。群聊记录不是你的私有记忆，也不会整段注入提示词。先调用 relay_bootstrap 获取当前身份、项目、团队、成员、唤醒消息和你的独立未读页；需要继续处理未读时调用 chat_read_unread，需要历史上下文时用稳定消息 ID 游标调用 chat_read_messages。处理完消息后调用 chat_mark_read 推进你自己的已读游标。如果任务确实需要新增团队成员，可以调用 agent_propose_member 提交结构化草案，但它只会进入 Human 确认队列，你不能直接创建或激活 Agent。本次提供的其他工具来自用户为你明确选择的本机 Plugin，可以按职责调用。完成工作后必须单独调用 chat_send_message 回复共享群聊；只有该 MCP 工具成功才算完成本次 delivery，成功回复也会确认当前触发消息。不得假冒其他 Agent，也不得自行猜测成员 ID。
         """
         let envelope = """
         你收到一个本地群聊 delivery：
@@ -500,7 +531,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         - trigger_kind: \(delivery.triggerKind.rawValue)
         - hop_count: \(delivery.hopCount)
 
-        请使用群聊工具读取消息并完成回复。
+        请通过本地 Relay MCP 读取消息并完成回复。
         """
         return [
             .init(role: .system, content: system),

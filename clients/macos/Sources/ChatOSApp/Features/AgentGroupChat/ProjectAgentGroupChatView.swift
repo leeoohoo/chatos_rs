@@ -111,6 +111,10 @@ struct ProjectAgentGroupChatView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 roomHeader
+                if !viewModel.pendingProposals.isEmpty {
+                    Divider()
+                    pendingProposals
+                }
                 if !viewModel.interruptedRuns.isEmpty {
                     Divider()
                     interruptedRuns
@@ -124,6 +128,52 @@ struct ProjectAgentGroupChatView: View {
             memberSidebar
                 .frame(width: 230)
         }
+    }
+
+    private var pendingProposals: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Agent 提交了新成员提案", systemImage: "person.crop.circle.badge.questionmark")
+                .appFont(.caption)
+                .fontWeight(.semibold)
+            ForEach(viewModel.pendingProposals) { proposal in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(proposal.draft.name) · \(proposal.draft.role)")
+                            .appFont(.body)
+                            .fontWeight(.medium)
+                        if !proposal.draft.responsibility.isEmpty {
+                            Text(proposal.draft.responsibility)
+                                .appFont(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        Text("由 \(viewModel.profilesByID[proposal.proposerAgentID]?.draft.name ?? proposal.proposerAgentID) 提议；确认时会重新校验模型和本机 Plugin。")
+                            .appFont(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if viewModel.proposalActionIDs.contains(proposal.id) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("拒绝", role: .destructive) {
+                            Task { await viewModel.rejectProposal(proposal) }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        Button("确认创建") {
+                            Task { await viewModel.approveProposal(proposal) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+                .padding(10)
+                .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.accentColor.opacity(0.07))
     }
 
     private var interruptedRuns: some View {
@@ -730,26 +780,38 @@ private struct LocalAgentBuilderSheet: View {
     }
 
     private var builderRequest: some View {
-        Form {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("描述希望新 Agent 承担的工作")
+                .font(.subheadline.weight(.medium))
             TextField(
-                "描述希望新 Agent 承担的工作",
+                "",
                 text: $brief,
                 axis: .vertical
             )
             .lineLimit(4...8)
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: .infinity)
+
             if viewModel.availableModels.isEmpty {
                 Text("没有可供 Builder 使用的模型，请先配置并启用模型。")
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Builder 模型", selection: $builderModelConfigID) {
-                    ForEach(viewModel.availableModels) { model in
-                        Text("\(model.name) · \(model.modelName)").tag(model.id)
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Builder 模型")
+                        .font(.subheadline.weight(.medium))
+                    Picker("", selection: $builderModelConfigID) {
+                        ForEach(viewModel.availableModels) { model in
+                            Text("\(model.name) · \(model.modelName)").tag(model.id)
+                        }
                     }
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             Text("Builder 只能读取当前项目、群成员、可用模型和本机 Plugin 清单；它只能提交草案，不能直接创建成员。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if isGenerating {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)

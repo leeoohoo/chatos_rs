@@ -117,6 +117,86 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
     }
 }
 
+public enum LocalAgentCreationProposalStatus: String, Codable, Sendable {
+    case pending, approved, rejected
+}
+
+/// Ordinary Agents can request a new teammate through Relay, but only the Human can resolve the
+/// proposal. Account, project and room authority are supplied by the identity-bound MCP session.
+public struct LocalAgentCreationProposal: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let ownerUserID: String
+    public let roomID: String
+    public let proposerAgentID: String
+    public let sourceDeliveryID: String
+    public let requestKey: String
+    public let draft: LocalAgentDraft
+    public let status: LocalAgentCreationProposalStatus
+    public let createdAgentID: String?
+    public let createdAtUnixMs: Int64
+    public let resolvedAtUnixMs: Int64?
+
+    public init(
+        id: String,
+        ownerUserID: String,
+        roomID: String,
+        proposerAgentID: String,
+        sourceDeliveryID: String,
+        requestKey: String,
+        draft: LocalAgentDraft,
+        status: LocalAgentCreationProposalStatus = .pending,
+        createdAgentID: String? = nil,
+        createdAtUnixMs: Int64,
+        resolvedAtUnixMs: Int64? = nil
+    ) {
+        self.id = id
+        self.ownerUserID = ownerUserID
+        self.roomID = roomID
+        self.proposerAgentID = proposerAgentID
+        self.sourceDeliveryID = sourceDeliveryID
+        self.requestKey = requestKey
+        self.draft = draft
+        self.status = status
+        self.createdAgentID = createdAgentID
+        self.createdAtUnixMs = createdAtUnixMs
+        self.resolvedAtUnixMs = resolvedAtUnixMs
+    }
+
+    public func validate() throws {
+        for (value, field) in [
+            (id, "id"), (ownerUserID, "ownerUserID"), (roomID, "roomID"),
+            (proposerAgentID, "proposerAgentID"), (sourceDeliveryID, "sourceDeliveryID"),
+            (requestKey, "requestKey"),
+        ] {
+            try AgentGroupChatValidation.identifier(value, field: field)
+        }
+        try draft.validate()
+        if let createdAgentID {
+            try AgentGroupChatValidation.identifier(createdAgentID, field: "createdAgentID")
+        }
+        guard createdAtUnixMs >= 0,
+              resolvedAtUnixMs == nil || resolvedAtUnixMs! >= createdAtUnixMs else {
+            throw AgentGroupChatError.invalidField("proposalTimestamps")
+        }
+    }
+}
+
+public struct LocalAgentProposalApproval: Codable, Sendable, Equatable {
+    public let proposal: LocalAgentCreationProposal
+    public let agent: LocalAgentProfile
+    public let member: ProjectAgentRoomMember
+
+    public init(
+        proposal: LocalAgentCreationProposal,
+        agent: LocalAgentProfile,
+        member: ProjectAgentRoomMember
+    ) {
+        self.proposal = proposal
+        self.agent = agent
+        self.member = member
+    }
+}
+
 public struct LocalAgentBuilderModelOption: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let name: String
@@ -421,6 +501,71 @@ public struct ProjectAgentMessage: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// Stable room pagination uses the persisted message identity instead of a timestamp-only cursor.
+/// Message ids disambiguate messages written in the same millisecond and are resolved inside the
+/// identity-bound room by the store.
+public struct ProjectAgentMessagePage: Codable, Sendable, Equatable {
+    public let messages: [ProjectAgentMessage]
+    public let nextCursorMessageID: String?
+    public let hasMore: Bool
+
+    public init(
+        messages: [ProjectAgentMessage],
+        nextCursorMessageID: String?,
+        hasMore: Bool
+    ) {
+        self.messages = messages
+        self.nextCursorMessageID = nextCursorMessageID
+        self.hasMore = hasMore
+    }
+}
+
+/// Each Agent owns an independent read cursor for each room. The cursor is monotonic and cannot
+/// be moved backwards by a stale or retried MCP call.
+public struct ProjectAgentReadCursor: Codable, Sendable, Equatable {
+    public let ownerUserID: String
+    public let roomID: String
+    public let agentID: String
+    public let messageID: String
+    public let messageCreatedAtUnixMs: Int64
+    public let updatedAtUnixMs: Int64
+
+    public init(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        messageID: String,
+        messageCreatedAtUnixMs: Int64,
+        updatedAtUnixMs: Int64
+    ) {
+        self.ownerUserID = ownerUserID
+        self.roomID = roomID
+        self.agentID = agentID
+        self.messageID = messageID
+        self.messageCreatedAtUnixMs = messageCreatedAtUnixMs
+        self.updatedAtUnixMs = updatedAtUnixMs
+    }
+}
+
+public struct ProjectAgentUnreadPage: Codable, Sendable, Equatable {
+    public let messages: [ProjectAgentMessage]
+    public let nextCursorMessageID: String?
+    public let hasMore: Bool
+    public let readThroughMessageID: String?
+
+    public init(
+        messages: [ProjectAgentMessage],
+        nextCursorMessageID: String?,
+        hasMore: Bool,
+        readThroughMessageID: String?
+    ) {
+        self.messages = messages
+        self.nextCursorMessageID = nextCursorMessageID
+        self.hasMore = hasMore
+        self.readThroughMessageID = readThroughMessageID
+    }
+}
+
 public enum ProjectAgentDeliveryTriggerKind: String, Codable, Sendable {
     case mention, defaultAgent = "default_agent", agentMention = "agent_mention"
 }
@@ -527,12 +672,39 @@ public protocol AgentGroupChatStore: Sendable {
         profileDraft: LocalAgentProfileDraft,
         memberDraft: ProjectAgentRoomMemberDraft
     ) async throws -> LocalAgentMembershipUpdateResult
+    func createAgentProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposerAgentID: String,
+        sourceDeliveryID: String,
+        requestKey: String,
+        draft: LocalAgentDraft,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentCreationProposal
+    func listAgentProposals(
+        ownerUserID: String,
+        roomID: String,
+        status: LocalAgentCreationProposalStatus?
+    ) async throws -> [LocalAgentCreationProposal]
+    func approveAgentProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentProposalApproval
+    func rejectAgentProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentCreationProposal
     func createRoom(
         ownerUserID: String,
         projectID: String,
         draft: ProjectAgentRoomDraft
     ) async throws -> ProjectAgentRoom
     func activeRoom(ownerUserID: String, projectID: String) async throws -> ProjectAgentRoom?
+    func listRooms(ownerUserID: String, includeArchived: Bool) async throws -> [ProjectAgentRoom]
     func addMember(
         ownerUserID: String,
         roomID: String,
@@ -553,6 +725,25 @@ public protocol AgentGroupChatStore: Sendable {
         afterUnixMs: Int64?,
         limit: Int
     ) async throws -> [ProjectAgentMessage]
+    func pageMessages(
+        ownerUserID: String,
+        roomID: String,
+        afterMessageID: String?,
+        limit: Int
+    ) async throws -> ProjectAgentMessagePage
+    func listUnreadMessages(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        limit: Int
+    ) async throws -> ProjectAgentUnreadPage
+    func markMessagesRead(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        throughMessageID: String,
+        nowUnixMs: Int64
+    ) async throws -> ProjectAgentReadCursor
     func message(
         ownerUserID: String,
         roomID: String,

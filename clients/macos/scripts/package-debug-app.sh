@@ -13,12 +13,25 @@ SWIFTTERM_NOTICE_DIR="$RESOURCES_DIR/ThirdPartyNotices/SwiftTerm"
 PET_DIR="$RESOURCES_DIR/Pets/fengtuan"
 EN_LOCALIZATION_DIR="$RESOURCES_DIR/en.lproj"
 ZH_HANS_LOCALIZATION_DIR="$RESOURCES_DIR/zh-Hans.lproj"
-EXECUTABLE="$PROJECT_DIR/.build/arm64-apple-macosx/debug/ChatOSSwift"
 SIGNING_IDENTITY=${CHATOS_CODESIGN_IDENTITY:-}
+SWIFT_BUILD_SYSTEM=${CHATOS_SWIFT_BUILD_SYSTEM:-native}
+SWIFT_SCRATCH_PATH=${CHATOS_SWIFT_SCRATCH_PATH:-"$PROJECT_DIR/.build-native"}
 
 cd "$PROJECT_DIR"
 "$PROJECT_DIR/scripts/audit-interface-localization.sh"
-swift build
+swift build \
+  --build-system "$SWIFT_BUILD_SYSTEM" \
+  --scratch-path "$SWIFT_SCRATCH_PATH" \
+  --product ChatOSSwift
+BIN_DIR=$(swift build \
+  --build-system "$SWIFT_BUILD_SYSTEM" \
+  --scratch-path "$SWIFT_SCRATCH_PATH" \
+  --show-bin-path)
+EXECUTABLE="$BIN_DIR/ChatOSSwift"
+if [[ ! -x "$EXECUTABLE" ]]; then
+  echo "ChatOSSwift executable not found at $EXECUTABLE" >&2
+  exit 1
+fi
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$TOOLS_DIR" "$RIPGREP_NOTICE_DIR" "$SWIFTTERM_NOTICE_DIR" "$PET_DIR" "$EN_LOCALIZATION_DIR" "$ZH_HANS_LOCALIZATION_DIR"

@@ -377,6 +377,8 @@
 "添加 Agent" = "Add Agent";
 "点击确认前不会创建 Agent。确认时客户端会重新校验模型与本机 Plugin 是否仍然可用。" = "No agent will be created until you confirm. On confirmation, the client will revalidate that the model and local plugins are still available.";
 "生成草案" = "Generate Draft";
+"Agent 提交了新成员提案" = "An Agent Proposed a New Member";
+"确认创建" = "Confirm and Create";
 "确认创建并加入" = "Confirm, Create, and Add";
 "等待你的确认" = "Waiting for Your Approval";
 "结束" = "Stop";
@@ -396,3 +398,17 @@
 "还没有消息" = "No Messages Yet";
 "重新生成" = "Regenerate";
 "默认 Agent" = "Default Agent";
+"创建 Agent 团队" = "Create Agent Team";
+"创建团队" = "Create Team";
+"团队" = "Teams";
+"团队创建后，可以手动创建 Agent，也可以让 Agent Builder 生成草案并由你确认。" = "After creating a team, you can create agents manually or have Agent Builder generate a draft for your approval.";
+"团队名称" = "Team Name";
+"团队必须绑定一个项目，群聊、Agent 和调度状态保存在本机。" = "Each team must be linked to a project. Group chats, agents, and scheduling state are stored locally.";
+"团队目标（可选）" = "Team Goal (Optional)";
+"每个团队绑定一个项目" = "Each team is linked to one project";
+"绑定项目" = "Linked Project";
+"请选择项目" = "Choose a Project";
+"还没有 Agent 团队" = "No Agent Teams Yet";
+"选择一个项目。只有主动创建团队的项目才会进入 Agent 群聊。" = "Choose a project. Only projects for which you explicitly create a team will appear in Agent Group Chat.";
+"选择一个项目，创建只在本机运行的 Agent 团队。" = "Choose a project to create an agent team that runs only on this Mac.";
+"选择或创建 Agent 团队" = "Select or Create an Agent Team";

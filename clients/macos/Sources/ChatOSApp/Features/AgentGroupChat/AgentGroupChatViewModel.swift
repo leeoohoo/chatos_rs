@@ -39,6 +39,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var installedPlugins: [NativeInstalledAgentPlugin] = []
     @Published private(set) var availableModels: [LocalAgentBuilderModelOption] = []
     @Published private(set) var interruptedRuns: [InterruptedRunPresentation] = []
+    @Published private(set) var pendingProposals: [LocalAgentCreationProposal] = []
     @Published var draftMessage = ""
     @Published var selectedMentionAgentIDs: Set<String> = []
     @Published private(set) var isLoading = false
@@ -47,6 +48,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var isPausingAgents = false
     @Published private(set) var isStoppingAgents = false
     @Published private(set) var runActionDeliveryIDs: Set<String> = []
+    @Published private(set) var proposalActionIDs: Set<String> = []
     @Published var errorMessage: String?
 
     private let service: NativeAgentGroupChatService
@@ -101,6 +103,7 @@ final class AgentGroupChatViewModel: ObservableObject {
             let members: [ProjectAgentRoomMember]
             let messages: [ProjectAgentMessage]
             let interruptedRuns: [InterruptedRunPresentation]
+            let pendingProposals: [LocalAgentCreationProposal]
             if let room {
                 members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
                 messages = try await store.listMessages(
@@ -128,16 +131,23 @@ final class AgentGroupChatViewModel: ObservableObject {
                     ))
                 }
                 interruptedRuns = values
+                pendingProposals = try await store.listAgentProposals(
+                    ownerUserID: ownerUserID,
+                    roomID: room.id,
+                    status: .pending
+                )
             } else {
                 members = []
                 messages = []
                 interruptedRuns = []
+                pendingProposals = []
             }
             self.agents = agents
             self.room = room
             self.members = members
             self.messages = messages
             self.interruptedRuns = interruptedRuns
+            self.pendingProposals = pendingProposals
             self.installedPlugins = (try? await pluginService.installedAgentPlugins(
                 ownerUserID: ownerUserID
             )) ?? []
@@ -311,6 +321,38 @@ final class AgentGroupChatViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             return false
+        }
+    }
+
+    func approveProposal(_ proposal: LocalAgentCreationProposal) async {
+        guard proposalActionIDs.insert(proposal.id).inserted else { return }
+        defer { proposalActionIDs.remove(proposal.id) }
+        do {
+            _ = try await builderService.approveProposal(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                proposal: proposal
+            )
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func rejectProposal(_ proposal: LocalAgentCreationProposal) async {
+        guard proposalActionIDs.insert(proposal.id).inserted else { return }
+        defer { proposalActionIDs.remove(proposal.id) }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.rejectAgentProposal(
+                ownerUserID: ownerUserID,
+                roomID: proposal.roomID,
+                proposalID: proposal.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

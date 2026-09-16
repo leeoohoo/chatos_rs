@@ -38,6 +38,20 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         )
     }
 
+    func testListRoomsReturnsOnlyActiveRoomsForOwnerInRecentOrder() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let first = try await makeRoom(store, projectID: "project-1")
+        let second = try await makeRoom(store, projectID: "project-2")
+        _ = try await makeRoom(store, owner: "bob", projectID: "project-3")
+
+        let rooms = try await store.listRooms(ownerUserID: "alice")
+
+        XCTAssertEqual(Set(rooms.map(\.id)), Set([first.id, second.id]))
+        XCTAssertEqual(rooms.map(\.ownerUserID), ["alice", "alice"])
+    }
+
     func testMentionCreatesDurableDeliveryWithStableAgentIdentity() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -122,6 +136,104 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertNil(otherClaim)
     }
 
+    func testUnreadCursorIsStableMonotonicAndIsolatedPerAgent() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let firstAgent = try await makeAgent(store, name: "Agent A")
+        let secondAgent = try await makeAgent(store, name: "Agent B")
+        let room = try await makeRoom(store)
+        for agent in [firstAgent, secondAgent] {
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: agent.draft.name)
+            )
+        }
+        for content in ["消息一", "消息二", "消息三"] {
+            _ = try await store.postMessage(
+                ownerUserID: "alice",
+                roomID: room.id,
+                draft: .init(senderKind: .human, senderID: "alice", content: content),
+                limits: .init()
+            )
+        }
+
+        let fullPage = try await store.pageMessages(
+            ownerUserID: "alice",
+            roomID: room.id,
+            afterMessageID: nil,
+            limit: 10
+        )
+        XCTAssertEqual(fullPage.messages.count, 3)
+        let firstUnread = try await store.listUnreadMessages(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: firstAgent.id,
+            limit: 2
+        )
+        XCTAssertEqual(firstUnread.messages, Array(fullPage.messages.prefix(2)))
+        XCTAssertTrue(firstUnread.hasMore)
+
+        let secondMessage = try XCTUnwrap(firstUnread.messages.last)
+        let cursor = try await store.markMessagesRead(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: firstAgent.id,
+            throughMessageID: secondMessage.id,
+            nowUnixMs: secondMessage.createdAtUnixMs + 1
+        )
+        XCTAssertEqual(cursor.messageID, secondMessage.id)
+        let remaining = try await store.listUnreadMessages(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: firstAgent.id,
+            limit: 10
+        )
+        XCTAssertEqual(remaining.messages, Array(fullPage.messages.dropFirst(2)))
+        XCTAssertEqual(remaining.readThroughMessageID, secondMessage.id)
+
+        let olderMessage = try XCTUnwrap(firstUnread.messages.first)
+        let retriedOldCursor = try await store.markMessagesRead(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: firstAgent.id,
+            throughMessageID: olderMessage.id,
+            nowUnixMs: secondMessage.createdAtUnixMs + 2
+        )
+        XCTAssertEqual(retriedOldCursor.messageID, secondMessage.id)
+        let secondAgentUnread = try await store.listUnreadMessages(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: secondAgent.id,
+            limit: 10
+        )
+        XCTAssertEqual(secondAgentUnread.messages, fullPage.messages)
+
+        let lastMessage = try XCTUnwrap(fullPage.messages.last)
+        _ = try await store.markMessagesRead(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: firstAgent.id,
+            throughMessageID: lastMessage.id,
+            nowUnixMs: lastMessage.createdAtUnixMs + 3
+        )
+        _ = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .agent, senderID: firstAgent.id, content: "自己的回复"),
+            limits: .init()
+        )
+        let afterOwnReply = try await store.listUnreadMessages(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: firstAgent.id,
+            limit: 10
+        )
+        XCTAssertTrue(afterOwnReply.messages.isEmpty)
+    }
+
     func testOnlyOneActiveDeliveryCanBeClaimedPerAgent() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -196,6 +308,203 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             nowUnixMs: first.message.createdAtUnixMs + 4
         )
         XCTAssertNotNil(nextClaim)
+    }
+
+    func testAgentProposalRequiresRunningIdentityAndHumanResolutionIsAtomic() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let proposer = try await makeAgent(store, name: "负责人")
+        let room = try await makeRoom(store)
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: proposer.id,
+            draft: .init(role: "负责人")
+        )
+        _ = try await store.setDefaultAgent(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: proposer.id
+        )
+        let incoming = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "需要补充测试角色",
+                mentionedAgentIDs: [proposer.id]
+            ),
+            limits: .init()
+        )
+        let pendingDelivery = try XCTUnwrap(incoming.deliveries.first)
+        do {
+            _ = try await store.createAgentProposal(
+                ownerUserID: "alice",
+                roomID: room.id,
+                proposerAgentID: proposer.id,
+                sourceDeliveryID: pendingDelivery.id,
+                requestKey: "call-before-claim",
+                draft: .init(
+                    name: "越权 Agent",
+                    role: "观察员",
+                    rolePrompt: "不应被创建。",
+                    modelConfigID: "model-1"
+                ),
+                nowUnixMs: incoming.message.createdAtUnixMs + 1
+            )
+            XCTFail("A non-running delivery submitted an Agent proposal")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .permissionDenied)
+        }
+        let claimedDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: proposer.id,
+            nowUnixMs: incoming.message.createdAtUnixMs + 1
+        )
+        let delivery = try XCTUnwrap(claimedDelivery)
+        let draft = LocalAgentDraft(
+            name: "测试 Agent",
+            role: "测试工程师",
+            responsibility: "验证项目",
+            rolePrompt: "只处理测试工作。",
+            modelConfigID: "model-1",
+            pluginIDs: [],
+            rationale: "团队缺少测试能力"
+        )
+        let proposal = try await store.createAgentProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposerAgentID: proposer.id,
+            sourceDeliveryID: delivery.id,
+            requestKey: "call-1",
+            draft: draft,
+            nowUnixMs: incoming.message.createdAtUnixMs + 2
+        )
+        let replayed = try await store.createAgentProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposerAgentID: proposer.id,
+            sourceDeliveryID: delivery.id,
+            requestKey: "call-1",
+            draft: draft,
+            nowUnixMs: incoming.message.createdAtUnixMs + 3
+        )
+        XCTAssertEqual(replayed.id, proposal.id)
+        do {
+            _ = try await store.createAgentProposal(
+                ownerUserID: "alice",
+                roomID: room.id,
+                proposerAgentID: proposer.id,
+                sourceDeliveryID: delivery.id,
+                requestKey: "call-1",
+                draft: .init(
+                    name: "冲突 Agent",
+                    role: "测试工程师",
+                    rolePrompt: "相同请求键不允许改变草案。",
+                    modelConfigID: "model-1"
+                ),
+                nowUnixMs: incoming.message.createdAtUnixMs + 4
+            )
+            XCTFail("The same proposal request key accepted a different draft")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
+
+        let otherRoom = try await makeRoom(store, projectID: "project-2")
+        let otherRoomProposals = try await store.listAgentProposals(
+            ownerUserID: "alice",
+            roomID: otherRoom.id
+        )
+        XCTAssertTrue(otherRoomProposals.isEmpty)
+        do {
+            _ = try await store.approveAgentProposal(
+                ownerUserID: "alice",
+                roomID: otherRoom.id,
+                proposalID: proposal.id,
+                nowUnixMs: incoming.message.createdAtUnixMs + 4
+            )
+            XCTFail("A proposal was approved through another room")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
+
+        let approval = try await store.approveAgentProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposalID: proposal.id,
+            nowUnixMs: incoming.message.createdAtUnixMs + 4
+        )
+        XCTAssertEqual(approval.proposal.status, .approved)
+        XCTAssertEqual(approval.proposal.createdAgentID, approval.agent.id)
+        XCTAssertEqual(approval.member.agentID, approval.agent.id)
+        XCTAssertEqual(approval.member.draft.role, draft.role)
+        let members = try await store.listMembers(ownerUserID: "alice", roomID: room.id)
+        XCTAssertEqual(Set(members.map(\.agentID)), Set([proposer.id, approval.agent.id]))
+        do {
+            _ = try await store.approveAgentProposal(
+                ownerUserID: "alice",
+                roomID: room.id,
+                proposalID: proposal.id,
+                nowUnixMs: incoming.message.createdAtUnixMs + 5
+            )
+            XCTFail("An approved proposal was processed twice")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
+        do {
+            _ = try await store.rejectAgentProposal(
+                ownerUserID: "alice",
+                roomID: room.id,
+                proposalID: proposal.id,
+                nowUnixMs: incoming.message.createdAtUnixMs + 5
+            )
+            XCTFail("An approved proposal was rejected")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
+
+        let rejectedDraft = LocalAgentDraft(
+            name: "多余 Agent",
+            role: "观察员",
+            rolePrompt: "只观察。",
+            modelConfigID: "model-1"
+        )
+        let rejectedProposal = try await store.createAgentProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposerAgentID: proposer.id,
+            sourceDeliveryID: delivery.id,
+            requestKey: "call-2",
+            draft: rejectedDraft,
+            nowUnixMs: incoming.message.createdAtUnixMs + 5
+        )
+        let rejected = try await store.rejectAgentProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposalID: rejectedProposal.id,
+            nowUnixMs: incoming.message.createdAtUnixMs + 6
+        )
+        XCTAssertEqual(rejected.status, .rejected)
+        XCTAssertNil(rejected.createdAgentID)
+        do {
+            _ = try await store.rejectAgentProposal(
+                ownerUserID: "alice",
+                roomID: room.id,
+                proposalID: rejectedProposal.id,
+                nowUnixMs: incoming.message.createdAtUnixMs + 7
+            )
+            XCTFail("A rejected proposal was processed twice")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
+        let pending = try await store.listAgentProposals(
+            ownerUserID: "alice",
+            roomID: room.id,
+            status: .pending
+        )
+        XCTAssertTrue(pending.isEmpty)
     }
 
     func testAgentCannotImpersonateHumanOrMentionNonMember() async throws {

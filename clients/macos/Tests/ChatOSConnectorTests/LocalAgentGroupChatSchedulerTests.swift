@@ -209,6 +209,76 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertEqual(failedRun?.checkpoint.status, .failed)
         XCTAssertTrue(unfinishedAfterAbandon.isEmpty)
     }
+
+    func testSchedulerRunsDifferentAgentsConcurrentlyButClaimsOneDeliveryPerAgent() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-parallel-scheduler-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let nativeService = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await nativeService.store()
+        let first = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "架构师", rolePrompt: "负责架构。", modelConfigID: "parallel-model")
+        )
+        let second = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "客户端", rolePrompt: "负责客户端。", modelConfigID: "parallel-model")
+        )
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "project-parallel",
+            draft: .init(name: "并行项目群")
+        )
+        for agent in [first, second] {
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: agent.draft.name)
+            )
+        }
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "请并行处理",
+                mentionedAgentIDs: [first.id, second.id]
+            ),
+            limits: .init()
+        )
+        XCTAssertEqual(post.deliveries.count, 2)
+
+        let probe = SchedulerConcurrencyProbe()
+        let settingsSuite = "local-agent-parallel-scheduler-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: nativeService,
+            services: ParallelSchedulerTestServices(probe: probe),
+            settings: .init(suiteName: settingsSuite)
+        )
+        let results = try await scheduler.drainProject(
+            ownerUserID: "alice",
+            projectID: "project-parallel",
+            maximumRuns: 2
+        )
+
+        XCTAssertEqual(results.count, 2)
+        XCTAssertEqual(Set(results.map(\.agentID)), Set([first.id, second.id]))
+        XCTAssertTrue(results.allSatisfy { $0.outcome == .completed })
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+        XCTAssertGreaterThanOrEqual(maximumConcurrentCalls, 2)
+        for delivery in post.deliveries {
+            let stored = try await store.delivery(
+                ownerUserID: "alice",
+                deliveryID: delivery.id
+            )
+            XCTAssertEqual(stored?.status, .completed)
+        }
+    }
 }
 
 private enum SchedulerTestError: Error {
@@ -264,5 +334,73 @@ private actor SchedulerTestModel: AgentModelClient {
                 )]
             )
         }
+    }
+}
+
+private struct ParallelSchedulerTestServices: AgentServiceProviding {
+    let probe: SchedulerConcurrencyProbe
+
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        XCTAssertEqual(configID, "parallel-model")
+        return ParallelSchedulerTestModel(probe: probe)
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        SchedulerOfflineMemory()
+    }
+}
+
+private actor SchedulerConcurrencyProbe {
+    private var activeCalls = 0
+    private var maximumCalls = 0
+
+    func enter() {
+        activeCalls += 1
+        maximumCalls = max(maximumCalls, activeCalls)
+    }
+
+    func leave() {
+        activeCalls -= 1
+    }
+
+    func maximumConcurrentCalls() -> Int {
+        maximumCalls
+    }
+}
+
+private actor ParallelSchedulerTestModel: AgentModelClient {
+    private let probe: SchedulerConcurrencyProbe
+    private var requestCount = 0
+
+    init(probe: SchedulerConcurrencyProbe) {
+        self.probe = probe
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        await probe.enter()
+        try await Task.sleep(for: .milliseconds(50))
+        await probe.leave()
+        requestCount += 1
+        if requestCount == 1 {
+            return .init(
+                role: .assistant,
+                toolCalls: [.init(id: "read-unread", name: "chat_read_unread", arguments: "{}")]
+            )
+        }
+        return .init(
+            role: .assistant,
+            toolCalls: [.init(
+                id: "send-reply",
+                name: "chat_send_message",
+                arguments: #"{"content":"并行 Agent 已完成。"}"#
+            )]
+        )
     }
 }

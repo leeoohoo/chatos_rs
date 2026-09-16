@@ -150,6 +150,227 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }
     }
 
+    public func createAgentProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposerAgentID: String,
+        sourceDeliveryID: String,
+        requestKey: String,
+        draft: LocalAgentDraft,
+        nowUnixMs: Int64
+    ) throws -> LocalAgentCreationProposal {
+        try validateOwnerRoomAgent(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            agentID: proposerAgentID
+        )
+        try AgentGroupChatValidation.identifier(sourceDeliveryID, field: "sourceDeliveryID")
+        try AgentGroupChatValidation.identifier(requestKey, field: "requestKey")
+        try draft.validate()
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            guard try readRoom(ownerUserID: ownerUserID, roomID: roomID)?.status == .active,
+                  try readMember(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: proposerAgentID
+                  )?.status == .active,
+                  let delivery = try readDelivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: sourceDeliveryID
+                  ), delivery.roomID == roomID,
+                     delivery.targetAgentID == proposerAgentID,
+                     delivery.status == .running else {
+                throw AgentGroupChatError.permissionDenied
+            }
+            if let existing = try readProposal(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                proposerAgentID: proposerAgentID,
+                sourceDeliveryID: sourceDeliveryID,
+                requestKey: requestKey
+            ) {
+                guard existing.draft == draft else { throw AgentGroupChatError.conflict }
+                return existing
+            }
+            let proposal = LocalAgentCreationProposal(
+                id: UUID().uuidString.lowercased(),
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                proposerAgentID: proposerAgentID,
+                sourceDeliveryID: sourceDeliveryID,
+                requestKey: requestKey,
+                draft: draft,
+                createdAtUnixMs: nowUnixMs
+            )
+            try proposal.validate()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            let draftJSON = String(decoding: try encoder.encode(draft), as: UTF8.self)
+            try execute(
+                """
+                INSERT INTO local_agent_creation_proposals (
+                    owner_user_id, id, room_id, proposer_agent_id, source_delivery_id,
+                    request_key, draft_json, status, created_agent_id,
+                    created_at_unix_ms, resolved_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
+                """,
+                [
+                    .text(ownerUserID), .text(proposal.id), .text(roomID),
+                    .text(proposerAgentID), .text(sourceDeliveryID), .text(requestKey),
+                    .text(draftJSON), .integer(nowUnixMs),
+                ]
+            )
+            return proposal
+        }
+    }
+
+    public func listAgentProposals(
+        ownerUserID: String,
+        roomID: String,
+        status: LocalAgentCreationProposalStatus? = nil
+    ) throws -> [LocalAgentCreationProposal] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
+            throw AgentGroupChatError.notFound
+        }
+        var sql = "SELECT \(Self.proposalColumns) FROM local_agent_creation_proposals WHERE owner_user_id = ? AND room_id = ?"
+        var values: [Value] = [.text(ownerUserID), .text(roomID)]
+        if let status {
+            sql += " AND status = ?"
+            values.append(.text(status.rawValue))
+        }
+        sql += " ORDER BY created_at_unix_ms, id"
+        return try query(sql, values, row: readProposal)
+    }
+
+    public func approveAgentProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String,
+        nowUnixMs: Int64
+    ) throws -> LocalAgentProposalApproval {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        try AgentGroupChatValidation.identifier(proposalID, field: "proposalID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            guard let room = try readRoom(ownerUserID: ownerUserID, roomID: roomID),
+                  room.status == .active,
+                  let proposal = try readProposal(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    proposalID: proposalID
+                  ), proposal.status == .pending else {
+                throw AgentGroupChatError.conflict
+            }
+            try proposal.draft.validate()
+            let agent = LocalAgentProfile(
+                id: UUID().uuidString.lowercased(),
+                ownerUserID: ownerUserID,
+                draft: proposal.draft.profileDraft,
+                createdAtUnixMs: nowUnixMs,
+                updatedAtUnixMs: nowUnixMs
+            )
+            try agent.validate()
+            try execute(
+                """
+                INSERT INTO local_agent_profiles (
+                    owner_user_id, id, name, description, role_prompt, model_config_id,
+                    default_plugin_ids_json, default_skill_ids_json, status,
+                    created_at_unix_ms, updated_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                """,
+                [
+                    .text(ownerUserID), .text(agent.id), .text(agent.draft.name),
+                    .text(agent.draft.description), .text(agent.draft.rolePrompt),
+                    .text(agent.draft.modelConfigID),
+                    .text(try encodeStrings(agent.draft.defaultPluginIDs)),
+                    .text(try encodeStrings(agent.draft.defaultSkillIDs)),
+                    .integer(nowUnixMs), .integer(nowUnixMs),
+                ]
+            )
+            let member = ProjectAgentRoomMember(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agentID: agent.id,
+                draft: proposal.draft.memberDraft,
+                joinedAtUnixMs: nowUnixMs
+            )
+            try member.validate()
+            try execute(
+                """
+                INSERT INTO project_agent_room_members (
+                    owner_user_id, room_id, agent_id, role, responsibility,
+                    plugin_allowlist_json, status, joined_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
+                """,
+                [
+                    .text(ownerUserID), .text(roomID), .text(agent.id),
+                    .text(member.draft.role), .text(member.draft.responsibility),
+                    .text(try encodeStrings(member.draft.pluginAllowlist)), .integer(nowUnixMs),
+                ]
+            )
+            if room.defaultAgentID == nil {
+                try execute(
+                    """
+                    UPDATE project_agent_rooms SET default_agent_id = ?, updated_at_unix_ms = ?
+                    WHERE owner_user_id = ? AND id = ? AND status = 'active'
+                    """,
+                    [.text(agent.id), .integer(nowUnixMs), .text(ownerUserID), .text(roomID)]
+                )
+            }
+            try execute(
+                """
+                UPDATE local_agent_creation_proposals
+                SET status = 'approved', created_agent_id = ?, resolved_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ? AND room_id = ? AND status = 'pending'
+                """,
+                [
+                    .text(agent.id), .integer(nowUnixMs), .text(ownerUserID),
+                    .text(proposalID), .text(roomID),
+                ]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let approved = try readProposal(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    proposalID: proposalID
+                  ) else { throw AgentGroupChatError.conflict }
+            return .init(proposal: approved, agent: agent, member: member)
+        }
+    }
+
+    public func rejectAgentProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String,
+        nowUnixMs: Int64
+    ) throws -> LocalAgentCreationProposal {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        try AgentGroupChatValidation.identifier(proposalID, field: "proposalID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            try execute(
+                """
+                UPDATE local_agent_creation_proposals
+                SET status = 'rejected', resolved_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ? AND room_id = ? AND status = 'pending'
+                """,
+                [.integer(nowUnixMs), .text(ownerUserID), .text(proposalID), .text(roomID)]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let rejected = try readProposal(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    proposalID: proposalID
+                  ) else { throw AgentGroupChatError.conflict }
+            return rejected
+        }
+    }
+
     public func createRoom(
         ownerUserID: String,
         projectID: String,
@@ -192,6 +413,20 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(projectID, field: "projectID")
         return try readActiveRoom(ownerUserID: ownerUserID, projectID: projectID)
+    }
+
+    public func listRooms(
+        ownerUserID: String,
+        includeArchived: Bool = false
+    ) throws -> [ProjectAgentRoom] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        return try query(
+            "SELECT \(Self.roomColumns) FROM project_agent_rooms WHERE owner_user_id = ?"
+                + (includeArchived ? "" : " AND status = 'active'")
+                + " ORDER BY updated_at_unix_ms DESC, id DESC",
+            [.text(ownerUserID)],
+            row: readRoom
+        )
     }
 
     public func addMember(
@@ -453,6 +688,167 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             values,
             row: readMessage
         )
+    }
+
+    public func pageMessages(
+        ownerUserID: String,
+        roomID: String,
+        afterMessageID: String? = nil,
+        limit: Int = 100
+    ) throws -> ProjectAgentMessagePage {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
+            throw AgentGroupChatError.notFound
+        }
+        var predicate = "owner_user_id = ? AND room_id = ?"
+        var values: [Value] = [.text(ownerUserID), .text(roomID)]
+        if let afterMessageID {
+            try AgentGroupChatValidation.identifier(afterMessageID, field: "afterMessageID")
+            guard let cursor = try readMessage(ownerUserID: ownerUserID, messageID: afterMessageID),
+                  cursor.roomID == roomID else {
+                throw AgentGroupChatError.notFound
+            }
+            predicate += " AND (created_at_unix_ms > ? OR (created_at_unix_ms = ? AND id > ?))"
+            values.append(contentsOf: [
+                .integer(cursor.createdAtUnixMs), .integer(cursor.createdAtUnixMs),
+                .text(cursor.id),
+            ])
+        }
+        values.append(.integer(Int64(limit + 1)))
+        let loaded = try query(
+            """
+            SELECT \(Self.messageColumns) FROM project_agent_messages
+            WHERE \(predicate) ORDER BY created_at_unix_ms, id LIMIT ?
+            """,
+            values,
+            row: readMessage
+        )
+        let messages = Array(loaded.prefix(limit))
+        return .init(
+            messages: messages,
+            nextCursorMessageID: messages.last?.id,
+            hasMore: loaded.count > limit
+        )
+    }
+
+    public func listUnreadMessages(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        limit: Int = 50
+    ) throws -> ProjectAgentUnreadPage {
+        try validateOwnerRoomAgent(ownerUserID: ownerUserID, roomID: roomID, agentID: agentID)
+        guard (1...100).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        guard try readRoom(ownerUserID: ownerUserID, roomID: roomID)?.status == .active,
+              try readMember(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agentID: agentID
+              )?.status == .active else {
+            throw AgentGroupChatError.notMember
+        }
+        let cursor = try readCursor(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            agentID: agentID
+        )
+        var predicate = "owner_user_id = ? AND room_id = ?"
+        var values: [Value] = [.text(ownerUserID), .text(roomID)]
+        if let cursor {
+            predicate += " AND (created_at_unix_ms > ? OR (created_at_unix_ms = ? AND id > ?))"
+            values.append(contentsOf: [
+                .integer(cursor.messageCreatedAtUnixMs),
+                .integer(cursor.messageCreatedAtUnixMs),
+                .text(cursor.messageID),
+            ])
+        }
+        // An Agent's own persisted replies are transcript context, but never unread work for it.
+        predicate += " AND NOT (sender_kind = 'agent' AND sender_id = ?)"
+        values.append(.text(agentID))
+        values.append(.integer(Int64(limit + 1)))
+        let loaded = try query(
+            """
+            SELECT \(Self.messageColumns) FROM project_agent_messages
+            WHERE \(predicate) ORDER BY created_at_unix_ms, id LIMIT ?
+            """,
+            values,
+            row: readMessage
+        )
+        let messages = Array(loaded.prefix(limit))
+        return .init(
+            messages: messages,
+            nextCursorMessageID: messages.last?.id,
+            hasMore: loaded.count > limit,
+            readThroughMessageID: cursor?.messageID
+        )
+    }
+
+    public func markMessagesRead(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        throughMessageID: String,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentReadCursor {
+        try validateOwnerRoomAgent(ownerUserID: ownerUserID, roomID: roomID, agentID: agentID)
+        try AgentGroupChatValidation.identifier(throughMessageID, field: "throughMessageID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            guard try readRoom(ownerUserID: ownerUserID, roomID: roomID)?.status == .active,
+                  try readMember(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: agentID
+                  )?.status == .active else {
+                throw AgentGroupChatError.notMember
+            }
+            guard let message = try readMessage(
+                ownerUserID: ownerUserID,
+                messageID: throughMessageID
+            ), message.roomID == roomID else {
+                throw AgentGroupChatError.notFound
+            }
+            if let existing = try readCursor(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agentID: agentID
+            ), existing.messageCreatedAtUnixMs > message.createdAtUnixMs
+                || (existing.messageCreatedAtUnixMs == message.createdAtUnixMs
+                    && existing.messageID >= message.id) {
+                return existing
+            }
+            let updatedAt = max(nowUnixMs, message.createdAtUnixMs)
+            try execute(
+                """
+                INSERT INTO project_agent_read_cursors (
+                    owner_user_id, room_id, agent_id, message_id,
+                    message_created_at_unix_ms, updated_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(owner_user_id, room_id, agent_id) DO UPDATE SET
+                    message_id = excluded.message_id,
+                    message_created_at_unix_ms = excluded.message_created_at_unix_ms,
+                    updated_at_unix_ms = excluded.updated_at_unix_ms
+                """,
+                [
+                    .text(ownerUserID), .text(roomID), .text(agentID), .text(message.id),
+                    .integer(message.createdAtUnixMs), .integer(updatedAt),
+                ]
+            )
+            return .init(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agentID: agentID,
+                messageID: message.id,
+                messageCreatedAtUnixMs: message.createdAtUnixMs,
+                updatedAtUnixMs: updatedAt
+            )
+        }
     }
 
     public func message(
@@ -798,6 +1194,67 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         ).first
     }
 
+    private func readCursor(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String
+    ) throws -> ProjectAgentReadCursor? {
+        try query(
+            """
+            SELECT owner_user_id, room_id, agent_id, message_id,
+                   message_created_at_unix_ms, updated_at_unix_ms
+            FROM project_agent_read_cursors
+            WHERE owner_user_id = ? AND room_id = ? AND agent_id = ? LIMIT 1
+            """,
+            [.text(ownerUserID), .text(roomID), .text(agentID)]
+        ) { statement in
+            .init(
+                ownerUserID: Self.string(statement, 0),
+                roomID: Self.string(statement, 1),
+                agentID: Self.string(statement, 2),
+                messageID: Self.string(statement, 3),
+                messageCreatedAtUnixMs: sqlite3_column_int64(statement, 4),
+                updatedAtUnixMs: sqlite3_column_int64(statement, 5)
+            )
+        }.first
+    }
+
+    private func readProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String
+    ) throws -> LocalAgentCreationProposal? {
+        try query(
+            """
+            SELECT \(Self.proposalColumns) FROM local_agent_creation_proposals
+            WHERE owner_user_id = ? AND room_id = ? AND id = ? LIMIT 1
+            """,
+            [.text(ownerUserID), .text(roomID), .text(proposalID)],
+            row: readProposal
+        ).first
+    }
+
+    private func readProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposerAgentID: String,
+        sourceDeliveryID: String,
+        requestKey: String
+    ) throws -> LocalAgentCreationProposal? {
+        try query(
+            """
+            SELECT \(Self.proposalColumns) FROM local_agent_creation_proposals
+            WHERE owner_user_id = ? AND room_id = ? AND proposer_agent_id = ?
+              AND source_delivery_id = ? AND request_key = ? LIMIT 1
+            """,
+            [
+                .text(ownerUserID), .text(roomID), .text(proposerAgentID),
+                .text(sourceDeliveryID), .text(requestKey),
+            ],
+            row: readProposal
+        ).first
+    }
+
     private func readDelivery(ownerUserID: String, deliveryID: String) throws -> ProjectAgentDelivery? {
         try query(
             "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND id = ?",
@@ -969,6 +1426,36 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         )
     }
 
+    private func readProposal(_ statement: OpaquePointer) throws -> LocalAgentCreationProposal {
+        let draft: LocalAgentDraft
+        do {
+            draft = try JSONDecoder().decode(
+                LocalAgentDraft.self,
+                from: Data(Self.string(statement, 6).utf8)
+            )
+        } catch {
+            throw AgentGroupChatError.storage("invalid Agent creation proposal")
+        }
+        guard let status = LocalAgentCreationProposalStatus(rawValue: Self.string(statement, 7)) else {
+            throw AgentGroupChatError.storage("invalid Agent creation proposal status")
+        }
+        let proposal = LocalAgentCreationProposal(
+            id: Self.string(statement, 1),
+            ownerUserID: Self.string(statement, 0),
+            roomID: Self.string(statement, 2),
+            proposerAgentID: Self.string(statement, 3),
+            sourceDeliveryID: Self.string(statement, 4),
+            requestKey: Self.string(statement, 5),
+            draft: draft,
+            status: status,
+            createdAgentID: Self.optionalString(statement, 8),
+            createdAtUnixMs: sqlite3_column_int64(statement, 9),
+            resolvedAtUnixMs: Self.optionalInt64(statement, 10)
+        )
+        try proposal.validate()
+        return proposal
+    }
+
     private func readDelivery(_ statement: OpaquePointer) throws -> ProjectAgentDelivery {
         guard let triggerKind = ProjectAgentDeliveryTriggerKind(rawValue: Self.string(statement, 6)),
               let status = ProjectAgentDeliveryStatus(rawValue: Self.string(statement, 7)) else {
@@ -1099,6 +1586,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     private static let roomColumns = "owner_user_id, id, project_id, name, goal, default_agent_id, status, created_at_unix_ms, updated_at_unix_ms"
     private static let memberColumns = "owner_user_id, room_id, agent_id, role, responsibility, plugin_allowlist_json, status, joined_at_unix_ms"
     private static let messageColumns = "owner_user_id, id, room_id, sender_kind, sender_id, content, reply_to_message_id, source_run_id, causation_id, root_message_id, hop_count, created_at_unix_ms"
+    private static let proposalColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_agent_id, created_at_unix_ms, resolved_at_unix_ms"
     private static let deliveryColumns = "owner_user_id, id, room_id, message_id, root_message_id, target_agent_id, trigger_kind, status, attempt, hop_count, deduplication_key, response_message_id, last_error, claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms"
 
     private static let schema = """
@@ -1191,6 +1679,20 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 REFERENCES local_agent_profiles(owner_user_id, id)
         );
 
+        CREATE TABLE IF NOT EXISTS project_agent_read_cursors (
+            owner_user_id TEXT NOT NULL,
+            room_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            message_created_at_unix_ms INTEGER NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL,
+            PRIMARY KEY(owner_user_id, room_id, agent_id),
+            FOREIGN KEY(owner_user_id, room_id, agent_id)
+                REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id),
+            FOREIGN KEY(owner_user_id, message_id)
+                REFERENCES project_agent_messages(owner_user_id, id)
+        );
+
         CREATE TABLE IF NOT EXISTS project_agent_deliveries (
             owner_user_id TEXT NOT NULL,
             id TEXT NOT NULL,
@@ -1226,6 +1728,30 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         CREATE UNIQUE INDEX IF NOT EXISTS one_running_delivery_per_agent
             ON project_agent_deliveries(owner_user_id, target_agent_id) WHERE status = 'running';
 
+        CREATE TABLE IF NOT EXISTS local_agent_creation_proposals (
+            owner_user_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            room_id TEXT NOT NULL,
+            proposer_agent_id TEXT NOT NULL,
+            source_delivery_id TEXT NOT NULL,
+            request_key TEXT NOT NULL,
+            draft_json TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),
+            created_agent_id TEXT,
+            created_at_unix_ms INTEGER NOT NULL,
+            resolved_at_unix_ms INTEGER,
+            PRIMARY KEY(owner_user_id, id),
+            UNIQUE(owner_user_id, room_id, proposer_agent_id, source_delivery_id, request_key),
+            FOREIGN KEY(owner_user_id, room_id, proposer_agent_id)
+                REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id),
+            FOREIGN KEY(owner_user_id, source_delivery_id)
+                REFERENCES project_agent_deliveries(owner_user_id, id),
+            FOREIGN KEY(owner_user_id, created_agent_id)
+                REFERENCES local_agent_profiles(owner_user_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS local_agent_creation_proposals_pending
+            ON local_agent_creation_proposals(owner_user_id, room_id, status, created_at_unix_ms, id);
+
         CREATE TABLE IF NOT EXISTS local_agent_group_chat_runs (
             owner_user_id TEXT NOT NULL,
             id TEXT NOT NULL,
@@ -1254,6 +1780,8 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         );
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (1);
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (2);
+        INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (3);
+        INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (4);
         COMMIT;
         """
 }

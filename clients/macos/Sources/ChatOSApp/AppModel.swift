@@ -1177,7 +1177,10 @@ final class AppModel: ObservableObject {
            remoteConnections.contains(where: { $0.id == id }) { return }
         if case let .terminal(id) = selection,
            terminals.contains(where: { $0.id == id }) { return }
-        if selection == .localConnector { return }
+        if selection == .localConnector
+            || selection == .applications
+            || selection == .mediaStudio
+            || selection == .agentGroupChat { return }
         selection = projects.first.map { .project($0.id) }
             ?? contacts.first.map { .contact($0.id) }
             ?? remoteConnections.first.map { .remote($0.id) }

@@ -6,6 +6,7 @@ enum SidebarSelection: Hashable {
     case localConnector
     case applications
     case mediaStudio
+    case agentGroupChat
     case pluginApplication(String, String)
     case terminal(String)
     case remote(String)
@@ -14,7 +15,6 @@ enum SidebarSelection: Hashable {
 enum ProjectWorkspaceTab: String, CaseIterable, Identifiable {
     case directory = "项目目录"
     case messages = "用户消息"
-    case agentChat = "Agent 群聊"
     case settings = "项目设置"
 
     var id: Self { self }
@@ -24,7 +24,6 @@ enum ProjectWorkspaceTab: String, CaseIterable, Identifiable {
         return switch self {
         case .directory: "Project Files"
         case .messages: "Messages"
-        case .agentChat: "Agent Chat"
         case .settings: "Project Settings"
         }
     }

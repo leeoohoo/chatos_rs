@@ -214,6 +214,32 @@ public struct LocalAgentBuilderService: Sendable {
         return agent
     }
 
+    /// Confirms a proposal submitted by a room Agent. Live model and Plugin allowlists are checked
+    /// before the store atomically creates the profile, joins it to the room and resolves the
+    /// proposal, so a stale or partially retried confirmation cannot create duplicate members.
+    public func approveProposal(
+        ownerUserID: String,
+        projectID: String,
+        proposal: LocalAgentCreationProposal
+    ) async throws -> LocalAgentProposalApproval {
+        guard proposal.ownerUserID == ownerUserID, proposal.status == .pending else {
+            throw AgentGroupChatError.conflict
+        }
+        let resources = try await loadResources(ownerUserID: ownerUserID)
+        try validate(draft: proposal.draft, resources: resources)
+        let store = try await groupChatService.store()
+        guard let room = try await store.activeRoom(ownerUserID: ownerUserID, projectID: projectID),
+              room.id == proposal.roomID else {
+            throw LocalAgentBuilderError.roomUnavailable
+        }
+        return try await store.approveAgentProposal(
+            ownerUserID: ownerUserID,
+            roomID: room.id,
+            proposalID: proposal.id,
+            nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+    }
+
     private func validate(
         draft: LocalAgentDraft,
         resources: LocalAgentBuilderResources
