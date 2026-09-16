@@ -331,7 +331,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         角色指令：\(profile.draft.rolePrompt)
         项目群目标：\(room.draft.goal.isEmpty ? "未单独设置" : room.draft.goal)
 
-        群聊记录不是你的私有记忆，也不会整段注入提示词。先调用 chat_get_trigger 读取本次消息；需要上下文时再调用 chat_read_messages，需要成员身份时调用 chat_list_members。完成工作后必须单独调用 chat_send_message 回复群聊；只有该工具成功才算完成本次 delivery。不得假冒其他 Agent，也不得自行猜测成员 ID。
+        群聊记录不是你的私有记忆，也不会整段注入提示词。先调用 chat_get_trigger 读取本次消息；需要上下文时再调用 chat_read_messages，需要成员身份时调用 chat_list_members。本次提供的其他工具来自用户为你明确选择的本机 Plugin，可以按职责调用。完成工作后必须单独调用 chat_send_message 回复群聊；只有该工具成功才算完成本次 delivery。不得假冒其他 Agent，也不得自行猜测成员 ID。
         """
         let envelope = """
         你收到一个本地群聊 delivery：

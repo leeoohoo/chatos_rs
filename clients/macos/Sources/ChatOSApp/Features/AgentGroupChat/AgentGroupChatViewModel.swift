@@ -18,6 +18,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var agents: [LocalAgentProfile] = []
     @Published private(set) var members: [ProjectAgentRoomMember] = []
     @Published private(set) var messages: [ProjectAgentMessage] = []
+    @Published private(set) var installedPlugins: [NativeInstalledAgentPlugin] = []
     @Published var draftMessage = ""
     @Published var selectedMentionAgentIDs: Set<String> = []
     @Published private(set) var isLoading = false
@@ -27,6 +28,7 @@ final class AgentGroupChatViewModel: ObservableObject {
 
     private let service: NativeAgentGroupChatService
     private let scheduler: LocalAgentGroupChatScheduler
+    private let pluginService: NativeLocalConnectorService
     private var openedStore: SQLiteAgentGroupChatStore?
     private var schedulerTask: Task<Void, Never>?
     private var schedulerNeedsAnotherPass = false
@@ -35,12 +37,14 @@ final class AgentGroupChatViewModel: ObservableObject {
         projectID: String,
         ownerUserID: String,
         service: NativeAgentGroupChatService,
-        scheduler: LocalAgentGroupChatScheduler
+        scheduler: LocalAgentGroupChatScheduler,
+        pluginService: NativeLocalConnectorService
     ) {
         self.projectID = projectID
         self.ownerUserID = ownerUserID
         self.service = service
         self.scheduler = scheduler
+        self.pluginService = pluginService
     }
 
     var profilesByID: [String: LocalAgentProfile] {
@@ -86,6 +90,9 @@ final class AgentGroupChatViewModel: ObservableObject {
             self.room = room
             self.members = members
             self.messages = messages
+            self.installedPlugins = (try? await pluginService.installedAgentPlugins(
+                ownerUserID: ownerUserID
+            )) ?? []
             selectedMentionAgentIDs.formIntersection(Set(members.map(\.agentID)))
             errorMessage = nil
         } catch {
@@ -117,7 +124,8 @@ final class AgentGroupChatViewModel: ObservableObject {
         role: String,
         responsibility: String,
         rolePrompt: String,
-        modelConfigID: String
+        modelConfigID: String,
+        pluginIDs: [String]
     ) async -> Bool {
         guard let room else {
             errorMessage = AgentGroupChatError.notFound.localizedDescription
@@ -131,7 +139,8 @@ final class AgentGroupChatViewModel: ObservableObject {
                     name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-                    modelConfigID: modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
+                    modelConfigID: modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines),
+                    defaultPluginIDs: pluginIDs
                 )
             )
             _ = try await store.addMember(
@@ -140,7 +149,8 @@ final class AgentGroupChatViewModel: ObservableObject {
                 agentID: agent.id,
                 draft: .init(
                     role: role.trimmingCharacters(in: .whitespacesAndNewlines),
-                    responsibility: responsibility.trimmingCharacters(in: .whitespacesAndNewlines)
+                    responsibility: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
+                    pluginAllowlist: pluginIDs
                 )
             )
             if members.isEmpty {

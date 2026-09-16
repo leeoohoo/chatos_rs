@@ -11,14 +11,16 @@ struct ProjectAgentGroupChatView: View {
         projectID: String,
         ownerUserID: String,
         service: NativeAgentGroupChatService,
-        scheduler: LocalAgentGroupChatScheduler
+        scheduler: LocalAgentGroupChatScheduler,
+        pluginService: NativeLocalConnectorService
     ) {
         _viewModel = StateObject(
             wrappedValue: AgentGroupChatViewModel(
                 projectID: projectID,
                 ownerUserID: ownerUserID,
                 service: service,
-                scheduler: scheduler
+                scheduler: scheduler,
+                pluginService: pluginService
             )
         )
     }
@@ -318,6 +320,7 @@ private struct CreateLocalAgentSheet: View {
     @State private var responsibility = ""
     @State private var rolePrompt = ""
     @State private var modelConfigID = ""
+    @State private var selectedPluginIDs: Set<String> = []
     @State private var isSaving = false
 
     var body: some View {
@@ -329,8 +332,34 @@ private struct CreateLocalAgentSheet: View {
                 TextField("职责说明", text: $responsibility, axis: .vertical).lineLimit(2...4)
                 TextField("角色 Prompt", text: $rolePrompt, axis: .vertical).lineLimit(4...8)
                 TextField("模型配置 ID", text: $modelConfigID)
+                if viewModel.installedPlugins.isEmpty {
+                    Text("没有可用于 Agent 的本机 Plugin")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Section("本地 Plugin") {
+                        ForEach(viewModel.installedPlugins) { plugin in
+                            Toggle(isOn: Binding(
+                                get: { selectedPluginIDs.contains(plugin.id) },
+                                set: { selected in
+                                    if selected {
+                                        selectedPluginIDs.insert(plugin.id)
+                                    } else {
+                                        selectedPluginIDs.remove(plugin.id)
+                                    }
+                                }
+                            )) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(plugin.displayName)
+                                    Text(plugin.description.isEmpty ? plugin.id : plugin.description)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            Text("下一阶段会加入 Agent Builder 和模型选择器；当前先使用已有模型配置 ID。")
+            Text("Agent 只会直接启动这里明确选择、且已在本机安装并启用的 Plugin。后续会改成模型和 Plugin 选择器。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
@@ -343,7 +372,8 @@ private struct CreateLocalAgentSheet: View {
                             role: role,
                             responsibility: responsibility,
                             rolePrompt: rolePrompt,
-                            modelConfigID: modelConfigID
+                            modelConfigID: modelConfigID,
+                            pluginIDs: selectedPluginIDs.sorted()
                         ) { dismiss() }
                         isSaving = false
                     }

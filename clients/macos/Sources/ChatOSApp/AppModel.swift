@@ -105,7 +105,7 @@ final class AppModel: ObservableObject {
     private let askUserPromptService: ChatOSAskUserPromptService
     private let petActivityInboxService: ChatOSPetActivityInboxService
     private let workspaceService: ChatOSWorkspaceService
-    private let localConnectorService: NativeLocalConnectorService
+    let localConnectorService: NativeLocalConnectorService
     private let projectConversationService: ChatOSProjectConversationService
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionService: NativeRemoteConnectionService
@@ -185,11 +185,12 @@ final class AppModel: ObservableObject {
         self.conversationService = conversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
-        self.localProjectsService = NativeLocalProjectsService(
+        let localProjectsService = NativeLocalProjectsService(
             connector: localConnectorService,
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("Projects.sqlite3")
         )
+        self.localProjectsService = localProjectsService
         let agentGroupChatService = NativeAgentGroupChatService(
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("AgentGroupChat.sqlite3")
@@ -197,7 +198,25 @@ final class AppModel: ObservableObject {
         self.agentGroupChatService = agentGroupChatService
         self.agentGroupChatScheduler = LocalAgentGroupChatScheduler(
             service: agentGroupChatService,
-            services: agentServices
+            services: agentServices,
+            additionalToolProviders: { profile, member, runContext in
+                let profilePluginIDs = Set(profile.draft.defaultPluginIDs)
+                let memberAllowlist = Set(member.draft.pluginAllowlist)
+                let selectedPluginIDs = memberAllowlist.isEmpty
+                    ? profilePluginIDs
+                    : profilePluginIDs.intersection(memberAllowlist)
+                guard !selectedPluginIDs.isEmpty else { return [] }
+                let projectContext = try await localProjectsService.pluginContext(
+                    ownerUserID: runContext.ownerUserID,
+                    projectID: runContext.projectID
+                )
+                return try await localConnectorService.makeAgentPluginToolProviders(
+                    ownerUserID: runContext.ownerUserID,
+                    runContext: runContext,
+                    pluginIDs: selectedPluginIDs.sorted(),
+                    projectContext: projectContext
+                )
+            }
         )
         let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService

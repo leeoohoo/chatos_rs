@@ -56,7 +56,8 @@ struct ProjectWorkspaceView: View {
                         projectID: projectID,
                         ownerUserID: ownerUserID,
                         service: model.agentGroupChatService,
-                        scheduler: model.agentGroupChatScheduler
+                        scheduler: model.agentGroupChatScheduler,
+                        pluginService: model.localConnectorService
                     )
                     .id("\(ownerUserID):\(projectID)")
                 } else {

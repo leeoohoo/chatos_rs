@@ -618,7 +618,7 @@ extension NativeLocalConnectorService {
         return String(compact.prefix(240))
     }
 
-    private static func toolPolicy(
+    static func toolPolicy(
         _ tool: NativeJSONValue?,
         componentKey: String,
         toolName: String
@@ -686,7 +686,7 @@ extension NativeLocalConnectorService {
     }
 }
 
-private struct NativePluginToolPolicy {
+struct NativePluginToolPolicy {
     var approvalMode: String
     var riskLevel: String
     var timeoutMilliseconds: Int
@@ -703,7 +703,7 @@ private struct NativePluginToolPolicy {
     }
 }
 
-private struct NativePluginPermissionRule {
+struct NativePluginPermissionRule {
     var argumentPointer: String
     var expectedValue: NativeJSONValue
     var matchWhenMissing: Bool
