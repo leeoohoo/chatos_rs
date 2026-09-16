@@ -6,6 +6,7 @@ struct ProjectAgentGroupChatView: View {
     @StateObject private var viewModel: AgentGroupChatViewModel
     @State private var showsCreateRoom = false
     @State private var showsCreateAgent = false
+    @State private var showsAgentBuilder = false
     @State private var abandonDeliveryID: String?
 
     init(
@@ -13,6 +14,7 @@ struct ProjectAgentGroupChatView: View {
         ownerUserID: String,
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
+        builderService: LocalAgentBuilderService,
         pluginService: NativeLocalConnectorService
     ) {
         _viewModel = StateObject(
@@ -21,6 +23,7 @@ struct ProjectAgentGroupChatView: View {
                 ownerUserID: ownerUserID,
                 service: service,
                 scheduler: scheduler,
+                builderService: builderService,
                 pluginService: pluginService
             )
         )
@@ -42,6 +45,9 @@ struct ProjectAgentGroupChatView: View {
         }
         .sheet(isPresented: $showsCreateAgent) {
             CreateLocalAgentSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showsAgentBuilder) {
+            LocalAgentBuilderSheet(viewModel: viewModel)
         }
         .alert(
             "Agent 群聊错误",
@@ -162,8 +168,15 @@ struct ProjectAgentGroupChatView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(.quaternary, in: Capsule())
-            Button("创建 Agent", systemImage: "person.badge.plus") {
-                showsCreateAgent = true
+            Menu {
+                Button("手动创建", systemImage: "square.and.pencil") {
+                    showsCreateAgent = true
+                }
+                Button("让 Agent Builder 创建", systemImage: "sparkles") {
+                    showsAgentBuilder = true
+                }
+            } label: {
+                Label("添加 Agent", systemImage: "person.badge.plus")
             }
             .buttonStyle(.bordered)
         }
@@ -335,7 +348,16 @@ struct ProjectAgentGroupChatView: View {
                 .padding(.vertical, 5)
             }
             Spacer()
-            Button("创建 Agent", systemImage: "plus") { showsCreateAgent = true }
+            Menu {
+                Button("手动创建", systemImage: "square.and.pencil") {
+                    showsCreateAgent = true
+                }
+                Button("Agent Builder", systemImage: "sparkles") {
+                    showsAgentBuilder = true
+                }
+            } label: {
+                Label("添加 Agent", systemImage: "plus")
+            }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity)
         }
@@ -396,7 +418,16 @@ private struct CreateLocalAgentSheet: View {
                 TextField("群聊角色", text: $role)
                 TextField("职责说明", text: $responsibility, axis: .vertical).lineLimit(2...4)
                 TextField("角色 Prompt", text: $rolePrompt, axis: .vertical).lineLimit(4...8)
-                TextField("模型配置 ID", text: $modelConfigID)
+                if viewModel.availableModels.isEmpty {
+                    Text("没有已启用且配置了密钥的模型")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker("模型", selection: $modelConfigID) {
+                        ForEach(viewModel.availableModels) { model in
+                            Text("\(model.name) · \(model.modelName)").tag(model.id)
+                        }
+                    }
+                }
                 if viewModel.installedPlugins.isEmpty {
                     Text("没有可用于 Agent 的本机 Plugin")
                         .foregroundStyle(.secondary)
@@ -424,7 +455,7 @@ private struct CreateLocalAgentSheet: View {
                     }
                 }
             }
-            Text("Agent 只会直接启动这里明确选择、且已在本机安装并启用的 Plugin。后续会改成模型和 Plugin 选择器。")
+            Text("Agent 只会直接启动这里明确选择、且已在本机安装并启用的 Plugin。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
@@ -454,5 +485,164 @@ private struct CreateLocalAgentSheet: View {
         }
         .padding(24)
         .frame(width: 560)
+        .onAppear {
+            if modelConfigID.isEmpty {
+                modelConfigID = viewModel.availableModels.first?.id ?? ""
+            }
+        }
+    }
+}
+
+private struct LocalAgentBuilderSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var viewModel: AgentGroupChatViewModel
+    @State private var brief = ""
+    @State private var builderModelConfigID = ""
+    @State private var proposedDraft: LocalAgentDraft?
+    @State private var isGenerating = false
+    @State private var isCreating = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label("Agent Builder", systemImage: "sparkles")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                Spacer()
+                Text("本地受控创建")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let proposedDraft {
+                draftConfirmation(proposedDraft)
+            } else {
+                builderRequest
+            }
+
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                if let proposedDraft {
+                    Button("重新生成") { self.proposedDraft = nil }
+                        .disabled(isCreating)
+                    Button("确认创建并加入") {
+                        isCreating = true
+                        Task {
+                            if await viewModel.confirmAgentDraft(proposedDraft) { dismiss() }
+                            isCreating = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isCreating)
+                } else {
+                    Button("生成草案") {
+                        isGenerating = true
+                        Task {
+                            proposedDraft = await viewModel.generateAgentDraft(
+                                brief: brief,
+                                builderModelConfigID: builderModelConfigID
+                            )
+                            isGenerating = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        isGenerating
+                            || brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || builderModelConfigID.isEmpty
+                    )
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 620)
+        .onAppear {
+            if builderModelConfigID.isEmpty {
+                builderModelConfigID = viewModel.availableModels.first?.id ?? ""
+            }
+        }
+    }
+
+    private var builderRequest: some View {
+        Form {
+            TextField(
+                "描述希望新 Agent 承担的工作",
+                text: $brief,
+                axis: .vertical
+            )
+            .lineLimit(4...8)
+            if viewModel.availableModels.isEmpty {
+                Text("没有可供 Builder 使用的模型，请先配置并启用模型。")
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("Builder 模型", selection: $builderModelConfigID) {
+                    ForEach(viewModel.availableModels) { model in
+                        Text("\(model.name) · \(model.modelName)").tag(model.id)
+                    }
+                }
+            }
+            Text("Builder 只能读取当前项目、群成员、可用模型和本机 Plugin 清单；它只能提交草案，不能直接创建成员。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if isGenerating {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在生成可确认的 Agent 草案…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func draftConfirmation(_ draft: LocalAgentDraft) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Label("等待你的确认", systemImage: "checkmark.seal")
+                    .font(.headline)
+                draftField("名称", draft.name)
+                draftField("群聊角色", draft.role)
+                draftField("职责", draft.responsibility.isEmpty ? "未单独设置" : draft.responsibility)
+                draftField("模型", modelName(draft.modelConfigID))
+                draftField(
+                    "本地 Plugin",
+                    draft.pluginIDs.isEmpty
+                        ? "无"
+                        : draft.pluginIDs.map(pluginName).joined(separator: "、")
+                )
+                draftField("创建理由", draft.rationale.isEmpty ? "未说明" : draft.rationale)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("角色 Prompt").font(.caption).foregroundStyle(.secondary)
+                    Text(draft.rolePrompt)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                }
+                Text("点击确认前不会创建 Agent。确认时客户端会重新校验模型与本机 Plugin 是否仍然可用。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(minHeight: 360, maxHeight: 560)
+    }
+
+    private func draftField(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).textSelection(.enabled)
+        }
+    }
+
+    private func modelName(_ id: String) -> String {
+        guard let model = viewModel.availableModels.first(where: { $0.id == id }) else {
+            return id
+        }
+        return "\(model.name) · \(model.modelName)"
+    }
+
+    private func pluginName(_ id: String) -> String {
+        viewModel.installedPlugins.first(where: { $0.id == id })?.displayName ?? id
     }
 }

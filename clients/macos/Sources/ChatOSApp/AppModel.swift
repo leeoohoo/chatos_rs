@@ -117,6 +117,7 @@ final class AppModel: ObservableObject {
     let projectRunService: NativeProjectRunService
     let agentGroupChatService: NativeAgentGroupChatService
     let agentGroupChatScheduler: LocalAgentGroupChatScheduler
+    let agentGroupChatBuilderService: LocalAgentBuilderService
     let notepadService: ChatOSNotepadService
     let wechatCompanionService: ChatOSWeChatCompanionService
     private let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
@@ -217,6 +218,12 @@ final class AppModel: ObservableObject {
                     projectContext: projectContext
                 )
             }
+        )
+        self.agentGroupChatBuilderService = LocalAgentBuilderService(
+            groupChatService: agentGroupChatService,
+            projectsService: localProjectsService,
+            connectorService: localConnectorService,
+            agentServices: agentServices
         )
         let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService

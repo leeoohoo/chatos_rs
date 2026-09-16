@@ -58,6 +58,104 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
     }
 }
 
+/// A user-reviewable proposal produced by the built-in Agent Builder. It deliberately contains
+/// only profile and room-member fields: account, project, room and creation authority stay in the
+/// host application and can never be selected by model tool arguments.
+public struct LocalAgentDraft: Codable, Sendable, Equatable {
+    public let name: String
+    public let role: String
+    public let responsibility: String
+    public let rolePrompt: String
+    public let modelConfigID: String
+    public let pluginIDs: [String]
+    public let rationale: String
+
+    public init(
+        name: String,
+        role: String,
+        responsibility: String = "",
+        rolePrompt: String,
+        modelConfigID: String,
+        pluginIDs: [String] = [],
+        rationale: String = ""
+    ) {
+        self.name = name
+        self.role = role
+        self.responsibility = responsibility
+        self.rolePrompt = rolePrompt
+        self.modelConfigID = modelConfigID
+        self.pluginIDs = pluginIDs
+        self.rationale = rationale
+    }
+
+    public func validate() throws {
+        try AgentGroupChatValidation.text(name, field: "name", maximumLength: 120)
+        try AgentGroupChatValidation.text(role, field: "role", maximumLength: 160)
+        try AgentGroupChatValidation.optionalText(
+            responsibility,
+            field: "responsibility",
+            maximumLength: 8_000
+        )
+        try AgentGroupChatValidation.text(rolePrompt, field: "rolePrompt", maximumLength: 32_000)
+        try AgentGroupChatValidation.identifier(modelConfigID, field: "modelConfigID")
+        try AgentGroupChatValidation.identifiers(pluginIDs, field: "pluginIDs", maximumCount: 100)
+        try AgentGroupChatValidation.optionalText(rationale, field: "rationale", maximumLength: 4_000)
+    }
+
+    public var profileDraft: LocalAgentProfileDraft {
+        .init(
+            name: name,
+            description: responsibility,
+            rolePrompt: rolePrompt,
+            modelConfigID: modelConfigID,
+            defaultPluginIDs: pluginIDs
+        )
+    }
+
+    public var memberDraft: ProjectAgentRoomMemberDraft {
+        .init(role: role, responsibility: responsibility, pluginAllowlist: pluginIDs)
+    }
+}
+
+public struct LocalAgentBuilderModelOption: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let name: String
+    public let provider: String
+    public let modelName: String
+
+    public init(id: String, name: String, provider: String, modelName: String) {
+        self.id = id
+        self.name = name
+        self.provider = provider
+        self.modelName = modelName
+    }
+}
+
+public struct LocalAgentBuilderPluginOption: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let name: String
+    public let description: String
+
+    public init(id: String, name: String, description: String) {
+        self.id = id
+        self.name = name
+        self.description = description
+    }
+}
+
+public struct LocalAgentBuilderResources: Codable, Sendable, Equatable {
+    public let models: [LocalAgentBuilderModelOption]
+    public let plugins: [LocalAgentBuilderPluginOption]
+
+    public init(
+        models: [LocalAgentBuilderModelOption],
+        plugins: [LocalAgentBuilderPluginOption]
+    ) {
+        self.models = models
+        self.plugins = plugins
+    }
+}
+
 public struct LocalAgentProfile: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let ownerUserID: String

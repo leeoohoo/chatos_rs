@@ -37,6 +37,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var members: [ProjectAgentRoomMember] = []
     @Published private(set) var messages: [ProjectAgentMessage] = []
     @Published private(set) var installedPlugins: [NativeInstalledAgentPlugin] = []
+    @Published private(set) var availableModels: [LocalAgentBuilderModelOption] = []
     @Published private(set) var interruptedRuns: [InterruptedRunPresentation] = []
     @Published var draftMessage = ""
     @Published var selectedMentionAgentIDs: Set<String> = []
@@ -48,6 +49,7 @@ final class AgentGroupChatViewModel: ObservableObject {
 
     private let service: NativeAgentGroupChatService
     private let scheduler: LocalAgentGroupChatScheduler
+    private let builderService: LocalAgentBuilderService
     private let pluginService: NativeLocalConnectorService
     private var openedStore: SQLiteAgentGroupChatStore?
     private var schedulerTask: Task<Void, Never>?
@@ -58,12 +60,14 @@ final class AgentGroupChatViewModel: ObservableObject {
         ownerUserID: String,
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
+        builderService: LocalAgentBuilderService,
         pluginService: NativeLocalConnectorService
     ) {
         self.projectID = projectID
         self.ownerUserID = ownerUserID
         self.service = service
         self.scheduler = scheduler
+        self.builderService = builderService
         self.pluginService = pluginService
     }
 
@@ -135,6 +139,10 @@ final class AgentGroupChatViewModel: ObservableObject {
             self.installedPlugins = (try? await pluginService.installedAgentPlugins(
                 ownerUserID: ownerUserID
             )) ?? []
+            let builderResources = try? await builderService.loadResources(
+                ownerUserID: ownerUserID
+            )
+            self.availableModels = builderResources?.models ?? []
             selectedMentionAgentIDs.formIntersection(Set(members.map(\.agentID)))
             errorMessage = nil
         } catch {
@@ -180,6 +188,11 @@ final class AgentGroupChatViewModel: ObservableObject {
             errorMessage = AgentGroupChatError.notFound.localizedDescription
             return false
         }
+        let normalizedModelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard availableModels.contains(where: { $0.id == normalizedModelConfigID }) else {
+            errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription
+            return false
+        }
         do {
             let store = try await resolveStore()
             let agent = try await store.createAgent(
@@ -188,7 +201,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                     name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-                    modelConfigID: modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines),
+                    modelConfigID: normalizedModelConfigID,
                     defaultPluginIDs: pluginIDs
                 )
             )
@@ -209,6 +222,37 @@ final class AgentGroupChatViewModel: ObservableObject {
                     agentID: agent.id
                 )
             }
+            await load()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func generateAgentDraft(brief: String, builderModelConfigID: String) async -> LocalAgentDraft? {
+        do {
+            let draft = try await builderService.generateDraft(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                brief: brief,
+                builderModelConfigID: builderModelConfigID
+            )
+            errorMessage = nil
+            return draft
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func confirmAgentDraft(_ draft: LocalAgentDraft) async -> Bool {
+        do {
+            _ = try await builderService.createConfirmedDraft(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                draft: draft
+            )
             await load()
             return true
         } catch {

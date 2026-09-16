@@ -330,10 +330,15 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                 )
             }
             let memory = try await services.makeAgentMemory(scope: memoryScope)
+            // Establish the bound thread before attaching Memory to the checkpoint. A fresh run
+            // may continue without Memory when this preflight is offline; a resumed run pauses
+            // instead of silently switching or dropping its already-bound Memory scope.
+            try await memory.ensureThread()
             let provider = AgentMemoryContextProvider(scope: memoryScope, service: memory)
             if checkpoint.memory == nil {
                 checkpoint = try provider.bind(checkpoint)
             }
+            checkpoint.memory?.threadCreated = true
             memoryProvider = provider
             try await session.record(
                 checkpoint: checkpoint,

@@ -225,6 +225,16 @@ private struct SchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        SchedulerOfflineMemory()
+    }
+}
+
+private struct SchedulerOfflineMemory: AgentMemoryServicing {
+    func ensureThread() async throws { throw SchedulerTestError.memoryOffline }
+    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
+        throw SchedulerTestError.memoryOffline
+    }
+    func compose() async throws -> AgentMemoryContext {
         throw SchedulerTestError.memoryOffline
     }
 }

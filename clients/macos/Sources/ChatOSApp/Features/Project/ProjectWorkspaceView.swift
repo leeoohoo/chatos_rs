@@ -57,6 +57,7 @@ struct ProjectWorkspaceView: View {
                         ownerUserID: ownerUserID,
                         service: model.agentGroupChatService,
                         scheduler: model.agentGroupChatScheduler,
+                        builderService: model.agentGroupChatBuilderService,
                         pluginService: model.localConnectorService
                     )
                     .id("\(ownerUserID):\(projectID)")
