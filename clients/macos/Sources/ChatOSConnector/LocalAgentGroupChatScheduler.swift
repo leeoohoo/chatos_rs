@@ -69,9 +69,11 @@ public struct LocalAgentGroupChatScheduler: Sendable {
 
         var results: [RunResult] = []
         while results.count < maximumRuns {
+            if Task.isCancelled { break }
             let members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
             var madeProgress = false
             for member in members where results.count < maximumRuns {
+                if Task.isCancelled { break }
                 guard let result = try await runNext(
                     store: store,
                     ownerUserID: ownerUserID,
@@ -85,6 +87,24 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             if !madeProgress { break }
         }
         return results
+    }
+
+    /// Stops both queued and active work for the current project. The caller should first cancel
+    /// its in-process scheduler task so no model or Plugin call remains active while SQLite closes
+    /// the durable queue.
+    @discardableResult
+    public func stopProject(ownerUserID: String, projectID: String) async throws -> Int {
+        let store = try await service.store()
+        guard let room = try await store.activeRoom(
+            ownerUserID: ownerUserID,
+            projectID: projectID
+        ) else { throw AgentGroupChatError.notFound }
+        return try await store.stopOutstandingDeliveries(
+            ownerUserID: ownerUserID,
+            roomID: room.id,
+            reason: "用户已停止当前项目中的全部本地 Agent。",
+            nowUnixMs: now()
+        )
     }
 
     /// Explicitly resumes one durable running delivery. This is intentionally not automatic:

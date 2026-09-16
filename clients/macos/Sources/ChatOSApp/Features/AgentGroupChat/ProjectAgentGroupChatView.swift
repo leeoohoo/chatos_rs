@@ -7,6 +7,7 @@ struct ProjectAgentGroupChatView: View {
     @State private var showsCreateRoom = false
     @State private var showsCreateAgent = false
     @State private var showsAgentBuilder = false
+    @State private var showsStopAllConfirmation = false
     @State private var abandonDeliveryID: String?
 
     init(
@@ -76,6 +77,18 @@ struct ProjectAgentGroupChatView: View {
             Button("取消", role: .cancel) { abandonDeliveryID = nil }
         } message: {
             Text("该 delivery 会标记为失败并释放 Agent 队列；已保存的检查点和事件仍会保留。")
+        }
+        .confirmationDialog(
+            "停止当前项目的全部 Agent？",
+            isPresented: $showsStopAllConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("停止全部 Agent", role: .destructive) {
+                Task { await viewModel.stopAllAgents() }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("正在运行的 delivery 会标记失败，尚未开始的 delivery 会取消；Run 检查点和事件会保留。")
         }
     }
 
@@ -168,6 +181,32 @@ struct ProjectAgentGroupChatView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(.quaternary, in: Capsule())
+            if viewModel.isRunningAgents {
+                Button {
+                    Task { await viewModel.pauseAgents() }
+                } label: {
+                    if viewModel.isPausingAgents {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("暂停", systemImage: "pause.fill")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isPausingAgents || viewModel.isStoppingAgents)
+            }
+            if viewModel.isRunningAgents || !viewModel.interruptedRuns.isEmpty {
+                Button(role: .destructive) {
+                    showsStopAllConfirmation = true
+                } label: {
+                    if viewModel.isStoppingAgents {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("停止全部", systemImage: "stop.fill")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isStoppingAgents)
+            }
             Menu {
                 Button("手动创建", systemImage: "square.and.pencil") {
                     showsCreateAgent = true

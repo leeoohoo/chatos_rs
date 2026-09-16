@@ -398,4 +398,89 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             XCTAssertEqual(error as? AgentGroupChatError, .conflict)
         }
     }
+
+    func testStopOutstandingDeliveriesClosesRunsAndCancelsQueuedWorkAtomically() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let runningAgent = try await makeAgent(store, name: "运行成员")
+        let queuedAgent = try await makeAgent(store, name: "排队成员")
+        let room = try await makeRoom(store)
+        for agent in [runningAgent, queuedAgent] {
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: agent.draft.name)
+            )
+        }
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "同时停止",
+                mentionedAgentIDs: [runningAgent.id, queuedAgent.id]
+            ),
+            limits: .init()
+        )
+        let runningValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: runningAgent.id,
+            nowUnixMs: post.message.createdAtUnixMs + 1
+        )
+        let running = try XCTUnwrap(runningValue)
+        let queued = try XCTUnwrap(post.deliveries.first(where: { $0.targetAgentID == queuedAgent.id }))
+        let runID = UUID()
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            roomID: room.id,
+            agentID: runningAgent.id,
+            deliveryID: running.id,
+            triggerMessageID: post.message.id,
+            rootMessageID: post.message.rootMessageID,
+            runID: runID.uuidString.lowercased(),
+            hopCount: running.hopCount
+        )
+        var checkpoint = AgentRunCheckpoint(
+            scope: LocalAgentGroupChatRun.runtimeScope(for: context),
+            messages: [.init(role: .system, content: "system")]
+        )
+        checkpoint.id = runID
+        checkpoint.status = .paused
+        let run = try LocalAgentGroupChatRun(
+            id: runID,
+            context: context,
+            modelConfigID: runningAgent.draft.modelConfigID,
+            policy: .init(),
+            checkpoint: checkpoint,
+            createdAtUnixMs: post.message.createdAtUnixMs + 1,
+            updatedAtUnixMs: post.message.createdAtUnixMs + 1
+        )
+        try await store.saveRun(run)
+
+        let stopped = try await store.stopOutstandingDeliveries(
+            ownerUserID: "alice",
+            roomID: room.id,
+            reason: "用户停止全部 Agent。",
+            nowUnixMs: post.message.createdAtUnixMs + 2
+        )
+        XCTAssertEqual(stopped, 2)
+        let stoppedRunning = try await store.delivery(ownerUserID: "alice", deliveryID: running.id)
+        let stoppedQueued = try await store.delivery(ownerUserID: "alice", deliveryID: queued.id)
+        XCTAssertEqual(stoppedRunning?.status, .failed)
+        XCTAssertEqual(stoppedQueued?.status, .cancelled)
+        let closedRun = try await store.run(ownerUserID: "alice", deliveryID: running.id)
+        XCTAssertEqual(closedRun?.checkpoint.status, .failed)
+        XCTAssertEqual(closedRun?.checkpoint.stopReason, "用户停止全部 Agent。")
+        XCTAssertEqual(closedRun?.events.last?.kind, "stopped_all")
+        let unfinished = try await store.listUnfinishedRuns(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            limit: 10
+        )
+        XCTAssertTrue(unfinished.isEmpty)
+    }
 }

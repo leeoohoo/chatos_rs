@@ -44,6 +44,8 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isSending = false
     @Published private(set) var isRunningAgents = false
+    @Published private(set) var isPausingAgents = false
+    @Published private(set) var isStoppingAgents = false
     @Published private(set) var runActionDeliveryIDs: Set<String> = []
     @Published var errorMessage: String?
 
@@ -336,6 +338,38 @@ final class AgentGroupChatViewModel: ObservableObject {
             await load()
             errorMessage = error.localizedDescription
         }
+    }
+
+    func pauseAgents() async {
+        guard isRunningAgents, !isPausingAgents, !isStoppingAgents else { return }
+        isPausingAgents = true
+        schedulerNeedsAnotherPass = false
+        let activeTask = schedulerTask
+        activeTask?.cancel()
+        await activeTask?.value
+        await load()
+        isPausingAgents = false
+    }
+
+    func stopAllAgents() async {
+        guard !isStoppingAgents else { return }
+        isStoppingAgents = true
+        schedulerNeedsAnotherPass = false
+        let activeTask = schedulerTask
+        activeTask?.cancel()
+        await activeTask?.value
+        do {
+            _ = try await scheduler.stopProject(
+                ownerUserID: ownerUserID,
+                projectID: projectID
+            )
+            await load()
+            errorMessage = nil
+        } catch {
+            await load()
+            errorMessage = error.localizedDescription
+        }
+        isStoppingAgents = false
     }
 
     private func resolveStore() async throws -> SQLiteAgentGroupChatStore {

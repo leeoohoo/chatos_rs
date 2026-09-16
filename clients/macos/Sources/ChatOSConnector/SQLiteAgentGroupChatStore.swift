@@ -536,6 +536,79 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }
     }
 
+    /// Atomically stops every queued or running delivery in one room. Pending work is cancelled;
+    /// running work is failed and any durable Run is closed in the same SQLite transaction.
+    public func stopOutstandingDeliveries(
+        ownerUserID: String,
+        roomID: String,
+        reason: String,
+        nowUnixMs: Int64
+    ) throws -> Int {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        try AgentGroupChatValidation.text(reason, field: "reason", maximumLength: 8_000)
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
+                throw AgentGroupChatError.notFound
+            }
+            let deliveryIDs: [String] = try query(
+                """
+                SELECT id FROM project_agent_deliveries
+                WHERE owner_user_id = ? AND room_id = ? AND status IN ('pending', 'running')
+                ORDER BY created_at_unix_ms, id
+                """,
+                [.text(ownerUserID), .text(roomID)]
+            ) { Self.string($0, 0) }
+            guard !deliveryIDs.isEmpty else { return 0 }
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            for deliveryID in deliveryIDs {
+                guard var run = try readRun(ownerUserID: ownerUserID, deliveryID: deliveryID) else {
+                    continue
+                }
+                run.checkpoint.status = .failed
+                run.checkpoint.stopReason = reason
+                run.events.append(.init(
+                    kind: "stopped_all",
+                    detail: reason,
+                    modelCalls: run.checkpoint.modelCalls
+                ))
+                run.updatedAtUnixMs = max(nowUnixMs, run.updatedAtUnixMs)
+                try run.validate()
+                let json = String(decoding: try encoder.encode(run), as: UTF8.self)
+                try execute(
+                    """
+                    UPDATE local_agent_group_chat_runs
+                    SET status = 'failed', run_json = ?, updated_at_unix_ms = ?
+                    WHERE owner_user_id = ? AND id = ?
+                    """,
+                    [
+                        .text(json), .integer(run.updatedAtUnixMs), .text(ownerUserID),
+                        .text(run.id.uuidString.lowercased()),
+                    ]
+                )
+                guard sqlite3_changes(database) == 1 else {
+                    throw AgentGroupChatError.conflict
+                }
+            }
+            try execute(
+                """
+                UPDATE project_agent_deliveries
+                SET status = CASE status WHEN 'running' THEN 'failed' ELSE 'cancelled' END,
+                    last_error = ?, completed_at_unix_ms = ?
+                WHERE owner_user_id = ? AND room_id = ? AND status IN ('pending', 'running')
+                """,
+                [.text(reason), .integer(nowUnixMs), .text(ownerUserID), .text(roomID)]
+            )
+            guard sqlite3_changes(database) == Int32(deliveryIDs.count) else {
+                throw AgentGroupChatError.conflict
+            }
+            return deliveryIDs.count
+        }
+    }
+
     public func saveRun(_ run: LocalAgentGroupChatRun) throws {
         try run.validate()
         let context = run.context
