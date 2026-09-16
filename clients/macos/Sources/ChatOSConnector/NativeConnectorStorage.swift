@@ -5,6 +5,8 @@ import LocalAuthentication
 import Security
 
 struct NativeConnectorPersistentState: Codable, Sendable {
+    var deploymentIdentifier: String?
+    var gatewayBaseURL: String?
     var user: LocalConnectorUser?
     var deviceID: String?
     var deviceName: String?

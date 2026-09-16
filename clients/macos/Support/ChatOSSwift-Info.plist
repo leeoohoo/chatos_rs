@@ -274,10 +274,25 @@
             </array>
         </dict>
     </array>
-    <key>ChatOSAPIBaseURL</key>
-    <string>https://gateway.jgoool.com/api/chatos</string>
-    <key>ChatOSLocalConnectorCloudBaseURL</key>
-    <string>https://connector.jgoool.com</string>
+    <key>ChatOSDeploymentProfile</key>
+    <string>production</string>
+    <key>ChatOSDeploymentProfiles</key>
+    <dict>
+        <key>production</key>
+        <dict>
+            <key>APIBaseURL</key>
+            <string>https://gateway.jgoool.com/api/chatos</string>
+            <key>ConnectorBaseURL</key>
+            <string>https://connector.jgoool.com</string>
+        </dict>
+        <key>local</key>
+        <dict>
+            <key>APIBaseURL</key>
+            <string>http://127.0.0.1:9080/api/chatos</string>
+            <key>ConnectorBaseURL</key>
+            <string>http://127.0.0.1:9080/api/connector</string>
+        </dict>
+    </dict>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>

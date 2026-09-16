@@ -92,6 +92,8 @@ struct NativeConnectorStateStoreTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = NativeConnectorStateStore(stateURL: directory.appendingPathComponent("state.json"))
         var state = NativeConnectorPersistentState.empty
+        state.deploymentIdentifier = "production"
+        state.gatewayBaseURL = "https://connector.jgoool.com"
         state.deviceID = "device-1"
         state.deviceName = "Test Mac"
         state.gatewayConnectionEnabled = false
@@ -121,6 +123,8 @@ struct NativeConnectorStateStoreTests {
         try store.save(state)
         let restored = try store.load()
 
+        #expect(restored.deploymentIdentifier == "production")
+        #expect(restored.gatewayBaseURL == "https://connector.jgoool.com")
         #expect(restored.deviceID == "device-1")
         #expect(restored.deviceName == "Test Mac")
         #expect(restored.gatewayConnectionEnabled == false)
@@ -135,6 +139,31 @@ struct NativeConnectorStateStoreTests {
         #expect(restored.installedPluginRecords?["plugin-a"]?.pluginKey == "plugin-a@official")
         #expect(restored.pluginPreferences["plugin-a"] == false)
         #expect(restored.workspaces.first?.absoluteRoot == "/tmp/project")
+    }
+
+    @Test
+    func connectorPairingIsScopedToOneDeployment() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.deploymentIdentifier = "local"
+        state.gatewayBaseURL = "http://127.0.0.1:9080/api/connector"
+        state.deviceID = "device-local"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.jgoool.com")!,
+                stateURL: stateURL,
+                deploymentIdentifier: "production"
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+
+        let matches = await service.pairingMatchesCurrentDeployment
+        #expect(!matches)
     }
 
     @Test
@@ -324,5 +353,11 @@ struct NativeConnectorStateStoreTests {
         #expect(state.installedPluginRecords?["current-id"]?.version == "0.8.12")
         #expect(state.pluginPreferences["legacy-id"] == nil)
         #expect(state.pluginPreferences["current-id"] == true)
+    }
+}
+
+private struct RejectingTicketProvider: LocalConnectorPairingTicketProviding {
+    func issueLocalConnectorPairingTicket() async throws -> String {
+        throw URLError(.notConnectedToInternet)
     }
 }

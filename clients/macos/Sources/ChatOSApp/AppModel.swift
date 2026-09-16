@@ -159,7 +159,8 @@ final class AppModel: ObservableObject {
         let localConnectorService = NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: RuntimeConfiguration.localConnectorCloudBaseURL,
-                stateURL: RuntimeConfiguration.nativeConnectorStateURL
+                stateURL: RuntimeConfiguration.nativeConnectorStateURL,
+                deploymentIdentifier: RuntimeConfiguration.deployment.identifier
             ),
             ticketProvider: connectorTicketProvider,
             remoteConnectionRuntime: remoteConnectionService,
@@ -922,7 +923,10 @@ final class AppModel: ObservableObject {
             authenticatedUserID = session.user.id
             mediaStudio.activate(userID: session.user.id)
             loadLanguagePreferences()
-            localConnectorControl.activate(pairIfNeeded: true)
+            localConnectorControl.activate(
+                pairIfNeeded: true,
+                expectedOwnerUserID: session.user.id
+            )
             refreshWorkspace()
             refreshRemoteConnections()
             refreshPluginApplications()

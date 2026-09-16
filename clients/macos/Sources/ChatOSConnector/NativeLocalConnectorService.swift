@@ -14,10 +14,16 @@ public typealias NativeApprovalMemoryProviderFactory = @Sendable (
 public struct NativeConnectorConfiguration: Sendable {
     public var gatewayBaseURL: URL
     public var stateURL: URL
+    public var deploymentIdentifier: String
 
-    public init(gatewayBaseURL: URL, stateURL: URL) {
+    public init(
+        gatewayBaseURL: URL,
+        stateURL: URL,
+        deploymentIdentifier: String = "default"
+    ) {
         self.gatewayBaseURL = gatewayBaseURL
         self.stateURL = stateURL
+        self.deploymentIdentifier = deploymentIdentifier
     }
 }
 
@@ -43,7 +49,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     let approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory?
     weak var companionRuntime: (any LocalConnectorCompanionRuntimeProviding)?
-    private let secretStore = NativeConnectorSecretStore()
+    private let secretStore: NativeConnectorSecretStore
     var state: NativeConnectorPersistentState
     private var cachedAccessToken: String?
     private var hasLoadedAccessToken = false
@@ -86,6 +92,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         self.ticketProvider = ticketProvider
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
         self.stateStore = NativeConnectorStateStore(stateURL: configuration.stateURL)
+        self.secretStore = NativeConnectorSecretStore(
+            rootURL: configuration.stateURL.deletingLastPathComponent()
+                .appendingPathComponent("Secrets", isDirectory: true)
+        )
         self.pluginInstaller = NativePluginInstaller(
             rootURL: configuration.stateURL
                 .deletingLastPathComponent()
@@ -100,7 +110,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func fetchStatus() async throws -> LocalConnectorStatus {
-        if state.deviceID != nil, state.gatewayConnectionEnabled != false, !gatewayConnected {
+        if pairingMatchesCurrentDeployment,
+           state.deviceID != nil,
+           state.gatewayConnectionEnabled != false,
+           !gatewayConnected {
             try? await connectGateway()
         }
         return statusSnapshot()
@@ -132,6 +145,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             publicKey: identity.publicKey
         )
         state.user = login.user.domainModel
+        state.deploymentIdentifier = configuration.deploymentIdentifier
+        state.gatewayBaseURL = normalizedGatewayBaseURL
         state.deviceID = device.id
         state.deviceName = resolvedName
         state.workspaces = [workspace]
@@ -403,7 +418,9 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     private func statusSnapshot() -> LocalConnectorStatus {
         .init(
-            configured: state.deviceID != nil && (try? accessToken()) != nil,
+            configured: pairingMatchesCurrentDeployment
+                && state.deviceID != nil
+                && (try? accessToken()) != nil,
             connectorRunning: gatewayConnected,
             developerMode: state.developerMode,
             cloudBaseURL: configuration.gatewayBaseURL.absoluteString,
@@ -414,6 +431,21 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             defaultWorkspaceID: state.workspaces.first?.id,
             workspaces: state.workspaces
         )
+    }
+
+    var pairingMatchesCurrentDeployment: Bool {
+        if configuration.deploymentIdentifier == "default",
+           state.deploymentIdentifier == nil,
+           state.gatewayBaseURL == nil {
+            return true
+        }
+        return state.deploymentIdentifier == configuration.deploymentIdentifier
+            && state.gatewayBaseURL == normalizedGatewayBaseURL
+    }
+
+    private var normalizedGatewayBaseURL: String {
+        configuration.gatewayBaseURL.absoluteString
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     private func runtimeSettingsSnapshot() -> LocalConnectorRuntimeSettings {

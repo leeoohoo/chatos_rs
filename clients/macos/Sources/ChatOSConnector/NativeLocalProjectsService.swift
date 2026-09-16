@@ -211,7 +211,10 @@ public struct AccountLocalProjectCreator: LocalProjectCreating {
 
 extension NativeLocalConnectorService {
     public func localProjectDeviceID(ownerUserID: String) throws -> String? {
-        guard state.user?.id == ownerUserID else { throw ProjectRegistryError.storage("本机工作区不属于当前账户，请重新配对。") }
+        guard pairingMatchesCurrentDeployment,
+              state.user?.id == ownerUserID else {
+            throw ProjectRegistryError.storage("本机工作区不属于当前环境或账户，请重新配对。")
+        }
         if let deviceID = state.deviceID { try ProjectRegistryValidation.routeIdentifier(deviceID, field: "deviceID") }
         return state.deviceID
     }

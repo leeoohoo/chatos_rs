@@ -39,13 +39,19 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         self.service = service
     }
 
-    func activate(pairIfNeeded: Bool) {
+    func activate(pairIfNeeded: Bool, expectedOwnerUserID: String? = nil) {
         startApprovalMonitoring()
         isStarting = true
-        refreshStatus(pairIfNeeded: pairIfNeeded)
+        refreshStatus(
+            pairIfNeeded: pairIfNeeded,
+            expectedOwnerUserID: expectedOwnerUserID
+        )
     }
 
-    func refreshStatus(pairIfNeeded: Bool = false) {
+    func refreshStatus(
+        pairIfNeeded: Bool = false,
+        expectedOwnerUserID: String? = nil
+    ) {
         refreshGeneration += 1
         let generation = refreshGeneration
         isLoading = true
@@ -54,7 +60,10 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             do {
                 let nextStatus = try await fetchStatusWithStartupRetry()
                 guard generation == refreshGeneration else { return }
-                if pairIfNeeded && !nextStatus.configured {
+                let ownerMismatch = expectedOwnerUserID.map {
+                    nextStatus.user?.id != $0
+                } ?? false
+                if pairIfNeeded && (!nextStatus.configured || ownerMismatch) {
                     status = try await service.pairWithCurrentChatOSSession(
                         deviceName: Host.current().localizedName
                     )
