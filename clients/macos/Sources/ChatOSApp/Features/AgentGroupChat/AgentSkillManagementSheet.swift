@@ -15,6 +15,22 @@ private enum AgentSkillManagementKind: String, CaseIterable, Identifiable {
     }
 }
 
+private enum AgentSkillContentMode: String, CaseIterable, Identifiable {
+    case preview
+    case edit
+    case split
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .preview: "预览"
+        case .edit: "编辑"
+        case .split: "分栏"
+        }
+    }
+}
+
 @MainActor
 private final class AgentSkillManagementViewModel: ObservableObject {
     @Published var kind: AgentSkillManagementKind = .profession
@@ -184,6 +200,7 @@ private final class AgentSkillManagementViewModel: ObservableObject {
 struct AgentSkillManagementSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: AgentSkillManagementViewModel
+    @State private var contentMode: AgentSkillContentMode = .preview
 
     init(ownerUserID: String, skillLibrary: LocalAgentSkillLibrary) {
         _viewModel = StateObject(wrappedValue: AgentSkillManagementViewModel(
@@ -198,14 +215,14 @@ struct AgentSkillManagementSheet: View {
             Divider()
             HSplitView {
                 catalog
-                    .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
+                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 420)
                 editor
-                    .frame(minWidth: 580, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 800, maxWidth: .infinity, maxHeight: .infinity)
             }
             Divider()
             footer
         }
-        .frame(minWidth: 920, idealWidth: 1020, minHeight: 660, idealHeight: 720)
+        .frame(minWidth: 1_180, idealWidth: 1_320, minHeight: 780, idealHeight: 900)
         .alert("无法保存 Skill", isPresented: Binding(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }
@@ -326,22 +343,72 @@ struct AgentSkillManagementSheet: View {
                             .lineLimit(2...4)
                             .textFieldStyle(.roundedBorder)
                     }
-                    editField(viewModel.kind == .profession ? "Skill 正文" : "项目规则正文") {
-                        TextEditor(text: $viewModel.content)
-                            .font(.system(.body, design: .monospaced))
-                            .scrollContentBackground(.hidden)
-                            .padding(8)
-                            .frame(minHeight: 360)
-                            .background(Color(nsColor: .textBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-                            }
-                    }
+                    markdownContent
                 }
                 .padding(18)
             }
+        }
+    }
+
+    private var markdownContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(viewModel.kind == .profession ? "Skill 正文" : "项目规则正文")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Markdown 显示", selection: $contentMode) {
+                    ForEach(AgentSkillContentMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 210)
+            }
+
+            switch contentMode {
+            case .preview:
+                markdownPreview
+            case .edit:
+                markdownEditor
+            case .split:
+                HSplitView {
+                    markdownEditor.frame(minWidth: 360)
+                    markdownPreview.frame(minWidth: 360)
+                }
+            }
+        }
+    }
+
+    private var markdownEditor: some View {
+        TextEditor(text: $viewModel.content)
+            .font(.system(.body, design: .monospaced))
+            .scrollContentBackground(.hidden)
+            .padding(10)
+            .frame(minHeight: 520)
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+            }
+    }
+
+    private var markdownPreview: some View {
+        ScrollView {
+            MarkdownDocumentView(
+                markdown: viewModel.content.isEmpty ? "_暂无内容_" : viewModel.content
+            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(20)
+        }
+        .frame(minHeight: 520)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         }
     }
 
