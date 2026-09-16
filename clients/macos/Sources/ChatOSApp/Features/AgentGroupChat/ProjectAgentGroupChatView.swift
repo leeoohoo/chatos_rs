@@ -7,12 +7,18 @@ struct ProjectAgentGroupChatView: View {
     @State private var showsCreateRoom = false
     @State private var showsCreateAgent = false
 
-    init(projectID: String, ownerUserID: String, service: NativeAgentGroupChatService) {
+    init(
+        projectID: String,
+        ownerUserID: String,
+        service: NativeAgentGroupChatService,
+        scheduler: LocalAgentGroupChatScheduler
+    ) {
         _viewModel = StateObject(
             wrappedValue: AgentGroupChatViewModel(
                 projectID: projectID,
                 ownerUserID: ownerUserID,
-                service: service
+                service: service,
+                scheduler: scheduler
             )
         )
     }
@@ -160,6 +166,14 @@ struct ProjectAgentGroupChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if viewModel.isRunningAgents {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("本地 Agent 正在处理群聊…")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if !viewModel.selectedMentionAgentIDs.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {

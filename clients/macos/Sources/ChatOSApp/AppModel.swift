@@ -116,6 +116,7 @@ final class AppModel: ObservableObject {
     let projectGitService: NativeProjectGitService
     let projectRunService: NativeProjectRunService
     let agentGroupChatService: NativeAgentGroupChatService
+    let agentGroupChatScheduler: LocalAgentGroupChatScheduler
     let notepadService: ChatOSNotepadService
     let wechatCompanionService: ChatOSWeChatCompanionService
     private let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
@@ -175,9 +176,10 @@ final class AppModel: ObservableObject {
         self.localConnectorControl = LocalConnectorControlCenterViewModel(
             service: localConnectorService
         )
+        let agentServices = ChatOSStoryPlanningService(client: apiClient)
         self.mediaStudio = MediaStudioViewModel(
             service: ChatOSMediaGenerationService(client: apiClient),
-            storyPlanner: ChatOSStoryPlanningService(client: apiClient)
+            storyPlanner: agentServices
         )
         self.localConnectorService = localConnectorService
         self.conversationService = conversationService
@@ -188,9 +190,14 @@ final class AppModel: ObservableObject {
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("Projects.sqlite3")
         )
-        self.agentGroupChatService = NativeAgentGroupChatService(
+        let agentGroupChatService = NativeAgentGroupChatService(
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("AgentGroupChat.sqlite3")
+        )
+        self.agentGroupChatService = agentGroupChatService
+        self.agentGroupChatScheduler = LocalAgentGroupChatScheduler(
+            service: agentGroupChatService,
+            services: agentServices
         )
         let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService

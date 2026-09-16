@@ -1,5 +1,6 @@
 import ChatOSConnector
 import ChatOSCore
+import ChatOSAgentRuntime
 import Foundation
 import XCTest
 
@@ -304,5 +305,97 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         let loadedBob = try await store.activeRoom(ownerUserID: "bob", projectID: "project-1")
         XCTAssertEqual(loadedAlice, aliceRoom)
         XCTAssertEqual(loadedBob, bobRoom)
+    }
+
+    func testAgentRunCheckpointSurvivesReopenAndCannotChangeDeliveryIdentity() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "成员")
+        let room = try await makeRoom(store)
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "成员")
+        )
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "开始",
+                mentionedAgentIDs: [agent.id]
+            ),
+            limits: .init()
+        )
+        let claimedValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: post.message.createdAtUnixMs + 1
+        )
+        let claimed = try XCTUnwrap(claimedValue)
+        let runID = UUID()
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            roomID: room.id,
+            agentID: agent.id,
+            deliveryID: claimed.id,
+            triggerMessageID: post.message.id,
+            rootMessageID: post.message.rootMessageID,
+            runID: runID.uuidString.lowercased(),
+            hopCount: claimed.hopCount
+        )
+        let scope = LocalAgentGroupChatRun.runtimeScope(for: context)
+        var checkpoint = AgentRunCheckpoint(
+            scope: scope,
+            messages: [.init(role: .system, content: "system")]
+        )
+        checkpoint.id = runID
+        let run = try LocalAgentGroupChatRun(
+            id: runID,
+            context: context,
+            modelConfigID: agent.draft.modelConfigID,
+            policy: .init(),
+            checkpoint: checkpoint,
+            createdAtUnixMs: post.message.createdAtUnixMs + 1,
+            updatedAtUnixMs: post.message.createdAtUnixMs + 1
+        )
+        try await store.saveRun(run)
+
+        let reopened = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let loaded = try await reopened.run(ownerUserID: "alice", deliveryID: claimed.id)
+        XCTAssertEqual(loaded, run)
+
+        let otherContext = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            roomID: room.id,
+            agentID: agent.id,
+            deliveryID: claimed.id,
+            triggerMessageID: post.message.id,
+            rootMessageID: post.message.rootMessageID,
+            runID: UUID().uuidString.lowercased(),
+            hopCount: claimed.hopCount
+        )
+        var changedCheckpoint = checkpoint
+        changedCheckpoint.id = UUID()
+        let conflicting = try LocalAgentGroupChatRun(
+            id: changedCheckpoint.id,
+            context: otherContext,
+            modelConfigID: agent.draft.modelConfigID,
+            policy: .init(),
+            checkpoint: changedCheckpoint,
+            createdAtUnixMs: run.createdAtUnixMs,
+            updatedAtUnixMs: run.updatedAtUnixMs + 1
+        )
+        do {
+            try await reopened.saveRun(conflicting)
+            XCTFail("Delivery accepted a different run identity")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
     }
 }

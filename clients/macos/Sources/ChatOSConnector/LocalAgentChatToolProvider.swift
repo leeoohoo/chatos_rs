@@ -4,7 +4,7 @@ import Foundation
 
 /// Immutable authority for one claimed local delivery. Caller-controlled tool arguments never
 /// select the sender, account, project, room or Memory identity.
-public struct LocalAgentChatRunContext: Sendable, Equatable {
+public struct LocalAgentChatRunContext: Codable, Sendable, Equatable {
     public let ownerUserID: String
     public let projectID: String
     public let roomID: String

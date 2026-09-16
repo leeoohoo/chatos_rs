@@ -1,10 +1,11 @@
+import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 import SQLite3
 
 /// Account- and project-scoped local authority for Agent rooms. The transcript and delivery
 /// queue remain usable without the network, Memory Engine, Plugin Management or Codex CLI.
-public actor SQLiteAgentGroupChatStore: AgentGroupChatStore {
+public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChatRunStoring {
     private nonisolated(unsafe) var database: OpaquePointer?
 
     public init(databaseURL: URL) throws {
@@ -535,6 +536,59 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore {
         }
     }
 
+    public func saveRun(_ run: LocalAgentGroupChatRun) throws {
+        try run.validate()
+        let context = run.context
+        guard let delivery = try readDelivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID
+        ), delivery.roomID == context.roomID,
+           delivery.targetAgentID == context.agentID,
+           delivery.messageID == context.triggerMessageID,
+           delivery.rootMessageID == context.rootMessageID else {
+            throw AgentGroupChatError.conflict
+        }
+        try transaction {
+            if let existing = try readRun(
+                ownerUserID: context.ownerUserID,
+                deliveryID: context.deliveryID
+            ), existing.id != run.id || existing.context != context
+                || existing.createdAtUnixMs != run.createdAtUnixMs {
+                throw AgentGroupChatError.conflict
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            let json = String(decoding: try encoder.encode(run), as: UTF8.self)
+            try execute(
+                """
+                INSERT INTO local_agent_group_chat_runs (
+                    owner_user_id, id, delivery_id, room_id, project_id, agent_id,
+                    status, run_json, created_at_unix_ms, updated_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(owner_user_id, id) DO UPDATE SET
+                    status = excluded.status,
+                    run_json = excluded.run_json,
+                    updated_at_unix_ms = excluded.updated_at_unix_ms
+                """,
+                [
+                    .text(context.ownerUserID), .text(run.id.uuidString.lowercased()),
+                    .text(context.deliveryID), .text(context.roomID), .text(context.projectID),
+                    .text(context.agentID), .text(run.checkpoint.status.rawValue), .text(json),
+                    .integer(run.createdAtUnixMs), .integer(run.updatedAtUnixMs),
+                ]
+            )
+        }
+    }
+
+    public func run(
+        ownerUserID: String,
+        deliveryID: String
+    ) throws -> LocalAgentGroupChatRun? {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(deliveryID, field: "deliveryID")
+        return try readRun(ownerUserID: ownerUserID, deliveryID: deliveryID)
+    }
+
     private func readActiveRoom(ownerUserID: String, projectID: String) throws -> ProjectAgentRoom? {
         try query(
             """
@@ -591,6 +645,29 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore {
             [.text(ownerUserID), .text(deliveryID)],
             row: readDelivery
         ).first
+    }
+
+    private func readRun(
+        ownerUserID: String,
+        deliveryID: String
+    ) throws -> LocalAgentGroupChatRun? {
+        let values: [String] = try query(
+            """
+            SELECT run_json FROM local_agent_group_chat_runs
+            WHERE owner_user_id = ? AND delivery_id = ? LIMIT 1
+            """,
+            [.text(ownerUserID), .text(deliveryID)]
+        ) { Self.string($0, 0) }
+        guard let json = values.first else { return nil }
+        do {
+            let run = try JSONDecoder().decode(LocalAgentGroupChatRun.self, from: Data(json.utf8))
+            try run.validate()
+            return run
+        } catch let error as AgentGroupChatError {
+            throw error
+        } catch {
+            throw AgentGroupChatError.storage("invalid Agent run record")
+        }
     }
 
     private func requireMessage(ownerUserID: String, roomID: String, messageID: String) throws {
@@ -986,10 +1063,34 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore {
         CREATE UNIQUE INDEX IF NOT EXISTS one_running_delivery_per_agent
             ON project_agent_deliveries(owner_user_id, target_agent_id) WHERE status = 'running';
 
+        CREATE TABLE IF NOT EXISTS local_agent_group_chat_runs (
+            owner_user_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            delivery_id TEXT NOT NULL,
+            room_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN (
+                'ready', 'running', 'paused', 'completed', 'failed', 'needsReview', 'limitReached'
+            )),
+            run_json TEXT NOT NULL,
+            created_at_unix_ms INTEGER NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL,
+            PRIMARY KEY(owner_user_id, id),
+            UNIQUE(owner_user_id, delivery_id),
+            FOREIGN KEY(owner_user_id, delivery_id)
+                REFERENCES project_agent_deliveries(owner_user_id, id),
+            FOREIGN KEY(owner_user_id, room_id, agent_id)
+                REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id)
+        );
+        CREATE INDEX IF NOT EXISTS local_agent_group_chat_runs_status
+            ON local_agent_group_chat_runs(owner_user_id, status, updated_at_unix_ms);
+
         CREATE TABLE IF NOT EXISTS local_agent_group_chat_schema_migrations (
             version INTEGER PRIMARY KEY NOT NULL
         );
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (1);
+        INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (2);
         COMMIT;
         """
 }

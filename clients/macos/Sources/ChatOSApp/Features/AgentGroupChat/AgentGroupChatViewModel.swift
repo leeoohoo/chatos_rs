@@ -22,15 +22,25 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var selectedMentionAgentIDs: Set<String> = []
     @Published private(set) var isLoading = false
     @Published private(set) var isSending = false
+    @Published private(set) var isRunningAgents = false
     @Published var errorMessage: String?
 
     private let service: NativeAgentGroupChatService
+    private let scheduler: LocalAgentGroupChatScheduler
     private var openedStore: SQLiteAgentGroupChatStore?
+    private var schedulerTask: Task<Void, Never>?
+    private var schedulerNeedsAnotherPass = false
 
-    init(projectID: String, ownerUserID: String, service: NativeAgentGroupChatService) {
+    init(
+        projectID: String,
+        ownerUserID: String,
+        service: NativeAgentGroupChatService,
+        scheduler: LocalAgentGroupChatScheduler
+    ) {
         self.projectID = projectID
         self.ownerUserID = ownerUserID
         self.service = service
+        self.scheduler = scheduler
     }
 
     var profilesByID: [String: LocalAgentProfile] {
@@ -156,7 +166,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         defer { isSending = false }
         do {
             let store = try await resolveStore()
-            _ = try await store.postMessage(
+            let post = try await store.postMessage(
                 ownerUserID: ownerUserID,
                 roomID: room.id,
                 draft: .init(
@@ -170,6 +180,9 @@ final class AgentGroupChatViewModel: ObservableObject {
             draftMessage = ""
             selectedMentionAgentIDs.removeAll()
             await load()
+            if !post.deliveries.isEmpty {
+                startScheduler()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -188,5 +201,33 @@ final class AgentGroupChatViewModel: ObservableObject {
         let store = try await service.store()
         openedStore = store
         return store
+    }
+
+    private func startScheduler() {
+        schedulerNeedsAnotherPass = true
+        guard schedulerTask == nil else { return }
+        isRunningAgents = true
+        schedulerTask = Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                schedulerNeedsAnotherPass = false
+                do {
+                    let results = try await scheduler.drainProject(
+                        ownerUserID: ownerUserID,
+                        projectID: projectID
+                    )
+                    if let failure = results.last(where: { $0.outcome == .failed }) {
+                        errorMessage = failure.detail ?? "本地 Agent 运行失败。"
+                    } else if let suspended = results.last(where: { $0.outcome == .suspended }) {
+                        errorMessage = suspended.detail ?? "本地 Agent 已暂停，运行检查点已保存。"
+                    }
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+                await load()
+            } while schedulerNeedsAnotherPass
+            isRunningAgents = false
+            schedulerTask = nil
+        }
     }
 }
