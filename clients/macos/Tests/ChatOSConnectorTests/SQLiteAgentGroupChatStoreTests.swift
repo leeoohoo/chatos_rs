@@ -14,14 +14,21 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
     private func makeAgent(
         _ store: SQLiteAgentGroupChatStore,
         owner: String = "alice",
-        name: String
+        name: String,
+        canManageStaff: Bool = false,
+        canAccessLocalProjects: Bool = false
     ) async throws -> LocalAgentProfile {
         try await store.createAgent(
             ownerUserID: owner,
             draft: .init(
                 name: name,
                 rolePrompt: "你是\(name)，只处理当前项目中明确交给你的工作。",
-                modelConfigID: "model-1"
+                modelConfigID: "model-1",
+                defaultSkillIDs: LocalAgentPermission.normalized(
+                    preserving: [],
+                    canManageStaff: canManageStaff,
+                    canAccessLocalProjects: canAccessLocalProjects
+                )
             )
         )
     }
@@ -314,7 +321,7 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let store = try SQLiteAgentGroupChatStore(databaseURL: url)
-        let proposer = try await makeAgent(store, name: "负责人")
+        let proposer = try await makeAgent(store, name: "负责人", canManageStaff: true)
         let room = try await makeRoom(store)
         _ = try await store.addMember(
             ownerUserID: "alice",
@@ -505,6 +512,325 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             status: .pending
         )
         XCTAssertTrue(pending.isEmpty)
+    }
+
+    func testStaffPermissionGatesHireAndRemovalProposalAndHumanRemovalPreservesProfile() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let manager = try await makeAgent(store, name: "负责人", canManageStaff: true)
+        let ordinary = try await makeAgent(store, name: "普通成员")
+        let target = try await makeAgent(store, name: "待移出成员")
+        let room = try await makeRoom(store)
+        for agent in [manager, ordinary, target] {
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: agent.draft.name)
+            )
+        }
+        _ = try await store.setDefaultAgent(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: target.id
+        )
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "检查团队配置",
+                mentionedAgentIDs: [manager.id, ordinary.id]
+            ),
+            limits: .init()
+        )
+        let claimedManagerDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: manager.id,
+            nowUnixMs: post.message.createdAtUnixMs + 1
+        )
+        let managerDelivery = try XCTUnwrap(claimedManagerDelivery)
+        let claimedOrdinaryDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: ordinary.id,
+            nowUnixMs: post.message.createdAtUnixMs + 1
+        )
+        let ordinaryDelivery = try XCTUnwrap(claimedOrdinaryDelivery)
+        let draft = LocalAgentRemovalProposalDraft(
+            targetAgentID: target.id,
+            reason: "职责已经由现有成员稳定覆盖",
+            handoffPlan: "文档和未完成事项交给负责人"
+        )
+
+        do {
+            _ = try await store.createAgentRemovalProposal(
+                ownerUserID: "alice",
+                roomID: room.id,
+                proposerAgentID: ordinary.id,
+                sourceDeliveryID: ordinaryDelivery.id,
+                requestKey: "ordinary-remove",
+                draft: draft,
+                nowUnixMs: post.message.createdAtUnixMs + 2
+            )
+            XCTFail("An Agent without staffing permission submitted a removal proposal")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .permissionDenied)
+        }
+
+        let proposal = try await store.createAgentRemovalProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposerAgentID: manager.id,
+            sourceDeliveryID: managerDelivery.id,
+            requestKey: "manager-remove",
+            draft: draft,
+            nowUnixMs: post.message.createdAtUnixMs + 2
+        )
+        let replay = try await store.createAgentRemovalProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposerAgentID: manager.id,
+            sourceDeliveryID: managerDelivery.id,
+            requestKey: "manager-remove",
+            draft: draft,
+            nowUnixMs: post.message.createdAtUnixMs + 3
+        )
+        XCTAssertEqual(replay.id, proposal.id)
+
+        let approved = try await store.approveAgentRemovalProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposalID: proposal.id,
+            nowUnixMs: post.message.createdAtUnixMs + 4
+        )
+        XCTAssertEqual(approved.status, .approved)
+        let members = try await store.listMembers(ownerUserID: "alice", roomID: room.id)
+        XCTAssertFalse(members.contains(where: { $0.agentID == target.id }))
+        let profiles = try await store.listAgents(ownerUserID: "alice", includeArchived: false)
+        XCTAssertTrue(profiles.contains(where: { $0.id == target.id }))
+        let reloadedRoom = try await store.activeRoom(
+            ownerUserID: "alice",
+            projectID: room.projectID
+        )
+        let updatedRoom = try XCTUnwrap(reloadedRoom)
+        XCTAssertNotEqual(updatedRoom.defaultAgentID, target.id)
+        XCTAssertTrue(members.contains(where: { $0.agentID == updatedRoom.defaultAgentID }))
+
+        let restored = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: target.id,
+            draft: .init(role: "重新加入")
+        )
+        XCTAssertEqual(restored.status, .active)
+    }
+
+    func testEveryTeamAgentCanSubmitIdempotentProjectProposalForHumanResolution() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let projectAgent = try await makeAgent(store, name: "项目负责人")
+        let ordinary = try await makeAgent(store, name: "普通成员")
+        let room = try await makeRoom(store)
+        for agent in [projectAgent, ordinary] {
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: agent.draft.name)
+            )
+        }
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "帮我规划一个新项目",
+                mentionedAgentIDs: [projectAgent.id, ordinary.id]
+            ),
+            limits: .init()
+        )
+        let claimedProjectDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: projectAgent.id,
+            nowUnixMs: post.message.createdAtUnixMs + 1
+        )
+        let projectDelivery = try XCTUnwrap(claimedProjectDelivery)
+        let claimedOrdinaryDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: ordinary.id,
+            nowUnixMs: post.message.createdAtUnixMs + 1
+        )
+        let ordinaryDelivery = try XCTUnwrap(claimedOrdinaryDelivery)
+        let draft = LocalProjectCreationProposalDraft(
+            name: "新项目",
+            description: "由项目负责人整理的项目说明"
+        )
+        let ordinaryProposal = try await store.createProjectProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposerAgentID: ordinary.id,
+            sourceDeliveryID: ordinaryDelivery.id,
+            requestKey: "ordinary-call",
+            draft: .init(name: "普通成员提案", description: "同样等待 Human 确认"),
+            nowUnixMs: post.message.createdAtUnixMs + 2
+        )
+        XCTAssertEqual(ordinaryProposal.status, .pending)
+
+        let proposal = try await store.createProjectProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposerAgentID: projectAgent.id,
+            sourceDeliveryID: projectDelivery.id,
+            requestKey: "project-call",
+            draft: draft,
+            nowUnixMs: post.message.createdAtUnixMs + 2
+        )
+        let replay = try await store.createProjectProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposerAgentID: projectAgent.id,
+            sourceDeliveryID: projectDelivery.id,
+            requestKey: "project-call",
+            draft: draft,
+            nowUnixMs: post.message.createdAtUnixMs + 3
+        )
+        XCTAssertEqual(replay.id, proposal.id)
+        let pending = try await store.listProjectProposals(
+            ownerUserID: "alice",
+            roomID: room.id,
+            status: .pending
+        )
+        XCTAssertEqual(Set(pending.map(\.id)), Set([ordinaryProposal.id, proposal.id]))
+        let approved = try await store.approveProjectProposal(
+            ownerUserID: "alice",
+            roomID: room.id,
+            proposalID: proposal.id,
+            createdProjectID: "project-created",
+            nowUnixMs: post.message.createdAtUnixMs + 4
+        )
+        XCTAssertEqual(approved.status, .approved)
+        XCTAssertEqual(approved.createdProjectID, "project-created")
+
+        let updated = try await store.updateAgentProfile(
+            ownerUserID: "alice",
+            agentID: projectAgent.id,
+            draft: .init(
+                name: "项目负责人",
+                rolePrompt: projectAgent.draft.rolePrompt,
+                modelConfigID: "model-2"
+            )
+        )
+        XCTAssertEqual(updated.draft.modelConfigID, "model-2")
+        XCTAssertTrue(updated.draft.defaultSkillIDs.isEmpty)
+    }
+
+    func testTeamToolUsesOpaqueSingleChoiceAndProgramPassesThroughProjectID() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(
+            store,
+            name: "团队负责人",
+            canAccessLocalProjects: true
+        )
+        let room = try await makeRoom(store, projectID: "source-project")
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "团队负责人")
+        )
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "为设计项目创建团队",
+                mentionedAgentIDs: [agent.id]
+            ),
+            limits: .init()
+        )
+        let claimed = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: post.message.createdAtUnixMs + 1
+        )
+        let delivery = try XCTUnwrap(claimed)
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            roomID: room.id,
+            agentID: agent.id,
+            deliveryID: delivery.id,
+            triggerMessageID: post.message.id,
+            rootMessageID: post.message.rootMessageID,
+            runID: "team-tool-run",
+            hopCount: delivery.hopCount
+        )
+        let secretProjectID = "secret-project-id-never-given-to-model"
+        let target = LocalProjectRecord(
+            id: secretProjectID,
+            ownerUserID: "alice",
+            draft: .init(
+                name: "设计系统",
+                workspaceID: "workspace-1",
+                relativeRoot: "design"
+            ),
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 1
+        )
+        let provider = LocalAgentProjectToolProvider(
+            store: store,
+            projects: [target],
+            context: context,
+            now: { post.message.createdAtUnixMs + 2 }
+        )
+        let definitions = try await provider.definitions()
+        XCTAssertEqual(definitions.map(\.name), ["team_propose"])
+        let schema = String(decoding: try XCTUnwrap(definitions.first).schema, as: UTF8.self)
+        XCTAssertTrue(schema.contains("设计系统"))
+        XCTAssertTrue(schema.contains("existing_1"))
+        XCTAssertFalse(schema.contains(secretProjectID))
+
+        let result = try await provider.execute(.init(
+            id: "team-proposal-call",
+            name: "team_propose",
+            arguments: #"{"project_option":"existing_1","team_name":"设计团队","team_goal":"完成产品设计"}"#
+        ))
+        XCTAssertFalse(result.content.contains(secretProjectID))
+        let proposals = try await store.listTeamProposals(
+            ownerUserID: "alice",
+            sourceRoomID: room.id,
+            status: .pending
+        )
+        let proposal = try XCTUnwrap(proposals.first)
+        XCTAssertEqual(proposal.draft.existingProjectID, secretProjectID)
+
+        do {
+            _ = try await store.approveTeamProposal(
+                ownerUserID: "alice",
+                sourceRoomID: room.id,
+                proposalID: proposal.id,
+                resolvedProjectID: "wrong-project-id",
+                nowUnixMs: post.message.createdAtUnixMs + 3
+            )
+            XCTFail("Human approval changed the program-resolved project id")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .permissionDenied)
+        }
+        let approval = try await store.approveTeamProposal(
+            ownerUserID: "alice",
+            sourceRoomID: room.id,
+            proposalID: proposal.id,
+            resolvedProjectID: secretProjectID,
+            nowUnixMs: post.message.createdAtUnixMs + 3
+        )
+        XCTAssertEqual(approval.room.projectID, secretProjectID)
     }
 
     func testAgentCannotImpersonateHumanOrMentionNonMember() async throws {

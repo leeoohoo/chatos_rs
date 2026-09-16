@@ -40,6 +40,8 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var availableModels: [LocalAgentBuilderModelOption] = []
     @Published private(set) var interruptedRuns: [InterruptedRunPresentation] = []
     @Published private(set) var pendingProposals: [LocalAgentCreationProposal] = []
+    @Published private(set) var pendingRemovalProposals: [LocalAgentRemovalProposal] = []
+    @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = []
     @Published var draftMessage = ""
     @Published var selectedMentionAgentIDs: Set<String> = []
     @Published private(set) var isLoading = false
@@ -49,12 +51,15 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var isStoppingAgents = false
     @Published private(set) var runActionDeliveryIDs: Set<String> = []
     @Published private(set) var proposalActionIDs: Set<String> = []
+    @Published private(set) var removalProposalActionIDs: Set<String> = []
+    @Published private(set) var teamProposalActionIDs: Set<String> = []
     @Published var errorMessage: String?
 
     private let service: NativeAgentGroupChatService
     private let scheduler: LocalAgentGroupChatScheduler
     private let builderService: LocalAgentBuilderService
     private let pluginService: NativeLocalConnectorService
+    private let projectsService: NativeLocalProjectsService
     private var openedStore: SQLiteAgentGroupChatStore?
     private var schedulerTask: Task<Void, Never>?
     private var schedulerNeedsAnotherPass = false
@@ -65,7 +70,8 @@ final class AgentGroupChatViewModel: ObservableObject {
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
         builderService: LocalAgentBuilderService,
-        pluginService: NativeLocalConnectorService
+        pluginService: NativeLocalConnectorService,
+        projectsService: NativeLocalProjectsService
     ) {
         self.projectID = projectID
         self.ownerUserID = ownerUserID
@@ -73,6 +79,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         self.scheduler = scheduler
         self.builderService = builderService
         self.pluginService = pluginService
+        self.projectsService = projectsService
     }
 
     var profilesByID: [String: LocalAgentProfile] {
@@ -104,6 +111,8 @@ final class AgentGroupChatViewModel: ObservableObject {
             let messages: [ProjectAgentMessage]
             let interruptedRuns: [InterruptedRunPresentation]
             let pendingProposals: [LocalAgentCreationProposal]
+            let pendingRemovalProposals: [LocalAgentRemovalProposal]
+            let pendingTeamProposals: [LocalAgentTeamCreationProposal]
             if let room {
                 members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
                 messages = try await store.listMessages(
@@ -136,11 +145,23 @@ final class AgentGroupChatViewModel: ObservableObject {
                     roomID: room.id,
                     status: .pending
                 )
+                pendingRemovalProposals = try await store.listAgentRemovalProposals(
+                    ownerUserID: ownerUserID,
+                    roomID: room.id,
+                    status: .pending
+                )
+                pendingTeamProposals = try await store.listTeamProposals(
+                    ownerUserID: ownerUserID,
+                    sourceRoomID: room.id,
+                    status: .pending
+                )
             } else {
                 members = []
                 messages = []
                 interruptedRuns = []
                 pendingProposals = []
+                pendingRemovalProposals = []
+                pendingTeamProposals = []
             }
             self.agents = agents
             self.room = room
@@ -148,6 +169,8 @@ final class AgentGroupChatViewModel: ObservableObject {
             self.messages = messages
             self.interruptedRuns = interruptedRuns
             self.pendingProposals = pendingProposals
+            self.pendingRemovalProposals = pendingRemovalProposals
+            self.pendingTeamProposals = pendingTeamProposals
             self.installedPlugins = (try? await pluginService.installedAgentPlugins(
                 ownerUserID: ownerUserID
             )) ?? []
@@ -232,6 +255,44 @@ final class AgentGroupChatViewModel: ObservableObject {
                     ownerUserID: ownerUserID,
                     roomID: room.id,
                     agentID: agent.id
+                )
+            }
+            await load()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func addExistingAgent(
+        agentID: String,
+        role: String,
+        responsibility: String
+    ) async -> Bool {
+        guard let room,
+              let profile = profilesByID[agentID],
+              !members.contains(where: { $0.agentID == agentID }) else {
+            errorMessage = AgentGroupChatError.conflict.localizedDescription
+            return false
+        }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.addMember(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                agentID: agentID,
+                draft: .init(
+                    role: role.trimmingCharacters(in: .whitespacesAndNewlines),
+                    responsibility: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
+                    pluginAllowlist: profile.draft.defaultPluginIDs
+                )
+            )
+            if members.isEmpty {
+                _ = try await store.setDefaultAgent(
+                    ownerUserID: ownerUserID,
+                    roomID: room.id,
+                    agentID: agentID
                 )
             }
             await load()
@@ -347,6 +408,103 @@ final class AgentGroupChatViewModel: ObservableObject {
             _ = try await store.rejectAgentProposal(
                 ownerUserID: ownerUserID,
                 roomID: proposal.roomID,
+                proposalID: proposal.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func approveRemovalProposal(_ proposal: LocalAgentRemovalProposal) async {
+        guard removalProposalActionIDs.insert(proposal.id).inserted else { return }
+        defer { removalProposalActionIDs.remove(proposal.id) }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.approveAgentRemovalProposal(
+                ownerUserID: ownerUserID,
+                roomID: proposal.roomID,
+                proposalID: proposal.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func rejectRemovalProposal(_ proposal: LocalAgentRemovalProposal) async {
+        guard removalProposalActionIDs.insert(proposal.id).inserted else { return }
+        defer { removalProposalActionIDs.remove(proposal.id) }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.rejectAgentRemovalProposal(
+                ownerUserID: ownerUserID,
+                roomID: proposal.roomID,
+                proposalID: proposal.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func approveTeamProposal(
+        _ proposal: LocalAgentTeamCreationProposal
+    ) async -> WorkspaceProject? {
+        guard teamProposalActionIDs.insert(proposal.id).inserted else { return nil }
+        defer { teamProposalActionIDs.remove(proposal.id) }
+        do {
+            let store = try await resolveStore()
+            let createdProject: WorkspaceProject?
+            let resolvedProjectID: String
+            if let existingProjectID = proposal.draft.existingProjectID {
+                let registry = try await projectsService.registry()
+                guard let project = try await registry.get(
+                    ownerUserID: ownerUserID,
+                    id: existingProjectID
+                ), project.status == .active else {
+                    throw ProjectRegistryError.notFound
+                }
+                createdProject = nil
+                resolvedProjectID = project.id
+            } else if let newProjectName = proposal.draft.newProjectName {
+                let project = try await projectsService.createInDefaultWorkspace(
+                    ownerUserID: ownerUserID,
+                    name: newProjectName,
+                    description: proposal.draft.newProjectDescription
+                )
+                createdProject = project
+                resolvedProjectID = project.id
+            } else {
+                throw AgentGroupChatError.conflict
+            }
+            _ = try await store.approveTeamProposal(
+                ownerUserID: ownerUserID,
+                sourceRoomID: proposal.sourceRoomID,
+                proposalID: proposal.id,
+                resolvedProjectID: resolvedProjectID,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await load()
+            NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+            return createdProject
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func rejectTeamProposal(_ proposal: LocalAgentTeamCreationProposal) async {
+        guard teamProposalActionIDs.insert(proposal.id).inserted else { return }
+        defer { teamProposalActionIDs.remove(proposal.id) }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.rejectTeamProposal(
+                ownerUserID: ownerUserID,
+                sourceRoomID: proposal.sourceRoomID,
                 proposalID: proposal.id,
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )

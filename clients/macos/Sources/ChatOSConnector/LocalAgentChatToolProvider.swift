@@ -91,6 +91,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let readMessagesToolName = "chat_read_messages"
     public static let markReadToolName = "chat_mark_read"
     public static let proposeMemberToolName = "agent_propose_member"
+    public static let proposeMemberRemovalToolName = "agent_propose_member_removal"
     public static let sendMessageToolName = "chat_send_message"
 
     private let store: any AgentGroupChatStore
@@ -114,7 +115,13 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     }
 
     public func definitions() async throws -> [AgentToolDefinition] {
-        Self.toolDefinitions
+        guard try await canManageStaff() else {
+            return Self.toolDefinitions.filter {
+                $0.name != Self.proposeMemberToolName
+                    && $0.name != Self.proposeMemberRemovalToolName
+            }
+        }
+        return Self.toolDefinitions
     }
 
     public func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -133,6 +140,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await markRead(call)
         case Self.proposeMemberToolName:
             return try await proposeMember(call)
+        case Self.proposeMemberRemovalToolName:
+            return try await proposeMemberRemoval(call)
         case Self.sendMessageToolName:
             return try await sendMessage(call)
         default:
@@ -179,7 +188,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 role: currentMember.draft.role,
                 responsibility: currentMember.draft.responsibility
             ),
-            projectID: context.projectID,
             roomID: room.id,
             roomName: room.draft.name,
             roomGoal: room.draft.goal,
@@ -335,6 +343,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     }
 
     private func proposeMember(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        guard try await canManageStaff() else { throw AgentGroupChatError.permissionDenied }
         let arguments = try Self.arguments(call)
         let profiles = try await store.listAgents(
             ownerUserID: context.ownerUserID,
@@ -366,6 +375,36 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         return try Self.outcome(proposal)
     }
 
+    private func proposeMemberRemoval(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        guard try await canManageStaff() else { throw AgentGroupChatError.permissionDenied }
+        let arguments = try Self.arguments(call)
+        let proposal = try await store.createAgentRemovalProposal(
+            ownerUserID: context.ownerUserID,
+            roomID: context.roomID,
+            proposerAgentID: context.agentID,
+            sourceDeliveryID: context.deliveryID,
+            requestKey: call.id,
+            draft: .init(
+                targetAgentID: try Self.requiredString(arguments, key: "target_agent_id"),
+                reason: try Self.requiredString(arguments, key: "reason"),
+                handoffPlan: try Self.optionalString(arguments, key: "handoff_plan") ?? ""
+            ),
+            nowUnixMs: now()
+        )
+        return try Self.outcome(proposal)
+    }
+
+    private func canManageStaff() async throws -> Bool {
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: false
+        )
+        guard let current = profiles.first(where: { $0.id == context.agentID }) else {
+            throw AgentGroupChatError.notFound
+        }
+        return LocalAgentPermission.canManageStaff(current.draft.defaultSkillIDs)
+    }
+
     private struct MemberResponse: Encodable {
         let agentID: String
         let name: String
@@ -380,7 +419,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     private struct BootstrapResponse: Encodable {
         let agent: MemberResponse
-        let projectID: String
         let roomID: String
         let roomName: String
         let roomGoal: String
@@ -391,7 +429,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
         enum CodingKeys: String, CodingKey {
             case agent
-            case projectID = "project_id"
             case roomID = "room_id"
             case roomName = "room_name"
             case roomGoal = "room_goal"
@@ -511,8 +548,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ),
         .init(
             name: proposeMemberToolName,
-            description: "向 Human 提交一个新 Agent 成员草案。该工具只持久化待确认提案，绝不会直接创建 Agent；账号、项目、团队和提案者身份由当前 Relay session 固定。model_config_id 省略时继承当前 Agent，Plugin 必须在 Human 确认时仍已安装可用。",
+            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 成员草案。该工具只持久化待确认提案，绝不会直接创建 Agent；账号、项目、团队和提案者身份由当前 Relay session 固定。model_config_id 省略时继承当前 Agent，Plugin 必须在 Human 确认时仍已安装可用。",
             schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"model_config_id":{"type":"string","minLength":1,"maxLength":512},"plugin_ids":{"type":"array","items":{"type":"string","minLength":1,"maxLength":512},"maxItems":100,"uniqueItems":true},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: proposeMemberRemovalToolName,
+            description: "使用已授予的人员管理权限，向 Human 提交把一个 Agent 移出当前项目团队的提案。必须提供事实理由和可选交接计划；该工具不会删除可复用的 Agent profile，也不会绕过 Human 确认。",
+            schema: Data(#"{"type":"object","properties":{"target_agent_id":{"type":"string","minLength":1,"maxLength":512},"reason":{"type":"string","minLength":1,"maxLength":4000},"handoff_plan":{"type":"string","maxLength":8000}},"required":["target_agent_id","reason"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(

@@ -35,6 +35,34 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: context.root.appendingPathComponent("repo/.git").path))
     }
 
+    func testCreatesAgentRequestedProjectInDefaultWorkspaceWithoutAcceptingAPath() async throws {
+        let context = try context()
+        defer { try? FileManager.default.removeItem(at: context.root) }
+
+        let first = try await context.service.createInDefaultWorkspace(
+            ownerUserID: "alice",
+            name: "设计 / 系统",
+            description: "由 Human 确认的 Agent 提案"
+        )
+        let second = try await context.service.createInDefaultWorkspace(
+            ownerUserID: "alice",
+            name: "设计 / 系统"
+        )
+
+        XCTAssertEqual(first.name, "设计 / 系统")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: context.root.appendingPathComponent("设计---系统").path
+        ))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: context.root.appendingPathComponent("设计---系统-2").path
+        ))
+        XCTAssertNotEqual(first.id, second.id)
+        let registry = try await context.service.registry()
+        let records = try await registry.list(ownerUserID: "alice")
+        XCTAssertEqual(Set(records.map(\.draft.workspaceID)), ["ws"])
+        XCTAssertEqual(Set(records.map(\.draft.relativeRoot)), ["设计---系统", "设计---系统-2"])
+    }
+
     func testSignedOutSuspensionPreservesPersistentProjectAccessState() async throws {
         let context = try context()
         defer { try? FileManager.default.removeItem(at: context.root) }

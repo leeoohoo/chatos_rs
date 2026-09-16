@@ -201,22 +201,38 @@ final class AppModel: ObservableObject {
             service: agentGroupChatService,
             services: agentServices,
             additionalToolProviders: { profile, member, runContext in
+                var providers: [any AgentToolProvider] = []
+                if LocalAgentPermission.canAccessLocalProjects(profile.draft.defaultSkillIDs) {
+                    let store = try await agentGroupChatService.store()
+                    let registry = try await localProjectsService.registry()
+                    let projects = try await registry.list(
+                        ownerUserID: runContext.ownerUserID,
+                        includeInactive: false
+                    )
+                    providers.append(LocalAgentProjectToolProvider(
+                        store: store,
+                        projects: projects,
+                        context: runContext
+                    ))
+                }
                 let profilePluginIDs = Set(profile.draft.defaultPluginIDs)
                 let memberAllowlist = Set(member.draft.pluginAllowlist)
                 let selectedPluginIDs = memberAllowlist.isEmpty
                     ? profilePluginIDs
                     : profilePluginIDs.intersection(memberAllowlist)
-                guard !selectedPluginIDs.isEmpty else { return [] }
-                let projectContext = try await localProjectsService.pluginContext(
-                    ownerUserID: runContext.ownerUserID,
-                    projectID: runContext.projectID
-                )
-                return try await localConnectorService.makeAgentPluginToolProviders(
-                    ownerUserID: runContext.ownerUserID,
-                    runContext: runContext,
-                    pluginIDs: selectedPluginIDs.sorted(),
-                    projectContext: projectContext
-                )
+                if !selectedPluginIDs.isEmpty {
+                    let projectContext = try await localProjectsService.pluginContext(
+                        ownerUserID: runContext.ownerUserID,
+                        projectID: runContext.projectID
+                    )
+                    providers += try await localConnectorService.makeAgentPluginToolProviders(
+                        ownerUserID: runContext.ownerUserID,
+                        runContext: runContext,
+                        pluginIDs: selectedPluginIDs.sorted(),
+                        projectContext: projectContext
+                    )
+                }
+                return providers
             }
         )
         self.agentGroupChatBuilderService = LocalAgentBuilderService(

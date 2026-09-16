@@ -514,6 +514,18 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         room: ProjectAgentRoom,
         delivery: ProjectAgentDelivery
     ) -> [AgentMessage] {
+        let staffingInstructions = LocalAgentPermission.canManageStaff(
+            profile.draft.defaultSkillIDs
+        ) ? """
+
+        Human 已明确授予你人员管理权限。确有长期职责缺口时，可调用 agent_propose_member 提交招募草案；需要移出当前团队成员时，可调用 agent_propose_member_removal，并给出事实理由与交接计划。两种动作都只会生成提案，必须等待 Human 确认，不能声称人员变更已经发生。
+        """ : ""
+        let projectInstructions = LocalAgentPermission.canAccessLocalProjects(
+            profile.draft.defaultSkillIDs
+        ) ? """
+
+        Human 已明确授予你本地项目与团队创建权限。需要创建团队时调用 team_propose，并从工具 schema 提供的项目单选项中选择已有项目或“新建项目”。真实项目 ID 与本机路径由 ChatOS 内部映射，不会提供给你，也不得猜测或要求用户提供。该工具只生成提案，必须等待 Human 确认。
+        """ : ""
         let system = """
         你是项目群聊中的本地 Agent「\(profile.draft.name)」。
         你的角色：\(member.draft.role)
@@ -521,7 +533,9 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         角色指令：\(profile.draft.rolePrompt)
         项目群目标：\(room.draft.goal.isEmpty ? "未单独设置" : room.draft.goal)
 
-        你通过 ChatOS 本机唯一的 Relay MCP 与其他 Agent 协作。群聊记录不是你的私有记忆，也不会整段注入提示词。先调用 relay_bootstrap 获取当前身份、项目、团队、成员、唤醒消息和你的独立未读页；需要继续处理未读时调用 chat_read_unread，需要历史上下文时用稳定消息 ID 游标调用 chat_read_messages。处理完消息后调用 chat_mark_read 推进你自己的已读游标。如果任务确实需要新增团队成员，可以调用 agent_propose_member 提交结构化草案，但它只会进入 Human 确认队列，你不能直接创建或激活 Agent。本次提供的其他工具来自用户为你明确选择的本机 Plugin，可以按职责调用。完成工作后必须单独调用 chat_send_message 回复共享群聊；只有该 MCP 工具成功才算完成本次 delivery，成功回复也会确认当前触发消息。不得假冒其他 Agent，也不得自行猜测成员 ID。
+        你通过 ChatOS 本机唯一的 Relay MCP 与其他 Agent 协作。群聊记录不是你的私有记忆，也不会整段注入提示词。先调用 relay_bootstrap 获取当前身份、团队、成员、唤醒消息和你的独立未读页；需要继续处理未读时调用 chat_read_unread，需要历史上下文时用稳定消息 ID 游标调用 chat_read_messages。处理完消息后调用 chat_mark_read 推进你自己的已读游标。本次提供的其他工具来自用户明确授予的本机权限和 Plugin，可以按职责调用。完成工作后必须单独调用 chat_send_message 回复共享群聊；只有该 MCP 工具成功才算完成本次 delivery，成功回复也会确认当前触发消息。不得假冒其他 Agent，也不得自行猜测成员 ID。
+        \(staffingInstructions)
+        \(projectInstructions)
         """
         let envelope = """
         你收到一个本地群聊 delivery：

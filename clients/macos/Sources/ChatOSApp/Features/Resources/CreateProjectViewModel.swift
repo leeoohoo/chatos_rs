@@ -12,6 +12,7 @@ final class CreateProjectViewModel: ObservableObject {
     @Published private(set) var showsHiddenDirectories = false
     private(set) var selectedWorkspaceID: String
     @Published var projectName = ""
+    @Published var projectDescription = ""
     @Published var errorMessage: String?
 
     let workspaces: [LocalConnectorWorkspace]
@@ -24,11 +25,16 @@ final class CreateProjectViewModel: ObservableObject {
     init(
         connectorStatus: LocalConnectorStatus?,
         filesystemService: any ProjectFilesystemServicing,
-        creationService: any LocalProjectCreating
+        creationService: any LocalProjectCreating,
+        suggestedName: String = "",
+        suggestedDescription: String = ""
     ) {
         workspaces = connectorStatus?.workspaces ?? []
         self.filesystemService = filesystemService
         self.creationService = creationService
+        projectName = suggestedName
+        projectDescription = suggestedDescription
+        userEditedProjectName = !suggestedName.isEmpty
         selectedWorkspaceID = connectorStatus?.defaultWorkspaceID
             ?? connectorStatus?.workspaces.first?.id
             ?? ""
@@ -113,8 +119,12 @@ final class CreateProjectViewModel: ObservableObject {
             errorMessage = "请选择可访问的本机项目目录。"
             return nil
         }
-        let draft = LocalProjectDraft(name: normalizedProjectName, workspaceID: workspace.id,
-                                      relativeRoot: currentRelativePath ?? "")
+        let draft = LocalProjectDraft(
+            name: normalizedProjectName,
+            description: projectDescription.trimmingCharacters(in: .whitespacesAndNewlines),
+            workspaceID: workspace.id,
+            relativeRoot: currentRelativePath ?? ""
+        )
         isSaving = true
         defer { isSaving = false }
         errorMessage = nil

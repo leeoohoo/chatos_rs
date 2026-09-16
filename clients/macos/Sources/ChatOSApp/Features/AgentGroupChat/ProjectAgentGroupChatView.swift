@@ -3,9 +3,11 @@ import ChatOSCore
 import SwiftUI
 
 struct ProjectAgentGroupChatView: View {
+    @EnvironmentObject private var model: AppModel
     @StateObject private var viewModel: AgentGroupChatViewModel
     @State private var showsCreateRoom = false
     @State private var showsCreateAgent = false
+    @State private var showsAddExistingAgent = false
     @State private var showsAgentBuilder = false
     @State private var showsStopAllConfirmation = false
     @State private var editingMember: AgentGroupChatViewModel.MemberPresentation?
@@ -17,7 +19,8 @@ struct ProjectAgentGroupChatView: View {
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
         builderService: LocalAgentBuilderService,
-        pluginService: NativeLocalConnectorService
+        pluginService: NativeLocalConnectorService,
+        projectsService: NativeLocalProjectsService
     ) {
         _viewModel = StateObject(
             wrappedValue: AgentGroupChatViewModel(
@@ -26,7 +29,8 @@ struct ProjectAgentGroupChatView: View {
                 service: service,
                 scheduler: scheduler,
                 builderService: builderService,
-                pluginService: pluginService
+                pluginService: pluginService,
+                projectsService: projectsService
             )
         )
     }
@@ -47,6 +51,9 @@ struct ProjectAgentGroupChatView: View {
         }
         .sheet(isPresented: $showsCreateAgent) {
             CreateLocalAgentSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showsAddExistingAgent) {
+            AddExistingAgentSheet(viewModel: viewModel)
         }
         .sheet(isPresented: $showsAgentBuilder) {
             LocalAgentBuilderSheet(viewModel: viewModel)
@@ -111,7 +118,9 @@ struct ProjectAgentGroupChatView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 roomHeader
-                if !viewModel.pendingProposals.isEmpty {
+                if !viewModel.pendingProposals.isEmpty
+                    || !viewModel.pendingRemovalProposals.isEmpty
+                    || !viewModel.pendingTeamProposals.isEmpty {
                     Divider()
                     pendingProposals
                 }
@@ -132,7 +141,7 @@ struct ProjectAgentGroupChatView: View {
 
     private var pendingProposals: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Agent 提交了新成员提案", systemImage: "person.crop.circle.badge.questionmark")
+            Label("Agent 提交了待确认提案", systemImage: "checklist")
                 .appFont(.caption)
                 .fontWeight(.semibold)
             ForEach(viewModel.pendingProposals) { proposal in
@@ -162,6 +171,96 @@ struct ProjectAgentGroupChatView: View {
                         .controlSize(.small)
                         Button("确认创建") {
                             Task { await viewModel.approveProposal(proposal) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+                .padding(10)
+                .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+            }
+            ForEach(viewModel.pendingRemovalProposals) { proposal in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("移出团队 · \(viewModel.profilesByID[proposal.draft.targetAgentID]?.draft.name ?? proposal.draft.targetAgentID)")
+                            .appFont(.body)
+                            .fontWeight(.medium)
+                        Text(proposal.draft.reason)
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        if !proposal.draft.handoffPlan.isEmpty {
+                            Text("交接：\(proposal.draft.handoffPlan)")
+                                .appFont(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        Text("只会移出当前项目团队；Agent、独立 Memory 和其他团队关系都会保留。")
+                            .appFont(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if viewModel.removalProposalActionIDs.contains(proposal.id) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("拒绝", role: .destructive) {
+                            Task { await viewModel.rejectRemovalProposal(proposal) }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        Button("确认移出", role: .destructive) {
+                            Task { await viewModel.approveRemovalProposal(proposal) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+                .padding(10)
+                .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+            }
+            ForEach(viewModel.pendingTeamProposals) { proposal in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(proposal.draft.newProjectName == nil
+                            ? "为已有项目创建团队"
+                            : "新建项目并创建团队")
+                            .appFont(.body)
+                            .fontWeight(.medium)
+                        if let newProjectName = proposal.draft.newProjectName {
+                            Text("项目：\(newProjectName)")
+                                .appFont(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        } else if let projectID = proposal.draft.existingProjectID {
+                            Text("项目：\(model.workspaceProjects.first(where: { $0.id == projectID })?.name ?? "本地项目")")
+                                .appFont(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        Text("团队：\(proposal.draft.teamName)")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(proposal.draft.newProjectName == nil
+                            ? "真实项目 ID 由客户端内部透传；Agent 不会看到它。"
+                            : "确认后 ChatOS 会在默认工作区新建项目，并用生成的 ID 绑定团队。")
+                            .appFont(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if viewModel.teamProposalActionIDs.contains(proposal.id) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("拒绝", role: .destructive) {
+                            Task { await viewModel.rejectTeamProposal(proposal) }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        Button(proposal.draft.newProjectName == nil ? "确认创建团队" : "确认创建项目和团队") {
+                            Task {
+                                if let project = await viewModel.approveTeamProposal(proposal) {
+                                    model.registerCreatedProject(project)
+                                }
+                            }
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
@@ -262,6 +361,9 @@ struct ProjectAgentGroupChatView: View {
                 .disabled(viewModel.isStoppingAgents)
             }
             Menu {
+                Button("添加已有 Agent", systemImage: "person.crop.circle.badge.plus") {
+                    showsAddExistingAgent = true
+                }
                 Button("手动创建", systemImage: "square.and.pencil") {
                     showsCreateAgent = true
                 }
@@ -578,6 +680,89 @@ private struct EditLocalAgentSheet: View {
         }
         .padding(24)
         .frame(width: 560)
+    }
+}
+
+private struct AddExistingAgentSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var viewModel: AgentGroupChatViewModel
+    @State private var selectedAgentID = ""
+    @State private var role = ""
+    @State private var responsibility = ""
+    @State private var isSaving = false
+
+    private var availableAgents: [LocalAgentProfile] {
+        let memberIDs = Set(viewModel.members.map(\.agentID))
+        return viewModel.agents.filter { !memberIDs.contains($0.id) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("添加已有 Agent")
+                .font(.title2.weight(.semibold))
+            Text("Agent 的模型和全局 Prompt 在 Agent 管理中维护；这里设置它在当前项目中的角色和职责。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            if availableAgents.isEmpty {
+                ContentUnavailableView(
+                    "没有可添加的 Agent",
+                    systemImage: "person.crop.circle.badge.exclamationmark",
+                    description: Text("请先到 Agent 管理中创建 Agent。")
+                )
+            } else {
+                Picker("Agent", selection: $selectedAgentID) {
+                    ForEach(availableAgents) { agent in
+                        Text(agent.draft.name).tag(agent.id)
+                    }
+                }
+                TextField("当前项目中的角色", text: $role)
+                    .textFieldStyle(.roundedBorder)
+                TextField("当前项目中的职责", text: $responsibility, axis: .vertical)
+                    .lineLimit(2...5)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                Button("加入团队") {
+                    isSaving = true
+                    Task {
+                        if await viewModel.addExistingAgent(
+                            agentID: selectedAgentID,
+                            role: resolvedRole,
+                            responsibility: responsibility
+                        ) { dismiss() }
+                        isSaving = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isSaving || selectedAgentID.isEmpty || availableAgents.isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
+        .onAppear { selectDefaultAgent() }
+        .onChange(of: selectedAgentID) { selectDefaultRole() }
+    }
+
+    private var resolvedRole: String {
+        let value = role.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !value.isEmpty { return value }
+        return availableAgents.first(where: { $0.id == selectedAgentID })?.draft.name ?? "Agent"
+    }
+
+    private func selectDefaultAgent() {
+        guard selectedAgentID.isEmpty else { return }
+        selectedAgentID = availableAgents.first?.id ?? ""
+        selectDefaultRole()
+    }
+
+    private func selectDefaultRole() {
+        guard let agent = availableAgents.first(where: { $0.id == selectedAgentID }) else { return }
+        if role.isEmpty { role = agent.draft.name }
+        if responsibility.isEmpty { responsibility = agent.draft.description }
     }
 }
 

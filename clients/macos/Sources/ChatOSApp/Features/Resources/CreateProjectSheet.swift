@@ -9,12 +9,16 @@ struct CreateProjectSheetHost: View {
         connectorStatus: LocalConnectorStatus?,
         filesystemService: any ProjectFilesystemServicing,
         creationService: any LocalProjectCreating,
+        suggestedName: String = "",
+        suggestedDescription: String = "",
         onCreated: @escaping (WorkspaceProject) -> Void
     ) {
         _viewModel = StateObject(wrappedValue: CreateProjectViewModel(
             connectorStatus: connectorStatus,
             filesystemService: filesystemService,
-            creationService: creationService
+            creationService: creationService,
+            suggestedName: suggestedName,
+            suggestedDescription: suggestedDescription
         ))
         self.onCreated = onCreated
     }
@@ -100,6 +104,15 @@ struct CreateProjectSheet: View {
                     )
                 )
                 .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("项目说明（可选）")
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextField("项目说明", text: $viewModel.projectDescription, axis: .vertical)
+                    .lineLimit(2...4)
+                    .textFieldStyle(.roundedBorder)
             }
 
             Label("不会上传代码或创建托管仓库，也不要求 Git remote 或默认联系人。", systemImage: "internaldrive")

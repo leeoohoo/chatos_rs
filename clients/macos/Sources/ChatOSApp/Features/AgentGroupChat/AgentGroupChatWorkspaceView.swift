@@ -2,21 +2,40 @@ import ChatOSConnector
 import ChatOSCore
 import SwiftUI
 
+extension Notification.Name {
+    static let agentGroupChatRoomsDidChange = Notification.Name("ChatOS.AgentGroupChatRoomsDidChange")
+}
+
+private enum AgentGroupChatWorkspaceDestination: Hashable {
+    case agents
+    case room(String)
+}
+
 @MainActor
 private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     @Published private(set) var rooms: [ProjectAgentRoom] = []
+    @Published private(set) var agents: [LocalAgentProfile] = []
+    @Published private(set) var availableModels: [LocalAgentBuilderModelOption] = []
+    @Published private(set) var installedPlugins: [LocalAgentBuilderPluginOption] = []
     @Published var selectedRoomID: String?
     @Published private(set) var isLoading = false
     @Published private(set) var isCreating = false
+    @Published private(set) var isSavingAgent = false
     @Published var errorMessage: String?
 
     private let ownerUserID: String
     private let service: NativeAgentGroupChatService
+    private let builderService: LocalAgentBuilderService
     private var openedStore: SQLiteAgentGroupChatStore?
 
-    init(ownerUserID: String, service: NativeAgentGroupChatService) {
+    init(
+        ownerUserID: String,
+        service: NativeAgentGroupChatService,
+        builderService: LocalAgentBuilderService
+    ) {
         self.ownerUserID = ownerUserID
         self.service = service
+        self.builderService = builderService
     }
 
     func load() async {
@@ -26,11 +45,101 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         do {
             let store = try await resolveStore()
             let rooms = try await store.listRooms(ownerUserID: ownerUserID)
+            let agents = try await store.listAgents(ownerUserID: ownerUserID, includeArchived: false)
+            let resources = try? await builderService.loadResources(ownerUserID: ownerUserID)
             self.rooms = rooms
+            self.agents = agents
+            self.availableModels = resources?.models ?? []
+            self.installedPlugins = resources?.plugins ?? []
             if let selectedRoomID, rooms.contains(where: { $0.id == selectedRoomID }) {
                 self.selectedRoomID = selectedRoomID
             } else {
-                self.selectedRoomID = rooms.first?.id
+                self.selectedRoomID = nil
+            }
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func saveAgent(
+        existing: LocalAgentProfile?,
+        name: String,
+        description: String,
+        rolePrompt: String,
+        modelConfigID: String,
+        pluginIDs: [String],
+        canManageStaff: Bool,
+        canAccessLocalProjects: Bool
+    ) async -> Bool {
+        guard !isSavingAgent else { return false }
+        let modelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard availableModels.contains(where: { $0.id == modelConfigID }) else {
+            errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription
+            return false
+        }
+        let installedPluginIDs = Set(installedPlugins.map(\.id))
+        guard pluginIDs.allSatisfy(installedPluginIDs.contains) else {
+            errorMessage = "选择的本机 Plugin 已停用或卸载，请刷新后重试。"
+            return false
+        }
+        let permissions = LocalAgentPermission.normalized(
+            preserving: existing?.draft.defaultSkillIDs ?? [],
+            canManageStaff: canManageStaff,
+            canAccessLocalProjects: canAccessLocalProjects
+        )
+        let draft = LocalAgentProfileDraft(
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            modelConfigID: modelConfigID,
+            defaultPluginIDs: pluginIDs,
+            defaultSkillIDs: permissions
+        )
+        isSavingAgent = true
+        defer { isSavingAgent = false }
+        do {
+            let store = try await resolveStore()
+            if let existing {
+                _ = try await store.updateAgentProfile(
+                    ownerUserID: ownerUserID,
+                    agentID: existing.id,
+                    draft: draft
+                )
+            } else {
+                _ = try await store.createAgent(ownerUserID: ownerUserID, draft: draft)
+            }
+            await load()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func addAgent(_ agent: LocalAgentProfile, to room: ProjectAgentRoom) async {
+        do {
+            let store = try await resolveStore()
+            let members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
+            guard !members.contains(where: { $0.agentID == agent.id }) else {
+                throw AgentGroupChatError.conflict
+            }
+            _ = try await store.addMember(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(
+                    role: agent.draft.name,
+                    responsibility: agent.draft.description,
+                    pluginAllowlist: agent.draft.defaultPluginIDs
+                )
+            )
+            if members.isEmpty {
+                _ = try await store.setDefaultAgent(
+                    ownerUserID: ownerUserID,
+                    roomID: room.id,
+                    agentID: agent.id
+                )
             }
             errorMessage = nil
         } catch {
@@ -74,6 +183,7 @@ struct AgentGroupChatWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @StateObject private var viewModel: AgentGroupChatWorkspaceViewModel
     @State private var showsCreateTeam = false
+    @State private var destination: AgentGroupChatWorkspaceDestination = .agents
 
     private let ownerUserID: String
     private let service: NativeAgentGroupChatService
@@ -96,7 +206,8 @@ struct AgentGroupChatWorkspaceView: View {
         _viewModel = StateObject(
             wrappedValue: AgentGroupChatWorkspaceViewModel(
                 ownerUserID: ownerUserID,
-                service: service
+                service: service,
+                builderService: builderService
             )
         )
     }
@@ -112,12 +223,19 @@ struct AgentGroupChatWorkspaceView: View {
         .workspaceFill()
         .navigationTitle(model.localized("Agent 群聊", english: "Agent Group Chat"))
         .task { await viewModel.load() }
+        .onReceive(NotificationCenter.default.publisher(for: .agentGroupChatRoomsDidChange)) { _ in
+            Task { await viewModel.load() }
+        }
         .sheet(isPresented: $showsCreateTeam) {
             CreateAgentTeamSheet(
                 projects: availableProjects,
                 isCreating: viewModel.isCreating
             ) { projectID, name, goal in
-                await viewModel.createRoom(projectID: projectID, name: name, goal: goal)
+                let created = await viewModel.createRoom(projectID: projectID, name: name, goal: goal)
+                if created, let roomID = viewModel.selectedRoomID {
+                    destination = .room(roomID)
+                }
+                return created
             }
         }
         .alert(
@@ -141,16 +259,17 @@ struct AgentGroupChatWorkspaceView: View {
     }
 
     private var selectedRoom: ProjectAgentRoom? {
-        viewModel.rooms.first { $0.id == viewModel.selectedRoomID }
+        guard case let .room(roomID) = destination else { return nil }
+        return viewModel.rooms.first { $0.id == roomID }
     }
 
     private var teamList: some View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("团队")
+                    Text("Agent 与团队")
                         .font(.headline)
-                    Text("每个团队绑定一个项目")
+                    Text("先管理 Agent，再进入项目团队")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -168,36 +287,46 @@ struct AgentGroupChatWorkspaceView: View {
 
             Divider()
 
-            if viewModel.isLoading, viewModel.rooms.isEmpty {
+            if viewModel.isLoading, viewModel.rooms.isEmpty, viewModel.agents.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.rooms.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("还没有 Agent 团队", systemImage: "person.3.sequence")
-                        .font(.headline)
-                    Text("选择一个项目，创建只在本机运行的 Agent 团队。")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Button("创建团队") { showsCreateTeam = true }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(availableProjects.isEmpty)
-                    Spacer(minLength: 0)
-                }
-                .padding(18)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
-                List(selection: $viewModel.selectedRoomID) {
-                    ForEach(viewModel.rooms) { room in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(room.draft.name)
-                                .font(.body.weight(.medium))
-                            Text(projectName(for: room.projectID))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                List(selection: $destination) {
+                    Section {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Agent 管理")
+                                    .font(.body.weight(.medium))
+                                Text("\(viewModel.agents.count) 个已创建 Agent")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "person.crop.rectangle.stack")
                         }
                         .padding(.vertical, 4)
-                        .tag(room.id)
+                        .tag(AgentGroupChatWorkspaceDestination.agents)
+                    }
+
+                    Section("团队") {
+                        if viewModel.rooms.isEmpty {
+                            Text("还没有项目团队")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(viewModel.rooms) { room in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(room.draft.name)
+                                        .font(.body.weight(.medium))
+                                    Text(projectName(for: room.projectID))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                .padding(.vertical, 4)
+                                .tag(AgentGroupChatWorkspaceDestination.room(room.id))
+                            }
+                        }
                     }
                 }
                 .listStyle(.plain)
@@ -211,21 +340,24 @@ struct AgentGroupChatWorkspaceView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let room = selectedRoom {
+        if destination == .agents {
+            AgentManagementView(viewModel: viewModel)
+        } else if let room = selectedRoom {
             ProjectAgentGroupChatView(
                 projectID: room.projectID,
                 ownerUserID: ownerUserID,
                 service: service,
                 scheduler: scheduler,
                 builderService: builderService,
-                pluginService: pluginService
+                pluginService: pluginService,
+                projectsService: model.localProjectsService
             )
             .id(room.id)
         } else {
             ContentUnavailableView {
-                Label("选择或创建 Agent 团队", systemImage: "person.3.sequence.fill")
+                Label("团队不存在", systemImage: "person.3.sequence.fill")
             } description: {
-                Text("团队必须绑定一个项目，群聊、Agent 和调度状态保存在本机。")
+                Text("请选择其他团队，或新建一个绑定项目的团队。")
             }
         }
     }
@@ -234,6 +366,321 @@ struct AgentGroupChatWorkspaceView: View {
         model.projects.first(where: { $0.id == projectID })?.title
             ?? model.localized("项目已移除", english: "Project Removed")
     }
+}
+
+private enum AgentProfileEditorTarget: Identifiable {
+    case create
+    case edit(LocalAgentProfile)
+
+    var id: String {
+        switch self {
+        case .create: "new-agent"
+        case let .edit(profile): profile.id
+        }
+    }
+}
+
+private struct AgentManagementView: View {
+    @ObservedObject var viewModel: AgentGroupChatWorkspaceViewModel
+    @State private var editorTarget: AgentProfileEditorTarget?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Agent 管理")
+                        .font(.title3.weight(.semibold))
+                    Text("Agent 可以复用于不同项目团队；模型、Prompt 和本机 Plugin 在这里统一管理。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("创建 Agent", systemImage: "person.badge.plus") {
+                    editorTarget = .create
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(18)
+
+            Divider()
+
+            if viewModel.agents.isEmpty {
+                ContentUnavailableView {
+                    Label("还没有 Agent", systemImage: "person.crop.rectangle.stack")
+                } description: {
+                    Text("先创建 Agent，再把它加入需要协作的项目团队。")
+                } actions: {
+                    Button("创建 Agent") { editorTarget = .create }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 280, maximum: 420), spacing: 14)],
+                        alignment: .leading,
+                        spacing: 14
+                    ) {
+                        ForEach(viewModel.agents) { agent in
+                            agentCard(agent)
+                        }
+                    }
+                    .padding(18)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .sheet(item: $editorTarget) { target in
+            AgentProfileEditorSheet(viewModel: viewModel, target: target)
+        }
+    }
+
+    private func agentCard(_ agent: LocalAgentProfile) -> some View {
+        let canManageStaff = LocalAgentPermission.canManageStaff(agent.draft.defaultSkillIDs)
+        let canAccessLocalProjects = LocalAgentPermission.canAccessLocalProjects(
+            agent.draft.defaultSkillIDs
+        )
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: canManageStaff ? "person.crop.circle.badge.checkmark" : "person.crop.circle")
+                    .font(.title2)
+                    .foregroundStyle(canManageStaff ? Color.accentColor : .secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(agent.draft.name)
+                        .font(.headline)
+                    Text(canManageStaff ? "可招募和解雇成员" : "无人员管理权限")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Menu("加入团队", systemImage: "person.2.badge.plus") {
+                    if viewModel.rooms.isEmpty {
+                        Text("请先创建项目团队")
+                    } else {
+                        ForEach(viewModel.rooms) { room in
+                            Button(room.draft.name) {
+                                Task { await viewModel.addAgent(agent, to: room) }
+                            }
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                Button("编辑") { editorTarget = .edit(agent) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            if !agent.draft.description.isEmpty {
+                Text(agent.draft.description)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Divider()
+            LabeledContent("模型") {
+                Text(modelName(agent.draft.modelConfigID))
+                    .lineLimit(1)
+            }
+            .font(.caption)
+            LabeledContent("本机 Plugin") {
+                Text(agent.draft.defaultPluginIDs.isEmpty ? "未启用" : "\(agent.draft.defaultPluginIDs.count) 个")
+            }
+            .font(.caption)
+            if canManageStaff || canAccessLocalProjects {
+                HStack(spacing: 6) {
+                    if canManageStaff {
+                        Label("人员管理", systemImage: "person.2.badge.gearshape")
+                    }
+                    if canAccessLocalProjects {
+                        Label("项目与团队", systemImage: "folder.badge.gearshape")
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private func modelName(_ id: String) -> String {
+        guard let model = viewModel.availableModels.first(where: { $0.id == id }) else { return id }
+        return "\(model.name) · \(model.modelName)"
+    }
+}
+
+private struct AgentProfileEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var viewModel: AgentGroupChatWorkspaceViewModel
+    let target: AgentProfileEditorTarget
+
+    @State private var name: String
+    @State private var description: String
+    @State private var rolePrompt: String
+    @State private var modelConfigID: String
+    @State private var selectedPluginIDs: Set<String>
+    @State private var canManageStaff: Bool
+    @State private var canAccessLocalProjects: Bool
+
+    init(viewModel: AgentGroupChatWorkspaceViewModel, target: AgentProfileEditorTarget) {
+        self.viewModel = viewModel
+        self.target = target
+        let profile: LocalAgentProfile?
+        switch target {
+        case .create:
+            profile = nil
+        case let .edit(value):
+            profile = value
+        }
+        _name = State(initialValue: profile?.draft.name ?? "")
+        _description = State(initialValue: profile?.draft.description ?? "")
+        _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? Self.defaultPrompt)
+        _modelConfigID = State(initialValue: profile?.draft.modelConfigID ?? "")
+        _selectedPluginIDs = State(initialValue: Set(profile?.draft.defaultPluginIDs ?? []))
+        _canManageStaff = State(initialValue: profile.map {
+            LocalAgentPermission.canManageStaff($0.draft.defaultSkillIDs)
+        } ?? false)
+        _canAccessLocalProjects = State(initialValue: profile.map {
+            LocalAgentPermission.canAccessLocalProjects($0.draft.defaultSkillIDs)
+        } ?? false)
+    }
+
+    private var existing: LocalAgentProfile? {
+        guard case let .edit(profile) = target else { return nil }
+        return profile
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text(existing == nil ? "创建 Agent" : "编辑 Agent")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    editorField("名称") {
+                        TextField("Agent 名称", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    editorField("说明") {
+                        TextField("Agent 负责什么", text: $description, axis: .vertical)
+                            .lineLimit(2...4)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    editorField("模型") {
+                        Picker("", selection: $modelConfigID) {
+                            ForEach(viewModel.availableModels) { model in
+                                Text("\(model.name) · \(model.modelName)").tag(model.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    editorField("角色 Prompt") {
+                        TextField("角色 Prompt", text: $rolePrompt, axis: .vertical)
+                            .lineLimit(5...10)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Toggle(isOn: $canManageStaff) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("允许招募和解雇成员")
+                                .font(.subheadline.weight(.medium))
+                            Text("授权后，Agent 可通过 Relay MCP 提交招募或移出团队提案；所有人员变更仍需你确认。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Toggle(isOn: $canAccessLocalProjects) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("允许查看本地项目并创建团队")
+                                .font(.subheadline.weight(.medium))
+                            Text("Agent 只看到项目名称和临时单选项；真实项目 ID 与路径由 ChatOS 内部透传。也可以在默认工作区新建项目。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if !viewModel.installedPlugins.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("本机 Plugin")
+                                .font(.subheadline.weight(.medium))
+                            ForEach(viewModel.installedPlugins) { plugin in
+                                Toggle(isOn: Binding(
+                                    get: { selectedPluginIDs.contains(plugin.id) },
+                                    set: { selected in
+                                        if selected { selectedPluginIDs.insert(plugin.id) }
+                                        else { selectedPluginIDs.remove(plugin.id) }
+                                    }
+                                )) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(plugin.name)
+                                        if !plugin.description.isEmpty {
+                                            Text(plugin.description)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                Button(existing == nil ? "创建" : "保存") {
+                    Task {
+                        if await viewModel.saveAgent(
+                            existing: existing,
+                            name: name,
+                            description: description,
+                            rolePrompt: rolePrompt,
+                            modelConfigID: modelConfigID,
+                            pluginIDs: selectedPluginIDs.sorted(),
+                            canManageStaff: canManageStaff,
+                            canAccessLocalProjects: canAccessLocalProjects
+                        ) { dismiss() }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    viewModel.isSavingAgent
+                        || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || modelConfigID.isEmpty
+                )
+            }
+        }
+        .padding(24)
+        .frame(width: 640)
+        .frame(minHeight: 560)
+        .onAppear {
+            if modelConfigID.isEmpty {
+                modelConfigID = viewModel.availableModels.first?.id ?? ""
+            }
+        }
+    }
+
+    private func editorField<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(.subheadline.weight(.medium))
+            content()
+        }
+    }
+
+    private static let defaultPrompt = """
+    只处理用户和项目团队明确交给你的工作。先通过 Relay MCP 理解当前项目、团队和群聊上下文，再按职责行动并回复；涉及项目创建或人员变更时必须等待 Human 确认。
+    """
 }
 
 private struct CreateAgentTeamSheet: View {

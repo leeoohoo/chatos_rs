@@ -88,6 +88,45 @@ public actor NativeLocalProjectsService {
                                 projectContext: try deviceID.map { try ProjectContextSnapshot(record: record, deviceID: $0) })
     }
 
+    /// Creates a host-owned project directory beneath ChatOS's default authorized workspace.
+    /// Agent tools provide only display metadata; neither an absolute path nor a workspace id is
+    /// accepted from the model.
+    public func createInDefaultWorkspace(
+        ownerUserID: String,
+        name: String,
+        description: String = ""
+    ) async throws -> WorkspaceProject {
+        try ProjectRegistryValidation.identifier(name, field: "name")
+        let status = try await connector.fetchStatus()
+        guard status.user?.id == ownerUserID,
+              let workspaceID = status.defaultWorkspaceID,
+              let workspace = status.workspaces.first(where: { $0.id == workspaceID }) else {
+            throw NativeConnectorError.workspaceUnavailable
+        }
+        let baseName = Self.safeProjectDirectoryName(name)
+        let root = URL(fileURLWithPath: workspace.absoluteRoot, isDirectory: true)
+        var directoryName = baseName
+        var suffix = 2
+        while FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(directoryName, isDirectory: true).path
+        ) {
+            directoryName = "\(baseName)-\(suffix)"
+            suffix += 1
+        }
+        _ = try await Task.detached {
+            try NativeWorkspaceFilesystem(workspace: workspace).createDirectory(path: directoryName)
+        }.value
+        return try await create(
+            ownerUserID: ownerUserID,
+            draft: .init(
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+                workspaceID: workspace.id,
+                relativeRoot: directoryName
+            )
+        )
+    }
+
     public func rename(ownerUserID: String, id: String, name: String, expectedRevision: Int64) async throws {
         guard let old = try await registry().get(ownerUserID: ownerUserID, id: id) else { throw ProjectRegistryError.notFound }
         let draft = LocalProjectDraft(name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -137,6 +176,18 @@ public actor NativeLocalProjectsService {
                 status: record.status
             )
         }
+    }
+
+    private static func safeProjectDirectoryName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let forbidden = CharacterSet(charactersIn: "/\\:").union(.controlCharacters)
+        let scalars = trimmed.unicodeScalars.map { forbidden.contains($0) ? "-" : String($0) }
+        let collapsed = scalars.joined()
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
+        let value = String(collapsed.prefix(80))
+        return value.isEmpty ? "ChatOS-Project" : value
     }
 }
 
