@@ -20,13 +20,16 @@ test('scene transforms keep pointer ownership and synchronize live artboard heig
   assert.match(styles, /\.scene-v2-artboard-canvas\.transforming iframe \{ pointer-events: none !important; \}/);
 });
 
-test('scene mutations are serialized and a committed transform stays visually locked until persistence finishes', () => {
+test('scene mutations are serialized while optimistic transforms remain immediately draggable', () => {
   assert.match(studio, /const sceneCommandQueue = useRef<Promise<void>>\(Promise\.resolve\(\)\)/);
   assert.match(studio, /sceneCommandQueue\.current\.then\(execute, execute\)/);
   assert.match(studio, /sceneCommandQueue\.current = queued\.then\(\(\) => undefined, \(\) => undefined\)/);
-  assert.match(sceneCanvas, /if \(transforming \|\| previewScene\) return;/);
-  assert.equal(sceneCanvas.match(/if \(transforming \|\| previewScene\) return;/g)?.length, 2);
-  assert.match(sceneCanvas, /onCommitRef\.current\(command\)[\s\S]*?\.finally\(\(\) => \{\s*setPreviewScene\(undefined\);\s*setTransforming\(false\);\s*\}\)/);
+  assert.match(sceneCanvas, /const displayedScene = previewScene \?\? optimisticScene \?\? scene/);
+  assert.match(sceneCanvas, /setOptimisticScene\(optimisticDocument\);\s*setPreviewScene\(undefined\);\s*setTransforming\(false\);\s*void onCommitRef\.current\(command\)/);
+  assert.equal(sceneCanvas.match(/snapshot: displayedScene/g)?.length, 2);
+  assert.equal(sceneCanvas.match(/if \(transformRef\.current\) return;/g)?.length, 2);
+  assert.doesNotMatch(sceneCanvas, /if \(transforming \|\| previewScene\) return;/);
+  assert.match(studio, /void refreshSceneHistory\(scene\.documentId\)\.catch\(\(\) => undefined\);\s*return result\.document/);
   assert.match(sceneCanvas, /event\.type === 'pointercancel'/);
 });
 

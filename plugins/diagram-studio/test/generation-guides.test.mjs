@@ -10,7 +10,7 @@ import {
   verifyGenerationPermit
 } from '../dist/generation-guides.test.mjs';
 
-const architectureChecklist = ['single_architecture_viewpoint', 'boundaries_show_ownership', 'primary_path_is_visible', 'relationships_are_aggregated', 'runtime_cycles_are_moved_to_detail', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'];
+const architectureChecklist = ['single_architecture_viewpoint', 'components_are_capabilities_not_steps', 'boundaries_show_ownership', 'primary_path_is_visible', 'relationships_are_aggregated', 'relationships_are_stable_dependencies', 'overview_is_not_a_runtime_chain', 'runtime_cycles_are_moved_to_detail', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'];
 const sequenceChecklist = ['single_runtime_scenario', 'participants_have_distinct_roles', 'message_order_is_causal', 'activation_intervals_are_bounded', 'fragments_do_not_hide_content', 'independent_scenarios_are_split'];
 const mindmapChecklist = ['single_central_topic', 'branches_are_mutually_distinct', 'parent_child_relationships_are_hierarchical', 'labels_are_concise', 'depth_is_bounded', 'overloaded_branches_are_split', 'independent_subjects_are_separate_maps', 'evidence_is_mapped'];
 
@@ -54,6 +54,7 @@ test('generation permits are bound to skill contract, kind, artifact, and runtim
   const plan = {
     goal,
     scope: 'Major client, entry, domain, and data boundaries only.',
+    viewpoint: 'system-context',
     excludedDetails: ['Controllers, repositories, tables, pods, and unrelated workflows.'],
     estimatedPrimaryItemCount: 8,
     estimatedEdgeCount: 10,
@@ -79,6 +80,7 @@ test('generation permits are bound to skill contract, kind, artifact, and runtim
     title: 'System Overview'
   });
   assert.equal(permit.qualityProfile, 'architecture-overview');
+  assert.equal(permit.viewpoint, 'system-context');
   assert.match(prepared.planHash, /^[a-f0-9]{64}$/);
 
   await assert.rejects(() => verifyGenerationPermit(storeDirectory, {
@@ -96,6 +98,45 @@ test('generation permits are bound to skill contract, kind, artifact, and runtim
     kind: 'architecture',
     artifactKey: 'another-artifact'
   }), /No active generation plan/);
+  } finally {
+    await rm(storeDirectory, { recursive: true, force: true });
+  }
+});
+
+test('architecture planning requires one viewpoint allowed by the selected mode', async () => {
+  const storeDirectory = await mkdtemp(path.join(os.tmpdir(), 'diagram-generation-plan-'));
+  const basePlan = {
+    goal: 'Show one bounded architecture overview',
+    scope: 'Major client, product, integration, and data responsibilities only.',
+    excludedDetails: ['Runtime message order and internal implementation classes.'],
+    estimatedPrimaryItemCount: 7,
+    estimatedEdgeCount: 7,
+    structure: ['Client', 'Product Core', 'External Systems', 'Data'],
+    splitPlan: ['Move runtime interactions to a sequence diagram.'],
+    splitRationale: 'The overview keeps one abstraction level.',
+    checklistAcknowledgements: architectureChecklist
+  };
+  try {
+    await assert.rejects(() => prepareGenerationPermit({
+      storeDirectory,
+      kind: 'architecture',
+      mode: 'overview',
+      artifactKey: 'missing-viewpoint',
+      operation: 'create',
+      title: 'Missing Viewpoint',
+      plan: basePlan,
+      scopeFingerprint: 'd'.repeat(64)
+    }), /viewpoint must be one of system-context, container/);
+    await assert.rejects(() => prepareGenerationPermit({
+      storeDirectory,
+      kind: 'architecture',
+      mode: 'overview',
+      artifactKey: 'wrong-viewpoint',
+      operation: 'create',
+      title: 'Wrong Viewpoint',
+      plan: { ...basePlan, viewpoint: 'component' },
+      scopeFingerprint: 'd'.repeat(64)
+    }), /viewpoint must be one of system-context, container/);
   } finally {
     await rm(storeDirectory, { recursive: true, force: true });
   }

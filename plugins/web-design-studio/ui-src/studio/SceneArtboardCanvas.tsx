@@ -243,11 +243,13 @@ export function SceneArtboardCanvas({
   const onSelectionChangeRef = useRef(onSelectionChange);
   const onContentHeightChangeRef = useRef(onContentHeightChange);
   const contentHeightFrame = useRef<number | undefined>(undefined);
+  const pendingSceneCommits = useRef(0);
   const [previewScene, setPreviewScene] = useState<SceneDocument>();
+  const [optimisticScene, setOptimisticScene] = useState<SceneDocument>();
   const [transforming, setTransforming] = useState(false);
   const [marquee, setMarquee] = useState<PointerMarquee>();
   const [marqueeRect, setMarqueeRect] = useState<EditorSelectionRect>();
-  const displayedScene = previewScene ?? scene;
+  const displayedScene = previewScene ?? optimisticScene ?? scene;
   const effectiveScene = useMemo(() => resolveResponsiveScene(displayedScene, viewportWidth).document, [displayedScene, viewportWidth]);
   const page = displayedScene.pages.find((candidate) => candidate.id === pageId);
   const rootNodeId = page?.children[0]?.id;
@@ -292,7 +294,7 @@ export function SceneArtboardCanvas({
 
   useEffect(() => {
     if (contentHeightFrame.current !== undefined) window.cancelAnimationFrame(contentHeightFrame.current);
-    if (!previewScene) {
+    if (!previewScene && !optimisticScene) {
       onContentHeightChangeRef.current?.(undefined);
       contentHeightFrame.current = undefined;
       return;
@@ -304,7 +306,13 @@ export function SceneArtboardCanvas({
     return () => {
       if (contentHeightFrame.current !== undefined) window.cancelAnimationFrame(contentHeightFrame.current);
     };
-  }, [contentHeight, previewScene]);
+  }, [contentHeight, optimisticScene, previewScene]);
+
+  useEffect(() => {
+    if (pendingSceneCommits.current === 0 && optimisticScene && scene.revision >= optimisticScene.revision) {
+      setOptimisticScene(undefined);
+    }
+  }, [optimisticScene, scene]);
 
   useEffect(() => () => {
     if (contentHeightFrame.current !== undefined) window.cancelAnimationFrame(contentHeightFrame.current);
@@ -373,11 +381,26 @@ export function SceneArtboardCanvas({
             type: 'resize', nodeId: completed.nodeId, handle: completed.handle!,
             deltaX: completed.deltaX, deltaY: completed.deltaY, minimumWidth: 1, minimumHeight: 1
           };
-        void onCommitRef.current(command).catch((error) => {
+        let optimisticDocument: SceneDocument;
+        try {
+          optimisticDocument = previewTransform(completed, completed.deltaX, completed.deltaY);
+        } catch (error) {
           onErrorRef.current(error instanceof Error ? error.message : String(error));
-        }).finally(() => {
           setPreviewScene(undefined);
           setTransforming(false);
+          return;
+        }
+        pendingSceneCommits.current += 1;
+        setOptimisticScene(optimisticDocument);
+        setPreviewScene(undefined);
+        setTransforming(false);
+        void onCommitRef.current(command).then((confirmedDocument) => {
+          pendingSceneCommits.current = Math.max(0, pendingSceneCommits.current - 1);
+          if (pendingSceneCommits.current === 0) setOptimisticScene(confirmedDocument);
+        }).catch((error) => {
+          pendingSceneCommits.current = Math.max(0, pendingSceneCommits.current - 1);
+          setOptimisticScene(undefined);
+          onErrorRef.current(error instanceof Error ? error.message : String(error));
         });
         return;
       }
@@ -414,7 +437,7 @@ export function SceneArtboardCanvas({
       return;
     }
     if (!active || event.button !== 0) return;
-    if (transforming || previewScene) return;
+    if (transformRef.current) return;
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-scene-node-id]') : null;
     if (!target) {
       const canvas = canvasRef.current;
@@ -452,7 +475,7 @@ export function SceneArtboardCanvas({
     canvas.setPointerCapture?.(event.pointerId);
     transformRef.current = {
       kind: 'move', pointerId: event.pointerId, startClientX: event.clientX, startClientY: event.clientY,
-      scale: pointerScale(canvas), snapshot: scene, nodeIds: nextIds, nodeId, deltaX: 0, deltaY: 0,
+      scale: pointerScale(canvas), snapshot: displayedScene, nodeIds: nextIds, nodeId, deltaX: 0, deltaY: 0,
       captureTarget: canvas
     };
     setTransforming(true);
@@ -472,7 +495,7 @@ export function SceneArtboardCanvas({
 
   function beginResize(nodeId: string, handle: SceneResizeHandle, event: ReactPointerEvent<HTMLSpanElement>) {
     if (!active) return;
-    if (transforming || previewScene) return;
+    if (transformRef.current) return;
     event.preventDefault();
     event.stopPropagation();
     const canvas = canvasRef.current;
@@ -480,7 +503,7 @@ export function SceneArtboardCanvas({
     event.currentTarget.setPointerCapture?.(event.pointerId);
     transformRef.current = {
       kind: 'resize', pointerId: event.pointerId, startClientX: event.clientX, startClientY: event.clientY,
-      scale: pointerScale(canvas), snapshot: scene, nodeIds: [nodeId], nodeId, handle, deltaX: 0, deltaY: 0,
+      scale: pointerScale(canvas), snapshot: displayedScene, nodeIds: [nodeId], nodeId, handle, deltaX: 0, deltaY: 0,
       captureTarget: event.currentTarget
     };
     setTransforming(true);

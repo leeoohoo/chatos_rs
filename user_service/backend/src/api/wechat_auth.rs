@@ -46,6 +46,8 @@ pub async fn login(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<WeChatMiniProgramLoginRequest>,
 ) -> ApiResult<WeChatMiniProgramLoginResponse> {
+    let (device_id, device_public_key) =
+        validate_device_identity(input.device_id.as_str(), input.device_public_key.as_str())?;
     let source = wechat_source(addr);
     reject_locked(&state, "wechat-code-exchange", source.as_str())?;
     let provider_identity = match exchange_code(&state, input.code.as_str()).await {
@@ -73,14 +75,25 @@ pub async fn login(
             .record_success(open_id_hash.as_str(), Some(source.as_str()));
         return Ok(Json(WeChatMiniProgramLoginResponse::BindingRequired));
     };
+    if identity.companion_device_id.as_deref() != Some(device_id.as_str())
+        || identity.companion_device_public_key.as_deref() != Some(device_public_key.as_str())
+    {
+        return Ok(Json(WeChatMiniProgramLoginResponse::BindingRequired));
+    }
     let user = load_enabled_user(&state, identity.user_id.as_str())
         .await
         .map_err(|error| {
             record_failure(&state, open_id_hash.as_str(), source.as_str());
             error
         })?;
-    let (token, client_session_id) =
-        issue_client_session(&state, &user, Some(identity.id.as_str())).await?;
+    let (token, client_session_id) = issue_client_session(
+        &state,
+        &user,
+        Some(identity.id.as_str()),
+        device_id.as_str(),
+        device_public_key.as_str(),
+    )
+    .await?;
     let now = now_rfc3339();
     state
         .store
@@ -118,6 +131,8 @@ pub async fn development_login(
     if input.password.trim().is_empty() {
         return Err(bad_request("password is required"));
     }
+    let (device_id, device_public_key) =
+        validate_device_identity(input.device_id.as_str(), input.device_public_key.as_str())?;
 
     let now_unix = Utc::now().timestamp();
     let source = format!("wechat-development:{}", addr.ip());
@@ -162,7 +177,14 @@ pub async fn development_login(
         .touch_user_last_login(user.id.as_str())
         .await
         .map_err(internal_error)?;
-    let (token, client_session_id) = issue_client_session(&state, &user, None).await?;
+    let (token, client_session_id) = issue_client_session(
+        &state,
+        &user,
+        None,
+        device_id.as_str(),
+        device_public_key.as_str(),
+    )
+    .await?;
     tracing::warn!(
         user_id = %user.id,
         client_session_id = %client_session_id,
@@ -182,19 +204,8 @@ pub async fn issue_bind_ticket(
 ) -> ApiResult<IssueWeChatBindTicketResponse> {
     let user_id = human_user_id(&principal)?;
     let app_id = configured_app_id(&state)?;
-    if state
-        .store
-        .find_active_external_identity_for_user(
-            user_id,
-            EXTERNAL_IDENTITY_PROVIDER_WECHAT_MINI_PROGRAM,
-            app_id,
-        )
-        .await
-        .map_err(internal_error)?
-        .is_some()
-    {
-        return Err(conflict("a WeChat account is already bound"));
-    }
+    // An already-bound account may intentionally replace its phone. The new device
+    // still has to scan this short-lived ticket and receive explicit desktop approval.
     let bind_ticket = generate_secret(16);
     let qr_code = state
         .wechat_mini_program
@@ -219,6 +230,8 @@ pub async fn issue_bind_ticket(
         status: WECHAT_BIND_STATUS_ISSUED.to_string(),
         claimed_open_id_hash: None,
         claimed_union_id_hash: None,
+        claimed_device_id: None,
+        claimed_device_public_key: None,
         claim_id: None,
         claim_secret_hash: None,
         confirmed_external_identity_id: None,
@@ -258,6 +271,8 @@ pub async fn claim_bind_ticket(
     Json(input): Json<ClaimWeChatBindTicketRequest>,
 ) -> ApiResult<ClaimWeChatBindTicketResponse> {
     validate_secret(input.bind_ticket.as_str(), "bind_ticket")?;
+    let (device_id, device_public_key) =
+        validate_device_identity(input.device_id.as_str(), input.device_public_key.as_str())?;
     let source = wechat_source(addr);
     reject_locked(&state, "wechat-bind-claim", source.as_str())?;
     let provider_identity = match exchange_code(&state, input.code.as_str()).await {
@@ -282,6 +297,8 @@ pub async fn claim_bind_ticket(
             configured_app_id(&state)?,
             open_id_hash.as_str(),
             union_id_hash.as_deref(),
+            device_id.as_str(),
+            device_public_key.as_str(),
             claim_id.as_str(),
             claim_secret_hash.as_str(),
             now_unix,
@@ -349,6 +366,14 @@ pub async fn confirm_bind_ticket(
         .claimed_open_id_hash
         .as_deref()
         .ok_or_else(|| internal_error("bind ticket claim is incomplete"))?;
+    let device_id = ticket
+        .claimed_device_id
+        .as_deref()
+        .ok_or_else(|| internal_error("bind ticket device identity is incomplete"))?;
+    let device_public_key = ticket
+        .claimed_device_public_key
+        .as_deref()
+        .ok_or_else(|| internal_error("bind ticket device key is incomplete"))?;
     let now = now_rfc3339();
     let identity = UserExternalIdentityRecord {
         id: Uuid::new_v4().to_string(),
@@ -357,11 +382,22 @@ pub async fn confirm_bind_ticket(
         app_id: ticket.app_id.clone(),
         open_id_hash: open_id_hash.to_string(),
         union_id_hash: ticket.claimed_union_id_hash.clone(),
+        companion_device_id: Some(device_id.to_string()),
+        companion_device_public_key: Some(device_public_key.to_string()),
         created_at: now.clone(),
         updated_at: now.clone(),
         last_login_at: None,
         revoked_at: None,
     };
+    let previous_identity = state
+        .store
+        .find_active_external_identity_by_subject(
+            EXTERNAL_IDENTITY_PROVIDER_WECHAT_MINI_PROGRAM,
+            ticket.app_id.as_str(),
+            open_id_hash,
+        )
+        .await
+        .map_err(internal_error)?;
     let identity = match state
         .store
         .bind_external_identity(&identity)
@@ -375,6 +411,31 @@ pub async fn confirm_bind_ticket(
             ));
         }
     };
+    if previous_identity.as_ref().is_some_and(|previous| {
+        previous.companion_device_id.as_deref() != Some(device_id)
+            || previous.companion_device_public_key.as_deref() != Some(device_public_key)
+    }) {
+        let sessions = state
+            .store
+            .revoke_client_sessions_for_identity(
+                identity.id.as_str(),
+                principal.sub.as_str(),
+                now.as_str(),
+            )
+            .await
+            .map_err(internal_error)?;
+        for session in sessions {
+            state
+                .store
+                .revoke_token(
+                    session.token_jti.as_str(),
+                    format!("user:{}", session.user_id).as_str(),
+                    session.expires_at_unix,
+                )
+                .await
+                .map_err(internal_error)?;
+        }
+    }
     state
         .store
         .confirm_wechat_bind_ticket(
@@ -438,8 +499,22 @@ pub async fn claim_result(
         .map_err(internal_error)?
         .ok_or_else(|| conflict("WeChat binding is no longer active"))?;
     let user = load_enabled_user(&state, ticket.user_id.as_str()).await?;
-    let (token, client_session_id) =
-        issue_client_session(&state, &user, Some(identity.id.as_str())).await?;
+    let device_id = identity
+        .companion_device_id
+        .as_deref()
+        .ok_or_else(|| conflict("confirmed binding is missing its device identity"))?;
+    let device_public_key = identity
+        .companion_device_public_key
+        .as_deref()
+        .ok_or_else(|| conflict("confirmed binding is missing its device key"))?;
+    let (token, client_session_id) = issue_client_session(
+        &state,
+        &user,
+        Some(identity.id.as_str()),
+        device_id,
+        device_public_key,
+    )
+    .await?;
     state
         .store
         .touch_external_identity_login(identity.id.as_str(), now.as_str())
@@ -577,6 +652,8 @@ async fn issue_client_session(
     state: &AppState,
     user: &UserRecord,
     external_identity_id: Option<&str>,
+    device_id: &str,
+    device_public_key: &str,
 ) -> Result<(String, String), (StatusCode, Json<Value>)> {
     let issued = issue_user_token_with_scopes(
         &state.config,
@@ -592,6 +669,8 @@ async fn issue_client_session(
         client_type: CLIENT_TYPE_WECHAT_MINI_PROGRAM.to_string(),
         external_identity_id: external_identity_id.map(ToOwned::to_owned),
         token_jti: issued.jti,
+        device_id: Some(device_id.to_string()),
+        device_public_key: Some(device_public_key.to_string()),
         created_at: now.clone(),
         updated_at: now.clone(),
         last_seen_at: now,
@@ -605,6 +684,32 @@ async fn issue_client_session(
         .await
         .map_err(internal_error)?;
     Ok((issued.token, session.id))
+}
+
+fn validate_device_identity(
+    device_id: &str,
+    device_public_key: &str,
+) -> Result<(String, String), (StatusCode, Json<Value>)> {
+    let device_id = device_id.trim();
+    if !(16..=128).contains(&device_id.len())
+        || device_id.contains(char::is_whitespace)
+        || !device_id
+            .bytes()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_'))
+    {
+        return Err(bad_request("device_id is invalid"));
+    }
+    let public_key = device_public_key.trim();
+    let encoded = public_key
+        .strip_prefix("ed25519:")
+        .ok_or_else(|| bad_request("device_public_key is invalid"))?;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded.as_bytes())
+        .map_err(|_| bad_request("device_public_key is invalid"))?;
+    if decoded.len() != 32 {
+        return Err(bad_request("device_public_key is invalid"));
+    }
+    Ok((device_id.to_string(), public_key.to_string()))
 }
 
 async fn exchange_code(

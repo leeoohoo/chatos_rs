@@ -54,6 +54,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .web-design-delete { width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--tertiary-label); font-size: 18px; }
 .web-design-delete:hover { background: rgba(255,59,48,.1); color: #ff3b30; }
 .project-create-modal { width: min(520px,calc(100vw - 68px)); }
+.design-delete-modal { width: min(480px,calc(100vw - 68px)); }
 .project-form-body { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 17px; padding: 20px 25px 23px; }
 .project-form-body > label { display: flex; flex-direction: column; gap: 7px; color: var(--secondary-label); font-size: 11px; font-weight: 650; }
 .project-form-body input,.project-form-body textarea { width: 100%; border: 1px solid var(--separator); border-radius: 10px; padding: 10px 11px; outline: 0; background: white; color: var(--label); font-weight: 400; }
@@ -124,6 +125,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .style-trigger { color: #4f46e5; }
 .primary-button { background: #007aff; color: white; min-width: 82px; box-shadow: 0 4px 12px rgba(0,122,255,.22); }
 .primary-button:disabled { background: #d6d4df; box-shadow: none; cursor: default; }
+.primary-button.destructive-button { background: #ff3b30; box-shadow: 0 4px 12px rgba(255,59,48,.2); }
+.primary-button.destructive-button:disabled { background: #d6d4df; box-shadow: none; }
 .ai-design-trigger { border: 0; border-radius: 9px; padding: 8px 13px; background: linear-gradient(135deg,#6d5dfc,#007aff); color: white; font-weight: 720; box-shadow: 0 5px 14px rgba(75,82,240,.24); }
 .ai-design-trigger:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(75,82,240,.3); }
 .delivery-menu { position: relative; color: var(--secondary-label); font-size: 13px; }

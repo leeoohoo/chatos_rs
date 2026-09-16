@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use futures_util::TryStreamExt;
-use mongodb::bson::{doc, to_document, Bson};
+use mongodb::bson::{doc, to_document, Bson, DateTime};
 use mongodb::options::{FindOptions, IndexOptions, UpdateOptions};
 use mongodb::{Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,7 @@ pub struct AppStore {
     user_external_identities: Collection<UserExternalIdentityRecord>,
     wechat_bind_tickets: Collection<WeChatBindTicketRecord>,
     client_sessions: Collection<ClientSessionRecord>,
+    device_proof_nonces: Collection<DeviceProofNonceRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +48,12 @@ struct RevokedTokenRecord {
     subject_id: String,
     revoked_at: String,
     expires_at_unix: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeviceProofNonceRecord {
+    id: String,
+    expires_at: DateTime,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +79,7 @@ impl AppStore {
             user_external_identities: db.collection("user_external_identities"),
             wechat_bind_tickets: db.collection("wechat_bind_tickets"),
             client_sessions: db.collection("client_sessions"),
+            device_proof_nonces: db.collection("device_proof_nonces"),
         }
     }
 

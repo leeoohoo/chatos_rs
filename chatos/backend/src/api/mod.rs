@@ -11,8 +11,11 @@ use axum::middleware;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::{Json, Router};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use once_cell::sync::Lazy;
 use serde_json::json;
+use sha2::{Digest, Sha512};
 use std::time::Instant;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
@@ -20,7 +23,8 @@ use tracing::{debug, info_span};
 
 use crate::config::Config;
 use crate::core::auth::{
-    access_token_from_headers, resolve_auth_user_and_scopes_via_user_service, AuthHeaderError,
+    access_token_from_headers, resolve_device_bound_auth_user_and_scopes_via_user_service,
+    AuthHeaderError,
 };
 use crate::core::websocket_ticket::{consume_websocket_ticket, WebSocketTicketRecord};
 use crate::modules;
@@ -434,9 +438,14 @@ async fn require_auth(
     // 在中间件只解析一次 token，并把登录用户注入 request extensions。
     let (access_token, auth_user, scopes) = match access_token_from_headers(req.headers()) {
         Ok(token) => {
-            let (auth_user, scopes) = resolve_auth_user_and_scopes_via_user_service(token.as_str())
-                .await
-                .map_err(|err| err.into_response())?;
+            let proof = device_proof_request(&req);
+            if !proof.body_sha512.is_empty() {
+                verify_and_restore_device_bound_body(&mut req, proof.body_sha512.as_str()).await?;
+            }
+            let (auth_user, scopes) =
+                resolve_device_bound_auth_user_and_scopes_via_user_service(token.as_str(), &proof)
+                    .await
+                    .map_err(|err| err.into_response())?;
             (token, auth_user, scopes)
         }
         // Browser WebSocket cannot set Authorization headers directly.
@@ -460,6 +469,62 @@ async fn require_auth(
     let response =
         access_token_scope::with_access_token_scope(Some(access_token), next.run(req)).await;
     Ok(response)
+}
+
+fn device_proof_request(
+    request: &Request<Body>,
+) -> crate::services::user_service_api_client::DeviceProofVerificationRequest {
+    let header = |name: &'static str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    let internal_path = request.uri().path();
+    let logical_path = internal_path.strip_prefix("/api").unwrap_or(internal_path);
+    let mut target = format!("/api/chatos{logical_path}");
+    if let Some(query) = request.uri().query().filter(|query| !query.is_empty()) {
+        target.push('?');
+        target.push_str(query);
+    }
+    crate::services::user_service_api_client::DeviceProofVerificationRequest {
+        surface: "chatos".to_string(),
+        method: request.method().as_str().to_string(),
+        target,
+        body_sha512: header("x-chatos-device-body-sha512"),
+        client_session_id: header("x-chatos-device-session-id"),
+        device_id: header("x-chatos-device-id"),
+        timestamp: header("x-chatos-device-timestamp").parse().unwrap_or_default(),
+        nonce: header("x-chatos-device-nonce"),
+        signature_algorithm: header("x-chatos-device-signature-alg"),
+        signature: header("x-chatos-device-signature"),
+    }
+}
+
+async fn verify_and_restore_device_bound_body(
+    request: &mut Request<Body>,
+    expected_hash: &str,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let body = std::mem::replace(request.body_mut(), Body::empty());
+    let bytes = axum::body::to_bytes(body, LIMIT).await.map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "device-bound request body is too large" })),
+        )
+    })?;
+    let actual = URL_SAFE_NO_PAD.encode(Sha512::digest(bytes.as_ref()));
+    *request.body_mut() = Body::from(bytes);
+    if actual != expected_hash {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "device proof body digest does not match the request" })),
+        ));
+    }
+    Ok(())
 }
 
 fn enforce_client_scope(

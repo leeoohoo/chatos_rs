@@ -31,17 +31,46 @@ order_domain --> business_db : SQL
 order_domain ..> task_queue : Publish
 @enduml`;
   const imported = plantUmlToDiagram(source, { documentId: 'compound-overview', kind: 'architecture' });
-  const laidOut = await layoutDiagram(imported, 'RIGHT');
+  const laidOut = await layoutDiagram(imported, 'RIGHT', 'architecture-overview');
   const report = inspectDiagramQuality(laidOut, 'architecture-overview');
   const topLevelRows = new Set(laidOut.nodes.filter((node) => !node.parentId).map((node) => Math.round(node.position.y)));
 
   assert.equal(report.valid, true);
-  assert.equal(report.ready, true);
+  assert.equal(report.ready, true, JSON.stringify(report));
   assert.equal(report.metrics.containerCount, 4);
   assert.equal(report.metrics.overlapCount, 0);
   assert.equal(report.metrics.childOverflowCount, 0);
   assert.ok(report.metrics.aspectRatio < 4, `expected a readable aspect ratio, received ${report.metrics.aspectRatio}`);
   assert.ok(topLevelRows.size > 1, 'expected compound boundaries to wrap across more than one row');
+});
+
+test('architecture overview layout groups capabilities instead of rendering an internal conveyor belt', async () => {
+  const source = `@startuml
+left to right direction
+actor "User" as user
+package "Client" as client_boundary { component "Desktop" as desktop }
+package "Product Core" as core_boundary {
+  component "Agent Runtime" as agent
+  component "Plugin Runtime" as plugins
+  component "Tool Routing" as tools
+}
+package "Data" as data_boundary { database "State" as state }
+user --> desktop : Uses
+desktop --> agent : Local API
+agent --> plugins : Hosts
+plugins --> tools : Routes
+agent --> state : Persists
+@enduml`;
+  const imported = plantUmlToDiagram(source, { documentId: 'architecture-capability-layout', kind: 'architecture' });
+  const laidOut = await layoutDiagram(imported, 'RIGHT', 'architecture-overview');
+  const core = laidOut.nodes.find((node) => node.data.label === 'Product Core');
+  assert.ok(core);
+  const children = laidOut.nodes.filter((node) => node.parentId === core.id);
+
+  assert.equal(children.length, 3);
+  assert.ok(new Set(children.map((node) => Math.round(node.position.x))).size <= 2);
+  assert.ok(new Set(children.map((node) => Math.round(node.position.y))).size >= 2);
+  assert.equal(inspectDiagramQuality(laidOut, 'architecture-overview').ready, true);
 });
 
 test('flowchart layout recomputes and distributes decision branch handles after moving nodes', async () => {

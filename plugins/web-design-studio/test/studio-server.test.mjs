@@ -259,6 +259,12 @@ test('studio serves the packaged workbench and persists a design', async () => {
     assert.deepEqual(reopened.components.find((component) => component.id === spellChart.id), spellChart);
     assert.deepEqual(reopened.components.find((component) => component.id === inspiraUpload.id), inspiraUpload);
     assert.deepEqual(reopened.components.find((component) => component.id === daisyCard.id), daisyCard);
+
+    const deleted = await fetch(`${base}/api/documents/${projectDesign.documentId}`, { method: 'DELETE' });
+    assert.equal(deleted.status, 204);
+    assert.equal((await fetch(`${base}/api/documents/${projectDesign.documentId}`)).ok, false);
+    const projectAfterDelete = await fetch(`${base}/api/projects/${context.defaultProjectId}`).then((response) => response.json());
+    assert.deepEqual(projectAfterDelete.designIds, [created.documentId]);
   } finally {
     if (child.exitCode === null) {
       child.kill('SIGTERM');

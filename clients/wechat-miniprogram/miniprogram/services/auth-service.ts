@@ -1,6 +1,7 @@
 import type { BindClaimResponse, BindClaimResult, WeChatLoginResponse } from '../models/api'
 import { sessionStore } from '../stores/session-store'
 import { apiRequest } from './api-client'
+import { deviceIdentityStore } from '../security/device-identity'
 
 function wxLoginCode(): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -22,11 +23,17 @@ function persistAuthenticated(result: WeChatLoginResponse | BindClaimResult): vo
 
 class AuthService {
   async developmentLogin(username: string, password: string): Promise<WeChatLoginResponse> {
+    const identity = await deviceIdentityStore.identity()
     const result = await apiRequest<WeChatLoginResponse>({
       surface: 'user',
       path: '/auth/wechat/mini-program/development-login',
       method: 'POST',
-      data: { username, password },
+      data: {
+        username,
+        password,
+        device_id: identity.deviceId,
+        device_public_key: identity.publicKey,
+      },
       authenticated: false,
     })
     persistAuthenticated(result)
@@ -35,11 +42,16 @@ class AuthService {
 
   async login(): Promise<WeChatLoginResponse> {
     const code = await wxLoginCode()
+    const identity = await deviceIdentityStore.identity()
     const result = await apiRequest<WeChatLoginResponse>({
       surface: 'user',
       path: '/auth/wechat/mini-program/login',
       method: 'POST',
-      data: { code },
+      data: {
+        code,
+        device_id: identity.deviceId,
+        device_public_key: identity.publicKey,
+      },
       authenticated: false,
     })
     persistAuthenticated(result)
@@ -48,11 +60,17 @@ class AuthService {
 
   async claim(bindTicket: string): Promise<BindClaimResponse> {
     const code = await wxLoginCode()
+    const identity = await deviceIdentityStore.identity()
     return apiRequest<BindClaimResponse>({
       surface: 'user',
       path: '/auth/wechat/mini-program/bind-claims',
       method: 'POST',
-      data: { code, bind_ticket: bindTicket },
+      data: {
+        code,
+        bind_ticket: bindTicket,
+        device_id: identity.deviceId,
+        device_public_key: identity.publicKey,
+      },
       authenticated: false,
     })
   }

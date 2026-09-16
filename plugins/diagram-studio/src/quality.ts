@@ -35,6 +35,9 @@ export interface DiagramQualityReport {
     width: number;
     height: number;
     aspectRatio: number;
+    architectureLongestPathNodeCount?: number;
+    architectureLongestPathRatio?: number;
+    architectureProcessLikeEdgeCount?: number;
     mindmapRootCount?: number;
     mindmapMaxDepth?: number;
     mindmapMaxChildren?: number;
@@ -50,6 +53,9 @@ export function inspectDiagramQuality(
 ): DiagramQualityReport {
   const components = document.nodes.filter((node) => node.data.shape !== 'container' && node.data.shape !== 'lane');
   const containers = document.nodes.filter((node) => node.data.shape === 'container');
+  const architectureSemantics = document.kind === 'architecture'
+    ? inspectArchitectureSemantics(document, components)
+    : undefined;
   const connected = new Set(document.edges.flatMap((edge) => [edge.source, edge.target]));
   const isolatedNodeIds = components.filter((node) => !connected.has(node.id)).map((node) => node.id);
   const missingSourceReferenceIds = components
@@ -229,6 +235,25 @@ export function inspectDiagramQuality(
       blocking: true
     });
   }
+  if (document.kind === 'architecture' && profile === 'architecture-overview' && architectureSemantics) {
+    const looksLikeRuntimeChain = architectureSemantics.longestPathNodeCount >= 5
+      && architectureSemantics.longestPathRatio >= 0.55
+      && architectureSemantics.processLikeEdgeCount >= 2;
+    if (looksLikeRuntimeChain) {
+      warnings.push({
+        code: 'architecture_flow_like_chain',
+        message: `A ${architectureSemantics.longestPathNodeCount}-component directed chain uses ${architectureSemantics.processLikeEdgeCount} process-like relationship labels. Keep stable dependencies in the overview and move execution order to a flowchart or sequence diagram.`,
+        blocking: true
+      });
+    }
+    if (architectureSemantics.processLikeEdgeCount >= Math.max(3, Math.ceil(document.edges.length * 0.3))) {
+      warnings.push({
+        code: 'architecture_runtime_step_labels',
+        message: `${architectureSemantics.processLikeEdgeCount} architecture relationships describe multi-step runtime actions. Replace them with durable contracts or split the runtime scenario into another diagram.`,
+        blocking: true
+      });
+    }
+  }
   const maxContainerChildren = maximum(childCounts);
   if (document.kind === 'architecture' && maxContainerChildren > 8) {
     warnings.push({
@@ -240,10 +265,11 @@ export function inspectDiagramQuality(
   const aspectRatio = bounds.height > 0 && bounds.width > 0
     ? Math.max(bounds.width / bounds.height, bounds.height / bounds.width)
     : 1;
-  if (document.kind !== 'mindmap' && components.length >= 6 && aspectRatio > 5.5) {
+  const maximumAspectRatio = document.kind === 'architecture' && profile === 'architecture-overview' ? 4 : 5.5;
+  if (document.kind !== 'mindmap' && components.length >= 6 && aspectRatio > maximumAspectRatio) {
     warnings.push({
       code: 'extreme_aspect_ratio',
-      message: `Diagram aspect ratio ${aspectRatio.toFixed(1)}:1 will make labels too small at fit-to-view.`,
+      message: `Diagram aspect ratio ${aspectRatio.toFixed(1)}:1 exceeds the ${maximumAspectRatio.toFixed(1)}:1 readability limit and will make labels too small at fit-to-view.`,
       blocking: true
     });
   }
@@ -278,6 +304,11 @@ export function inspectDiagramQuality(
       width: Math.round(bounds.width),
       height: Math.round(bounds.height),
       aspectRatio: Number(aspectRatio.toFixed(2))
+      ,...(architectureSemantics ? {
+        architectureLongestPathNodeCount: architectureSemantics.longestPathNodeCount,
+        architectureLongestPathRatio: Number(architectureSemantics.longestPathRatio.toFixed(2)),
+        architectureProcessLikeEdgeCount: architectureSemantics.processLikeEdgeCount
+      } : {})
       ,...(mindmap ? {
         mindmapRootCount: mindmap.roots.length,
         mindmapMaxDepth: mindmap.maxDepth,
@@ -287,6 +318,98 @@ export function inspectDiagramQuality(
     errors,
     warnings
   };
+}
+
+function inspectArchitectureSemantics(document: DiagramDocument, components: DiagramNode[]): {
+  longestPathNodeCount: number;
+  longestPathRatio: number;
+  processLikeEdgeCount: number;
+} {
+  const semanticNodes = components.filter((node) => !['text', 'activation', 'fragment'].includes(node.data.shape));
+  const nodeIds = new Set(semanticNodes.map((node) => node.id));
+  const outgoing = new Map(semanticNodes.map((node) => [node.id, new Set<string>()]));
+  for (const edge of document.edges) {
+    if (nodeIds.has(edge.source) && nodeIds.has(edge.target) && edge.source !== edge.target) {
+      outgoing.get(edge.source)!.add(edge.target);
+    }
+  }
+  const componentsByCycle = stronglyConnectedArchitectureComponents([...nodeIds], outgoing);
+  const cycleByNode = new Map<string, number>();
+  componentsByCycle.forEach((component, index) => component.forEach((nodeId) => cycleByNode.set(nodeId, index)));
+  const cycleOutgoing = new Map(componentsByCycle.map((_, index) => [index, new Set<number>()]));
+  const cycleIncoming = new Map(componentsByCycle.map((_, index) => [index, 0]));
+  for (const [source, targets] of outgoing) {
+    const sourceCycle = cycleByNode.get(source)!;
+    for (const target of targets) {
+      const targetCycle = cycleByNode.get(target)!;
+      if (sourceCycle === targetCycle || cycleOutgoing.get(sourceCycle)!.has(targetCycle)) continue;
+      cycleOutgoing.get(sourceCycle)!.add(targetCycle);
+      cycleIncoming.set(targetCycle, (cycleIncoming.get(targetCycle) ?? 0) + 1);
+    }
+  }
+  const longestByCycle = new Map(componentsByCycle.map((component, index) => [index, component.length]));
+  const queue = componentsByCycle.map((_, index) => index).filter((index) => cycleIncoming.get(index) === 0);
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const target of cycleOutgoing.get(current) ?? []) {
+      longestByCycle.set(target, Math.max(
+        longestByCycle.get(target) ?? 0,
+        (longestByCycle.get(current) ?? 0) + componentsByCycle[target].length
+      ));
+      cycleIncoming.set(target, (cycleIncoming.get(target) ?? 0) - 1);
+      if (cycleIncoming.get(target) === 0) queue.push(target);
+    }
+  }
+  const longestPathNodeCount = maximum(longestByCycle.values());
+  return {
+    longestPathNodeCount,
+    longestPathRatio: semanticNodes.length > 0 ? longestPathNodeCount / semanticNodes.length : 0,
+    processLikeEdgeCount: document.edges.filter((edge) => isProcessLikeArchitectureLabel(edge.label ?? edge.data?.relation ?? '')).length
+  };
+}
+
+function isProcessLikeArchitectureLabel(value: string): boolean {
+  const label = value.trim();
+  if (!label) return false;
+  if (/^\s*\d+[.)、:：-]/u.test(label) || /(?:然后|随后|之后|完成后|成功后|失败后|先.+再)/u.test(label)) return true;
+  const chineseRuntimeVerbs = label.match(/扫描|注册|读取|加载|创建|查询|更新|返回|回调|重试|执行|调用|管理|保存|发送|接收|解析|校验|获取|生成/gu)?.length ?? 0;
+  const englishRuntimeVerbs = label.match(/\b(?:scan|register|read|load|create|query|update|return|callback|retry|execute|invoke|manage|save|send|receive|parse|validate|fetch|generate)(?:s|ed|ing)?\b/giu)?.length ?? 0;
+  return chineseRuntimeVerbs + englishRuntimeVerbs >= 2;
+}
+
+function stronglyConnectedArchitectureComponents(nodeIds: string[], outgoing: Map<string, Set<string>>): string[][] {
+  let nextIndex = 0;
+  const indexes = new Map<string, number>();
+  const lowLinks = new Map<string, number>();
+  const stack: string[] = [];
+  const onStack = new Set<string>();
+  const components: string[][] = [];
+  const visit = (nodeId: string) => {
+    indexes.set(nodeId, nextIndex);
+    lowLinks.set(nodeId, nextIndex);
+    nextIndex += 1;
+    stack.push(nodeId);
+    onStack.add(nodeId);
+    for (const target of outgoing.get(nodeId) ?? []) {
+      if (!indexes.has(target)) {
+        visit(target);
+        lowLinks.set(nodeId, Math.min(lowLinks.get(nodeId)!, lowLinks.get(target)!));
+      } else if (onStack.has(target)) {
+        lowLinks.set(nodeId, Math.min(lowLinks.get(nodeId)!, indexes.get(target)!));
+      }
+    }
+    if (lowLinks.get(nodeId) !== indexes.get(nodeId)) return;
+    const component: string[] = [];
+    while (stack.length > 0) {
+      const member = stack.pop()!;
+      onStack.delete(member);
+      component.push(member);
+      if (member === nodeId) break;
+    }
+    components.push(component);
+  };
+  nodeIds.forEach((nodeId) => { if (!indexes.has(nodeId)) visit(nodeId); });
+  return components;
 }
 
 function topLevelNodeId(nodes: DiagramNode[], nodeId: string): string | undefined {

@@ -6,8 +6,13 @@ use axum::http::{Method, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
+use sha2::{Digest, Sha512};
 
-use crate::auth::{bearer_token_from_headers, verify_token_via_user_service};
+use crate::auth::{
+    bearer_token_from_headers, verify_request_via_user_service, DeviceProofVerificationRequest,
+};
 use crate::models::ErrorResponse;
 use crate::state::AppState;
 
@@ -196,10 +201,18 @@ pub(super) async fn require_internal_auth(
         return Ok(response);
     }
     let token = bearer_token_from_request(&request).map_err(ApiError::unauthorized)?;
-    let user =
-        verify_token_via_user_service(&state.config, &state.user_service_http, token.as_str())
-            .await
-            .map_err(ApiError::unauthorized)?;
+    let proof = device_proof_request(&request, "local");
+    let user = verify_request_via_user_service(
+        &state.config,
+        &state.user_service_http,
+        token.as_str(),
+        &proof,
+    )
+    .await
+    .map_err(ApiError::unauthorized)?;
+    if user.is_wechat_companion() {
+        verify_and_restore_device_bound_body(&mut request, proof.body_sha512.as_str()).await?;
+    }
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
 }
@@ -250,13 +263,76 @@ pub(super) async fn require_public_auth(
         return Ok(next.run(request).await);
     }
     let token = bearer_token_from_request(&request).map_err(ApiError::unauthorized)?;
-    let user =
-        verify_token_via_user_service(&state.config, &state.user_service_http, token.as_str())
-            .await
-            .map_err(ApiError::unauthorized)?;
+    let proof = device_proof_request(&request, "local");
+    let user = verify_request_via_user_service(
+        &state.config,
+        &state.user_service_http,
+        token.as_str(),
+        &proof,
+    )
+    .await
+    .map_err(ApiError::unauthorized)?;
+    if user.is_wechat_companion() {
+        verify_and_restore_device_bound_body(&mut request, proof.body_sha512.as_str()).await?;
+    }
     enforce_client_scope(&user, request.method(), request.uri().path())?;
     request.extensions_mut().insert(user);
     Ok(next.run(request).await)
+}
+
+fn device_proof_request(
+    request: &Request<axum::body::Body>,
+    surface: &str,
+) -> DeviceProofVerificationRequest {
+    let header = |name: &'static str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    let internal_path = request.uri().path();
+    let logical_path = internal_path
+        .strip_prefix("/api/local-connectors")
+        .unwrap_or(internal_path);
+    let mut target = format!("/api/{surface}{logical_path}");
+    if let Some(query) = request.uri().query().filter(|query| !query.is_empty()) {
+        target.push('?');
+        target.push_str(query);
+    }
+    DeviceProofVerificationRequest {
+        surface: surface.to_string(),
+        method: request.method().as_str().to_string(),
+        target,
+        body_sha512: header("x-chatos-device-body-sha512"),
+        client_session_id: header("x-chatos-device-session-id"),
+        device_id: header("x-chatos-device-id"),
+        timestamp: header("x-chatos-device-timestamp").parse().unwrap_or_default(),
+        nonce: header("x-chatos-device-nonce"),
+        signature_algorithm: header("x-chatos-device-signature-alg"),
+        signature: header("x-chatos-device-signature"),
+    }
+}
+
+async fn verify_and_restore_device_bound_body(
+    request: &mut Request<axum::body::Body>,
+    expected_hash: &str,
+) -> Result<(), ApiError> {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let body = std::mem::replace(request.body_mut(), axum::body::Body::empty());
+    let bytes = axum::body::to_bytes(body, LIMIT)
+        .await
+        .map_err(|_| ApiError::unauthorized("device-bound request body is too large"))?;
+    let actual = URL_SAFE_NO_PAD.encode(Sha512::digest(bytes.as_ref()));
+    *request.body_mut() = axum::body::Body::from(bytes);
+    if actual != expected_hash {
+        return Err(ApiError::unauthorized(
+            "device proof body digest does not match the request",
+        ));
+    }
+    Ok(())
 }
 
 fn bearer_token_from_request(request: &Request<axum::body::Body>) -> Result<String, String> {

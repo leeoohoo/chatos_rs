@@ -50,6 +50,20 @@ pub struct UserServiceVerifyResponse {
     pub principal: UserServiceVerifiedPrincipal,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceProofVerificationRequest {
+    pub surface: String,
+    pub method: String,
+    pub target: String,
+    pub body_sha512: String,
+    pub client_session_id: String,
+    pub device_id: String,
+    pub timestamp: i64,
+    pub nonce: String,
+    pub signature_algorithm: String,
+    pub signature: String,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UserServiceAgentAccountSummary {
     pub id: String,

@@ -98,6 +98,10 @@ pub struct UserExternalIdentityRecord {
     pub app_id: String,
     pub open_id_hash: String,
     pub union_id_hash: Option<String>,
+    #[serde(default)]
+    pub companion_device_id: Option<String>,
+    #[serde(default)]
+    pub companion_device_public_key: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_login_at: Option<String>,
@@ -113,6 +117,10 @@ pub struct WeChatBindTicketRecord {
     pub status: String,
     pub claimed_open_id_hash: Option<String>,
     pub claimed_union_id_hash: Option<String>,
+    #[serde(default)]
+    pub claimed_device_id: Option<String>,
+    #[serde(default)]
+    pub claimed_device_public_key: Option<String>,
     pub claim_id: Option<String>,
     pub claim_secret_hash: Option<String>,
     pub confirmed_external_identity_id: Option<String>,
@@ -131,6 +139,10 @@ pub struct ClientSessionRecord {
     pub client_type: String,
     pub external_identity_id: Option<String>,
     pub token_jti: String,
+    #[serde(default)]
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub device_public_key: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_seen_at: String,
@@ -389,6 +401,8 @@ pub struct LoginRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WeChatMiniProgramLoginRequest {
     pub code: String,
+    pub device_id: String,
+    pub device_public_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -396,6 +410,8 @@ pub struct WeChatMiniProgramLoginRequest {
 pub struct WeChatMiniProgramDevelopmentLoginRequest {
     pub username: String,
     pub password: String,
+    pub device_id: String,
+    pub device_public_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -423,6 +439,22 @@ pub struct IssueWeChatBindTicketResponse {
 pub struct ClaimWeChatBindTicketRequest {
     pub code: String,
     pub bind_ticket: String,
+    pub device_id: String,
+    pub device_public_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceProofVerificationRequest {
+    pub surface: String,
+    pub method: String,
+    pub target: String,
+    pub body_sha512: String,
+    pub client_session_id: String,
+    pub device_id: String,
+    pub timestamp: i64,
+    pub nonce: String,
+    pub signature_algorithm: String,
+    pub signature: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

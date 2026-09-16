@@ -15,7 +15,7 @@ pub use types::{
     UserServiceAgentAccountSummary, UserServiceAuthUser, UserServiceInternalModelRuntimeRecord,
     UserServiceLocalConnectorTicketResponse, UserServiceLoginResponse, UserServiceMeResponse,
     UserServiceModelConfigRecord, UserServiceModelProviderRecord, UserServiceModelSettingsRecord,
-    UserServiceVerifyResponse,
+    DeviceProofVerificationRequest, UserServiceVerifiedPrincipal, UserServiceVerifyResponse,
 };
 
 const CHATOS_INTERNAL_CALLER: &str = "chatos-backend";
@@ -155,6 +155,23 @@ pub async fn verify_token(
         "/api/auth/verify",
         Some(access_token),
         None,
+        timeout_ms,
+    )
+    .await
+}
+
+pub async fn verify_device_request(
+    base_url: &str,
+    access_token: &str,
+    proof: &DeviceProofVerificationRequest,
+    timeout_ms: i64,
+) -> Result<UserServiceVerifyResponse, String> {
+    request_json(
+        Method::POST,
+        base_url,
+        "/api/auth/device-proof/verify",
+        Some(access_token),
+        Some(proof),
         timeout_ms,
     )
     .await

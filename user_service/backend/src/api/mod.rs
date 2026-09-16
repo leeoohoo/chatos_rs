@@ -21,6 +21,7 @@ use crate::store::now_rfc3339;
 
 mod agents;
 mod auth;
+mod device_proof;
 mod internal_auth;
 mod internal_models;
 mod invite_codes;
@@ -160,6 +161,10 @@ pub fn build_public_router(state: AppState) -> Router {
             post(wechat_auth::claim_result),
         )
         .route(
+            "/api/auth/device-proof/verify",
+            post(device_proof::verify_forwarded_request),
+        )
+        .route(
             "/api/auth/register/send-code",
             post(auth::send_register_email_code),
         )
@@ -278,6 +283,9 @@ pub async fn require_auth(
         return Err(unauthorized("client session has been revoked or expired"));
     }
     if is_wechat_companion {
+        let proof = device_proof::proof_from_request("user", &request)?;
+        device_proof::verify_and_restore_body(&mut request, proof.body_sha512.as_str()).await?;
+        device_proof::verify_device_proof(&state, &claims, &proof).await?;
         let now = now_rfc3339();
         state
             .store

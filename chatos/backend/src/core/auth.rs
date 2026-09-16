@@ -151,6 +151,51 @@ pub async fn resolve_auth_user_and_scopes_via_user_service(
     Ok((AuthUser { user_id, role }, principal.scopes))
 }
 
+pub async fn resolve_device_bound_auth_user_and_scopes_via_user_service(
+    access_token: &str,
+    proof: &user_service_api_client::DeviceProofVerificationRequest,
+) -> Result<(AuthUser, Vec<String>), AuthResolveError> {
+    let cfg = Config::try_get().map_err(AuthResolveError::ConfigUnavailable)?;
+    let base_url = cfg
+        .user_service_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AuthResolveError::ConfigUnavailable(
+                "CHATOS_USER_SERVICE_BASE_URL is required".to_string(),
+            )
+        })?;
+    let payload = user_service_api_client::verify_device_request(
+        base_url,
+        access_token,
+        proof,
+        cfg.user_service_request_timeout_ms,
+    )
+    .await
+    .map_err(map_user_service_verify_error)?;
+    principal_to_auth_user(payload.principal)
+}
+
+fn principal_to_auth_user(
+    principal: user_service_api_client::UserServiceVerifiedPrincipal,
+) -> Result<(AuthUser, Vec<String>), AuthResolveError> {
+    if principal.principal_type != "human_user" {
+        return Err(AuthResolveError::InvalidPrincipal);
+    }
+    let user_id = principal
+        .user_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or(AuthResolveError::InvalidPrincipal)?;
+    let role = principal
+        .role
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "user".to_string());
+    Ok((AuthUser { user_id, role }, principal.scopes))
+}
+
 fn map_user_service_verify_error(detail: String) -> AuthResolveError {
     match user_service_api_client::response_status_from_error(detail.as_str()) {
         Some(401 | 403) => AuthResolveError::InvalidPrincipal,

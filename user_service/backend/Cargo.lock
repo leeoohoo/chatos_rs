@@ -3600,6 +3600,7 @@ dependencies = [
  "opentelemetry_sdk",
  "rand 0.10.2",
  "reqwest",
+ "ring",
  "rustls 0.23.43",
  "rustls-pemfile 2.2.0",
  "serde",

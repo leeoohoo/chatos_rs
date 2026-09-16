@@ -70,6 +70,23 @@ impl AppStore {
         .await?;
         self.create_index(&self.client_sessions, "expires_at_unix")
             .await?;
+        self.create_unique_index(&self.device_proof_nonces, "id")
+            .await?;
+        self.device_proof_nonces
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! { "expires_at": 1 })
+                    .options(
+                        IndexOptions::builder()
+                            .name("device_proof_nonce_expiry".to_string())
+                            .expire_after(std::time::Duration::from_secs(0))
+                            .build(),
+                    )
+                    .build(),
+                None,
+            )
+            .await
+            .map_err(|err| format!("create device proof nonce TTL index failed: {err}"))?;
         Ok(())
     }
 
@@ -162,7 +179,9 @@ impl AppStore {
             .await?
         {
             return Ok(if existing.user_id == record.user_id {
-                BindExternalIdentityResult::Bound(existing)
+                BindExternalIdentityResult::Bound(
+                    self.update_bound_identity_device(&existing, record).await?,
+                )
             } else {
                 BindExternalIdentityResult::Conflict
             });
@@ -176,7 +195,9 @@ impl AppStore {
             .await?
         {
             return Ok(if existing.open_id_hash == record.open_id_hash {
-                BindExternalIdentityResult::Bound(existing)
+                BindExternalIdentityResult::Bound(
+                    self.update_bound_identity_device(&existing, record).await?,
+                )
             } else {
                 BindExternalIdentityResult::Conflict
             });
@@ -202,6 +223,8 @@ impl AppStore {
                     doc! { "id": &revoked.id, "revoked_at": { "$ne": null } },
                     doc! { "$set": {
                         "union_id_hash": &record.union_id_hash,
+                        "companion_device_id": &record.companion_device_id,
+                        "companion_device_public_key": &record.companion_device_public_key,
                         "updated_at": &record.updated_at,
                         "last_login_at": &record.last_login_at,
                         "revoked_at": null,
@@ -225,6 +248,29 @@ impl AppStore {
             Err(err) if is_duplicate_key(&err) => self.resolve_identity_bind_race(record).await,
             Err(err) => Err(err.to_string()),
         }
+    }
+
+    async fn update_bound_identity_device(
+        &self,
+        existing: &UserExternalIdentityRecord,
+        requested: &UserExternalIdentityRecord,
+    ) -> Result<UserExternalIdentityRecord, String> {
+        self.user_external_identities
+            .find_one_and_update(
+                doc! { "id": &existing.id, "revoked_at": null },
+                doc! { "$set": {
+                    "union_id_hash": &requested.union_id_hash,
+                    "companion_device_id": &requested.companion_device_id,
+                    "companion_device_public_key": &requested.companion_device_public_key,
+                    "updated_at": &requested.updated_at,
+                } },
+                FindOneAndUpdateOptions::builder()
+                    .return_document(ReturnDocument::After)
+                    .build(),
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "bound WeChat identity disappeared during device update".to_string())
     }
 
     async fn resolve_identity_bind_race(
@@ -344,6 +390,8 @@ impl AppStore {
         app_id: &str,
         open_id_hash: &str,
         union_id_hash: Option<&str>,
+        device_id: &str,
+        device_public_key: &str,
         claim_id: &str,
         claim_secret_hash: &str,
         now_unix: i64,
@@ -361,6 +409,8 @@ impl AppStore {
                     "status": WECHAT_BIND_STATUS_CLAIMED,
                     "claimed_open_id_hash": open_id_hash,
                     "claimed_union_id_hash": union_id_hash,
+                    "claimed_device_id": device_id,
+                    "claimed_device_public_key": device_public_key,
                     "claim_id": claim_id,
                     "claim_secret_hash": claim_secret_hash,
                     "claimed_at": now,
@@ -457,6 +507,33 @@ impl AppStore {
             .await
             .map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    pub async fn find_client_session_by_jti(
+        &self,
+        token_jti: &str,
+    ) -> Result<Option<ClientSessionRecord>, String> {
+        self.client_sessions
+            .find_one(doc! { "token_jti": token_jti }, None)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn consume_device_proof_nonce(
+        &self,
+        session_id: &str,
+        nonce: &str,
+        expires_at_unix_ms: i64,
+    ) -> Result<bool, String> {
+        let record = super::DeviceProofNonceRecord {
+            id: format!("{session_id}:{nonce}"),
+            expires_at: mongodb::bson::DateTime::from_millis(expires_at_unix_ms),
+        };
+        match self.device_proof_nonces.insert_one(record, None).await {
+            Ok(_) => Ok(true),
+            Err(error) if is_duplicate_key(&error) => Ok(false),
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     pub async fn list_client_sessions(

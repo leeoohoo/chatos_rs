@@ -826,6 +826,8 @@ export function WebDesignStudioApp() {
   const [projectLibraryOpen, setProjectLibraryOpen] = useState(false);
   const [newDesignOpen, setNewDesignOpen] = useState(false);
   const [newDesignName, setNewDesignName] = useState('');
+  const [deleteDesignTarget, setDeleteDesignTarget] = useState<DesignSummary>();
+  const [deletingDesign, setDeletingDesign] = useState(false);
   const [editingSlot, setEditingSlot] = useState<EditingSlot>();
   const [inspectorVisualState, setInspectorVisualState] = useState<InspectorVisualState>('default');
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('design');
@@ -846,6 +848,7 @@ export function WebDesignStudioApp() {
   const documentRef = useRef<WebDesignDocument | undefined>(undefined);
   const sceneDocumentRef = useRef<SceneDocument | undefined>(undefined);
   const sceneCommandQueue = useRef<Promise<void>>(Promise.resolve());
+  const sceneHistoryRequestId = useRef(0);
   const assetInput = useRef<HTMLInputElement | null>(null);
   const canvasStage = useRef<HTMLElement | null>(null);
   const canvasScroll = useRef<HTMLDivElement | null>(null);
@@ -1546,7 +1549,9 @@ export function WebDesignStudioApp() {
 
   async function refreshSceneHistory(documentId: string) {
     if (!repository) return;
-    setSceneHistory(await repository.readSceneHistory(documentId));
+    const requestId = ++sceneHistoryRequestId.current;
+    const history = await repository.readSceneHistory(documentId);
+    if (requestId === sceneHistoryRequestId.current) setSceneHistory(history);
   }
 
   async function refreshGenerationState(showLoading = false) {
@@ -1624,7 +1629,7 @@ export function WebDesignStudioApp() {
           command
         });
         applySceneDocument(result.document);
-        await refreshSceneHistory(scene.documentId);
+        void refreshSceneHistory(scene.documentId).catch(() => undefined);
         return result.document;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1784,9 +1789,11 @@ export function WebDesignStudioApp() {
     replaceStudioLocation(activeProject?.projectId);
   }
 
-  async function deleteProjectDocument(target: DesignSummary) {
+  async function confirmDeleteProjectDocument() {
+    const target = deleteDesignTarget;
     if (!repository || !activeProject) return;
-    if (!window.confirm(`确定永久删除“${target.title}”吗？`)) return;
+    if (!target || deletingDesign) return;
+    setDeletingDesign(true);
     try {
       await repository.remove(target.documentId);
       setActiveProject(await repository.readProject(activeProject.projectId));
@@ -1794,9 +1801,12 @@ export function WebDesignStudioApp() {
       await refreshCatalog();
       setScreen('project');
       replaceStudioLocation(activeProject.projectId);
+      setDeleteDesignTarget(undefined);
       showToast(`已删除“${target.title}”`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeletingDesign(false);
     }
   }
 
@@ -3945,6 +3955,22 @@ export function WebDesignStudioApp() {
       <footer className="project-modal-actions"><button className="quiet-button" onClick={() => setNewDesignOpen(false)}>取消</button><button className="primary-button" disabled={!newDesignName.trim()} onClick={() => void createDesignFromSheet()}>创建并打开</button></footer>
     </section>
   </div>;
+  const deleteDesignModal = deleteDesignTarget && <div
+    className="studio-modal-backdrop"
+    onPointerDown={() => { if (!deletingDesign) setDeleteDesignTarget(undefined); }}
+  >
+    <section
+      className="studio-modal design-delete-modal"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="delete-design-title"
+      aria-describedby="delete-design-description"
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <header><div><span className="eyebrow">永久删除</span><h2 id="delete-design-title">删除“{deleteDesignTarget.title}”？</h2><p id="delete-design-description">画板、组件、批注和设计历史都会被删除，此操作无法撤销。</p></div><button disabled={deletingDesign} onClick={() => setDeleteDesignTarget(undefined)} aria-label="关闭删除确认">×</button></header>
+      <footer className="project-modal-actions"><button className="quiet-button" autoFocus disabled={deletingDesign} onClick={() => setDeleteDesignTarget(undefined)}>取消</button><button className="primary-button destructive-button" disabled={deletingDesign} onClick={() => void confirmDeleteProjectDocument()}>{deletingDesign ? '正在删除…' : '永久删除'}</button></footer>
+    </section>
+  </div>;
 
   if (!ready) return <div className="loading-screen"><div className="loading-dot" />正在准备 Web Design Studio…</div>;
 
@@ -3955,10 +3981,10 @@ export function WebDesignStudioApp() {
       <section className="web-project-section"><div className="web-project-section-heading"><h2>项目设计</h2><span>{activeProjectDocuments.length} 份</span></div>
         {activeProjectDocuments.length ? <div className="web-design-grid">{activeProjectDocuments.map((item) => <article className="web-design-card" key={item.documentId}>
           <button className="web-design-card-open" onClick={() => void openProjectDocument(item.documentId)}><span className="web-design-thumbnail"><i /><i /><i /></span><span className="web-project-card-copy"><strong>{item.title}</strong><small>{item.pageCount ?? 1} 个页面 · {item.componentCount} 个组件 · v{item.revision}</small></span><time>{formatProjectDate(item.updatedAt)}</time><b>›</b></button>
-          <button className="web-design-delete" aria-label={`删除设计 ${item.title}`} onClick={() => void deleteProjectDocument(item)}>×</button>
+          <button className="web-design-delete" aria-label={`删除设计 ${item.title}`} onClick={() => setDeleteDesignTarget(item)}>×</button>
         </article>)}</div> : <div className="web-project-empty"><span>▧</span><strong>这个项目还没有网站设计</strong><p>先创建一份设计，为它单独命名，再进入画布设计页面。</p><button className="primary-button" onClick={() => void createNew()}>＋ 新建网站设计</button></div>}
       </section>
-    </main>{newDesignModal}{toast && <div className="toast">{toast}</div>}
+    </main>{newDesignModal}{deleteDesignModal}{toast && <div className="toast">{toast}</div>}
   </div>;
 
   if (!document || !activeProject) return <div className="loading-screen"><div className="loading-dot" />正在打开网站项目…</div>;
@@ -4272,7 +4298,7 @@ export function WebDesignStudioApp() {
         <div className="project-library-list">
           {activeProjectDocuments.map((item) => <div key={item.documentId} className={`project-library-item ${item.documentId === document.documentId ? 'active' : ''}`}>
             <button onClick={() => void openProjectDocument(item.documentId)}><span className="project-library-thumb"><i /><i /><i /></span><span><strong>{item.title}</strong><small>{item.pageCount ?? 1} 个页面 · {item.componentCount} 个组件 · v{item.revision}</small></span></button>
-            <button className="project-library-delete" onClick={() => void deleteProjectDocument(item)} aria-label={`删除设计 ${item.title}`}>×</button>
+            <button className="project-library-delete" onClick={() => setDeleteDesignTarget(item)} aria-label={`删除设计 ${item.title}`}>×</button>
           </div>)}
         </div>
         <footer><button onClick={() => void createNew()}>＋ 在当前项目中新建设计</button><button onClick={goToActiveProject}>查看项目首页</button></footer>
@@ -4896,6 +4922,7 @@ export function WebDesignStudioApp() {
           <div className="theme-preset-grid">{WEB_DESIGN_THEME_PRESETS.map((preset) => <button key={preset.id} onClick={() => void applyDesignTheme(preset)}><div className="theme-preview" style={{ background: preset.canvasBackground }}><i style={{ background: preset.preview[1] }} /><b style={{ background: preset.preview[2] }} /><span style={{ color: preset.tokens.colors.text }}>Aa</span></div><strong>{preset.name}</strong><small>{preset.description}</small><div className="theme-swatches">{preset.preview.map((color) => <i key={color} style={{ background: color }} />)}</div></button>)}</div>
         </section>
       </div>}
+      {deleteDesignModal}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );

@@ -11,6 +11,7 @@ const fallbackRuntimeSessionId = randomUUID();
 
 export interface DiagramGuideModeContract {
   qualityProfile: DiagramQualityProfile;
+  viewpoints?: string[];
   maxPrimaryItems: number;
   maxEdges: number;
   minStructureItems: number;
@@ -30,6 +31,7 @@ export interface DiagramGuideContract {
 export interface GenerationPlan {
   goal: string;
   scope: string;
+  viewpoint?: string;
   excludedDetails: string[];
   estimatedPrimaryItemCount: number;
   estimatedEdgeCount: number;
@@ -53,6 +55,7 @@ export interface GenerationPermitPayload {
   title: string;
   planHash: string;
   qualityProfile: DiagramQualityProfile;
+  viewpoint?: string;
   maxPrimaryItems: number;
   maxEdges: number;
   minStructureItems: number;
@@ -156,6 +159,17 @@ function validateContract(value: unknown, expectedKind: DiagramKind): DiagramGui
       && (!Number.isSafeInteger(mode.maxStructureItems) || mode.maxStructureItems < mode.minStructureItems)) {
       throw new Error(`Generation guide mode ${modeName} has invalid maxStructureItems.`);
     }
+    if (mode.viewpoints !== undefined
+      && (!Array.isArray(mode.viewpoints)
+        || mode.viewpoints.length === 0
+        || mode.viewpoints.some((item) => typeof item !== 'string' || normalizeText(item).length === 0)
+        || new Set(mode.viewpoints).size !== mode.viewpoints.length)) {
+      throw new Error(`Generation guide mode ${modeName} has invalid viewpoints.`);
+    }
+  }
+  if (contract.kind === 'architecture'
+    && Object.values(contract.modes).some((mode) => !mode.viewpoints || mode.viewpoints.length === 0)) {
+    throw new Error('Architecture generation guide modes must declare their allowed viewpoints.');
   }
   return contract as DiagramGuideContract;
 }
@@ -259,6 +273,7 @@ export async function prepareGenerationPermit(argumentsValue: {
     title,
     planHash,
     qualityProfile: modeContract.qualityProfile,
+    ...(plan.viewpoint ? { viewpoint: plan.viewpoint } : {}),
     maxPrimaryItems: modeContract.maxPrimaryItems,
     maxEdges: modeContract.maxEdges,
     minStructureItems: modeContract.minStructureItems,
@@ -298,6 +313,7 @@ function validatePlan(value: unknown): GenerationPlan {
   return {
     goal: normalizeText(plan.goal as string),
     scope: normalizeText(plan.scope as string),
+    ...(typeof plan.viewpoint === 'string' && normalizeText(plan.viewpoint) ? { viewpoint: normalizeText(plan.viewpoint) } : {}),
     excludedDetails: (plan.excludedDetails as string[]).map(normalizeText),
     estimatedPrimaryItemCount: plan.estimatedPrimaryItemCount as number,
     estimatedEdgeCount: plan.estimatedEdgeCount as number,
@@ -324,6 +340,11 @@ function validatePlanAgainstContract(
   }
   if (mode.maxStructureItems !== undefined && plan.structure.length > mode.maxStructureItems) {
     throw new Error(`Plan contains ${plan.structure.length} structure items, exceeding the limit of ${mode.maxStructureItems}. Merge equivalent roles or split the diagram.`);
+  }
+  if (mode.viewpoints) {
+    if (!plan.viewpoint || !mode.viewpoints.includes(plan.viewpoint)) {
+      throw new Error(`Plan viewpoint must be one of ${mode.viewpoints.join(', ')} for ${contract.kind}/${mode.qualityProfile}.`);
+    }
   }
   const acknowledgements = new Set(plan.checklistAcknowledgements);
   const missing = contract.checklist.filter((item) => !acknowledgements.has(item));

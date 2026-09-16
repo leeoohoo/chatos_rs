@@ -27,7 +27,7 @@ import {
 } from './generation-guides.js';
 
 const SERVER_NAME = 'chatos-diagram-studio';
-const SERVER_VERSION = '0.4.0';
+const SERVER_VERSION = '0.4.3';
 const store = new DiagramDocumentStore();
 const scopeKey = runtimeDataScopeFingerprint(store.rootDirectory);
 const generationScopeKey = runtimeGenerationScopeFingerprint(store.rootDirectory);
@@ -103,6 +103,7 @@ const TOOL_DEFINITIONS = [
           properties: {
             goal: { type: 'string', minLength: 1, maxLength: 1000 },
             scope: { type: 'string', minLength: 1, maxLength: 4000 },
+            viewpoint: { type: 'string', enum: ['system-context', 'container', 'component'], description: 'Architecture only: select exactly one abstraction viewpoint allowed by the chosen mode.' },
             excludedDetails: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string', minLength: 1, maxLength: 1000 } },
             estimatedPrimaryItemCount: { type: 'integer', minimum: 0 },
             estimatedEdgeCount: { type: 'integer', minimum: 0 },
@@ -416,6 +417,7 @@ function withGenerationProvenance(
     planHash: permit.planHash,
     permitId: permit.permitId,
     qualityProfile: permit.qualityProfile,
+    ...(permit.viewpoint ? { viewpoint: permit.viewpoint } : {}),
     generatedAt: new Date().toISOString()
   };
   return document;
@@ -429,6 +431,7 @@ function generationProvenance(permit: GenerationPermitPayload) {
     planHash: permit.planHash,
     permitId: permit.permitId,
     qualityProfile: permit.qualityProfile,
+    ...(permit.viewpoint ? { viewpoint: permit.viewpoint } : {}),
     generatedAt: new Date().toISOString()
   };
 }
@@ -461,7 +464,7 @@ async function commitGeneratedDiagram(argumentsValue: Record<string, unknown>) {
       : kind === 'flowchart' || kind === 'swimlane' || kind === 'sequence'
         ? 'DOWN'
         : 'RIGHT';
-  const document = hasEmbeddedDiagramLayout(source) ? imported : await layoutDiagram(imported, direction);
+  const document = hasEmbeddedDiagramLayout(source) ? imported : await layoutDiagram(imported, direction, permit.qualityProfile);
   document.artifactKey = artifactKey;
   applyNodeEvidence(document, argumentsValue.nodeEvidence);
   withGenerationProvenance(document, permit);
@@ -531,6 +534,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         operation: prepared.permit.operation,
         ...(prepared.permit.documentId ? { documentId: prepared.permit.documentId } : {}),
         qualityProfile: prepared.permit.qualityProfile,
+        ...(prepared.permit.viewpoint ? { viewpoint: prepared.permit.viewpoint } : {}),
         budgets: {
           maxPrimaryItems: prepared.permit.maxPrimaryItems,
           maxEdges: prepared.permit.maxEdges,
