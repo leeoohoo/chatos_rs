@@ -474,13 +474,19 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         guard let currentProfile = profiles.first(where: { $0.id == context.agentID }) else {
             throw AgentGroupChatError.notFound
         }
+        let requestedModelConfigID = try Self.optionalString(
+            arguments,
+            key: "model_config_id"
+        )?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelConfigID = requestedModelConfigID.flatMap {
+            $0.isEmpty || $0.caseInsensitiveCompare("default") == .orderedSame ? nil : $0
+        } ?? currentProfile.draft.modelConfigID
         let draft = LocalAgentDraft(
             name: try Self.requiredString(arguments, key: "name"),
             role: try Self.requiredString(arguments, key: "role"),
             responsibility: try Self.optionalString(arguments, key: "responsibility") ?? "",
             rolePrompt: try Self.requiredString(arguments, key: "role_prompt"),
-            modelConfigID: try Self.optionalString(arguments, key: "model_config_id")
-                ?? currentProfile.draft.modelConfigID,
+            modelConfigID: modelConfigID,
             professionKey: try Self.requiredString(arguments, key: "profession_key"),
             rationale: try Self.optionalString(arguments, key: "rationale") ?? ""
         )

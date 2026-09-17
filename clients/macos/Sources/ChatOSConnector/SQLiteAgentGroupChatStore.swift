@@ -302,6 +302,38 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         proposalID: String,
         nowUnixMs: Int64
     ) throws -> LocalAgentProposalApproval {
+        try approveAgentProposal(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            proposalID: proposalID,
+            nowUnixMs: nowUnixMs,
+            draftOverride: nil
+        )
+    }
+
+    public func approveAgentProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String,
+        nowUnixMs: Int64,
+        resolvedDraft: LocalAgentDraft
+    ) throws -> LocalAgentProposalApproval {
+        try approveAgentProposal(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            proposalID: proposalID,
+            nowUnixMs: nowUnixMs,
+            draftOverride: resolvedDraft
+        )
+    }
+
+    private func approveAgentProposal(
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String,
+        nowUnixMs: Int64,
+        draftOverride: LocalAgentDraft?
+    ) throws -> LocalAgentProposalApproval {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(roomID, field: "roomID")
         try AgentGroupChatValidation.identifier(proposalID, field: "proposalID")
@@ -316,11 +348,29 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                   ), proposal.status == .pending else {
                 throw AgentGroupChatError.conflict
             }
-            try proposal.draft.validate()
+            let approvedDraft = draftOverride ?? proposal.draft
+            if draftOverride != nil, approvedDraft != proposal.draft {
+                let storedModelConfigID = proposal.draft.modelConfigID
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let expectedDraft = LocalAgentDraft(
+                    name: proposal.draft.name,
+                    role: proposal.draft.role,
+                    responsibility: proposal.draft.responsibility,
+                    rolePrompt: proposal.draft.rolePrompt,
+                    modelConfigID: approvedDraft.modelConfigID,
+                    professionKey: proposal.draft.professionKey,
+                    rationale: proposal.draft.rationale
+                )
+                guard storedModelConfigID.caseInsensitiveCompare("default") == .orderedSame,
+                      approvedDraft == expectedDraft else {
+                    throw AgentGroupChatError.conflict
+                }
+            }
+            try approvedDraft.validate()
             let agent = LocalAgentProfile(
                 id: UUID().uuidString.lowercased(),
                 ownerUserID: ownerUserID,
-                draft: proposal.draft.profileDraft,
+                draft: approvedDraft.profileDraft,
                 createdAtUnixMs: nowUnixMs,
                 updatedAtUnixMs: nowUnixMs
             )
@@ -350,7 +400,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                     ownerUserID: ownerUserID,
                     roomID: roomID,
                     agentID: agent.id,
-                    draft: proposal.draft.memberDraft,
+                    draft: approvedDraft.memberDraft,
                     joinedAtUnixMs: nowUnixMs
                 )
                 try createdMember.validate()
@@ -378,14 +428,20 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                     )
                 }
             }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            let draftJSON = String(
+                decoding: try encoder.encode(approvedDraft),
+                as: UTF8.self
+            )
             try execute(
                 """
                 UPDATE local_agent_creation_proposals
-                SET status = 'approved', created_agent_id = ?, resolved_at_unix_ms = ?
+                SET draft_json = ?, status = 'approved', created_agent_id = ?, resolved_at_unix_ms = ?
                 WHERE owner_user_id = ? AND id = ? AND room_id = ? AND status = 'pending'
                 """,
                 [
-                    .text(agent.id), .integer(nowUnixMs), .text(ownerUserID),
+                    .text(draftJSON), .text(agent.id), .integer(nowUnixMs), .text(ownerUserID),
                     .text(proposalID), .text(roomID),
                 ]
             )

@@ -226,9 +226,10 @@ public struct LocalAgentBuilderService: Sendable {
         guard proposal.ownerUserID == ownerUserID, proposal.status == .pending else {
             throw AgentGroupChatError.conflict
         }
-        let resources = try await loadResources(ownerUserID: ownerUserID)
-        try validate(draft: proposal.draft, resources: resources)
         let store = try await groupChatService.store()
+        let resolvedDraft = try await resolvedProposalDraft(proposal, store: store)
+        let resources = try await loadResources(ownerUserID: ownerUserID)
+        try validate(draft: resolvedDraft, resources: resources)
         guard let room = try await store.activeRoom(ownerUserID: ownerUserID, projectID: projectID),
               room.id == proposal.roomID else {
             throw LocalAgentBuilderError.roomUnavailable
@@ -237,7 +238,8 @@ public struct LocalAgentBuilderService: Sendable {
             ownerUserID: ownerUserID,
             roomID: room.id,
             proposalID: proposal.id,
-            nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000),
+            resolvedDraft: resolvedDraft
         )
     }
 
@@ -253,9 +255,10 @@ public struct LocalAgentBuilderService: Sendable {
               proposal.status == .pending else {
             throw AgentGroupChatError.conflict
         }
-        let resources = try await loadResources(ownerUserID: ownerUserID)
-        try validate(draft: proposal.draft, resources: resources)
         let store = try await groupChatService.store()
+        let resolvedDraft = try await resolvedProposalDraft(proposal, store: store)
+        let resources = try await loadResources(ownerUserID: ownerUserID)
+        try validate(draft: resolvedDraft, resources: resources)
         guard let room = try await store.room(ownerUserID: ownerUserID, roomID: roomID),
               room.conversationKind.isDirect else {
             throw LocalAgentBuilderError.roomUnavailable
@@ -264,7 +267,35 @@ public struct LocalAgentBuilderService: Sendable {
             ownerUserID: ownerUserID,
             roomID: roomID,
             proposalID: proposal.id,
-            nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000),
+            resolvedDraft: resolvedDraft
+        )
+    }
+
+    private func resolvedProposalDraft(
+        _ proposal: LocalAgentCreationProposal,
+        store: SQLiteAgentGroupChatStore
+    ) async throws -> LocalAgentDraft {
+        let requestedModelConfigID = proposal.draft.modelConfigID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard requestedModelConfigID.caseInsensitiveCompare("default") == .orderedSame else {
+            return proposal.draft
+        }
+        let profiles = try await store.listAgents(
+            ownerUserID: proposal.ownerUserID,
+            includeArchived: true
+        )
+        guard let proposer = profiles.first(where: { $0.id == proposal.proposerAgentID }) else {
+            throw LocalAgentBuilderError.modelUnavailable
+        }
+        return LocalAgentDraft(
+            name: proposal.draft.name,
+            role: proposal.draft.role,
+            responsibility: proposal.draft.responsibility,
+            rolePrompt: proposal.draft.rolePrompt,
+            modelConfigID: proposer.draft.modelConfigID,
+            professionKey: proposal.draft.professionKey,
+            rationale: proposal.draft.rationale
         )
     }
 

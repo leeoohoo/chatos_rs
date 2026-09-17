@@ -5,11 +5,19 @@ import Foundation
 public actor NativeLocalProjectsService {
     private let connector: NativeLocalConnectorService
     private let databaseURL: URL
+    private let managedProjectsRootURL: URL
     private var store: SQLiteProjectRegistry?
 
-    public init(connector: NativeLocalConnectorService, databaseURL: URL) {
+    public init(
+        connector: NativeLocalConnectorService,
+        databaseURL: URL,
+        managedProjectsRootURL: URL? = nil
+    ) {
         self.connector = connector
         self.databaseURL = databaseURL
+        self.managedProjectsRootURL = managedProjectsRootURL
+            ?? databaseURL.deletingLastPathComponent()
+                .appendingPathComponent("Projects", isDirectory: true)
     }
 
     public func registry() throws -> SQLiteProjectRegistry {
@@ -88,7 +96,7 @@ public actor NativeLocalProjectsService {
                                 projectContext: try deviceID.map { try ProjectContextSnapshot(record: record, deviceID: $0) })
     }
 
-    /// Creates a host-owned project directory beneath ChatOS's default authorized workspace.
+    /// Creates a host-owned project directory beneath ChatOS's managed projects folder.
     /// Agent tools provide only display metadata; neither an absolute path nor a workspace id is
     /// accepted from the model.
     public func createInDefaultWorkspace(
@@ -100,22 +108,31 @@ public actor NativeLocalProjectsService {
         try ProjectRegistryValidation.identifier(name, field: "name")
         let status = try await connector.fetchStatus()
         guard status.user?.id == ownerUserID,
-              let workspaceID = status.defaultWorkspaceID,
-              let workspace = status.workspaces.first(where: { $0.id == workspaceID }) else {
+              let workspace = Self.mostSpecificWorkspace(
+                containing: managedProjectsRootURL,
+                workspaces: status.workspaces
+              ),
+              let projectsRelativeRoot = Self.relativePath(
+                of: managedProjectsRootURL,
+                inside: workspace
+              ) else {
             throw NativeConnectorError.workspaceUnavailable
         }
         let baseName = Self.safeProjectDirectoryName(name)
-        let root = URL(fileURLWithPath: workspace.absoluteRoot, isDirectory: true)
         var directoryName = baseName
         var suffix = 2
         while FileManager.default.fileExists(
-            atPath: root.appendingPathComponent(directoryName, isDirectory: true).path
+            atPath: managedProjectsRootURL
+                .appendingPathComponent(directoryName, isDirectory: true).path
         ) {
             directoryName = "\(baseName)-\(suffix)"
             suffix += 1
         }
+        let relativeRoot = projectsRelativeRoot == "."
+            ? directoryName
+            : "\(projectsRelativeRoot)/\(directoryName)"
         _ = try await Task.detached {
-            try NativeWorkspaceFilesystem(workspace: workspace).createDirectory(path: directoryName)
+            try NativeWorkspaceFilesystem(workspace: workspace).createDirectory(path: relativeRoot)
         }.value
         return try await create(
             ownerUserID: ownerUserID,
@@ -123,7 +140,7 @@ public actor NativeLocalProjectsService {
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                 description: description.trimmingCharacters(in: .whitespacesAndNewlines),
                 workspaceID: workspace.id,
-                relativeRoot: directoryName,
+                relativeRoot: relativeRoot,
                 projectTypeKey: projectTypeKey
             )
         )
@@ -192,6 +209,37 @@ public actor NativeLocalProjectsService {
             .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
         let value = String(collapsed.prefix(80))
         return value.isEmpty ? "ChatOS-Project" : value
+    }
+
+    private static func mostSpecificWorkspace(
+        containing targetURL: URL,
+        workspaces: [LocalConnectorWorkspace]
+    ) -> LocalConnectorWorkspace? {
+        workspaces
+            .filter { relativePath(of: targetURL, inside: $0) != nil }
+            .max {
+                canonicalPath($0.absoluteRoot).count < canonicalPath($1.absoluteRoot).count
+            }
+    }
+
+    private static func relativePath(
+        of targetURL: URL,
+        inside workspace: LocalConnectorWorkspace
+    ) -> String? {
+        let targetPath = targetURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let rootPath = canonicalPath(workspace.absoluteRoot)
+        if targetPath == rootPath { return "." }
+        let prefix = rootPath == "/" ? "/" : rootPath + "/"
+        guard targetPath.hasPrefix(prefix) else { return nil }
+        let relative = String(targetPath.dropFirst(prefix.count))
+        return relative.isEmpty ? "." : relative
+    }
+
+    private static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
     }
 }
 

@@ -125,6 +125,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                     "role": "测试工程师",
                     "responsibility": "验证实现",
                     "role_prompt": "只验证当前项目的实现。",
+                    "model_config_id": "default",
                     "profession_key": "qa_engineer",
                     "rationale": "团队缺少测试角色",
                 ], options: [.sortedKeys]),

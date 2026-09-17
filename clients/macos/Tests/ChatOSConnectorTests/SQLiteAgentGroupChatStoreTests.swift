@@ -507,7 +507,7 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             role: "测试工程师",
             responsibility: "验证项目",
             rolePrompt: "只处理测试工作。",
-            modelConfigID: "model-1",
+            modelConfigID: "default",
             rationale: "团队缺少测试能力"
         )
         let proposal = try await store.createAgentProposal(
@@ -567,13 +567,25 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             XCTAssertEqual(error as? AgentGroupChatError, .conflict)
         }
 
+        let resolvedDraft = LocalAgentDraft(
+            name: draft.name,
+            role: draft.role,
+            responsibility: draft.responsibility,
+            rolePrompt: draft.rolePrompt,
+            modelConfigID: "model-1",
+            professionKey: draft.professionKey,
+            rationale: draft.rationale
+        )
         let approval = try await store.approveAgentProposal(
             ownerUserID: "alice",
             roomID: room.id,
             proposalID: proposal.id,
-            nowUnixMs: incoming.message.createdAtUnixMs + 4
+            nowUnixMs: incoming.message.createdAtUnixMs + 4,
+            resolvedDraft: resolvedDraft
         )
         XCTAssertEqual(approval.proposal.status, .approved)
+        XCTAssertEqual(approval.proposal.draft.modelConfigID, "model-1")
+        XCTAssertEqual(approval.agent.draft.modelConfigID, "model-1")
         XCTAssertEqual(approval.proposal.createdAgentID, approval.agent.id)
         XCTAssertEqual(approval.member?.agentID, approval.agent.id)
         XCTAssertEqual(approval.member?.draft.role, draft.role)

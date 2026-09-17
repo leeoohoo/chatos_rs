@@ -4,17 +4,22 @@ import Foundation
 import XCTest
 
 final class NativeLocalProjectsServiceTests: XCTestCase {
-    private func context() throws -> Context {
+    private func context(rootWorkspaceFirst: Bool = false) throws -> Context {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("local-projects-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("repo"), withIntermediateDirectories: true)
         let stateURL = root.appendingPathComponent("connector.json")
         var state = NativeConnectorPersistentState.empty
         state.user = .init(id: "alice", username: "alice", displayName: nil, role: "user")
         state.deviceID = "device"
-        state.workspaces = [
-            .init(id: "ws", alias: "workspace", absoluteRoot: root.path, fingerprint: "fingerprint"),
-            .init(id: "root-ws", alias: "root", absoluteRoot: "/", fingerprint: "root-fingerprint"),
-        ]
+        let projectWorkspace = LocalConnectorWorkspace(
+            id: "ws", alias: "workspace", absoluteRoot: root.path, fingerprint: "fingerprint"
+        )
+        let rootWorkspace = LocalConnectorWorkspace(
+            id: "root-ws", alias: "root", absoluteRoot: "/", fingerprint: "root-fingerprint"
+        )
+        state.workspaces = rootWorkspaceFirst
+            ? [rootWorkspace, projectWorkspace]
+            : [projectWorkspace, rootWorkspace]
         try NativeConnectorStateStore(stateURL: stateURL).save(state)
         let connector = NativeLocalConnectorService(
             configuration: .init(gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL),
@@ -36,7 +41,7 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
     }
 
     func testCreatesAgentRequestedProjectInDefaultWorkspaceWithoutAcceptingAPath() async throws {
-        let context = try context()
+        let context = try context(rootWorkspaceFirst: true)
         defer { try? FileManager.default.removeItem(at: context.root) }
 
         let first = try await context.service.createInDefaultWorkspace(
@@ -51,16 +56,19 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
 
         XCTAssertEqual(first.name, "设计 / 系统")
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: context.root.appendingPathComponent("设计---系统").path
+            atPath: context.root.appendingPathComponent("Projects/设计---系统").path
         ))
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: context.root.appendingPathComponent("设计---系统-2").path
+            atPath: context.root.appendingPathComponent("Projects/设计---系统-2").path
         ))
         XCTAssertNotEqual(first.id, second.id)
         let registry = try await context.service.registry()
         let records = try await registry.list(ownerUserID: "alice")
         XCTAssertEqual(Set(records.map(\.draft.workspaceID)), ["ws"])
-        XCTAssertEqual(Set(records.map(\.draft.relativeRoot)), ["设计---系统", "设计---系统-2"])
+        XCTAssertEqual(
+            Set(records.map(\.draft.relativeRoot)),
+            ["Projects/设计---系统", "Projects/设计---系统-2"]
+        )
     }
 
     func testSignedOutSuspensionPreservesPersistentProjectAccessState() async throws {

@@ -558,11 +558,20 @@ private struct AgentManagementView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+            }
+            if !agent.draft.description.isEmpty {
+                Text(agent.draft.description)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            HStack(spacing: 10) {
                 Button("私聊", systemImage: "bubble.left.and.bubble.right") {
                     openDirect(agent)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .fixedSize()
                 Menu("加入团队", systemImage: "person.2.badge.plus") {
                     if viewModel.rooms.isEmpty {
                         Text("请先创建项目团队")
@@ -576,15 +585,11 @@ private struct AgentManagementView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                Spacer(minLength: 0)
                 Button("编辑") { editorTarget = .edit(agent) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-            }
-            if !agent.draft.description.isEmpty {
-                Text(agent.draft.description)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .fixedSize()
             }
             Divider()
             LabeledContent("模型") {
