@@ -173,6 +173,7 @@ impl RuntimeLifecycleHook for TaskRunnerLifecycleHook {
             self.progress.confirmed_project_paths(),
             self.progress.confirmed_validation_commands(),
             self.progress.confirmed_acceptance_tools(),
+            self.progress.pending_completion_requirements(),
             reported_outcome,
         );
         let mut state = self.state.lock();
@@ -301,6 +302,7 @@ fn task_execution_outcome_from_ai_report(
     confirmed_project_paths: Vec<String>,
     confirmed_validation_commands: Vec<String>,
     confirmed_acceptance_tools: Vec<String>,
+    pending_completion_requirements: std::collections::BTreeMap<String, String>,
     reported_outcome: AiReportedTaskOutcome,
 ) -> TaskExecutionOutcome {
     let summary = task_execution_summary(content);
@@ -308,6 +310,33 @@ fn task_execution_outcome_from_ai_report(
     let commands = normalized_unique_strings(confirmed_validation_commands);
     let tools = normalized_unique_strings(confirmed_acceptance_tools);
     let criteria = normalized_unique_strings(expected_acceptance_criteria.to_vec());
+
+    if reported_outcome.status == TaskExecutionOutcomeStatus::Succeeded
+        && !pending_completion_requirements.is_empty()
+    {
+        let missing = pending_completion_requirements
+            .iter()
+            .map(|(id, verifier)| format!("{id} -> {verifier}"))
+            .collect::<Vec<_>>();
+        let reason = format!(
+            "AI reported succeeded before required completion proof was recorded: {}",
+            missing.join(", ")
+        );
+        return TaskExecutionOutcome {
+            status: TaskExecutionOutcomeStatus::Blocked,
+            summary,
+            blocking_reason: Some(reason.clone()),
+            unmet_acceptance_criteria: if criteria.is_empty() {
+                vec![reason.clone()]
+            } else {
+                criteria
+            },
+            verification_evidence: vec![reason],
+            acceptance_evidence: Vec::new(),
+            referenced_paths: paths,
+            referenced_endpoints: Vec::new(),
+        };
+    }
 
     let mut verification_evidence = vec![format!(
         "AI 显式上报任务终态 {}：{}",

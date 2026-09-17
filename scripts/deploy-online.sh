@@ -70,6 +70,8 @@ Environment:
   CHATOS_DEPLOY_ADMIN_PASSWORD Plugin administrator password; prompts when omitted
   CHATOS_ADMIN_AUTH_BASE_URL    Unified admin User Service gateway prefix
   CHATOS_PLUGIN_API_BASE_URL    Unified admin Plugin Management gateway prefix
+  CHATOS_DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED
+                                Set true/false to update the server-side Mini Program test-login switch
 EOF
 }
 

@@ -11,6 +11,14 @@ DEPLOY_BRANCH="${CHATOS_DEPLOY_BRANCH:-3.0.3}"
 REMOTE_SOURCE_REPO="${CHATOS_DEPLOY_SOURCE_REPO:-/opt/chatos_rs}"
 REMOTE_DEPLOY_ROOT="${CHATOS_DEPLOY_ROOT:-/opt/chatos-deploy}"
 DEPLOY_SERVICES_CSV="${CHATOS_DEPLOY_SERVICES:-}"
+DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED="${CHATOS_DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED:-}"
+
+if [[ -n "$DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED" ]] \
+  && [[ "$DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED" != "true" ]] \
+  && [[ "$DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED" != "false" ]]; then
+  echo "[ERROR] CHATOS_DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED must be true or false" >&2
+  exit 2
+fi
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -115,7 +123,8 @@ if ! ssh -o BatchMode=yes "$DEPLOY_SERVER" bash -s -- \
   "$DEPLOY_BRANCH" \
   "$REMOTE_SOURCE_REPO" \
   "$REMOTE_DEPLOY_ROOT" \
-  "$remote_deploy_services_arg" <<'REMOTE_SCRIPT'
+  "$remote_deploy_services_arg" \
+  "$DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 run_deployment() {
@@ -126,6 +135,7 @@ deploy_branch="$3"
 source_repo="$4"
 deploy_root="$5"
 deploy_services_arg="$6"
+deploy_wechat_development_login_enabled="$7"
 if [[ "$deploy_services_arg" == "__CHATOS_ALL_SERVICES__" ]]; then
   deploy_services_csv=""
 else
@@ -434,7 +444,11 @@ update_image_tag=true
 if (( deploy_all == 0 )) && [[ ${#deploy_services[@]} -eq 0 ]]; then
   update_image_tag=false
 fi
-python3 - "$release_dir/docker/bootstrap.conf" "$release_tag" "$update_image_tag" <<'PY'
+python3 - \
+  "$release_dir/docker/bootstrap.conf" \
+  "$release_tag" \
+  "$update_image_tag" \
+  "$deploy_wechat_development_login_enabled" <<'PY'
 from pathlib import Path
 import secrets
 import sys
@@ -442,6 +456,7 @@ import sys
 path = Path(sys.argv[1])
 release_tag = sys.argv[2]
 update_image_tag = sys.argv[3] == "true"
+development_login_enabled = sys.argv[4]
 secret_key = "CHATOS_USER_SERVICE_INTERNAL_API_SECRET"
 development_secret = "change_me_chatos_user_service_secret"
 updates = {
@@ -449,6 +464,8 @@ updates = {
 }
 if update_image_tag:
     updates["CHATOS_IMAGE_TAG"] = release_tag
+if development_login_enabled:
+    updates["USER_SERVICE_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED"] = development_login_enabled
 lines = path.read_text().splitlines()
 current_values = {}
 for line in lines:

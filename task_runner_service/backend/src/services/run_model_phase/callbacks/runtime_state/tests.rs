@@ -146,6 +146,7 @@ fn ai_reported_succeeded_outcome_is_authoritative() {
         vec!["backend/pom.xml".to_string()],
         vec!["mvn -q clean test".to_string()],
         Vec::new(),
+        Default::default(),
         AiReportedTaskOutcome {
             status: TaskExecutionOutcomeStatus::Succeeded,
             reason: "实现和验证均已完成".to_string(),
@@ -171,6 +172,7 @@ fn ai_reported_failed_outcome_is_authoritative_without_receipts() {
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        Default::default(),
         AiReportedTaskOutcome {
             status: TaskExecutionOutcomeStatus::Failed,
             reason: "编译错误无法在本轮修复".to_string(),
@@ -196,6 +198,7 @@ fn ai_reported_blocked_outcome_is_authoritative_even_with_success_receipts() {
         vec!["src/main.rs".to_string()],
         vec!["cargo check".to_string()],
         vec!["plugin_snapshot".to_string()],
+        Default::default(),
         AiReportedTaskOutcome {
             status: TaskExecutionOutcomeStatus::Blocked,
             reason: "缺少上游凭据".to_string(),
@@ -206,6 +209,32 @@ fn ai_reported_blocked_outcome_is_authoritative_even_with_success_receipts() {
     assert_eq!(outcome.blocking_reason.as_deref(), Some("缺少上游凭据"));
     assert_eq!(outcome.unmet_acceptance_criteria, ["integration passes"]);
     assert!(outcome.verification_evidence.len() > 1);
+}
+
+#[test]
+fn succeeded_report_is_blocked_when_plugin_completion_proof_is_pending() {
+    let outcome = task_execution_outcome_from_ai_report(
+        "规划已经生成。",
+        &["规划在插件中可见".to_string()],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        [(
+            "solution-studio:workspace-1".to_string(),
+            "solution_finalize".to_string(),
+        )]
+        .into(),
+        AiReportedTaskOutcome {
+            status: TaskExecutionOutcomeStatus::Succeeded,
+            reason: "模型声称已经完成".to_string(),
+        },
+    );
+
+    assert_eq!(outcome.status, TaskExecutionOutcomeStatus::Blocked);
+    assert!(outcome
+        .blocking_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("solution_finalize")));
 }
 
 #[test]

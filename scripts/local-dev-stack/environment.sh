@@ -225,6 +225,7 @@ export_local_env() {
   # Debug builds expose a password-authenticated Companion simulator route.
   # Release binaries do not register that route, even if this value is copied.
   export USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION="${CHATOS_LOCAL_DEV_WECHAT_MINI_PROGRAM_ENV_VERSION:-develop}"
+  export USER_SERVICE_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED="${CHATOS_LOCAL_DEV_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED:-true}"
 }
 
 config_center_caller_signing_secret() {

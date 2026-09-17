@@ -7,6 +7,26 @@ public struct AgentToolCall: Codable, Equatable, Sendable {
     public init(id: String, name: String, arguments: String) { self.id = id; self.name = name; self.arguments = arguments }
 }
 
+public struct AgentMessageAttachment: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable {
+        case image
+        case file
+        case audio
+    }
+
+    public var name: String
+    public var mimeType: String
+    public var kind: Kind
+    public var localFileURL: URL
+
+    public init(name: String, mimeType: String, kind: Kind, localFileURL: URL) {
+        self.name = name
+        self.mimeType = mimeType
+        self.kind = kind
+        self.localFileURL = localFileURL
+    }
+}
+
 public struct AgentMessage: Codable, Equatable, Sendable {
     public enum Role: String, Codable, Sendable { case system, user, assistant, tool }
     public var role: Role
@@ -17,17 +37,31 @@ public struct AgentMessage: Codable, Equatable, Sendable {
     /// preserves encrypted reasoning and compaction items across stateless calls.
     public var responseOutputJSON: Data?
     public var usage: AgentUsage?
-    public init(role: Role, content: String = "", toolCalls: [AgentToolCall] = [], toolCallID: String? = nil) {
+    /// Local, program-owned input files. Model transports resolve these URLs to data payloads;
+    /// the filesystem path itself is never sent to the model provider.
+    public var attachments: [AgentMessageAttachment]?
+    public init(
+        role: Role,
+        content: String = "",
+        toolCalls: [AgentToolCall] = [],
+        toolCallID: String? = nil,
+        attachments: [AgentMessageAttachment] = []
+    ) {
         self.role = role; self.content = content; self.toolCalls = toolCalls
         self.toolCallID = toolCallID; self.responseOutputJSON = nil; self.usage = nil
+        self.attachments = attachments.isEmpty ? nil : attachments
     }
     public init(
         role: Role, content: String, toolCalls: [AgentToolCall],
-        toolCallID: String? = nil, responseOutputJSON: Data?, usage: AgentUsage?
+        toolCallID: String? = nil, responseOutputJSON: Data?, usage: AgentUsage?,
+        attachments: [AgentMessageAttachment] = []
     ) {
         self.role = role; self.content = content; self.toolCalls = toolCalls
         self.toolCallID = toolCallID; self.responseOutputJSON = responseOutputJSON; self.usage = usage
+        self.attachments = attachments.isEmpty ? nil : attachments
     }
+
+    public var attachmentItems: [AgentMessageAttachment] { attachments ?? [] }
 }
 
 public struct AgentUsage: Codable, Equatable, Sendable {
@@ -205,13 +239,14 @@ public extension AgentModelClient {
 }
 
 public enum AgentRuntimeError: LocalizedError, Sendable {
-    case invalidPolicy, invalidResponse, contextTooLarge, contextOverflow, timeout, scopeMismatch
+    case invalidPolicy, invalidResponse, invalidAttachment, contextTooLarge, contextOverflow, timeout, scopeMismatch
     case provider(Int)
     case providerDetail(Int, String)
     public var errorDescription: String? {
         switch self {
         case .invalidPolicy: "Agent 运行设置无效，请检查设置中的范围。"
         case .invalidResponse: "模型没有返回有效且完整的工具调用。"
+        case .invalidAttachment: "Agent 消息附件不可读取或超过大小限制。"
         case .contextTooLarge: "Agent 上下文超过安全大小限制，请从已保存的业务检查点开始新一轮运行。"
         case .contextOverflow: "模型报告上下文超出窗口，需要压缩后才能继续。"
         case .timeout: "Agent 已达到设置中的超时时限。"

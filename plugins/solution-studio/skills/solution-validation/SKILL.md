@@ -5,7 +5,7 @@ description: Validate a Solution Studio workspace for completeness, traceability
 
 # Solution Validation
 
-Call `solution_validate` on the target workspace and interpret the result rather than reimplementing graph validation from prose.
+Call `solution_validate` on the target workspace and interpret the result rather than reimplementing graph validation from prose. Validation is diagnostic; `solution_finalize` is the delivery gate that re-reads the exact revision, verifies request-specific design block IDs, registers the internal artifact, and emits the completion proof required by Task Runner.
 
 Treat unknown references, self-dependencies, cycles, missing required documents, empty or non-rendering SVG previews, and tasks without acceptance criteria as blocking. Also check whether design and plan revision links are stale, whether the project has a technical baseline and overall architecture, whether every requirement reaches exactly one substantive design section and at least one task, and whether unresolved questions or risks need human review. For development projects, a sentence-length summary without module, interface/data, flow, failure, and verification detail is not a completed design.
 

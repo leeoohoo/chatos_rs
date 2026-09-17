@@ -851,6 +851,90 @@ public enum ProjectAgentMessageSenderKind: String, Codable, Sendable {
     case human, agent, system
 }
 
+public struct ProjectAgentMessageAttachmentDraft: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let name: String
+    public let mimeType: String
+    public let kind: ConversationAttachmentKind
+    public let origin: ConversationAttachmentOrigin
+    public let data: Data
+
+    public init(
+        id: String = UUID().uuidString.lowercased(),
+        name: String,
+        mimeType: String,
+        kind: ConversationAttachmentKind,
+        origin: ConversationAttachmentOrigin,
+        data: Data
+    ) {
+        self.id = id
+        self.name = name
+        self.mimeType = mimeType
+        self.kind = kind
+        self.origin = origin
+        self.data = data
+    }
+
+    public init(_ attachment: ConversationAttachmentDraft) {
+        self.init(
+            id: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            kind: attachment.kind,
+            origin: attachment.origin,
+            data: attachment.data
+        )
+    }
+
+    public func validate() throws {
+        try AgentGroupChatValidation.identifier(id, field: "attachment.id")
+        try AgentGroupChatValidation.text(name, field: "attachment.name", maximumLength: 512)
+        try AgentGroupChatValidation.text(
+            mimeType,
+            field: "attachment.mimeType",
+            maximumLength: 255
+        )
+        guard !data.isEmpty, data.count <= 20 * 1_024 * 1_024 else {
+            throw AgentGroupChatError.invalidField("attachment.data")
+        }
+    }
+}
+
+public struct ProjectAgentMessageAttachment: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let name: String
+    public let mimeType: String
+    public let size: Int
+    public let kind: ConversationAttachmentKind
+    public let origin: ConversationAttachmentOrigin
+
+    public init(
+        id: String,
+        name: String,
+        mimeType: String,
+        size: Int,
+        kind: ConversationAttachmentKind,
+        origin: ConversationAttachmentOrigin
+    ) {
+        self.id = id
+        self.name = name
+        self.mimeType = mimeType
+        self.size = size
+        self.kind = kind
+        self.origin = origin
+    }
+}
+
+public struct ProjectAgentMessageAttachmentPayload: Sendable, Equatable {
+    public let attachment: ProjectAgentMessageAttachment
+    public let localFileURL: URL
+
+    public init(attachment: ProjectAgentMessageAttachment, localFileURL: URL) {
+        self.attachment = attachment
+        self.localFileURL = localFileURL
+    }
+}
+
 public struct ProjectAgentMessageDraft: Codable, Sendable, Equatable {
     public let senderKind: ProjectAgentMessageSenderKind
     public let senderID: String
@@ -861,6 +945,7 @@ public struct ProjectAgentMessageDraft: Codable, Sendable, Equatable {
     public let causationID: String?
     public let rootMessageID: String?
     public let hopCount: Int
+    public let attachments: [ProjectAgentMessageAttachmentDraft]?
 
     public init(
         senderKind: ProjectAgentMessageSenderKind,
@@ -871,7 +956,8 @@ public struct ProjectAgentMessageDraft: Codable, Sendable, Equatable {
         sourceRunID: String? = nil,
         causationID: String? = nil,
         rootMessageID: String? = nil,
-        hopCount: Int = 0
+        hopCount: Int = 0,
+        attachments: [ProjectAgentMessageAttachmentDraft] = []
     ) {
         self.senderKind = senderKind
         self.senderID = senderID
@@ -882,11 +968,18 @@ public struct ProjectAgentMessageDraft: Codable, Sendable, Equatable {
         self.causationID = causationID
         self.rootMessageID = rootMessageID
         self.hopCount = hopCount
+        self.attachments = attachments.isEmpty ? nil : attachments
     }
+
+    public var attachmentItems: [ProjectAgentMessageAttachmentDraft] { attachments ?? [] }
 
     public func validate() throws {
         try AgentGroupChatValidation.identifier(senderID, field: "senderID")
-        try AgentGroupChatValidation.text(content, field: "content", maximumLength: 64_000)
+        if content.isEmpty, !attachmentItems.isEmpty {
+            // An attachment-only Human message is valid and renders without placeholder text.
+        } else {
+            try AgentGroupChatValidation.text(content, field: "content", maximumLength: 64_000)
+        }
         try AgentGroupChatValidation.identifiers(
             mentionedAgentIDs,
             field: "mentionedAgentIDs",
@@ -903,6 +996,12 @@ public struct ProjectAgentMessageDraft: Codable, Sendable, Equatable {
         guard (0...64).contains(hopCount) else {
             throw AgentGroupChatError.invalidField("hopCount")
         }
+        guard attachmentItems.count <= 20,
+              attachmentItems.reduce(0, { $0 + $1.data.count }) <= 20 * 1_024 * 1_024,
+              Set(attachmentItems.map(\.id)).count == attachmentItems.count else {
+            throw AgentGroupChatError.invalidField("attachments")
+        }
+        try attachmentItems.forEach { try $0.validate() }
     }
 }
 
@@ -920,6 +1019,7 @@ public struct ProjectAgentMessage: Codable, Sendable, Equatable, Identifiable {
     public let rootMessageID: String
     public let hopCount: Int
     public let createdAtUnixMs: Int64
+    public let attachments: [ProjectAgentMessageAttachment]?
 
     public init(
         id: String,
@@ -927,6 +1027,7 @@ public struct ProjectAgentMessage: Codable, Sendable, Equatable, Identifiable {
         roomID: String,
         draft: ProjectAgentMessageDraft,
         rootMessageID: String,
+        attachments: [ProjectAgentMessageAttachment] = [],
         createdAtUnixMs: Int64
     ) {
         self.id = id
@@ -941,8 +1042,11 @@ public struct ProjectAgentMessage: Codable, Sendable, Equatable, Identifiable {
         causationID = draft.causationID
         self.rootMessageID = rootMessageID
         hopCount = draft.hopCount
+        self.attachments = attachments.isEmpty ? nil : attachments
         self.createdAtUnixMs = createdAtUnixMs
     }
+
+    public var attachmentItems: [ProjectAgentMessageAttachment] { attachments ?? [] }
 }
 
 /// Stable room pagination uses the persisted message identity instead of a timestamp-only cursor.
@@ -1262,6 +1366,12 @@ public protocol AgentGroupChatStore: Sendable {
         draft: ProjectAgentMessageDraft,
         limits: AgentGroupChatRoutingLimits
     ) async throws -> AgentGroupChatPostResult
+    func messageAttachment(
+        ownerUserID: String,
+        roomID: String,
+        messageID: String,
+        attachmentID: String
+    ) async throws -> ProjectAgentMessageAttachmentPayload?
     func listMessages(
         ownerUserID: String,
         roomID: String,

@@ -82,8 +82,11 @@ public struct AgentChatModelClient: AgentModelClient {
                          stream: Bool) throws -> URLRequest {
         var payload: [String: Any] = [
             "model": model, "stream": stream,
-            "messages": messages.map { message -> [String: Any] in
-                var value: [String: Any] = ["role": message.role.rawValue, "content": message.content]
+            "messages": try messages.map { message -> [String: Any] in
+                var value: [String: Any] = [
+                    "role": message.role.rawValue,
+                    "content": try Self.chatContent(message),
+                ]
                 if let id = message.toolCallID { value["tool_call_id"] = id }
                 if !message.toolCalls.isEmpty {
                     value["tool_calls"] = message.toolCalls.map { call in
@@ -108,6 +111,54 @@ public struct AgentChatModelClient: AgentModelClient {
         request.setValue(stream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         return request
+    }
+
+    private static func chatContent(_ message: AgentMessage) throws -> Any {
+        guard !message.attachmentItems.isEmpty else { return message.content }
+        var content: [[String: Any]] = []
+        if !message.content.isEmpty {
+            content.append(["type": "text", "text": message.content])
+        }
+        for attachment in message.attachmentItems {
+            let data = try validatedAttachmentData(attachment)
+            if attachment.kind == .image {
+                content.append([
+                    "type": "image_url",
+                    "image_url": [
+                        "url": "data:\(attachment.mimeType);base64,\(data.base64EncodedString())",
+                        "detail": "auto",
+                    ],
+                ])
+            } else if let text = boundedText(data) {
+                content.append([
+                    "type": "text",
+                    "text": "<attachment name=\"\(attachment.name)\" mime_type=\"\(attachment.mimeType)\">\n\(text)\n</attachment>",
+                ])
+            } else {
+                content.append([
+                    "type": "text",
+                    "text": "[附件：\(attachment.name)，类型 \(attachment.mimeType)。需要时通过 Relay 的附件读取工具处理。]",
+                ])
+            }
+        }
+        return content
+    }
+
+    private static func validatedAttachmentData(_ attachment: AgentMessageAttachment) throws -> Data {
+        guard attachment.localFileURL.isFileURL else { throw AgentRuntimeError.invalidAttachment }
+        let data = try Data(contentsOf: attachment.localFileURL, options: [.mappedIfSafe])
+        guard !data.isEmpty, data.count <= 20 * 1_024 * 1_024 else {
+            throw AgentRuntimeError.invalidAttachment
+        }
+        return data
+    }
+
+    private static func boundedText(_ data: Data) -> String? {
+        guard !data.prefix(8_000).contains(0),
+              let text = String(data: data.prefix(512 * 1_024), encoding: .utf8) else { return nil }
+        return data.count > 512 * 1_024
+            ? text + "\n[附件内容已截断；可通过 Relay 分段读取]"
+            : text
     }
 
     private static func validate(status: Int, errorBody data: Data) throws {

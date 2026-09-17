@@ -3,7 +3,7 @@ type ExtConfig = {
 }
 
 const DEFAULT_API_ORIGIN = 'https://app.jgoool.com'
-const LOCAL_DEVELOPMENT_API_ORIGIN = 'http://127.0.0.1:9080'
+const DEVELOPMENT_API_ORIGIN = DEFAULT_API_ORIGIN
 
 export function isDevelopmentEnvironment(): boolean {
   try {
@@ -26,7 +26,7 @@ export function apiOrigin(): string {
   const ext = wx.getExtConfigSync?.() as ExtConfig | undefined
   return (
     normalizeOrigin(ext?.apiOrigin, development) ??
-    (development ? LOCAL_DEVELOPMENT_API_ORIGIN : DEFAULT_API_ORIGIN)
+    (development ? DEVELOPMENT_API_ORIGIN : DEFAULT_API_ORIGIN)
   )
 }
 

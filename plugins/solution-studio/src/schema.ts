@@ -177,6 +177,11 @@ export interface WorkspaceValidation {
   };
 }
 
+export interface DesignBlockExpectation {
+  id: string;
+  type: DesignContentType;
+}
+
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 
 export function assertIdentifier(value: unknown, label: string): asserts value is string {
@@ -376,6 +381,12 @@ export function validateWorkspace(workspace: SolutionWorkspace): WorkspaceValida
   const designSectionIds = new Set(workspace.design.sections.map((item) => item.id));
   const taskIds = new Set(workspace.executionPlan.tasks.map((item) => item.id));
 
+  if (!workspace.projectProfile?.background.trim()) issues.push({ code: 'project_background_missing', message: '项目基本信息缺少项目背景。', path: 'projectProfile.background', blocking: true });
+  if (!workspace.projectProfile?.overview.trim()) issues.push({ code: 'project_overview_missing', message: '项目基本信息缺少整体描述。', path: 'projectProfile.overview', blocking: true });
+  if (!workspace.projectProfile?.projectType.trim()) issues.push({ code: 'project_type_missing', message: '项目基本信息缺少项目类型。', path: 'projectProfile.projectType', blocking: true });
+  if (!workspace.projectProfile?.deliveryForm.trim()) issues.push({ code: 'project_delivery_form_missing', message: '项目基本信息缺少交付形态。', path: 'projectProfile.deliveryForm', blocking: true });
+  if (!workspace.projectProfile?.targetPlatforms.length) issues.push({ code: 'project_target_platforms_missing', message: '项目基本信息缺少目标平台。', path: 'projectProfile.targetPlatforms', blocking: true });
+
   if (workspace.requirements.items.length === 0) issues.push({ code: 'requirements_empty', message: '至少需要一条结构化需求。', path: 'requirements.items', blocking: true });
   if (workspace.design.sections.length === 0) issues.push({ code: 'design_empty', message: '设计方案至少需要一个章节。', path: 'design.sections', blocking: true });
   if (workspace.design.sections.length > 0 && !workspace.design.blocks?.some((block) => block.type === 'text')) issues.push({ code: 'project_design_missing', message: '项目总体设计缺少技术基线文档。', path: 'design.blocks', blocking: true });
@@ -396,6 +407,7 @@ export function validateWorkspace(workspace: SolutionWorkspace): WorkspaceValida
 
   for (const section of workspace.design.sections) {
     if (!section.blocks?.some((block) => block.type === 'text')) issues.push({ code: 'design_section_document_missing', message: `设计方案 ${section.id} 缺少详细技术文档。`, path: `design.sections.${section.id}.blocks`, blocking: true });
+    if (isDevelopmentProject(workspace.projectProfile?.projectType) && !section.blocks?.some((block) => block.type === 'architecture' || block.type === 'flowchart')) issues.push({ code: 'design_section_visual_missing', message: `开发项目的设计方案 ${section.id} 缺少架构图或流程图。`, path: `design.sections.${section.id}.blocks`, blocking: true });
     for (const id of section.requirementIds) if (!requirementIds.has(id)) issues.push({ code: 'unknown_requirement', message: `设计章节 ${section.id} 引用了不存在的需求 ${id}。`, path: `design.sections.${section.id}`, blocking: true });
     for (const id of section.evidenceIds) if (!evidenceIds.has(id)) issues.push({ code: 'unknown_evidence', message: `设计章节 ${section.id} 引用了不存在的证据 ${id}。`, path: `design.sections.${section.id}`, blocking: true });
   }
@@ -468,6 +480,36 @@ export function validateWorkspace(workspace: SolutionWorkspace): WorkspaceValida
     readyTaskIds,
     traceability: { requirementCount: requirementIds.size, requirementsWithDesign: designedRequirements.size, requirementsWithTasks: plannedRequirements.size }
   };
+}
+
+function isDevelopmentProject(projectType: string | undefined): boolean {
+  const normalized = projectType?.trim().toLowerCase() ?? '';
+  return ['开发', '软件', '游戏', '网站', '应用', 'development', 'software', 'game', 'web', 'app'].some((marker) => normalized.includes(marker));
+}
+
+export function designBlocks(workspace: SolutionWorkspace): DesignContentBlock[] {
+  return [
+    ...(workspace.design.blocks ?? []),
+    ...workspace.design.sections.flatMap((section) => section.blocks ?? [])
+  ];
+}
+
+export function validateDesignBlockExpectations(workspace: SolutionWorkspace, expectations: DesignBlockExpectation[]): ValidationIssue[] {
+  const blocks = new Map(designBlocks(workspace).map((block) => [block.id, block]));
+  const issues: ValidationIssue[] = [];
+  for (const expectation of expectations) {
+    assertIdentifier(expectation.id, 'expectedDesignBlocks.id');
+    if (!['text', 'architecture', 'flowchart', 'ui-svg'].includes(expectation.type)) throw new Error(`Expected design block ${expectation.id} type is invalid.`);
+    const block = blocks.get(expectation.id);
+    if (!block) {
+      issues.push({ code: 'expected_design_block_missing', message: `交付校验未找到设计块 ${expectation.id}。`, path: 'design.blocks', blocking: true });
+    } else if (block.type !== expectation.type) {
+      issues.push({ code: 'expected_design_block_type_mismatch', message: `设计块 ${expectation.id} 应为 ${expectation.type}，实际为 ${block.type}。`, path: `design.blocks.${expectation.id}.type`, blocking: true });
+    } else if (!block.content.trim()) {
+      issues.push({ code: 'expected_design_block_empty', message: `设计块 ${expectation.id} 内容为空。`, path: `design.blocks.${expectation.id}.content`, blocking: true });
+    }
+  }
+  return issues;
 }
 
 export function workspaceSummary(workspace: SolutionWorkspace): SolutionWorkspaceSummary {

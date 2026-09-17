@@ -466,6 +466,21 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             } else {
                 projectType = nil
             }
+            guard let triggerMessage = try await store.message(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                messageID: delivery.messageID
+            ) else { throw AgentGroupChatError.notFound }
+            var triggerAttachments: [ProjectAgentMessageAttachmentPayload] = []
+            for attachment in triggerMessage.attachmentItems {
+                guard let payload = try await store.messageAttachment(
+                    ownerUserID: ownerUserID,
+                    roomID: room.id,
+                    messageID: triggerMessage.id,
+                    attachmentID: attachment.id
+                ) else { throw AgentGroupChatError.storage("message attachment is missing") }
+                triggerAttachments.append(payload)
+            }
             var initial = AgentRunCheckpoint(
                 scope: scope,
                 messages: Self.initialMessages(
@@ -474,7 +489,8 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                     room: room,
                     delivery: delivery,
                     profession: profession,
-                    projectType: projectType
+                    projectType: projectType,
+                    triggerAttachments: triggerAttachments
                 )
             )
             initial.id = runID
@@ -643,7 +659,8 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         room: ProjectAgentRoom,
         delivery: ProjectAgentDelivery,
         profession: LocalAgentProfessionDefinition,
-        projectType: LocalProjectTypeDefinition?
+        projectType: LocalProjectTypeDefinition?,
+        triggerAttachments: [ProjectAgentMessageAttachmentPayload]
     ) -> [AgentMessage] {
         let conversationRole: String
         let conversationContext: String
@@ -712,12 +729,26 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         - root_message_id: \(delivery.rootMessageID)
         - trigger_kind: \(delivery.triggerKind.rawValue)
         - hop_count: \(delivery.hopCount)
+        - attachment_count: \(triggerAttachments.count)
 
         请通过本地 Relay MCP 读取消息并完成回复。
         """
         return [
             .init(role: .system, content: system),
-            .init(role: .user, content: envelope),
+            .init(
+                role: .user,
+                content: envelope,
+                attachments: triggerAttachments.map { payload in
+                    AgentMessageAttachment(
+                        name: payload.attachment.name,
+                        mimeType: payload.attachment.mimeType,
+                        kind: AgentMessageAttachment.Kind(
+                            rawValue: payload.attachment.kind.rawValue
+                        ) ?? .file,
+                        localFileURL: payload.localFileURL
+                    )
+                }
+            ),
         ]
     }
 

@@ -435,9 +435,17 @@ struct ProjectAgentGroupChatView: View {
                             .appFont(.caption2).foregroundStyle(.secondary)
                     }
                 }
-                Text(message.content)
-                    .appFont(.body)
-                    .textSelection(.enabled)
+                if !message.content.isEmpty {
+                    Text(message.content)
+                        .appFont(.body)
+                        .textSelection(.enabled)
+                }
+                if !message.attachmentItems.isEmpty {
+                    AgentMessageAttachmentChips(
+                        attachments: message.attachmentItems,
+                        dataByID: viewModel.attachmentDataByID
+                    )
+                }
                 if !message.mentionedAgentIDs.isEmpty {
                     Text(message.mentionedAgentIDs.compactMap { id in
                         guard let name = viewModel.profilesByID[id]?.draft.name else { return nil }
@@ -481,7 +489,14 @@ struct ProjectAgentGroupChatView: View {
                     }
                 }
             }
-            HStack(alignment: .bottom, spacing: 10) {
+            AgentChatComposerView(
+                text: $viewModel.draftMessage,
+                attachments: $viewModel.attachments,
+                attachmentError: $viewModel.attachmentError,
+                isSending: viewModel.isSending,
+                placeholder: "输入消息；不选择 @ 时交给默认 Agent，也可粘贴图片、文档和长文本…",
+                onSend: { Task { await viewModel.sendMessage() } }
+            ) {
                 Menu {
                     if viewModel.activeMembers.isEmpty {
                         Text("先创建 Agent")
@@ -499,30 +514,10 @@ struct ProjectAgentGroupChatView: View {
                     }
                 } label: {
                     Image(systemName: "at")
-                        .frame(width: 28, height: 28)
                 }
                 .menuStyle(.borderlessButton)
                 .disabled(viewModel.activeMembers.isEmpty)
-
-                TextField("输入消息；不选择 @ 时交给默认 Agent", text: $viewModel.draftMessage, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...6)
-                    .onSubmit { Task { await viewModel.sendMessage() } }
-
-                Button {
-                    Task { await viewModel.sendMessage() }
-                } label: {
-                    if viewModel.isSending {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "arrow.up.circle.fill").font(.title2)
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(
-                    viewModel.isSending
-                        || viewModel.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
+                .help("选择要 @ 的 Agent；不选择时交给默认 Agent")
             }
         }
         .padding(12)

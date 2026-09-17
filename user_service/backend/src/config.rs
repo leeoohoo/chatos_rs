@@ -54,6 +54,7 @@ pub struct AppConfig {
     pub wechat_mini_program_identity_hash_secret: Option<String>,
     pub wechat_mini_program_api_base_url: String,
     pub wechat_mini_program_env_version: String,
+    pub wechat_mini_program_development_login_enabled: bool,
     pub wechat_mini_program_request_timeout_ms: i64,
     pub wechat_mini_program_bind_ticket_ttl_seconds: i64,
     pub wechat_mini_program_client_session_ttl_seconds: i64,
@@ -190,6 +191,10 @@ impl AppConfig {
             )
             .unwrap_or_else(|| "release".to_string())
             .to_ascii_lowercase(),
+            wechat_mini_program_development_login_enabled: optional_config_center_bool(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED",
+            )?
+            .unwrap_or(false),
             wechat_mini_program_request_timeout_ms: optional_config_center_i64(
                 "USER_SERVICE_WECHAT_MINI_PROGRAM_REQUEST_TIMEOUT_MS",
             )?
@@ -370,10 +375,17 @@ fn require_http_endpoint(key: &str, value: &str) -> Result<(), String> {
 }
 
 fn require_config_center_bool(key: &str) -> Result<bool, String> {
-    match require_config_center_text(key)?
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    parse_bool(key, require_config_center_text(key)?.as_str())
+}
+
+fn optional_config_center_bool(key: &str) -> Result<Option<bool>, String> {
+    optional_config_center_text(key)
+        .map(|value| parse_bool(key, value.as_str()))
+        .transpose()
+}
+
+fn parse_bool(key: &str, value: &str) -> Result<bool, String> {
+    match value.to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Ok(true),
         "false" | "0" | "no" | "off" => Ok(false),
         _ => Err(format!("invalid {key}: expected true/false")),

@@ -7,8 +7,11 @@ import SQLite3
 /// queue remain usable without the network, Memory Engine, Plugin Management or Codex CLI.
 public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChatRunStoring {
     private nonisolated(unsafe) var database: OpaquePointer?
+    private let attachmentsRootURL: URL
 
     public init(databaseURL: URL) throws {
+        attachmentsRootURL = databaseURL.deletingLastPathComponent()
+            .appendingPathComponent("AgentGroupChatAttachments", isDirectory: true)
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -1302,7 +1305,9 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(roomID, field: "roomID")
         try draft.validate()
         try limits.validate()
-        return try transaction {
+        var attachmentDirectoryToRemove: URL?
+        do {
+            return try transaction {
             guard let room = try readRoom(ownerUserID: ownerUserID, roomID: roomID),
                   room.status == .active else {
                 throw AgentGroupChatError.notFound
@@ -1353,12 +1358,22 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 )
             }
 
+            if !draft.attachmentItems.isEmpty {
+                attachmentDirectoryToRemove = attachmentDirectoryURL(messageID: messageID)
+            }
+            let persistedAttachments = try persistMessageAttachments(
+                ownerUserID: ownerUserID,
+                messageID: messageID,
+                drafts: draft.attachmentItems
+            )
+
             let message = ProjectAgentMessage(
                 id: messageID,
                 ownerUserID: ownerUserID,
                 roomID: roomID,
                 draft: draft,
                 rootMessageID: rootMessageID,
+                attachments: persistedAttachments,
                 createdAtUnixMs: now
             )
             let candidates: [String]
@@ -1436,7 +1451,57 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 deliveries: deliveries,
                 routingStopReason: stopReason
             )
+            }
+        } catch {
+            if let attachmentDirectoryToRemove {
+                try? FileManager.default.removeItem(at: attachmentDirectoryToRemove)
+            }
+            throw error
         }
+    }
+
+    public func messageAttachment(
+        ownerUserID: String,
+        roomID: String,
+        messageID: String,
+        attachmentID: String
+    ) throws -> ProjectAgentMessageAttachmentPayload? {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        try AgentGroupChatValidation.identifier(messageID, field: "messageID")
+        try AgentGroupChatValidation.identifier(attachmentID, field: "attachmentID")
+        return try query(
+            """
+            SELECT a.id, a.name, a.mime_type, a.size_bytes, a.kind, a.origin, a.relative_path
+            FROM project_agent_message_attachments a
+            JOIN project_agent_messages m
+              ON m.owner_user_id = a.owner_user_id AND m.id = a.message_id
+            WHERE a.owner_user_id = ? AND a.message_id = ? AND a.id = ? AND m.room_id = ?
+            """,
+            [.text(ownerUserID), .text(messageID), .text(attachmentID), .text(roomID)]
+        ) { statement in
+            guard let kind = ConversationAttachmentKind(rawValue: Self.string(statement, 4)),
+                  let origin = ConversationAttachmentOrigin(rawValue: Self.string(statement, 5)) else {
+                throw AgentGroupChatError.storage("invalid message attachment")
+            }
+            let attachment = ProjectAgentMessageAttachment(
+                id: Self.string(statement, 0),
+                name: Self.string(statement, 1),
+                mimeType: Self.string(statement, 2),
+                size: Int(sqlite3_column_int64(statement, 3)),
+                kind: kind,
+                origin: origin
+            )
+            let relativePath = Self.string(statement, 6)
+            let fileURL = try self.attachmentFileURL(relativePath: relativePath)
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                throw AgentGroupChatError.storage("message attachment file is missing")
+            }
+            return ProjectAgentMessageAttachmentPayload(
+                attachment: attachment,
+                localFileURL: fileURL
+            )
+        }.first
     }
 
     public func listMessages(
@@ -2386,6 +2451,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             """,
             [.text(ownerUserID), .text(messageID)]
         ) { Self.string($0, 0) }
+        let attachments = try readMessageAttachments(
+            ownerUserID: ownerUserID,
+            messageID: messageID
+        )
         let draft = ProjectAgentMessageDraft(
             senderKind: senderKind,
             senderID: Self.string(statement, 4),
@@ -2403,8 +2472,105 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             roomID: Self.string(statement, 2),
             draft: draft,
             rootMessageID: Self.string(statement, 9),
+            attachments: attachments,
             createdAtUnixMs: sqlite3_column_int64(statement, 11)
         )
+    }
+
+    private func readMessageAttachments(
+        ownerUserID: String,
+        messageID: String
+    ) throws -> [ProjectAgentMessageAttachment] {
+        try query(
+            """
+            SELECT id, name, mime_type, size_bytes, kind, origin
+            FROM project_agent_message_attachments
+            WHERE owner_user_id = ? AND message_id = ?
+            ORDER BY position
+            """,
+            [.text(ownerUserID), .text(messageID)]
+        ) { statement in
+            guard let kind = ConversationAttachmentKind(rawValue: Self.string(statement, 4)),
+                  let origin = ConversationAttachmentOrigin(rawValue: Self.string(statement, 5)) else {
+                throw AgentGroupChatError.storage("invalid message attachment")
+            }
+            return ProjectAgentMessageAttachment(
+                id: Self.string(statement, 0),
+                name: Self.string(statement, 1),
+                mimeType: Self.string(statement, 2),
+                size: Int(sqlite3_column_int64(statement, 3)),
+                kind: kind,
+                origin: origin
+            )
+        }
+    }
+
+    private func persistMessageAttachments(
+        ownerUserID: String,
+        messageID: String,
+        drafts: [ProjectAgentMessageAttachmentDraft]
+    ) throws -> [ProjectAgentMessageAttachment] {
+        guard !drafts.isEmpty else { return [] }
+        let directory = attachmentDirectoryURL(messageID: messageID)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        var attachments: [ProjectAgentMessageAttachment] = []
+        for (position, draft) in drafts.enumerated() {
+            let attachmentID = UUID().uuidString.lowercased()
+            let relativePath = "\(messageID)/\(attachmentID)"
+            let fileURL = try attachmentFileURL(relativePath: relativePath)
+            try draft.data.write(to: fileURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: fileURL.path
+            )
+            let attachment = ProjectAgentMessageAttachment(
+                id: attachmentID,
+                name: draft.name,
+                mimeType: draft.mimeType,
+                size: draft.data.count,
+                kind: draft.kind,
+                origin: draft.origin
+            )
+            try execute(
+                """
+                INSERT INTO project_agent_message_attachments (
+                    owner_user_id, message_id, id, position, name, mime_type,
+                    size_bytes, kind, origin, relative_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    .text(ownerUserID), .text(messageID), .text(attachmentID),
+                    .integer(Int64(position)), .text(draft.name), .text(draft.mimeType),
+                    .integer(Int64(draft.data.count)), .text(draft.kind.rawValue),
+                    .text(draft.origin.rawValue), .text(relativePath),
+                ]
+            )
+            attachments.append(attachment)
+        }
+        return attachments
+    }
+
+    private func attachmentDirectoryURL(messageID: String) -> URL {
+        attachmentsRootURL.appendingPathComponent(messageID, isDirectory: true)
+    }
+
+    private func attachmentFileURL(relativePath: String) throws -> URL {
+        guard !relativePath.isEmpty,
+              !relativePath.hasPrefix("/"),
+              !relativePath.split(separator: "/").contains("..") else {
+            throw AgentGroupChatError.storage("invalid message attachment path")
+        }
+        let root = attachmentsRootURL.standardizedFileURL
+        let candidate = root.appendingPathComponent(relativePath).standardizedFileURL
+        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        guard candidate.path.hasPrefix(prefix) else {
+            throw AgentGroupChatError.storage("invalid message attachment path")
+        }
+        return candidate
     }
 
     private func readProposal(_ statement: OpaquePointer) throws -> LocalAgentCreationProposal {
@@ -2756,6 +2922,23 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 REFERENCES local_agent_profiles(owner_user_id, id)
         );
 
+        CREATE TABLE IF NOT EXISTS project_agent_message_attachments (
+            owner_user_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            position INTEGER NOT NULL CHECK(position >= 0),
+            name TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL CHECK(size_bytes > 0),
+            kind TEXT NOT NULL CHECK(kind IN ('image', 'file', 'audio')),
+            origin TEXT NOT NULL CHECK(origin IN ('file', 'pastedImage', 'pastedDocument', 'pastedText')),
+            relative_path TEXT NOT NULL,
+            PRIMARY KEY(owner_user_id, id),
+            UNIQUE(owner_user_id, message_id, position),
+            FOREIGN KEY(owner_user_id, message_id)
+                REFERENCES project_agent_messages(owner_user_id, id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS project_agent_read_cursors (
             owner_user_id TEXT NOT NULL,
             room_id TEXT NOT NULL,
@@ -2929,6 +3112,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (5);
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (6);
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (7);
+        INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (10);
         COMMIT;
         """
 
@@ -2975,6 +3159,9 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         )
         try execute(
             "INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (9)"
+        )
+        try execute(
+            "INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (10)"
         )
     }
 }

@@ -406,7 +406,6 @@ pub struct WeChatMiniProgramLoginRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(debug_assertions)]
 pub struct WeChatMiniProgramDevelopmentLoginRequest {
     pub username: String,
     pub password: String,

@@ -357,6 +357,16 @@ async fn completed_run_persists_success_when_report_completed() {
         .expect("get parent")
         .expect("parent");
     assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+    assert_eq!(
+        saved_parent.task_tool_state.outcome_items[0].kind,
+        "summary"
+    );
+    assert_eq!(saved_parent.task_tool_state.outcome_items[0].text, "done");
+    assert!(saved_parent
+        .task_tool_state
+        .outcome_items
+        .iter()
+        .any(|item| item.kind == "verification" && item.text == "focused test passed"));
 }
 
 #[tokio::test]

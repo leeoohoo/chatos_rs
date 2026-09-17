@@ -6,6 +6,7 @@ function completeWorkspace() {
   const workspace = createSolutionWorkspace('登录改造', 'existing-project', 'login-redesign');
   const now = new Date().toISOString();
   workspace.revision = 1;
+  workspace.projectProfile = { background: '现有登录流程需要提升稳定性。', overview: '改造会话刷新与失败回退。', projectType: '软件开发', deliveryForm: 'Web 应用', targetPlatforms: ['Web'] };
   workspace.requirements = {
     status: 'approved', revision: 1, summary: '改进登录可靠性', goals: ['稳定登录'], users: ['注册用户'], inScope: ['会话刷新'], outOfScope: ['第三方登录'], constraints: [], assumptions: [], openQuestions: [],
     evidence: [{ id: 'E-001', label: '认证入口', source: 'src/auth.ts', confidence: 'verified' }],
@@ -17,7 +18,7 @@ function completeWorkspace() {
       { id: 'D-000-B-001', type: 'text', title: '技术基线', content: 'TypeScript 与 Web 运行时。' },
       { id: 'D-000-B-002', type: 'architecture', title: '总体架构', content: '<svg viewBox="0 0 400 200"><text x="20" y="30">Overall</text></svg>' }
     ],
-    sections: [{ id: 'D-001', title: '刷新协调器', body: '统一刷新并合并并发请求。', requirementIds: ['R-001'], evidenceIds: ['E-001'], blocks: [{ id: 'D-001-B-001', type: 'text', title: '详细设计', content: '协调器接口与失败处理。' }] }],
+    sections: [{ id: 'D-001', title: '刷新协调器', body: '统一刷新并合并并发请求。', requirementIds: ['R-001'], evidenceIds: ['E-001'], blocks: [{ id: 'D-001-B-001', type: 'text', title: '详细设计', content: '协调器接口与失败处理。' }, { id: 'D-001-B-002', type: 'flowchart', title: '刷新流程', content: '<svg viewBox="0 0 400 200"><text x="20" y="30">Refresh flow</text></svg>' }] }],
     decisions: [], risks: ['刷新失败需要退出'], validationStrategy: ['并发刷新测试'], updatedAt: now
   };
   workspace.executionPlan = {

@@ -45,20 +45,26 @@ Page({
     if (!this.data.developmentMode || this.data.state === 'development_login') return
     const username = this.data.developmentUsername.trim()
     if (!username || !this.data.developmentPassword) {
-      this.setData({ error: '请输入本地 ChatOS 的用户名和密码' })
+      this.setData({ error: '请输入 ChatOS 服务器的用户名和密码' })
       return
     }
     this.setData({ state: 'development_login', error: '' })
     try {
       const result = await authService.developmentLogin(username, this.data.developmentPassword)
       if (result.status !== 'authenticated') {
-        throw new Error('本地测试登录未返回有效会话')
+        throw new Error('服务器测试登录未返回有效会话')
       }
       wx.switchTab({ url: '/pages/devices/index' })
     } catch (error) {
+      const message =
+        error instanceof ApiError && error.statusCode === 404
+          ? '服务器尚未开启小程序测试通道，请部署最新版 User Service 并启用测试登录'
+          : error instanceof Error
+            ? error.message
+            : '服务器测试登录失败'
       this.setData({
         state: 'ready',
-        error: error instanceof Error ? error.message : '本地测试登录失败',
+        error: message,
       })
     }
   },

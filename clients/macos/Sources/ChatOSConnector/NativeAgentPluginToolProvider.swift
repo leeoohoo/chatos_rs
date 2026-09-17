@@ -162,14 +162,17 @@ extension NativeLocalConnectorService {
     ) throws -> any AgentToolProvider {
         guard state.user?.id == ownerUserID,
               runContext.ownerUserID == ownerUserID,
-              projectContext.projectID == runContext.projectID else {
+              projectContext.projectID == runContext.projectID,
+              let projectRoot = projectContext.projectRoot else {
             throw NativePluginRuntimeError.invalidRequest("本地 Agent 能力目录与当前账户或项目不匹配")
         }
+        let resolvedProject = try resolveProjectPath(projectRoot)
         return NativeAgentCapabilityToolProvider(
             service: self,
             ownerUserID: ownerUserID,
             runContext: runContext,
             projectContext: projectContext,
+            resolvedProject: resolvedProject,
             installedPlugins: try installedAgentPlugins(ownerUserID: ownerUserID)
         )
     }
@@ -255,10 +258,10 @@ enum LocalAgentCapabilityDiscoverySkill {
     static let instructions = """
     <skill name="chatos-capability-discovery">
     当任务需要 Relay 之外的本机工具、项目文件或 Plugin 时，按以下顺序工作：
-    1. 使用 capability_search，用简短任务关键词搜索能力；不要为了探索而列出全部 Plugin。
-    2. 只对最匹配的一个 plugin_option 调用 capability_describe，读取它在本轮可用的工具和参数。
+    1. 使用 capability_search，用简短任务关键词搜索能力；不要为了探索而列出全部能力。
+    2. 只对最匹配的一个 plugin_option 调用 capability_describe，读取它在本轮可用的工具和参数。项目团队可在这里发现 ChatOS 内置的项目文件与终端 MCP；独立私聊不会获得项目能力。
     3. 使用 capability_invoke 调用选中的 tool_option。只有需要另一类能力时才继续搜索。
-    4. Plugin、项目 ID、项目根目录和本机授权由 ChatOS 内部绑定；不得猜测、索要或回显这些内部值。
+    4. 能力、项目 ID、项目根目录和本机授权由 ChatOS 内部绑定；不得猜测、索要或回显这些内部值。
     5. 文件操作默认限定在当前项目；写入、删除、计费或其他高风险动作仍可能要求 Human 确认。
     </skill>
     """
@@ -269,9 +272,16 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     static let describeToolName = "capability_describe"
     static let invokeToolName = "capability_invoke"
 
-    private struct PluginOption: Sendable {
+    private enum CapabilityKind: Sendable {
+        case builtIn
+        case plugin(NativeInstalledAgentPlugin)
+    }
+
+    private struct CapabilityOption: Sendable {
         let token: String
-        let plugin: NativeInstalledAgentPlugin
+        let name: String
+        let description: String
+        let kind: CapabilityKind
     }
 
     private struct SearchArguments: Decodable {
@@ -316,7 +326,8 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private let ownerUserID: String
     private let runContext: LocalAgentChatRunContext
     private let projectContext: LocalConnectorPluginApplicationContext
-    private let options: [PluginOption]
+    private let resolvedProject: NativeResolvedProjectPath
+    private let options: [CapabilityOption]
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
 
@@ -325,14 +336,28 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         ownerUserID: String,
         runContext: LocalAgentChatRunContext,
         projectContext: LocalConnectorPluginApplicationContext,
+        resolvedProject: NativeResolvedProjectPath,
         installedPlugins: [NativeInstalledAgentPlugin]
     ) {
         self.service = service
         self.ownerUserID = ownerUserID
         self.runContext = runContext
         self.projectContext = projectContext
-        self.options = installedPlugins.enumerated().map { offset, plugin in
-            .init(token: "plugin_\(offset + 1)", plugin: plugin)
+        self.resolvedProject = resolvedProject
+        self.options = [
+            .init(
+                token: "builtin_1",
+                name: "ChatOS 项目文件与终端",
+                description: "读取和搜索当前项目文件、分批提交文件修改，并在当前项目中运行终端命令。真实项目路径由客户端绑定。",
+                kind: .builtIn
+            ),
+        ] + installedPlugins.enumerated().map { offset, plugin in
+            .init(
+                token: "plugin_\(offset + 1)",
+                name: plugin.displayName,
+                description: plugin.description,
+                kind: .plugin(plugin)
+            )
         }
     }
 
@@ -367,13 +392,18 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             }
             let terms = query.lowercased().split(whereSeparator: { $0.isWhitespace }).map(String.init)
             let matches = options.filter { option in
-                let searchable = "\(option.plugin.displayName) \(option.plugin.description)".lowercased()
+                let builtInKeywords = if case .builtIn = option.kind {
+                    " 文件 读写 代码 终端 shell command filesystem"
+                } else {
+                    ""
+                }
+                let searchable = "\(option.name) \(option.description)\(builtInKeywords)".lowercased()
                 return terms.contains(where: searchable.contains)
             }.prefix(12).map { option in
                 PluginSummary(
                     pluginOption: option.token,
-                    name: option.plugin.displayName,
-                    description: option.plugin.description
+                    name: option.name,
+                    description: option.description
                 )
             }
             return try outcome(SearchResponse(matches: Array(matches)))
@@ -401,7 +431,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             toolNamesByOption[option.token] = names
             return try outcome(DescribeResponse(
                 pluginOption: option.token,
-                name: option.plugin.displayName,
+                name: option.name,
                 tools: tools
             ))
 
@@ -431,14 +461,24 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         }
     }
 
-    private func registry(for option: PluginOption) async throws -> AgentToolProviderRegistry {
+    private func registry(for option: CapabilityOption) async throws -> AgentToolProviderRegistry {
         if let existing = registries[option.token] { return existing }
-        let providers = try await service.makeAgentPluginToolProviders(
-            ownerUserID: ownerUserID,
-            runContext: runContext,
-            pluginIDs: [option.plugin.id],
-            projectContext: projectContext
-        )
+        let providers: [any AgentToolProvider]
+        switch option.kind {
+        case .builtIn:
+            providers = [NativeAgentBuiltinToolProvider(
+                service: service,
+                runContext: runContext,
+                resolvedProject: resolvedProject
+            )]
+        case let .plugin(plugin):
+            providers = try await service.makeAgentPluginToolProviders(
+                ownerUserID: ownerUserID,
+                runContext: runContext,
+                pluginIDs: [plugin.id],
+                projectContext: projectContext
+            )
+        }
         let registry = try await AgentToolProviderRegistry(providers: providers)
         registries[option.token] = registry
         return registry
@@ -463,6 +503,175 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
 
     private func redact(_ value: String) -> String {
         value.replacingOccurrences(of: runContext.projectID, with: "[internal-project]")
+    }
+}
+
+private struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
+    private let service: NativeLocalConnectorService
+    private let runContext: LocalAgentChatRunContext
+    private let resolvedProject: NativeResolvedProjectPath
+
+    init(
+        service: NativeLocalConnectorService,
+        runContext: LocalAgentChatRunContext,
+        resolvedProject: NativeResolvedProjectPath
+    ) {
+        self.service = service
+        self.runContext = runContext
+        self.resolvedProject = resolvedProject
+    }
+
+    func definitions() async throws -> [AgentToolDefinition] {
+        try Self.nativeDefinitions.map { value in
+            guard let object = value.jsonObject,
+                  let name = object["name"]?.jsonString,
+                  let description = object["description"]?.jsonString,
+                  let schema = object["inputSchema"] else {
+                throw NativePluginRuntimeError.invalidMCPResponse("内置 MCP 工具定义无效")
+            }
+            let effect: AgentToolDefinition.Effect
+            if NativeMCPCodeWriteStore.toolNames.contains(name) {
+                effect = .write
+            } else if NativeMCPTerminalStore.toolNames.contains(name) {
+                effect = .terminal
+            } else {
+                effect = .readOnly
+            }
+            return .init(
+                name: name,
+                description: description,
+                schema: try JSONEncoder().encode(schema),
+                effect: effect
+            )
+        }
+    }
+
+    func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        do {
+            let value = try JSONDecoder().decode(
+                NativeJSONValue.self,
+                from: Data(call.arguments.utf8)
+            )
+            guard case let .object(arguments) = value else {
+                return .failure("内置 MCP 工具参数必须是 JSON 对象。")
+            }
+            let result = try await service.executeAgentBuiltinTool(
+                callID: call.id,
+                name: call.name,
+                arguments: arguments,
+                runContext: runContext,
+                resolvedProject: resolvedProject
+            )
+            return .init(result.canonicalJSONString)
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    private static let nativeDefinitions = NativeMCPCodeReadTools.toolDefinitions
+        + NativeMCPCodeWriteStore.toolDefinitions
+        + NativeMCPTerminalStore.toolDefinitions
+}
+
+extension NativeLocalConnectorService {
+    func executeAgentBuiltinTool(
+        callID: String,
+        name: String,
+        arguments: [String: NativeJSONValue],
+        runContext: LocalAgentChatRunContext,
+        resolvedProject: NativeResolvedProjectPath
+    ) async throws -> NativeJSONValue {
+        guard runContext.ownerUserID == state.user?.id,
+              !runContext.projectID.hasPrefix("direct:") else {
+            throw NativePluginRuntimeError.invalidRequest("当前 Agent 会话没有绑定项目")
+        }
+        let projectRoot = resolvedProject.absoluteURL
+        if NativeMCPCodeReadTools.toolDefinitions.contains(where: {
+            $0.jsonObject?["name"]?.jsonString == name
+        }) {
+            return try await Task.detached {
+                try NativeMCPCodeReadTools(
+                    workspace: resolvedProject.workspace,
+                    projectRoot: projectRoot,
+                    requestCWD: nil,
+                    defaultToolRoot: nil
+                ).call(name: name, arguments: arguments)
+            }.value
+        }
+        if NativeMCPCodeWriteStore.toolNames.contains(name) {
+            if name == "commit_edit_session" {
+                let decision = await approvalDecision(
+                    requestID: callID,
+                    command: "agent_project_file_commit",
+                    arguments: ["提交当前 Agent 暂存的项目文件修改"],
+                    cwd: projectRoot,
+                    projectRoot: projectRoot,
+                    source: "local-agent-builtin-mcp",
+                    risk: .init(level: "medium", reason: "Agent 将修改当前项目中的文件。"),
+                    approvalScopeKey: "agent-project-files",
+                    workspaceID: resolvedProject.workspace.id
+                )
+                guard case .approve = decision else {
+                    throw NativePluginRuntimeError.invalidRequest("用户未批准 Agent 修改项目文件")
+                }
+            }
+            return try await mcpCodeWriteStore.call(
+                name: name,
+                arguments: arguments,
+                scope: .init(
+                    workspaceID: resolvedProject.workspace.id,
+                    sessionID: runContext.roomID,
+                    runID: runContext.runID
+                ),
+                projectRoot: projectRoot
+            )
+        }
+        guard NativeMCPTerminalStore.toolNames.contains(name) else {
+            throw NativePluginRuntimeError.invalidRequest("当前项目没有这个内置 MCP 工具")
+        }
+        if name != "execute_command" {
+            return try await mcpTerminalStore.call(
+                name: name,
+                arguments: arguments,
+                projectRoot: projectRoot
+            )
+        }
+        let command = arguments["common"]?.jsonString
+            ?? arguments["command"]?.jsonString
+            ?? ""
+        guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NativePluginRuntimeError.invalidRequest("终端命令不能为空")
+        }
+        let cwd = try resolveDirectory(
+            arguments["path"]?.jsonString ?? ".",
+            relativeTo: projectRoot,
+            workspace: resolvedProject.workspace
+        )
+        let shellArguments = ["-lc", command]
+        let risk = NativeApprovalRiskEvaluator.evaluate(
+            command: "/bin/zsh",
+            arguments: shellArguments
+        )
+        let decision = await approvalDecision(
+            requestID: callID,
+            command: "/bin/zsh",
+            arguments: shellArguments,
+            cwd: cwd,
+            projectRoot: projectRoot,
+            source: "local-agent-builtin-mcp",
+            risk: risk,
+            approvalScopeKey: "agent-project-terminal",
+            workspaceID: resolvedProject.workspace.id
+        )
+        guard case .approve = decision else {
+            throw NativePluginRuntimeError.invalidRequest("用户未批准 Agent 执行终端命令")
+        }
+        return try await mcpTerminalStore.execute(
+            command: command,
+            cwd: cwd,
+            projectRoot: projectRoot,
+            background: arguments["background"]?.jsonBool ?? false
+        )
     }
 }
 

@@ -93,6 +93,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let listMembersToolName = "chat_list_members"
     public static let readUnreadToolName = "chat_read_unread"
     public static let readMessagesToolName = "chat_read_messages"
+    public static let readAttachmentToolName = "chat_read_attachment"
     public static let markReadToolName = "chat_mark_read"
     public static let openDirectToolName = "chat_direct_open"
     public static let sendDirectToolName = "chat_direct_send"
@@ -155,6 +156,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await readUnread(call)
         case Self.readMessagesToolName:
             return try await readMessages(call)
+        case Self.readAttachmentToolName:
+            return try await readAttachment(call)
         case Self.markReadToolName:
             return try await markRead(call)
         case Self.openDirectToolName:
@@ -283,6 +286,50 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             limit: limit
         )
         return try Self.outcome(page)
+    }
+
+    private func readAttachment(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let messageID = try Self.requiredString(arguments, key: "message_id")
+        let attachmentID = try Self.requiredString(arguments, key: "attachment_id")
+        let offset = max(0, Int(try Self.optionalInteger(arguments, key: "offset") ?? 0))
+        let limit = min(
+            12_000,
+            max(1, Int(try Self.optionalInteger(arguments, key: "limit") ?? 12_000))
+        )
+        guard let payload = try await store.messageAttachment(
+            ownerUserID: context.ownerUserID,
+            roomID: context.roomID,
+            messageID: messageID,
+            attachmentID: attachmentID
+        ) else { throw AgentGroupChatError.notFound }
+        let data = try Data(contentsOf: payload.localFileURL, options: [.mappedIfSafe])
+        var response: [String: NativeJSONValue] = [
+            "message_id": .string(messageID),
+            "attachment_id": .string(payload.attachment.id),
+            "name": .string(payload.attachment.name),
+            "mime_type": .string(payload.attachment.mimeType),
+            "kind": .string(payload.attachment.kind.rawValue),
+            "size": .number(Double(payload.attachment.size)),
+        ]
+        if !data.prefix(8_000).contains(0), let text = String(data: data, encoding: .utf8) {
+            let characters = Array(text)
+            let start = min(offset, characters.count)
+            let end = min(start + limit, characters.count)
+            response["content"] = .string(String(characters[start..<end]))
+            response["offset"] = .number(Double(start))
+            response["next_offset"] = end < characters.count ? .number(Double(end)) : .null
+            response["has_more"] = .bool(end < characters.count)
+        } else {
+            response["content"] = .null
+            response["multimodal_on_trigger"] = .bool(messageID == context.triggerMessageID)
+            response["note"] = .string(
+                messageID == context.triggerMessageID
+                    ? "该二进制附件已作为当前触发消息的多模态输入提供给模型。"
+                    : "该二进制附件不能作为文本读取；请让 Human 在新消息中重新附带，或使用匹配的本机 Plugin。"
+            )
+        }
+        return try Self.outcome(response)
     }
 
     private func markRead(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -638,6 +685,11 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             name: readMessagesToolName,
             description: "使用稳定消息 ID 游标分页读取当前项目群聊记录；响应中的 next_cursor_message_id 可用于下一页。",
             schema: Data(#"{"type":"object","properties":{"after_message_id":{"type":"string","minLength":1,"maxLength":512},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: readAttachmentToolName,
+            description: "按消息和附件 ID 读取当前会话附件。文本可用 offset/limit 分段读取；当前触发消息中的图片或 PDF 会由客户端直接作为多模态输入交给模型。",
+            schema: Data(#"{"type":"object","properties":{"message_id":{"type":"string","minLength":1,"maxLength":512},"attachment_id":{"type":"string","minLength":1,"maxLength":512},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}},"required":["message_id","attachment_id"],"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: markReadToolName,

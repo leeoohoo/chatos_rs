@@ -150,7 +150,14 @@ public actor AgentResponsesModelClient: AgentModelClient {
         for message in messages {
             switch message.role {
             case .system, .user:
-                items.append(["role": message.role.rawValue, "content": message.content])
+                if message.attachmentItems.isEmpty {
+                    items.append(["role": message.role.rawValue, "content": message.content])
+                } else {
+                    items.append([
+                        "role": message.role.rawValue,
+                        "content": try inputContent(message),
+                    ])
+                }
             case .assistant:
                 if let raw = message.responseOutputJSON {
                     guard let output = try JSONSerialization.jsonObject(with: raw) as? [[String: Any]] else {
@@ -194,6 +201,61 @@ public actor AgentResponsesModelClient: AgentModelClient {
         }
         guard !items.isEmpty else { throw AgentRuntimeError.invalidResponse }
         return items
+    }
+
+    private static func inputContent(_ message: AgentMessage) throws -> [[String: Any]] {
+        var content: [[String: Any]] = []
+        if !message.content.isEmpty {
+            content.append(["type": "input_text", "text": message.content])
+        }
+        for attachment in message.attachmentItems {
+            let data = try validatedAttachmentData(attachment)
+            let dataURL = "data:\(attachment.mimeType);base64,\(data.base64EncodedString())"
+            switch attachment.kind {
+            case .image:
+                content.append([
+                    "type": "input_image",
+                    "image_url": dataURL,
+                    "detail": "auto",
+                ])
+            case .file where attachment.mimeType == "application/pdf":
+                content.append([
+                    "type": "input_file",
+                    "filename": attachment.name,
+                    "file_data": dataURL,
+                ])
+            case .file, .audio:
+                if let text = boundedText(data) {
+                    content.append([
+                        "type": "input_text",
+                        "text": "<attachment name=\"\(attachment.name)\" mime_type=\"\(attachment.mimeType)\">\n\(text)\n</attachment>",
+                    ])
+                } else {
+                    content.append([
+                        "type": "input_text",
+                        "text": "[附件：\(attachment.name)，类型 \(attachment.mimeType)。需要时通过 Relay 的附件读取工具处理。]",
+                    ])
+                }
+            }
+        }
+        return content
+    }
+
+    private static func validatedAttachmentData(_ attachment: AgentMessageAttachment) throws -> Data {
+        guard attachment.localFileURL.isFileURL else { throw AgentRuntimeError.invalidAttachment }
+        let data = try Data(contentsOf: attachment.localFileURL, options: [.mappedIfSafe])
+        guard !data.isEmpty, data.count <= 20 * 1_024 * 1_024 else {
+            throw AgentRuntimeError.invalidAttachment
+        }
+        return data
+    }
+
+    private static func boundedText(_ data: Data) -> String? {
+        guard !data.prefix(8_000).contains(0),
+              let text = String(data: data.prefix(512 * 1_024), encoding: .utf8) else { return nil }
+        return data.count > 512 * 1_024
+            ? text + "\n[附件内容已截断；可通过 Relay 分段读取]"
+            : text
     }
 
     private static func responseTool(_ tool: AgentToolDefinition) throws -> [String: Any] {

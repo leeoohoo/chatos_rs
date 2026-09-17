@@ -32,7 +32,7 @@ use super::task_process_log::{
 use super::{summarized_report_content, RunService};
 use crate::models::{
     now_rfc3339, ModelConfigRecord, StartTaskRunRequest, TaskRecord, TaskRunEventRecord,
-    TaskRunRecord, TaskRunStatus, TaskStatus,
+    TaskRunRecord, TaskRunStatus, TaskStatus, TaskToolOutcomeItem,
 };
 use callbacks::runtime_state::TaskRunnerLifecycleState;
 

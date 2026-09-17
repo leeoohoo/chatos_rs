@@ -14,7 +14,10 @@ Build the active ChatOS project's single coherent plan whose requirements, desig
 3. Use `solution-design` only after the requirement set is coherent enough to design against.
 4. Use `solution-execution-plan` to derive tasks and explicit `dependsOn` relationships from the approved direction.
 5. Use `solution-validation` before presenting the result. Resolve blocking structural issues; surface unresolved product questions instead of inventing answers.
-6. Report the saved artifact honestly: list the document statuses and concrete requirement/design/task counts, and say whether SVG previews were actually rendered. A generation turn finishing is not the same as the project plan being approved or its execution tasks being completed.
+6. Call `solution_finalize` after the last mutation, using the current workspace revision, the actual delivery scope, and every visual block promised in this request. This re-reads the canonical workspace, verifies the named blocks, and registers the internal Markdown artifact. A planning mutation leaves a pending completion requirement; do not report success until finalization returns the matching completion proof.
+7. Report the saved artifact honestly: list the document statuses and concrete requirement/design/task counts, and say whether SVG previews were actually rendered. A generation turn finishing is not the same as the project plan being approved or its execution tasks being completed.
+
+The Skills define the happy path; the completion proof is only a guard against accidental false success. Do not aim merely to satisfy validation. Aim to leave the user with a readable, substantive plan whose promised content is already visible inside Solution Studio.
 
 Read [references/workspace-schema.md](references/workspace-schema.md) before writing a complete workspace document.
 
@@ -30,3 +33,5 @@ Read [references/workspace-schema.md](references/workspace-schema.md) before wri
 - Treat `tasks[].dependsOn` as the only source of execution order. Never encode order only in prose or canvas positions.
 - Do not claim that plan generation authorizes implementation. A plan records work; it does not perform it.
 - Keep the plugin self-contained: design SVG and the execution DAG are rendered only from this workspace's own data, with no cross-plugin references or dependencies.
+- While this Skill is active, treat the host project directory as a read-only evidence source. Do not create planning `.md`, `.svg`, `.json`, screenshots, or other Solution Studio deliverables under `scope.projectRoot`. Store planning text and SVG code only through Solution Studio tools. Temporary visual-QA files may exist only outside the project directory and are not deliverables.
+- A successful file write, terminal command, or model response is not Solution Studio delivery evidence. Only saved workspace content plus a matching `solution_finalize` completion proof closes the planning turn.

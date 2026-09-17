@@ -11,6 +11,9 @@ private final class AgentDirectChatViewModel: ObservableObject {
     @Published private(set) var pendingAgentProposals: [LocalAgentCreationProposal] = []
     @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = []
     @Published var draftMessage = ""
+    @Published var attachments: [ConversationAttachmentDraft] = []
+    @Published var attachmentError: String?
+    @Published private(set) var attachmentDataByID: [String: Data] = [:]
     @Published private(set) var isLoading = false
     @Published private(set) var isSending = false
     @Published private(set) var isRunningAgents = false
@@ -102,7 +105,12 @@ private final class AgentDirectChatViewModel: ObservableObject {
             self.conversation = conversation
             agents = try await loadedAgents
             members = try await loadedMembers
-            messages = try await loadedMessages
+            let nextMessages = try await loadedMessages
+            messages = nextMessages
+            attachmentDataByID = try await loadAttachmentData(
+                messages: nextMessages,
+                store: store
+            )
             pendingTeamProposals = try await loadedProposals
             pendingAgentProposals = try await loadedAgentProposals
             errorMessage = nil
@@ -114,7 +122,8 @@ private final class AgentDirectChatViewModel: ObservableObject {
     func sendMessage() async {
         guard isHumanDirect, !isSending else { return }
         let content = draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !content.isEmpty else { return }
+        let outgoingAttachments = attachments
+        guard !content.isEmpty || !outgoingAttachments.isEmpty else { return }
         isSending = true
         defer { isSending = false }
         do {
@@ -122,10 +131,17 @@ private final class AgentDirectChatViewModel: ObservableObject {
             let post = try await store.postMessage(
                 ownerUserID: ownerUserID,
                 roomID: conversationID,
-                draft: .init(senderKind: .human, senderID: ownerUserID, content: content),
+                draft: .init(
+                    senderKind: .human,
+                    senderID: ownerUserID,
+                    content: content,
+                    attachments: outgoingAttachments.map(ProjectAgentMessageAttachmentDraft.init)
+                ),
                 limits: .init()
             )
             draftMessage = ""
+            attachments = []
+            attachmentError = nil
             await load()
             if !post.deliveries.isEmpty { startScheduler() }
         } catch {
@@ -229,6 +245,28 @@ private final class AgentDirectChatViewModel: ObservableObject {
         let store = try await service.store()
         openedStore = store
         return store
+    }
+
+    private func loadAttachmentData(
+        messages: [ProjectAgentMessage],
+        store: SQLiteAgentGroupChatStore
+    ) async throws -> [String: Data] {
+        var result: [String: Data] = [:]
+        for message in messages {
+            for attachment in message.attachmentItems where attachment.kind == .image {
+                guard let payload = try await store.messageAttachment(
+                    ownerUserID: ownerUserID,
+                    roomID: conversationID,
+                    messageID: message.id,
+                    attachmentID: attachment.id
+                ) else { continue }
+                result[attachment.id] = try Data(
+                    contentsOf: payload.localFileURL,
+                    options: [.mappedIfSafe]
+                )
+            }
+        }
+        return result
     }
 
     private func startScheduler() {
@@ -362,15 +400,23 @@ struct AgentDirectChatView: View {
                 Text(viewModel.displayName(for: message))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(message.content)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(
-                        isHuman ? Color.accentColor : Color(nsColor: .controlBackgroundColor),
-                        in: RoundedRectangle(cornerRadius: 12)
+                if !message.content.isEmpty {
+                    Text(message.content)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(
+                            isHuman ? Color.accentColor : Color(nsColor: .controlBackgroundColor),
+                            in: RoundedRectangle(cornerRadius: 12)
+                        )
+                        .foregroundStyle(isHuman ? Color.white : Color.primary)
+                }
+                if !message.attachmentItems.isEmpty {
+                    AgentMessageAttachmentChips(
+                        attachments: message.attachmentItems,
+                        dataByID: viewModel.attachmentDataByID
                     )
-                    .foregroundStyle(isHuman ? Color.white : Color.primary)
+                }
             }
             if !isHuman { Spacer(minLength: 80) }
         }
@@ -445,21 +491,15 @@ struct AgentDirectChatView: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            TextField("发消息", text: $viewModel.draftMessage, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...6)
-                .onSubmit { Task { await viewModel.sendMessage() } }
-            Button {
-                Task { await viewModel.sendMessage() }
-            } label: {
-                Image(systemName: "arrow.up.circle.fill").font(.title2)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
-            .disabled(viewModel.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                      || viewModel.isSending)
-        }
+        AgentChatComposerView(
+            text: $viewModel.draftMessage,
+            attachments: $viewModel.attachments,
+            attachmentError: $viewModel.attachmentError,
+            isSending: viewModel.isSending,
+            placeholder: "输入消息，或粘贴图片、文档和长文本…",
+            onSend: { Task { await viewModel.sendMessage() } },
+            leadingControl: { EmptyView() }
+        )
         .padding(14)
     }
 }

@@ -12,6 +12,7 @@ const MAX_CONFIRMED_PROJECT_PATHS: usize = 128;
 const MAX_CONFIRMED_VALIDATION_COMMANDS: usize = 128;
 const MAX_CONFIRMED_ACCEPTANCE_TOOLS: usize = 128;
 const MAX_PENDING_VALIDATION_COMMANDS: usize = 64;
+const MAX_PENDING_COMPLETION_REQUIREMENTS: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskExecutionReviewPolicy {
@@ -85,6 +86,7 @@ pub struct TaskExecutionProgressState {
     confirmed_validation_commands: Mutex<BTreeSet<String>>,
     confirmed_acceptance_tools: Mutex<BTreeSet<String>>,
     pending_validation_commands: Mutex<BTreeMap<String, String>>,
+    pending_completion_requirements: Mutex<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +108,8 @@ pub struct TaskExecutionProgressSnapshot {
     pub confirmed_acceptance_tools: Vec<String>,
     #[serde(default)]
     pub pending_validation_commands: BTreeMap<String, String>,
+    #[serde(default)]
+    pub pending_completion_requirements: BTreeMap<String, String>,
 }
 
 impl Default for TaskExecutionProgressState {
@@ -131,6 +135,7 @@ impl TaskExecutionProgressState {
             confirmed_validation_commands: Mutex::new(BTreeSet::new()),
             confirmed_acceptance_tools: Mutex::new(BTreeSet::new()),
             pending_validation_commands: Mutex::new(BTreeMap::new()),
+            pending_completion_requirements: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -170,6 +175,7 @@ impl TaskExecutionProgressState {
                 .lock()
                 .map(|commands| commands.clone())
                 .unwrap_or_default(),
+            pending_completion_requirements: self.pending_completion_requirements(),
         }
     }
 
@@ -240,6 +246,16 @@ impl TaskExecutionProgressState {
                     .map(|(process_id, command)| (process_id.clone(), command.clone())),
             );
         }
+        if let Ok(mut pending) = self.pending_completion_requirements.lock() {
+            pending.clear();
+            pending.extend(
+                snapshot
+                    .pending_completion_requirements
+                    .iter()
+                    .take(MAX_PENDING_COMPLETION_REQUIREMENTS)
+                    .map(|(id, verifier)| (id.clone(), verifier.clone())),
+            );
+        }
     }
 
     pub fn begin_iteration(&self, iteration: usize) {
@@ -248,6 +264,7 @@ impl TaskExecutionProgressState {
 
     pub fn observe_tool_result(&self, payload: &Value) {
         self.record_confirmed_project_paths(payload);
+        self.record_completion_contract(payload);
         let iteration = self.current_iteration.load(Ordering::Relaxed);
         if tool_result_is_project_mutation(payload) {
             self.project_mutation_generation
@@ -300,6 +317,68 @@ impl TaskExecutionProgressState {
             .lock()
             .map(|tools| tools.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    pub fn pending_completion_requirements(&self) -> BTreeMap<String, String> {
+        self.pending_completion_requirements
+            .lock()
+            .map(|requirements| requirements.clone())
+            .unwrap_or_default()
+    }
+
+    fn record_completion_contract(&self, payload: &Value) {
+        if payload.get("success").and_then(Value::as_bool) != Some(true)
+            || payload.get("is_error").and_then(Value::as_bool) == Some(true)
+        {
+            return;
+        }
+        let tool_name = payload
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown_tool");
+        if let Some(requirement) = tool_result_field(payload, "completionRequirement") {
+            let id = requirement
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let verifier = requirement
+                .get("verifier")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let (Some(id), Some(verifier), Ok(mut pending)) =
+                (id, verifier, self.pending_completion_requirements.lock())
+            {
+                if pending.len() < MAX_PENDING_COMPLETION_REQUIREMENTS || pending.contains_key(id) {
+                    pending.insert(id.to_string(), verifier.to_string());
+                }
+            }
+        }
+        if let Some(proof) = tool_result_field(payload, "completionProof") {
+            let id = proof
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let verifier = proof
+                .get("verifier")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let (Some(id), Some(verifier), Ok(mut pending)) =
+                (id, verifier, self.pending_completion_requirements.lock())
+            {
+                if pending.get(id).is_some_and(|expected| expected == verifier) {
+                    pending.remove(id);
+                    if let Ok(mut tools) = self.confirmed_acceptance_tools.lock() {
+                        if tools.len() < MAX_CONFIRMED_ACCEPTANCE_TOOLS {
+                            tools.insert(tool_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn validation_command_from_tool_result(&self, payload: &Value) -> Option<String> {
@@ -934,7 +1013,7 @@ fn terminal_result_is_busy(payload: &Value) -> bool {
     terminal_result_field(payload, "busy").and_then(|value| value.as_bool()) == Some(true)
 }
 
-fn terminal_result_field(payload: &Value, field: &str) -> Option<Value> {
+fn tool_result_field(payload: &Value, field: &str) -> Option<Value> {
     payload
         .get("result")
         .map(chatos_mcp_runtime::structured_result_payload)
@@ -951,6 +1030,10 @@ fn terminal_result_field(payload: &Value, field: &str) -> Option<Value> {
                         .cloned()
                 })
         })
+}
+
+fn terminal_result_field(payload: &Value, field: &str) -> Option<Value> {
+    tool_result_field(payload, field)
 }
 
 #[cfg(test)]
@@ -994,6 +1077,48 @@ mod tests {
             TaskExecutionReviewTrigger::MissingTargetedReads
         );
         assert_eq!(checkpoint.missing_read_failures, 2);
+    }
+
+    #[test]
+    fn plugin_completion_contract_stays_pending_until_matching_proof_arrives() {
+        let progress = TaskExecutionProgressState::default();
+        progress.observe_tool_result(&json!({
+            "name": "solution_studio_solution_upsert_design",
+            "success": true,
+            "is_error": false,
+            "result": {
+                "completionRequirement": {
+                    "id": "solution-studio:workspace-1",
+                    "verifier": "solution_finalize"
+                }
+            }
+        }));
+        assert_eq!(
+            progress
+                .pending_completion_requirements()
+                .get("solution-studio:workspace-1")
+                .map(String::as_str),
+            Some("solution_finalize")
+        );
+        assert!(progress.confirmed_acceptance_tools().is_empty());
+
+        progress.observe_tool_result(&json!({
+            "name": "solution_studio_solution_finalize",
+            "success": true,
+            "is_error": false,
+            "result": {
+                "completionProof": {
+                    "id": "solution-studio:workspace-1",
+                    "verifier": "solution_finalize",
+                    "revision": 3
+                }
+            }
+        }));
+        assert!(progress.pending_completion_requirements().is_empty());
+        assert_eq!(
+            progress.confirmed_acceptance_tools(),
+            ["solution_studio_solution_finalize"]
+        );
     }
 
     #[test]

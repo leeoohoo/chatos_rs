@@ -13,9 +13,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::auth::{issue_user_token_with_scopes, CurrentPrincipal};
-#[cfg(debug_assertions)]
 use crate::auth::{normalize_username, verify_password};
-#[cfg(debug_assertions)]
 use crate::models::WeChatMiniProgramDevelopmentLoginRequest;
 use crate::models::{
     AuthUser, ClaimWeChatBindTicketRequest, ClaimWeChatBindTicketResponse, ClientSessionRecord,
@@ -31,7 +29,6 @@ use crate::store::now_rfc3339;
 use crate::store::wechat_auth::BindExternalIdentityResult;
 use crate::wechat::{WeChatExchangeError, WeChatMiniProgramClient, WeChatMiniProgramIdentity};
 
-#[cfg(debug_assertions)]
 use super::unauthorized;
 use super::{
     bad_request, conflict, forbidden, internal_error, not_found, service_unavailable, ApiResult,
@@ -115,15 +112,14 @@ pub async fn login(
     }))
 }
 
-/// Password-authenticated test entry for the local Mini Program simulator.
-/// Release binaries do not register this handler.
-#[cfg(debug_assertions)]
+/// Password-authenticated test entry for the Mini Program developer simulator.
+/// Release binaries keep the route disabled unless the operator explicitly enables it.
 pub async fn development_login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(input): Json<WeChatMiniProgramDevelopmentLoginRequest>,
 ) -> ApiResult<WeChatMiniProgramLoginResponse> {
-    if state.config.wechat_mini_program_env_version != "develop" {
+    if !state.config.wechat_mini_program_development_login_enabled {
         return Err(not_found("development login is not enabled"));
     }
 

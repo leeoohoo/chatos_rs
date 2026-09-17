@@ -172,7 +172,6 @@ pub fn build_public_router(state: AppState) -> Router {
             "/api/auth/local-connector-ticket/exchange",
             post(auth::exchange_local_connector_ticket),
         );
-    #[cfg(debug_assertions)]
     let router = router.route(
         "/api/auth/wechat/mini-program/development-login",
         post(wechat_auth::development_login),
@@ -476,6 +475,7 @@ mod tests {
             wechat_mini_program_identity_hash_secret: None,
             wechat_mini_program_api_base_url: "https://api.weixin.qq.com".to_string(),
             wechat_mini_program_env_version: "release".to_string(),
+            wechat_mini_program_development_login_enabled: false,
             wechat_mini_program_request_timeout_ms: 5_000,
             wechat_mini_program_bind_ticket_ttl_seconds: 120,
             wechat_mini_program_client_session_ttl_seconds: 604_800,

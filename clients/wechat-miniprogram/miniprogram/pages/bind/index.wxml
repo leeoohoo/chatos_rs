@@ -9,9 +9,9 @@
   </view>
 
   <view class="card development-card" wx:elif="{{developmentMode && !scene && state !== 'waiting'}}">
-    <view class="development-badge">仅本地开发</view>
-    <view class="state-title">进入测试通道</view>
-    <view class="state-copy">使用本地 ChatOS 账号签发受限 Companion 会话，无需微信扫码。</view>
+    <view class="development-badge">仅开发版</view>
+    <view class="state-title">进入服务器测试通道</view>
+    <view class="state-copy">使用服务器上的 ChatOS 账号签发受限 Companion 会话，无需微信扫码。</view>
     <input
       class="development-input"
       value="{{developmentUsername}}"
@@ -33,7 +33,7 @@
       loading="{{state === 'development_login'}}"
       disabled="{{state === 'development_login'}}"
       bindtap="startDevelopmentLogin"
-    >进入本地测试</button>
+    >连接服务器</button>
     <view class="development-note">该入口不会出现在体验版或正式版。</view>
   </view>
 

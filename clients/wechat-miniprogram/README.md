@@ -10,7 +10,16 @@
 4. 体验版联调时将 User Service 的 `USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION` 设为 `trial`；生产发布使用默认值 `release`。
 5. 执行 `npm install && npm run check` 做 TypeScript 校验。
 
-本地开发者工具使用 `develop` 版本时，默认连接 `http://127.0.0.1:9080`，绑定页会显示“进入测试通道”。该入口要求真实 ChatOS 用户名和密码，后端仍只签发受限的 Companion 会话。它仅存在于 User Service 的 debug 构建中，并且要求 `USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION=develop`；体验版和正式版不可用。
+开发者工具使用 `develop` 版本时，绑定页会显示测试通道。该入口要求真实 ChatOS 用户名和密码，后端仍只签发绑定当前设备公钥的受限 Companion 会话。User Service 默认关闭该接口；联调环境必须显式设置 `USER_SERVICE_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED=true`，体验版和正式版页面不会显示该入口。
+
+线上开发者工具联调时，可只重新部署 User Service 并开启该开关：
+
+```bash
+CHATOS_DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED=true \
+  ./scripts/deploy-online.sh service user-service-backend
+```
+
+联调结束后用同一命令将值设为 `false` 并重新部署 User Service。
 
 默认生产网关是 `https://app.jgoool.com`。开发/预发环境通过小程序 ext config 提供 `apiOrigin` 覆盖，不允许把微信 AppSecret 放入本工程。
 

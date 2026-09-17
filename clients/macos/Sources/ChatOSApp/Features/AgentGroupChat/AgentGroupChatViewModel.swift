@@ -42,6 +42,9 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var pendingRemovalProposals: [LocalAgentRemovalProposal] = []
     @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = []
     @Published var draftMessage = ""
+    @Published var attachments: [ConversationAttachmentDraft] = []
+    @Published var attachmentError: String?
+    @Published private(set) var attachmentDataByID: [String: Data] = [:]
     @Published var selectedMentionAgentIDs: Set<String> = []
     @Published private(set) var isLoading = false
     @Published private(set) var isSending = false
@@ -163,6 +166,15 @@ final class AgentGroupChatViewModel: ObservableObject {
             self.room = room
             self.members = members
             self.messages = messages
+            if let room {
+                attachmentDataByID = try await loadAttachmentData(
+                    messages: messages,
+                    roomID: room.id,
+                    store: store
+                )
+            } else {
+                attachmentDataByID = [:]
+            }
             self.interruptedRuns = interruptedRuns
             self.pendingProposals = pendingProposals
             self.pendingRemovalProposals = pendingRemovalProposals
@@ -508,7 +520,8 @@ final class AgentGroupChatViewModel: ObservableObject {
     func sendMessage() async {
         guard let room, !isSending else { return }
         let content = draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !content.isEmpty else { return }
+        let outgoingAttachments = attachments
+        guard !content.isEmpty || !outgoingAttachments.isEmpty else { return }
         isSending = true
         defer { isSending = false }
         do {
@@ -520,11 +533,14 @@ final class AgentGroupChatViewModel: ObservableObject {
                     senderKind: .human,
                     senderID: ownerUserID,
                     content: content,
-                    mentionedAgentIDs: selectedMentionAgentIDs.sorted()
+                    mentionedAgentIDs: selectedMentionAgentIDs.sorted(),
+                    attachments: outgoingAttachments.map(ProjectAgentMessageAttachmentDraft.init)
                 ),
                 limits: .init()
             )
             draftMessage = ""
+            attachments = []
+            attachmentError = nil
             selectedMentionAgentIDs.removeAll()
             await load()
             if !post.deliveries.isEmpty {
@@ -619,6 +635,29 @@ final class AgentGroupChatViewModel: ObservableObject {
         let store = try await service.store()
         openedStore = store
         return store
+    }
+
+    private func loadAttachmentData(
+        messages: [ProjectAgentMessage],
+        roomID: String,
+        store: SQLiteAgentGroupChatStore
+    ) async throws -> [String: Data] {
+        var result: [String: Data] = [:]
+        for message in messages {
+            for attachment in message.attachmentItems where attachment.kind == .image {
+                guard let payload = try await store.messageAttachment(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    messageID: message.id,
+                    attachmentID: attachment.id
+                ) else { continue }
+                result[attachment.id] = try Data(
+                    contentsOf: payload.localFileURL,
+                    options: [.mappedIfSafe]
+                )
+            }
+        }
+        return result
     }
 
     private func startScheduler() {

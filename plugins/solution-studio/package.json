@@ -1,6 +1,6 @@
 {
   "name": "@chatos/solution-studio",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Apple-inspired workbench for requirements, solution design, and dependency-aware execution planning.",
   "license": "Apache-2.0",
   "type": "module",
