@@ -102,6 +102,77 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(result.last, checkpoint.messages[1], "Current task contract must remain sticky")
     }
 
+    func testLocalAgentComposeAcceptsEarlierRunRecordsOnStableThread() throws {
+        let earlierRunID = UUID()
+        let currentRunID = UUID()
+        let earlierScope = try AgentMemoryScope(
+            tenantID: "user-a", agentID: "agent-a", projectID: "project-1",
+            runID: earlierRunID, runtimeScope: "account:user-a:project:project-1:agent:agent-a"
+        )
+        let currentScope = try AgentMemoryScope(
+            tenantID: "user-a", agentID: "agent-a", projectID: "project-2",
+            runID: currentRunID, runtimeScope: "account:user-a:project:project-2:agent:agent-a"
+        )
+        XCTAssertEqual(earlierScope.threadID, currentScope.threadID)
+
+        let earlierReply = AgentMessage(role: .assistant, content: "已经创建三国自走棋团队")
+        let currentSystem = AgentMessage(role: .system, content: "Only authorized tools")
+        let currentRequest = AgentMessage(role: .user, content: "那你帮我处理好吧")
+        var checkpoint = AgentRunCheckpoint(
+            scope: currentScope.runtimeScope,
+            messages: [currentSystem, currentRequest]
+        )
+        checkpoint.id = currentRunID
+        let memory = AgentMemoryCheckpoint(scope: currentScope, pinnedMessageCount: 2)
+        let context = AgentMemoryContext(
+            blocks: [],
+            recentRecords: [
+                .init(id: earlierScope.recordID(at: 2), message: earlierReply),
+                .init(id: currentScope.recordID(at: 0), message: currentSystem),
+                .init(id: currentScope.recordID(at: 1), message: currentRequest),
+            ]
+        )
+
+        let result = try AgentContextAssembler.assemble(
+            checkpoint: checkpoint, memory: memory, context: context
+        )
+
+        XCTAssertEqual(result, [currentSystem, earlierReply, currentRequest])
+    }
+
+    func testCrossRunHistoryStillRejectsMalformedDuplicateAndUnknownCurrentRunRecords() throws {
+        let runID = UUID()
+        let scope = try AgentMemoryScope(
+            tenantID: "user-a", agentID: "agent-a", projectID: "project-1",
+            runID: runID, runtimeScope: "account:user-a:project:project-1:agent:agent-a"
+        )
+        var checkpoint = AgentRunCheckpoint(
+            scope: scope.runtimeScope,
+            messages: [.init(role: .system, content: "system"), .init(role: .user, content: "request")]
+        )
+        checkpoint.id = runID
+        let memory = AgentMemoryCheckpoint(scope: scope, pinnedMessageCount: 2)
+        let earlierID = "client-agent:\(UUID().uuidString):message:0"
+        let earlierRecord = AgentMemoryContextRecord(
+            id: earlierID, message: .init(role: .assistant, content: "history")
+        )
+        let invalidContexts: [AgentMemoryContext] = [
+            .init(blocks: [], recentRecords: [
+                .init(id: "another-run-record", message: earlierRecord.message),
+            ]),
+            .init(blocks: [], recentRecords: [earlierRecord, earlierRecord]),
+            .init(blocks: [], recentRecords: [
+                .init(id: "client-agent:\(runID.uuidString):message:99", message: earlierRecord.message),
+            ]),
+        ]
+
+        for context in invalidContexts {
+            XCTAssertThrowsError(try AgentContextAssembler.assemble(
+                checkpoint: checkpoint, memory: memory, context: context
+            ))
+        }
+    }
+
     func testRejectsMissingHistoryWithoutSummaryAndUnknownRecords() throws {
         var (checkpoint, scope) = try fixture()
         checkpoint.messages.append(.init(role: .assistant, content: "must not be dropped"))

@@ -61,6 +61,34 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     }
 
     public func recordID(at index: Int) -> String { "client-agent:\(runID):message:\(index)" }
+
+    /// Story and approval threads belong to one run. Local chat Agents deliberately keep one
+    /// thread across wake-ups, so compose may return immutable records written by earlier runs.
+    public var allowsCrossRunHistory: Bool {
+        threadID.hasPrefix("client-agent:group-chat:")
+    }
+
+    /// Parses only record IDs emitted by `recordID(at:)`. Memory Engine has already verified the
+    /// tenant/source/thread boundary; this additionally prevents arbitrary IDs inside that thread
+    /// from being promoted into model context.
+    public func recordLocation(for id: String) -> (runID: UUID, index: Int)? {
+        let prefix = "client-agent:"
+        let marker = ":message:"
+        guard id.hasPrefix(prefix),
+              let markerRange = id.range(of: marker, options: .backwards),
+              markerRange.lowerBound > id.index(id.startIndex, offsetBy: prefix.count) else {
+            return nil
+        }
+        let runText = String(id[id.index(id.startIndex, offsetBy: prefix.count)..<markerRange.lowerBound])
+        let indexText = String(id[markerRange.upperBound...])
+        guard let parsedRunID = UUID(uuidString: runText),
+              parsedRunID.uuidString == runText,
+              let index = Int(indexText), index >= 0,
+              String(index) == indexText else {
+            return nil
+        }
+        return (parsedRunID, index)
+    }
 }
 
 public struct AgentMemoryEntry: Sendable {

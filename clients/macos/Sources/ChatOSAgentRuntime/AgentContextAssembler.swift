@@ -11,11 +11,27 @@ enum AgentContextAssembler {
         }
         let indices = Dictionary(uniqueKeysWithValues: all.indices.map { (memory.scope.recordID(at: $0), $0) })
         var selected = Set<Int>()
+        var selectedRecordIDs = Set<String>()
         var retained: [AgentMemoryContextRecord] = []
         for record in context.recentRecords {
-            guard let index = indices[record.id], all[index] == record.message,
-                  selected.insert(index).inserted else { throw AgentContextError.invalidHistory }
-            if index >= pins { retained.append(record) }
+            guard selectedRecordIDs.insert(record.id).inserted else {
+                throw AgentContextError.invalidHistory
+            }
+            if let index = indices[record.id] {
+                guard all[index] == record.message, selected.insert(index).inserted else {
+                    throw AgentContextError.invalidHistory
+                }
+                // Current-run pinned instructions and trigger are appended from the authoritative
+                // checkpoint below, so do not inject the composed copies a second time.
+                if index >= pins { retained.append(record) }
+                continue
+            }
+            guard memory.scope.allowsCrossRunHistory,
+                  let location = memory.scope.recordLocation(for: record.id),
+                  location.runID != memory.scope.runID else {
+                throw AgentContextError.invalidHistory
+            }
+            retained.append(record)
         }
         if context.blocks.allSatisfy({ $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
             guard Set(pins..<all.count).isSubset(of: selected) else { throw AgentContextError.invalidHistory }

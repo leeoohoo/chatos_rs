@@ -281,18 +281,20 @@ private final class AgentDirectChatViewModel: ObservableObject {
         isRunningAgents = true
         schedulerTask = Task { [weak self] in
             guard let self else { return }
+            var schedulerMessage: String?
             do {
                 let results = try await scheduler.drainAccount(ownerUserID: ownerUserID)
                 if let failure = results.last(where: { $0.outcome == .failed }) {
-                    errorMessage = failure.detail ?? "Agent 运行失败。"
+                    schedulerMessage = failure.detail ?? "Agent 运行失败。"
                 } else if let suspended = results.last(where: { $0.outcome == .suspended }) {
-                    errorMessage = suspended.detail ?? "Agent 已暂停。"
+                    schedulerMessage = suspended.detail ?? "Agent 已暂停。"
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                schedulerMessage = error.localizedDescription
             }
             await load()
             NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+            if let schedulerMessage { errorMessage = schedulerMessage }
             isRunningAgents = false
             schedulerTask = nil
         }
