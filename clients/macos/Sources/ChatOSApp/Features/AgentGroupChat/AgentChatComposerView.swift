@@ -195,7 +195,7 @@ struct AgentChatComposerView<LeadingControl: View>: View {
         attachmentError = nil
         Task {
             let result = await Task.detached(priority: .userInitiated) {
-                Self.loadFiles(urls)
+                loadAgentChatAttachmentFiles(urls)
             }.value
             append(result.attachments, errors: result.errors)
         }
@@ -230,47 +230,8 @@ struct AgentChatComposerView<LeadingControl: View>: View {
         attachmentError = messages.isEmpty ? nil : messages.joined(separator: "；")
     }
 
-    nonisolated private static func loadFiles(
-        _ urls: [URL]
-    ) -> (attachments: [ConversationAttachmentDraft], errors: [String]) {
-        var attachments: [ConversationAttachmentDraft] = []
-        var errors: [String] = []
-        for url in urls {
-            let accessed = url.startAccessingSecurityScopedResource()
-            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            do {
-                let values = try url.resourceValues(forKeys: [.isRegularFileKey, .contentTypeKey])
-                guard values.isRegularFile == true else {
-                    errors.append("“\(url.lastPathComponent)”不是可发送的文件")
-                    continue
-                }
-                let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-                let type = values.contentType ?? UTType(filenameExtension: url.pathExtension)
-                let mimeType = type?.preferredMIMEType ?? "application/octet-stream"
-                attachments.append(.init(
-                    name: url.lastPathComponent,
-                    mimeType: mimeType,
-                    kind: attachmentKind(mimeType),
-                    origin: .file,
-                    data: data
-                ))
-            } catch {
-                errors.append("无法读取“\(url.lastPathComponent)”：\(error.localizedDescription)")
-            }
-        }
-        return (attachments, errors)
-    }
-
-    nonisolated private static func attachmentKind(
-        _ mimeType: String
-    ) -> ConversationAttachmentKind {
-        if mimeType.hasPrefix("image/") { return .image }
-        if mimeType.hasPrefix("audio/") { return .audio }
-        return .file
-    }
-
     private func attachmentKind(_ mimeType: String) -> ConversationAttachmentKind {
-        Self.attachmentKind(mimeType)
+        agentChatAttachmentKind(mimeType)
     }
 
     private func pastedName(prefix: String, extension fileExtension: String) -> String {
@@ -280,6 +241,43 @@ struct AgentChatComposerView<LeadingControl: View>: View {
     }
 }
 
+private func loadAgentChatAttachmentFiles(
+    _ urls: [URL]
+) -> (attachments: [ConversationAttachmentDraft], errors: [String]) {
+    var attachments: [ConversationAttachmentDraft] = []
+    var errors: [String] = []
+    for url in urls {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .contentTypeKey])
+            guard values.isRegularFile == true else {
+                errors.append("“\(url.lastPathComponent)”不是可发送的文件")
+                continue
+            }
+            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+            let type = values.contentType ?? UTType(filenameExtension: url.pathExtension)
+            let mimeType = type?.preferredMIMEType ?? "application/octet-stream"
+            attachments.append(.init(
+                name: url.lastPathComponent,
+                mimeType: mimeType,
+                kind: agentChatAttachmentKind(mimeType),
+                origin: .file,
+                data: data
+            ))
+        } catch {
+            errors.append("无法读取“\(url.lastPathComponent)”：\(error.localizedDescription)")
+        }
+    }
+    return (attachments, errors)
+}
+
+private func agentChatAttachmentKind(_ mimeType: String) -> ConversationAttachmentKind {
+    if mimeType.hasPrefix("image/") { return .image }
+    if mimeType.hasPrefix("audio/") { return .audio }
+    return .file
+}
+
 struct AgentMessageAttachmentChips: View {
     let attachments: [ProjectAgentMessageAttachment]
     let dataByID: [String: Data]
@@ -287,7 +285,7 @@ struct AgentMessageAttachmentChips: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            ForEach(attachments) { attachment in
+            ForEach(attachments, id: \.id) { attachment in
                 if attachment.kind == .image,
                    let data = dataByID[attachment.id],
                    let image = NSImage(data: data) {
@@ -313,7 +311,7 @@ struct AgentMessageAttachmentChips: View {
                             Text(attachment.name)
                                 .lineLimit(1)
                                 .appFont(.caption.weight(.medium))
-                            Text(formatAttachmentSize(attachment.size))
+                            Text(formattedSize(attachment.size))
                                 .appFont(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -340,6 +338,12 @@ struct AgentMessageAttachmentChips: View {
         if attachment.mimeType == "application/pdf" { return "doc.richtext" }
         if attachment.mimeType.hasPrefix("text/") { return "doc.text" }
         return "doc"
+    }
+
+    private func formattedSize(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
     }
 }
 

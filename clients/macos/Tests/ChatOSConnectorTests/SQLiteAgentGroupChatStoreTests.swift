@@ -90,6 +90,66 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertEqual(post.deliveries.map(\.targetAgentID), [agent.id])
     }
 
+    func testMessageAttachmentsPersistLocallyAndRemainRoomScoped() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "视觉助手")
+        let conversation = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+        let data = Data("附件正文".utf8)
+
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: conversation.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "",
+                attachments: [
+                    .init(
+                        name: "说明.txt",
+                        mimeType: "text/plain",
+                        kind: .file,
+                        origin: .pastedDocument,
+                        data: data
+                    ),
+                ]
+            ),
+            limits: .init()
+        )
+
+        let attachment = try XCTUnwrap(post.message.attachmentItems.first)
+        XCTAssertEqual(attachment.name, "说明.txt")
+        XCTAssertEqual(attachment.size, data.count)
+        let loadedPayload = try await store.messageAttachment(
+            ownerUserID: "alice",
+            roomID: conversation.id,
+            messageID: post.message.id,
+            attachmentID: attachment.id
+        )
+        let payload = try XCTUnwrap(loadedPayload)
+        XCTAssertEqual(try Data(contentsOf: payload.localFileURL), data)
+
+        let reopened = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let messages = try await reopened.listMessages(
+            ownerUserID: "alice",
+            roomID: conversation.id,
+            limit: 20
+        )
+        XCTAssertEqual(messages.last?.attachmentItems, [attachment])
+        let other = try await makeRoom(reopened, projectID: "project-other")
+        let escaped = try await reopened.messageAttachment(
+            ownerUserID: "alice",
+            roomID: other.id,
+            messageID: post.message.id,
+            attachmentID: attachment.id
+        )
+        XCTAssertNil(escaped)
+    }
+
     func testAgentDirectPairIsOrderIndependentAndRoutesOnlyToPeer() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

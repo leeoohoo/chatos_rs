@@ -488,3 +488,6 @@
 "类型" = "Type";
 "选择一个 Skill" = "Select a Skill";
 "Markdown 显示" = "Markdown Display";
+"附件" = "Attachments";
+"添加图片、文档或其他文件；也可以直接粘贴或拖入" = "Add images, documents, or other files. You can also paste or drag them here.";
+"选择要 @ 的 Agent；不选择时交给默认 Agent" = "Choose an Agent to mention. If none is selected, the default Agent will respond.";
