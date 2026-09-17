@@ -16,7 +16,15 @@ final class LocalAgentBuilderToolProviderTests: XCTestCase {
                 members: [.init(name: "架构师", role: "架构", responsibility: "审查设计")]
             ),
             models: [
-                .init(id: "model-1", name: "主模型", provider: "openai", modelName: "gpt-test"),
+                .init(
+                    id: "model-1",
+                    name: "主模型",
+                    provider: "openai",
+                    modelName: "gpt-test",
+                    supportsReasoning: true,
+                    defaultThinkingLevel: "medium",
+                    thinkingLevels: ["low", "medium", "high"]
+                ),
             ],
             professions: LocalAgentSkillCatalog.professions
         )
@@ -48,12 +56,14 @@ final class LocalAgentBuilderToolProviderTests: XCTestCase {
         let draft = await provider.currentDraft()
         XCTAssertEqual(draft?.name, "客户端工程师")
         XCTAssertEqual(draft?.modelConfigID, "model-1")
+        XCTAssertEqual(draft?.thinkingLevel, "medium")
         XCTAssertEqual(draft?.professionKey, "desktop_engineer")
         let draftSchema = String(
             decoding: try XCTUnwrap(definitions.first(where: { $0.name == "agent_draft" })).schema,
             as: UTF8.self
         )
         XCTAssertFalse(draftSchema.contains("plugin"))
+        XCTAssertTrue(draftSchema.contains("thinkingLevel"))
     }
 
     private static func arguments() throws -> String {

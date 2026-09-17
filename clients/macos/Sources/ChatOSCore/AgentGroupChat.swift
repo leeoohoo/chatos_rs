@@ -99,6 +99,7 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
     public let responsibility: String
     public let rolePrompt: String
     public let modelConfigID: String
+    public let thinkingLevel: String?
     public let professionKey: String
     public let rationale: String
 
@@ -108,6 +109,7 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
         responsibility: String = "",
         rolePrompt: String,
         modelConfigID: String,
+        thinkingLevel: String? = nil,
         professionKey: String = LocalAgentSkillCatalog.legacyProfessionKey,
         rationale: String = ""
     ) {
@@ -116,6 +118,8 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
         self.responsibility = responsibility
         self.rolePrompt = rolePrompt
         self.modelConfigID = modelConfigID
+        self.thinkingLevel = thinkingLevel?
+            .trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.professionKey = professionKey
         self.rationale = rationale
     }
@@ -130,12 +134,18 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
         )
         try AgentGroupChatValidation.text(rolePrompt, field: "rolePrompt", maximumLength: 32_000)
         try AgentGroupChatValidation.identifier(modelConfigID, field: "modelConfigID")
+        if let thinkingLevel {
+            guard LocalAgentThinkingLevelCatalog.allValues.contains(thinkingLevel) else {
+                throw AgentGroupChatError.invalidField("thinkingLevel")
+            }
+        }
         _ = try LocalAgentSkillCatalog.requireProfession(key: professionKey)
         try AgentGroupChatValidation.optionalText(rationale, field: "rationale", maximumLength: 4_000)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, role, responsibility, rolePrompt, modelConfigID, professionKey, rationale
+        case name, role, responsibility, rolePrompt, modelConfigID, thinkingLevel
+        case professionKey, rationale
     }
 
     public init(from decoder: Decoder) throws {
@@ -146,6 +156,7 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
             responsibility: try values.decodeIfPresent(String.self, forKey: .responsibility) ?? "",
             rolePrompt: try values.decode(String.self, forKey: .rolePrompt),
             modelConfigID: try values.decode(String.self, forKey: .modelConfigID),
+            thinkingLevel: try values.decodeIfPresent(String.self, forKey: .thinkingLevel),
             professionKey: try values.decodeIfPresent(String.self, forKey: .professionKey)
                 ?? LocalAgentSkillCatalog.legacyProfessionKey,
             rationale: try values.decodeIfPresent(String.self, forKey: .rationale) ?? ""
@@ -158,6 +169,7 @@ public struct LocalAgentDraft: Codable, Sendable, Equatable {
             description: responsibility,
             rolePrompt: rolePrompt,
             modelConfigID: modelConfigID,
+            thinkingLevel: thinkingLevel,
             professionKey: professionKey
         )
     }

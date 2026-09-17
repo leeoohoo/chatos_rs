@@ -481,12 +481,19 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         let modelConfigID = requestedModelConfigID.flatMap {
             $0.isEmpty || $0.caseInsensitiveCompare("default") == .orderedSame ? nil : $0
         } ?? currentProfile.draft.modelConfigID
+        let requestedThinkingLevel = try Self.optionalString(
+            arguments,
+            key: "thinking_level"
+        )?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let thinkingLevel = requestedThinkingLevel.flatMap { $0.isEmpty ? nil : $0 }
+            ?? currentProfile.draft.thinkingLevel
         let draft = LocalAgentDraft(
             name: try Self.requiredString(arguments, key: "name"),
             role: try Self.requiredString(arguments, key: "role"),
             responsibility: try Self.optionalString(arguments, key: "responsibility") ?? "",
             rolePrompt: try Self.requiredString(arguments, key: "role_prompt"),
             modelConfigID: modelConfigID,
+            thinkingLevel: thinkingLevel,
             professionKey: try Self.requiredString(arguments, key: "profession_key"),
             rationale: try Self.optionalString(arguments, key: "rationale") ?? ""
         )
@@ -717,8 +724,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ),
         .init(
             name: Self.proposeMemberToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。该工具只持久化待确认提案，绝不会直接创建 Agent；私聊中确认后只创建独立 Agent，团队会话中确认后才加入当前团队。model_config_id 省略时继承当前 Agent。",
-            schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"model_config_id":{"type":"string","minLength":1,"maxLength":512},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
+            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。该工具只持久化待确认提案，绝不会直接创建 Agent；私聊中确认后只创建独立 Agent，团队会话中确认后才加入当前团队。model_config_id 和 thinking_level 省略时继承当前 Agent。",
+            schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"model_config_id":{"type":"string","minLength":1,"maxLength":512},"thinking_level":{"type":"string","enum":["auto","none","minimal","low","medium","high","xhigh","max"]},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
@@ -744,6 +751,11 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 "responsibility": ["type": "string", "maxLength": 8_000],
                 "role_prompt": ["type": "string", "minLength": 1, "maxLength": 32_000],
                 "model_config_id": ["type": "string", "minLength": 1, "maxLength": 512],
+                "thinking_level": [
+                    "type": "string",
+                    "enum": LocalAgentThinkingLevelCatalog.allValues.sorted(),
+                    "description": "省略时继承当前 Agent 的思考等级；确认创建时会按实际模型能力重新校验。",
+                ],
                 "profession_key": [
                     "type": "string",
                     "enum": professions.map(\.key),
@@ -756,7 +768,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ]
         return .init(
             name: Self.proposeMemberToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。必须从客户端目录选择职业；该工具只持久化待确认提案，绝不会直接创建 Agent。",
+            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。必须从客户端目录选择职业；model_config_id 和 thinking_level 省略时继承当前 Agent。该工具只持久化待确认提案，绝不会直接创建 Agent。",
             schema: try JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
             effect: .write
         )

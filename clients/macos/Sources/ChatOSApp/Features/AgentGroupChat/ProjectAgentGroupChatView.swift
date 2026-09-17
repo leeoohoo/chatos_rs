@@ -51,7 +51,7 @@ struct ProjectAgentGroupChatView: View {
             CreateLocalAgentSheet(viewModel: viewModel)
         }
         .sheet(isPresented: $showsAddExistingAgent) {
-            AddExistingAgentSheet(viewModel: viewModel)
+            InviteExistingAgentSheet(viewModel: viewModel)
         }
         .sheet(isPresented: $showsAgentBuilder) {
             LocalAgentBuilderSheet(viewModel: viewModel)
@@ -149,6 +149,9 @@ struct ProjectAgentGroupChatView: View {
                             .appFont(.body)
                             .fontWeight(.medium)
                         Text("职业：\(profession(proposal.draft.professionKey)?.label ?? proposal.draft.professionKey)")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("思考等级：\(proposal.draft.thinkingLevel ?? "跟随模型默认")")
                             .appFont(.caption)
                             .foregroundStyle(.secondary)
                         if !proposal.draft.responsibility.isEmpty {
@@ -377,20 +380,6 @@ struct ProjectAgentGroupChatView: View {
                 .buttonStyle(.bordered)
                 .disabled(viewModel.isStoppingAgents)
             }
-            Menu {
-                Button("添加已有 Agent", systemImage: "person.crop.circle.badge.plus") {
-                    showsAddExistingAgent = true
-                }
-                Button("手动创建", systemImage: "square.and.pencil") {
-                    showsCreateAgent = true
-                }
-                Button("让 Agent Builder 创建", systemImage: "sparkles") {
-                    showsAgentBuilder = true
-                }
-            } label: {
-                Label("添加 Agent", systemImage: "person.badge.plus")
-            }
-            .buttonStyle(.bordered)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -565,6 +554,13 @@ struct ProjectAgentGroupChatView: View {
                 .padding(.vertical, 5)
             }
             Spacer()
+            Button {
+                showsAddExistingAgent = true
+            } label: {
+                Label("邀请 Agent", systemImage: "person.crop.circle.badge.plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .frame(maxWidth: .infinity)
             Menu {
                 Button("手动创建", systemImage: "square.and.pencil") {
                     showsCreateAgent = true
@@ -573,10 +569,10 @@ struct ProjectAgentGroupChatView: View {
                     showsAgentBuilder = true
                 }
             } label: {
-                Label("添加 Agent", systemImage: "plus")
+                Label("创建新 Agent", systemImage: "plus")
             }
-                .buttonStyle(.borderedProminent)
-                .frame(maxWidth: .infinity)
+            .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity)
         }
         .padding(14)
         .background(Color(nsColor: .controlBackgroundColor))
@@ -688,12 +684,11 @@ private struct EditLocalAgentSheet: View {
     }
 }
 
-private struct AddExistingAgentSheet: View {
+private struct InviteExistingAgentSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     @ObservedObject var viewModel: AgentGroupChatViewModel
     @State private var selectedAgentID = ""
-    @State private var role = ""
-    @State private var responsibility = ""
     @State private var isSaving = false
 
     private var availableAgents: [LocalAgentProfile] {
@@ -703,42 +698,37 @@ private struct AddExistingAgentSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("添加已有 Agent")
+            Text("邀请 Agent")
                 .font(.title2.weight(.semibold))
-            Text("Agent 的模型和全局 Prompt 在 Agent 管理中维护；这里设置它在当前项目中的角色和职责。")
+            Text("选择一个已有 Agent 加入当前团队。同一个 Agent 可以加入多个团队。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
             if availableAgents.isEmpty {
                 ContentUnavailableView(
-                    "没有可添加的 Agent",
+                    "没有可邀请的 Agent",
                     systemImage: "person.crop.circle.badge.exclamationmark",
-                    description: Text("请先到 Agent 管理中创建 Agent。")
+                    description: Text("所有已有 Agent 都已加入当前团队，或尚未创建 Agent。")
                 )
             } else {
-                Picker("Agent", selection: $selectedAgentID) {
-                    ForEach(availableAgents) { agent in
-                        Text(agent.draft.name).tag(agent.id)
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(availableAgents) { agent in
+                            agentRow(agent)
+                        }
                     }
+                    .padding(1)
                 }
-                TextField("当前项目中的角色", text: $role)
-                    .textFieldStyle(.roundedBorder)
-                TextField("当前项目中的职责", text: $responsibility, axis: .vertical)
-                    .lineLimit(2...5)
-                    .textFieldStyle(.roundedBorder)
+                .frame(height: min(CGFloat(availableAgents.count) * 86, 360))
             }
 
             HStack {
                 Spacer()
                 Button("取消") { dismiss() }
-                Button("加入团队") {
+                Button("邀请") {
                     isSaving = true
                     Task {
-                        if await viewModel.addExistingAgent(
-                            agentID: selectedAgentID,
-                            role: resolvedRole,
-                            responsibility: responsibility
-                        ) { dismiss() }
+                        if await viewModel.inviteAgent(agentID: selectedAgentID) { dismiss() }
                         isSaving = false
                     }
                 }
@@ -747,27 +737,64 @@ private struct AddExistingAgentSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 560)
+        .frame(width: 620)
         .onAppear { selectDefaultAgent() }
-        .onChange(of: selectedAgentID) { selectDefaultRole() }
     }
 
-    private var resolvedRole: String {
-        let value = role.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !value.isEmpty { return value }
-        return availableAgents.first(where: { $0.id == selectedAgentID })?.draft.name ?? "Agent"
+    private func agentRow(_ agent: LocalAgentProfile) -> some View {
+        Button {
+            selectedAgentID = agent.id
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "person.crop.circle")
+                    .font(.title2)
+                    .foregroundStyle(agent.id == selectedAgentID ? Color.accentColor : .secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(agent.draft.name).font(.headline)
+                        Text(professionName(agent.draft.professionKey))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(agent.draft.description.isEmpty ? modelName(agent.draft.modelConfigID) : agent.draft.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                if agent.id == selectedAgentID {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.tint)
+                }
+            }
+            .padding(12)
+            .contentShape(Rectangle())
+            .background(
+                agent.id == selectedAgentID
+                    ? Color.accentColor.opacity(0.10)
+                    : Color.secondary.opacity(0.06),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(agent.id == selectedAgentID ? Color.accentColor : .clear, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func selectDefaultAgent() {
         guard selectedAgentID.isEmpty else { return }
         selectedAgentID = availableAgents.first?.id ?? ""
-        selectDefaultRole()
     }
 
-    private func selectDefaultRole() {
-        guard let agent = availableAgents.first(where: { $0.id == selectedAgentID }) else { return }
-        if role.isEmpty { role = agent.draft.name }
-        if responsibility.isEmpty { responsibility = agent.draft.description }
+    private func professionName(_ key: String) -> String {
+        guard let owner = model.localProjectOwnerUserID else { return key }
+        return model.agentSkillLibrary.profession(ownerUserID: owner, key: key)?.label ?? key
+    }
+
+    private func modelName(_ id: String) -> String {
+        viewModel.availableModels.first(where: { $0.id == id })?.name ?? "已配置模型"
     }
 }
 

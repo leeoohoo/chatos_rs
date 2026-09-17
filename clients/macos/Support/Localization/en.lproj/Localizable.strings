@@ -432,6 +432,12 @@
 "本机 Plugin" = "Local Plugins";
 "没有可添加的 Agent" = "No Agents Available to Add";
 "添加已有 Agent" = "Add Existing Agent";
+"邀请 Agent" = "Invite Agent";
+"邀请" = "Invite";
+"创建新 Agent" = "Create New Agent";
+"选择一个已有 Agent 加入当前团队。同一个 Agent 可以加入多个团队。" = "Select an existing Agent to join this team. The same Agent can join multiple teams.";
+"没有可邀请的 Agent" = "No Agents Available to Invite";
+"所有已有 Agent 都已加入当前团队，或尚未创建 Agent。" = "All existing Agents are already on this team, or no Agents have been created yet.";
 "确认后仍需由你选择已授权的本机目录。" = "After approval, you still need to choose an authorized local directory.";
 "请先创建项目团队" = "Create a project team first";
 "请先到 Agent 管理中创建 Agent。" = "Create an agent in Agent Management first.";

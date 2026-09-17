@@ -149,10 +149,13 @@ private final class AgentDirectChatViewModel: ObservableObject {
         }
     }
 
-    func approveTeamProposal(_ proposal: LocalAgentTeamCreationProposal) async {
-        guard proposalActionIDs.insert(proposal.id).inserted else { return }
+    func approveTeamProposal(
+        _ proposal: LocalAgentTeamCreationProposal
+    ) async -> WorkspaceProject? {
+        guard proposalActionIDs.insert(proposal.id).inserted else { return nil }
         defer { proposalActionIDs.remove(proposal.id) }
         do {
+            let createdProject: WorkspaceProject?
             let resolvedProjectID: String
             if let existingProjectID = proposal.draft.existingProjectID {
                 let registry = try await projectsService.registry()
@@ -162,6 +165,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
                 ), project.status == .active else {
                     throw ProjectRegistryError.notFound
                 }
+                createdProject = nil
                 resolvedProjectID = project.id
             } else if let newProjectName = proposal.draft.newProjectName {
                 let project = try await projectsService.createInDefaultWorkspace(
@@ -171,6 +175,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
                     projectTypeKey: proposal.draft.newProjectTypeKey
                         ?? LocalAgentSkillCatalog.legacyProjectTypeKey
                 )
+                createdProject = project
                 resolvedProjectID = project.id
             } else {
                 throw AgentGroupChatError.conflict
@@ -185,8 +190,10 @@ private final class AgentDirectChatViewModel: ObservableObject {
             )
             NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
             await load()
+            return createdProject
         } catch {
             errorMessage = error.localizedDescription
+            return nil
         }
     }
 
@@ -442,7 +449,11 @@ struct AgentDirectChatView: View {
                     Task { await viewModel.rejectTeamProposal(proposal) }
                 }
                 Button(proposal.draft.newProjectName == nil ? "确认创建团队" : "确认创建项目和团队") {
-                    Task { await viewModel.approveTeamProposal(proposal) }
+                    Task {
+                        if let project = await viewModel.approveTeamProposal(proposal) {
+                            model.registerCreatedProject(project)
+                        }
+                    }
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -459,6 +470,9 @@ struct AgentDirectChatView: View {
                 .font(.headline)
             Text("\(proposal.draft.name) · \(proposal.draft.role)")
             Text("职业：\(profession(proposal.draft.professionKey)?.label ?? proposal.draft.professionKey)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("思考等级：\(proposal.draft.thinkingLevel ?? "跟随模型默认")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !proposal.draft.responsibility.isEmpty {

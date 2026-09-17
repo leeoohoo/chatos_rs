@@ -358,6 +358,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                     responsibility: proposal.draft.responsibility,
                     rolePrompt: proposal.draft.rolePrompt,
                     modelConfigID: approvedDraft.modelConfigID,
+                    thinkingLevel: approvedDraft.thinkingLevel,
                     professionKey: proposal.draft.professionKey,
                     rationale: proposal.draft.rationale
                 )
@@ -3199,6 +3200,21 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 throw AgentGroupChatError.storage(String(cString: sqlite3_errmsg(handle)))
             }
         }
+        func hasMigration(_ version: Int) -> Bool {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                handle,
+                "SELECT 1 FROM local_agent_group_chat_schema_migrations WHERE version = ? LIMIT 1",
+                -1,
+                &statement,
+                nil
+            ) == SQLITE_OK, let statement else { return false }
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_bind_int64(statement, 1, Int64(version)) == SQLITE_OK else {
+                return false
+            }
+            return sqlite3_step(statement) == SQLITE_ROW
+        }
         if !hasColumn("conversation_kind") {
             try execute(
                 "ALTER TABLE project_agent_rooms ADD COLUMN conversation_kind TEXT NOT NULL DEFAULT 'project_team'"
@@ -3234,5 +3250,42 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try execute(
             "INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (11)"
         )
+        if !hasMigration(12) {
+            try execute(
+                """
+                UPDATE local_agent_profiles AS recruited
+                SET thinking_level = (
+                    SELECT proposer.thinking_level
+                    FROM local_agent_creation_proposals AS proposal
+                    JOIN local_agent_profiles AS proposer
+                      ON proposer.owner_user_id = proposal.owner_user_id
+                     AND proposer.id = proposal.proposer_agent_id
+                    WHERE proposal.owner_user_id = recruited.owner_user_id
+                      AND proposal.created_agent_id = recruited.id
+                      AND proposal.status = 'approved'
+                      AND proposer.model_config_id = recruited.model_config_id
+                      AND proposer.thinking_level IS NOT NULL
+                    ORDER BY proposal.resolved_at_unix_ms DESC
+                    LIMIT 1
+                )
+                WHERE recruited.thinking_level IS NULL
+                  AND EXISTS (
+                    SELECT 1
+                    FROM local_agent_creation_proposals AS proposal
+                    JOIN local_agent_profiles AS proposer
+                      ON proposer.owner_user_id = proposal.owner_user_id
+                     AND proposer.id = proposal.proposer_agent_id
+                    WHERE proposal.owner_user_id = recruited.owner_user_id
+                      AND proposal.created_agent_id = recruited.id
+                      AND proposal.status = 'approved'
+                      AND proposer.model_config_id = recruited.model_config_id
+                      AND proposer.thinking_level IS NOT NULL
+                  )
+                """
+            )
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (12)"
+            )
+        }
     }
 }

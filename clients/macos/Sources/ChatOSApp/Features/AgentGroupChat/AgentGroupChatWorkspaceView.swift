@@ -130,36 +130,6 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         }
     }
 
-    func addAgent(_ agent: LocalAgentProfile, to room: ProjectAgentRoom) async {
-        do {
-            let store = try await resolveStore()
-            let members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
-            guard !members.contains(where: { $0.agentID == agent.id }) else {
-                throw AgentGroupChatError.conflict
-            }
-            _ = try await store.addMember(
-                ownerUserID: ownerUserID,
-                roomID: room.id,
-                agentID: agent.id,
-                draft: .init(
-                    role: agent.draft.name,
-                    responsibility: agent.draft.description,
-                    pluginAllowlist: []
-                )
-            )
-            if members.isEmpty {
-                _ = try await store.setDefaultAgent(
-                    ownerUserID: ownerUserID,
-                    roomID: room.id,
-                    agentID: agent.id
-                )
-            }
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func openDirect(with agent: LocalAgentProfile) async -> ProjectAgentRoom? {
         do {
             let store = try await resolveStore()
@@ -571,19 +541,6 @@ private struct AgentManagementView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .fixedSize()
-                Menu("加入团队", systemImage: "person.2.badge.plus") {
-                    if viewModel.rooms.isEmpty {
-                        Text("请先创建项目团队")
-                    } else {
-                        ForEach(viewModel.rooms) { room in
-                            Button(room.draft.name) {
-                                Task { await viewModel.addAgent(agent, to: room) }
-                            }
-                        }
-                    }
-                }
-                .menuStyle(.borderlessButton)
                 .fixedSize()
                 Spacer(minLength: 0)
                 Button("编辑") { editorTarget = .edit(agent) }

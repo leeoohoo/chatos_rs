@@ -573,6 +573,7 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             responsibility: draft.responsibility,
             rolePrompt: draft.rolePrompt,
             modelConfigID: "model-1",
+            thinkingLevel: "medium",
             professionKey: draft.professionKey,
             rationale: draft.rationale
         )
@@ -586,6 +587,8 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertEqual(approval.proposal.status, .approved)
         XCTAssertEqual(approval.proposal.draft.modelConfigID, "model-1")
         XCTAssertEqual(approval.agent.draft.modelConfigID, "model-1")
+        XCTAssertEqual(approval.proposal.draft.thinkingLevel, "medium")
+        XCTAssertEqual(approval.agent.draft.thinkingLevel, "medium")
         XCTAssertEqual(approval.proposal.createdAgentID, approval.agent.id)
         XCTAssertEqual(approval.member?.agentID, approval.agent.id)
         XCTAssertEqual(approval.member?.draft.role, draft.role)

@@ -21,6 +21,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 name: "架构师",
                 rolePrompt: "设计系统。",
                 modelConfigID: "model",
+                thinkingLevel: "medium",
                 defaultSkillIDs: LocalAgentPermission.normalized(
                     preserving: [],
                     canManageStaff: true
@@ -149,6 +150,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(pendingProposals.count, 1)
         XCTAssertEqual(pendingProposals.first?.proposerAgentID, first.id)
         XCTAssertEqual(pendingProposals.first?.draft.modelConfigID, first.draft.modelConfigID)
+        XCTAssertEqual(pendingProposals.first?.draft.thinkingLevel, "medium")
 
         let sendArguments = try XCTUnwrap(
             String(

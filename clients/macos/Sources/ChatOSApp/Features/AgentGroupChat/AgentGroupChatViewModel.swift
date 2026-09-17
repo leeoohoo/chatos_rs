@@ -282,13 +282,9 @@ final class AgentGroupChatViewModel: ObservableObject {
         }
     }
 
-    func addExistingAgent(
-        agentID: String,
-        role: String,
-        responsibility: String
-    ) async -> Bool {
+    func inviteAgent(agentID: String) async -> Bool {
         guard let room,
-              profilesByID[agentID] != nil,
+              let profile = profilesByID[agentID],
               !members.contains(where: { $0.agentID == agentID }) else {
             errorMessage = AgentGroupChatError.conflict.localizedDescription
             return false
@@ -300,8 +296,8 @@ final class AgentGroupChatViewModel: ObservableObject {
                 roomID: room.id,
                 agentID: agentID,
                 draft: .init(
-                    role: role.trimmingCharacters(in: .whitespacesAndNewlines),
-                    responsibility: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
+                    role: profile.draft.name,
+                    responsibility: profile.draft.description,
                     pluginAllowlist: []
                 )
             )

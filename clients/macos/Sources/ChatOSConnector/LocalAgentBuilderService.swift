@@ -294,6 +294,7 @@ public struct LocalAgentBuilderService: Sendable {
             responsibility: proposal.draft.responsibility,
             rolePrompt: proposal.draft.rolePrompt,
             modelConfigID: proposer.draft.modelConfigID,
+            thinkingLevel: proposal.draft.thinkingLevel ?? proposer.draft.thinkingLevel,
             professionKey: proposal.draft.professionKey,
             rationale: proposal.draft.rationale
         )
@@ -304,15 +305,19 @@ public struct LocalAgentBuilderService: Sendable {
         resources: LocalAgentBuilderResources
     ) throws {
         try draft.validate()
-        guard resources.models.contains(where: { $0.id == draft.modelConfigID }) else {
+        guard let model = resources.models.first(where: { $0.id == draft.modelConfigID }) else {
             throw LocalAgentBuilderError.modelUnavailable
+        }
+        if let thinkingLevel = draft.thinkingLevel,
+           !model.thinkingLevels.contains(thinkingLevel) {
+            throw AgentGroupChatError.invalidField("thinkingLevel")
         }
     }
 
     private static func initialMessages(brief: String) -> [AgentMessage] {
         let system = """
         你是 ChatOS 客户端内置的 Agent Builder。你的唯一任务是为当前项目群聊设计一个普通 Agent 草案。
-        先调用 project_inspect、model_list 和 profession_list 获取客户端提供的受控快照，然后单独调用 agent_draft 提交草案。只能选择返回的模型配置和职业 key；职业是持久身份，ChatOS 会在运行时自动注入该职业的完整 Skill。不要创建公司、组织或账号；不要假设未提供的高风险权限；不要把 Agent Builder、创建 Agent 或管理成员的能力写入普通 Agent。不要为 Agent 预选 Plugin 或文件能力：运行时会由专门的能力发现 Skill 引导 Agent 按任务自主发现和调用本机工具。
+        先调用 project_inspect、model_list 和 profession_list 获取客户端提供的受控快照，然后单独调用 agent_draft 提交草案。只能选择返回的模型配置、该模型支持的 thinkingLevels 和职业 key；职业是持久身份，ChatOS 会在运行时自动注入该职业的完整 Skill。不要创建公司、组织或账号；不要假设未提供的高风险权限；不要把 Agent Builder、创建 Agent 或管理成员的能力写入普通 Agent。不要为 Agent 预选 Plugin 或文件能力：运行时会由专门的能力发现 Skill 引导 Agent 按任务自主发现和调用本机工具。
         agent_draft 只会生成等待用户确认的结构化草案，不会创建 Agent。
         """
         return [
@@ -413,14 +418,32 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
                 from: Data(call.arguments.utf8)
             )
             try proposed.validate()
-            guard models.contains(where: { $0.id == proposed.modelConfigID }) else {
+            guard let selectedModel = models.first(where: { $0.id == proposed.modelConfigID }) else {
                 return .failure(LocalAgentBuilderError.modelUnavailable.localizedDescription)
+            }
+            let resolvedThinkingLevel = proposed.thinkingLevel
+                ?? selectedModel.defaultThinkingLevel
+            if let resolvedThinkingLevel,
+               !selectedModel.thinkingLevels.contains(resolvedThinkingLevel) {
+                return .failure(
+                    AgentGroupChatError.invalidField("thinkingLevel").localizedDescription
+                )
             }
             guard professions.contains(where: { $0.key == proposed.professionKey }) else {
                 return .failure("职业已不可用，请重新读取 profession_list。")
             }
-            draft = proposed
-            return try Self.outcome(proposed)
+            let resolved = LocalAgentDraft(
+                name: proposed.name,
+                role: proposed.role,
+                responsibility: proposed.responsibility,
+                rolePrompt: proposed.rolePrompt,
+                modelConfigID: proposed.modelConfigID,
+                thinkingLevel: resolvedThinkingLevel,
+                professionKey: proposed.professionKey,
+                rationale: proposed.rationale
+            )
+            draft = resolved
+            return try Self.outcome(resolved)
         default:
             return .failure("Agent Builder 工具不可用：\(call.name)")
         }
@@ -449,6 +472,11 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
                 "responsibility": ["type": "string", "maxLength": 8_000],
                 "rolePrompt": ["type": "string", "minLength": 1, "maxLength": 32_000],
                 "modelConfigID": ["type": "string", "enum": models.map(\.id)],
+                "thinkingLevel": [
+                    "type": "string",
+                    "enum": Array(Set(models.flatMap(\.thinkingLevels))).sorted(),
+                    "description": "必须是所选模型 model_list.thinkingLevels 中的值；省略时使用该模型配置的默认等级。",
+                ],
                 "professionKey": ["type": "string", "enum": professions.map(\.key)],
                 "rationale": ["type": "string", "maxLength": 4_000],
             ],
