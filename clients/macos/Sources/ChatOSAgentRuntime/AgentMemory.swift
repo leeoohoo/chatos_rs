@@ -34,9 +34,10 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         self.includeSubjectMemory = profile == "approval" ? false : nil
     }
 
-    /// Project-chat Agents use a stable Agent identity rather than a caller-selected profile.
-    /// The subject shape is understood by Memory Engine's existing agent-project mapper and
-    /// prevents one room member from inheriting another member's private project memory.
+    /// Local chat Agents own one continuous Memory identity across private chats, teams, Todo
+    /// execution and separate wake-ups. `runID` still namespaces immutable record IDs and audit
+    /// checkpoints, but it must not split the Agent's Memory thread. Tool authority remains bound
+    /// to the current delivery/project and is never widened by remembered content.
     public init(
         tenantID: String,
         agentID: String,
@@ -52,8 +53,8 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
-        self.threadID = "client-agent:group-chat:\(agentID):\(projectID):\(runID)"
-        self.subjectID = "agent_project:\(agentID):\(projectID)"
+        self.threadID = "client-agent:group-chat:\(agentID)"
+        self.subjectID = "agent:\(agentID)"
         self.runID = runID
         self.runtimeScope = runtimeScope
         self.includeSubjectMemory = nil

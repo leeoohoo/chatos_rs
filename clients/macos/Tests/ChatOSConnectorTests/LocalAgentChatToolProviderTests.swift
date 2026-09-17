@@ -89,7 +89,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(
             Set(definitions.map(\.name)),
             [
-                "relay_bootstrap", "chat_get_trigger", "chat_list_members", "chat_read_unread",
+                "relay_bootstrap", "agent_workspace_snapshot", "chat_get_trigger",
+                "chat_list_members", "chat_read_unread",
                 "chat_read_messages", "chat_read_attachment", "chat_mark_read", "agent_propose_member",
                 "agent_propose_member_removal",
                 "chat_direct_open", "chat_direct_send", "chat_send_message",
@@ -106,6 +107,20 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertTrue(bootstrap.content.contains(second.id))
         XCTAssertTrue(bootstrap.content.contains(incoming.message.id))
         XCTAssertTrue(bootstrap.content.contains("unread"))
+        let workspace = try await provider.execute(
+            .init(
+                id: "call-workspace",
+                name: LocalAgentChatToolProvider.workspaceSnapshotToolName,
+                arguments: "{}"
+            )
+        )
+        XCTAssertTrue(workspace.content.contains("项目群聊"))
+        XCTAssertTrue(workspace.content.contains("架构师"))
+        XCTAssertTrue(workspace.content.contains("客户端"))
+        XCTAssertTrue(workspace.content.contains(#""has_project_manager":true"#))
+        XCTAssertFalse(workspace.content.contains(room.id))
+        XCTAssertFalse(workspace.content.contains(first.id))
+        XCTAssertFalse(workspace.content.contains(second.id))
         let trigger = try await provider.execute(
             .init(id: "call-trigger", name: "chat_get_trigger", arguments: "{}")
         )

@@ -857,7 +857,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             conversationContext = "项目群目标：\(room.draft.goal.isEmpty ? "未单独设置" : room.draft.goal)"
         case .humanAgentDirect:
             conversationRole = "你与 Human 的私聊"
-            conversationContext = "这是独立私聊，不绑定项目；不要假定可以读取任何项目文件。"
+            conversationContext = "这是独立私聊，不绑定项目；不要假定可以读取任何项目文件。relay_bootstrap 的 members 只表示当前私聊参与者，不代表账户内只有这些 Agent。"
         case .agentAgentDirect:
             conversationRole = "Agent 之间的私聊"
             conversationContext = "这是独立私聊，不绑定项目；通过 Relay 回复对方，不要假定可以读取任何项目文件。"
@@ -914,7 +914,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         角色指令：\(profile.draft.rolePrompt)
         \(conversationContext)
 
-        你通过 ChatOS 本机唯一的 Relay MCP 协作。聊天记录不是你的私有记忆，也不会整段注入提示词。普通会话可先调用 relay_bootstrap 获取当前身份和会话上下文；主动巡检使用 chat_read_all_unread。chat_read_all_unread 返回的消息立即视为已读，是否需要行动由你根据内容判断。TodoList 属于项目团队而不是某个 Agent；agent_id 只代表负责人。所有团队成员可读任务板，只有该团队显式指定、且职业为 project_manager 的项目经理拥有 todo_add、todo_update、todo_reorder 和依赖维护权限。跨 Agent 任务可以依赖，但只能在同一团队内；所有前置 completed 前，下游不会调度，前置 blocked/cancelled 也不会放行。Todo 执行线程只获得当前任务、已完成前置结果、进度和结束工具。普通消息必须通过 chat_send_message 完成回复；主动巡检和 Todo 状态处理通过 agent_cycle_complete 结束；Todo 工作通过 todo_complete 或 todo_block 结束。只有对应 MCP 工具成功才算完成本次 delivery。不得假冒其他 Agent，也不得自行猜测内部 ID。
+        你通过 ChatOS 本机唯一的 Relay MCP 协作。每个 Agent 绑定一个跨私聊、团队、Todo 和多次唤醒连续复用的独立 Memory thread；不要把一次唤醒当成新身份。聊天记录不是你的私有记忆，也不会整段注入提示词。普通会话先调用 relay_bootstrap 获取当前身份和会话上下文；用户使用“之前、那个、他们、继续”等指代或询问先前工作时，再调用 chat_read_messages 核对当前会话历史，不得凭本轮 trigger 宣称忘记。relay_bootstrap 只描述当前会话；回答现有 Agent、团队、成员关系、项目经理或人员缺口前必须调用 agent_workspace_snapshot，不能把私聊 members 当成账户目录。主动巡检使用 chat_read_all_unread。chat_read_all_unread 返回的消息立即视为已读，是否需要行动由你根据内容判断。TodoList 属于项目团队而不是某个 Agent；agent_id 只代表负责人。所有团队成员可读任务板，只有该团队显式指定、且职业为 project_manager 的项目经理拥有 todo_add、todo_update、todo_reorder 和依赖维护权限。跨 Agent 任务可以依赖，但只能在同一团队内；所有前置 completed 前，下游不会调度，前置 blocked/cancelled 也不会放行。Todo 执行线程只获得当前任务、已完成前置结果、进度和结束工具。普通消息必须通过 chat_send_message 完成回复；主动巡检和 Todo 状态处理通过 agent_cycle_complete 结束；Todo 工作通过 todo_complete 或 todo_block 结束。只有对应 MCP 工具成功才算完成本次 delivery。不得假冒其他 Agent，也不得自行猜测内部 ID。
         \(LocalAgentCapabilityDiscoverySkill.instructions)
         \(staffingInstructions)
         \(projectInstructions)

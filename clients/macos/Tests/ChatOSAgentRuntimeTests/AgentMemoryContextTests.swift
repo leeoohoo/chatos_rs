@@ -3,7 +3,7 @@ import XCTest
 @testable import ChatOSAgentRuntime
 
 final class AgentMemoryContextTests: XCTestCase {
-    func testProjectChatMemoryIsPrivateToAgentAndProject() throws {
+    func testLocalAgentMemoryIsStableAcrossProjectsAndPrivateToAgent() throws {
         let runID = UUID()
         let first = try AgentMemoryScope(
             tenantID: "user-a",
@@ -19,8 +19,18 @@ final class AgentMemoryContextTests: XCTestCase {
             runID: runID,
             runtimeScope: "account:user-a:project:project-1:agent:agent-b"
         )
-        XCTAssertEqual(first.subjectID, "agent_project:agent-a:project-1")
-        XCTAssertEqual(second.subjectID, "agent_project:agent-b:project-1")
+        let firstInAnotherProject = try AgentMemoryScope(
+            tenantID: "user-a",
+            agentID: "agent-a",
+            projectID: "project-2",
+            runID: UUID(),
+            runtimeScope: "account:user-a:project:project-2:agent:agent-a"
+        )
+        XCTAssertEqual(first.subjectID, "agent:agent-a")
+        XCTAssertEqual(first.threadID, "client-agent:group-chat:agent-a")
+        XCTAssertEqual(firstInAnotherProject.subjectID, first.subjectID)
+        XCTAssertEqual(firstInAnotherProject.threadID, first.threadID)
+        XCTAssertEqual(second.subjectID, "agent:agent-b")
         XCTAssertNotEqual(first.subjectID, second.subjectID)
         XCTAssertNotEqual(first.threadID, second.threadID)
         XCTAssertNil(first.includeSubjectMemory)

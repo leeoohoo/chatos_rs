@@ -146,6 +146,7 @@ private actor LocalAgentRunReferenceVault {
     private var messages: [String: MessageAuthority] = [:]
     private var todos: [String: TodoAuthority] = [:]
     private var teams: [String: String] = [:]
+    private var agents: [String: String] = [:]
     private var assignees: [String: AssigneeAuthority] = [:]
     private var plugins: [String: LocalAgentTodoPluginOption] = [:]
 
@@ -196,6 +197,15 @@ private actor LocalAgentRunReferenceVault {
 
     func teamID(reference: String) -> String? { teams[reference] }
 
+    func agentReference(agentID: String) -> String {
+        if let existing = agents.first(where: { $0.value == agentID })?.key { return existing }
+        let reference = "agent_\(UUID().uuidString.lowercased())"
+        agents[reference] = agentID
+        return reference
+    }
+
+    func agentID(reference: String) -> String? { agents[reference] }
+
     func assigneeReference(agentID: String, teamRoomID: String) -> String {
         if let existing = assignees.first(where: {
             $0.value.agentID == agentID && $0.value.teamRoomID == teamRoomID
@@ -223,6 +233,7 @@ private actor LocalAgentRunReferenceVault {
 /// account, project, room, Agent, delivery or Memory identity.
 public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let bootstrapToolName = "relay_bootstrap"
+    public static let workspaceSnapshotToolName = "agent_workspace_snapshot"
     public static let getTriggerToolName = "chat_get_trigger"
     public static let listMembersToolName = "chat_list_members"
     public static let readUnreadToolName = "chat_read_unread"
@@ -338,6 +349,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         switch call.name {
         case Self.bootstrapToolName:
             return try await bootstrap(call)
+        case Self.workspaceSnapshotToolName:
+            return try await workspaceSnapshot(call)
         case Self.getTriggerToolName:
             return try await getTrigger(call)
         case Self.listMembersToolName:
@@ -450,6 +463,66 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                     isProjectManager: room.projectManagerAgentID == member.agentID
                 )
             }
+        ))
+    }
+
+    /// Account-local discovery is deliberately separate from `relay_bootstrap`: bootstrap is
+    /// scoped to the current conversation, while this snapshot answers organization questions
+    /// without exposing durable database identifiers to the model.
+    private func workspaceSnapshot(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        _ = try Self.arguments(call)
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: false
+        )
+        let profilesByID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+        let rooms = try await store.listRooms(
+            ownerUserID: context.ownerUserID,
+            includeArchived: false
+        )
+        var teamResponses: [WorkspaceTeamResponse] = []
+        var teamNamesByAgentID: [String: [String]] = [:]
+        for room in rooms {
+            let members = try await store.listMembers(
+                ownerUserID: context.ownerUserID,
+                roomID: room.id
+            ).filter { $0.status == .active }
+            var memberResponses: [WorkspaceTeamMemberResponse] = []
+            for member in members {
+                let profile = profilesByID[member.agentID]
+                teamNamesByAgentID[member.agentID, default: []].append(room.draft.name)
+                memberResponses.append(.init(
+                    agentReference: await references.agentReference(agentID: member.agentID),
+                    name: profile?.draft.name ?? "Agent",
+                    profession: profile?.draft.professionKey ?? LocalAgentSkillCatalog.legacyProfessionKey,
+                    role: member.draft.role,
+                    isProjectManager: room.projectManagerAgentID == member.agentID
+                ))
+            }
+            teamResponses.append(.init(
+                teamReference: await references.teamReference(teamID: room.id),
+                name: room.draft.name,
+                goal: room.draft.goal,
+                hasProjectManager: room.projectManagerAgentID != nil,
+                projectManager: room.projectManagerAgentID.flatMap {
+                    profilesByID[$0]?.draft.name
+                },
+                members: memberResponses
+            ))
+        }
+        var agentResponses: [WorkspaceAgentResponse] = []
+        for profile in profiles {
+            agentResponses.append(.init(
+                agentReference: await references.agentReference(agentID: profile.id),
+                name: profile.draft.name,
+                profession: profile.draft.professionKey,
+                isCurrentAgent: profile.id == context.agentID,
+                teams: (teamNamesByAgentID[profile.id] ?? []).sorted()
+            ))
+        }
+        return try Self.outcome(WorkspaceSnapshotResponse(
+            agents: agentResponses,
+            teams: teamResponses
         ))
     }
 
@@ -1884,6 +1957,57 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         }
     }
 
+    private struct WorkspaceSnapshotResponse: Encodable {
+        let agents: [WorkspaceAgentResponse]
+        let teams: [WorkspaceTeamResponse]
+    }
+
+    private struct WorkspaceAgentResponse: Encodable {
+        let agentReference: String
+        let name: String
+        let profession: String
+        let isCurrentAgent: Bool
+        let teams: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case agentReference = "agent_ref"
+            case name, profession
+            case isCurrentAgent = "is_current_agent"
+            case teams
+        }
+    }
+
+    private struct WorkspaceTeamResponse: Encodable {
+        let teamReference: String
+        let name: String
+        let goal: String
+        let hasProjectManager: Bool
+        let projectManager: String?
+        let members: [WorkspaceTeamMemberResponse]
+
+        enum CodingKeys: String, CodingKey {
+            case teamReference = "team_ref"
+            case name, goal
+            case hasProjectManager = "has_project_manager"
+            case projectManager = "project_manager"
+            case members
+        }
+    }
+
+    private struct WorkspaceTeamMemberResponse: Encodable {
+        let agentReference: String
+        let name: String
+        let profession: String
+        let role: String
+        let isProjectManager: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case agentReference = "agent_ref"
+            case name, profession, role
+            case isProjectManager = "is_project_manager"
+        }
+    }
+
     private struct TodoResponse: Encodable {
         let todoReference: String
         let team: String
@@ -2226,6 +2350,11 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         .init(
             name: bootstrapToolName,
             description: "连接本地 Relay MCP 后读取当前 Agent 身份、绑定项目、团队、成员和本次唤醒消息。身份与范围由客户端固定，不能由参数切换。",
+            schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: workspaceSnapshotToolName,
+            description: "读取当前账户在本机已有的全部活跃 Agent、项目团队、成员关系和显式项目经理。私聊中的 relay_bootstrap 只描述当前会话，不能据此判断其他团队或 Agent 不存在；回答组织现状、既有团队、成员或人员缺口前必须调用本工具。仅返回本轮临时引用，不暴露真实 Agent、团队或项目 ID。",
             schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
         ),
         .init(
