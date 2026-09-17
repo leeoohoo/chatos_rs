@@ -79,6 +79,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
                 description: "实现客户端功能",
                 rolePrompt: "先读取群聊，再给出可执行答复。",
                 modelConfigID: "local-model",
+                thinkingLevel: "high",
                 professionKey: "desktop_engineer"
             )
         )
@@ -110,7 +111,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
         let scheduler = LocalAgentGroupChatScheduler(
             service: nativeService,
-            services: SchedulerTestServices(),
+            services: SchedulerTestServices(expectedThinkingLevel: "high"),
             settings: .init(suiteName: settingsSuite),
             projectTypeKeyProvider: { _, _ in "desktop_application" }
         )
@@ -351,11 +352,27 @@ private enum SchedulerTestError: Error {
 }
 
 private struct SchedulerTestServices: AgentServiceProviding {
+    var expectedThinkingLevel: String?
+
+    init(expectedThinkingLevel: String? = nil) {
+        self.expectedThinkingLevel = expectedThinkingLevel
+    }
+
     func makeAgentModel(
         configID: String,
         policy: AgentRunPolicy
     ) async throws -> any AgentModelClient {
         XCTAssertEqual(configID, "local-model")
+        return SchedulerTestModel()
+    }
+
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy,
+        thinkingLevel: String?
+    ) async throws -> any AgentModelClient {
+        XCTAssertEqual(configID, "local-model")
+        XCTAssertEqual(thinkingLevel, expectedThinkingLevel)
         return SchedulerTestModel()
     }
 

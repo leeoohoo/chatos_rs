@@ -592,6 +592,7 @@ private struct EditLocalAgentSheet: View {
     @State private var responsibility: String
     @State private var rolePrompt: String
     @State private var modelConfigID: String
+    @State private var thinkingLevel: String
     @State private var isSaving = false
 
     init(
@@ -606,6 +607,7 @@ private struct EditLocalAgentSheet: View {
         _responsibility = State(initialValue: item.member.draft.responsibility)
         _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? "")
         _modelConfigID = State(initialValue: profile?.draft.modelConfigID ?? "")
+        _thinkingLevel = State(initialValue: profile?.draft.thinkingLevel ?? "")
     }
 
     var body: some View {
@@ -623,6 +625,13 @@ private struct EditLocalAgentSheet: View {
                         Text("\(model.name) · \(model.modelName)").tag(model.id)
                     }
                 }
+                Picker("思考等级", selection: $thinkingLevel) {
+                    Text(defaultThinkingLabel).tag("")
+                    ForEach(selectedModel?.thinkingLevels ?? [], id: \.self) { level in
+                        Text(level).tag(level)
+                    }
+                }
+                .disabled(selectedModel?.supportsReasoning != true)
                 if !viewModel.availableModels.contains(where: { $0.id == modelConfigID }) {
                     Text("原模型当前不可用，请选择新的模型后保存。")
                         .font(.caption)
@@ -641,7 +650,8 @@ private struct EditLocalAgentSheet: View {
                             role: role,
                             responsibility: responsibility,
                             rolePrompt: rolePrompt,
-                            modelConfigID: modelConfigID
+                            modelConfigID: modelConfigID,
+                            thinkingLevel: thinkingLevel
                         ) { dismiss() }
                         isSaving = false
                     }
@@ -657,6 +667,24 @@ private struct EditLocalAgentSheet: View {
         }
         .padding(24)
         .frame(width: 560)
+        .onChange(of: modelConfigID) { normalizeThinkingLevel() }
+    }
+
+    private var selectedModel: LocalAgentBuilderModelOption? {
+        viewModel.availableModels.first(where: { $0.id == modelConfigID })
+    }
+
+    private var defaultThinkingLabel: String {
+        guard let configured = selectedModel?.defaultThinkingLevel,
+              !configured.isEmpty else { return "跟随模型默认" }
+        return "跟随模型默认（\(configured)）"
+    }
+
+    private func normalizeThinkingLevel() {
+        thinkingLevel = LocalAgentThinkingLevelCatalog.normalized(
+            thinkingLevel,
+            allowedValues: selectedModel?.thinkingLevels ?? []
+        ) ?? ""
     }
 }
 
@@ -785,6 +813,7 @@ private struct CreateLocalAgentSheet: View {
     @State private var responsibility = ""
     @State private var rolePrompt = ""
     @State private var modelConfigID = ""
+    @State private var thinkingLevel = ""
     @State private var professionKey = LocalAgentSkillCatalog.legacyProfessionKey
     @State private var isSaving = false
 
@@ -805,6 +834,13 @@ private struct CreateLocalAgentSheet: View {
                             Text("\(model.name) · \(model.modelName)").tag(model.id)
                         }
                     }
+                    Picker("思考等级", selection: $thinkingLevel) {
+                        Text(defaultThinkingLabel).tag("")
+                        ForEach(selectedModel?.thinkingLevels ?? [], id: \.self) { level in
+                            Text(level).tag(level)
+                        }
+                    }
+                    .disabled(selectedModel?.supportsReasoning != true)
                 }
                 Picker("职业", selection: $professionKey) {
                     ForEach(professions) { profession in
@@ -828,6 +864,7 @@ private struct CreateLocalAgentSheet: View {
                             responsibility: responsibility,
                             rolePrompt: rolePrompt,
                             modelConfigID: modelConfigID,
+                            thinkingLevel: thinkingLevel,
                             professionKey: professionKey
                         ) { dismiss() }
                         isSaving = false
@@ -848,7 +885,26 @@ private struct CreateLocalAgentSheet: View {
             if modelConfigID.isEmpty {
                 modelConfigID = viewModel.availableModels.first?.id ?? ""
             }
+            normalizeThinkingLevel()
         }
+        .onChange(of: modelConfigID) { normalizeThinkingLevel() }
+    }
+
+    private var selectedModel: LocalAgentBuilderModelOption? {
+        viewModel.availableModels.first(where: { $0.id == modelConfigID })
+    }
+
+    private var defaultThinkingLabel: String {
+        guard let configured = selectedModel?.defaultThinkingLevel,
+              !configured.isEmpty else { return "跟随模型默认" }
+        return "跟随模型默认（\(configured)）"
+    }
+
+    private func normalizeThinkingLevel() {
+        thinkingLevel = LocalAgentThinkingLevelCatalog.normalized(
+            thinkingLevel,
+            allowedValues: selectedModel?.thinkingLevels ?? []
+        ) ?? ""
     }
 
     private var professions: [LocalAgentProfessionDefinition] {

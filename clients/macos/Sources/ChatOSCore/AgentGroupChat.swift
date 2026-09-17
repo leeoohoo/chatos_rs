@@ -29,6 +29,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
     public let description: String
     public let rolePrompt: String
     public let modelConfigID: String
+    public let thinkingLevel: String?
     public let professionKey: String
     public let defaultPluginIDs: [String]
     public let defaultSkillIDs: [String]
@@ -38,6 +39,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
         description: String = "",
         rolePrompt: String,
         modelConfigID: String,
+        thinkingLevel: String? = nil,
         professionKey: String = LocalAgentSkillCatalog.legacyProfessionKey,
         defaultPluginIDs: [String] = [],
         defaultSkillIDs: [String] = []
@@ -46,6 +48,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
         self.description = description
         self.rolePrompt = rolePrompt
         self.modelConfigID = modelConfigID
+        self.thinkingLevel = thinkingLevel?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.professionKey = professionKey
         self.defaultPluginIDs = defaultPluginIDs
         self.defaultSkillIDs = defaultSkillIDs
@@ -56,13 +59,18 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
         try AgentGroupChatValidation.optionalText(description, field: "description", maximumLength: 2_000)
         try AgentGroupChatValidation.text(rolePrompt, field: "rolePrompt", maximumLength: 32_000)
         try AgentGroupChatValidation.identifier(modelConfigID, field: "modelConfigID")
+        if let thinkingLevel {
+            guard LocalAgentThinkingLevelCatalog.allValues.contains(thinkingLevel) else {
+                throw AgentGroupChatError.invalidField("thinkingLevel")
+            }
+        }
         _ = try LocalAgentSkillCatalog.requireProfession(key: professionKey)
         try AgentGroupChatValidation.identifiers(defaultPluginIDs, field: "defaultPluginIDs", maximumCount: 100)
         try AgentGroupChatValidation.identifiers(defaultSkillIDs, field: "defaultSkillIDs", maximumCount: 100)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, description, rolePrompt, modelConfigID, professionKey
+        case name, description, rolePrompt, modelConfigID, thinkingLevel, professionKey
         case defaultPluginIDs, defaultSkillIDs
     }
 
@@ -73,6 +81,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
             description: try values.decodeIfPresent(String.self, forKey: .description) ?? "",
             rolePrompt: try values.decode(String.self, forKey: .rolePrompt),
             modelConfigID: try values.decode(String.self, forKey: .modelConfigID),
+            thinkingLevel: try values.decodeIfPresent(String.self, forKey: .thinkingLevel),
             professionKey: try values.decodeIfPresent(String.self, forKey: .professionKey)
                 ?? LocalAgentSkillCatalog.legacyProfessionKey,
             defaultPluginIDs: try values.decodeIfPresent([String].self, forKey: .defaultPluginIDs) ?? [],
@@ -619,13 +628,76 @@ public struct LocalAgentBuilderModelOption: Codable, Sendable, Equatable, Identi
     public let name: String
     public let provider: String
     public let modelName: String
+    public let supportsReasoning: Bool
+    public let defaultThinkingLevel: String?
+    public let thinkingLevels: [String]
 
-    public init(id: String, name: String, provider: String, modelName: String) {
+    public init(
+        id: String,
+        name: String,
+        provider: String,
+        modelName: String,
+        supportsReasoning: Bool = false,
+        defaultThinkingLevel: String? = nil,
+        thinkingLevels: [String] = []
+    ) {
         self.id = id
         self.name = name
         self.provider = provider
         self.modelName = modelName
+        self.supportsReasoning = supportsReasoning
+        self.defaultThinkingLevel = defaultThinkingLevel
+        self.thinkingLevels = thinkingLevels
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, provider, modelName, supportsReasoning, defaultThinkingLevel, thinkingLevels
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try values.decode(String.self, forKey: .id),
+            name: try values.decode(String.self, forKey: .name),
+            provider: try values.decode(String.self, forKey: .provider),
+            modelName: try values.decode(String.self, forKey: .modelName),
+            supportsReasoning: try values.decodeIfPresent(Bool.self, forKey: .supportsReasoning) ?? false,
+            defaultThinkingLevel: try values.decodeIfPresent(String.self, forKey: .defaultThinkingLevel),
+            thinkingLevels: try values.decodeIfPresent([String].self, forKey: .thinkingLevels) ?? []
+        )
+    }
+}
+
+public enum LocalAgentThinkingLevelCatalog {
+    public static let allValues = Set([
+        "auto", "none", "minimal", "low", "medium", "high", "xhigh", "max",
+    ])
+
+    public static func values(provider: String?) -> [String] {
+        switch normalizedProvider(provider) {
+        case "deepseek": ["none", "high", "max"]
+        case "kimi", "kimik2", "moonshot": ["auto", "none"]
+        case "glm", "zhipu", "zai": ["none", "low", "medium", "high", "xhigh"]
+        default: ["none", "minimal", "low", "medium", "high", "xhigh"]
+        }
+    }
+
+    public static func normalized(_ value: String?, allowedValues: [String]) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+              allowedValues.contains(value) else { return nil }
+        return value
+    }
+
+    private static func normalizedProvider(_ provider: String?) -> String {
+        (provider ?? "gpt")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 public struct LocalAgentBuilderPluginOption: Codable, Sendable, Equatable, Identifiable {

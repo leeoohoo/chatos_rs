@@ -74,14 +74,24 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         description: String,
         rolePrompt: String,
         modelConfigID: String,
+        thinkingLevel: String?,
         professionKey: String,
         canManageStaff: Bool,
         canAccessLocalProjects: Bool
     ) async -> Bool {
         guard !isSavingAgent else { return false }
         let modelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard availableModels.contains(where: { $0.id == modelConfigID }) else {
+        guard let selectedModel = availableModels.first(where: { $0.id == modelConfigID }) else {
             errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription
+            return false
+        }
+        let normalizedThinkingLevel = LocalAgentThinkingLevelCatalog.normalized(
+            thinkingLevel,
+            allowedValues: selectedModel.thinkingLevels
+        )
+        if let thinkingLevel = thinkingLevel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !thinkingLevel.isEmpty, normalizedThinkingLevel == nil {
+            errorMessage = AgentGroupChatError.invalidField("thinkingLevel").localizedDescription
             return false
         }
         let permissions = LocalAgentPermission.normalized(
@@ -94,6 +104,7 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             modelConfigID: modelConfigID,
+            thinkingLevel: normalizedThinkingLevel,
             professionKey: professionKey,
             defaultPluginIDs: [],
             defaultSkillIDs: permissions
@@ -581,6 +592,10 @@ private struct AgentManagementView: View {
                     .lineLimit(1)
             }
             .font(.caption)
+            LabeledContent("思考等级") {
+                Text(agent.draft.thinkingLevel ?? "跟随模型默认")
+            }
+            .font(.caption)
             LabeledContent("职业") {
                 Text(professions.first(where: { $0.key == agent.draft.professionKey })?.label
                     ?? agent.draft.professionKey)
@@ -633,6 +648,7 @@ private struct AgentProfileEditorSheet: View {
     @State private var description: String
     @State private var rolePrompt: String
     @State private var modelConfigID: String
+    @State private var thinkingLevel: String
     @State private var professionKey: String
     @State private var canManageStaff: Bool
     @State private var canAccessLocalProjects: Bool
@@ -656,6 +672,7 @@ private struct AgentProfileEditorSheet: View {
         _description = State(initialValue: profile?.draft.description ?? "")
         _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? Self.defaultPrompt)
         _modelConfigID = State(initialValue: profile?.draft.modelConfigID ?? "")
+        _thinkingLevel = State(initialValue: profile?.draft.thinkingLevel ?? "")
         _professionKey = State(initialValue: profile?.draft.professionKey
             ?? LocalAgentSkillCatalog.legacyProfessionKey)
         _canManageStaff = State(initialValue: profile.map {
@@ -669,6 +686,10 @@ private struct AgentProfileEditorSheet: View {
     private var existing: LocalAgentProfile? {
         guard case let .edit(profile) = target else { return nil }
         return profile
+    }
+
+    private var selectedModel: LocalAgentBuilderModelOption? {
+        viewModel.availableModels.first(where: { $0.id == modelConfigID })
     }
 
     var body: some View {
@@ -698,6 +719,24 @@ private struct AgentProfileEditorSheet: View {
                         }
                         .labelsHidden()
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    editorField("思考等级") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Picker("", selection: $thinkingLevel) {
+                                Text(defaultThinkingLabel).tag("")
+                                ForEach(selectedModel?.thinkingLevels ?? [], id: \.self) { level in
+                                    Text(level).tag(level)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .disabled(selectedModel?.supportsReasoning != true)
+                            if selectedModel?.supportsReasoning != true {
+                                Text("当前模型未启用思考能力")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                     editorField("职业") {
                         VStack(alignment: .leading, spacing: 5) {
@@ -752,6 +791,7 @@ private struct AgentProfileEditorSheet: View {
                             description: description,
                             rolePrompt: rolePrompt,
                             modelConfigID: modelConfigID,
+                            thinkingLevel: thinkingLevel,
                             professionKey: professionKey,
                             canManageStaff: canManageStaff,
                             canAccessLocalProjects: canAccessLocalProjects
@@ -774,7 +814,24 @@ private struct AgentProfileEditorSheet: View {
             if modelConfigID.isEmpty {
                 modelConfigID = viewModel.availableModels.first?.id ?? ""
             }
+            normalizeThinkingLevel()
         }
+        .onChange(of: modelConfigID) {
+            normalizeThinkingLevel()
+        }
+    }
+
+    private var defaultThinkingLabel: String {
+        guard let configured = selectedModel?.defaultThinkingLevel,
+              !configured.isEmpty else { return "跟随模型默认" }
+        return "跟随模型默认（\(configured)）"
+    }
+
+    private func normalizeThinkingLevel() {
+        thinkingLevel = LocalAgentThinkingLevelCatalog.normalized(
+            thinkingLevel,
+            allowedValues: selectedModel?.thinkingLevels ?? []
+        ) ?? ""
     }
 
     private func editorField<Content: View>(

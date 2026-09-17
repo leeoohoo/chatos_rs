@@ -65,7 +65,12 @@ public struct LocalAgentBuilderService: Sendable {
                 id: model.id,
                 name: model.name,
                 provider: model.provider,
-                modelName: model.modelName
+                modelName: model.modelName,
+                supportsReasoning: model.supportsReasoning,
+                defaultThinkingLevel: model.taskThinkingLevel,
+                thinkingLevels: model.supportsReasoning
+                    ? LocalAgentThinkingLevelCatalog.values(provider: model.provider)
+                    : []
             )
         }.sorted {
             if $0.name != $1.name {

@@ -1271,6 +1271,7 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
                 description: "新职责",
                 rolePrompt: "使用新的角色指令。",
                 modelConfigID: "model-2",
+                thinkingLevel: "high",
                 defaultPluginIDs: ["plugin.new"],
                 defaultSkillIDs: ["skill.keep"]
             ),
@@ -1283,6 +1284,7 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
 
         XCTAssertEqual(result.profile.draft.name, "新名称")
         XCTAssertEqual(result.profile.draft.modelConfigID, "model-2")
+        XCTAssertEqual(result.profile.draft.thinkingLevel, "high")
         XCTAssertEqual(result.profile.draft.defaultSkillIDs, ["skill.keep"])
         XCTAssertEqual(result.member.draft.role, "新角色")
         XCTAssertEqual(result.member.draft.pluginAllowlist, ["plugin.new"])

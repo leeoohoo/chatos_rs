@@ -491,3 +491,7 @@
 "附件" = "Attachments";
 "添加图片、文档或其他文件；也可以直接粘贴或拖入" = "Add images, documents, or other files. You can also paste or drag them here.";
 "选择要 @ 的 Agent；不选择时交给默认 Agent" = "Choose an Agent to mention. If none is selected, the default Agent will respond.";
+"思考等级" = "Thinking Level";
+"当前模型未启用思考能力" = "Thinking is not enabled for the selected model.";
+"跟随模型默认" = "Use Model Default";
+"跟随模型默认（%@）" = "Use Model Default (%@)";

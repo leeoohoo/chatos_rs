@@ -222,6 +222,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         responsibility: String,
         rolePrompt: String,
         modelConfigID: String,
+        thinkingLevel: String?,
         professionKey: String
     ) async -> Bool {
         guard let room else {
@@ -229,8 +230,17 @@ final class AgentGroupChatViewModel: ObservableObject {
             return false
         }
         let normalizedModelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard availableModels.contains(where: { $0.id == normalizedModelConfigID }) else {
+        guard let selectedModel = availableModels.first(where: { $0.id == normalizedModelConfigID }) else {
             errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription
+            return false
+        }
+        let normalizedThinkingLevel = LocalAgentThinkingLevelCatalog.normalized(
+            thinkingLevel,
+            allowedValues: selectedModel.thinkingLevels
+        )
+        if let thinkingLevel = thinkingLevel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !thinkingLevel.isEmpty, normalizedThinkingLevel == nil {
+            errorMessage = AgentGroupChatError.invalidField("thinkingLevel").localizedDescription
             return false
         }
         do {
@@ -242,6 +252,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     modelConfigID: normalizedModelConfigID,
+                    thinkingLevel: normalizedThinkingLevel,
                     professionKey: professionKey,
                     defaultPluginIDs: []
                 )
@@ -315,15 +326,25 @@ final class AgentGroupChatViewModel: ObservableObject {
         role: String,
         responsibility: String,
         rolePrompt: String,
-        modelConfigID: String
+        modelConfigID: String,
+        thinkingLevel: String?
     ) async -> Bool {
         guard let room, let existingProfile = profilesByID[agentID] else {
             errorMessage = AgentGroupChatError.notFound.localizedDescription
             return false
         }
         let normalizedModelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard availableModels.contains(where: { $0.id == normalizedModelConfigID }) else {
+        guard let selectedModel = availableModels.first(where: { $0.id == normalizedModelConfigID }) else {
             errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription
+            return false
+        }
+        let normalizedThinkingLevel = LocalAgentThinkingLevelCatalog.normalized(
+            thinkingLevel,
+            allowedValues: selectedModel.thinkingLevels
+        )
+        if let thinkingLevel = thinkingLevel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !thinkingLevel.isEmpty, normalizedThinkingLevel == nil {
+            errorMessage = AgentGroupChatError.invalidField("thinkingLevel").localizedDescription
             return false
         }
         do {
@@ -337,6 +358,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     modelConfigID: normalizedModelConfigID,
+                    thinkingLevel: normalizedThinkingLevel,
                     professionKey: existingProfile.draft.professionKey,
                     defaultPluginIDs: [],
                     defaultSkillIDs: existingProfile.draft.defaultSkillIDs

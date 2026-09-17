@@ -581,7 +581,8 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         )
         let model = try await services.makeAgentModel(
             configID: run.modelConfigID,
-            policy: policy
+            policy: policy,
+            thinkingLevel: profile.draft.thinkingLevel
         )
         var finalCheckpoint = try await runtime.run(
             checkpoint: checkpoint,

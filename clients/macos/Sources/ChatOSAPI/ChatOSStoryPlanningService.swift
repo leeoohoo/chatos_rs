@@ -15,6 +15,14 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
     }
 
     public func makeAgentModel(configID: String, policy: AgentRunPolicy) async throws -> any AgentModelClient {
+        try await makeAgentModel(configID: configID, policy: policy, thinkingLevel: nil)
+    }
+
+    public func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy,
+        thinkingLevel: String?
+    ) async throws -> any AgentModelClient {
         try policy.validate()
         let session = try await client.currentAuthenticationSessionID()
         let config: Config = try await client.request("/ai-model-configs/\(configID.urlPathEncoded)?include_secret=true",
@@ -36,8 +44,9 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
         }
         let model: any AgentModelClient = try AgentResponsesModelClient(
             baseURL: url, model: config.model, apiKey: key,
+            thinking: thinkingLevel ?? config.taskThinkingLevel,
             maximumOutputTokens: (policy.context ?? .init()).outputReserveTokens,
-            promptCacheKey: "story-agent:\(configID)",
+            promptCacheKey: "story-agent:\(configID):\(thinkingLevel ?? config.taskThinkingLevel ?? "default")",
             transport: send, streamTransport: stream
         )
         return StorySessionBoundModel(model: model, client: client, session: session)
@@ -111,5 +120,11 @@ private struct Config: Decodable {
     var provider: String?
     var apiKey: String?
     var baseURL: String?
-    enum CodingKeys: String, CodingKey { case enabled, model, provider; case apiKey = "api_key", baseURL = "base_url" }
+    var taskThinkingLevel: String?
+    enum CodingKeys: String, CodingKey {
+        case enabled, model, provider
+        case apiKey = "api_key"
+        case baseURL = "base_url"
+        case taskThinkingLevel = "task_thinking_level"
+    }
 }

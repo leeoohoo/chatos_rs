@@ -61,13 +61,14 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             """
             INSERT INTO local_agent_profiles (
                 owner_user_id, id, name, description, role_prompt, model_config_id,
-                profession_key, default_plugin_ids_json, default_skill_ids_json, status,
-                created_at_unix_ms, updated_at_unix_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json,
+                status, created_at_unix_ms, updated_at_unix_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 .text(ownerUserID), .text(record.id), .text(draft.name),
                 .text(draft.description), .text(draft.rolePrompt), .text(draft.modelConfigID),
+                draft.thinkingLevel.map(Value.text) ?? .null,
                 .text(draft.professionKey),
                 .text(try encodeStrings(draft.defaultPluginIDs)),
                 .text(try encodeStrings(draft.defaultSkillIDs)), .text(record.status.rawValue),
@@ -109,12 +110,14 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 """
                 UPDATE local_agent_profiles
                 SET name = ?, description = ?, role_prompt = ?, model_config_id = ?,
-                    profession_key = ?, default_plugin_ids_json = ?, default_skill_ids_json = ?, updated_at_unix_ms = ?
+                    thinking_level = ?, profession_key = ?, default_plugin_ids_json = ?,
+                    default_skill_ids_json = ?, updated_at_unix_ms = ?
                 WHERE owner_user_id = ? AND id = ? AND status = 'active'
                 """,
                 [
                     .text(draft.name), .text(draft.description), .text(draft.rolePrompt),
-                    .text(draft.modelConfigID), .text(draft.professionKey), .text(try encodeStrings(draft.defaultPluginIDs)),
+                    .text(draft.modelConfigID), draft.thinkingLevel.map(Value.text) ?? .null,
+                    .text(draft.professionKey), .text(try encodeStrings(draft.defaultPluginIDs)),
                     .text(try encodeStrings(draft.defaultSkillIDs)), .integer(now),
                     .text(ownerUserID), .text(agentID),
                 ]
@@ -154,12 +157,14 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 """
                 UPDATE local_agent_profiles
                 SET name = ?, description = ?, role_prompt = ?, model_config_id = ?,
-                    profession_key = ?, default_plugin_ids_json = ?, default_skill_ids_json = ?, updated_at_unix_ms = ?
+                    thinking_level = ?, profession_key = ?, default_plugin_ids_json = ?,
+                    default_skill_ids_json = ?, updated_at_unix_ms = ?
                 WHERE owner_user_id = ? AND id = ? AND status = 'active'
                 """,
                 [
                     .text(profileDraft.name), .text(profileDraft.description),
                     .text(profileDraft.rolePrompt), .text(profileDraft.modelConfigID),
+                    profileDraft.thinkingLevel.map(Value.text) ?? .null,
                     .text(profileDraft.professionKey),
                     .text(try encodeStrings(profileDraft.defaultPluginIDs)),
                     .text(try encodeStrings(profileDraft.defaultSkillIDs)), .integer(now),
@@ -324,14 +329,15 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 """
                 INSERT INTO local_agent_profiles (
                     owner_user_id, id, name, description, role_prompt, model_config_id,
-                    profession_key, default_plugin_ids_json, default_skill_ids_json, status,
-                    created_at_unix_ms, updated_at_unix_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    thinking_level, profession_key, default_plugin_ids_json,
+                    default_skill_ids_json, status, created_at_unix_ms, updated_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 [
                     .text(ownerUserID), .text(agent.id), .text(agent.draft.name),
                     .text(agent.draft.description), .text(agent.draft.rolePrompt),
                     .text(agent.draft.modelConfigID),
+                    agent.draft.thinkingLevel.map(Value.text) ?? .null,
                     .text(agent.draft.professionKey),
                     .text(try encodeStrings(agent.draft.defaultPluginIDs)),
                     .text(try encodeStrings(agent.draft.defaultSkillIDs)),
@@ -2372,7 +2378,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     }
 
     private func readAgent(_ statement: OpaquePointer) throws -> LocalAgentProfile {
-        guard let status = LocalAgentProfileStatus(rawValue: Self.string(statement, 9)) else {
+        guard let status = LocalAgentProfileStatus(rawValue: Self.string(statement, 10)) else {
             throw AgentGroupChatError.storage("invalid agent status")
         }
         let profile = LocalAgentProfile(
@@ -2383,13 +2389,14 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 description: Self.string(statement, 3),
                 rolePrompt: Self.string(statement, 4),
                 modelConfigID: Self.string(statement, 5),
-                professionKey: Self.string(statement, 6),
-                defaultPluginIDs: try decodeStrings(Self.string(statement, 7)),
-                defaultSkillIDs: try decodeStrings(Self.string(statement, 8))
+                thinkingLevel: Self.optionalString(statement, 6),
+                professionKey: Self.string(statement, 7),
+                defaultPluginIDs: try decodeStrings(Self.string(statement, 8)),
+                defaultSkillIDs: try decodeStrings(Self.string(statement, 9))
             ),
             status: status,
-            createdAtUnixMs: sqlite3_column_int64(statement, 10),
-            updatedAtUnixMs: sqlite3_column_int64(statement, 11)
+            createdAtUnixMs: sqlite3_column_int64(statement, 11),
+            updatedAtUnixMs: sqlite3_column_int64(statement, 12)
         )
         try profile.validate()
         return profile
@@ -2818,7 +2825,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     private static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
 
-    private static let agentColumns = "owner_user_id, id, name, description, role_prompt, model_config_id, profession_key, default_plugin_ids_json, default_skill_ids_json, status, created_at_unix_ms, updated_at_unix_ms"
+    private static let agentColumns = "owner_user_id, id, name, description, role_prompt, model_config_id, thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json, status, created_at_unix_ms, updated_at_unix_ms"
     private static let roomColumns = "owner_user_id, id, project_id, name, goal, default_agent_id, status, created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key"
     private static let memberColumns = "owner_user_id, room_id, agent_id, role, responsibility, plugin_allowlist_json, status, joined_at_unix_ms"
     private static let messageColumns = "owner_user_id, id, room_id, sender_kind, sender_id, content, reply_to_message_id, source_run_id, causation_id, root_message_id, hop_count, created_at_unix_ms"
@@ -2840,6 +2847,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             description TEXT NOT NULL,
             role_prompt TEXT NOT NULL,
             model_config_id TEXT NOT NULL,
+            thinking_level TEXT,
             profession_key TEXT NOT NULL DEFAULT 'general_member',
             default_plugin_ids_json TEXT NOT NULL,
             default_skill_ids_json TEXT NOT NULL,
@@ -3113,6 +3121,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (6);
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (7);
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (10);
+        INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (11);
         COMMIT;
         """
 
@@ -3147,6 +3156,9 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 "ALTER TABLE local_agent_profiles ADD COLUMN profession_key TEXT NOT NULL DEFAULT 'general_member'"
             )
         }
+        if !hasColumn("thinking_level", table: "local_agent_profiles") {
+            try execute("ALTER TABLE local_agent_profiles ADD COLUMN thinking_level TEXT")
+        }
         try execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS one_active_direct_conversation_per_pair
@@ -3162,6 +3174,9 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         )
         try execute(
             "INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (10)"
+        )
+        try execute(
+            "INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (11)"
         )
     }
 }

@@ -33,6 +33,29 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual(calls[1].headers["Accept"], "text/event-stream")
     }
 
+    func testAgentFactoryAppliesPerAgentThinkingLevel() async throws {
+        let transport = StoryPlanningTransport()
+        let model = try await makeService(transport).makeAgentModel(
+            configID: "text-model",
+            policy: .init(),
+            thinkingLevel: "high"
+        )
+        _ = try await model.complete(
+            messages: [.init(role: .user, content: "story")],
+            tools: [AgentToolDefinition(
+                name: request.toolName,
+                description: "test",
+                schema: request.schema
+            )],
+            timeout: 42
+        )
+        let calls = await transport.requests()
+        let body = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: XCTUnwrap(calls[1].body)) as? [String: Any]
+        )
+        XCTAssertEqual((body["reasoning"] as? [String: Any])?["effort"] as? String, "high")
+    }
+
     func testStoryAgentUsesOfficialResponsesCompaction() async throws {
         let transport = StoryPlanningTransport(scenario: "official")
         let model = try await makeService(transport).makeAgentModel(
