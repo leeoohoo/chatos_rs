@@ -5,7 +5,7 @@ use std::future::Future;
 
 tokio::task_local! {
     static ACCESS_TOKEN_SCOPE: Option<String>;
-    static TRUSTED_BACKGROUND_SERVICE_SCOPE: bool;
+    static INTERNAL_MEMORY_SERVICE_AUTH_SCOPE: bool;
 }
 
 pub async fn with_access_token_scope<T, Fut>(access_token: Option<String>, future: Fut) -> T
@@ -14,6 +14,27 @@ where
 {
     ACCESS_TOKEN_SCOPE
         .scope(normalize_optional_token(access_token), future)
+        .await
+}
+
+/// Runs an already authenticated HTTP request with its user token available to
+/// downstream user-scoped services. Device-bound Companion requests use
+/// ChatOS' signed service identity for Memory Engine calls because the phone's
+/// proof has already been consumed at the ChatOS boundary and cannot be
+/// replayed for a different service target.
+pub async fn with_verified_request_scope<T, Fut>(
+    access_token: Option<String>,
+    use_internal_memory_service_auth: bool,
+    future: Fut,
+) -> T
+where
+    Fut: Future<Output = T>,
+{
+    INTERNAL_MEMORY_SERVICE_AUTH_SCOPE
+        .scope(
+            use_internal_memory_service_auth,
+            with_access_token_scope(access_token, future),
+        )
         .await
 }
 
@@ -35,7 +56,7 @@ where
 {
     let access_token = normalize_optional_token(access_token);
     tokio::spawn(async move {
-        TRUSTED_BACKGROUND_SERVICE_SCOPE
+        INTERNAL_MEMORY_SERVICE_AUTH_SCOPE
             .scope(true, with_access_token_scope(access_token, future))
             .await
     })
@@ -58,7 +79,7 @@ pub fn get_current_access_token() -> Option<String> {
 /// ChatOS' signed service identity while the original user token remains
 /// available for user-scoped Project, MCP, and Local Connector calls.
 pub fn prefer_internal_memory_service_auth() -> bool {
-    TRUSTED_BACKGROUND_SERVICE_SCOPE
+    INTERNAL_MEMORY_SERVICE_AUTH_SCOPE
         .try_with(|enabled| *enabled)
         .unwrap_or(false)
 }
@@ -116,5 +137,26 @@ mod tests {
         .expect("detached task");
         assert_eq!(result.0.as_deref(), Some("explicit-token"));
         assert!(result.1);
+    }
+
+    #[tokio::test]
+    async fn companion_request_scope_keeps_token_and_prefers_internal_memory_auth() {
+        with_verified_request_scope(Some(" companion-token ".to_string()), true, async {
+            assert_eq!(
+                get_current_access_token().as_deref(),
+                Some("companion-token")
+            );
+            assert!(prefer_internal_memory_service_auth());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn regular_verified_request_keeps_user_memory_auth() {
+        with_verified_request_scope(Some(" user-token ".to_string()), false, async {
+            assert_eq!(get_current_access_token().as_deref(), Some("user-token"));
+            assert!(!prefer_internal_memory_service_auth());
+        })
+        .await;
     }
 }

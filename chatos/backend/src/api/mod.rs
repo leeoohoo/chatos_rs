@@ -462,12 +462,23 @@ async fn require_auth(
 
     enforce_client_scope(req.method(), req.uri().path(), scopes.as_slice())?;
 
+    // The Companion device proof is verified above against the original
+    // ChatOS method, target, and body. It must not be replayed as if it were a
+    // proof for Memory Engine. After the route has passed scope enforcement,
+    // use ChatOS' signed internal identity for its Memory Engine data access;
+    // individual handlers still enforce conversation ownership with auth_user.
+    let use_internal_memory_service_auth = scopes.iter().any(|scope| scope == "wechat_companion");
+
     req.extensions_mut().insert(auth_user);
     req.extensions_mut().insert(RequestClientScopes(scopes));
     req.extensions_mut()
         .insert(RequestAccessToken(access_token.clone()));
-    let response =
-        access_token_scope::with_access_token_scope(Some(access_token), next.run(req)).await;
+    let response = access_token_scope::with_verified_request_scope(
+        Some(access_token),
+        use_internal_memory_service_auth,
+        next.run(req),
+    )
+    .await;
     Ok(response)
 }
 
@@ -497,7 +508,9 @@ fn device_proof_request(
         body_sha512: header("x-chatos-device-body-sha512"),
         client_session_id: header("x-chatos-device-session-id"),
         device_id: header("x-chatos-device-id"),
-        timestamp: header("x-chatos-device-timestamp").parse().unwrap_or_default(),
+        timestamp: header("x-chatos-device-timestamp")
+            .parse()
+            .unwrap_or_default(),
         nonce: header("x-chatos-device-nonce"),
         signature_algorithm: header("x-chatos-device-signature-alg"),
         signature: header("x-chatos-device-signature"),
