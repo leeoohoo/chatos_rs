@@ -41,9 +41,21 @@ impl TaskService {
         self.store.task_stats().await
     }
 
+    pub async fn task_stats_filtered(
+        &self,
+        filters: TaskListFilters,
+    ) -> Result<TaskStatsResponse, String> {
+        let filters = sanitize_task_list_filters(filters);
+        self.store.task_stats_filtered(&filters).await
+    }
+
     pub async fn task_index(&self) -> Result<TaskIndexResponse, String> {
+        let filters = TaskListFilters {
+            limit: Some(500),
+            ..TaskListFilters::default()
+        };
         Ok(TaskIndexResponse {
-            tasks: self.store.list_task_summaries().await?,
+            tasks: self.store.list_task_summaries_filtered(&filters).await?,
             tags: self.store.list_task_tags().await?,
         })
     }

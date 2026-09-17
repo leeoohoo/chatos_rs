@@ -4,7 +4,7 @@
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::{Extension, Json};
 use base64::Engine;
 use chrono::Utc;
@@ -41,21 +41,22 @@ const SECRET_MAX_BYTES: usize = 512;
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(input): Json<WeChatMiniProgramLoginRequest>,
 ) -> ApiResult<WeChatMiniProgramLoginResponse> {
     let (device_id, device_public_key) =
         validate_device_identity(input.device_id.as_str(), input.device_public_key.as_str())?;
-    let source = wechat_source(addr);
-    reject_locked(&state, "wechat-code-exchange", source.as_str())?;
+    let source = wechat_source(&headers, addr);
+    reject_locked(&state, "wechat-code-exchange", source.as_str()).await?;
     let provider_identity = match exchange_code(&state, input.code.as_str()).await {
         Ok(identity) => identity,
         Err(error) => {
-            record_failure(&state, "wechat-code-exchange", source.as_str());
+            record_failure(&state, "wechat-code-exchange", source.as_str()).await?;
             return Err(map_exchange_error(error));
         }
     };
     let (open_id_hash, _) = hash_provider_identity(&state, &provider_identity)?;
-    reject_locked(&state, open_id_hash.as_str(), source.as_str())?;
+    reject_locked(&state, open_id_hash.as_str(), source.as_str()).await?;
     let app_id = configured_app_id(&state)?;
     let Some(identity) = state
         .store
@@ -69,7 +70,9 @@ pub async fn login(
     else {
         state
             .login_throttle
-            .record_success(open_id_hash.as_str(), Some(source.as_str()));
+            .record_success(open_id_hash.as_str(), Some(source.as_str()))
+            .await
+            .map_err(internal_error)?;
         return Ok(Json(WeChatMiniProgramLoginResponse::BindingRequired));
     };
     if identity.companion_device_id.as_deref() != Some(device_id.as_str())
@@ -77,12 +80,13 @@ pub async fn login(
     {
         return Ok(Json(WeChatMiniProgramLoginResponse::BindingRequired));
     }
-    let user = load_enabled_user(&state, identity.user_id.as_str())
-        .await
-        .map_err(|error| {
-            record_failure(&state, open_id_hash.as_str(), source.as_str());
-            error
-        })?;
+    let user = match load_enabled_user(&state, identity.user_id.as_str()).await {
+        Ok(user) => user,
+        Err(error) => {
+            record_failure(&state, open_id_hash.as_str(), source.as_str()).await?;
+            return Err(error);
+        }
+    };
     let (token, client_session_id) = issue_client_session(
         &state,
         &user,
@@ -104,7 +108,9 @@ pub async fn login(
         .map_err(internal_error)?;
     state
         .login_throttle
-        .record_success(open_id_hash.as_str(), Some(source.as_str()));
+        .record_success(open_id_hash.as_str(), Some(source.as_str()))
+        .await
+        .map_err(internal_error)?;
     Ok(Json(WeChatMiniProgramLoginResponse::Authenticated {
         token,
         user: auth_user(&user),
@@ -117,6 +123,7 @@ pub async fn login(
 pub async fn development_login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(input): Json<WeChatMiniProgramDevelopmentLoginRequest>,
 ) -> ApiResult<WeChatMiniProgramLoginResponse> {
     if !state.config.wechat_mini_program_development_login_enabled {
@@ -131,13 +138,21 @@ pub async fn development_login(
         validate_device_identity(input.device_id.as_str(), input.device_public_key.as_str())?;
 
     let now_unix = Utc::now().timestamp();
-    let source = format!("wechat-development:{}", addr.ip());
-    if state.login_throttle.is_locked(
-        username.as_str(),
-        Some(source.as_str()),
-        now_unix,
-        &state.config,
-    ) {
+    let source = format!(
+        "wechat-development:{}",
+        crate::login_throttle::request_source(&headers, addr)
+    );
+    if state
+        .login_throttle
+        .is_locked(
+            username.as_str(),
+            Some(source.as_str()),
+            now_unix,
+            &state.config,
+        )
+        .await
+        .map_err(internal_error)?
+    {
         return Err(unauthorized("invalid username or password"));
     }
 
@@ -147,27 +162,37 @@ pub async fn development_login(
         .await
         .map_err(internal_error)?
     else {
-        state.login_throttle.record_failure(
-            username.as_str(),
-            Some(source.as_str()),
-            now_unix,
-            &state.config,
-        );
+        state
+            .login_throttle
+            .record_failure(
+                username.as_str(),
+                Some(source.as_str()),
+                now_unix,
+                &state.config,
+            )
+            .await
+            .map_err(internal_error)?;
         return Err(unauthorized("invalid username or password"));
     };
     if !user.enabled || !verify_password(input.password.as_str(), user.password_hash.as_str()) {
-        state.login_throttle.record_failure(
-            username.as_str(),
-            Some(source.as_str()),
-            now_unix,
-            &state.config,
-        );
+        state
+            .login_throttle
+            .record_failure(
+                username.as_str(),
+                Some(source.as_str()),
+                now_unix,
+                &state.config,
+            )
+            .await
+            .map_err(internal_error)?;
         return Err(unauthorized("invalid username or password"));
     }
 
     state
         .login_throttle
-        .record_success(username.as_str(), Some(source.as_str()));
+        .record_success(username.as_str(), Some(source.as_str()))
+        .await
+        .map_err(internal_error)?;
     state
         .store
         .touch_user_last_login(user.id.as_str())
@@ -264,22 +289,23 @@ pub async fn issue_bind_ticket(
 pub async fn claim_bind_ticket(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(input): Json<ClaimWeChatBindTicketRequest>,
 ) -> ApiResult<ClaimWeChatBindTicketResponse> {
     validate_secret(input.bind_ticket.as_str(), "bind_ticket")?;
     let (device_id, device_public_key) =
         validate_device_identity(input.device_id.as_str(), input.device_public_key.as_str())?;
-    let source = wechat_source(addr);
-    reject_locked(&state, "wechat-bind-claim", source.as_str())?;
+    let source = wechat_source(&headers, addr);
+    reject_locked(&state, "wechat-bind-claim", source.as_str()).await?;
     let provider_identity = match exchange_code(&state, input.code.as_str()).await {
         Ok(identity) => identity,
         Err(error) => {
-            record_failure(&state, "wechat-bind-claim", source.as_str());
+            record_failure(&state, "wechat-bind-claim", source.as_str()).await?;
             return Err(map_exchange_error(error));
         }
     };
     let (open_id_hash, union_id_hash) = hash_provider_identity(&state, &provider_identity)?;
-    reject_locked(&state, open_id_hash.as_str(), source.as_str())?;
+    reject_locked(&state, open_id_hash.as_str(), source.as_str()).await?;
     let claim_id = Uuid::new_v4().to_string();
     let claim_secret = generate_secret(32);
     let claim_secret_hash = hash_secret(&state, "claim-secret", claim_secret.as_str())?;
@@ -305,7 +331,9 @@ pub async fn claim_bind_ticket(
         .ok_or_else(|| bad_request("bind ticket is invalid, expired, or already claimed"))?;
     state
         .login_throttle
-        .record_success(open_id_hash.as_str(), Some(source.as_str()));
+        .record_success(open_id_hash.as_str(), Some(source.as_str()))
+        .await
+        .map_err(internal_error)?;
     Ok(Json(ClaimWeChatBindTicketResponse {
         status: WECHAT_BIND_STATUS_CLAIMED.to_string(),
         claim_id,
@@ -817,34 +845,50 @@ fn auth_user(user: &UserRecord) -> AuthUser {
     }
 }
 
-fn reject_locked(
+async fn reject_locked(
     state: &AppState,
     identity: &str,
     source: &str,
 ) -> Result<(), (StatusCode, Json<Value>)> {
-    if state.login_throttle.is_locked(
-        identity,
-        Some(source),
-        Utc::now().timestamp(),
-        &state.config,
-    ) {
+    if state
+        .login_throttle
+        .is_locked(
+            identity,
+            Some(source),
+            Utc::now().timestamp(),
+            &state.config,
+        )
+        .await
+        .map_err(internal_error)?
+    {
         Err(bad_request("WeChat authentication is temporarily locked"))
     } else {
         Ok(())
     }
 }
 
-fn record_failure(state: &AppState, identity: &str, source: &str) {
-    state.login_throttle.record_failure(
-        identity,
-        Some(source),
-        Utc::now().timestamp(),
-        &state.config,
-    );
+async fn record_failure(
+    state: &AppState,
+    identity: &str,
+    source: &str,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    state
+        .login_throttle
+        .record_failure(
+            identity,
+            Some(source),
+            Utc::now().timestamp(),
+            &state.config,
+        )
+        .await
+        .map_err(internal_error)
 }
 
-fn wechat_source(addr: SocketAddr) -> String {
-    format!("wechat:{}", addr.ip())
+fn wechat_source(headers: &HeaderMap, addr: SocketAddr) -> String {
+    format!(
+        "wechat:{}",
+        crate::login_throttle::request_source(headers, addr)
+    )
 }
 
 fn map_exchange_error(error: WeChatExchangeError) -> (StatusCode, Json<Value>) {

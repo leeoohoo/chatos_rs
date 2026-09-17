@@ -67,6 +67,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     private var lastGatewayPongAt: Date?
     private var gatewayReconnectFailureCount = 0
     private var gatewayConnectionCleanupCount = 0
+    private var lastConnectorCredentialRefreshAttemptAt: Date?
     var pendingApprovals: [LocalConnectorPendingApproval] = []
     var pendingApprovalContinuations: [String: CheckedContinuation<NativeApprovalDecision, Never>] = [:]
     var pendingApprovalScopeKeys: [String: String] = [:]
@@ -151,6 +152,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         state.deviceName = resolvedName
         state.workspaces = [workspace]
         state.gatewayConnectionEnabled = true
+        lastConnectorCredentialRefreshAttemptAt = nil
         try stateStore.save(state)
         try await connectGateway()
         try? await Task.sleep(for: .milliseconds(200))
@@ -683,8 +685,52 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         await closeGatewayConnection(
             terminatePluginSessions: Self.transientGatewayFailureTerminatesPluginSessions
         )
-        if !authenticationExpired {
+        if authenticationExpired {
+            await refreshConnectorCredentialAfterRejection()
+        } else {
             scheduleGatewayReconnect()
+        }
+    }
+
+    private func refreshConnectorCredentialAfterRejection() async {
+        let now = Date()
+        guard Self.shouldAttemptConnectorCredentialRefresh(
+            lastAttempt: lastConnectorCredentialRefreshAttemptAt,
+            now: now
+        ) else {
+            Self.logger.error("Connector 凭证刚刚续签过但仍被拒绝，已停止自动重试")
+            return
+        }
+        lastConnectorCredentialRefreshAttemptAt = now
+        guard state.gatewayConnectionEnabled != false,
+              let expectedOwnerUserID = state.user?.id.trimmedNonEmpty,
+              let deviceName = state.deviceName?.trimmedNonEmpty else {
+            Self.logger.error("Connector 凭证已失效，但本机缺少安全续签所需的配对信息")
+            return
+        }
+        do {
+            let ticket = try await ticketProvider.issueLocalConnectorPairingTicket()
+            let login = try await gateway.exchange(ticket: ticket, deviceName: deviceName)
+            guard login.user.id == expectedOwnerUserID else {
+                throw NativeConnectorError.server(
+                    status: 409,
+                    message: "当前登录账号与已配对设备账号不一致"
+                )
+            }
+            try secretStore.save(Data(login.token.utf8), account: Self.accessTokenAccount)
+            cachedAccessToken = login.token
+            hasLoadedAccessToken = true
+            state.user = login.user.domainModel
+            try stateStore.save(state)
+            shouldMaintainGatewayConnection = true
+            gatewayReconnectFailureCount = 0
+            Self.logger.info("Connector 凭证已自动续签，正在恢复网关长连接")
+            scheduleGatewayReconnect()
+        } catch {
+            shouldMaintainGatewayConnection = false
+            Self.logger.error(
+                "Connector 凭证自动续签失败：\(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 
@@ -746,6 +792,16 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     static func gatewayReconnectDelaySeconds(afterFailedAttempts attempts: Int) -> Int {
         guard attempts > 0 else { return 0 }
         return min(30, 1 << min(attempts - 1, 5))
+    }
+
+    static let connectorCredentialRefreshCooldown: TimeInterval = 60
+
+    static func shouldAttemptConnectorCredentialRefresh(
+        lastAttempt: Date?,
+        now: Date
+    ) -> Bool {
+        guard let lastAttempt else { return true }
+        return now.timeIntervalSince(lastAttempt) >= connectorCredentialRefreshCooldown
     }
 
     private func recordGatewayReconnectFailure() {

@@ -10,12 +10,13 @@ mod types;
 use http::{request_empty, request_json};
 pub use types::{
     CreateUserServiceAgentAccountRequest, CreateUserServiceModelConfigRequest,
-    CreateUserServiceModelProviderRequest, UpdateUserServiceModelConfigRequest,
-    UpdateUserServiceModelProviderRequest, UpdateUserServiceModelSettingsRequest,
-    UserServiceAgentAccountSummary, UserServiceAuthUser, UserServiceInternalModelRuntimeRecord,
-    UserServiceLocalConnectorTicketResponse, UserServiceLoginResponse, UserServiceMeResponse,
-    UserServiceModelConfigRecord, UserServiceModelProviderRecord, UserServiceModelSettingsRecord,
-    DeviceProofVerificationRequest, UserServiceVerifiedPrincipal, UserServiceVerifyResponse,
+    CreateUserServiceModelProviderRequest, DeviceProofVerificationRequest,
+    UpdateUserServiceModelConfigRequest, UpdateUserServiceModelProviderRequest,
+    UpdateUserServiceModelSettingsRequest, UserServiceAgentAccountSummary, UserServiceAuthUser,
+    UserServiceInternalModelRuntimeRecord, UserServiceLocalConnectorTicketResponse,
+    UserServiceLoginResponse, UserServiceMeResponse, UserServiceModelConfigRecord,
+    UserServiceModelProviderRecord, UserServiceModelSettingsRecord, UserServiceVerifiedPrincipal,
+    UserServiceVerifyResponse,
 };
 
 const CHATOS_INTERNAL_CALLER: &str = "chatos-backend";

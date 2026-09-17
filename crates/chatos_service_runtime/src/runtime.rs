@@ -6,6 +6,7 @@ use reqwest::StatusCode;
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::config::{DiscoveryMode, RuntimeConfig};
@@ -24,7 +25,17 @@ pub struct ChatosServiceRuntime {
     config: RuntimeConfig,
     client: reqwest::Client,
     round_robin: Arc<Mutex<HashMap<String, usize>>>,
+    discovery_cache: Arc<Mutex<HashMap<String, CachedDiscovery>>>,
 }
+
+#[derive(Debug, Clone)]
+struct CachedDiscovery {
+    endpoints: Vec<ServiceEndpoint>,
+    refreshed_at: Instant,
+}
+
+const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(5);
+const DISCOVERY_STALE_TTL: Duration = Duration::from_secs(60);
 
 impl ChatosServiceRuntime {
     pub fn from_env(
@@ -41,6 +52,7 @@ impl ChatosServiceRuntime {
             .expect("build service runtime HTTP client"),
             config,
             round_robin: Arc::new(Mutex::new(HashMap::new())),
+            discovery_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -135,12 +147,34 @@ impl ChatosServiceRuntime {
         let Some(consul) = self.config.consul_http_addr.as_deref() else {
             return Ok(Vec::new());
         };
+        if let Some(endpoints) = self
+            .cached_discovery(service_name, DISCOVERY_CACHE_TTL)
+            .await
+        {
+            return Ok(endpoints);
+        }
         let endpoint = format!(
             "{}/v1/health/service/{}?passing=true",
             consul.trim_end_matches('/'),
             urlencoding::encode(service_name.trim())
         );
-        let response = self.client.get(endpoint).send().await?;
+        let response = match self.client.get(endpoint).send().await {
+            Ok(response) => response,
+            Err(error) => {
+                if let Some(endpoints) = self
+                    .cached_discovery(service_name, DISCOVERY_STALE_TTL)
+                    .await
+                {
+                    tracing::warn!(
+                        service = service_name,
+                        error = %error,
+                        "service discovery failed; using stale cached endpoints"
+                    );
+                    return Ok(endpoints);
+                }
+                return Err(error.into());
+            }
+        };
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(Vec::new());
         }
@@ -170,7 +204,27 @@ impl ChatosServiceRuntime {
                 scheme: "http".to_string(),
             });
         }
+        self.discovery_cache.lock().await.insert(
+            service_name.to_string(),
+            CachedDiscovery {
+                endpoints: endpoints.clone(),
+                refreshed_at: Instant::now(),
+            },
+        );
         Ok(endpoints)
+    }
+
+    async fn cached_discovery(
+        &self,
+        service_name: &str,
+        max_age: Duration,
+    ) -> Option<Vec<ServiceEndpoint>> {
+        self.discovery_cache
+            .lock()
+            .await
+            .get(service_name)
+            .filter(|cached| cached.refreshed_at.elapsed() <= max_age)
+            .map(|cached| cached.endpoints.clone())
     }
 
     pub async fn resolve_base_url(

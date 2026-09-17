@@ -53,7 +53,7 @@ impl TaskListQuery {
             parent_task_id: self.parent_task_id,
             include_subtasks: Some(self.include_subtasks.unwrap_or(false)),
             source_run_id: self.source_run_id,
-            limit: self.limit,
+            limit: Some(self.limit.unwrap_or(100).clamp(1, 500)),
             offset: self.offset,
             ..TaskListFilters::default()
         }

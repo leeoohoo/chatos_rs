@@ -5,10 +5,17 @@ use super::*;
 
 impl InMemoryStore {
     pub(in crate::store) fn task_stats(&self) -> TaskStatsResponse {
-        let data = self.inner.read();
+        self.task_stats_filtered(&TaskListFilters::default())
+    }
+
+    pub(in crate::store) fn task_stats_filtered(
+        &self,
+        filters: &TaskListFilters,
+    ) -> TaskStatsResponse {
+        let tasks = self.list_tasks_filtered(filters);
         let mut stats = empty_task_stats();
 
-        for task in data.tasks.values() {
+        for task in &tasks {
             stats.total += 1;
             if !matches!(task.schedule.mode, TaskScheduleMode::Manual) {
                 stats.scheduled += 1;

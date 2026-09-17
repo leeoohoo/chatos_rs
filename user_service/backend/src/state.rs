@@ -19,6 +19,8 @@ pub struct AppState {
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
         let db = connect_database(&config).await?;
+        let login_throttle = LoginThrottle::new(db.collection("login_throttle"));
+        login_throttle.initialize().await?;
         let store = AppStore::new(db);
         store.initialize().await?;
         let migrated_model_count = store.migrate_legacy_model_task_enabled().await?;
@@ -33,7 +35,7 @@ impl AppState {
         Ok(Self {
             config,
             store,
-            login_throttle: LoginThrottle::default(),
+            login_throttle,
             wechat_mini_program,
         })
     }
@@ -43,11 +45,12 @@ impl AppState {
         config: AppConfig,
     ) -> Result<Self, String> {
         let db = connect_database(&config).await?;
+        let login_throttle = LoginThrottle::new(db.collection("login_throttle"));
         let wechat_mini_program = WeChatMiniProgramClient::from_config(&config)?;
         Ok(Self {
             config,
             store: AppStore::new(db),
-            login_throttle: LoginThrottle::default(),
+            login_throttle,
             wechat_mini_program,
         })
     }

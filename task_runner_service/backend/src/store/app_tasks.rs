@@ -79,6 +79,16 @@ impl AppStore {
         }
     }
 
+    pub async fn task_stats_filtered(
+        &self,
+        filters: &TaskListFilters,
+    ) -> Result<TaskStatsResponse, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.task_stats_filtered(filters)),
+            Self::Mongo(store) => store.task_stats_filtered(filters).await,
+        }
+    }
+
     pub async fn list_due_scheduled_tasks(
         &self,
         now: DateTime<Utc>,

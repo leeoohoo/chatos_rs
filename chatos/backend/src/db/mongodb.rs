@@ -41,7 +41,9 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
     if let Some(ms) = cfg.connect_timeout_ms {
         options.connect_timeout = Some(Duration::from_millis(ms));
     }
-    let _ = cfg.socket_timeout_ms;
+    if let Some(ms) = cfg.socket_timeout_ms {
+        options.socket_timeout = Some(Duration::from_millis(ms));
+    }
 
     let client =
         Client::with_options(options).map_err(|e| format!("mongodb client failed: {e}"))?;
@@ -76,8 +78,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         }
     }
 
-    let _ = db
-        .collection::<mongodb::bson::Document>("auth_users")
+    db.collection::<mongodb::bson::Document>("auth_users")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "user_id": 1 })
@@ -89,13 +90,13 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
+        .await
+        .map_err(|err| format!("create auth_users user_id unique index failed: {err}"))?;
     let _ = db
         .collection::<mongodb::bson::Document>("auth_users")
         .create_index(IndexModel::builder().keys(doc! { "role": 1 }).build(), None)
         .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("agents")
+    db.collection::<mongodb::bson::Document>("agents")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "id": 1 })
@@ -107,9 +108,9 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("chatos_contacts")
+        .await
+        .map_err(|err| format!("create agents id unique index failed: {err}"))?;
+    db.collection::<mongodb::bson::Document>("chatos_contacts")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "id": 1 })
@@ -121,9 +122,9 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("session_runtime_settings")
+        .await
+        .map_err(|err| format!("create contacts id unique index failed: {err}"))?;
+    db.collection::<mongodb::bson::Document>("session_runtime_settings")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "session_id": 1 })
@@ -135,7 +136,8 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
+        .await
+        .map_err(|err| format!("create session settings unique index failed: {err}"))?;
     let _ = db
         .collection::<mongodb::bson::Document>("session_runtime_settings")
         .create_index(
@@ -145,8 +147,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
             None,
         )
         .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("chatos_contacts")
+    db.collection::<mongodb::bson::Document>("chatos_contacts")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "user_id": 1, "agent_id": 1 })
@@ -158,7 +159,8 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
+        .await
+        .map_err(|err| format!("create contacts owner-agent unique index failed: {err}"))?;
     let _ = db
         .collection::<mongodb::bson::Document>("chatos_contacts")
         .create_index(
@@ -168,8 +170,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
             None,
         )
         .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("chatos_memory_projects")
+    db.collection::<mongodb::bson::Document>("chatos_memory_projects")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "id": 1 })
@@ -181,9 +182,9 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("chatos_memory_projects")
+        .await
+        .map_err(|err| format!("create memory projects id unique index failed: {err}"))?;
+    db.collection::<mongodb::bson::Document>("chatos_memory_projects")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "user_id": 1, "project_id": 1 })
@@ -195,7 +196,8 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
+        .await
+        .map_err(|err| format!("create memory projects scope unique index failed: {err}"))?;
     let _ = db
         .collection::<mongodb::bson::Document>("chatos_memory_projects")
         .create_index(
@@ -205,8 +207,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
             None,
         )
         .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("chatos_project_agent_links")
+    db.collection::<mongodb::bson::Document>("chatos_project_agent_links")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "id": 1 })
@@ -218,9 +219,9 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("chatos_project_agent_links")
+        .await
+        .map_err(|err| format!("create project-agent links id unique index failed: {err}"))?;
+    db.collection::<mongodb::bson::Document>("chatos_project_agent_links")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "user_id": 1, "project_id": 1 })
@@ -232,9 +233,9 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("chatos_project_agent_links")
+        .await
+        .map_err(|err| format!("create project-agent project unique index failed: {err}"))?;
+    db.collection::<mongodb::bson::Document>("chatos_project_agent_links")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "user_id": 1, "project_id": 1, "agent_id": 1 })
@@ -246,7 +247,8 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
+        .await
+        .map_err(|err| format!("create project-agent identity unique index failed: {err}"))?;
     let _ = db
         .collection::<mongodb::bson::Document>("chatos_project_agent_links")
         .create_index(
@@ -274,8 +276,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
             None,
         )
         .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("users")
+    db.collection::<mongodb::bson::Document>("users")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "email": 1 })
@@ -287,7 +288,8 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
+        .await
+        .map_err(|err| format!("create users email unique index failed: {err}"))?;
     let _ = db
         .collection::<mongodb::bson::Document>("task_manager_tasks")
         .create_index(
@@ -324,8 +326,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
             None,
         )
         .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("pet_activity_inbox")
+    db.collection::<mongodb::bson::Document>("pet_activity_inbox")
         .create_index(
             IndexModel::builder()
                 .keys(doc! {
@@ -341,7 +342,8 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
                 .build(),
             None,
         )
-        .await;
+        .await
+        .map_err(|err| format!("create pet inbox idempotency unique index failed: {err}"))?;
     let _ = db
         .collection::<mongodb::bson::Document>("pet_activity_inbox")
         .create_index(

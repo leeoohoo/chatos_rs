@@ -75,7 +75,7 @@ pub(in crate::api) async fn list_task_summaries(
                     keyword: query.keyword,
                     project_scope,
                     project_id,
-                    limit: query.limit,
+                    limit: Some(query.limit.unwrap_or(100).clamp(1, 500)),
                     include_subtasks: Some(false),
                     ..TaskListFilters::default()
                 },
@@ -102,7 +102,10 @@ pub(in crate::api) async fn get_task_index(
     let tasks = state
         .task_service
         .list_tasks_filtered(task_filters_for_user(
-            TaskListFilters::default(),
+            TaskListFilters {
+                limit: Some(500),
+                ..TaskListFilters::default()
+            },
             &current_user,
         )?)
         .await
@@ -132,13 +135,11 @@ pub(in crate::api) async fn get_task_stats(
             .map_err(ApiError::bad_request)?;
         return Ok(Json(stats));
     }
-    let tasks = state
+    let filters = task_filters_for_user(TaskListFilters::default(), &current_user)?;
+    let stats = state
         .task_service
-        .list_tasks_filtered(task_filters_for_user(
-            TaskListFilters::default(),
-            &current_user,
-        )?)
+        .task_stats_filtered(filters)
         .await
         .map_err(ApiError::bad_request)?;
-    Ok(Json(task_stats_from_tasks(&tasks)))
+    Ok(Json(stats))
 }

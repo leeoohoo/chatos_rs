@@ -4,6 +4,18 @@
 use super::*;
 
 impl MongoStore {
+    pub(in crate::store) fn enqueue_run_event(&self, event: TaskRunEventRecord) {
+        if let Err(error) = self.run_event_persist_sender.try_send(event) {
+            let event = error.into_inner();
+            warn!(
+                run_id = event.run_id.as_str(),
+                event_id = event.id.as_str(),
+                event_type = event.event_type.as_str(),
+                "run event persistence queue is full or closed; dropping event"
+            );
+        }
+    }
+
     pub(in crate::store) async fn has_run_event_type(
         &self,
         run_id: &str,

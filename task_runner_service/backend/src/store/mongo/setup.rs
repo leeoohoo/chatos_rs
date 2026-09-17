@@ -98,7 +98,42 @@ impl MongoStore {
                 "migrated legacy public-project sentinels to explicit user-conversation scope"
             );
         }
+        let run_events = database.collection::<TaskRunEventRecord>("task_run_events");
+        let (run_event_persist_sender, mut run_event_persist_receiver) =
+            tokio::sync::mpsc::channel::<TaskRunEventRecord>(4096);
+        let run_events_for_worker = run_events.clone();
+        tokio::spawn(async move {
+            while let Some(event) = run_event_persist_receiver.recv().await {
+                let persisted = run_events_for_worker
+                    .replace_one(
+                        doc! { "id": &event.id },
+                        &event,
+                        mongodb::options::ReplaceOptions::builder()
+                            .upsert(true)
+                            .build(),
+                    )
+                    .await;
+                if let Err(error) = persisted {
+                    tracing::warn!(
+                        run_id = event.run_id.as_str(),
+                        event_id = event.id.as_str(),
+                        error = %error,
+                        "failed to persist queued run event"
+                    );
+                    continue;
+                }
+                if let Err(error) = crate::run_event_queue::publish_run_event(&event).await {
+                    tracing::warn!(
+                        run_id = event.run_id.as_str(),
+                        event_id = event.id.as_str(),
+                        error = error.as_str(),
+                        "failed to publish queued run event"
+                    );
+                }
+            }
+        });
         let store = Self {
+            client,
             tasks: database.collection::<TaskRecord>("tasks"),
             user_service_model_source: UserServiceModelSource {
                 base_url: user_service_internal_base_url,
@@ -107,15 +142,20 @@ impl MongoStore {
             },
             runtime_settings: database.collection::<RuntimeSettingsRecord>("runtime_settings"),
             runs: database.collection::<TaskRunRecord>("task_runs"),
-            run_events: database.collection::<TaskRunEventRecord>("task_run_events"),
+            run_events,
             run_terminal_subscriptions: database
                 .collection::<RunTerminalSubscriptionRecord>("task_run_terminal_subscriptions"),
             ask_user_prompts: database.collection::<AskUserPromptRecord>("ask_user_prompts"),
             users: database.collection::<UserRecord>("users"),
             task_prerequisites: database.collection::<TaskPrerequisiteRecord>("task_prerequisites"),
+            dependency_graph_revisions: database
+                .collection::<Document>("task_dependency_graph_revisions"),
+            run_event_persist_sender,
             cancel_requested_runs: Arc::new(RwLock::new(HashSet::new())),
             run_event_sender,
         };
+        store.initialize_dependency_graph_revision().await?;
+        store.backfill_schedule_due_at().await?;
         store.ensure_indexes().await?;
         store.reload_cancel_requested_runs().await?;
         Ok(store)
@@ -174,11 +214,11 @@ impl MongoStore {
             false,
         )
         .await?;
-        self.ensure_index(&self.tasks, doc! { "schedule.next_run_at": 1 }, false)
+        self.ensure_index(&self.tasks, doc! { "schedule_due_at": 1 }, false)
             .await?;
         self.ensure_index(
             &self.tasks,
-            doc! { "schedule.mode": 1, "schedule.next_run_at": 1 },
+            doc! { "schedule.mode": 1, "schedule_due_at": 1 },
             false,
         )
         .await?;
@@ -313,6 +353,42 @@ impl MongoStore {
         )
         .await?;
 
+        Ok(())
+    }
+
+    async fn backfill_schedule_due_at(&self) -> Result<(), String> {
+        self.tasks
+            .clone_with_type::<Document>()
+            .update_many(
+                doc! {},
+                vec![doc! {
+                    "$set": {
+                        "schedule_due_at": {
+                            "$convert": {
+                                "input": "$schedule.next_run_at",
+                                "to": "date",
+                                "onError": Bson::Null,
+                                "onNull": Bson::Null,
+                            }
+                        }
+                    }
+                }],
+                None,
+            )
+            .await
+            .map_err(|err| format!("backfill schedule_due_at failed: {err}"))?;
+        Ok(())
+    }
+
+    async fn initialize_dependency_graph_revision(&self) -> Result<(), String> {
+        self.dependency_graph_revisions
+            .update_one(
+                doc! { "_id": "global" },
+                doc! { "$setOnInsert": { "revision": 0_i64 } },
+                mongodb::options::UpdateOptions::builder().upsert(true).build(),
+            )
+            .await
+            .map_err(|err| format!("initialize dependency graph revision failed: {err}"))?;
         Ok(())
     }
 

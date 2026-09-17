@@ -309,7 +309,9 @@ fn device_proof_request(
         body_sha512: header("x-chatos-device-body-sha512"),
         client_session_id: header("x-chatos-device-session-id"),
         device_id: header("x-chatos-device-id"),
-        timestamp: header("x-chatos-device-timestamp").parse().unwrap_or_default(),
+        timestamp: header("x-chatos-device-timestamp")
+            .parse()
+            .unwrap_or_default(),
         nonce: header("x-chatos-device-nonce"),
         signature_algorithm: header("x-chatos-device-signature-alg"),
         signature: header("x-chatos-device-signature"),

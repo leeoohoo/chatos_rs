@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use futures::stream::{self, StreamExt};
 use memory_engine_sdk::{
     EngineSubjectMemory, QuerySubjectMemoriesRequest, UpsertSubjectMemoryScopeRequest,
 };
@@ -50,12 +51,16 @@ pub async fn list_contact_project_memories_by_contact(
     limit: Option<i64>,
     offset: i64,
 ) -> Result<Vec<MemoryProjectMemoryDto>, String> {
+    const PROJECT_MEMORY_QUERY_CONCURRENCY: usize = 8;
+    let batches = stream::iter(project_ids.iter().cloned().map(|project_id| async move {
+        list_contact_project_memories(user_id, contact_id, project_id.as_str(), limit, 0).await
+    }))
+    .buffer_unordered(PROJECT_MEMORY_QUERY_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await;
     let mut items = Vec::new();
-    for project_id in project_ids {
-        let mut rows =
-            list_contact_project_memories(user_id, contact_id, project_id.as_str(), limit, 0)
-                .await?;
-        items.append(&mut rows);
+    for rows in batches {
+        items.extend(rows?);
     }
     items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
     items.dedup_by(|left, right| {

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ChatOSConnector
 
@@ -14,5 +15,23 @@ struct NativeConnectorReconnectPolicyTests {
     @Test
     func transientGatewayFailurePreservesPreparedPluginSessions() {
         #expect(!NativeLocalConnectorService.transientGatewayFailureTerminatesPluginSessions)
+    }
+
+    @Test
+    func connectorCredentialRefreshIsRateLimited() {
+        let now = Date(timeIntervalSince1970: 10_000)
+
+        #expect(NativeLocalConnectorService.shouldAttemptConnectorCredentialRefresh(
+            lastAttempt: nil,
+            now: now
+        ))
+        #expect(!NativeLocalConnectorService.shouldAttemptConnectorCredentialRefresh(
+            lastAttempt: now.addingTimeInterval(-59),
+            now: now
+        ))
+        #expect(NativeLocalConnectorService.shouldAttemptConnectorCredentialRefresh(
+            lastAttempt: now.addingTimeInterval(-60),
+            now: now
+        ))
     }
 }

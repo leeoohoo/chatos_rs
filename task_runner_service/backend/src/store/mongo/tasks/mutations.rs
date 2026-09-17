@@ -5,7 +5,17 @@ use super::*;
 
 impl MongoStore {
     pub(in crate::store) async fn save_task(&self, task: TaskRecord) -> Result<TaskRecord, String> {
-        self.upsert_by_id(&self.tasks, &task.id, &task).await?;
+        let mut document = bson::to_document(&task).map_err(|err| err.to_string())?;
+        document.insert("schedule_due_at", schedule_due_at_bson(&task.schedule)?);
+        self.tasks
+            .clone_with_type::<Document>()
+            .replace_one(
+                doc! { "id": &task.id },
+                document,
+                ReplaceOptions::builder().upsert(true).build(),
+            )
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(task)
     }
 
@@ -26,6 +36,7 @@ impl MongoStore {
                 doc! {
                     "$set": {
                         "schedule": bson::to_bson(&schedule).map_err(|err| err.to_string())?,
+                        "schedule_due_at": schedule_due_at_bson(&schedule)?,
                         "updated_at": updated_at,
                     }
                 },
@@ -93,4 +104,15 @@ impl MongoStore {
 
         self.delete_by_id(&self.tasks, id).await
     }
+}
+
+fn schedule_due_at_bson(schedule: &TaskScheduleConfig) -> Result<Bson, String> {
+    let Some(value) = schedule.next_run_at.as_deref() else {
+        return Ok(Bson::Null);
+    };
+    let parsed = chrono::DateTime::parse_from_rfc3339(value)
+        .map_err(|err| format!("invalid schedule.next_run_at: {err}"))?;
+    Ok(Bson::DateTime(mongodb::bson::DateTime::from_millis(
+        parsed.timestamp_millis(),
+    )))
 }

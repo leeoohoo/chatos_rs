@@ -14,7 +14,7 @@ use mongodb::{
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tracing::warn;
 
 use crate::config::{AppConfig, StoreMode};
@@ -294,6 +294,7 @@ pub(crate) struct InMemoryStore {
 
 #[derive(Clone)]
 pub(crate) struct MongoStore {
+    client: Client,
     tasks: Collection<TaskRecord>,
     user_service_model_source: UserServiceModelSource,
     runtime_settings: Collection<RuntimeSettingsRecord>,
@@ -303,6 +304,8 @@ pub(crate) struct MongoStore {
     ask_user_prompts: Collection<AskUserPromptRecord>,
     users: Collection<UserRecord>,
     task_prerequisites: Collection<TaskPrerequisiteRecord>,
+    dependency_graph_revisions: Collection<Document>,
+    run_event_persist_sender: mpsc::Sender<TaskRunEventRecord>,
     cancel_requested_runs: Arc<RwLock<HashSet<String>>>,
     run_event_sender: broadcast::Sender<TaskRunEventRecord>,
 }

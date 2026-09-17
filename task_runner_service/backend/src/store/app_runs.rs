@@ -382,23 +382,8 @@ impl AppStore {
                 });
             }
             Self::Mongo(store) => {
-                tokio::spawn(async move {
-                    if let Err(err) = store.append_run_event(event).await {
-                        warn!("failed to append run event: {err}");
-                        return;
-                    }
-                    if let Err(err) =
-                        crate::run_event_queue::publish_run_event(&publish_event).await
-                    {
-                        warn!(
-                            run_id = publish_event.run_id.as_str(),
-                            event_id = publish_event.id.as_str(),
-                            event_type = publish_event.event_type.as_str(),
-                            error = err.as_str(),
-                            "failed to publish run event to rabbitmq"
-                        );
-                    }
-                });
+                let _ = publish_event;
+                store.enqueue_run_event(event);
             }
         }
     }
