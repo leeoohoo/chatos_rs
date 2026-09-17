@@ -21,6 +21,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
 
     private struct ClaimedWork: Sendable {
         let order: Int
+        let room: ProjectAgentRoom
         let member: ProjectAgentRoomMember
         let delivery: ProjectAgentDelivery
     }
@@ -50,6 +51,9 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     public typealias ProfessionCatalogProvider = @Sendable (
         _ ownerUserID: String
     ) async throws -> [LocalAgentProfessionDefinition]
+    public typealias TodoPluginCatalogProvider = @Sendable (
+        _ ownerUserID: String
+    ) async throws -> [LocalAgentTodoPluginOption]
 
     private let service: NativeAgentGroupChatService
     private let services: any AgentServiceProviding
@@ -62,6 +66,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     private let professionProvider: ProfessionProvider
     private let projectTypeProvider: ProjectTypeProvider
     private let professionCatalogProvider: ProfessionCatalogProvider
+    private let todoPluginCatalogProvider: TodoPluginCatalogProvider
     private let now: @Sendable () -> Int64
 
     public init(
@@ -80,6 +85,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         professionCatalogProvider: @escaping ProfessionCatalogProvider = { _ in
             LocalAgentSkillCatalog.professions
         },
+        todoPluginCatalogProvider: @escaping TodoPluginCatalogProvider = { _ in [] },
         additionalToolProviders: @escaping AdditionalToolProviderFactory = { _, _, _ in [] },
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
@@ -95,6 +101,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.professionProvider = professionProvider
         self.projectTypeProvider = projectTypeProvider
         self.professionCatalogProvider = professionCatalogProvider
+        self.todoPluginCatalogProvider = todoPluginCatalogProvider
         self.additionalToolProviders = additionalToolProviders
         self.now = now
     }
@@ -153,26 +160,85 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         let store = try await service.store()
         var results: [RunResult] = []
         while results.count < maximumRuns, !Task.isCancelled {
+            _ = try await store.enqueuePendingAgentTodos(
+                ownerUserID: ownerUserID,
+                nowUnixMs: now()
+            )
             let teams = try await store.listRooms(ownerUserID: ownerUserID, includeArchived: false)
             let directs = try await store.listDirectConversations(
                 ownerUserID: ownerUserID,
                 includeArchived: false
             )
             let rooms = teams + directs
-            var madeProgress = false
-            for room in rooms where results.count < maximumRuns {
-                let round = try await drain(
-                    store: store,
+            let remainingCapacity = maximumRuns - results.count
+            var roomByID = Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0) })
+            var memberByRoomAndAgent: [String: ProjectAgentRoomMember] = [:]
+            var agentIDs: [String] = []
+            var seenAgentIDs = Set<String>()
+            for room in rooms {
+                for member in try await store.listMembers(
                     ownerUserID: ownerUserID,
-                    room: room,
-                    maximumRuns: maximumRuns - results.count
-                )
-                if !round.isEmpty {
-                    madeProgress = true
-                    results.append(contentsOf: round)
+                    roomID: room.id
+                ) where member.status == .active {
+                    memberByRoomAndAgent[Self.memberKey(
+                        roomID: room.id,
+                        agentID: member.agentID
+                    )] = member
+                    if seenAgentIDs.insert(member.agentID).inserted {
+                        agentIDs.append(member.agentID)
+                    }
                 }
             }
-            if !madeProgress { break }
+            var claimedWork: [ClaimedWork] = []
+            claimedWork.reserveCapacity(remainingCapacity)
+            for agentID in agentIDs where claimedWork.count < remainingCapacity {
+                // A single Agent owns two independent durable lanes. Claiming twice lets its
+                // manager keep receiving messages while one project-bound executor is working.
+                for _ in 0..<2 where claimedWork.count < remainingCapacity {
+                    guard let delivery = try await store.claimNextDelivery(
+                        ownerUserID: ownerUserID,
+                        agentID: agentID,
+                        nowUnixMs: now()
+                    ) else { break }
+                    let room: ProjectAgentRoom
+                    if let known = roomByID[delivery.roomID] {
+                        room = known
+                    } else if let loaded = try await store.room(
+                        ownerUserID: ownerUserID,
+                        roomID: delivery.roomID
+                    ) {
+                        room = loaded
+                        roomByID[loaded.id] = loaded
+                    } else {
+                        throw AgentGroupChatError.notFound
+                    }
+                    let key = Self.memberKey(roomID: room.id, agentID: agentID)
+                    let member: ProjectAgentRoomMember
+                    if let known = memberByRoomAndAgent[key] {
+                        member = known
+                    } else if let loaded = try await store.listMembers(
+                        ownerUserID: ownerUserID,
+                        roomID: room.id
+                    ).first(where: { $0.agentID == agentID && $0.status == .active }) {
+                        member = loaded
+                        memberByRoomAndAgent[key] = loaded
+                    } else {
+                        throw AgentGroupChatError.notMember
+                    }
+                    claimedWork.append(.init(
+                        order: claimedWork.count,
+                        room: room,
+                        member: member,
+                        delivery: delivery
+                    ))
+                }
+            }
+            if claimedWork.isEmpty { break }
+            results.append(contentsOf: try await runClaimedWork(
+                claimedWork,
+                store: store,
+                ownerUserID: ownerUserID
+            ))
         }
         return results
     }
@@ -183,55 +249,71 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         room: ProjectAgentRoom,
         maximumRuns: Int
     ) async throws -> [RunResult] {
-        let projectID = room.projectID
-
         var results: [RunResult] = []
         while results.count < maximumRuns {
             if Task.isCancelled { break }
             let members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
             let remainingCapacity = maximumRuns - results.count
             var claimedWork: [ClaimedWork] = []
-            claimedWork.reserveCapacity(min(remainingCapacity, members.count))
+            claimedWork.reserveCapacity(min(remainingCapacity, members.count * 2))
             for member in members where claimedWork.count < remainingCapacity {
-                if Task.isCancelled { break }
-                guard let delivery = try await store.claimNextDelivery(
-                    ownerUserID: ownerUserID,
-                    roomID: room.id,
-                    agentID: member.agentID,
-                    nowUnixMs: now()
-                ) else { continue }
-                claimedWork.append(.init(
-                    order: claimedWork.count,
-                    member: member,
-                    delivery: delivery
-                ))
+                for _ in 0..<2 where claimedWork.count < remainingCapacity {
+                    if Task.isCancelled { break }
+                    guard let delivery = try await store.claimNextDelivery(
+                        ownerUserID: ownerUserID,
+                        roomID: room.id,
+                        agentID: member.agentID,
+                        nowUnixMs: now()
+                    ) else { break }
+                    claimedWork.append(.init(
+                        order: claimedWork.count,
+                        room: room,
+                        member: member,
+                        delivery: delivery
+                    ))
+                }
             }
             if claimedWork.isEmpty { break }
-
-            let round = try await withThrowingTaskGroup(of: OrderedRunResult.self) { group in
-                for work in claimedWork {
-                    group.addTask {
-                        let result = try await runClaimedDeliveryHandlingFailure(
-                            store: store,
-                            ownerUserID: ownerUserID,
-                            projectID: projectID,
-                            room: room,
-                            member: work.member,
-                            delivery: work.delivery
-                        )
-                        return .init(order: work.order, result: result)
-                    }
-                }
-                var completed: [OrderedRunResult] = []
-                completed.reserveCapacity(claimedWork.count)
-                for try await result in group {
-                    completed.append(result)
-                }
-                return completed.sorted { $0.order < $1.order }
-            }
-            results.append(contentsOf: round.map(\.result))
+            results.append(contentsOf: try await runClaimedWork(
+                claimedWork,
+                store: store,
+                ownerUserID: ownerUserID
+            ))
         }
         return results
+    }
+
+    private func runClaimedWork(
+        _ claimedWork: [ClaimedWork],
+        store: SQLiteAgentGroupChatStore,
+        ownerUserID: String
+    ) async throws -> [RunResult] {
+        let round = try await withThrowingTaskGroup(of: OrderedRunResult.self) { group in
+            for work in claimedWork {
+                group.addTask {
+                    let result = try await runClaimedDeliveryHandlingFailure(
+                        store: store,
+                        ownerUserID: ownerUserID,
+                        projectID: work.room.projectID,
+                        room: work.room,
+                        member: work.member,
+                        delivery: work.delivery
+                    )
+                    return .init(order: work.order, result: result)
+                }
+            }
+            var completed: [OrderedRunResult] = []
+            completed.reserveCapacity(claimedWork.count)
+            for try await result in group {
+                completed.append(result)
+            }
+            return completed.sorted { $0.order < $1.order }
+        }
+        return round.map(\.result)
+    }
+
+    private static func memberKey(roomID: String, agentID: String) -> String {
+        "\(roomID)\u{0}\(agentID)"
     }
 
     /// Stops both queued and active work for the current project. The caller should first cancel
@@ -342,6 +424,28 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             error: detail,
             nowUnixMs: now()
         )
+        if delivery.triggerKind == .todo,
+           let todo = try await store.todoForDelivery(
+               ownerUserID: ownerUserID,
+               deliveryID: deliveryID
+           ) {
+            _ = try await store.appendAgentTodoProgress(
+                ownerUserID: ownerUserID,
+                agentID: delivery.targetAgentID,
+                todoID: todo.id,
+                kind: .blocked,
+                runID: run.context.runID,
+                stage: "abandoned",
+                detail: detail,
+                nowUnixMs: now()
+            )
+            _ = try await store.enqueueAgentTodoStatus(
+                ownerUserID: ownerUserID,
+                agentID: delivery.targetAgentID,
+                todoID: todo.id,
+                nowUnixMs: now()
+            )
+        }
     }
 
     private func runClaimedDeliveryHandlingFailure(
@@ -363,10 +467,12 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             )
         } catch {
             let detail = Self.failureDetail(error)
+            var savedRunID: String?
             if var savedRun = try await store.run(
                 ownerUserID: ownerUserID,
                 deliveryID: delivery.id
             ) {
+                savedRunID = savedRun.context.runID
                 savedRun.checkpoint.status = .failed
                 savedRun.checkpoint.stopReason = detail
                 savedRun.events.append(.init(
@@ -378,11 +484,13 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                 try await store.saveRun(savedRun)
             }
             if try await store.delivery(ownerUserID: ownerUserID, deliveryID: delivery.id)?.status == .running {
-                _ = try await store.failDelivery(
+                try await failDeliveryAndNotifyManager(
+                    store: store,
                     ownerUserID: ownerUserID,
-                    deliveryID: delivery.id,
-                    error: detail,
-                    nowUnixMs: now()
+                    delivery: delivery,
+                    runID: savedRunID,
+                    detail: detail,
+                    stage: "executor_failed"
                 )
             }
             return .init(
@@ -426,6 +534,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                   savedRun.context.deliveryID == delivery.id,
                   savedRun.context.triggerMessageID == delivery.messageID,
                   savedRun.context.rootMessageID == delivery.rootMessageID,
+                  savedRun.context.lane == delivery.lane,
                   savedRun.checkpoint.status != .completed else {
                 throw AgentGroupChatError.conflict
             }
@@ -441,7 +550,8 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                 triggerMessageID: delivery.messageID,
                 rootMessageID: delivery.rootMessageID,
                 runID: runID.uuidString.lowercased(),
-                hopCount: delivery.hopCount
+                hopCount: delivery.hopCount,
+                lane: delivery.lane
             )
             let scope = LocalAgentGroupChatRun.runtimeScope(for: context)
             let policy = try settings.load().global
@@ -513,6 +623,23 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         var checkpoint = run.checkpoint
         let session = LocalAgentGroupChatRunSession(run: run, store: store, now: now)
 
+        if context.lane == .executor, savedRun == nil,
+           let todo = try await store.todoForDelivery(
+            ownerUserID: ownerUserID,
+            deliveryID: delivery.id
+           ) {
+            _ = try await store.appendAgentTodoProgress(
+                ownerUserID: ownerUserID,
+                agentID: profile.id,
+                todoID: todo.id,
+                kind: .started,
+                runID: context.runID,
+                stage: "started",
+                detail: "Todo 执行线程已启动，并完成团队、项目和能力计划绑定。",
+                nowUnixMs: now()
+            )
+        }
+
         var memoryProvider: AgentMemoryContextProvider?
         do {
             let memoryScope: AgentMemoryScope
@@ -573,7 +700,10 @@ public struct LocalAgentGroupChatScheduler: Sendable {
 
         let chatProvider = try await relayMCP.connect(
             context: context,
-            professions: try await professionCatalogProvider(ownerUserID)
+            professions: try await professionCatalogProvider(ownerUserID),
+            todoPluginOptions: context.lane == .manager
+                ? try await todoPluginCatalogProvider(ownerUserID)
+                : []
         )
         let extraProviders = try await additionalToolProviders(profile, member, context)
         let toolRegistry = try await AgentToolProviderRegistry(
@@ -595,8 +725,17 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                 guard let current = try await store.delivery(
                     ownerUserID: ownerUserID,
                     deliveryID: delivery.id
-                ), current.status == .completed,
-                      let responseMessageID = current.responseMessageID,
+                ), current.status == .completed else { return nil }
+                if current.triggerKind == .heartbeat, current.responseMessageID == nil {
+                    return "主动巡检已完成。"
+                }
+                if current.triggerKind == .todo, current.responseMessageID == nil {
+                    return "Todo 已更新并结束本轮执行。"
+                }
+                if current.triggerKind == .todoStatus, current.responseMessageID == nil {
+                    return "Todo 状态已由通讯线程处理。"
+                }
+                guard let responseMessageID = current.responseMessageID,
                       let response = try await store.message(
                         ownerUserID: ownerUserID,
                         roomID: room.id,
@@ -616,7 +755,12 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         )
         if finalCheckpoint.status == .completed, currentDelivery?.status != .completed {
             finalCheckpoint.status = .failed
-            finalCheckpoint.stopReason = "Agent 未通过本地 Relay MCP 的 chat_send_message 完成当前群聊回复。"
+            finalCheckpoint.stopReason = switch delivery.triggerKind {
+            case .heartbeat: "Agent 未通过本地 Relay MCP 完成本次主动巡检。"
+            case .todo: "Agent 未通过本地 Relay MCP 更新 Todo 状态并完成本轮执行。"
+            case .todoStatus: "Agent 未通过本地 Relay MCP 处理 Todo 状态通知。"
+            default: "Agent 未通过本地 Relay MCP 的 chat_send_message 完成当前群聊回复。"
+            }
         }
         _ = try await session.finish(checkpoint: finalCheckpoint)
 
@@ -638,11 +782,13 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         case .ready, .running, .failed:
             let detail = finalCheckpoint.stopReason ?? "本地 Agent 运行未完成。"
             if currentDelivery?.status == .running {
-                _ = try await store.failDelivery(
+                try await failDeliveryAndNotifyManager(
+                    store: store,
                     ownerUserID: ownerUserID,
-                    deliveryID: delivery.id,
-                    error: detail,
-                    nowUnixMs: now()
+                    delivery: delivery,
+                    runID: context.runID,
+                    detail: detail,
+                    stage: "executor_failed"
                 )
             }
             return .init(
@@ -652,6 +798,46 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                 detail: detail
             )
         }
+    }
+
+    private func failDeliveryAndNotifyManager(
+        store: SQLiteAgentGroupChatStore,
+        ownerUserID: String,
+        delivery: ProjectAgentDelivery,
+        runID: String?,
+        detail: String,
+        stage: String
+    ) async throws {
+        let timestamp = now()
+        let todo = delivery.triggerKind == .todo
+            ? try await store.todoForDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: delivery.id
+            )
+            : nil
+        _ = try await store.failDelivery(
+            ownerUserID: ownerUserID,
+            deliveryID: delivery.id,
+            error: detail,
+            nowUnixMs: timestamp
+        )
+        guard let todo else { return }
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: ownerUserID,
+            agentID: delivery.targetAgentID,
+            todoID: todo.id,
+            kind: .blocked,
+            runID: runID,
+            stage: stage,
+            detail: detail,
+            nowUnixMs: timestamp
+        )
+        _ = try await store.enqueueAgentTodoStatus(
+            ownerUserID: ownerUserID,
+            agentID: delivery.targetAgentID,
+            todoID: todo.id,
+            nowUnixMs: timestamp
+        )
     }
 
     private static func initialMessages(
@@ -688,6 +874,19 @@ public struct LocalAgentGroupChatScheduler: Sendable {
 
         Human 已明确授予你本地项目与团队创建权限。需要创建团队时调用 team_propose，并从工具 schema 提供的项目单选项中选择已有项目或“新建项目”。真实项目 ID 与本机路径由 ChatOS 内部映射，不会提供给你，也不得猜测或要求用户提供。该工具只生成提案，必须等待 Human 确认。
         """ : ""
+        let heartbeatInstructions = delivery.triggerKind == .heartbeat ? """
+
+        这是你的主动巡检，不是某个团队单独产生的消息。先调用 chat_read_all_unread 一次读取你在所有群聊和私聊中的未读；工具返回即表示这些消息已经读过。逐条判断：普通通知和闲聊无需创建 Todo；可以立即回复的使用 chat_inbox_send 回复原会话。todo_list 是团队级共享任务板，所有成员可读，只有团队明确绑定且职业为 project_manager 的项目经理可以创建、分配、改序、改依赖、取消或重开任务。你是项目经理时，需要后续行动先调用 todo_execution_options 选择团队和负责人；有前置关系时再调用 todo_dependency_options，只用本轮临时引用创建 Todo，并声明所需基础能力与 Plugin。你不是对应团队项目经理时，不得自行建任务；使用 chat_inbox_send 回复来源项目群，并设置 notify_project_manager=true，把可执行范围、证据和验收建议交给客户端绑定的项目经理。然后调用 todo_list 检查分配给自己的任务和团队进度。完成本轮收件和整理后调用 agent_cycle_complete；chat_heartbeat_complete 只为旧运行兼容。禁止为了证明在线而发送无意义消息。
+        你的巡检要求：\(profile.draft.heartbeatPrompt.isEmpty ? "读取全部未读，整理 TodoList，并继续推进最优先的工作。" : profile.draft.heartbeatPrompt)
+        """ : ""
+        let todoInstructions = delivery.triggerKind == .todo ? """
+
+        这是独立的 Todo 执行线程。你是当前任务的负责人，无论是否为项目经理，都拥有这一任务的执行权：先调用 todo_get_context 读取程序绑定的任务、来源消息和可信能力计划；执行期间用 todo_progress_append 持续记录阶段、动作、观察结果与下一步。开始执行时客户端已将任务置为 in_progress；完成后调用 todo_complete 将自己的任务置为 completed 并保存总结；无法继续时调用 todo_block 置为 blocked 并保存阻塞原因和执行现场。你不能读取全局收件箱、修改其他 Todo、切换团队或自行扩大工具范围。
+        """ : ""
+        let todoStatusInstructions = delivery.triggerKind == .todoStatus ? """
+
+        这是 Todo 执行状态通知，由客户端在执行线程完成、阻塞或异常结束后自动产生。先调用 chat_get_trigger 读取状态摘要，再调用 todo_list 找到对应任务，必要时调用 todo_read_progress 查看完整执行记录。根据结果判断是否需要使用 Todo 返回的 conversation_ref 和 message_ref，通过 chat_inbox_send 向一条或多条来源会话汇报；阻塞时可以结合新消息用 todo_update 调整任务、补充来源或重新置为 pending。处理完后必须调用 agent_cycle_complete。不要把内部 Todo 状态消息直接发到聊天记录，也不要猜测任何真实 ID。
+        """ : ""
         let professionSkill = """
         <skill name="\(profession.chatOSSkillName)" binding="program-owned" key="\(profession.key)">
         这是 ChatOS 根据当前 Agent 持久职业绑定自动注入的完整职业 Skill。模型不得更改、替换或声称选择了其他职业。内容迁移自 Relay；其中对旧 Relay Trigger、company/task 工具和公司组织的引用只表示协作方法与质量门禁，实际通信、身份、任务和权限必须使用本轮 ChatOS Relay MCP 及客户端提供的工具，未提供的旧工具不得调用。
@@ -715,24 +914,32 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         角色指令：\(profile.draft.rolePrompt)
         \(conversationContext)
 
-        你通过 ChatOS 本机唯一的 Relay MCP 协作。聊天记录不是你的私有记忆，也不会整段注入提示词。先调用 relay_bootstrap 获取当前身份、会话参与者、唤醒消息和你的独立未读页；需要继续处理未读时调用 chat_read_unread，需要历史上下文时用稳定消息 ID 游标调用 chat_read_messages。处理完消息后调用 chat_mark_read 推进你自己的已读游标。你可以用 chat_direct_open 和 chat_direct_send 与另一个 Agent 建立私聊。本次提供的其他工具来自用户明确授予的本机权限和 Plugin，可以按职责调用。完成工作后必须单独调用 chat_send_message 回复当前会话；只有该 MCP 工具成功才算完成本次 delivery，成功回复也会确认当前触发消息。不得假冒其他 Agent，也不得自行猜测成员 ID。
+        你通过 ChatOS 本机唯一的 Relay MCP 协作。聊天记录不是你的私有记忆，也不会整段注入提示词。普通会话可先调用 relay_bootstrap 获取当前身份和会话上下文；主动巡检使用 chat_read_all_unread。chat_read_all_unread 返回的消息立即视为已读，是否需要行动由你根据内容判断。TodoList 属于项目团队而不是某个 Agent；agent_id 只代表负责人。所有团队成员可读任务板，只有该团队显式指定、且职业为 project_manager 的项目经理拥有 todo_add、todo_update、todo_reorder 和依赖维护权限。跨 Agent 任务可以依赖，但只能在同一团队内；所有前置 completed 前，下游不会调度，前置 blocked/cancelled 也不会放行。Todo 执行线程只获得当前任务、已完成前置结果、进度和结束工具。普通消息必须通过 chat_send_message 完成回复；主动巡检和 Todo 状态处理通过 agent_cycle_complete 结束；Todo 工作通过 todo_complete 或 todo_block 结束。只有对应 MCP 工具成功才算完成本次 delivery。不得假冒其他 Agent，也不得自行猜测内部 ID。
         \(LocalAgentCapabilityDiscoverySkill.instructions)
         \(staffingInstructions)
         \(projectInstructions)
+        \(heartbeatInstructions)
+        \(todoInstructions)
+        \(todoStatusInstructions)
 
         \(professionSkill)
         \(projectSkill)
         """
+        let requestedAction = switch delivery.triggerKind {
+        case .heartbeat: "请读取全部未读、整理并推进自己的 TodoList，然后结束本轮巡检。"
+        case .todo: "请执行当前最优先的 Todo，并持久化它的最新状态。"
+        case .todoStatus: "请检查 Todo 的执行结果和进度，向相关来源会话沟通，并结束本轮通讯处理。"
+        default: "请通过本地 Relay MCP 读取消息并完成回复。"
+        }
         let envelope = """
-        你收到一个本地会话 delivery：
-        - delivery_id: \(delivery.id)
-        - trigger_message_id: \(delivery.messageID)
-        - root_message_id: \(delivery.rootMessageID)
+        你收到一个由 ChatOS 客户端完成身份和权限绑定的本地 delivery：
         - trigger_kind: \(delivery.triggerKind.rawValue)
-        - hop_count: \(delivery.hopCount)
         - attachment_count: \(triggerAttachments.count)
 
-        请通过本地 Relay MCP 读取消息并完成回复。
+        账户、Agent、项目、会话、消息和 delivery 的真实 ID 均由客户端内部持有并透传，
+        不需要也不允许你猜测这些值。
+
+        \(requestedAction)
         """
         return [
             .init(role: .system, content: system),

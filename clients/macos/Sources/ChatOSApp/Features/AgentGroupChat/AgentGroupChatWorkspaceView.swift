@@ -5,6 +5,9 @@ import SwiftUI
 extension Notification.Name {
     static let agentGroupChatRoomsDidChange = Notification.Name("ChatOS.AgentGroupChatRoomsDidChange")
     static let agentSkillLibraryDidChange = Notification.Name("ChatOS.AgentSkillLibraryDidChange")
+    static let agentHeartbeatConfigurationDidChange = Notification.Name(
+        "ChatOS.AgentHeartbeatConfigurationDidChange"
+    )
 }
 
 private enum AgentGroupChatWorkspaceDestination: Hashable {
@@ -77,7 +80,10 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         thinkingLevel: String?,
         professionKey: String,
         canManageStaff: Bool,
-        canAccessLocalProjects: Bool
+        canAccessLocalProjects: Bool,
+        heartbeatEnabled: Bool,
+        heartbeatIntervalSeconds: Int,
+        heartbeatPrompt: String
     ) async -> Bool {
         guard !isSavingAgent else { return false }
         let modelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -107,7 +113,10 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             thinkingLevel: normalizedThinkingLevel,
             professionKey: professionKey,
             defaultPluginIDs: [],
-            defaultSkillIDs: permissions
+            defaultSkillIDs: permissions,
+            heartbeatEnabled: heartbeatEnabled,
+            heartbeatIntervalSeconds: heartbeatIntervalSeconds,
+            heartbeatPrompt: heartbeatPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         isSavingAgent = true
         defer { isSavingAgent = false }
@@ -123,6 +132,7 @@ private final class AgentGroupChatWorkspaceViewModel: ObservableObject {
                 _ = try await store.createAgent(ownerUserID: ownerUserID, draft: draft)
             }
             await load()
+            NotificationCenter.default.post(name: .agentHeartbeatConfigurationDidChange, object: nil)
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -567,6 +577,14 @@ private struct AgentManagementView: View {
                 Text("按任务自主发现")
             }
             .font(.caption)
+            LabeledContent("主动巡检") {
+                Text(
+                    agent.draft.heartbeatEnabled
+                        ? Self.heartbeatIntervalLabel(agent.draft.heartbeatIntervalSeconds)
+                        : "关闭"
+                )
+            }
+            .font(.caption)
             if canManageStaff || canAccessLocalProjects {
                 HStack(spacing: 6) {
                     if canManageStaff {
@@ -586,6 +604,17 @@ private struct AgentManagementView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private static func heartbeatIntervalLabel(_ seconds: Int) -> String {
+        switch seconds {
+        case 60: "每分钟"
+        case 300: "每 5 分钟"
+        case 900: "每 15 分钟"
+        case 1_800: "每 30 分钟"
+        case 3_600: "每小时"
+        default: "每 \(seconds / 60) 分钟"
         }
     }
 
@@ -614,6 +643,9 @@ private struct AgentProfileEditorSheet: View {
     @State private var professionKey: String
     @State private var canManageStaff: Bool
     @State private var canAccessLocalProjects: Bool
+    @State private var heartbeatEnabled: Bool
+    @State private var heartbeatIntervalSeconds: Int
+    @State private var heartbeatPrompt: String
 
     init(
         viewModel: AgentGroupChatWorkspaceViewModel,
@@ -643,6 +675,11 @@ private struct AgentProfileEditorSheet: View {
         _canAccessLocalProjects = State(initialValue: profile.map {
             LocalAgentPermission.canAccessLocalProjects($0.draft.defaultSkillIDs)
         } ?? false)
+        _heartbeatEnabled = State(initialValue: profile?.draft.heartbeatEnabled ?? false)
+        _heartbeatIntervalSeconds = State(
+            initialValue: profile?.draft.heartbeatIntervalSeconds ?? 900
+        )
+        _heartbeatPrompt = State(initialValue: profile?.draft.heartbeatPrompt ?? "")
     }
 
     private var existing: LocalAgentProfile? {
@@ -739,6 +776,41 @@ private struct AgentProfileEditorSheet: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    Divider()
+                    Toggle(isOn: $heartbeatEnabled) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("主动巡检")
+                                .font(.subheadline.weight(.medium))
+                            Text("按周期唤醒这个 Agent，依次检查它加入的全部团队和私聊；无事时不会发送消息。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if heartbeatEnabled {
+                        editorField("巡检周期") {
+                            Picker("", selection: $heartbeatIntervalSeconds) {
+                                Text("每分钟").tag(60)
+                                Text("每 5 分钟").tag(300)
+                                Text("每 15 分钟").tag(900)
+                                Text("每 30 分钟").tag(1_800)
+                                Text("每小时").tag(3_600)
+                            }
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        editorField("巡检要求") {
+                            TextField(
+                                "例如：检查阻塞、无人响应的任务和需要主动推进的工作",
+                                text: $heartbeatPrompt,
+                                axis: .vertical
+                            )
+                            .lineLimit(3...6)
+                            .textFieldStyle(.roundedBorder)
+                        }
+                        Text("主动巡检会产生模型调用；通讯与任务执行分离，同一 Agent 的同类运行仍会串行。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -756,7 +828,10 @@ private struct AgentProfileEditorSheet: View {
                             thinkingLevel: thinkingLevel,
                             professionKey: professionKey,
                             canManageStaff: canManageStaff,
-                            canAccessLocalProjects: canAccessLocalProjects
+                            canAccessLocalProjects: canAccessLocalProjects,
+                            heartbeatEnabled: heartbeatEnabled,
+                            heartbeatIntervalSeconds: heartbeatIntervalSeconds,
+                            heartbeatPrompt: heartbeatPrompt
                         ) { dismiss() }
                     }
                 }

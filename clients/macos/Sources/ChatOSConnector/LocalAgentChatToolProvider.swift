@@ -2,6 +2,20 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
+/// Safe catalog metadata supplied by the client. `pluginID` remains inside the provider and is
+/// mapped from a run-scoped opaque reference before a Todo execution plan is persisted.
+public struct LocalAgentTodoPluginOption: Sendable, Equatable {
+    public let pluginID: String
+    public let displayName: String
+    public let description: String
+
+    public init(pluginID: String, displayName: String, description: String) {
+        self.pluginID = pluginID
+        self.displayName = displayName
+        self.description = description
+    }
+}
+
 /// Immutable authority for one claimed local delivery. Caller-controlled tool arguments never
 /// select the sender, account, project, room or Memory identity.
 public struct LocalAgentChatRunContext: Codable, Sendable, Equatable {
@@ -14,6 +28,7 @@ public struct LocalAgentChatRunContext: Codable, Sendable, Equatable {
     public let rootMessageID: String
     public let runID: String
     public let hopCount: Int
+    public let lane: LocalAgentRunLane
 
     public init(
         ownerUserID: String,
@@ -24,7 +39,8 @@ public struct LocalAgentChatRunContext: Codable, Sendable, Equatable {
         triggerMessageID: String,
         rootMessageID: String,
         runID: String,
-        hopCount: Int
+        hopCount: Int,
+        lane: LocalAgentRunLane = .manager
     ) throws {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(projectID, field: "projectID")
@@ -46,6 +62,28 @@ public struct LocalAgentChatRunContext: Codable, Sendable, Equatable {
         self.rootMessageID = rootMessageID
         self.runID = runID
         self.hopCount = hopCount
+        self.lane = lane
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ownerUserID, projectID, roomID, agentID, deliveryID, triggerMessageID
+        case rootMessageID, runID, hopCount, lane
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            ownerUserID: values.decode(String.self, forKey: .ownerUserID),
+            projectID: values.decode(String.self, forKey: .projectID),
+            roomID: values.decode(String.self, forKey: .roomID),
+            agentID: values.decode(String.self, forKey: .agentID),
+            deliveryID: values.decode(String.self, forKey: .deliveryID),
+            triggerMessageID: values.decode(String.self, forKey: .triggerMessageID),
+            rootMessageID: values.decode(String.self, forKey: .rootMessageID),
+            runID: values.decode(String.self, forKey: .runID),
+            hopCount: values.decode(Int.self, forKey: .hopCount),
+            lane: values.decodeIfPresent(LocalAgentRunLane.self, forKey: .lane) ?? .manager
+        )
     }
 }
 
@@ -72,17 +110,113 @@ public actor LocalAgentRelayMCPServer {
 
     public func connect(
         context: LocalAgentChatRunContext,
-        professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions
+        professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions,
+        todoPluginOptions: [LocalAgentTodoPluginOption] = []
     ) async throws -> LocalAgentChatToolProvider {
         let store = try await service.store()
         return try LocalAgentChatToolProvider(
             store: store,
             context: context,
             professions: professions,
+            todoPluginOptions: todoPluginOptions,
             limits: limits,
             now: now
         )
     }
+}
+
+private actor LocalAgentRunReferenceVault {
+    struct MessageAuthority: Sendable {
+        let roomID: String
+        let messageID: String
+    }
+
+    struct TodoAuthority: Sendable {
+        let todoID: String
+        let agentID: String
+        let teamRoomID: String
+    }
+
+    struct AssigneeAuthority: Sendable {
+        let agentID: String
+        let teamRoomID: String
+    }
+
+    private var conversations: [String: String] = [:]
+    private var messages: [String: MessageAuthority] = [:]
+    private var todos: [String: TodoAuthority] = [:]
+    private var teams: [String: String] = [:]
+    private var assignees: [String: AssigneeAuthority] = [:]
+    private var plugins: [String: LocalAgentTodoPluginOption] = [:]
+
+    func conversationReference(roomID: String) -> String {
+        if let existing = conversations.first(where: { $0.value == roomID })?.key {
+            return existing
+        }
+        let reference = "conversation_\(UUID().uuidString.lowercased())"
+        conversations[reference] = roomID
+        return reference
+    }
+
+    func messageReference(roomID: String, messageID: String) -> String {
+        if let existing = messages.first(where: {
+            $0.value.roomID == roomID && $0.value.messageID == messageID
+        })?.key { return existing }
+        let reference = "message_\(UUID().uuidString.lowercased())"
+        messages[reference] = .init(roomID: roomID, messageID: messageID)
+        return reference
+    }
+
+    func messageAuthority(reference: String) -> MessageAuthority? { messages[reference] }
+    func roomID(conversationReference: String) -> String? {
+        conversations[conversationReference]
+    }
+
+    func todoReference(todoID: String, agentID: String, teamRoomID: String) -> String {
+        if let existing = todos.first(where: { $0.value.todoID == todoID })?.key {
+            return existing
+        }
+        let reference = "todo_\(UUID().uuidString.lowercased())"
+        todos[reference] = .init(
+            todoID: todoID,
+            agentID: agentID,
+            teamRoomID: teamRoomID
+        )
+        return reference
+    }
+
+    func todoAuthority(reference: String) -> TodoAuthority? { todos[reference] }
+
+    func teamReference(teamID: String) -> String {
+        if let existing = teams.first(where: { $0.value == teamID })?.key { return existing }
+        let reference = "team_\(UUID().uuidString.lowercased())"
+        teams[reference] = teamID
+        return reference
+    }
+
+    func teamID(reference: String) -> String? { teams[reference] }
+
+    func assigneeReference(agentID: String, teamRoomID: String) -> String {
+        if let existing = assignees.first(where: {
+            $0.value.agentID == agentID && $0.value.teamRoomID == teamRoomID
+        })?.key { return existing }
+        let reference = "assignee_\(UUID().uuidString.lowercased())"
+        assignees[reference] = .init(agentID: agentID, teamRoomID: teamRoomID)
+        return reference
+    }
+
+    func assigneeAuthority(reference: String) -> AssigneeAuthority? { assignees[reference] }
+
+    func pluginReference(option: LocalAgentTodoPluginOption) -> String {
+        if let existing = plugins.first(where: { $0.value.pluginID == option.pluginID })?.key {
+            return existing
+        }
+        let reference = "plugin_\(UUID().uuidString.lowercased())"
+        plugins[reference] = option
+        return reference
+    }
+
+    func plugin(reference: String) -> LocalAgentTodoPluginOption? { plugins[reference] }
 }
 
 /// One identity-bound session on the local Relay MCP. Tool arguments can never select another
@@ -92,6 +226,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let getTriggerToolName = "chat_get_trigger"
     public static let listMembersToolName = "chat_list_members"
     public static let readUnreadToolName = "chat_read_unread"
+    public static let readAllUnreadToolName = "chat_read_all_unread"
+    public static let inboxSendToolName = "chat_inbox_send"
     public static let readMessagesToolName = "chat_read_messages"
     public static let readAttachmentToolName = "chat_read_attachment"
     public static let markReadToolName = "chat_mark_read"
@@ -100,17 +236,33 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let proposeMemberToolName = "agent_propose_member"
     public static let proposeMemberRemovalToolName = "agent_propose_member_removal"
     public static let sendMessageToolName = "chat_send_message"
+    public static let completeHeartbeatToolName = "chat_heartbeat_complete"
+    public static let completeManagerCycleToolName = "agent_cycle_complete"
+    public static let todoListToolName = "todo_list"
+    public static let todoAddToolName = "todo_add"
+    public static let todoUpdateToolName = "todo_update"
+    public static let todoReorderToolName = "todo_reorder"
+    public static let todoExecutionOptionsToolName = "todo_execution_options"
+    public static let todoDependencyOptionsToolName = "todo_dependency_options"
+    public static let todoGetContextToolName = "todo_get_context"
+    public static let todoProgressAppendToolName = "todo_progress_append"
+    public static let todoReadProgressToolName = "todo_read_progress"
+    public static let todoCompleteToolName = "todo_complete"
+    public static let todoBlockToolName = "todo_block"
 
     private let store: any AgentGroupChatStore
     private let context: LocalAgentChatRunContext
     private let professions: [LocalAgentProfessionDefinition]
     private let limits: AgentGroupChatRoutingLimits
     private let now: @Sendable () -> Int64
+    private let references: LocalAgentRunReferenceVault
+    private let todoPluginOptions: [LocalAgentTodoPluginOption]
 
     public init(
         store: any AgentGroupChatStore,
         context: LocalAgentChatRunContext,
         professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions,
+        todoPluginOptions: [LocalAgentTodoPluginOption] = [],
         limits: AgentGroupChatRoutingLimits = .init(),
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
@@ -122,10 +274,38 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         self.professions = professions
         self.limits = limits
         self.now = now
+        self.references = LocalAgentRunReferenceVault()
+        self.todoPluginOptions = todoPluginOptions
     }
 
     public func definitions() async throws -> [AgentToolDefinition] {
         var definitions = Self.toolDefinitions
+        guard let delivery = try await store.delivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID
+        ) else { throw AgentGroupChatError.notFound }
+        if delivery.lane == .executor {
+            let executorTools: Set<String> = [
+                Self.todoGetContextToolName,
+                Self.todoProgressAppendToolName,
+                Self.todoCompleteToolName,
+                Self.todoBlockToolName,
+            ]
+            return definitions.filter { executorTools.contains($0.name) }
+        }
+        let executorOnly: Set<String> = [
+            Self.todoGetContextToolName,
+            Self.todoProgressAppendToolName,
+            Self.todoCompleteToolName,
+            Self.todoBlockToolName,
+        ]
+        definitions.removeAll { executorOnly.contains($0.name) }
+        if delivery.triggerKind != .heartbeat {
+            definitions.removeAll { $0.name == Self.completeHeartbeatToolName }
+        }
+        if delivery.triggerKind != .heartbeat && delivery.triggerKind != .todoStatus {
+            definitions.removeAll { $0.name == Self.completeManagerCycleToolName }
+        }
         if !(try await canManageStaff()) {
             definitions = definitions.filter {
                 $0.name != Self.proposeMemberToolName
@@ -141,6 +321,16 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 definitions = definitions.filter { $0.name != Self.proposeMemberRemovalToolName }
             }
         }
+        if !(try await managesAnyProjectTeam()) {
+            let projectManagerOnly: Set<String> = [
+                Self.todoAddToolName,
+                Self.todoUpdateToolName,
+                Self.todoReorderToolName,
+                Self.todoExecutionOptionsToolName,
+                Self.todoDependencyOptionsToolName,
+            ]
+            definitions.removeAll { projectManagerOnly.contains($0.name) }
+        }
         return definitions
     }
 
@@ -154,6 +344,10 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await listMembers(call)
         case Self.readUnreadToolName:
             return try await readUnread(call)
+        case Self.readAllUnreadToolName:
+            return try await readAllUnread(call)
+        case Self.inboxSendToolName:
+            return try await sendInboxMessage(call)
         case Self.readMessagesToolName:
             return try await readMessages(call)
         case Self.readAttachmentToolName:
@@ -170,6 +364,32 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await proposeMemberRemoval(call)
         case Self.sendMessageToolName:
             return try await sendMessage(call)
+        case Self.completeHeartbeatToolName:
+            return try await completeHeartbeat(call)
+        case Self.completeManagerCycleToolName:
+            return try await completeManagerCycle(call)
+        case Self.todoListToolName:
+            return try await listTodos(call)
+        case Self.todoAddToolName:
+            return try await addTodo(call)
+        case Self.todoUpdateToolName:
+            return try await updateTodo(call)
+        case Self.todoReorderToolName:
+            return try await reorderTodos(call)
+        case Self.todoExecutionOptionsToolName:
+            return try await todoExecutionOptions(call)
+        case Self.todoDependencyOptionsToolName:
+            return try await todoDependencyOptions(call)
+        case Self.todoGetContextToolName:
+            return try await todoGetContext(call)
+        case Self.todoProgressAppendToolName:
+            return try await appendTodoProgress(call)
+        case Self.todoReadProgressToolName:
+            return try await readTodoProgress(call)
+        case Self.todoCompleteToolName:
+            return try await completeTodo(call)
+        case Self.todoBlockToolName:
+            return try await blockTodo(call)
         default:
             return .failure("群聊工具不可用：\(call.name)")
         }
@@ -212,7 +432,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 agentID: currentProfile.id,
                 name: currentProfile.draft.name,
                 role: currentMember.draft.role,
-                responsibility: currentMember.draft.responsibility
+                responsibility: currentMember.draft.responsibility,
+                isProjectManager: room.projectManagerAgentID == currentProfile.id
             ),
             roomID: room.id,
             roomName: room.draft.name,
@@ -225,7 +446,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                     agentID: member.agentID,
                     name: profiles[member.agentID]?.draft.name ?? member.agentID,
                     role: member.draft.role,
-                    responsibility: member.draft.responsibility
+                    responsibility: member.draft.responsibility,
+                    isProjectManager: room.projectManagerAgentID == member.agentID
                 )
             }
         ))
@@ -252,12 +474,17 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             includeArchived: false
         )
         let profiles = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
+        let room = try await store.room(
+            ownerUserID: context.ownerUserID,
+            roomID: context.roomID
+        )
         let response = members.map { member in
             MemberResponse(
                 agentID: member.agentID,
                 name: profiles[member.agentID]?.draft.name ?? member.agentID,
                 role: member.draft.role,
-                responsibility: member.draft.responsibility
+                responsibility: member.draft.responsibility,
+                isProjectManager: room?.projectManagerAgentID == member.agentID
             )
         }
         return try Self.outcome(response)
@@ -273,6 +500,942 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             limit: limit
         )
         return try Self.outcome(page)
+    }
+
+    private func readAllUnread(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let limit = try Self.optionalInteger(arguments, key: "limit").map(Int.init) ?? 200
+        let conversations = try await store.readAllUnreadMessagesAndMarkRead(
+            ownerUserID: context.ownerUserID,
+            agentID: context.agentID,
+            limit: limit,
+            nowUnixMs: now()
+        )
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: true
+        )
+        let names = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.draft.name) })
+        var response: [InboxConversationResponse] = []
+        for conversation in conversations {
+            let conversationReference = await references.conversationReference(
+                roomID: conversation.room.id
+            )
+            var messages: [InboxMessageResponse] = []
+            for message in conversation.messages {
+                let messageReference = await references.messageReference(
+                    roomID: conversation.room.id,
+                    messageID: message.id
+                )
+                let sender = switch message.senderKind {
+                case .human: "Human"
+                case .agent: names[message.senderID] ?? "Agent"
+                case .system: "System"
+                }
+                messages.append(.init(
+                    messageReference: messageReference,
+                    sender: sender,
+                    content: message.content,
+                    attachmentNames: message.attachmentItems.map(\.name),
+                    createdAtUnixMs: message.createdAtUnixMs
+                ))
+            }
+            response.append(.init(
+                conversationReference: conversationReference,
+                name: conversation.room.draft.name,
+                kind: conversation.room.conversationKind.rawValue,
+                messages: messages
+            ))
+        }
+        return try Self.outcome(InboxResponse(
+            conversations: response,
+            messageCount: response.reduce(0) { $0 + $1.messages.count },
+            markedRead: true
+        ))
+    }
+
+    private func sendInboxMessage(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let conversationReference = try Self.requiredString(
+            arguments,
+            key: "conversation_ref"
+        )
+        let replyReference = try Self.requiredString(arguments, key: "reply_to_message_ref")
+        guard let roomID = await references.roomID(
+            conversationReference: conversationReference
+        ), let source = await references.messageAuthority(reference: replyReference),
+           source.roomID == roomID,
+           let replyMessage = try await store.message(
+               ownerUserID: context.ownerUserID,
+               roomID: roomID,
+               messageID: source.messageID
+           ) else { throw AgentGroupChatError.invalidField("inbox_reference") }
+        let notifyProjectManager = try Self.optionalBoolean(
+            arguments,
+            key: "notify_project_manager"
+        ) ?? false
+        var mentionedAgentIDs: [String] = []
+        if notifyProjectManager {
+            guard let room = try await store.room(
+                ownerUserID: context.ownerUserID,
+                roomID: roomID
+            ), room.conversationKind == .projectTeam,
+            let projectManagerAgentID = room.projectManagerAgentID else {
+                return Self.structuredFailure(
+                    code: "project_manager_unavailable",
+                    field: "notify_project_manager",
+                    message: "该会话不是项目团队，或团队尚未明确指定项目经理。",
+                    retryable: false
+                )
+            }
+            mentionedAgentIDs = [projectManagerAgentID]
+        }
+        let post = try await store.postMessage(
+            ownerUserID: context.ownerUserID,
+            roomID: roomID,
+            draft: .init(
+                senderKind: .agent,
+                senderID: context.agentID,
+                content: try Self.requiredString(arguments, key: "content"),
+                mentionedAgentIDs: mentionedAgentIDs,
+                replyToMessageID: replyMessage.id,
+                sourceRunID: context.runID,
+                causationID: context.deliveryID,
+                rootMessageID: replyMessage.rootMessageID,
+                hopCount: min(64, replyMessage.hopCount + 1)
+            ),
+            limits: limits
+        )
+        return try Self.outcome(InboxSendResponse(
+            sent: true,
+            notifiedProjectManager: notifyProjectManager,
+            conversationReference: conversationReference,
+            replyToMessageReference: replyReference,
+            spawnedDeliveryCount: post.deliveries.count,
+            routingStopReason: post.routingStopReason
+        ))
+    }
+
+    private func listTodos(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let includeTerminal = try Self.optionalBoolean(
+            arguments,
+            key: "include_terminal"
+        ) ?? false
+        return try Self.outcome(try await todoResponses(includeTerminal: includeTerminal))
+    }
+
+    private func todoExecutionOptions(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        _ = try Self.arguments(call)
+        let rooms = try await store.listRooms(
+            ownerUserID: context.ownerUserID,
+            includeArchived: false
+        )
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: false
+        )
+        let profilesByID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+        var teams: [TodoTeamOptionResponse] = []
+        for room in rooms where room.conversationKind == .projectTeam {
+            guard room.projectManagerAgentID == context.agentID else { continue }
+            let members = try await store.listMembers(
+                ownerUserID: context.ownerUserID,
+                roomID: room.id
+            )
+            var assignees: [TodoAssigneeOptionResponse] = []
+            for member in members where member.status == .active {
+                guard let profile = profilesByID[member.agentID] else { continue }
+                assignees.append(.init(
+                    assigneeReference: await references.assigneeReference(
+                        agentID: member.agentID,
+                        teamRoomID: room.id
+                    ),
+                    name: profile.draft.name,
+                    profession: profile.draft.professionKey,
+                    role: member.draft.role
+                ))
+            }
+            teams.append(.init(
+                teamReference: await references.teamReference(teamID: room.id),
+                name: room.draft.name,
+                goal: room.draft.goal,
+                assignees: assignees
+            ))
+        }
+        var plugins: [TodoPluginOptionResponse] = []
+        for option in todoPluginOptions {
+            plugins.append(.init(
+                pluginReference: await references.pluginReference(option: option),
+                name: option.displayName,
+                description: option.description
+            ))
+        }
+        return try Self.outcome(TodoExecutionOptionsResponse(
+            teams: teams,
+            builtinCapabilities: LocalAgentTodoBuiltinCapability.allCases.map(\.rawValue),
+            plugins: plugins
+        ))
+    }
+
+    private func todoDependencyOptions(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let teamReference = try Self.requiredString(arguments, key: "team_ref")
+        guard let teamID = await references.teamID(reference: teamReference),
+              try await isProjectManager(teamRoomID: teamID) else {
+            return Self.structuredFailure(
+                code: "project_manager_required",
+                field: "team_ref",
+                message: "只有该团队明确指定的项目经理可以管理任务与前置依赖。",
+                retryable: true,
+                nextTool: Self.todoExecutionOptionsToolName
+            )
+        }
+        let todos = try await store.listTeamTodos(
+            ownerUserID: context.ownerUserID,
+            teamRoomID: teamID,
+            includeTerminal: true
+        ).filter { $0.status != .cancelled }
+        var response: [TodoDependencyOptionResponse] = []
+        for todo in todos {
+            let profile = try await store.listAgents(
+                ownerUserID: context.ownerUserID,
+                includeArchived: true
+            ).first(where: { $0.id == todo.agentID })
+            response.append(.init(
+                todoReference: await references.todoReference(
+                    todoID: todo.id,
+                    agentID: todo.agentID,
+                    teamRoomID: todo.teamRoomID
+                ),
+                title: todo.title,
+                assignee: profile?.draft.name ?? "Agent",
+                status: todo.status.rawValue,
+                blockedReason: todo.blockedReason,
+                result: todo.result
+            ))
+        }
+        return try Self.outcome(response)
+    }
+
+    private func addTodo(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let teamReference = try Self.requiredString(arguments, key: "team_ref")
+        guard let teamID = await references.teamID(reference: teamReference) else {
+            return Self.structuredFailure(
+                code: "invalid_team_ref",
+                field: "team_ref",
+                message: "团队选项无效或已经过期。请重新调用 todo_execution_options。",
+                retryable: true,
+                nextTool: Self.todoExecutionOptionsToolName
+            )
+        }
+        guard try await isProjectManager(teamRoomID: teamID) else {
+            return Self.structuredFailure(
+                code: "project_manager_required",
+                field: "team_ref",
+                message: "只有该团队明确指定的项目经理可以创建和分配团队任务。",
+                retryable: false
+            )
+        }
+        let assigneeID: String
+        if let assigneeReference = try Self.optionalString(arguments, key: "assignee_ref") {
+            guard let authority = await references.assigneeAuthority(
+                reference: assigneeReference
+            ), authority.teamRoomID == teamID else {
+                return Self.structuredFailure(
+                    code: "invalid_assignee_ref",
+                    field: "assignee_ref",
+                    message: "负责人选项无效、已过期或不属于所选团队。请重新读取执行选项。",
+                    retryable: true,
+                    nextTool: Self.todoExecutionOptionsToolName
+                )
+            }
+            assigneeID = authority.agentID
+        } else {
+            assigneeID = context.agentID
+        }
+        let dependencyReferences = try Self.optionalStringArray(
+            arguments,
+            key: "depends_on_todo_refs"
+        )
+        var dependencies: [LocalAgentTodoDependencyDraft] = []
+        var dependencyIDs = Set<String>()
+        for (index, reference) in dependencyReferences.enumerated() {
+            guard let authority = await references.todoAuthority(reference: reference) else {
+                return Self.structuredFailure(
+                    code: "invalid_dependency_todo_ref",
+                    field: "depends_on_todo_refs[\(index)]",
+                    message: "前置任务引用无效或已经过期。请重新读取团队前置任务选项。",
+                    retryable: true,
+                    nextTool: Self.todoDependencyOptionsToolName
+                )
+            }
+            guard authority.teamRoomID == teamID else {
+                return Self.structuredFailure(
+                    code: "cross_team_dependency",
+                    field: "depends_on_todo_refs[\(index)]",
+                    message: "前置任务必须与当前任务属于同一个项目团队。",
+                    retryable: true,
+                    nextTool: Self.todoDependencyOptionsToolName
+                )
+            }
+            guard dependencyIDs.insert(authority.todoID).inserted else {
+                return Self.structuredFailure(
+                    code: "duplicate_dependency",
+                    field: "depends_on_todo_refs",
+                    message: "同一个前置任务不能重复添加。",
+                    retryable: true
+                )
+            }
+            dependencies.append(.init(
+                prerequisiteTodoID: authority.todoID,
+                prerequisiteAgentID: authority.agentID
+            ))
+        }
+        let sourceReferences = try Self.optionalStringArray(
+            arguments,
+            key: "source_message_refs"
+        )
+        guard !sourceReferences.isEmpty else {
+            return Self.structuredFailure(
+                code: "missing_source_messages",
+                field: "source_message_refs",
+                message: "Todo 必须关联至少一条本轮已经读取的来源消息。",
+                retryable: true,
+                nextTool: Self.readAllUnreadToolName
+            )
+        }
+        var sources: [LocalAgentTodoSourceDraft] = []
+        for reference in sourceReferences {
+            guard let source = await references.messageAuthority(reference: reference) else {
+                return Self.structuredFailure(
+                    code: "invalid_source_message_ref",
+                    field: "source_message_refs",
+                    message: "来源消息引用无效、已过期，或不属于当前 Agent 的本轮收件箱。",
+                    retryable: true,
+                    nextTool: Self.readAllUnreadToolName
+                )
+            }
+            sources.append(.init(roomID: source.roomID, messageID: source.messageID))
+        }
+        let requestedKinds = try Self.optionalStringArray(
+            arguments,
+            key: "builtin_capabilities"
+        )
+        var builtinCapabilities: [LocalAgentTodoBuiltinCapability] = []
+        for rawValue in requestedKinds {
+            guard let capability = LocalAgentTodoBuiltinCapability(rawValue: rawValue) else {
+                return Self.structuredFailure(
+                    code: "unsupported_builtin_capability",
+                    field: "builtin_capabilities",
+                    message: "请求了客户端未提供的基础能力。请重新读取执行选项。",
+                    retryable: true,
+                    nextTool: Self.todoExecutionOptionsToolName
+                )
+            }
+            builtinCapabilities.append(capability)
+        }
+        guard Set(builtinCapabilities).count == builtinCapabilities.count else {
+            return Self.structuredFailure(
+                code: "duplicate_builtin_capability",
+                field: "builtin_capabilities",
+                message: "同一种基础能力不能重复选择。",
+                retryable: true
+            )
+        }
+        let requiresExecution = try Self.optionalBoolean(
+            arguments,
+            key: "requires_execution"
+        ) ?? true
+        if !requiresExecution,
+           builtinCapabilities.contains(where: { $0 != .projectRead }) {
+            return Self.structuredFailure(
+                code: "execution_required",
+                field: "requires_execution",
+                message: "文件写入或终端能力需要执行环境，请将 requires_execution 设为 true。",
+                retryable: true
+            )
+        }
+        let pluginHints = try Self.optionalObjectArray(arguments, key: "plugin_hints")
+        var pluginSelections: [LocalAgentTodoPluginSelection] = []
+        var selectedPluginIDs = Set<String>()
+        for (index, hint) in pluginHints.enumerated() {
+            guard let reference = hint["plugin_ref"] as? String,
+                  let option = await references.plugin(reference: reference) else {
+                return Self.structuredFailure(
+                    code: "plugin_not_selectable",
+                    field: "plugin_hints[\(index)].plugin_ref",
+                    message: "Plugin 选项无效、已停用或已经过期。请重新读取本机执行选项。",
+                    retryable: true,
+                    nextTool: Self.todoExecutionOptionsToolName
+                )
+            }
+            guard selectedPluginIDs.insert(option.pluginID).inserted else {
+                return Self.structuredFailure(
+                    code: "duplicate_plugin",
+                    field: "plugin_hints[\(index)].plugin_ref",
+                    message: "同一个 Plugin 不能被重复选择。",
+                    retryable: true
+                )
+            }
+            let reason = (hint["reason"] as? String) ?? ""
+            pluginSelections.append(.init(
+                pluginID: option.pluginID,
+                displayName: option.displayName,
+                reason: reason
+            ))
+        }
+        let createdAt = now()
+        do {
+            let primary = sources[0]
+            let todo = try await store.createAgentTodo(
+                ownerUserID: context.ownerUserID,
+                agentID: assigneeID,
+                requestKey: call.id,
+                draft: .init(
+                    title: try Self.requiredString(arguments, key: "title"),
+                    detail: try Self.optionalString(arguments, key: "detail") ?? "",
+                    priority: Int(try Self.optionalInteger(arguments, key: "priority") ?? 50),
+                    teamRoomID: teamID,
+                    sourceRoomID: primary.roomID,
+                    sourceMessageID: primary.messageID,
+                    additionalSources: Array(sources.dropFirst()),
+                    dependencies: dependencies,
+                    executionPlan: .init(
+                        requiresExecution: requiresExecution,
+                        builtinCapabilities: builtinCapabilities,
+                        plugins: pluginSelections,
+                        selectionRevision: "local-capability-catalog-v1",
+                        selectedAtUnixMs: createdAt
+                    ),
+                    creatorAgentID: context.agentID
+                ),
+                nowUnixMs: createdAt
+            )
+            return try Self.outcome(try await todoResponse(todo))
+        } catch let error as AgentGroupChatError {
+            return Self.structuredFailure(
+                code: Self.errorCode(error),
+                field: Self.errorField(error),
+                message: error.localizedDescription,
+                retryable: error != .permissionDenied
+            )
+        }
+    }
+
+    private func updateTodo(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let todoReference = try Self.requiredString(arguments, key: "todo_ref")
+        guard let authority = await references.todoAuthority(reference: todoReference) else {
+            return Self.structuredFailure(
+                code: "invalid_todo_ref",
+                field: "todo_ref",
+                message: "Todo 引用无效或已经过期，请重新调用 todo_list。",
+                retryable: true,
+                nextTool: Self.todoListToolName
+            )
+        }
+        guard try await isProjectManager(teamRoomID: authority.teamRoomID) else {
+            return Self.structuredFailure(
+                code: "project_manager_required",
+                field: "todo_ref",
+                message: "只有该团队明确指定的项目经理可以修改团队任务。",
+                retryable: false
+            )
+        }
+        let status = try Self.optionalString(arguments, key: "status").flatMap(
+            LocalAgentTodoStatus.init(rawValue:)
+        )
+        if arguments["status"] != nil, status == nil {
+            return Self.structuredFailure(
+                code: "invalid_todo_status",
+                field: "status",
+                message: "通讯线程只能把 Todo 重新置为 pending，或将它取消。",
+                retryable: true
+            )
+        }
+        if let status, status != .pending && status != .cancelled {
+            return Self.structuredFailure(
+                code: "executor_owned_status",
+                field: "status",
+                message: "completed 和 blocked 状态由独立 Todo 执行线程写入，通讯线程不能代替执行。",
+                retryable: true
+            )
+        }
+        let sourceReferences = try Self.optionalStringArray(
+            arguments,
+            key: "source_message_refs"
+        )
+        var linkedSources: [LocalAgentTodoSourceDraft] = []
+        let relation: LocalAgentTodoSourceRelation = arguments["priority"] == nil
+            ? .updated
+            : .reprioritized
+        for reference in sourceReferences {
+            guard let source = await references.messageAuthority(reference: reference) else {
+                return Self.structuredFailure(
+                    code: "invalid_source_message_ref",
+                    field: "source_message_refs",
+                    message: "补充来源消息无效、已过期，或不属于当前 Agent 的本轮收件箱。",
+                    retryable: true,
+                    nextTool: Self.readAllUnreadToolName
+                )
+            }
+            linkedSources.append(.init(
+                roomID: source.roomID,
+                messageID: source.messageID,
+                relation: relation
+            ))
+        }
+        var dependencyDrafts: [LocalAgentTodoDependencyDraft]?
+        if arguments["depends_on_todo_refs"] != nil {
+            let dependencyReferences = try Self.optionalStringArray(
+                arguments,
+                key: "depends_on_todo_refs"
+            )
+            var parsed: [LocalAgentTodoDependencyDraft] = []
+            var dependencyIDs = Set<String>()
+            for (index, reference) in dependencyReferences.enumerated() {
+                guard let prerequisite = await references.todoAuthority(reference: reference) else {
+                    return Self.structuredFailure(
+                        code: "invalid_dependency_todo_ref",
+                        field: "depends_on_todo_refs[\(index)]",
+                        message: "前置任务引用无效或已经过期。请重新读取团队前置任务选项。",
+                        retryable: true,
+                        nextTool: Self.todoDependencyOptionsToolName
+                    )
+                }
+                guard prerequisite.teamRoomID == authority.teamRoomID else {
+                    return Self.structuredFailure(
+                        code: "cross_team_dependency",
+                        field: "depends_on_todo_refs[\(index)]",
+                        message: "前置任务必须与当前任务属于同一个项目团队。",
+                        retryable: true,
+                        nextTool: Self.todoDependencyOptionsToolName
+                    )
+                }
+                guard prerequisite.todoID != authority.todoID else {
+                    return Self.structuredFailure(
+                        code: "self_dependency",
+                        field: "depends_on_todo_refs[\(index)]",
+                        message: "任务不能依赖自己。",
+                        retryable: true
+                    )
+                }
+                guard dependencyIDs.insert(prerequisite.todoID).inserted else {
+                    return Self.structuredFailure(
+                        code: "duplicate_dependency",
+                        field: "depends_on_todo_refs",
+                        message: "同一个前置任务不能重复添加。",
+                        retryable: true
+                    )
+                }
+                parsed.append(.init(
+                    prerequisiteTodoID: prerequisite.todoID,
+                    prerequisiteAgentID: prerequisite.agentID
+                ))
+            }
+            dependencyDrafts = parsed
+        }
+        let timestamp = now()
+        let todo = try await store.updateAgentTodo(
+            ownerUserID: context.ownerUserID,
+            agentID: authority.agentID,
+            todoID: authority.todoID,
+            update: .init(
+                title: try Self.optionalString(arguments, key: "title"),
+                detail: try Self.optionalString(arguments, key: "detail"),
+                priority: try Self.optionalInteger(arguments, key: "priority").map(Int.init),
+                status: status,
+                blockedReason: status == .pending ? "" : nil,
+                result: nil
+            ),
+            nowUnixMs: timestamp
+        )
+        if !linkedSources.isEmpty {
+            _ = try await store.linkAgentTodoSources(
+                ownerUserID: context.ownerUserID,
+                agentID: authority.agentID,
+                todoID: authority.todoID,
+                sources: linkedSources,
+                nowUnixMs: timestamp
+            )
+        }
+        if let dependencyDrafts {
+            do {
+                _ = try await store.setAgentTodoDependencies(
+                    ownerUserID: context.ownerUserID,
+                    agentID: authority.agentID,
+                    todoID: authority.todoID,
+                    dependencies: dependencyDrafts,
+                    nowUnixMs: timestamp
+                )
+            } catch let error as AgentGroupChatError {
+                return Self.structuredFailure(
+                    code: error == .invalidField("todoDependencyCycle")
+                        ? "dependency_cycle" : Self.errorCode(error),
+                    field: Self.errorField(error) ?? "depends_on_todo_refs",
+                    message: error == .invalidField("todoDependencyCycle")
+                        ? "这些前置关系会形成依赖环，请重新拆分或调整依赖。"
+                        : error.localizedDescription,
+                    retryable: true,
+                    nextTool: Self.todoDependencyOptionsToolName
+                )
+            }
+        }
+        return try Self.outcome(try await todoResponse(todo))
+    }
+
+    private func reorderTodos(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let todoReferences = try Self.optionalStringArray(arguments, key: "todo_refs")
+        guard !todoReferences.isEmpty else {
+            throw AgentGroupChatError.invalidField("todo_refs")
+        }
+        var todoIDs: [String] = []
+        var teamRoomID: String?
+        for reference in todoReferences {
+            guard let authority = await references.todoAuthority(reference: reference) else {
+                return Self.structuredFailure(
+                    code: "invalid_todo_ref",
+                    field: "todo_refs",
+                    message: "Todo 引用无效或已经过期，请重新调用 todo_list。",
+                    retryable: true,
+                    nextTool: Self.todoListToolName
+                )
+            }
+            if let teamRoomID, teamRoomID != authority.teamRoomID {
+                return Self.structuredFailure(
+                    code: "cross_team_reorder",
+                    field: "todo_refs",
+                    message: "一次只能调整同一个团队任务板的顺序。",
+                    retryable: true
+                )
+            }
+            teamRoomID = authority.teamRoomID
+            todoIDs.append(authority.todoID)
+        }
+        guard let teamRoomID, try await isProjectManager(teamRoomID: teamRoomID) else {
+            return Self.structuredFailure(
+                code: "project_manager_required",
+                field: "todo_refs",
+                message: "只有该团队明确指定的项目经理可以调整团队任务顺序。",
+                retryable: false
+            )
+        }
+        let todos = try await store.reorderTeamTodos(
+            ownerUserID: context.ownerUserID,
+            teamRoomID: teamRoomID,
+            todoIDs: todoIDs,
+            nowUnixMs: now()
+        )
+        var response: [TodoResponse] = []
+        for todo in todos { response.append(try await todoResponse(todo)) }
+        return try Self.outcome(response)
+    }
+
+    private func todoGetContext(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        _ = try Self.arguments(call)
+        guard let todo = try await store.todoForDelivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID
+        ), todo.agentID == context.agentID, todo.teamRoomID == context.roomID else {
+            return Self.structuredFailure(
+                code: "todo_execution_context_mismatch",
+                field: "delivery",
+                message: "当前执行线程没有有效的 Todo、Agent 或团队绑定。",
+                retryable: false
+            )
+        }
+        let sources = try await store.listAgentTodoSources(
+            ownerUserID: context.ownerUserID,
+            agentID: context.agentID,
+            todoID: todo.id
+        )
+        var sourceMessages: [TodoSourceMessageResponse] = []
+        for source in sources {
+            guard let message = try await store.message(
+                ownerUserID: context.ownerUserID,
+                roomID: source.conversationID,
+                messageID: source.messageID
+            ) else { continue }
+            sourceMessages.append(.init(
+                relation: source.relation.rawValue,
+                content: message.content,
+                attachmentNames: message.attachmentItems.map(\.name),
+                createdAtUnixMs: message.createdAtUnixMs
+            ))
+        }
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: true
+        )
+        let names = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.draft.name) })
+        var prerequisites: [TodoDependencyResponse] = []
+        for dependency in try await store.listAgentTodoDependencies(
+            ownerUserID: context.ownerUserID,
+            agentID: todo.agentID,
+            todoID: todo.id
+        ) {
+            guard let prerequisite = try await store.agentTodo(
+                ownerUserID: context.ownerUserID,
+                agentID: dependency.prerequisiteAgentID,
+                todoID: dependency.prerequisiteTodoID
+            ) else { continue }
+            prerequisites.append(.init(
+                todoReference: await references.todoReference(
+                    todoID: prerequisite.id,
+                    agentID: prerequisite.agentID,
+                    teamRoomID: prerequisite.teamRoomID
+                ),
+                title: prerequisite.title,
+                assignee: names[prerequisite.agentID] ?? "Agent",
+                status: prerequisite.status.rawValue,
+                blockedReason: prerequisite.blockedReason,
+                result: prerequisite.result
+            ))
+        }
+        return try Self.outcome(TodoExecutionContextResponse(
+            title: todo.title,
+            detail: todo.detail,
+            priority: todo.priority,
+            builtinCapabilities: todo.executionPlan.builtinCapabilities.map(\.rawValue),
+            plugins: todo.executionPlan.plugins.map(\.displayName),
+            sourceMessages: sourceMessages,
+            prerequisites: prerequisites
+        ))
+    }
+
+    private func appendTodoProgress(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        guard let todo = try await currentExecutionTodo() else {
+            return Self.structuredFailure(
+                code: "todo_execution_context_mismatch",
+                field: "delivery",
+                message: "当前线程不是有效的 Todo 执行线程。",
+                retryable: false
+            )
+        }
+        let progress = try await store.appendAgentTodoProgress(
+            ownerUserID: context.ownerUserID,
+            agentID: context.agentID,
+            todoID: todo.id,
+            kind: .progress,
+            runID: context.runID,
+            stage: try Self.optionalString(arguments, key: "stage") ?? "",
+            detail: try Self.requiredString(arguments, key: "detail"),
+            nowUnixMs: now()
+        )
+        return try Self.outcome(TodoProgressResponse(progress: progress))
+    }
+
+    private func readTodoProgress(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let reference = try Self.requiredString(arguments, key: "todo_ref")
+        guard let authority = await references.todoAuthority(reference: reference),
+              try await isTeamMember(teamRoomID: authority.teamRoomID) else {
+            return Self.structuredFailure(
+                code: "invalid_todo_ref",
+                field: "todo_ref",
+                message: "Todo 引用无效或已经过期，请重新调用 todo_list。",
+                retryable: true,
+                nextTool: Self.todoListToolName
+            )
+        }
+        let limit = Int(try Self.optionalInteger(arguments, key: "limit") ?? 100)
+        let progress = try await store.listAgentTodoProgress(
+            ownerUserID: context.ownerUserID,
+            agentID: authority.agentID,
+            todoID: authority.todoID,
+            limit: limit
+        )
+        return try Self.outcome(progress.map(TodoProgressResponse.init(progress:)))
+    }
+
+    private func completeTodo(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let summary = try Self.requiredString(arguments, key: "summary")
+        return try await finishExecutionTodo(
+            status: .completed,
+            progressKind: .completed,
+            detail: summary,
+            blockedReason: "",
+            result: summary
+        )
+    }
+
+    private func blockTodo(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let reason = try Self.requiredString(arguments, key: "reason")
+        return try await finishExecutionTodo(
+            status: .blocked,
+            progressKind: .blocked,
+            detail: reason,
+            blockedReason: reason,
+            result: ""
+        )
+    }
+
+    private func finishExecutionTodo(
+        status: LocalAgentTodoStatus,
+        progressKind: LocalAgentTodoProgressKind,
+        detail: String,
+        blockedReason: String,
+        result: String
+    ) async throws -> AgentToolOutcome {
+        guard let todo = try await currentExecutionTodo() else {
+            return Self.structuredFailure(
+                code: "todo_execution_context_mismatch",
+                field: "delivery",
+                message: "当前线程不是有效的 Todo 执行线程。",
+                retryable: false
+            )
+        }
+        let timestamp = now()
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: context.ownerUserID,
+            agentID: context.agentID,
+            todoID: todo.id,
+            kind: progressKind,
+            runID: context.runID,
+            stage: status == .completed ? "completed" : "blocked",
+            detail: detail,
+            nowUnixMs: timestamp
+        )
+        let updated = try await store.updateAgentTodo(
+            ownerUserID: context.ownerUserID,
+            agentID: context.agentID,
+            todoID: todo.id,
+            update: .init(
+                status: status,
+                blockedReason: blockedReason,
+                result: result
+            ),
+            nowUnixMs: timestamp
+        )
+        _ = try await store.completeHeartbeatDelivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID,
+            nowUnixMs: timestamp
+        )
+        _ = try await store.enqueueAgentTodoStatus(
+            ownerUserID: context.ownerUserID,
+            agentID: context.agentID,
+            todoID: todo.id,
+            nowUnixMs: timestamp
+        )
+        return try Self.outcome(try await todoResponse(updated))
+    }
+
+    private func currentExecutionTodo() async throws -> LocalAgentTodo? {
+        guard let delivery = try await store.delivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID
+        ), delivery.status == .running, delivery.lane == .executor,
+        let todo = try await store.todoForDelivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID
+        ), todo.agentID == context.agentID,
+        todo.teamRoomID == context.roomID else { return nil }
+        return todo
+    }
+
+    private func todoResponses(includeTerminal: Bool) async throws -> [TodoResponse] {
+        let rooms = try await store.listRooms(
+            ownerUserID: context.ownerUserID,
+            includeArchived: false
+        )
+        var response: [TodoResponse] = []
+        for room in rooms where room.conversationKind == .projectTeam {
+            guard try await isTeamMember(teamRoomID: room.id) else { continue }
+            for todo in try await store.listTeamTodos(
+                ownerUserID: context.ownerUserID,
+                teamRoomID: room.id,
+                includeTerminal: includeTerminal
+            ) {
+                response.append(try await todoResponse(todo))
+            }
+        }
+        response.sort {
+            if $0.priority != $1.priority { return $0.priority > $1.priority }
+            return $0.updatedAtUnixMs > $1.updatedAtUnixMs
+        }
+        return response
+    }
+
+    private func todoResponse(_ todo: LocalAgentTodo) async throws -> TodoResponse {
+        let todoReference = await references.todoReference(
+            todoID: todo.id,
+            agentID: todo.agentID,
+            teamRoomID: todo.teamRoomID
+        )
+        let team = try await store.room(
+            ownerUserID: context.ownerUserID,
+            roomID: todo.teamRoomID
+        )
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: true
+        )
+        let names = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.draft.name) })
+        var sourceReferences: [TodoSourceReferenceResponse] = []
+        for source in try await store.listAgentTodoSources(
+            ownerUserID: context.ownerUserID,
+            agentID: todo.agentID,
+            todoID: todo.id
+        ) {
+            sourceReferences.append(.init(
+                conversationReference: await references.conversationReference(
+                    roomID: source.conversationID
+                ),
+                messageReference: await references.messageReference(
+                    roomID: source.conversationID,
+                    messageID: source.messageID
+                ),
+                relation: source.relation.rawValue
+            ))
+        }
+        var dependencies: [TodoDependencyResponse] = []
+        for dependency in try await store.listAgentTodoDependencies(
+            ownerUserID: context.ownerUserID,
+            agentID: todo.agentID,
+            todoID: todo.id
+        ) {
+            guard let prerequisite = try await store.agentTodo(
+                ownerUserID: context.ownerUserID,
+                agentID: dependency.prerequisiteAgentID,
+                todoID: dependency.prerequisiteTodoID
+            ) else { continue }
+            dependencies.append(.init(
+                todoReference: await references.todoReference(
+                    todoID: prerequisite.id,
+                    agentID: prerequisite.agentID,
+                    teamRoomID: prerequisite.teamRoomID
+                ),
+                title: prerequisite.title,
+                assignee: names[prerequisite.agentID] ?? "Agent",
+                status: prerequisite.status.rawValue,
+                blockedReason: prerequisite.blockedReason,
+                result: prerequisite.result
+            ))
+        }
+        return .init(
+            todoReference: todoReference,
+            team: team?.draft.name ?? "Team",
+            assignee: names[todo.agentID] ?? "Agent",
+            assignedToCurrentAgent: todo.agentID == context.agentID,
+            title: todo.title,
+            detail: todo.detail,
+            priority: todo.priority,
+            status: todo.status.rawValue,
+            blockedReason: todo.blockedReason,
+            result: todo.result,
+            builtinCapabilities: todo.executionPlan.builtinCapabilities.map(\.rawValue),
+            plugins: todo.executionPlan.plugins.map(\.displayName),
+            sources: sourceReferences,
+            dependencies: dependencies,
+            updatedAtUnixMs: todo.updatedAtUnixMs
+        )
     }
 
     private func readMessages(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -445,6 +1608,17 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             responseMessageID: post.message.id,
             nowUnixMs: now()
         )
+        if delivery.triggerKind == .todo,
+           delivery.deduplicationKey.hasPrefix("todo:") {
+            let todoID = String(delivery.deduplicationKey.dropFirst("todo:".count))
+            _ = try? await store.updateAgentTodo(
+                ownerUserID: context.ownerUserID,
+                agentID: context.agentID,
+                todoID: todoID,
+                update: .init(status: .completed, result: content),
+                nowUnixMs: now()
+            )
+        }
         // A substantive reply acknowledges the triggering message. This best-effort cursor update
         // is intentionally secondary to the already durable message/delivery transaction.
         _ = try? await store.markMessagesRead(
@@ -462,6 +1636,44 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 routingStopReason: post.routingStopReason
             )
         )
+    }
+
+    private func completeHeartbeat(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        _ = try Self.arguments(call)
+        guard let delivery = try await store.delivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID
+        ), delivery.status == .running,
+           delivery.triggerKind == .heartbeat,
+           delivery.roomID == context.roomID,
+           delivery.targetAgentID == context.agentID else {
+            throw AgentGroupChatError.conflict
+        }
+        _ = try await store.completeHeartbeatDelivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID,
+            nowUnixMs: now()
+        )
+        return try Self.outcome(["status": "completed"])
+    }
+
+    private func completeManagerCycle(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        _ = try Self.arguments(call)
+        guard let delivery = try await store.delivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID
+        ), delivery.status == .running,
+        delivery.triggerKind == .heartbeat || delivery.triggerKind == .todoStatus,
+        delivery.roomID == context.roomID,
+        delivery.targetAgentID == context.agentID else {
+            throw AgentGroupChatError.conflict
+        }
+        _ = try await store.completeHeartbeatDelivery(
+            ownerUserID: context.ownerUserID,
+            deliveryID: context.deliveryID,
+            nowUnixMs: now()
+        )
+        return try Self.outcome(["status": "completed"])
     }
 
     private func proposeMember(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -540,15 +1752,46 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         return LocalAgentPermission.canManageStaff(current.draft.defaultSkillIDs)
     }
 
+    private func managesAnyProjectTeam() async throws -> Bool {
+        try await store.listRooms(
+            ownerUserID: context.ownerUserID,
+            includeArchived: false
+        ).contains {
+            $0.conversationKind == .projectTeam
+                && $0.projectManagerAgentID == context.agentID
+        }
+    }
+
+    private func isProjectManager(teamRoomID: String) async throws -> Bool {
+        guard let room = try await store.room(
+            ownerUserID: context.ownerUserID,
+            roomID: teamRoomID
+        ), room.status == .active, room.conversationKind == .projectTeam,
+        room.projectManagerAgentID == context.agentID else { return false }
+        return try await store.listMembers(
+            ownerUserID: context.ownerUserID,
+            roomID: teamRoomID
+        ).contains { $0.agentID == context.agentID && $0.status == .active }
+    }
+
+    private func isTeamMember(teamRoomID: String) async throws -> Bool {
+        try await store.listMembers(
+            ownerUserID: context.ownerUserID,
+            roomID: teamRoomID
+        ).contains { $0.agentID == context.agentID && $0.status == .active }
+    }
+
     private struct MemberResponse: Encodable {
         let agentID: String
         let name: String
         let role: String
         let responsibility: String
+        let isProjectManager: Bool
 
         enum CodingKeys: String, CodingKey {
             case agentID = "agent_id"
             case name, role, responsibility
+            case isProjectManager = "is_project_manager"
         }
     }
 
@@ -582,6 +1825,254 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             case hasUnread = "has_unread"
             case nextUnreadMessageID = "next_unread_message_id"
         }
+    }
+
+    private struct InboxResponse: Encodable {
+        let conversations: [InboxConversationResponse]
+        let messageCount: Int
+        let markedRead: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case conversations
+            case messageCount = "message_count"
+            case markedRead = "marked_read"
+        }
+    }
+
+    private struct InboxConversationResponse: Encodable {
+        let conversationReference: String
+        let name: String
+        let kind: String
+        let messages: [InboxMessageResponse]
+
+        enum CodingKeys: String, CodingKey {
+            case conversationReference = "conversation_ref"
+            case name, kind, messages
+        }
+    }
+
+    private struct InboxMessageResponse: Encodable {
+        let messageReference: String
+        let sender: String
+        let content: String
+        let attachmentNames: [String]
+        let createdAtUnixMs: Int64
+
+        enum CodingKeys: String, CodingKey {
+            case messageReference = "message_ref"
+            case sender, content
+            case attachmentNames = "attachment_names"
+            case createdAtUnixMs = "created_at_unix_ms"
+        }
+    }
+
+    private struct InboxSendResponse: Encodable {
+        let sent: Bool
+        let notifiedProjectManager: Bool
+        let conversationReference: String
+        let replyToMessageReference: String
+        let spawnedDeliveryCount: Int
+        let routingStopReason: String?
+
+        enum CodingKeys: String, CodingKey {
+            case sent
+            case notifiedProjectManager = "notified_project_manager"
+            case conversationReference = "conversation_ref"
+            case replyToMessageReference = "reply_to_message_ref"
+            case spawnedDeliveryCount = "spawned_delivery_count"
+            case routingStopReason = "routing_stop_reason"
+        }
+    }
+
+    private struct TodoResponse: Encodable {
+        let todoReference: String
+        let team: String
+        let assignee: String
+        let assignedToCurrentAgent: Bool
+        let title: String
+        let detail: String
+        let priority: Int
+        let status: String
+        let blockedReason: String
+        let result: String
+        let builtinCapabilities: [String]
+        let plugins: [String]
+        let sources: [TodoSourceReferenceResponse]
+        let dependencies: [TodoDependencyResponse]
+        let updatedAtUnixMs: Int64
+
+        enum CodingKeys: String, CodingKey {
+            case todoReference = "todo_ref"
+            case team, assignee
+            case assignedToCurrentAgent = "assigned_to_current_agent"
+            case title, detail, priority, status
+            case blockedReason = "blocked_reason"
+            case result
+            case builtinCapabilities = "builtin_capabilities"
+            case plugins
+            case sources, dependencies
+            case updatedAtUnixMs = "updated_at_unix_ms"
+        }
+    }
+
+    private struct TodoDependencyResponse: Encodable {
+        let todoReference: String
+        let title: String
+        let assignee: String
+        let status: String
+        let blockedReason: String
+        let result: String
+
+        enum CodingKeys: String, CodingKey {
+            case todoReference = "todo_ref"
+            case title, assignee, status
+            case blockedReason = "blocked_reason"
+            case result
+        }
+    }
+
+    private struct TodoSourceReferenceResponse: Encodable {
+        let conversationReference: String
+        let messageReference: String
+        let relation: String
+
+        enum CodingKeys: String, CodingKey {
+            case conversationReference = "conversation_ref"
+            case messageReference = "message_ref"
+            case relation
+        }
+    }
+
+    private struct TodoTeamOptionResponse: Encodable {
+        let teamReference: String
+        let name: String
+        let goal: String
+        let assignees: [TodoAssigneeOptionResponse]
+
+        enum CodingKeys: String, CodingKey {
+            case teamReference = "team_ref"
+            case name, goal, assignees
+        }
+    }
+
+    private struct TodoAssigneeOptionResponse: Encodable {
+        let assigneeReference: String
+        let name: String
+        let profession: String
+        let role: String
+
+        enum CodingKeys: String, CodingKey {
+            case assigneeReference = "assignee_ref"
+            case name, profession, role
+        }
+    }
+
+    private struct TodoDependencyOptionResponse: Encodable {
+        let todoReference: String
+        let title: String
+        let assignee: String
+        let status: String
+        let blockedReason: String
+        let result: String
+
+        enum CodingKeys: String, CodingKey {
+            case todoReference = "todo_ref"
+            case title, assignee, status
+            case blockedReason = "blocked_reason"
+            case result
+        }
+    }
+
+    private struct TodoPluginOptionResponse: Encodable {
+        let pluginReference: String
+        let name: String
+        let description: String
+
+        enum CodingKeys: String, CodingKey {
+            case pluginReference = "plugin_ref"
+            case name, description
+        }
+    }
+
+    private struct TodoExecutionOptionsResponse: Encodable {
+        let teams: [TodoTeamOptionResponse]
+        let builtinCapabilities: [String]
+        let plugins: [TodoPluginOptionResponse]
+
+        enum CodingKeys: String, CodingKey {
+            case teams
+            case builtinCapabilities = "builtin_capabilities"
+            case plugins
+        }
+    }
+
+    private struct TodoSourceMessageResponse: Encodable {
+        let relation: String
+        let content: String
+        let attachmentNames: [String]
+        let createdAtUnixMs: Int64
+
+        enum CodingKeys: String, CodingKey {
+            case relation, content
+            case attachmentNames = "attachment_names"
+            case createdAtUnixMs = "created_at_unix_ms"
+        }
+    }
+
+    private struct TodoExecutionContextResponse: Encodable {
+        let title: String
+        let detail: String
+        let priority: Int
+        let builtinCapabilities: [String]
+        let plugins: [String]
+        let sourceMessages: [TodoSourceMessageResponse]
+        let prerequisites: [TodoDependencyResponse]
+
+        enum CodingKeys: String, CodingKey {
+            case title, detail, priority
+            case builtinCapabilities = "builtin_capabilities"
+            case plugins, prerequisites
+            case sourceMessages = "source_messages"
+        }
+    }
+
+    private struct TodoProgressResponse: Encodable {
+        let sequence: Int64
+        let kind: String
+        let stage: String
+        let detail: String
+        let createdAtUnixMs: Int64
+
+        init(progress: LocalAgentTodoProgress) {
+            sequence = progress.sequence
+            kind = progress.kind.rawValue
+            stage = progress.stage
+            detail = progress.detail
+            createdAtUnixMs = progress.createdAtUnixMs
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case sequence, kind, stage, detail
+            case createdAtUnixMs = "created_at_unix_ms"
+        }
+    }
+
+    private struct StructuredToolFailure: Encodable {
+        struct Detail: Encodable {
+            let code: String
+            let field: String?
+            let message: String
+            let retryable: Bool
+            let nextTool: String?
+
+            enum CodingKeys: String, CodingKey {
+                case code, field, message, retryable
+                case nextTool = "next_tool"
+            }
+        }
+
+        let ok = false
+        let error: Detail
     }
 
     private struct DirectOpenResponse: Encodable {
@@ -659,9 +2150,29 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         return integer
     }
 
+    private static func optionalBoolean(_ object: [String: Any], key: String) throws -> Bool? {
+        guard let value = object[key] else { return nil }
+        guard !(value is NSNull), let number = value as? NSNumber,
+              CFGetTypeID(number) == CFBooleanGetTypeID() else {
+            throw AgentGroupChatError.invalidField(key)
+        }
+        return number.boolValue
+    }
+
     private static func optionalStringArray(_ object: [String: Any], key: String) throws -> [String] {
         guard let value = object[key] else { return [] }
         guard let values = value as? [String] else {
+            throw AgentGroupChatError.invalidField(key)
+        }
+        return values
+    }
+
+    private static func optionalObjectArray(
+        _ object: [String: Any],
+        key: String
+    ) throws -> [[String: Any]] {
+        guard let value = object[key] else { return [] }
+        guard let values = value as? [[String: Any]] else {
             throw AgentGroupChatError.invalidField(key)
         }
         return values
@@ -671,6 +2182,44 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return .init(String(decoding: try encoder.encode(value), as: UTF8.self))
+    }
+
+    private static func structuredFailure(
+        code: String,
+        field: String?,
+        message: String,
+        retryable: Bool,
+        nextTool: String? = nil
+    ) -> AgentToolOutcome {
+        let response = StructuredToolFailure(error: .init(
+            code: code,
+            field: field,
+            message: message,
+            retryable: retryable,
+            nextTool: nextTool
+        ))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let content = (try? encoder.encode(response)).map {
+            String(decoding: $0, as: UTF8.self)
+        } ?? #"{"ok":false,"error":{"code":"internal_error","message":"工具校验失败。","retryable":false}}"#
+        return .failure(content)
+    }
+
+    private static func errorCode(_ error: AgentGroupChatError) -> String {
+        switch error {
+        case .invalidField: "invalid_argument"
+        case .notFound: "resource_not_found"
+        case .conflict: "state_conflict"
+        case .notMember: "agent_not_in_team"
+        case .permissionDenied: "permission_denied"
+        case .storage: "storage_error"
+        }
+    }
+
+    private static func errorField(_ error: AgentGroupChatError) -> String? {
+        guard case let .invalidField(field) = error else { return nil }
+        return field
     }
 
     private static let toolDefinitions: [AgentToolDefinition] = [
@@ -693,6 +2242,17 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             name: readUnreadToolName,
             description: "读取当前 Agent 在这个群聊中的未读消息。已读位置按 Agent 独立持久化；读取不会自动确认，处理后调用 chat_mark_read。",
             schema: Data(#"{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: readAllUnreadToolName,
+            description: "读取当前 Agent 在全部群聊和私聊中的未读消息。返回内容即视为已读并自动推进各会话游标；只返回本轮临时引用，不暴露真实会话、消息或项目 ID。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
+            schema: Data(#"{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: inboxSendToolName,
+            description: "使用 chat_read_all_unread 本轮返回的临时引用回复原群聊或私聊。普通成员需要把新增工作交给项目经理任务化时，在项目团队会话设置 notify_project_manager=true，由客户端解析并唤醒该团队明确绑定的项目经理。",
+            schema: Data(#"{"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":64000},"notify_project_manager":{"type":"boolean","default":false}},"required":["conversation_ref","reply_to_message_ref","content"],"additionalProperties":false}"#.utf8),
+            effect: .write
         ),
         .init(
             name: readMessagesToolName,
@@ -738,6 +2298,79 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             name: sendMessageToolName,
             description: "以当前 Agent 身份回复群聊，可用稳定 Agent ID 提及其他成员。成功发送即完成当前 delivery。",
             schema: Data(#"{"type":"object","properties":{"content":{"type":"string","minLength":1,"maxLength":64000},"mention_agent_ids":{"type":"array","items":{"type":"string","minLength":1,"maxLength":512},"maxItems":32,"uniqueItems":true},"reply_to_message_id":{"type":"string","minLength":1,"maxLength":512}},"required":["content"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: completeHeartbeatToolName,
+            description: "仅用于主动巡检：当前会话没有需要汇报或执行的事项时，安静完成本次巡检，不向聊天记录发送消息。",
+            schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: completeManagerCycleToolName,
+            description: "结束一次主动巡检或 Todo 状态通知处理。确认已经完成必要回复和 Todo 调整后调用；不会向聊天记录写入内部状态消息。",
+            schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: todoListToolName,
+            description: "读取当前 Agent 所属项目团队的共享任务板，并标明团队、负责人、依赖和是否分配给自己。普通成员只能查看；只有团队明确指定的项目经理可以修改。默认不返回已完成或已取消任务。",
+            schema: Data(#"{"type":"object","properties":{"include_terminal":{"type":"boolean","default":false}},"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: todoExecutionOptionsToolName,
+            description: "仅供项目经理读取自己管理的团队、可分配成员、基础能力和本机 Plugin 临时选项。创建 Todo 前必须调用；真实团队、项目、Agent 和 Plugin ID 不会返回。",
+            schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: todoDependencyOptionsToolName,
+            description: "仅供项目经理读取某个团队可作为前置任务的 Todo 临时引用。创建或更新依赖前调用；只能建立同团队依赖，客户端会拒绝自依赖、重复和环。",
+            schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["team_ref"],"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: todoAddToolName,
+            description: "仅供项目经理在共享团队任务板创建 Todo，选择负责人、前置任务和可信执行能力。team_ref/assignee_ref/plugin_ref 必须来自 todo_execution_options，前置引用来自 todo_dependency_options 或 todo_list；真实 ID 由客户端解析和校验。",
+            schema: Data(#"{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":500},"detail":{"type":"string","maxLength":16000},"priority":{"type":"integer","minimum":0,"maximum":100,"default":50},"team_ref":{"type":"string","minLength":1,"maxLength":600},"assignee_ref":{"type":"string","minLength":1,"maxLength":600},"depends_on_todo_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true},"source_message_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"minItems":1,"maxItems":64,"uniqueItems":true},"requires_execution":{"type":"boolean","default":true},"builtin_capabilities":{"type":"array","items":{"type":"string","enum":["project_read","project_write","terminal"]},"maxItems":3,"uniqueItems":true},"plugin_hints":{"type":"array","items":{"type":"object","properties":{"plugin_ref":{"type":"string","minLength":1,"maxLength":600},"reason":{"type":"string","maxLength":1000}},"required":["plugin_ref"],"additionalProperties":false},"maxItems":32}},"required":["title","team_ref","assignee_ref","source_message_refs","requires_execution","builtin_capabilities"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: todoUpdateToolName,
+            description: "仅供项目经理更新团队 Todo 的标题、说明、优先级、前置任务，或将阻塞任务重开、取消过时任务。这里管理的是任务结构和调度状态；负责人即使不是项目经理，仍在独立执行线程中通过 todo_progress_append、todo_block、todo_complete 记录过程并修改自己任务的执行状态。",
+            schema: Data(#"{"type":"object","properties":{"todo_ref":{"type":"string","minLength":1,"maxLength":600},"title":{"type":"string","minLength":1,"maxLength":500},"detail":{"type":"string","maxLength":16000},"priority":{"type":"integer","minimum":0,"maximum":100},"status":{"type":"string","enum":["pending","cancelled"]},"depends_on_todo_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true},"source_message_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true}},"required":["todo_ref"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: todoReorderToolName,
+            description: "仅供项目经理显式调整同一个团队任务板中未完成 Todo 的优先顺序。数组中靠前的任务优先；未完成前置任务仍不会被调度。",
+            schema: Data(#"{"type":"object","properties":{"todo_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"minItems":1,"maxItems":500,"uniqueItems":true}},"required":["todo_refs"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: todoReadProgressToolName,
+            description: "通讯线程读取一个 Todo 执行线程持续写入的阶段、动作、结果或阻塞记录。使用 todo_list 返回的临时 todo_ref。",
+            schema: Data(#"{"type":"object","properties":{"todo_ref":{"type":"string","minLength":1,"maxLength":600},"limit":{"type":"integer","minimum":1,"maximum":500,"default":100}},"required":["todo_ref"],"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: todoGetContextToolName,
+            description: "仅用于 Todo 执行线程：读取当前 delivery 绑定的任务、可信能力计划和来源消息，不接受任何 ID 参数。",
+            schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: todoProgressAppendToolName,
+            description: "仅用于 Todo 执行线程：当前任务负责人记录阶段、已执行动作、观察结果和下一步，使通讯线程可以随时查看进度；不要求负责人是项目经理。",
+            schema: Data(#"{"type":"object","properties":{"stage":{"type":"string","maxLength":240},"detail":{"type":"string","minLength":1,"maxLength":16000}},"required":["detail"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: todoCompleteToolName,
+            description: "仅用于 Todo 执行线程：当前任务负责人保存完成总结，把自己负责的任务置为 completed 并结束执行；不要求负责人是项目经理。客户端同时记录完成事件。",
+            schema: Data(#"{"type":"object","properties":{"summary":{"type":"string","minLength":1,"maxLength":16000}},"required":["summary"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: todoBlockToolName,
+            description: "仅用于 Todo 执行线程：当前任务负责人保存阻塞原因和执行现场，把自己负责的任务置为 blocked 并结束执行；不要求负责人是项目经理。随后由通讯线程向来源会话沟通。",
+            schema: Data(#"{"type":"object","properties":{"reason":{"type":"string","minLength":1,"maxLength":8000}},"required":["reason"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
     ]

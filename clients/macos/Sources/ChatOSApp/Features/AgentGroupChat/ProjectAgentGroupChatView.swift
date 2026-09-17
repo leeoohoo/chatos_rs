@@ -526,6 +526,12 @@ struct ProjectAgentGroupChatView: View {
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
+            if !viewModel.activeMembers.isEmpty,
+               viewModel.room?.projectManagerAgentID == nil {
+                Label("尚未指定项目经理，团队任务板暂不可创建任务。", systemImage: "exclamationmark.triangle")
+                    .appFont(.caption)
+                    .foregroundStyle(.orange)
+            }
             ForEach(viewModel.activeMembers) { item in
                 Button {
                     editingMember = item
@@ -546,6 +552,10 @@ struct ProjectAgentGroupChatView: View {
                         if viewModel.room?.defaultAgentID == item.member.agentID {
                             Text("默认 Agent")
                                 .appFont(.caption2).foregroundStyle(.tint)
+                        }
+                        if viewModel.room?.projectManagerAgentID == item.member.agentID {
+                            Text("项目经理")
+                                .appFont(.caption2).foregroundStyle(.green)
                         }
                     }
                     .contentShape(Rectangle())
@@ -589,6 +599,7 @@ private struct EditLocalAgentSheet: View {
     @State private var rolePrompt: String
     @State private var modelConfigID: String
     @State private var thinkingLevel: String
+    @State private var shouldBeProjectManager: Bool
     @State private var isSaving = false
 
     init(
@@ -604,6 +615,9 @@ private struct EditLocalAgentSheet: View {
         _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? "")
         _modelConfigID = State(initialValue: profile?.draft.modelConfigID ?? "")
         _thinkingLevel = State(initialValue: profile?.draft.thinkingLevel ?? "")
+        _shouldBeProjectManager = State(
+            initialValue: viewModel.room?.projectManagerAgentID == item.member.agentID
+        )
     }
 
     var body: some View {
@@ -628,6 +642,13 @@ private struct EditLocalAgentSheet: View {
                     }
                 }
                 .disabled(selectedModel?.supportsReasoning != true)
+                if item.profile?.draft.professionKey == "project_manager" {
+                    Toggle("设为当前团队的项目经理", isOn: $shouldBeProjectManager)
+                        .disabled(viewModel.room?.projectManagerAgentID == item.member.agentID)
+                    Text("项目经理独占团队任务板的创建、分配、优先级和依赖管理权限。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if !viewModel.availableModels.contains(where: { $0.id == modelConfigID }) {
                     Text("原模型当前不可用，请选择新的模型后保存。")
                         .font(.caption)
@@ -640,7 +661,7 @@ private struct EditLocalAgentSheet: View {
                 Button("保存") {
                     isSaving = true
                     Task {
-                        if await viewModel.updateAgentMembership(
+                        let saved = await viewModel.updateAgentMembership(
                             agentID: item.member.agentID,
                             name: name,
                             role: role,
@@ -648,7 +669,21 @@ private struct EditLocalAgentSheet: View {
                             rolePrompt: rolePrompt,
                             modelConfigID: modelConfigID,
                             thinkingLevel: thinkingLevel
-                        ) { dismiss() }
+                        )
+                        guard saved else {
+                            isSaving = false
+                            return
+                        }
+                        if shouldBeProjectManager,
+                           viewModel.room?.projectManagerAgentID != item.member.agentID {
+                            guard await viewModel.setProjectManager(
+                                agentID: item.member.agentID
+                            ) else {
+                                isSaving = false
+                                return
+                            }
+                        }
+                        dismiss()
                         isSaving = false
                     }
                 }
@@ -803,13 +838,34 @@ private struct CreateAgentRoomSheet: View {
     @ObservedObject var viewModel: AgentGroupChatViewModel
     @State private var name = "项目 Agent 群聊"
     @State private var goal = ""
+    @State private var projectManagerAgentID = ""
     @State private var isSaving = false
+
+    private var projectManagerCandidates: [LocalAgentProfile] {
+        viewModel.agents.filter {
+            $0.status == .active && $0.draft.professionKey == "project_manager"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("创建本地 Agent 群聊").font(.title2).fontWeight(.semibold)
             TextField("群聊名称", text: $name)
             TextField("群聊目标（可选）", text: $goal, axis: .vertical).lineLimit(2...5)
+            if projectManagerCandidates.isEmpty {
+                Label("请先在 Agent 管理中创建一个职业为“项目经理”的 Agent。", systemImage: "person.crop.circle.badge.exclamationmark")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            } else {
+                Picker("项目经理", selection: $projectManagerAgentID) {
+                    ForEach(projectManagerCandidates) { agent in
+                        Text(agent.draft.name).tag(agent.id)
+                    }
+                }
+                Text("项目经理负责创建、分配和维护团队任务与前置依赖。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Text("聊天记录和调度状态只保存在这台 Mac。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
@@ -818,16 +874,29 @@ private struct CreateAgentRoomSheet: View {
                 Button("创建") {
                     isSaving = true
                     Task {
-                        if await viewModel.createRoom(name: name, goal: goal) { dismiss() }
+                        if await viewModel.createRoom(
+                            name: name,
+                            goal: goal,
+                            projectManagerAgentID: projectManagerAgentID
+                        ) { dismiss() }
                         isSaving = false
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    isSaving
+                        || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || projectManagerAgentID.isEmpty
+                )
             }
         }
         .padding(24)
         .frame(width: 480)
+        .onAppear {
+            if projectManagerAgentID.isEmpty {
+                projectManagerAgentID = projectManagerCandidates.first?.id ?? ""
+            }
+        }
     }
 }
 

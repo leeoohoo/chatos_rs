@@ -158,7 +158,8 @@ extension NativeLocalConnectorService {
     public func makeAgentCapabilityToolProvider(
         ownerUserID: String,
         runContext: LocalAgentChatRunContext,
-        projectContext: LocalConnectorPluginApplicationContext
+        projectContext: LocalConnectorPluginApplicationContext,
+        executionPlan: LocalAgentTodoExecutionPlan
     ) throws -> any AgentToolProvider {
         guard state.user?.id == ownerUserID,
               runContext.ownerUserID == ownerUserID,
@@ -166,14 +167,29 @@ extension NativeLocalConnectorService {
               let projectRoot = projectContext.projectRoot else {
             throw NativePluginRuntimeError.invalidRequest("本地 Agent 能力目录与当前账户或项目不匹配")
         }
+        guard runContext.lane == .executor else {
+            throw NativePluginRuntimeError.invalidRequest("通讯线程不能装配项目文件、终端或 Plugin 能力")
+        }
+        try executionPlan.validate()
         let resolvedProject = try resolveProjectPath(projectRoot)
+        let installed = try installedAgentPlugins(ownerUserID: ownerUserID)
+        let installedByID = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, $0) })
+        let selectedPlugins = try executionPlan.plugins.map { selection in
+            guard let plugin = installedByID[selection.pluginID] else {
+                throw NativePluginRuntimeError.invalidRequest(
+                    "Todo 所需 Plugin「\(selection.displayName)」已经卸载或停用，请由通讯线程调整任务计划。"
+                )
+            }
+            return plugin
+        }
         return NativeAgentCapabilityToolProvider(
             service: self,
             ownerUserID: ownerUserID,
             runContext: runContext,
             projectContext: projectContext,
             resolvedProject: resolvedProject,
-            installedPlugins: try installedAgentPlugins(ownerUserID: ownerUserID)
+            builtinCapabilities: Set(executionPlan.builtinCapabilities),
+            installedPlugins: selectedPlugins
         )
     }
 
@@ -327,6 +343,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private let runContext: LocalAgentChatRunContext
     private let projectContext: LocalConnectorPluginApplicationContext
     private let resolvedProject: NativeResolvedProjectPath
+    private let builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>
     private let options: [CapabilityOption]
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
@@ -337,6 +354,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         runContext: LocalAgentChatRunContext,
         projectContext: LocalConnectorPluginApplicationContext,
         resolvedProject: NativeResolvedProjectPath,
+        builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
         installedPlugins: [NativeInstalledAgentPlugin]
     ) {
         self.service = service
@@ -344,14 +362,16 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         self.runContext = runContext
         self.projectContext = projectContext
         self.resolvedProject = resolvedProject
-        self.options = [
+        self.builtinCapabilities = builtinCapabilities
+        let builtinOptions: [CapabilityOption] = builtinCapabilities.isEmpty ? [] : [
             .init(
                 token: "builtin_1",
                 name: "ChatOS 项目文件与终端",
-                description: "读取和搜索当前项目文件、分批提交文件修改，并在当前项目中运行终端命令。真实项目路径由客户端绑定。",
+                description: "本 Todo 已批准的项目基础能力：\(builtinCapabilities.map(\.rawValue).sorted().joined(separator: ", "))。真实项目路径由客户端绑定。",
                 kind: .builtIn
             ),
-        ] + installedPlugins.enumerated().map { offset, plugin in
+        ]
+        self.options = builtinOptions + installedPlugins.enumerated().map { offset, plugin in
             .init(
                 token: "plugin_\(offset + 1)",
                 name: plugin.displayName,
@@ -469,7 +489,8 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             providers = [NativeAgentBuiltinToolProvider(
                 service: service,
                 runContext: runContext,
-                resolvedProject: resolvedProject
+                resolvedProject: resolvedProject,
+                allowedCapabilities: builtinCapabilities
             )]
         case let .plugin(plugin):
             providers = try await service.makeAgentPluginToolProviders(
@@ -510,19 +531,25 @@ private struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
     private let service: NativeLocalConnectorService
     private let runContext: LocalAgentChatRunContext
     private let resolvedProject: NativeResolvedProjectPath
+    private let allowedCapabilities: Set<LocalAgentTodoBuiltinCapability>
 
     init(
         service: NativeLocalConnectorService,
         runContext: LocalAgentChatRunContext,
-        resolvedProject: NativeResolvedProjectPath
+        resolvedProject: NativeResolvedProjectPath,
+        allowedCapabilities: Set<LocalAgentTodoBuiltinCapability>
     ) {
         self.service = service
         self.runContext = runContext
         self.resolvedProject = resolvedProject
+        self.allowedCapabilities = allowedCapabilities
     }
 
     func definitions() async throws -> [AgentToolDefinition] {
-        try Self.nativeDefinitions.map { value in
+        try Self.nativeDefinitions.filter { value in
+            guard let name = value.jsonObject?["name"]?.jsonString else { return false }
+            return allowedCapabilities.contains(Self.capability(for: name))
+        }.map { value in
             guard let object = value.jsonObject,
                   let name = object["name"]?.jsonString,
                   let description = object["description"]?.jsonString,
@@ -548,6 +575,9 @@ private struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
 
     func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         do {
+            guard allowedCapabilities.contains(Self.capability(for: call.name)) else {
+                return .failure("这个 Todo 的可信执行计划没有授权该基础能力。")
+            }
             let value = try JSONDecoder().decode(
                 NativeJSONValue.self,
                 from: Data(call.arguments.utf8)
@@ -571,6 +601,12 @@ private struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
     private static let nativeDefinitions = NativeMCPCodeReadTools.toolDefinitions
         + NativeMCPCodeWriteStore.toolDefinitions
         + NativeMCPTerminalStore.toolDefinitions
+
+    private static func capability(for toolName: String) -> LocalAgentTodoBuiltinCapability {
+        if NativeMCPCodeWriteStore.toolNames.contains(toolName) { return .projectWrite }
+        if NativeMCPTerminalStore.toolNames.contains(toolName) { return .terminal }
+        return .projectRead
+    }
 }
 
 extension NativeLocalConnectorService {

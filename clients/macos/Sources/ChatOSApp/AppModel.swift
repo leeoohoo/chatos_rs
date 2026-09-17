@@ -136,6 +136,7 @@ final class AppModel: ObservableObject {
     private var workspaceAccountGeneration: UInt64 = 0
     private var isApplyingLanguagePreferences = false
     private var languagePreferencesSaveTask: Task<Void, Never>?
+    private var agentHeartbeatTask: Task<Void, Never>?
     var mainWindowPresentationHandler: (() -> Void)?
     var settingsWindowPresentationHandler: (() -> Void)?
 
@@ -222,6 +223,17 @@ final class AppModel: ObservableObject {
             professionCatalogProvider: { ownerUserID in
                 agentSkillLibrary.professions(ownerUserID: ownerUserID)
             },
+            todoPluginCatalogProvider: { ownerUserID in
+                try await localConnectorService.installedAgentPlugins(
+                    ownerUserID: ownerUserID
+                ).map {
+                    LocalAgentTodoPluginOption(
+                        pluginID: $0.id,
+                        displayName: $0.displayName,
+                        description: $0.description
+                    )
+                }
+            },
             additionalToolProviders: { profile, member, runContext in
                 var providers: [any AgentToolProvider] = []
                 if LocalAgentPermission.canAccessLocalProjects(profile.draft.defaultSkillIDs) {
@@ -240,7 +252,16 @@ final class AppModel: ObservableObject {
                         context: runContext
                     ))
                 }
-                if !runContext.projectID.hasPrefix("direct:") {
+                if runContext.lane == .executor {
+                    let store = try await agentGroupChatService.store()
+                    guard let todo = try await store.todoForDelivery(
+                        ownerUserID: runContext.ownerUserID,
+                        deliveryID: runContext.deliveryID
+                    ), todo.agentID == profile.id,
+                    todo.teamRoomID == member.roomID,
+                    !runContext.projectID.hasPrefix("direct:") else {
+                        throw AgentGroupChatError.conflict
+                    }
                     let projectContext = try await localProjectsService.pluginContext(
                         ownerUserID: runContext.ownerUserID,
                         projectID: runContext.projectID
@@ -248,7 +269,8 @@ final class AppModel: ObservableObject {
                     providers.append(try await localConnectorService.makeAgentCapabilityToolProvider(
                         ownerUserID: runContext.ownerUserID,
                         runContext: runContext,
-                        projectContext: projectContext
+                        projectContext: projectContext,
+                        executionPlan: todo.executionPlan
                     ))
                 }
                 return providers
@@ -314,6 +336,13 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: true)
+                self?.restartAgentHeartbeatCoordinator()
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .agentHeartbeatConfigurationDidChange)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.restartAgentHeartbeatCoordinator()
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
@@ -896,6 +925,50 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Runs independently of the Agent workspace UI. A due Agent gets one account-level wake-up;
+    /// Relay reads its complete unread inbox and its durable TodoList in that single run.
+    private func restartAgentHeartbeatCoordinator() {
+        agentHeartbeatTask?.cancel()
+        guard let ownerUserID = authenticatedUserID else {
+            agentHeartbeatTask = nil
+            return
+        }
+        let service = agentGroupChatService
+        let scheduler = agentGroupChatScheduler
+        agentHeartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    let store = try await service.store()
+                    let now = Int64(Date().timeIntervalSince1970 * 1_000)
+                    _ = try await store.enqueueDueAgentHeartbeats(
+                        ownerUserID: ownerUserID,
+                        nowUnixMs: now
+                    )
+                    // Also drains durable work left pending by an app crash after enqueue.
+                    _ = try await scheduler.drainAccount(ownerUserID: ownerUserID)
+                    guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
+                        return
+                    }
+                    let nextDue = try await store.nextAgentHeartbeatDue(
+                        ownerUserID: ownerUserID
+                    )
+                    let delayMilliseconds: Int64
+                    if let nextDue {
+                        delayMilliseconds = min(60_000, max(1_000, nextDue - now))
+                    } else {
+                        delayMilliseconds = 60_000
+                    }
+                    try await Task.sleep(for: .milliseconds(delayMilliseconds))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    try? await Task.sleep(for: .seconds(10))
+                }
+            }
+        }
+    }
+
     func requestConnectorSettings(_ tab: LocalConnectorControlTab) {
         requestedConnectorSettingsTab = tab
     }
@@ -921,6 +994,7 @@ final class AppModel: ObservableObject {
                 projectConversationPreparationErrors = [:]
             }
             authenticatedUserID = session.user.id
+            restartAgentHeartbeatCoordinator()
             mediaStudio.activate(userID: session.user.id)
             loadLanguagePreferences()
             localConnectorControl.activate(
@@ -932,6 +1006,8 @@ final class AppModel: ObservableObject {
             refreshPluginApplications()
         case .signedOut:
             workspaceAccountGeneration += 1
+            agentHeartbeatTask?.cancel()
+            agentHeartbeatTask = nil
             authenticatedUserID = nil
             languagePreferencesSaveTask?.cancel()
             isLanguagePreferencesLoading = false

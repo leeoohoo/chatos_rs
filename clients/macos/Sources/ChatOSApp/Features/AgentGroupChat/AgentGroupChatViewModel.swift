@@ -197,16 +197,21 @@ final class AgentGroupChatViewModel: ObservableObject {
         }
     }
 
-    func createRoom(name: String, goal: String) async -> Bool {
+    func createRoom(
+        name: String,
+        goal: String,
+        projectManagerAgentID: String
+    ) async -> Bool {
         do {
             let store = try await resolveStore()
-            _ = try await store.createRoom(
+            _ = try await store.createManagedRoom(
                 ownerUserID: ownerUserID,
                 projectID: projectID,
                 draft: .init(
                     name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                     goal: goal.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
+                ),
+                projectManagerAgentID: projectManagerAgentID
             )
             await load()
             return true
@@ -364,6 +369,31 @@ final class AgentGroupChatViewModel: ObservableObject {
                     responsibility: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     pluginAllowlist: []
                 )
+            )
+            await load()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func setProjectManager(agentID: String) async -> Bool {
+        guard let room,
+              let profile = profilesByID[agentID],
+              profile.draft.professionKey == "project_manager",
+              members.contains(where: { $0.agentID == agentID && $0.status == .active }) else {
+            errorMessage = AgentGroupChatError.invalidField(
+                "projectManagerProfession"
+            ).localizedDescription
+            return false
+        }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.setProjectManager(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                agentID: agentID
             )
             await load()
             return true

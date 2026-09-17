@@ -49,12 +49,16 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try draft.validate()
         let now = Self.now()
+        let nextHeartbeatAtUnixMs = draft.heartbeatEnabled
+            ? now + Int64(draft.heartbeatIntervalSeconds) * 1_000
+            : nil
         let record = LocalAgentProfile(
             id: UUID().uuidString.lowercased(),
             ownerUserID: ownerUserID,
             draft: draft,
             createdAtUnixMs: now,
-            updatedAtUnixMs: now
+            updatedAtUnixMs: now,
+            nextHeartbeatAtUnixMs: nextHeartbeatAtUnixMs
         )
         try record.validate()
         try execute(
@@ -62,8 +66,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             INSERT INTO local_agent_profiles (
                 owner_user_id, id, name, description, role_prompt, model_config_id,
                 thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json,
+                heartbeat_enabled, heartbeat_interval_seconds, heartbeat_prompt,
+                last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms,
                 status, created_at_unix_ms, updated_at_unix_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
             """,
             [
                 .text(ownerUserID), .text(record.id), .text(draft.name),
@@ -71,7 +77,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 draft.thinkingLevel.map(Value.text) ?? .null,
                 .text(draft.professionKey),
                 .text(try encodeStrings(draft.defaultPluginIDs)),
-                .text(try encodeStrings(draft.defaultSkillIDs)), .text(record.status.rawValue),
+                .text(try encodeStrings(draft.defaultSkillIDs)),
+                .integer(draft.heartbeatEnabled ? 1 : 0),
+                .integer(Int64(draft.heartbeatIntervalSeconds)), .text(draft.heartbeatPrompt),
+                nextHeartbeatAtUnixMs.map(Value.integer) ?? .null, .text(record.status.rawValue),
                 .integer(now), .integer(now),
             ]
         )
@@ -92,6 +101,275 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         )
     }
 
+    public func nextAgentHeartbeatDue(ownerUserID: String) throws -> Int64? {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        return try query(
+            """
+            SELECT next_heartbeat_at_unix_ms
+            FROM local_agent_profiles
+            WHERE owner_user_id = ? AND status = 'active' AND heartbeat_enabled = 1
+              AND next_heartbeat_at_unix_ms IS NOT NULL
+            ORDER BY next_heartbeat_at_unix_ms
+            LIMIT 1
+            """,
+            [.text(ownerUserID)]
+        ) { sqlite3_column_int64($0, 0) }.first
+    }
+
+    /// Creates exactly one account-wide inbox wake-up for each due Agent. The wake-up is anchored
+    /// to the Agent's Human direct conversation only because the existing durable run queue needs
+    /// a room authority; Relay reads every unread conversation in that one run.
+    public func enqueueDueAgentHeartbeats(
+        ownerUserID: String,
+        nowUnixMs: Int64,
+        agentLimit: Int = 16
+    ) throws -> [ProjectAgentDelivery] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        guard (1...128).contains(agentLimit) else {
+            throw AgentGroupChatError.invalidField("agentLimit")
+        }
+        return try transaction {
+            struct DueAgent {
+                let id: String
+                let intervalSeconds: Int64
+                let prompt: String
+                let scheduledAtUnixMs: Int64
+            }
+            let dueAgents: [DueAgent] = try query(
+                """
+                SELECT id, heartbeat_interval_seconds, heartbeat_prompt,
+                       next_heartbeat_at_unix_ms
+                FROM local_agent_profiles
+                WHERE owner_user_id = ? AND status = 'active' AND heartbeat_enabled = 1
+                  AND next_heartbeat_at_unix_ms IS NOT NULL
+                  AND next_heartbeat_at_unix_ms <= ?
+                ORDER BY next_heartbeat_at_unix_ms, id
+                LIMIT ?
+                """,
+                [.text(ownerUserID), .integer(nowUnixMs), .integer(Int64(agentLimit))]
+            ) { statement in
+                DueAgent(
+                    id: Self.string(statement, 0),
+                    intervalSeconds: sqlite3_column_int64(statement, 1),
+                    prompt: Self.string(statement, 2),
+                    scheduledAtUnixMs: sqlite3_column_int64(statement, 3)
+                )
+            }
+            var deliveries: [ProjectAgentDelivery] = []
+            for agent in dueAgents {
+                let outstanding = try scalarInt64(
+                    """
+                    SELECT COUNT(*) FROM project_agent_deliveries
+                    WHERE owner_user_id = ? AND target_agent_id = ?
+                      AND trigger_kind = 'heartbeat' AND status IN ('pending', 'running')
+                    """,
+                    [.text(ownerUserID), .text(agent.id)]
+                )
+                if outstanding == 0 {
+                    let directKey = "human:\(ownerUserID)|agent:\(agent.id)"
+                    let room: ProjectAgentRoom
+                    if let existing = try readDirectRoom(
+                        ownerUserID: ownerUserID,
+                        directKey: directKey
+                    ) {
+                        room = existing
+                    } else {
+                        guard let profile = try readAgent(
+                            ownerUserID: ownerUserID,
+                            agentID: agent.id
+                        ) else { throw AgentGroupChatError.notFound }
+                        let roomID = UUID().uuidString.lowercased()
+                        room = ProjectAgentRoom(
+                            id: roomID,
+                            ownerUserID: ownerUserID,
+                            projectID: "direct:\(roomID)",
+                            draft: .init(name: profile.draft.name),
+                            defaultAgentID: profile.id,
+                            conversationKind: .humanAgentDirect,
+                            directKey: directKey,
+                            createdAtUnixMs: nowUnixMs,
+                            updatedAtUnixMs: nowUnixMs
+                        )
+                        try room.validate()
+                        try insertConversation(room)
+                        try insertDirectMember(
+                            ownerUserID: ownerUserID,
+                            roomID: room.id,
+                            agent: profile,
+                            nowUnixMs: nowUnixMs
+                        )
+                    }
+                    let messageID = UUID().uuidString.lowercased()
+                    let deliveryID = UUID().uuidString.lowercased()
+                    let content = agent.prompt.isEmpty
+                        ? "主动巡检：读取全部未读消息，整理并继续处理自己的 TodoList。"
+                        : agent.prompt
+                    try execute(
+                        """
+                        INSERT INTO project_agent_messages (
+                            owner_user_id, id, room_id, sender_kind, sender_id, content,
+                            reply_to_message_id, source_run_id, causation_id, root_message_id,
+                            hop_count, created_at_unix_ms
+                        ) VALUES (?, ?, ?, 'system', 'system', ?, NULL, NULL, 'heartbeat', ?, 0, ?)
+                        """,
+                        [
+                            .text(ownerUserID), .text(messageID), .text(room.id), .text(content),
+                            .text(messageID), .integer(nowUnixMs),
+                        ]
+                    )
+                    try execute(
+                        """
+                        INSERT INTO project_agent_deliveries (
+                            owner_user_id, id, room_id, message_id, root_message_id,
+                            target_agent_id, trigger_kind, status, attempt, hop_count,
+                            deduplication_key, response_message_id, last_error,
+                            claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+                        ) VALUES (?, ?, ?, ?, ?, ?, 'heartbeat', 'pending', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
+                        """,
+                        [
+                            .text(ownerUserID), .text(deliveryID), .text(room.id), .text(messageID),
+                            .text(messageID), .text(agent.id),
+                            .text("heartbeat:\(agent.id):\(agent.scheduledAtUnixMs)"),
+                            .integer(nowUnixMs),
+                        ]
+                    )
+                    guard let delivery = try readDelivery(
+                        ownerUserID: ownerUserID,
+                        deliveryID: deliveryID
+                    ) else { throw AgentGroupChatError.storage("heartbeat delivery insert failed") }
+                    deliveries.append(delivery)
+                }
+                let next = nowUnixMs + agent.intervalSeconds * 1_000
+                try execute(
+                    """
+                    UPDATE local_agent_profiles
+                    SET last_heartbeat_at_unix_ms = ?, next_heartbeat_at_unix_ms = ?
+                    WHERE owner_user_id = ? AND id = ? AND status = 'active'
+                      AND heartbeat_enabled = 1
+                    """,
+                    [.integer(nowUnixMs), .integer(next), .text(ownerUserID), .text(agent.id)]
+                )
+            }
+            return deliveries
+        }
+    }
+
+    /// Queues at most one highest-priority sourced Todo per Agent. The ordinary per-Agent delivery
+    /// lock keeps Todo execution serial, while the source room restores the correct project tools.
+    public func enqueuePendingAgentTodos(
+        ownerUserID: String,
+        nowUnixMs: Int64,
+        agentLimit: Int = 32
+    ) throws -> [ProjectAgentDelivery] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        guard nowUnixMs >= 0, (1...128).contains(agentLimit) else {
+            throw AgentGroupChatError.invalidField("agentLimit")
+        }
+        return try transaction {
+            let agentIDs: [String] = try query(
+                """
+                SELECT DISTINCT t.agent_id
+                FROM local_agent_todos t
+                JOIN local_agent_profiles a
+                  ON a.owner_user_id = t.owner_user_id AND a.id = t.agent_id
+                WHERE t.owner_user_id = ? AND t.status = 'pending'
+                  AND t.team_room_id IS NOT NULL AND a.status = 'active'
+                ORDER BY t.agent_id
+                LIMIT ?
+                """,
+                [.text(ownerUserID), .integer(Int64(agentLimit))]
+            ) { Self.string($0, 0) }
+            var deliveries: [ProjectAgentDelivery] = []
+            for agentID in agentIDs {
+                let outstanding = try scalarInt64(
+                    """
+                    SELECT COUNT(*) FROM project_agent_deliveries
+                    WHERE owner_user_id = ? AND target_agent_id = ?
+                      AND trigger_kind = 'todo' AND status IN ('pending', 'running')
+                    """,
+                    [.text(ownerUserID), .text(agentID)]
+                )
+                guard outstanding == 0 else { continue }
+                guard let todo = try query(
+                    """
+                    SELECT \(Self.todoColumns) FROM local_agent_todos t
+                    WHERE t.owner_user_id = ? AND t.agent_id = ? AND t.status = 'pending'
+                      AND EXISTS (
+                        SELECT 1 FROM project_agent_rooms r
+                        JOIN project_agent_room_members m
+                          ON m.owner_user_id = r.owner_user_id AND m.room_id = r.id
+                        WHERE r.owner_user_id = t.owner_user_id AND r.id = t.team_room_id
+                          AND r.status = 'active' AND m.agent_id = t.agent_id
+                          AND m.status = 'active'
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM local_agent_todo_dependencies dependency
+                        JOIN local_agent_todos prerequisite
+                          ON prerequisite.owner_user_id = dependency.owner_user_id
+                         AND prerequisite.id = dependency.prerequisite_todo_id
+                        WHERE dependency.owner_user_id = t.owner_user_id
+                          AND dependency.todo_id = t.id
+                          AND prerequisite.status != 'completed'
+                      )
+                    ORDER BY t.priority DESC, t.sort_order, t.created_at_unix_ms, t.id
+                    LIMIT 1
+                    """,
+                    [.text(ownerUserID), .text(agentID)],
+                    row: readTodo
+                ).first else { continue }
+                let roomID = todo.teamRoomID
+                let messageID = UUID().uuidString.lowercased()
+                let deliveryID = UUID().uuidString.lowercased()
+                let rootMessageID = messageID
+                try execute(
+                    """
+                    INSERT INTO project_agent_messages (
+                        owner_user_id, id, room_id, sender_kind, sender_id, content,
+                        reply_to_message_id, source_run_id, causation_id, root_message_id,
+                        hop_count, created_at_unix_ms
+                    ) VALUES (?, ?, ?, 'system', 'system', ?, NULL, NULL, 'todo', ?, 0, ?)
+                    """,
+                    [
+                        .text(ownerUserID), .text(messageID), .text(roomID),
+                        .text(todo.detail.isEmpty ? todo.title : "\(todo.title)\n\n\(todo.detail)"),
+                        .text(rootMessageID), .integer(nowUnixMs),
+                    ]
+                )
+                try execute(
+                    """
+                    INSERT INTO project_agent_deliveries (
+                        owner_user_id, id, room_id, message_id, root_message_id,
+                        target_agent_id, trigger_kind, status, attempt, hop_count,
+                        deduplication_key, response_message_id, last_error,
+                        claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'todo', 'pending', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
+                    """,
+                    [
+                        .text(ownerUserID), .text(deliveryID), .text(roomID), .text(messageID),
+                        .text(rootMessageID), .text(agentID), .text("todo:\(todo.id)"),
+                        .integer(nowUnixMs),
+                    ]
+                )
+                try execute(
+                    """
+                    UPDATE local_agent_todos
+                    SET status = 'in_progress', updated_at_unix_ms = ?
+                    WHERE owner_user_id = ? AND agent_id = ? AND id = ? AND status = 'pending'
+                    """,
+                    [.integer(nowUnixMs), .text(ownerUserID), .text(agentID), .text(todo.id)]
+                )
+                guard let delivery = try readDelivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: deliveryID
+                ) else { throw AgentGroupChatError.storage("todo delivery insert failed") }
+                deliveries.append(delivery)
+            }
+            return deliveries
+        }
+    }
+
     public func updateAgentProfile(
         ownerUserID: String,
         agentID: String,
@@ -106,19 +384,36 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 throw AgentGroupChatError.notFound
             }
             let now = max(Self.now(), existing.updatedAtUnixMs)
+            let nextHeartbeatAtUnixMs: Int64?
+            if draft.heartbeatEnabled {
+                if !existing.draft.heartbeatEnabled
+                    || existing.draft.heartbeatIntervalSeconds != draft.heartbeatIntervalSeconds {
+                    nextHeartbeatAtUnixMs = now + Int64(draft.heartbeatIntervalSeconds) * 1_000
+                } else {
+                    nextHeartbeatAtUnixMs = existing.nextHeartbeatAtUnixMs
+                        ?? now + Int64(draft.heartbeatIntervalSeconds) * 1_000
+                }
+            } else {
+                nextHeartbeatAtUnixMs = nil
+            }
             try execute(
                 """
                 UPDATE local_agent_profiles
                 SET name = ?, description = ?, role_prompt = ?, model_config_id = ?,
                     thinking_level = ?, profession_key = ?, default_plugin_ids_json = ?,
-                    default_skill_ids_json = ?, updated_at_unix_ms = ?
+                    default_skill_ids_json = ?, heartbeat_enabled = ?,
+                    heartbeat_interval_seconds = ?, heartbeat_prompt = ?,
+                    next_heartbeat_at_unix_ms = ?, updated_at_unix_ms = ?
                 WHERE owner_user_id = ? AND id = ? AND status = 'active'
                 """,
                 [
                     .text(draft.name), .text(draft.description), .text(draft.rolePrompt),
                     .text(draft.modelConfigID), draft.thinkingLevel.map(Value.text) ?? .null,
                     .text(draft.professionKey), .text(try encodeStrings(draft.defaultPluginIDs)),
-                    .text(try encodeStrings(draft.defaultSkillIDs)), .integer(now),
+                    .text(try encodeStrings(draft.defaultSkillIDs)),
+                    .integer(draft.heartbeatEnabled ? 1 : 0),
+                    .integer(Int64(draft.heartbeatIntervalSeconds)), .text(draft.heartbeatPrompt),
+                    nextHeartbeatAtUnixMs.map(Value.integer) ?? .null, .integer(now),
                     .text(ownerUserID), .text(agentID),
                 ]
             )
@@ -381,8 +676,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 INSERT INTO local_agent_profiles (
                     owner_user_id, id, name, description, role_prompt, model_config_id,
                     thinking_level, profession_key, default_plugin_ids_json,
-                    default_skill_ids_json, status, created_at_unix_ms, updated_at_unix_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    default_skill_ids_json, heartbeat_enabled, heartbeat_interval_seconds,
+                    heartbeat_prompt, last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms,
+                    status, created_at_unix_ms, updated_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 900, '', NULL, NULL, 'active', ?, ?)
                 """,
                 [
                     .text(ownerUserID), .text(agent.id), .text(agent.draft.name),
@@ -614,6 +911,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                     roomID: roomID,
                     agentID: proposal.draft.targetAgentID
                   )?.status == .active else {
+                throw AgentGroupChatError.conflict
+            }
+            guard room.projectManagerAgentID != proposal.draft.targetAgentID else {
+                // Project-management authority must be handed over explicitly before removal.
                 throw AgentGroupChatError.conflict
             }
             try execute(
@@ -1107,6 +1408,53 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }
     }
 
+    public func createManagedRoom(
+        ownerUserID: String,
+        projectID: String,
+        draft: ProjectAgentRoomDraft,
+        projectManagerAgentID: String
+    ) throws -> ProjectAgentRoom {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(projectID, field: "projectID")
+        try AgentGroupChatValidation.identifier(
+            projectManagerAgentID,
+            field: "projectManagerAgentID"
+        )
+        try draft.validate()
+        return try transaction {
+            guard try readActiveRoom(ownerUserID: ownerUserID, projectID: projectID) == nil else {
+                throw AgentGroupChatError.conflict
+            }
+            guard let manager = try readAgent(
+                ownerUserID: ownerUserID,
+                agentID: projectManagerAgentID
+            ), manager.status == .active,
+            manager.draft.professionKey == "project_manager" else {
+                throw AgentGroupChatError.invalidField("projectManagerProfession")
+            }
+            let timestamp = Self.now()
+            let room = ProjectAgentRoom(
+                id: UUID().uuidString.lowercased(),
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                draft: draft,
+                defaultAgentID: projectManagerAgentID,
+                projectManagerAgentID: projectManagerAgentID,
+                createdAtUnixMs: timestamp,
+                updatedAtUnixMs: timestamp
+            )
+            try room.validate()
+            try insertConversation(room)
+            try insertDirectMember(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                agent: manager,
+                nowUnixMs: timestamp
+            )
+            return room
+        }
+    }
+
     public func openHumanAgentDirect(
         ownerUserID: String,
         agentID: String
@@ -1358,6 +1706,45 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }
     }
 
+    public func setProjectManager(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String
+    ) throws -> ProjectAgentRoom {
+        try validateOwnerRoomAgent(ownerUserID: ownerUserID, roomID: roomID, agentID: agentID)
+        return try transaction {
+            guard let room = try readRoom(ownerUserID: ownerUserID, roomID: roomID),
+                  room.status == .active, room.conversationKind == .projectTeam else {
+                throw AgentGroupChatError.notFound
+            }
+            guard try readMember(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agentID: agentID
+            )?.status == .active else { throw AgentGroupChatError.notMember }
+            guard try readAgent(
+                ownerUserID: ownerUserID,
+                agentID: agentID
+            )?.draft.professionKey == "project_manager" else {
+                throw AgentGroupChatError.invalidField("projectManagerProfession")
+            }
+            let now = max(Self.now(), room.updatedAtUnixMs)
+            try execute(
+                """
+                UPDATE project_agent_rooms
+                SET project_manager_agent_id = ?, updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ? AND status = 'active'
+                """,
+                [.text(agentID), .integer(now), .text(ownerUserID), .text(roomID)]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let updated = try readRoom(ownerUserID: ownerUserID, roomID: roomID) else {
+                throw AgentGroupChatError.conflict
+            }
+            return updated
+        }
+    }
+
     public func postMessage(
         ownerUserID: String,
         roomID: String,
@@ -1582,7 +1969,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             throw AgentGroupChatError.notFound
         }
         var values: [Value] = [.text(ownerUserID), .text(roomID)]
-        var predicate = "owner_user_id = ? AND room_id = ?"
+        var predicate = "owner_user_id = ? AND room_id = ? AND NOT (sender_kind = 'system' AND causation_id IN ('heartbeat', 'todo', 'todo_status'))"
         if let afterUnixMs {
             guard afterUnixMs >= 0 else { throw AgentGroupChatError.invalidField("afterUnixMs") }
             predicate += " AND created_at_unix_ms > ?"
@@ -1613,7 +2000,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
             throw AgentGroupChatError.notFound
         }
-        var predicate = "owner_user_id = ? AND room_id = ?"
+        var predicate = "owner_user_id = ? AND room_id = ? AND NOT (sender_kind = 'system' AND causation_id IN ('heartbeat', 'todo', 'todo_status'))"
         var values: [Value] = [.text(ownerUserID), .text(roomID)]
         if let afterMessageID {
             try AgentGroupChatValidation.identifier(afterMessageID, field: "afterMessageID")
@@ -1667,7 +2054,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             roomID: roomID,
             agentID: agentID
         )
-        var predicate = "owner_user_id = ? AND room_id = ?"
+        var predicate = "owner_user_id = ? AND room_id = ? AND NOT (sender_kind = 'system' AND causation_id IN ('heartbeat', 'todo', 'todo_status'))"
         var values: [Value] = [.text(ownerUserID), .text(roomID)]
         if let cursor {
             predicate += " AND (created_at_unix_ms > ? OR (created_at_unix_ms = ? AND id > ?))"
@@ -1760,6 +2147,874 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }
     }
 
+    public func readAllUnreadMessagesAndMarkRead(
+        ownerUserID: String,
+        agentID: String,
+        limit: Int = 200,
+        nowUnixMs: Int64
+    ) throws -> [LocalAgentUnreadConversation] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        guard (1...500).contains(limit), nowUnixMs >= 0 else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        return try transaction {
+            guard try readAgent(ownerUserID: ownerUserID, agentID: agentID)?.status == .active else {
+                throw AgentGroupChatError.notFound
+            }
+            let messages = try query(
+                """
+                SELECT msg.owner_user_id, msg.id, msg.room_id, msg.sender_kind, msg.sender_id,
+                       msg.content, msg.reply_to_message_id, msg.source_run_id,
+                       msg.causation_id, msg.root_message_id, msg.hop_count,
+                       msg.created_at_unix_ms
+                FROM project_agent_messages msg
+                JOIN project_agent_rooms room
+                  ON room.owner_user_id = msg.owner_user_id AND room.id = msg.room_id
+                JOIN project_agent_room_members member
+                  ON member.owner_user_id = msg.owner_user_id
+                 AND member.room_id = msg.room_id AND member.agent_id = ?
+                LEFT JOIN project_agent_read_cursors cursor
+                  ON cursor.owner_user_id = msg.owner_user_id
+                 AND cursor.room_id = msg.room_id AND cursor.agent_id = ?
+                WHERE msg.owner_user_id = ? AND room.status = 'active'
+                  AND member.status = 'active'
+                  AND NOT (msg.sender_kind = 'system' AND msg.causation_id IN ('heartbeat', 'todo', 'todo_status'))
+                  AND NOT (msg.sender_kind = 'agent' AND msg.sender_id = ?)
+                  AND (
+                    cursor.message_id IS NULL
+                    OR msg.created_at_unix_ms > cursor.message_created_at_unix_ms
+                    OR (msg.created_at_unix_ms = cursor.message_created_at_unix_ms
+                        AND msg.id > cursor.message_id)
+                  )
+                ORDER BY msg.created_at_unix_ms, msg.id
+                LIMIT ?
+                """,
+                [
+                    .text(agentID), .text(agentID), .text(ownerUserID), .text(agentID),
+                    .integer(Int64(limit)),
+                ],
+                row: readMessage
+            )
+            guard !messages.isEmpty else { return [] }
+
+            var lastMessageByRoom: [String: ProjectAgentMessage] = [:]
+            var roomOrder: [String] = []
+            var grouped: [String: [ProjectAgentMessage]] = [:]
+            for message in messages {
+                if grouped[message.roomID] == nil { roomOrder.append(message.roomID) }
+                grouped[message.roomID, default: []].append(message)
+                lastMessageByRoom[message.roomID] = message
+            }
+            for (roomID, message) in lastMessageByRoom {
+                try execute(
+                    """
+                    INSERT INTO project_agent_read_cursors (
+                        owner_user_id, room_id, agent_id, message_id,
+                        message_created_at_unix_ms, updated_at_unix_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(owner_user_id, room_id, agent_id) DO UPDATE SET
+                        message_id = excluded.message_id,
+                        message_created_at_unix_ms = excluded.message_created_at_unix_ms,
+                        updated_at_unix_ms = excluded.updated_at_unix_ms
+                    """,
+                    [
+                        .text(ownerUserID), .text(roomID), .text(agentID), .text(message.id),
+                        .integer(message.createdAtUnixMs),
+                        .integer(max(nowUnixMs, message.createdAtUnixMs)),
+                    ]
+                )
+            }
+            return try roomOrder.map { roomID in
+                guard let room = try readRoom(ownerUserID: ownerUserID, roomID: roomID) else {
+                    throw AgentGroupChatError.storage("unread conversation is missing")
+                }
+                return .init(room: room, messages: grouped[roomID] ?? [])
+            }
+        }
+    }
+
+    public func listAgentTodos(
+        ownerUserID: String,
+        agentID: String,
+        includeTerminal: Bool = false
+    ) throws -> [LocalAgentTodo] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        return try query(
+            "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ?"
+                + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
+                + " ORDER BY priority DESC, sort_order, created_at_unix_ms, id",
+            [.text(ownerUserID), .text(agentID)],
+            row: readTodo
+        )
+    }
+
+    public func listTeamTodos(
+        ownerUserID: String,
+        teamRoomID: String,
+        includeTerminal: Bool = false
+    ) throws -> [LocalAgentTodo] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(teamRoomID, field: "teamRoomID")
+        guard try readRoom(ownerUserID: ownerUserID, roomID: teamRoomID)?.conversationKind
+            == .projectTeam else {
+            throw AgentGroupChatError.notFound
+        }
+        return try query(
+            "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND team_room_id = ?"
+                + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
+                + " ORDER BY priority DESC, sort_order, created_at_unix_ms, id",
+            [.text(ownerUserID), .text(teamRoomID)],
+            row: readTodo
+        )
+    }
+
+    public func createAgentTodo(
+        ownerUserID: String,
+        agentID: String,
+        requestKey: String,
+        draft: LocalAgentTodoDraft,
+        nowUnixMs: Int64
+    ) throws -> LocalAgentTodo {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(requestKey, field: "requestKey")
+        try AgentGroupChatValidation.text(draft.title, field: "todoTitle", maximumLength: 500)
+        try AgentGroupChatValidation.optionalText(draft.detail, field: "todoDetail", maximumLength: 16_000)
+        try draft.executionPlan.validate()
+        guard (0...100).contains(draft.priority), nowUnixMs >= 0,
+              draft.dependencies.count <= 64,
+              Set(draft.dependencies.map(\.prerequisiteTodoID)).count == draft.dependencies.count else {
+            throw AgentGroupChatError.invalidField("todoPriority")
+        }
+        for dependency in draft.dependencies {
+            try AgentGroupChatValidation.identifier(
+                dependency.prerequisiteTodoID,
+                field: "todoDependency"
+            )
+            try AgentGroupChatValidation.identifier(
+                dependency.prerequisiteAgentID,
+                field: "todoDependencyAgent"
+            )
+        }
+        return try transaction {
+            if let existing = try query(
+                "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ? AND request_key = ? LIMIT 1",
+                [.text(ownerUserID), .text(agentID), .text(requestKey)],
+                row: readTodo
+            ).first { return existing }
+            guard try readAgent(ownerUserID: ownerUserID, agentID: agentID)?.status == .active else {
+                throw AgentGroupChatError.notFound
+            }
+            let creatorAgentID = draft.creatorAgentID ?? agentID
+            guard try readAgent(
+                ownerUserID: ownerUserID,
+                agentID: creatorAgentID
+            )?.status == .active else { throw AgentGroupChatError.notFound }
+            if let roomID = draft.sourceRoomID {
+                guard try readMember(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: creatorAgentID
+                )?.status == .active else { throw AgentGroupChatError.notMember }
+                if let messageID = draft.sourceMessageID {
+                    guard try readMessage(ownerUserID: ownerUserID, messageID: messageID)?.roomID == roomID else {
+                        throw AgentGroupChatError.notFound
+                    }
+                }
+            } else if draft.sourceMessageID != nil {
+                throw AgentGroupChatError.invalidField("sourceMessageID")
+            }
+            for source in draft.additionalSources {
+                try AgentGroupChatValidation.identifier(source.roomID, field: "sourceConversation")
+                try AgentGroupChatValidation.identifier(source.messageID, field: "sourceMessage")
+                guard try readMember(
+                    ownerUserID: ownerUserID,
+                    roomID: source.roomID,
+                    agentID: creatorAgentID
+                )?.status == .active,
+                try readMessage(
+                    ownerUserID: ownerUserID,
+                    messageID: source.messageID
+                )?.roomID == source.roomID else {
+                    throw AgentGroupChatError.invalidField("sourceMessageRefs")
+                }
+            }
+            let resolvedTeamRoomID: String
+            if let requested = draft.teamRoomID {
+                resolvedTeamRoomID = requested
+            } else if let sourceRoomID = draft.sourceRoomID,
+                      try readRoom(
+                        ownerUserID: ownerUserID,
+                        roomID: sourceRoomID
+                      )?.conversationKind == .projectTeam {
+                // Compatibility for trusted native callers. Model-facing tools always require a
+                // team_ref and never infer the execution boundary from arbitrary message text.
+                resolvedTeamRoomID = sourceRoomID
+            } else {
+                throw AgentGroupChatError.invalidField("teamRef")
+            }
+            guard let team = try readRoom(
+                ownerUserID: ownerUserID,
+                roomID: resolvedTeamRoomID
+            ), team.status == .active, team.conversationKind == .projectTeam,
+               (draft.creatorAgentID == nil
+                   || team.projectManagerAgentID == creatorAgentID),
+               try readMember(
+                   ownerUserID: ownerUserID,
+                   roomID: resolvedTeamRoomID,
+                   agentID: agentID
+               )?.status == .active else {
+                throw AgentGroupChatError.invalidField("teamRef")
+            }
+            let nextOrder = (try query(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ?",
+                [.text(ownerUserID), .text(agentID)]
+            ) { sqlite3_column_int64($0, 0) }.first) ?? 0
+            let todo = LocalAgentTodo(
+                id: UUID().uuidString.lowercased(),
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                teamRoomID: resolvedTeamRoomID,
+                sourceRoomID: draft.sourceRoomID,
+                sourceMessageID: draft.sourceMessageID,
+                title: draft.title,
+                detail: draft.detail,
+                priority: draft.priority,
+                sortOrder: nextOrder,
+                executionPlan: draft.executionPlan,
+                createdAtUnixMs: nowUnixMs,
+                updatedAtUnixMs: nowUnixMs
+            )
+            try todo.validate()
+            try execute(
+                """
+                INSERT INTO local_agent_todos (
+                    owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id,
+                    request_key, title, detail, priority, sort_order, status,
+                    blocked_reason, result, created_at_unix_ms, updated_at_unix_ms,
+                    execution_plan_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', '', ?, ?, ?)
+                """,
+                [
+                    .text(ownerUserID), .text(todo.id), .text(agentID),
+                    .text(resolvedTeamRoomID),
+                    draft.sourceRoomID.map(Value.text) ?? .null,
+                    draft.sourceMessageID.map(Value.text) ?? .null,
+                    .text(requestKey), .text(draft.title), .text(draft.detail),
+                    .integer(Int64(draft.priority)), .integer(nextOrder),
+                    .integer(nowUnixMs), .integer(nowUnixMs),
+                    .text(try encodeJSON(draft.executionPlan)),
+                ]
+            )
+            var sources = draft.additionalSources
+            if let roomID = draft.sourceRoomID, let messageID = draft.sourceMessageID {
+                sources.insert(.init(roomID: roomID, messageID: messageID), at: 0)
+            }
+            var inserted = Set<String>()
+            for source in sources {
+                let key = "\(source.roomID)\u{0}\(source.messageID)\u{0}\(source.relation.rawValue)"
+                guard inserted.insert(key).inserted else { continue }
+                try execute(
+                    """
+                    INSERT INTO local_agent_todo_sources (
+                        owner_user_id, todo_id, conversation_id, message_id, relation,
+                        created_at_unix_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        .text(ownerUserID), .text(todo.id), .text(source.roomID),
+                        .text(source.messageID), .text(source.relation.rawValue),
+                        .integer(nowUnixMs),
+                    ]
+                )
+            }
+            _ = try replaceAgentTodoDependencies(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todo.id,
+                dependencies: draft.dependencies,
+                nowUnixMs: nowUnixMs
+            )
+            return todo
+        }
+    }
+
+    public func updateAgentTodo(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        update: LocalAgentTodoUpdate,
+        nowUnixMs: Int64
+    ) throws -> LocalAgentTodo {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            guard let existing = try readTodo(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todoID
+            ) else { throw AgentGroupChatError.notFound }
+            let title = update.title ?? existing.title
+            let detail = update.detail ?? existing.detail
+            let priority = update.priority ?? existing.priority
+            let status = update.status ?? existing.status
+            let blockedReason = update.blockedReason ?? existing.blockedReason
+            let result = update.result ?? existing.result
+            let revised = LocalAgentTodo(
+                id: existing.id,
+                ownerUserID: existing.ownerUserID,
+                agentID: existing.agentID,
+                teamRoomID: existing.teamRoomID,
+                sourceRoomID: existing.sourceRoomID,
+                sourceMessageID: existing.sourceMessageID,
+                title: title,
+                detail: detail,
+                priority: priority,
+                sortOrder: existing.sortOrder,
+                status: status,
+                blockedReason: blockedReason,
+                result: result,
+                executionPlan: existing.executionPlan,
+                createdAtUnixMs: existing.createdAtUnixMs,
+                updatedAtUnixMs: max(nowUnixMs, existing.createdAtUnixMs)
+            )
+            try revised.validate()
+            try execute(
+                """
+                UPDATE local_agent_todos
+                SET title = ?, detail = ?, priority = ?, status = ?, blocked_reason = ?,
+                    result = ?, updated_at_unix_ms = ?
+                WHERE owner_user_id = ? AND agent_id = ? AND id = ?
+                """,
+                [
+                    .text(title), .text(detail), .integer(Int64(priority)),
+                    .text(status.rawValue), .text(blockedReason), .text(result),
+                    .integer(revised.updatedAtUnixMs), .text(ownerUserID), .text(agentID),
+                    .text(todoID),
+                ]
+            )
+            return revised
+        }
+    }
+
+    public func reorderAgentTodos(
+        ownerUserID: String,
+        agentID: String,
+        todoIDs: [String],
+        nowUnixMs: Int64
+    ) throws -> [LocalAgentTodo] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifiers(todoIDs, field: "todoIDs", maximumCount: 500)
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            let active = try listAgentTodos(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                includeTerminal: false
+            )
+            let byID = Dictionary(uniqueKeysWithValues: active.map { ($0.id, $0) })
+            guard todoIDs.allSatisfy({ byID[$0] != nil }) else {
+                throw AgentGroupChatError.notFound
+            }
+            let requested = Set(todoIDs)
+            let ordered = todoIDs + active.map(\.id).filter { !requested.contains($0) }
+            for (offset, id) in ordered.enumerated() {
+                let reorderedPriority = max(0, 100 - offset)
+                try execute(
+                    """
+                    UPDATE local_agent_todos
+                    SET priority = ?, sort_order = ?, updated_at_unix_ms = ?
+                    WHERE owner_user_id = ? AND agent_id = ? AND id = ?
+                    """,
+                    [
+                        .integer(Int64(reorderedPriority)), .integer(Int64(offset)),
+                        .integer(nowUnixMs), .text(ownerUserID), .text(agentID), .text(id),
+                    ]
+                )
+            }
+            return try listAgentTodos(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                includeTerminal: false
+            )
+        }
+    }
+
+    public func reorderTeamTodos(
+        ownerUserID: String,
+        teamRoomID: String,
+        todoIDs: [String],
+        nowUnixMs: Int64
+    ) throws -> [LocalAgentTodo] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(teamRoomID, field: "teamRoomID")
+        try AgentGroupChatValidation.identifiers(todoIDs, field: "todoIDs", maximumCount: 500)
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            let active = try listTeamTodos(
+                ownerUserID: ownerUserID,
+                teamRoomID: teamRoomID,
+                includeTerminal: false
+            )
+            let byID = Dictionary(uniqueKeysWithValues: active.map { ($0.id, $0) })
+            guard todoIDs.allSatisfy({ byID[$0] != nil }) else {
+                throw AgentGroupChatError.notFound
+            }
+            let requested = Set(todoIDs)
+            let ordered = todoIDs + active.map(\.id).filter { !requested.contains($0) }
+            for (offset, id) in ordered.enumerated() {
+                let reorderedPriority = max(0, 100 - offset)
+                try execute(
+                    """
+                    UPDATE local_agent_todos
+                    SET priority = ?, sort_order = ?, updated_at_unix_ms = ?
+                    WHERE owner_user_id = ? AND team_room_id = ? AND id = ?
+                    """,
+                    [
+                        .integer(Int64(reorderedPriority)), .integer(Int64(offset)),
+                        .integer(nowUnixMs), .text(ownerUserID), .text(teamRoomID), .text(id),
+                    ]
+                )
+            }
+            return try listTeamTodos(
+                ownerUserID: ownerUserID,
+                teamRoomID: teamRoomID,
+                includeTerminal: false
+            )
+        }
+    }
+
+    public func listAgentTodoSources(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String
+    ) throws -> [LocalAgentTodoSourceLink] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
+            throw AgentGroupChatError.notFound
+        }
+        return try query(
+            """
+            SELECT todo_id, conversation_id, message_id, relation, created_at_unix_ms
+            FROM local_agent_todo_sources
+            WHERE owner_user_id = ? AND todo_id = ?
+            ORDER BY created_at_unix_ms, message_id, relation
+            """,
+            [.text(ownerUserID), .text(todoID)]
+        ) { statement in
+            guard let relation = LocalAgentTodoSourceRelation(
+                rawValue: Self.string(statement, 3)
+            ) else { throw AgentGroupChatError.storage("invalid Agent Todo source relation") }
+            return .init(
+                todoID: Self.string(statement, 0),
+                conversationID: Self.string(statement, 1),
+                messageID: Self.string(statement, 2),
+                relation: relation,
+                createdAtUnixMs: sqlite3_column_int64(statement, 4)
+            )
+        }
+    }
+
+    public func listAgentTodoDependencies(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String
+    ) throws -> [LocalAgentTodoDependency] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
+            throw AgentGroupChatError.notFound
+        }
+        return try query(
+            """
+            SELECT d.todo_id, d.prerequisite_todo_id, prerequisite.agent_id,
+                   d.created_at_unix_ms
+            FROM local_agent_todo_dependencies d
+            JOIN local_agent_todos prerequisite
+              ON prerequisite.owner_user_id = d.owner_user_id
+             AND prerequisite.id = d.prerequisite_todo_id
+            WHERE d.owner_user_id = ? AND d.todo_id = ?
+            ORDER BY d.created_at_unix_ms, d.prerequisite_todo_id
+            """,
+            [.text(ownerUserID), .text(todoID)]
+        ) { statement in
+            .init(
+                todoID: Self.string(statement, 0),
+                prerequisiteTodoID: Self.string(statement, 1),
+                prerequisiteAgentID: Self.string(statement, 2),
+                createdAtUnixMs: sqlite3_column_int64(statement, 3)
+            )
+        }
+    }
+
+    public func setAgentTodoDependencies(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        dependencies: [LocalAgentTodoDependencyDraft],
+        nowUnixMs: Int64
+    ) throws -> [LocalAgentTodoDependency] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        guard nowUnixMs >= 0, dependencies.count <= 64,
+              Set(dependencies.map(\.prerequisiteTodoID)).count == dependencies.count else {
+            throw AgentGroupChatError.invalidField("todoDependencies")
+        }
+        for dependency in dependencies {
+            try AgentGroupChatValidation.identifier(
+                dependency.prerequisiteTodoID,
+                field: "todoDependency"
+            )
+            try AgentGroupChatValidation.identifier(
+                dependency.prerequisiteAgentID,
+                field: "todoDependencyAgent"
+            )
+        }
+        return try transaction {
+            try replaceAgentTodoDependencies(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todoID,
+                dependencies: dependencies,
+                nowUnixMs: nowUnixMs
+            )
+        }
+    }
+
+    private func replaceAgentTodoDependencies(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        dependencies: [LocalAgentTodoDependencyDraft],
+        nowUnixMs: Int64
+    ) throws -> [LocalAgentTodoDependency] {
+        guard let todo = try readTodo(
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            todoID: todoID
+        ) else { throw AgentGroupChatError.notFound }
+        try execute(
+            "DELETE FROM local_agent_todo_dependencies WHERE owner_user_id = ? AND todo_id = ?",
+            [.text(ownerUserID), .text(todoID)]
+        )
+        for dependency in dependencies {
+            guard dependency.prerequisiteTodoID != todoID,
+                  let prerequisite = try readTodo(
+                      ownerUserID: ownerUserID,
+                      agentID: dependency.prerequisiteAgentID,
+                      todoID: dependency.prerequisiteTodoID
+                  ), prerequisite.teamRoomID == todo.teamRoomID else {
+                throw AgentGroupChatError.invalidField("todoDependencies")
+            }
+            let createsCycle = try scalarInt64(
+                """
+                WITH RECURSIVE ancestors(id) AS (
+                    SELECT prerequisite_todo_id
+                    FROM local_agent_todo_dependencies
+                    WHERE owner_user_id = ? AND todo_id = ?
+                    UNION
+                    SELECT dependency.prerequisite_todo_id
+                    FROM local_agent_todo_dependencies dependency
+                    JOIN ancestors ON dependency.todo_id = ancestors.id
+                    WHERE dependency.owner_user_id = ?
+                )
+                SELECT COUNT(*) FROM ancestors WHERE id = ?
+                """,
+                [
+                    .text(ownerUserID), .text(dependency.prerequisiteTodoID),
+                    .text(ownerUserID), .text(todoID),
+                ]
+            ) > 0
+            guard !createsCycle else {
+                throw AgentGroupChatError.invalidField("todoDependencyCycle")
+            }
+            try execute(
+                """
+                INSERT INTO local_agent_todo_dependencies (
+                    owner_user_id, todo_id, prerequisite_todo_id, created_at_unix_ms
+                ) VALUES (?, ?, ?, ?)
+                """,
+                [
+                    .text(ownerUserID), .text(todoID),
+                    .text(dependency.prerequisiteTodoID), .integer(nowUnixMs),
+                ]
+            )
+        }
+        return try listAgentTodoDependencies(
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            todoID: todoID
+        )
+    }
+
+    public func linkAgentTodoSources(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        sources: [LocalAgentTodoSourceDraft],
+        nowUnixMs: Int64
+    ) throws -> [LocalAgentTodoSourceLink] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        guard !sources.isEmpty, sources.count <= 64, nowUnixMs >= 0 else {
+            throw AgentGroupChatError.invalidField("sourceMessageRefs")
+        }
+        return try transaction {
+            guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
+                throw AgentGroupChatError.notFound
+            }
+            for source in sources {
+                try AgentGroupChatValidation.identifier(
+                    source.roomID,
+                    field: "sourceConversation"
+                )
+                try AgentGroupChatValidation.identifier(source.messageID, field: "sourceMessage")
+                guard try readMessage(
+                    ownerUserID: ownerUserID,
+                    messageID: source.messageID
+                )?.roomID == source.roomID else {
+                    throw AgentGroupChatError.invalidField("sourceMessageRefs")
+                }
+                try execute(
+                    """
+                    INSERT OR IGNORE INTO local_agent_todo_sources (
+                        owner_user_id, todo_id, conversation_id, message_id, relation,
+                        created_at_unix_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        .text(ownerUserID), .text(todoID), .text(source.roomID),
+                        .text(source.messageID), .text(source.relation.rawValue),
+                        .integer(nowUnixMs),
+                    ]
+                )
+            }
+            return try listAgentTodoSources(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todoID
+            )
+        }
+    }
+
+    public func listAgentTodoProgress(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        limit: Int
+    ) throws -> [LocalAgentTodoProgress] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        guard (1...500).contains(limit),
+              try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
+            throw AgentGroupChatError.invalidField("todoProgressLimit")
+        }
+        let newestFirst: [LocalAgentTodoProgress] = try query(
+            """
+            SELECT id, todo_id, sequence, kind, run_id, stage, detail, created_at_unix_ms
+            FROM local_agent_todo_events
+            WHERE owner_user_id = ? AND todo_id = ?
+            ORDER BY sequence DESC
+            LIMIT ?
+            """,
+            [.text(ownerUserID), .text(todoID), .integer(Int64(limit))]
+        ) { statement in
+            guard let kind = LocalAgentTodoProgressKind(rawValue: Self.string(statement, 3)) else {
+                throw AgentGroupChatError.storage("invalid Agent Todo progress kind")
+            }
+            return .init(
+                id: Self.string(statement, 0),
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: Self.string(statement, 1),
+                sequence: sqlite3_column_int64(statement, 2),
+                kind: kind,
+                runID: Self.optionalString(statement, 4),
+                stage: Self.string(statement, 5),
+                detail: Self.string(statement, 6),
+                createdAtUnixMs: sqlite3_column_int64(statement, 7)
+            )
+        }
+        return Array(newestFirst.reversed())
+    }
+
+    public func appendAgentTodoProgress(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        kind: LocalAgentTodoProgressKind,
+        runID: String?,
+        stage: String,
+        detail: String,
+        nowUnixMs: Int64
+    ) throws -> LocalAgentTodoProgress {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        if let runID { try AgentGroupChatValidation.identifier(runID, field: "runID") }
+        try AgentGroupChatValidation.optionalText(stage, field: "todoProgressStage", maximumLength: 240)
+        try AgentGroupChatValidation.text(detail, field: "todoProgressDetail", maximumLength: 16_000)
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
+                throw AgentGroupChatError.notFound
+            }
+            let sequence = (try query(
+                """
+                SELECT COALESCE(MAX(sequence), 0) + 1
+                FROM local_agent_todo_events WHERE owner_user_id = ? AND todo_id = ?
+                """,
+                [.text(ownerUserID), .text(todoID)]
+            ) { sqlite3_column_int64($0, 0) }.first) ?? 1
+            let progress = LocalAgentTodoProgress(
+                id: UUID().uuidString.lowercased(),
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todoID,
+                sequence: sequence,
+                kind: kind,
+                runID: runID,
+                stage: stage,
+                detail: detail,
+                createdAtUnixMs: nowUnixMs
+            )
+            try execute(
+                """
+                INSERT INTO local_agent_todo_events (
+                    owner_user_id, id, todo_id, sequence, run_id, kind, stage, detail,
+                    created_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    .text(ownerUserID), .text(progress.id), .text(todoID), .integer(sequence),
+                    runID.map(Value.text) ?? .null, .text(kind.rawValue), .text(stage),
+                    .text(detail), .integer(nowUnixMs),
+                ]
+            )
+            return progress
+        }
+    }
+
+    public func agentTodo(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String
+    ) throws -> LocalAgentTodo? {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        return try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID)
+    }
+
+    public func todoForDelivery(
+        ownerUserID: String,
+        deliveryID: String
+    ) throws -> LocalAgentTodo? {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(deliveryID, field: "deliveryID")
+        guard let delivery = try readDelivery(ownerUserID: ownerUserID, deliveryID: deliveryID),
+              delivery.triggerKind == .todo,
+              delivery.deduplicationKey.hasPrefix("todo:") else { return nil }
+        return try readTodo(
+            ownerUserID: ownerUserID,
+            agentID: delivery.targetAgentID,
+            todoID: String(delivery.deduplicationKey.dropFirst("todo:".count))
+        )
+    }
+
+    public func enqueueAgentTodoStatus(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentDelivery {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        guard let statusTodo = try readTodo(
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            todoID: todoID
+        ), let team = try readRoom(
+            ownerUserID: ownerUserID,
+            roomID: statusTodo.teamRoomID
+        ) else {
+            throw AgentGroupChatError.conflict
+        }
+        // Legacy trusted callers may have Todo rows created before teams acquired an explicit
+        // project-manager binding. Model-facing creation always supplies `creatorAgentID` and
+        // therefore cannot reach this compatibility fallback.
+        let projectManagerAgentID = team.projectManagerAgentID ?? agentID
+        let room = try openHumanAgentDirect(
+            ownerUserID: ownerUserID,
+            agentID: projectManagerAgentID
+        )
+        return try transaction {
+            guard let todo = try readTodo(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todoID
+            ), todo.status == .completed || todo.status == .blocked || todo.status == .cancelled else {
+                throw AgentGroupChatError.conflict
+            }
+            let key = "todo-status:\(todo.id):\(todo.status.rawValue):\(todo.updatedAtUnixMs)"
+            if let existing = try query(
+                "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND deduplication_key = ? LIMIT 1",
+                [.text(ownerUserID), .text(key)],
+                row: readDelivery
+            ).first { return existing }
+            let messageID = UUID().uuidString.lowercased()
+            let deliveryID = UUID().uuidString.lowercased()
+            let summary = todo.status == .completed ? todo.result : todo.blockedReason
+            let content = "Todo 状态已更新：\(todo.title)\n状态：\(todo.status.rawValue)\n\(summary)"
+            try execute(
+                """
+                INSERT INTO project_agent_messages (
+                    owner_user_id, id, room_id, sender_kind, sender_id, content,
+                    reply_to_message_id, source_run_id, causation_id, root_message_id,
+                    hop_count, created_at_unix_ms
+                ) VALUES (?, ?, ?, 'system', 'system', ?, NULL, NULL, 'todo_status', ?, 0, ?)
+                """,
+                [
+                    .text(ownerUserID), .text(messageID), .text(room.id), .text(content),
+                    .text(messageID), .integer(nowUnixMs),
+                ]
+            )
+            try execute(
+                """
+                INSERT INTO project_agent_deliveries (
+                    owner_user_id, id, room_id, message_id, root_message_id,
+                    target_agent_id, trigger_kind, status, attempt, hop_count,
+                    deduplication_key, response_message_id, last_error,
+                    claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, 'todo_status', 'pending', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
+                """,
+                [
+                    .text(ownerUserID), .text(deliveryID), .text(room.id), .text(messageID),
+                    .text(messageID), .text(projectManagerAgentID), .text(key),
+                    .integer(nowUnixMs),
+                ]
+            )
+            guard let delivery = try readDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: deliveryID
+            ) else { throw AgentGroupChatError.storage("Todo status delivery insert failed") }
+            return delivery
+        }
+    }
+
     public func message(
         ownerUserID: String,
         roomID: String,
@@ -1814,14 +3069,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(agentID, field: "agentID")
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
         return try transaction {
-            let activeCount = try scalarInt64(
-                """
-                SELECT COUNT(*) FROM project_agent_deliveries
-                WHERE owner_user_id = ? AND target_agent_id = ? AND status = 'running'
-                """,
-                [.text(ownerUserID), .text(agentID)]
-            )
-            guard activeCount == 0 else { return nil }
             var sql = """
                 SELECT d.id FROM project_agent_deliveries d
                 JOIN project_agent_rooms r
@@ -1831,6 +3078,17 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                  AND m.room_id = d.room_id AND m.agent_id = d.target_agent_id
                 WHERE d.owner_user_id = ? AND d.target_agent_id = ?
                   AND d.status = 'pending' AND r.status = 'active' AND m.status = 'active'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM project_agent_deliveries active
+                    WHERE active.owner_user_id = d.owner_user_id
+                      AND active.target_agent_id = d.target_agent_id
+                      AND active.status = 'running'
+                      AND (
+                        (d.trigger_kind = 'todo' AND active.trigger_kind = 'todo')
+                        OR
+                        (d.trigger_kind != 'todo' AND active.trigger_kind != 'todo')
+                      )
+                  )
                 """
             var values: [Value] = [.text(ownerUserID), .text(agentID)]
             if let roomID {
@@ -1908,6 +3166,42 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }
     }
 
+    public func completeHeartbeatDelivery(
+        ownerUserID: String,
+        deliveryID: String,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentDelivery {
+        try validateDeliveryMutation(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID,
+            nowUnixMs: nowUnixMs
+        )
+        return try transaction {
+            guard let delivery = try readDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: deliveryID
+            ), delivery.status == .running,
+               delivery.triggerKind == .heartbeat || delivery.triggerKind == .todo
+                || delivery.triggerKind == .todoStatus else {
+                throw AgentGroupChatError.conflict
+            }
+            try execute(
+                """
+                UPDATE project_agent_deliveries
+                SET status = 'completed', response_message_id = NULL, completed_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ? AND status = 'running'
+                """,
+                [.integer(nowUnixMs), .text(ownerUserID), .text(deliveryID)]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let updated = try readDelivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: deliveryID
+                  ) else { throw AgentGroupChatError.conflict }
+            return updated
+        }
+    }
+
     public func failDelivery(
         ownerUserID: String,
         deliveryID: String,
@@ -1921,7 +3215,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         )
         try AgentGroupChatValidation.text(error, field: "error", maximumLength: 8_000)
         return try transaction {
-            guard try readDelivery(ownerUserID: ownerUserID, deliveryID: deliveryID)?.status == .running else {
+            guard let delivery = try readDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: deliveryID
+            ), delivery.status == .running else {
                 throw AgentGroupChatError.conflict
             }
             try execute(
@@ -1932,8 +3229,28 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 """,
                 [.text(error), .integer(nowUnixMs), .text(ownerUserID), .text(deliveryID)]
             )
-            guard sqlite3_changes(database) == 1,
-                  let updated = try readDelivery(ownerUserID: ownerUserID, deliveryID: deliveryID) else {
+            guard sqlite3_changes(database) == 1 else {
+                throw AgentGroupChatError.conflict
+            }
+            if delivery.triggerKind == .todo,
+               delivery.deduplicationKey.hasPrefix("todo:") {
+                let todoID = String(delivery.deduplicationKey.dropFirst("todo:".count))
+                try execute(
+                    """
+                    UPDATE local_agent_todos
+                    SET status = 'blocked', blocked_reason = ?, updated_at_unix_ms = ?
+                    WHERE owner_user_id = ? AND agent_id = ? AND id = ?
+                    """,
+                    [
+                        .text(error), .integer(nowUnixMs), .text(ownerUserID),
+                        .text(delivery.targetAgentID), .text(todoID),
+                    ]
+                )
+            }
+            guard let updated = try readDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: deliveryID
+            ) else {
                 throw AgentGroupChatError.conflict
             }
             return updated
@@ -2148,8 +3465,9 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             """
             INSERT INTO project_agent_rooms (
                 owner_user_id, id, project_id, name, goal, default_agent_id, status,
-                created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key,
+                project_manager_agent_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 .text(room.ownerUserID), .text(room.id), .text(room.projectID),
@@ -2157,6 +3475,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 .optionalText(room.defaultAgentID), .text(room.status.rawValue),
                 .integer(room.createdAtUnixMs), .integer(room.updatedAtUnixMs),
                 .text(room.conversationKind.rawValue), .optionalText(room.directKey),
+                .optionalText(room.projectManagerAgentID),
             ]
         )
     }
@@ -2212,6 +3531,18 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 updatedAtUnixMs: sqlite3_column_int64(statement, 5)
             )
         }.first
+    }
+
+    private func readTodo(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String
+    ) throws -> LocalAgentTodo? {
+        try query(
+            "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ? AND id = ? LIMIT 1",
+            [.text(ownerUserID), .text(agentID), .text(todoID)],
+            row: readTodo
+        ).first
     }
 
     private func readProposal(
@@ -2435,7 +3766,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     }
 
     private func readAgent(_ statement: OpaquePointer) throws -> LocalAgentProfile {
-        guard let status = LocalAgentProfileStatus(rawValue: Self.string(statement, 10)) else {
+        guard let status = LocalAgentProfileStatus(rawValue: Self.string(statement, 15)) else {
             throw AgentGroupChatError.storage("invalid agent status")
         }
         let profile = LocalAgentProfile(
@@ -2449,11 +3780,16 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 thinkingLevel: Self.optionalString(statement, 6),
                 professionKey: Self.string(statement, 7),
                 defaultPluginIDs: try decodeStrings(Self.string(statement, 8)),
-                defaultSkillIDs: try decodeStrings(Self.string(statement, 9))
+                defaultSkillIDs: try decodeStrings(Self.string(statement, 9)),
+                heartbeatEnabled: sqlite3_column_int64(statement, 10) != 0,
+                heartbeatIntervalSeconds: Int(sqlite3_column_int64(statement, 11)),
+                heartbeatPrompt: Self.string(statement, 12)
             ),
             status: status,
-            createdAtUnixMs: sqlite3_column_int64(statement, 11),
-            updatedAtUnixMs: sqlite3_column_int64(statement, 12)
+            createdAtUnixMs: sqlite3_column_int64(statement, 16),
+            updatedAtUnixMs: sqlite3_column_int64(statement, 17),
+            lastHeartbeatAtUnixMs: Self.optionalInt64(statement, 13),
+            nextHeartbeatAtUnixMs: Self.optionalInt64(statement, 14)
         )
         try profile.validate()
         return profile
@@ -2472,6 +3808,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             projectID: Self.string(statement, 2),
             draft: .init(name: Self.string(statement, 3), goal: Self.string(statement, 4)),
             defaultAgentID: Self.optionalString(statement, 5),
+            projectManagerAgentID: Self.optionalString(statement, 11),
             conversationKind: conversationKind,
             directKey: Self.optionalString(statement, 10),
             status: status,
@@ -2539,6 +3876,44 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             attachments: attachments,
             createdAtUnixMs: sqlite3_column_int64(statement, 11)
         )
+    }
+
+    private func readTodo(_ statement: OpaquePointer) throws -> LocalAgentTodo {
+        guard let status = LocalAgentTodoStatus(rawValue: Self.string(statement, 11)) else {
+            throw AgentGroupChatError.storage("invalid Agent todo status")
+        }
+        let executionPlan: LocalAgentTodoExecutionPlan
+        do {
+            executionPlan = try JSONDecoder().decode(
+                LocalAgentTodoExecutionPlan.self,
+                from: Data(Self.string(statement, 16).utf8)
+            )
+        } catch {
+            throw AgentGroupChatError.storage("invalid Agent Todo execution plan")
+        }
+        guard let teamRoomID = Self.optionalString(statement, 3) else {
+            throw AgentGroupChatError.storage("Agent Todo is missing its team binding")
+        }
+        let todo = LocalAgentTodo(
+            id: Self.string(statement, 1),
+            ownerUserID: Self.string(statement, 0),
+            agentID: Self.string(statement, 2),
+            teamRoomID: teamRoomID,
+            sourceRoomID: Self.optionalString(statement, 4),
+            sourceMessageID: Self.optionalString(statement, 5),
+            title: Self.string(statement, 6),
+            detail: Self.string(statement, 7),
+            priority: Int(sqlite3_column_int64(statement, 8)),
+            sortOrder: sqlite3_column_int64(statement, 9),
+            status: status,
+            blockedReason: Self.string(statement, 12),
+            result: Self.string(statement, 13),
+            executionPlan: executionPlan,
+            createdAtUnixMs: sqlite3_column_int64(statement, 14),
+            updatedAtUnixMs: sqlite3_column_int64(statement, 15)
+        )
+        try todo.validate()
+        return todo
     }
 
     private func readMessageAttachments(
@@ -2851,6 +4226,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         String(decoding: try JSONEncoder().encode(values), as: UTF8.self)
     }
 
+    private func encodeJSON<Value: Encodable>(_ value: Value) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return String(decoding: try encoder.encode(value), as: UTF8.self)
+    }
+
     private func decodeStrings(_ value: String) throws -> [String] {
         do {
             return try JSONDecoder().decode([String].self, from: Data(value.utf8))
@@ -2882,10 +4263,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     private static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
 
-    private static let agentColumns = "owner_user_id, id, name, description, role_prompt, model_config_id, thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json, status, created_at_unix_ms, updated_at_unix_ms"
-    private static let roomColumns = "owner_user_id, id, project_id, name, goal, default_agent_id, status, created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key"
+    private static let agentColumns = "owner_user_id, id, name, description, role_prompt, model_config_id, thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json, heartbeat_enabled, heartbeat_interval_seconds, heartbeat_prompt, last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms, status, created_at_unix_ms, updated_at_unix_ms"
+    private static let roomColumns = "owner_user_id, id, project_id, name, goal, default_agent_id, status, created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key, project_manager_agent_id"
     private static let memberColumns = "owner_user_id, room_id, agent_id, role, responsibility, plugin_allowlist_json, status, joined_at_unix_ms"
     private static let messageColumns = "owner_user_id, id, room_id, sender_kind, sender_id, content, reply_to_message_id, source_run_id, causation_id, root_message_id, hop_count, created_at_unix_ms"
+    private static let todoColumns = "owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id, title, detail, priority, sort_order, request_key, status, blocked_reason, result, created_at_unix_ms, updated_at_unix_ms, execution_plan_json"
     private static let proposalColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_agent_id, created_at_unix_ms, resolved_at_unix_ms"
     private static let removalProposalColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_at_unix_ms, resolved_at_unix_ms"
     private static let teamProposalColumns = "owner_user_id, id, source_room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_room_id, created_at_unix_ms, resolved_at_unix_ms"
@@ -2908,6 +4290,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             profession_key TEXT NOT NULL DEFAULT 'general_member',
             default_plugin_ids_json TEXT NOT NULL,
             default_skill_ids_json TEXT NOT NULL,
+            heartbeat_enabled INTEGER NOT NULL DEFAULT 0 CHECK(heartbeat_enabled IN (0, 1)),
+            heartbeat_interval_seconds INTEGER NOT NULL DEFAULT 900
+                CHECK(heartbeat_interval_seconds BETWEEN 60 AND 86400),
+            heartbeat_prompt TEXT NOT NULL DEFAULT '',
+            last_heartbeat_at_unix_ms INTEGER,
+            next_heartbeat_at_unix_ms INTEGER,
             status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
             created_at_unix_ms INTEGER NOT NULL,
             updated_at_unix_ms INTEGER NOT NULL,
@@ -2927,8 +4315,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             conversation_kind TEXT NOT NULL DEFAULT 'project_team'
                 CHECK(conversation_kind IN ('project_team', 'human_agent_direct', 'agent_agent_direct')),
             direct_key TEXT,
+            project_manager_agent_id TEXT,
             PRIMARY KEY(owner_user_id, id),
             FOREIGN KEY(owner_user_id, default_agent_id)
+                REFERENCES local_agent_profiles(owner_user_id, id),
+            FOREIGN KEY(owner_user_id, project_manager_agent_id)
                 REFERENCES local_agent_profiles(owner_user_id, id)
         );
         CREATE UNIQUE INDEX IF NOT EXISTS one_active_agent_room_per_project
@@ -3018,6 +4409,91 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 REFERENCES project_agent_messages(owner_user_id, id)
         );
 
+        CREATE TABLE IF NOT EXISTS local_agent_todos (
+            owner_user_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            team_room_id TEXT NOT NULL,
+            source_room_id TEXT,
+            source_message_id TEXT,
+            request_key TEXT NOT NULL,
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 100),
+            sort_order INTEGER NOT NULL CHECK(sort_order >= 0),
+            status TEXT NOT NULL CHECK(status IN (
+                'pending', 'in_progress', 'blocked', 'completed', 'cancelled'
+            )),
+            blocked_reason TEXT NOT NULL,
+            result TEXT NOT NULL,
+            created_at_unix_ms INTEGER NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL,
+            execution_plan_json TEXT NOT NULL,
+            PRIMARY KEY(owner_user_id, id),
+            UNIQUE(owner_user_id, agent_id, request_key),
+            FOREIGN KEY(owner_user_id, agent_id)
+                REFERENCES local_agent_profiles(owner_user_id, id),
+            FOREIGN KEY(owner_user_id, team_room_id)
+                REFERENCES project_agent_rooms(owner_user_id, id),
+            FOREIGN KEY(owner_user_id, source_room_id)
+                REFERENCES project_agent_rooms(owner_user_id, id),
+            FOREIGN KEY(owner_user_id, source_message_id)
+                REFERENCES project_agent_messages(owner_user_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS local_agent_todos_queue
+            ON local_agent_todos(owner_user_id, agent_id, status, priority DESC, sort_order);
+
+        CREATE TABLE IF NOT EXISTS local_agent_todo_sources (
+            owner_user_id TEXT NOT NULL,
+            todo_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            relation TEXT NOT NULL CHECK(relation IN (
+                'created', 'updated', 'reprioritized', 'blocked_context'
+            )),
+            created_at_unix_ms INTEGER NOT NULL,
+            PRIMARY KEY(owner_user_id, todo_id, conversation_id, message_id, relation),
+            FOREIGN KEY(owner_user_id, todo_id)
+                REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE,
+            FOREIGN KEY(owner_user_id, conversation_id)
+                REFERENCES project_agent_rooms(owner_user_id, id),
+            FOREIGN KEY(owner_user_id, message_id)
+                REFERENCES project_agent_messages(owner_user_id, id)
+        );
+
+        CREATE TABLE IF NOT EXISTS local_agent_todo_events (
+            owner_user_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            todo_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL CHECK(sequence > 0),
+            run_id TEXT,
+            kind TEXT NOT NULL CHECK(kind IN (
+                'started', 'progress', 'blocked', 'completed', 'cancelled'
+            )),
+            stage TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            created_at_unix_ms INTEGER NOT NULL,
+            PRIMARY KEY(owner_user_id, id),
+            UNIQUE(owner_user_id, todo_id, sequence),
+            FOREIGN KEY(owner_user_id, todo_id)
+                REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS local_agent_todo_dependencies (
+            owner_user_id TEXT NOT NULL,
+            todo_id TEXT NOT NULL,
+            prerequisite_todo_id TEXT NOT NULL,
+            created_at_unix_ms INTEGER NOT NULL,
+            PRIMARY KEY(owner_user_id, todo_id, prerequisite_todo_id),
+            CHECK(todo_id != prerequisite_todo_id),
+            FOREIGN KEY(owner_user_id, todo_id)
+                REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE,
+            FOREIGN KEY(owner_user_id, prerequisite_todo_id)
+                REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS local_agent_todo_dependencies_prerequisite
+            ON local_agent_todo_dependencies(owner_user_id, prerequisite_todo_id, todo_id);
+
         CREATE TABLE IF NOT EXISTS project_agent_deliveries (
             owner_user_id TEXT NOT NULL,
             id TEXT NOT NULL,
@@ -3025,7 +4501,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             message_id TEXT NOT NULL,
             root_message_id TEXT NOT NULL,
             target_agent_id TEXT NOT NULL,
-            trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('mention', 'default_agent', 'agent_mention')),
+            trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('mention', 'default_agent', 'agent_mention', 'heartbeat', 'todo', 'todo_status')),
             status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
             attempt INTEGER NOT NULL CHECK(attempt >= 0),
             hop_count INTEGER NOT NULL CHECK(hop_count >= 0),
@@ -3050,8 +4526,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         );
         CREATE INDEX IF NOT EXISTS project_agent_deliveries_agent_queue
             ON project_agent_deliveries(owner_user_id, target_agent_id, status, created_at_unix_ms, id);
-        CREATE UNIQUE INDEX IF NOT EXISTS one_running_delivery_per_agent
-            ON project_agent_deliveries(owner_user_id, target_agent_id) WHERE status = 'running';
+        CREATE UNIQUE INDEX IF NOT EXISTS one_running_manager_delivery_per_agent
+            ON project_agent_deliveries(owner_user_id, target_agent_id)
+            WHERE status = 'running' AND trigger_kind != 'todo';
+        CREATE UNIQUE INDEX IF NOT EXISTS one_running_executor_delivery_per_agent
+            ON project_agent_deliveries(owner_user_id, target_agent_id)
+            WHERE status = 'running' AND trigger_kind = 'todo';
 
         CREATE TABLE IF NOT EXISTS local_agent_creation_proposals (
             owner_user_id TEXT NOT NULL,
@@ -3231,6 +4711,27 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         if !hasColumn("thinking_level", table: "local_agent_profiles") {
             try execute("ALTER TABLE local_agent_profiles ADD COLUMN thinking_level TEXT")
         }
+        if !hasColumn("heartbeat_enabled", table: "local_agent_profiles") {
+            try execute(
+                "ALTER TABLE local_agent_profiles ADD COLUMN heartbeat_enabled INTEGER NOT NULL DEFAULT 0"
+            )
+        }
+        if !hasColumn("heartbeat_interval_seconds", table: "local_agent_profiles") {
+            try execute(
+                "ALTER TABLE local_agent_profiles ADD COLUMN heartbeat_interval_seconds INTEGER NOT NULL DEFAULT 900"
+            )
+        }
+        if !hasColumn("heartbeat_prompt", table: "local_agent_profiles") {
+            try execute(
+                "ALTER TABLE local_agent_profiles ADD COLUMN heartbeat_prompt TEXT NOT NULL DEFAULT ''"
+            )
+        }
+        if !hasColumn("last_heartbeat_at_unix_ms", table: "local_agent_profiles") {
+            try execute("ALTER TABLE local_agent_profiles ADD COLUMN last_heartbeat_at_unix_ms INTEGER")
+        }
+        if !hasColumn("next_heartbeat_at_unix_ms", table: "local_agent_profiles") {
+            try execute("ALTER TABLE local_agent_profiles ADD COLUMN next_heartbeat_at_unix_ms INTEGER")
+        }
         try execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS one_active_direct_conversation_per_pair
@@ -3285,6 +4786,462 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             )
             try execute(
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (12)"
+            )
+        }
+        if !hasMigration(13) {
+            try execute("PRAGMA foreign_keys = OFF")
+            do {
+                try execute("BEGIN IMMEDIATE")
+                try execute(
+                    """
+                    CREATE TABLE project_agent_deliveries_v13 (
+                        owner_user_id TEXT NOT NULL,
+                        id TEXT NOT NULL,
+                        room_id TEXT NOT NULL,
+                        message_id TEXT NOT NULL,
+                        root_message_id TEXT NOT NULL,
+                        target_agent_id TEXT NOT NULL,
+                        trigger_kind TEXT NOT NULL CHECK(trigger_kind IN (
+                            'mention', 'default_agent', 'agent_mention', 'heartbeat', 'todo'
+                        )),
+                        status TEXT NOT NULL CHECK(status IN (
+                            'pending', 'running', 'completed', 'failed', 'cancelled'
+                        )),
+                        attempt INTEGER NOT NULL CHECK(attempt >= 0),
+                        hop_count INTEGER NOT NULL CHECK(hop_count >= 0),
+                        deduplication_key TEXT NOT NULL,
+                        response_message_id TEXT,
+                        last_error TEXT,
+                        claimed_at_unix_ms INTEGER,
+                        completed_at_unix_ms INTEGER,
+                        created_at_unix_ms INTEGER NOT NULL,
+                        PRIMARY KEY(owner_user_id, id),
+                        UNIQUE(owner_user_id, deduplication_key),
+                        FOREIGN KEY(owner_user_id, room_id)
+                            REFERENCES project_agent_rooms(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, root_message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, room_id, target_agent_id)
+                            REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id),
+                        FOREIGN KEY(owner_user_id, response_message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id)
+                    )
+                    """
+                )
+                try execute(
+                    """
+                    INSERT INTO project_agent_deliveries_v13
+                    SELECT * FROM project_agent_deliveries
+                    """
+                )
+                try execute("DROP TABLE project_agent_deliveries")
+                try execute(
+                    "ALTER TABLE project_agent_deliveries_v13 RENAME TO project_agent_deliveries"
+                )
+                try execute(
+                    """
+                    CREATE INDEX project_agent_deliveries_agent_queue
+                    ON project_agent_deliveries(
+                        owner_user_id, target_agent_id, status, created_at_unix_ms, id
+                    )
+                    """
+                )
+                try execute(
+                    """
+                    CREATE UNIQUE INDEX one_running_delivery_per_agent
+                    ON project_agent_deliveries(owner_user_id, target_agent_id)
+                    WHERE status = 'running'
+                    """
+                )
+                try execute(
+                    "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (13)"
+                )
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                try? execute("PRAGMA foreign_keys = ON")
+                throw error
+            }
+            try execute("PRAGMA foreign_keys = ON")
+        }
+        if !hasMigration(14) {
+            try execute("PRAGMA foreign_keys = OFF")
+            do {
+                try execute("BEGIN IMMEDIATE")
+                try execute(
+                    """
+                    CREATE TABLE project_agent_deliveries_v14 (
+                        owner_user_id TEXT NOT NULL,
+                        id TEXT NOT NULL,
+                        room_id TEXT NOT NULL,
+                        message_id TEXT NOT NULL,
+                        root_message_id TEXT NOT NULL,
+                        target_agent_id TEXT NOT NULL,
+                        trigger_kind TEXT NOT NULL CHECK(trigger_kind IN (
+                            'mention', 'default_agent', 'agent_mention', 'heartbeat', 'todo'
+                        )),
+                        status TEXT NOT NULL CHECK(status IN (
+                            'pending', 'running', 'completed', 'failed', 'cancelled'
+                        )),
+                        attempt INTEGER NOT NULL CHECK(attempt >= 0),
+                        hop_count INTEGER NOT NULL CHECK(hop_count >= 0),
+                        deduplication_key TEXT NOT NULL,
+                        response_message_id TEXT,
+                        last_error TEXT,
+                        claimed_at_unix_ms INTEGER,
+                        completed_at_unix_ms INTEGER,
+                        created_at_unix_ms INTEGER NOT NULL,
+                        PRIMARY KEY(owner_user_id, id),
+                        UNIQUE(owner_user_id, deduplication_key),
+                        FOREIGN KEY(owner_user_id, room_id)
+                            REFERENCES project_agent_rooms(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, root_message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, room_id, target_agent_id)
+                            REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id),
+                        FOREIGN KEY(owner_user_id, response_message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id)
+                    )
+                    """
+                )
+                try execute(
+                    """
+                    INSERT INTO project_agent_deliveries_v14
+                    SELECT * FROM project_agent_deliveries
+                    """
+                )
+                try execute("DROP TABLE project_agent_deliveries")
+                try execute(
+                    "ALTER TABLE project_agent_deliveries_v14 RENAME TO project_agent_deliveries"
+                )
+                try execute(
+                    """
+                    CREATE INDEX project_agent_deliveries_agent_queue
+                    ON project_agent_deliveries(
+                        owner_user_id, target_agent_id, status, created_at_unix_ms, id
+                    )
+                    """
+                )
+                try execute(
+                    """
+                    CREATE UNIQUE INDEX one_running_delivery_per_agent
+                    ON project_agent_deliveries(owner_user_id, target_agent_id)
+                    WHERE status = 'running'
+                    """
+                )
+                try execute(
+                    "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (14)"
+                )
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                try? execute("PRAGMA foreign_keys = ON")
+                throw error
+            }
+            try execute("PRAGMA foreign_keys = ON")
+        }
+        if !hasMigration(15) {
+            if !hasColumn("team_room_id", table: "local_agent_todos") {
+                try execute("ALTER TABLE local_agent_todos ADD COLUMN team_room_id TEXT")
+            }
+            if !hasColumn("execution_plan_json", table: "local_agent_todos") {
+                try execute(
+                    """
+                    ALTER TABLE local_agent_todos ADD COLUMN execution_plan_json TEXT NOT NULL
+                    DEFAULT '{"requiresExecution":true,"builtinCapabilities":["project_read"],"plugins":[],"selectionRevision":"local-v1","selectedAtUnixMs":0}'
+                    """
+                )
+            }
+            try execute(
+                """
+                UPDATE local_agent_todos
+                SET team_room_id = source_room_id
+                WHERE team_room_id IS NULL AND source_room_id IN (
+                    SELECT id FROM project_agent_rooms
+                    WHERE owner_user_id = local_agent_todos.owner_user_id
+                      AND conversation_kind = 'project_team'
+                )
+                """
+            )
+            try execute("PRAGMA foreign_keys = OFF")
+            do {
+                try execute("BEGIN IMMEDIATE")
+                try execute(
+                    """
+                    CREATE TABLE project_agent_deliveries_v15 (
+                        owner_user_id TEXT NOT NULL,
+                        id TEXT NOT NULL,
+                        room_id TEXT NOT NULL,
+                        message_id TEXT NOT NULL,
+                        root_message_id TEXT NOT NULL,
+                        target_agent_id TEXT NOT NULL,
+                        trigger_kind TEXT NOT NULL CHECK(trigger_kind IN (
+                            'mention', 'default_agent', 'agent_mention', 'heartbeat', 'todo',
+                            'todo_status'
+                        )),
+                        status TEXT NOT NULL CHECK(status IN (
+                            'pending', 'running', 'completed', 'failed', 'cancelled'
+                        )),
+                        attempt INTEGER NOT NULL CHECK(attempt >= 0),
+                        hop_count INTEGER NOT NULL CHECK(hop_count >= 0),
+                        deduplication_key TEXT NOT NULL,
+                        response_message_id TEXT,
+                        last_error TEXT,
+                        claimed_at_unix_ms INTEGER,
+                        completed_at_unix_ms INTEGER,
+                        created_at_unix_ms INTEGER NOT NULL,
+                        PRIMARY KEY(owner_user_id, id),
+                        UNIQUE(owner_user_id, deduplication_key),
+                        FOREIGN KEY(owner_user_id, room_id)
+                            REFERENCES project_agent_rooms(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, root_message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, room_id, target_agent_id)
+                            REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id),
+                        FOREIGN KEY(owner_user_id, response_message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id)
+                    )
+                    """
+                )
+                try execute("INSERT INTO project_agent_deliveries_v15 SELECT * FROM project_agent_deliveries")
+                try execute("DROP TABLE project_agent_deliveries")
+                try execute(
+                    "ALTER TABLE project_agent_deliveries_v15 RENAME TO project_agent_deliveries"
+                )
+                try execute(
+                    """
+                    CREATE INDEX project_agent_deliveries_agent_queue
+                    ON project_agent_deliveries(
+                        owner_user_id, target_agent_id, status, created_at_unix_ms, id
+                    )
+                    """
+                )
+                try execute(
+                    """
+                    CREATE UNIQUE INDEX one_running_manager_delivery_per_agent
+                    ON project_agent_deliveries(owner_user_id, target_agent_id)
+                    WHERE status = 'running' AND trigger_kind != 'todo'
+                    """
+                )
+                try execute(
+                    """
+                    CREATE UNIQUE INDEX one_running_executor_delivery_per_agent
+                    ON project_agent_deliveries(owner_user_id, target_agent_id)
+                    WHERE status = 'running' AND trigger_kind = 'todo'
+                    """
+                )
+                try execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_agent_todo_sources (
+                        owner_user_id TEXT NOT NULL,
+                        todo_id TEXT NOT NULL,
+                        conversation_id TEXT NOT NULL,
+                        message_id TEXT NOT NULL,
+                        relation TEXT NOT NULL CHECK(relation IN (
+                            'created', 'updated', 'reprioritized', 'blocked_context'
+                        )),
+                        created_at_unix_ms INTEGER NOT NULL,
+                        PRIMARY KEY(
+                            owner_user_id, todo_id, conversation_id, message_id, relation
+                        ),
+                        FOREIGN KEY(owner_user_id, todo_id)
+                            REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE,
+                        FOREIGN KEY(owner_user_id, conversation_id)
+                            REFERENCES project_agent_rooms(owner_user_id, id),
+                        FOREIGN KEY(owner_user_id, message_id)
+                            REFERENCES project_agent_messages(owner_user_id, id)
+                    )
+                    """
+                )
+                try execute(
+                    """
+                    INSERT OR IGNORE INTO local_agent_todo_sources (
+                        owner_user_id, todo_id, conversation_id, message_id, relation,
+                        created_at_unix_ms
+                    )
+                    SELECT owner_user_id, id, source_room_id, source_message_id, 'created',
+                           created_at_unix_ms
+                    FROM local_agent_todos
+                    WHERE source_room_id IS NOT NULL AND source_message_id IS NOT NULL
+                    """
+                )
+                try execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS local_agent_todo_events (
+                        owner_user_id TEXT NOT NULL,
+                        id TEXT NOT NULL,
+                        todo_id TEXT NOT NULL,
+                        sequence INTEGER NOT NULL CHECK(sequence > 0),
+                        run_id TEXT,
+                        kind TEXT NOT NULL CHECK(kind IN (
+                            'started', 'progress', 'blocked', 'completed', 'cancelled'
+                        )),
+                        stage TEXT NOT NULL,
+                        detail TEXT NOT NULL,
+                        created_at_unix_ms INTEGER NOT NULL,
+                        PRIMARY KEY(owner_user_id, id),
+                        UNIQUE(owner_user_id, todo_id, sequence),
+                        FOREIGN KEY(owner_user_id, todo_id)
+                            REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE
+                    )
+                    """
+                )
+                try execute(
+                    "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (15)"
+                )
+                try execute("COMMIT")
+            } catch {
+                try? execute("ROLLBACK")
+                try? execute("PRAGMA foreign_keys = ON")
+                throw error
+            }
+            try execute("PRAGMA foreign_keys = ON")
+        }
+        if !hasMigration(16) {
+            try execute(
+                """
+                CREATE TABLE IF NOT EXISTS local_agent_todo_dependencies (
+                    owner_user_id TEXT NOT NULL,
+                    todo_id TEXT NOT NULL,
+                    prerequisite_todo_id TEXT NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL,
+                    PRIMARY KEY(owner_user_id, todo_id, prerequisite_todo_id),
+                    CHECK(todo_id != prerequisite_todo_id),
+                    FOREIGN KEY(owner_user_id, todo_id)
+                        REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE,
+                    FOREIGN KEY(owner_user_id, prerequisite_todo_id)
+                        REFERENCES local_agent_todos(owner_user_id, id) ON DELETE CASCADE
+                )
+                """
+            )
+            try execute(
+                """
+                CREATE INDEX IF NOT EXISTS local_agent_todo_dependencies_prerequisite
+                ON local_agent_todo_dependencies(
+                    owner_user_id, prerequisite_todo_id, todo_id
+                )
+                """
+            )
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (16)"
+            )
+        }
+        if !hasMigration(17) {
+            if !hasColumn("project_manager_agent_id") {
+                // SQLite cannot add one column with a composite foreign key. Rebuild the room
+                // table so the manager reference remains account-scoped instead of accidentally
+                // accepting an Agent ID owned by another account.
+                try execute("PRAGMA foreign_keys = OFF")
+                do {
+                    try execute("BEGIN IMMEDIATE")
+                    try execute(
+                        """
+                        CREATE TABLE project_agent_rooms_v17 (
+                            owner_user_id TEXT NOT NULL,
+                            id TEXT NOT NULL,
+                            project_id TEXT NOT NULL,
+                            name TEXT NOT NULL,
+                            goal TEXT NOT NULL,
+                            default_agent_id TEXT,
+                            status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
+                            created_at_unix_ms INTEGER NOT NULL,
+                            updated_at_unix_ms INTEGER NOT NULL,
+                            conversation_kind TEXT NOT NULL DEFAULT 'project_team'
+                                CHECK(conversation_kind IN (
+                                    'project_team', 'human_agent_direct', 'agent_agent_direct'
+                                )),
+                            direct_key TEXT,
+                            project_manager_agent_id TEXT,
+                            PRIMARY KEY(owner_user_id, id),
+                            FOREIGN KEY(owner_user_id, default_agent_id)
+                                REFERENCES local_agent_profiles(owner_user_id, id),
+                            FOREIGN KEY(owner_user_id, project_manager_agent_id)
+                                REFERENCES local_agent_profiles(owner_user_id, id)
+                        )
+                        """
+                    )
+                    try execute(
+                        """
+                        INSERT INTO project_agent_rooms_v17 (
+                            owner_user_id, id, project_id, name, goal, default_agent_id,
+                            status, created_at_unix_ms, updated_at_unix_ms,
+                            conversation_kind, direct_key, project_manager_agent_id
+                        )
+                        SELECT owner_user_id, id, project_id, name, goal, default_agent_id,
+                               status, created_at_unix_ms, updated_at_unix_ms,
+                               conversation_kind, direct_key, NULL
+                        FROM project_agent_rooms
+                        """
+                    )
+                    try execute("DROP TABLE project_agent_rooms")
+                    try execute(
+                        "ALTER TABLE project_agent_rooms_v17 RENAME TO project_agent_rooms"
+                    )
+                    try execute(
+                        """
+                        CREATE UNIQUE INDEX one_active_agent_room_per_project
+                        ON project_agent_rooms(owner_user_id, project_id)
+                        WHERE status = 'active'
+                        """
+                    )
+                    try execute(
+                        """
+                        CREATE UNIQUE INDEX one_active_direct_conversation_per_pair
+                        ON project_agent_rooms(owner_user_id, direct_key)
+                        WHERE status = 'active' AND direct_key IS NOT NULL
+                        """
+                    )
+                    try execute("COMMIT")
+                } catch {
+                    try? execute("ROLLBACK")
+                    try? execute("PRAGMA foreign_keys = ON")
+                    throw error
+                }
+                try execute("PRAGMA foreign_keys = ON")
+            }
+            // Existing teams are migrated only when there is exactly one active member whose
+            // explicit profession is Project Manager. Join order and default routing are never
+            // used to infer management authority.
+            try execute(
+                """
+                UPDATE project_agent_rooms AS room
+                SET project_manager_agent_id = (
+                    SELECT member.agent_id
+                    FROM project_agent_room_members member
+                    JOIN local_agent_profiles profile
+                      ON profile.owner_user_id = member.owner_user_id
+                     AND profile.id = member.agent_id
+                    WHERE member.owner_user_id = room.owner_user_id
+                      AND member.room_id = room.id
+                      AND member.status = 'active'
+                      AND profile.status = 'active'
+                      AND profile.profession_key = 'project_manager'
+                    LIMIT 1
+                )
+                WHERE room.conversation_kind = 'project_team'
+                  AND room.project_manager_agent_id IS NULL
+                  AND 1 = (
+                    SELECT COUNT(*)
+                    FROM project_agent_room_members member
+                    JOIN local_agent_profiles profile
+                      ON profile.owner_user_id = member.owner_user_id
+                     AND profile.id = member.agent_id
+                    WHERE member.owner_user_id = room.owner_user_id
+                      AND member.room_id = room.id
+                      AND member.status = 'active'
+                      AND profile.status = 'active'
+                      AND profile.profession_key = 'project_manager'
+                  )
+                """
+            )
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (17)"
             )
         }
     }

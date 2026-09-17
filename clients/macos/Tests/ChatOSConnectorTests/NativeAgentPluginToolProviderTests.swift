@@ -94,7 +94,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             triggerMessageID: "message-1",
             rootMessageID: "message-1",
             runID: "run-1",
-            hopCount: 0
+            hopCount: 0,
+            lane: .executor
         )
         let installed = try await service.installedAgentPlugins(ownerUserID: "alice")
         XCTAssertEqual(installed.map(\.id), ["plugin-1"])
@@ -129,6 +130,10 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 projectID: "project-1",
                 projectName: "Test",
                 projectRoot: project.path
+            ),
+            executionPlan: .init(
+                builtinCapabilities: [.projectRead, .projectWrite, .terminal],
+                plugins: [.init(pluginID: "plugin-1", displayName: "test-agent-plugin")]
             )
         )
         let brokerDefinitions = try await broker.definitions()

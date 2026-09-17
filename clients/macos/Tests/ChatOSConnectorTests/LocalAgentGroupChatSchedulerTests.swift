@@ -345,6 +345,90 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
             XCTAssertEqual(stored?.status, .completed)
         }
     }
+
+    func testSchedulerRunsOneAgentsManagerAndExecutorLanesConcurrently() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-lane-scheduler-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let nativeService = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await nativeService.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "双线程 Agent",
+                rolePrompt: "同时处理通讯与执行。",
+                modelConfigID: "lane-model"
+            )
+        )
+        let team = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "lane-project",
+            draft: .init(name: "双线程项目")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: team.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let source = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: team.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "执行项目任务"),
+            limits: .init()
+        ).message
+        _ = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "lane-todo",
+            draft: .init(
+                title: "执行项目任务",
+                teamRoomID: team.id,
+                sourceRoomID: team.id,
+                sourceMessageID: source.id,
+                executionPlan: .init(builtinCapabilities: [])
+            ),
+            nowUnixMs: source.createdAtUnixMs + 1
+        )
+        let direct = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+        _ = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: direct.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "同时回复这条消息"),
+            limits: .init()
+        )
+
+        let probe = SchedulerConcurrencyProbe()
+        let settingsSuite = "local-agent-lane-scheduler-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: nativeService,
+            services: LaneSchedulerTestServices(probe: probe),
+            settings: .init(suiteName: settingsSuite),
+            now: { source.createdAtUnixMs + 10_000 }
+        )
+        let results = try await scheduler.drainAccount(
+            ownerUserID: "alice",
+            maximumRuns: 2
+        )
+
+        XCTAssertEqual(results.count, 2)
+        XCTAssertTrue(results.allSatisfy { $0.agentID == agent.id && $0.outcome == .completed })
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+        XCTAssertGreaterThanOrEqual(maximumConcurrentCalls, 2)
+        let allTodos = try await store.listAgentTodos(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            includeTerminal: true
+        )
+        let completedTodo = allTodos.first
+        XCTAssertEqual(completedTodo?.status, .completed)
+    }
 }
 
 private enum SchedulerTestError: Error {
@@ -485,6 +569,58 @@ private actor ParallelSchedulerTestModel: AgentModelClient {
                 id: "send-reply",
                 name: "chat_send_message",
                 arguments: #"{"content":"并行 Agent 已完成。"}"#
+            )]
+        )
+    }
+}
+
+private struct LaneSchedulerTestServices: AgentServiceProviding {
+    let probe: SchedulerConcurrencyProbe
+
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        XCTAssertEqual(configID, "lane-model")
+        return LaneSchedulerTestModel(probe: probe)
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        SchedulerOfflineMemory()
+    }
+}
+
+private actor LaneSchedulerTestModel: AgentModelClient {
+    private let probe: SchedulerConcurrencyProbe
+
+    init(probe: SchedulerConcurrencyProbe) {
+        self.probe = probe
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        await probe.enter()
+        try await Task.sleep(for: .milliseconds(75))
+        await probe.leave()
+        if tools.contains(where: { $0.name == LocalAgentChatToolProvider.todoCompleteToolName }) {
+            return .init(
+                role: .assistant,
+                toolCalls: [.init(
+                    id: "complete-todo",
+                    name: LocalAgentChatToolProvider.todoCompleteToolName,
+                    arguments: #"{"summary":"执行线程已完成。"}"#
+                )]
+            )
+        }
+        return .init(
+            role: .assistant,
+            toolCalls: [.init(
+                id: "reply-manager",
+                name: LocalAgentChatToolProvider.sendMessageToolName,
+                arguments: #"{"content":"通讯线程已回复。"}"#
             )]
         )
     }
