@@ -142,6 +142,12 @@ private actor LocalAgentRunReferenceVault {
         let teamRoomID: String
     }
 
+    struct AttachmentAuthority: Sendable {
+        let roomID: String
+        let messageID: String
+        let attachmentID: String
+    }
+
     private var conversations: [String: String] = [:]
     private var messages: [String: MessageAuthority] = [:]
     private var todos: [String: TodoAuthority] = [:]
@@ -149,6 +155,7 @@ private actor LocalAgentRunReferenceVault {
     private var agents: [String: String] = [:]
     private var assignees: [String: AssigneeAuthority] = [:]
     private var plugins: [String: LocalAgentTodoPluginOption] = [:]
+    private var attachments: [String: AttachmentAuthority] = [:]
 
     func conversationReference(roomID: String) -> String {
         if let existing = conversations.first(where: { $0.value == roomID })?.key {
@@ -227,6 +234,25 @@ private actor LocalAgentRunReferenceVault {
     }
 
     func plugin(reference: String) -> LocalAgentTodoPluginOption? { plugins[reference] }
+
+    func attachmentReference(roomID: String, messageID: String, attachmentID: String) -> String {
+        if let existing = attachments.first(where: {
+            $0.value.roomID == roomID
+                && $0.value.messageID == messageID
+                && $0.value.attachmentID == attachmentID
+        })?.key { return existing }
+        let reference = "attachment_\(UUID().uuidString.lowercased())"
+        attachments[reference] = .init(
+            roomID: roomID,
+            messageID: messageID,
+            attachmentID: attachmentID
+        )
+        return reference
+    }
+
+    func attachmentAuthority(reference: String) -> AttachmentAuthority? {
+        attachments[reference]
+    }
 }
 
 /// One identity-bound session on the local Relay MCP. Tool arguments can never select another
@@ -440,29 +466,31 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             agentID: context.agentID,
             limit: 20
         )
+        let conversationReference = await references.conversationReference(roomID: room.id)
+        var memberResponses: [MemberResponse] = []
+        for member in members {
+            memberResponses.append(MemberResponse(
+                agentReference: await references.agentReference(agentID: member.agentID),
+                name: profiles[member.agentID]?.draft.name ?? "Agent",
+                role: member.draft.role,
+                responsibility: member.draft.responsibility,
+                isProjectManager: room.projectManagerAgentID == member.agentID
+            ))
+        }
         return try Self.outcome(BootstrapResponse(
             agent: .init(
-                agentID: currentProfile.id,
+                agentReference: await references.agentReference(agentID: currentProfile.id),
                 name: currentProfile.draft.name,
                 role: currentMember.draft.role,
                 responsibility: currentMember.draft.responsibility,
                 isProjectManager: room.projectManagerAgentID == currentProfile.id
             ),
-            roomID: room.id,
+            conversationReference: conversationReference,
             roomName: room.draft.name,
             roomGoal: room.draft.goal,
-            deliveryID: context.deliveryID,
-            trigger: trigger,
-            unread: unread,
-            members: members.map { member in
-                MemberResponse(
-                    agentID: member.agentID,
-                    name: profiles[member.agentID]?.draft.name ?? member.agentID,
-                    role: member.draft.role,
-                    responsibility: member.draft.responsibility,
-                    isProjectManager: room.projectManagerAgentID == member.agentID
-                )
-            }
+            trigger: await messageResponse(trigger, profiles: profiles),
+            unread: await unreadResponse(unread, profiles: profiles),
+            members: memberResponses
         ))
     }
 
@@ -533,7 +561,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             roomID: context.roomID,
             messageID: context.triggerMessageID
         ) else { throw AgentGroupChatError.notFound }
-        return try Self.outcome(message)
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: true
+        )
+        return try Self.outcome(await messageResponse(
+            message,
+            profiles: Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+        ))
     }
 
     private func listMembers(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -551,14 +586,15 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             ownerUserID: context.ownerUserID,
             roomID: context.roomID
         )
-        let response = members.map { member in
-            MemberResponse(
-                agentID: member.agentID,
-                name: profiles[member.agentID]?.draft.name ?? member.agentID,
+        var response: [MemberResponse] = []
+        for member in members {
+            response.append(MemberResponse(
+                agentReference: await references.agentReference(agentID: member.agentID),
+                name: profiles[member.agentID]?.draft.name ?? "Agent",
                 role: member.draft.role,
                 responsibility: member.draft.responsibility,
                 isProjectManager: room?.projectManagerAgentID == member.agentID
-            )
+            ))
         }
         return try Self.outcome(response)
     }
@@ -572,7 +608,96 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             agentID: context.agentID,
             limit: limit
         )
-        return try Self.outcome(page)
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: true
+        )
+        return try Self.outcome(await unreadResponse(
+            page,
+            profiles: Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+        ))
+    }
+
+    private func unreadResponse(
+        _ page: ProjectAgentUnreadPage,
+        profiles: [String: LocalAgentProfile]
+    ) async -> MessagePageResponse {
+        var messages: [MessageResponse] = []
+        for message in page.messages {
+            messages.append(await messageResponse(message, profiles: profiles))
+        }
+        let nextCursorReference: String?
+        if let messageID = page.nextCursorMessageID {
+            nextCursorReference = await references.messageReference(
+                roomID: context.roomID,
+                messageID: messageID
+            )
+        } else { nextCursorReference = nil }
+        let readThroughReference: String?
+        if let messageID = page.readThroughMessageID {
+            readThroughReference = await references.messageReference(
+                roomID: context.roomID,
+                messageID: messageID
+            )
+        } else { readThroughReference = nil }
+        return .init(
+            messages: messages,
+            nextCursorReference: nextCursorReference,
+            hasMore: page.hasMore,
+            readThroughReference: readThroughReference
+        )
+    }
+
+    private func messageResponse(
+        _ message: ProjectAgentMessage,
+        profiles: [String: LocalAgentProfile]
+    ) async -> MessageResponse {
+        let senderName: String
+        let senderAgentReference: String?
+        switch message.senderKind {
+        case .human:
+            senderName = "Human"
+            senderAgentReference = nil
+        case .agent:
+            senderName = profiles[message.senderID]?.draft.name ?? "Agent"
+            senderAgentReference = await references.agentReference(agentID: message.senderID)
+        case .system:
+            senderName = "System"
+            senderAgentReference = nil
+        }
+        var attachments: [AttachmentResponse] = []
+        for attachment in message.attachmentItems {
+            attachments.append(.init(
+                attachmentReference: await references.attachmentReference(
+                    roomID: message.roomID,
+                    messageID: message.id,
+                    attachmentID: attachment.id
+                ),
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                size: attachment.size,
+                kind: attachment.kind.rawValue
+            ))
+        }
+        let replyToReference: String?
+        if let replyToMessageID = message.replyToMessageID {
+            replyToReference = await references.messageReference(
+                roomID: message.roomID,
+                messageID: replyToMessageID
+            )
+        } else { replyToReference = nil }
+        return .init(
+            messageReference: await references.messageReference(
+                roomID: message.roomID,
+                messageID: message.id
+            ),
+            sender: senderName,
+            senderAgentReference: senderAgentReference,
+            content: message.content,
+            replyToMessageReference: replyToReference,
+            attachments: attachments,
+            createdAtUnixMs: message.createdAtUnixMs
+        )
     }
 
     private func readAllUnread(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -605,11 +730,25 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 case .agent: names[message.senderID] ?? "Agent"
                 case .system: "System"
                 }
+                var attachments: [AttachmentResponse] = []
+                for attachment in message.attachmentItems {
+                    attachments.append(.init(
+                        attachmentReference: await references.attachmentReference(
+                            roomID: conversation.room.id,
+                            messageID: message.id,
+                            attachmentID: attachment.id
+                        ),
+                        name: attachment.name,
+                        mimeType: attachment.mimeType,
+                        size: attachment.size,
+                        kind: attachment.kind.rawValue
+                    ))
+                }
                 messages.append(.init(
                     messageReference: messageReference,
                     sender: sender,
                     content: message.content,
-                    attachmentNames: message.attachmentItems.map(\.name),
+                    attachments: attachments,
                     createdAtUnixMs: message.createdAtUnixMs
                 ))
             }
@@ -1513,21 +1652,75 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     private func readMessages(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
-        let afterMessageID = try Self.optionalString(arguments, key: "after_message_id")
+        let beforeReference = try Self.optionalString(arguments, key: "before_message_ref")
+        let beforeMessageID: String?
+        if let beforeReference {
+            guard let authority = await references.messageAuthority(reference: beforeReference),
+                  authority.roomID == context.roomID else {
+                return Self.structuredFailure(
+                    code: "invalid_message_ref",
+                    field: "before_message_ref",
+                    message: "消息游标无效或已经过期，请从最近一页重新读取。",
+                    retryable: true,
+                    nextTool: Self.readMessagesToolName
+                )
+            }
+            beforeMessageID = authority.messageID
+        } else {
+            beforeMessageID = nil
+        }
         let limit = try Self.optionalInteger(arguments, key: "limit").map(Int.init) ?? 50
-        let page = try await store.pageMessages(
+        let page = try await store.pageRecentMessages(
             ownerUserID: context.ownerUserID,
             roomID: context.roomID,
-            afterMessageID: afterMessageID,
+            beforeMessageID: beforeMessageID,
             limit: limit
         )
-        return try Self.outcome(page)
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: true
+        )
+        let profilesByID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+        var messages: [MessageResponse] = []
+        for message in page.messages {
+            messages.append(await messageResponse(message, profiles: profilesByID))
+        }
+        let nextReference: String?
+        if page.hasMore, let messageID = page.nextCursorMessageID {
+            nextReference = await references.messageReference(
+                roomID: context.roomID,
+                messageID: messageID
+            )
+        } else { nextReference = nil }
+        return try Self.outcome(MessagePageResponse(
+            messages: messages,
+            nextCursorReference: nextReference,
+            hasMore: page.hasMore,
+            readThroughReference: nil
+        ))
     }
 
     private func readAttachment(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
-        let messageID = try Self.requiredString(arguments, key: "message_id")
-        let attachmentID = try Self.requiredString(arguments, key: "attachment_id")
+        let messageReference = try Self.requiredString(arguments, key: "message_ref")
+        let attachmentReference = try Self.requiredString(arguments, key: "attachment_ref")
+        guard let messageAuthority = await references.messageAuthority(
+            reference: messageReference
+        ), let attachmentAuthority = await references.attachmentAuthority(
+            reference: attachmentReference
+        ),
+        attachmentAuthority.roomID == messageAuthority.roomID,
+        attachmentAuthority.messageID == messageAuthority.messageID else {
+            return Self.structuredFailure(
+                code: "invalid_attachment_ref",
+                field: "attachment_ref",
+                message: "附件引用无效、已经过期或不属于所选消息，请重新读取消息。",
+                retryable: true,
+                nextTool: Self.readMessagesToolName
+            )
+        }
+        let messageID = messageAuthority.messageID
+        let attachmentID = attachmentAuthority.attachmentID
         let offset = max(0, Int(try Self.optionalInteger(arguments, key: "offset") ?? 0))
         let limit = min(
             12_000,
@@ -1535,14 +1728,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         )
         guard let payload = try await store.messageAttachment(
             ownerUserID: context.ownerUserID,
-            roomID: context.roomID,
+            roomID: messageAuthority.roomID,
             messageID: messageID,
             attachmentID: attachmentID
         ) else { throw AgentGroupChatError.notFound }
         let data = try Data(contentsOf: payload.localFileURL, options: [.mappedIfSafe])
         var response: [String: NativeJSONValue] = [
-            "message_id": .string(messageID),
-            "attachment_id": .string(payload.attachment.id),
+            "message_ref": .string(messageReference),
+            "attachment_ref": .string(attachmentReference),
             "name": .string(payload.attachment.name),
             "mime_type": .string(payload.attachment.mimeType),
             "kind": .string(payload.attachment.kind.rawValue),
@@ -1570,12 +1763,22 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     private func markRead(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
-        let throughMessageID = try Self.requiredString(arguments, key: "through_message_id")
+        let throughReference = try Self.requiredString(arguments, key: "through_message_ref")
+        guard let authority = await references.messageAuthority(reference: throughReference),
+              authority.roomID == context.roomID else {
+            return Self.structuredFailure(
+                code: "invalid_message_ref",
+                field: "through_message_ref",
+                message: "已读消息引用无效或已经过期，请重新读取当前会话未读。",
+                retryable: true,
+                nextTool: Self.readUnreadToolName
+            )
+        }
         let cursor = try await store.markMessagesRead(
             ownerUserID: context.ownerUserID,
             roomID: context.roomID,
             agentID: context.agentID,
-            throughMessageID: throughMessageID,
+            throughMessageID: authority.messageID,
             nowUnixMs: now()
         )
         let remaining = try await store.listUnreadMessages(
@@ -1584,30 +1787,60 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             agentID: context.agentID,
             limit: 1
         )
+        let nextUnreadMessageReference: String?
+        if let messageID = remaining.messages.first?.id {
+            nextUnreadMessageReference = await references.messageReference(
+                roomID: context.roomID,
+                messageID: messageID
+            )
+        } else { nextUnreadMessageReference = nil }
         return try Self.outcome(MarkReadResponse(
-            cursor: cursor,
+            throughMessageReference: await references.messageReference(
+                roomID: context.roomID,
+                messageID: cursor.messageID
+            ),
             hasUnread: !remaining.messages.isEmpty,
-            nextUnreadMessageID: remaining.messages.first?.id
+            nextUnreadMessageReference: nextUnreadMessageReference
         ))
     }
 
     private func openDirect(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
-        let targetAgentID = try Self.requiredString(arguments, key: "target_agent_id")
+        let targetReference = try Self.requiredString(arguments, key: "target_agent_ref")
+        guard let targetAgentID = await references.agentID(reference: targetReference) else {
+            return Self.structuredFailure(
+                code: "invalid_agent_ref",
+                field: "target_agent_ref",
+                message: "Agent 引用无效或已经过期，请重新读取账户 Agent 与团队快照。",
+                retryable: true,
+                nextTool: Self.workspaceSnapshotToolName
+            )
+        }
         let conversation = try await store.openAgentDirect(
             ownerUserID: context.ownerUserID,
             initiatingAgentID: context.agentID,
             targetAgentID: targetAgentID
         )
         return try Self.outcome(DirectOpenResponse(
-            conversationID: conversation.id,
-            targetAgentID: targetAgentID
+            conversationReference: await references.conversationReference(roomID: conversation.id),
+            targetAgentReference: targetReference
         ))
     }
 
     private func sendDirect(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
-        let conversationID = try Self.requiredString(arguments, key: "conversation_id")
+        let conversationReference = try Self.requiredString(arguments, key: "conversation_ref")
+        guard let conversationID = await references.roomID(
+            conversationReference: conversationReference
+        ) else {
+            return Self.structuredFailure(
+                code: "invalid_conversation_ref",
+                field: "conversation_ref",
+                message: "私聊引用无效或已经过期，请重新打开 Agent 私聊。",
+                retryable: true,
+                nextTool: Self.openDirectToolName
+            )
+        }
         let content = try Self.requiredString(arguments, key: "content")
         guard let conversation = try await store.room(
             ownerUserID: context.ownerUserID,
@@ -1636,9 +1869,12 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             limits: limits
         )
         return try Self.outcome(DirectSendResponse(
-            conversationID: conversationID,
-            messageID: post.message.id,
-            spawnedDeliveryIDs: post.deliveries.map(\.id),
+            conversationReference: conversationReference,
+            messageReference: await references.messageReference(
+                roomID: conversationID,
+                messageID: post.message.id
+            ),
+            spawnedDeliveryCount: post.deliveries.count,
             routingStopReason: post.routingStopReason
         ))
     }
@@ -1646,9 +1882,36 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     private func sendMessage(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let content = try Self.requiredString(arguments, key: "content")
-        let mentionAgentIDs = try Self.optionalStringArray(arguments, key: "mention_agent_ids")
-        let replyToMessageID = try Self.optionalString(arguments, key: "reply_to_message_id")
-            ?? context.triggerMessageID
+        let mentionReferences = try Self.optionalStringArray(arguments, key: "mention_agent_refs")
+        var mentionAgentIDs: [String] = []
+        for (index, reference) in mentionReferences.enumerated() {
+            guard let agentID = await references.agentID(reference: reference) else {
+                return Self.structuredFailure(
+                    code: "invalid_agent_ref",
+                    field: "mention_agent_refs[\(index)]",
+                    message: "被 @ 的 Agent 引用无效或已经过期，请重新读取当前会话成员。",
+                    retryable: true,
+                    nextTool: Self.listMembersToolName
+                )
+            }
+            mentionAgentIDs.append(agentID)
+        }
+        let replyToMessageID: String
+        if let replyReference = try Self.optionalString(arguments, key: "reply_to_message_ref") {
+            guard let authority = await references.messageAuthority(reference: replyReference),
+                  authority.roomID == context.roomID else {
+                return Self.structuredFailure(
+                    code: "invalid_message_ref",
+                    field: "reply_to_message_ref",
+                    message: "回复消息引用无效或已经过期，请重新读取当前会话消息。",
+                    retryable: true,
+                    nextTool: Self.readMessagesToolName
+                )
+            }
+            replyToMessageID = authority.messageID
+        } else {
+            replyToMessageID = context.triggerMessageID
+        }
         guard let delivery = try await store.delivery(
             ownerUserID: context.ownerUserID,
             deliveryID: context.deliveryID
@@ -1703,9 +1966,12 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         )
         return try Self.outcome(
             SendResponse(
-                messageID: post.message.id,
-                deliveryID: completed.id,
-                spawnedDeliveryIDs: post.deliveries.map(\.id),
+                messageReference: await references.messageReference(
+                    roomID: context.roomID,
+                    messageID: post.message.id
+                ),
+                completed: completed.status == .completed,
+                spawnedDeliveryCount: post.deliveries.count,
                 routingStopReason: post.routingStopReason
             )
         )
@@ -1759,13 +2025,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         guard let currentProfile = profiles.first(where: { $0.id == context.agentID }) else {
             throw AgentGroupChatError.notFound
         }
-        let requestedModelConfigID = try Self.optionalString(
-            arguments,
-            key: "model_config_id"
-        )?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let modelConfigID = requestedModelConfigID.flatMap {
-            $0.isEmpty || $0.caseInsensitiveCompare("default") == .orderedSame ? nil : $0
-        } ?? currentProfile.draft.modelConfigID
         let requestedThinkingLevel = try Self.optionalString(
             arguments,
             key: "thinking_level"
@@ -1777,7 +2036,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             role: try Self.requiredString(arguments, key: "role"),
             responsibility: try Self.optionalString(arguments, key: "responsibility") ?? "",
             rolePrompt: try Self.requiredString(arguments, key: "role_prompt"),
-            modelConfigID: modelConfigID,
+            modelConfigID: currentProfile.draft.modelConfigID,
             thinkingLevel: thinkingLevel,
             professionKey: try Self.requiredString(arguments, key: "profession_key"),
             rationale: try Self.optionalString(arguments, key: "rationale") ?? ""
@@ -1792,12 +2051,26 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             draft: draft,
             nowUnixMs: now()
         )
-        return try Self.outcome(proposal)
+        return try Self.outcome(ProposalAcknowledgement(
+            type: "agent_creation",
+            status: proposal.status.rawValue,
+            subject: proposal.draft.name
+        ))
     }
 
     private func proposeMemberRemoval(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         guard try await canManageStaff() else { throw AgentGroupChatError.permissionDenied }
         let arguments = try Self.arguments(call)
+        let targetReference = try Self.requiredString(arguments, key: "target_agent_ref")
+        guard let targetAgentID = await references.agentID(reference: targetReference) else {
+            return Self.structuredFailure(
+                code: "invalid_agent_ref",
+                field: "target_agent_ref",
+                message: "Agent 引用无效或已经过期，请重新读取当前会话成员。",
+                retryable: true,
+                nextTool: Self.listMembersToolName
+            )
+        }
         let proposal = try await store.createAgentRemovalProposal(
             ownerUserID: context.ownerUserID,
             roomID: context.roomID,
@@ -1805,13 +2078,17 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             sourceDeliveryID: context.deliveryID,
             requestKey: call.id,
             draft: .init(
-                targetAgentID: try Self.requiredString(arguments, key: "target_agent_id"),
+                targetAgentID: targetAgentID,
                 reason: try Self.requiredString(arguments, key: "reason"),
                 handoffPlan: try Self.optionalString(arguments, key: "handoff_plan") ?? ""
             ),
             nowUnixMs: now()
         )
-        return try Self.outcome(proposal)
+        return try Self.outcome(ProposalAcknowledgement(
+            type: "agent_removal",
+            status: proposal.status.rawValue,
+            subject: "团队成员移出提案"
+        ))
     }
 
     private func canManageStaff() async throws -> Bool {
@@ -1855,14 +2132,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     }
 
     private struct MemberResponse: Encodable {
-        let agentID: String
+        let agentReference: String
         let name: String
         let role: String
         let responsibility: String
         let isProjectManager: Bool
 
         enum CodingKeys: String, CodingKey {
-            case agentID = "agent_id"
+            case agentReference = "agent_ref"
             case name, role, responsibility
             case isProjectManager = "is_project_manager"
         }
@@ -1870,33 +2147,80 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     private struct BootstrapResponse: Encodable {
         let agent: MemberResponse
-        let roomID: String
+        let conversationReference: String
         let roomName: String
         let roomGoal: String
-        let deliveryID: String
-        let trigger: ProjectAgentMessage
-        let unread: ProjectAgentUnreadPage
+        let trigger: MessageResponse
+        let unread: MessagePageResponse
         let members: [MemberResponse]
 
         enum CodingKeys: String, CodingKey {
             case agent
-            case roomID = "room_id"
+            case conversationReference = "conversation_ref"
             case roomName = "room_name"
             case roomGoal = "room_goal"
-            case deliveryID = "delivery_id"
             case trigger, unread, members
         }
     }
 
     private struct MarkReadResponse: Encodable {
-        let cursor: ProjectAgentReadCursor
+        let throughMessageReference: String
         let hasUnread: Bool
-        let nextUnreadMessageID: String?
+        let nextUnreadMessageReference: String?
 
         enum CodingKeys: String, CodingKey {
-            case cursor
+            case throughMessageReference = "through_message_ref"
             case hasUnread = "has_unread"
-            case nextUnreadMessageID = "next_unread_message_id"
+            case nextUnreadMessageReference = "next_unread_message_ref"
+        }
+    }
+
+    private struct AttachmentResponse: Encodable {
+        let attachmentReference: String
+        let name: String
+        let mimeType: String
+        let size: Int
+        let kind: String
+
+        enum CodingKeys: String, CodingKey {
+            case attachmentReference = "attachment_ref"
+            case name
+            case mimeType = "mime_type"
+            case size, kind
+        }
+    }
+
+    private struct MessageResponse: Encodable {
+        let messageReference: String
+        let sender: String
+        let senderAgentReference: String?
+        let content: String
+        let replyToMessageReference: String?
+        let attachments: [AttachmentResponse]
+        let createdAtUnixMs: Int64
+
+        enum CodingKeys: String, CodingKey {
+            case messageReference = "message_ref"
+            case sender
+            case senderAgentReference = "sender_agent_ref"
+            case content
+            case replyToMessageReference = "reply_to_message_ref"
+            case attachments
+            case createdAtUnixMs = "created_at_unix_ms"
+        }
+    }
+
+    private struct MessagePageResponse: Encodable {
+        let messages: [MessageResponse]
+        let nextCursorReference: String?
+        let hasMore: Bool
+        let readThroughReference: String?
+
+        enum CodingKeys: String, CodingKey {
+            case messages
+            case nextCursorReference = "next_before_message_ref"
+            case hasMore = "has_more"
+            case readThroughReference = "read_through_message_ref"
         }
     }
 
@@ -1928,13 +2252,12 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         let messageReference: String
         let sender: String
         let content: String
-        let attachmentNames: [String]
+        let attachments: [AttachmentResponse]
         let createdAtUnixMs: Int64
 
         enum CodingKeys: String, CodingKey {
             case messageReference = "message_ref"
-            case sender, content
-            case attachmentNames = "attachment_names"
+            case sender, content, attachments
             case createdAtUnixMs = "created_at_unix_ms"
         }
     }
@@ -2199,40 +2522,46 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         let error: Detail
     }
 
+    private struct ProposalAcknowledgement: Encodable {
+        let type: String
+        let status: String
+        let subject: String
+    }
+
     private struct DirectOpenResponse: Encodable {
-        let conversationID: String
-        let targetAgentID: String
+        let conversationReference: String
+        let targetAgentReference: String
 
         enum CodingKeys: String, CodingKey {
-            case conversationID = "conversation_id"
-            case targetAgentID = "target_agent_id"
+            case conversationReference = "conversation_ref"
+            case targetAgentReference = "target_agent_ref"
         }
     }
 
     private struct DirectSendResponse: Encodable {
-        let conversationID: String
-        let messageID: String
-        let spawnedDeliveryIDs: [String]
+        let conversationReference: String
+        let messageReference: String
+        let spawnedDeliveryCount: Int
         let routingStopReason: String?
 
         enum CodingKeys: String, CodingKey {
-            case conversationID = "conversation_id"
-            case messageID = "message_id"
-            case spawnedDeliveryIDs = "spawned_delivery_ids"
+            case conversationReference = "conversation_ref"
+            case messageReference = "message_ref"
+            case spawnedDeliveryCount = "spawned_delivery_count"
             case routingStopReason = "routing_stop_reason"
         }
     }
 
     private struct SendResponse: Encodable {
-        let messageID: String
-        let deliveryID: String
-        let spawnedDeliveryIDs: [String]
+        let messageReference: String
+        let completed: Bool
+        let spawnedDeliveryCount: Int
         let routingStopReason: String?
 
         enum CodingKeys: String, CodingKey {
-            case messageID = "message_id"
-            case deliveryID = "delivery_id"
-            case spawnedDeliveryIDs = "spawned_delivery_ids"
+            case messageReference = "message_ref"
+            case completed
+            case spawnedDeliveryCount = "spawned_delivery_count"
             case routingStopReason = "routing_stop_reason"
         }
     }
@@ -2385,48 +2714,48 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ),
         .init(
             name: readMessagesToolName,
-            description: "使用稳定消息 ID 游标分页读取当前项目群聊记录；响应中的 next_cursor_message_id 可用于下一页。",
-            schema: Data(#"{"type":"object","properties":{"after_message_id":{"type":"string","minLength":1,"maxLength":512},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}"#.utf8)
+            description: "从最近一页开始，向更早方向分页读取当前会话记录。需要更早消息时，把响应中的 next_before_message_ref 作为 before_message_ref 继续读取。所有引用只在本轮有效。",
+            schema: Data(#"{"type":"object","properties":{"before_message_ref":{"type":"string","minLength":1,"maxLength":600},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: readAttachmentToolName,
-            description: "按消息和附件 ID 读取当前会话附件。文本可用 offset/limit 分段读取；当前触发消息中的图片或 PDF 会由客户端直接作为多模态输入交给模型。",
-            schema: Data(#"{"type":"object","properties":{"message_id":{"type":"string","minLength":1,"maxLength":512},"attachment_id":{"type":"string","minLength":1,"maxLength":512},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}},"required":["message_id","attachment_id"],"additionalProperties":false}"#.utf8)
+            description: "按消息和附件的本轮临时引用读取当前会话附件。文本可用 offset/limit 分段读取；当前触发消息中的图片或 PDF 已由客户端直接作为多模态输入交给模型。",
+            schema: Data(#"{"type":"object","properties":{"message_ref":{"type":"string","minLength":1,"maxLength":600},"attachment_ref":{"type":"string","minLength":1,"maxLength":600},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}},"required":["message_ref","attachment_ref"],"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: markReadToolName,
-            description: "把当前 Agent 的独立已读游标推进到指定消息。游标单调前进，旧调用或重试不会把已读位置回退。",
-            schema: Data(#"{"type":"object","properties":{"through_message_id":{"type":"string","minLength":1,"maxLength":512}},"required":["through_message_id"],"additionalProperties":false}"#.utf8),
+            description: "把当前 Agent 的独立已读游标推进到指定本轮消息引用。游标单调前进，旧调用或重试不会把已读位置回退。",
+            schema: Data(#"{"type":"object","properties":{"through_message_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["through_message_ref"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: openDirectToolName,
-            description: "打开或复用与另一个 Agent 的私聊。不能与自己私聊；A 到 B 和 B 到 A 会得到同一个 conversation_id。",
-            schema: Data(#"{"type":"object","properties":{"target_agent_id":{"type":"string","minLength":1,"maxLength":512}},"required":["target_agent_id"],"additionalProperties":false}"#.utf8),
+            description: "使用 agent_workspace_snapshot 或成员列表返回的临时 Agent 引用打开或复用私聊。不能与自己私聊；A 到 B 和 B 到 A 会得到同一个 conversation_ref。",
+            schema: Data(#"{"type":"object","properties":{"target_agent_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["target_agent_ref"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: sendDirectToolName,
             description: "向已经打开的 Agent 私聊发送消息。当前 Agent 必须是该私聊参与者，成功后会通过本地 delivery 唤醒对方。",
-            schema: Data(#"{"type":"object","properties":{"conversation_id":{"type":"string","minLength":1,"maxLength":512},"content":{"type":"string","minLength":1,"maxLength":64000}},"required":["conversation_id","content"],"additionalProperties":false}"#.utf8),
+            schema: Data(#"{"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":64000}},"required":["conversation_ref","content"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: Self.proposeMemberToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。该工具只持久化待确认提案，绝不会直接创建 Agent；私聊中确认后只创建独立 Agent，团队会话中确认后才加入当前团队。model_config_id 和 thinking_level 省略时继承当前 Agent。",
-            schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"model_config_id":{"type":"string","minLength":1,"maxLength":512},"thinking_level":{"type":"string","enum":["auto","none","minimal","low","medium","high","xhigh","max"]},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
+            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。该工具只持久化待确认提案，绝不会直接创建 Agent；私聊中确认后只创建独立 Agent，团队会话中确认后才加入当前团队。模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。",
+            schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"thinking_level":{"type":"string","enum":["auto","none","minimal","low","medium","high","xhigh","max"]},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: proposeMemberRemovalToolName,
             description: "使用已授予的人员管理权限，向 Human 提交把一个 Agent 移出当前项目团队的提案。必须提供事实理由和可选交接计划；该工具不会删除可复用的 Agent profile，也不会绕过 Human 确认。",
-            schema: Data(#"{"type":"object","properties":{"target_agent_id":{"type":"string","minLength":1,"maxLength":512},"reason":{"type":"string","minLength":1,"maxLength":4000},"handoff_plan":{"type":"string","maxLength":8000}},"required":["target_agent_id","reason"],"additionalProperties":false}"#.utf8),
+            schema: Data(#"{"type":"object","properties":{"target_agent_ref":{"type":"string","minLength":1,"maxLength":600},"reason":{"type":"string","minLength":1,"maxLength":4000},"handoff_plan":{"type":"string","maxLength":8000}},"required":["target_agent_ref","reason"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: sendMessageToolName,
-            description: "以当前 Agent 身份回复群聊，可用稳定 Agent ID 提及其他成员。成功发送即完成当前 delivery。",
-            schema: Data(#"{"type":"object","properties":{"content":{"type":"string","minLength":1,"maxLength":64000},"mention_agent_ids":{"type":"array","items":{"type":"string","minLength":1,"maxLength":512},"maxItems":32,"uniqueItems":true},"reply_to_message_id":{"type":"string","minLength":1,"maxLength":512}},"required":["content"],"additionalProperties":false}"#.utf8),
+            description: "以当前 Agent 身份回复当前会话。需要 @ 成员或回复指定消息时，只能使用本轮成员和消息临时引用；成功发送即完成当前 delivery。",
+            schema: Data(#"{"type":"object","properties":{"content":{"type":"string","minLength":1,"maxLength":64000},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":32,"uniqueItems":true},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["content"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
@@ -2512,7 +2841,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 "role": ["type": "string", "minLength": 1, "maxLength": 160],
                 "responsibility": ["type": "string", "maxLength": 8_000],
                 "role_prompt": ["type": "string", "minLength": 1, "maxLength": 32_000],
-                "model_config_id": ["type": "string", "minLength": 1, "maxLength": 512],
                 "thinking_level": [
                     "type": "string",
                     "enum": LocalAgentThinkingLevelCatalog.allValues.sorted(),
@@ -2530,7 +2858,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ]
         return .init(
             name: Self.proposeMemberToolName,
-            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。必须从客户端目录选择职业；model_config_id 和 thinking_level 省略时继承当前 Agent。该工具只持久化待确认提案，绝不会直接创建 Agent。",
+            description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。必须从客户端目录选择职业；模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。该工具只持久化待确认提案，绝不会直接创建 Agent。",
             schema: try JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
             effect: .write
         )

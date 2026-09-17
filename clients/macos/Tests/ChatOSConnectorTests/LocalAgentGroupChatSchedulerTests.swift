@@ -1,10 +1,35 @@
 import ChatOSAgentRuntime
-import ChatOSConnector
+@testable import ChatOSConnector
 import ChatOSCore
 import Foundation
 import XCTest
 
 final class LocalAgentGroupChatSchedulerTests: XCTestCase {
+    func testAutomaticRecoveryOnlyAcceptsSideEffectFreeTechnicalPauses() {
+        var checkpoint = AgentRunCheckpoint(
+            scope: "account:alice:agent:test:run:test",
+            messages: [.init(role: .system, content: "system")]
+        )
+        checkpoint.status = .paused
+        checkpoint.stopReason = AgentContextError.unavailable.localizedDescription
+        XCTAssertTrue(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
+
+        checkpoint.status = .needsReview
+        XCTAssertFalse(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
+
+        checkpoint.status = .paused
+        checkpoint.pendingCalls = [.init(id: "write", name: "chat_send_message", arguments: "{}")]
+        XCTAssertFalse(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
+
+        checkpoint.pendingCalls = []
+        checkpoint.inFlightCallID = "write"
+        XCTAssertFalse(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
+
+        checkpoint.inFlightCallID = nil
+        checkpoint.stopReason = "用户已暂停"
+        XCTAssertFalse(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
+    }
+
     func testDirectConversationInjectsProfessionWithoutProjectType() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-direct-skill-\(UUID().uuidString)")
@@ -139,15 +164,16 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertEqual(savedRun?.checkpoint.status, .completed)
         XCTAssertEqual(savedRun?.context.agentID, agent.id)
         XCTAssertEqual(savedRun?.context.projectID, "project-1")
-        XCTAssertNil(savedRun?.checkpoint.memory)
-        XCTAssertTrue(savedRun?.events.contains(where: { $0.kind == "memory_unavailable" }) == true)
+        XCTAssertNotNil(savedRun?.checkpoint.memory)
+        XCTAssertFalse(savedRun?.events.contains(where: { $0.kind == "memory_unavailable" }) == true)
         let system = savedRun?.checkpoint.messages.first?.content ?? ""
         XCTAssertTrue(system.contains(#"name="chatos-profession-desktop-engineer""#))
         XCTAssertTrue(system.contains(#"name="chatos-project-type-desktop-application""#))
         XCTAssertTrue(system.contains("Desktop Application Playbook") || system.contains("桌面"))
+        XCTAssertTrue(savedRun?.checkpoint.messages.dropFirst().first?.content.contains("开始实现") == true)
     }
 
-    func testResumeKeepsUnknownWriteInNeedsReviewUntilUserAbandonsIt() async throws {
+    func testDirectResumeKeepsUnknownWriteInNeedsReviewUntilUserAbandonsIt() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-resume-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -159,20 +185,8 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
             ownerUserID: "alice",
             draft: .init(name: "实现者", rolePrompt: "实现任务", modelConfigID: "local-model")
         )
-        let room = try await store.createRoom(
+        let room = try await store.openHumanAgentDirect(
             ownerUserID: "alice",
-            projectID: "project-1",
-            draft: .init(name: "项目群")
-        )
-        _ = try await store.addMember(
-            ownerUserID: "alice",
-            roomID: room.id,
-            agentID: agent.id,
-            draft: .init(role: "实现者")
-        )
-        _ = try await store.setDefaultAgent(
-            ownerUserID: "alice",
-            roomID: room.id,
             agentID: agent.id
         )
         let post = try await store.postMessage(
@@ -191,7 +205,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let runID = UUID()
         let context = try LocalAgentChatRunContext(
             ownerUserID: "alice",
-            projectID: "project-1",
+            projectID: room.projectID,
             roomID: room.id,
             agentID: agent.id,
             deliveryID: delivery.id,
@@ -213,6 +227,15 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         checkpoint.pendingCalls = [call]
         checkpoint.inFlightCallID = call.id
         checkpoint.status = .running
+        let memoryScope = try AgentMemoryScope(
+            tenantID: "alice",
+            agentID: agent.id,
+            projectID: room.projectID,
+            runID: runID,
+            runtimeScope: checkpoint.scope
+        )
+        checkpoint.memory = .init(scope: memoryScope, pinnedMessageCount: 1)
+        checkpoint.memory?.threadCreated = true
         let run = try LocalAgentGroupChatRun(
             id: runID,
             context: context,
@@ -233,7 +256,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         )
         let result = try await scheduler.resumeDelivery(
             ownerUserID: "alice",
-            projectID: "project-1",
+            projectID: room.projectID,
             deliveryID: pending.id
         )
         XCTAssertEqual(result.outcome, .suspended)
@@ -251,14 +274,14 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertEqual(runningDelivery?.status, .running)
         let listedRuns = try await store.listUnfinishedRuns(
             ownerUserID: "alice",
-            projectID: "project-1",
+            projectID: room.projectID,
             limit: 10
         )
         XCTAssertEqual(listedRuns.map(\.id), [runID])
 
         try await scheduler.abandonDelivery(
             ownerUserID: "alice",
-            projectID: "project-1",
+            projectID: room.projectID,
             deliveryID: delivery.id
         )
         let failedDelivery = try await store.delivery(
@@ -268,7 +291,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let failedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
         let unfinishedAfterAbandon = try await store.listUnfinishedRuns(
             ownerUserID: "alice",
-            projectID: "project-1",
+            projectID: room.projectID,
             limit: 10
         )
         XCTAssertEqual(failedDelivery?.status, .failed)
@@ -429,10 +452,91 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let completedTodo = allTodos.first
         XCTAssertEqual(completedTodo?.status, .completed)
     }
+
+    func testFreshDeliveryPausesInsteadOfRunningWithoutContinuousMemory() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-memory-required-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "连续记忆 Agent", rolePrompt: "保持连续。", modelConfigID: "offline-model")
+        )
+        let room = try await store.openHumanAgentDirect(ownerUserID: "alice", agentID: agent.id)
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "记住之前的工作继续做"),
+            limits: .init()
+        )
+        let delivery = try XCTUnwrap(post.deliveries.first)
+        let settingsSuite = "local-agent-memory-required-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: MemoryOfflineSchedulerServices(),
+            settings: .init(suiteName: settingsSuite)
+        )
+
+        let results = try await scheduler.drainConversation(
+            ownerUserID: "alice",
+            roomID: room.id
+        )
+
+        XCTAssertEqual(results.first?.outcome, .suspended)
+        XCTAssertTrue(results.first?.detail?.contains("连续 Memory") == true)
+        let storedDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        XCTAssertEqual(storedDelivery?.status, .running)
+        let storedRun = try await store.run(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        let run = try XCTUnwrap(storedRun)
+        XCTAssertEqual(run.checkpoint.status, .paused)
+        XCTAssertEqual(run.checkpoint.stopReason, AgentContextError.unavailable.localizedDescription)
+        XCTAssertTrue(run.events.contains { $0.kind == "memory_unavailable" })
+        let messages = try await store.listMessages(
+            ownerUserID: "alice",
+            roomID: room.id,
+            afterUnixMs: nil,
+            limit: 10
+        )
+        XCTAssertEqual(messages.map(\.content), ["记住之前的工作继续做"])
+    }
 }
 
 private enum SchedulerTestError: Error {
     case memoryOffline
+}
+
+private struct MemoryOfflineSchedulerServices: AgentServiceProviding {
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        XCTFail("Memory 未连接时不应调用模型")
+        return SchedulerTestModel()
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        SchedulerOfflineMemory()
+    }
+}
+
+private struct SchedulerOfflineMemory: AgentMemoryServicing {
+    func ensureThread() async throws { throw SchedulerTestError.memoryOffline }
+    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
+        throw SchedulerTestError.memoryOffline
+    }
+    func compose() async throws -> AgentMemoryContext {
+        throw SchedulerTestError.memoryOffline
+    }
 }
 
 private struct SchedulerTestServices: AgentServiceProviding {
@@ -461,23 +565,19 @@ private struct SchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerOfflineMemory()
+        SchedulerTestMemory()
     }
 }
 
-private struct SchedulerOfflineMemory: AgentMemoryServicing {
-    func ensureThread() async throws { throw SchedulerTestError.memoryOffline }
-    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
-        throw SchedulerTestError.memoryOffline
-    }
+private struct SchedulerTestMemory: AgentMemoryServicing {
+    func ensureThread() async throws {}
+    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {}
     func compose() async throws -> AgentMemoryContext {
-        throw SchedulerTestError.memoryOffline
+        .init(blocks: [], recentRecords: [])
     }
 }
 
 private actor SchedulerTestModel: AgentModelClient {
-    private var requestCount = 0
-
     func complete(
         messages: [AgentMessage],
         tools: [AgentToolDefinition],
@@ -486,23 +586,17 @@ private actor SchedulerTestModel: AgentModelClient {
         XCTAssertTrue(messages.contains {
             $0.role == .system && $0.content.contains("chatos-capability-discovery")
         })
-        requestCount += 1
-        switch requestCount {
-        case 1:
-            return .init(
-                role: .assistant,
-                toolCalls: [.init(id: "read-trigger", name: "chat_get_trigger", arguments: "{}")]
-            )
-        default:
-            return .init(
-                role: .assistant,
-                toolCalls: [.init(
-                    id: "send-reply",
-                    name: "chat_send_message",
-                    arguments: #"{"content":"我已在客户端完成本地调度。"}"#
-                )]
-            )
-        }
+        XCTAssertTrue(messages.contains {
+            $0.role == .user && $0.content.contains("current_trigger_json")
+        })
+        return .init(
+            role: .assistant,
+            toolCalls: [.init(
+                id: "send-reply",
+                name: "chat_send_message",
+                arguments: #"{"content":"我已在客户端完成本地调度。"}"#
+            )]
+        )
     }
 }
 
@@ -518,7 +612,7 @@ private struct ParallelSchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerOfflineMemory()
+        SchedulerTestMemory()
     }
 }
 
@@ -586,7 +680,7 @@ private struct LaneSchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerOfflineMemory()
+        SchedulerTestMemory()
     }
 }
 

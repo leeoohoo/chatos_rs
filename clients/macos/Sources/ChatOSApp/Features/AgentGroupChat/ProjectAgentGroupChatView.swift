@@ -11,7 +11,6 @@ struct ProjectAgentGroupChatView: View {
     @State private var showsAgentBuilder = false
     @State private var showsStopAllConfirmation = false
     @State private var editingMember: AgentGroupChatViewModel.MemberPresentation?
-    @State private var abandonDeliveryID: String?
 
     init(
         projectID: String,
@@ -71,23 +70,6 @@ struct ProjectAgentGroupChatView: View {
             Text(viewModel.errorMessage ?? "")
         }
         .confirmationDialog(
-            "结束这个 Agent Run？",
-            isPresented: Binding(
-                get: { abandonDeliveryID != nil },
-                set: { if !$0 { abandonDeliveryID = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("结束 Run", role: .destructive) {
-                guard let deliveryID = abandonDeliveryID else { return }
-                abandonDeliveryID = nil
-                Task { await viewModel.abandonRun(deliveryID: deliveryID) }
-            }
-            Button("取消", role: .cancel) { abandonDeliveryID = nil }
-        } message: {
-            Text("该 delivery 会标记为失败并释放 Agent 队列；已保存的检查点和事件仍会保留。")
-        }
-        .confirmationDialog(
             "停止当前项目的全部 Agent？",
             isPresented: $showsStopAllConfirmation,
             titleVisibility: .visible
@@ -121,10 +103,6 @@ struct ProjectAgentGroupChatView: View {
                     || !viewModel.pendingTeamProposals.isEmpty {
                     Divider()
                     pendingProposals
-                }
-                if !viewModel.interruptedRuns.isEmpty {
-                    Divider()
-                    interruptedRuns
                 }
                 Divider()
                 transcript
@@ -293,49 +271,6 @@ struct ProjectAgentGroupChatView: View {
     private func projectType(_ key: String) -> LocalProjectTypeDefinition? {
         guard let owner = model.localProjectOwnerUserID else { return nil }
         return model.agentSkillLibrary.projectType(ownerUserID: owner, key: key)
-    }
-
-    private var interruptedRuns: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("检测到未完成的本地 Agent Run", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-                .appFont(.caption)
-                .fontWeight(.semibold)
-            ForEach(viewModel.interruptedRuns) { item in
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(item.agentName) · \(item.statusText)")
-                            .appFont(.caption)
-                        if let reason = item.run.checkpoint.stopReason, !reason.isEmpty {
-                            Text(reason)
-                                .appFont(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                    Spacer()
-                    let isActing = viewModel.runActionDeliveryIDs.contains(item.delivery.id)
-                    if isActing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("恢复") {
-                            Task { await viewModel.resumeRun(deliveryID: item.delivery.id) }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .disabled(viewModel.isRunningAgents)
-                        Button("结束", role: .destructive) {
-                            abandonDeliveryID = item.delivery.id
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(viewModel.isRunningAgents)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color.orange.opacity(0.08))
     }
 
     private var roomHeader: some View {

@@ -323,6 +323,22 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             limit: 10
         )
         XCTAssertEqual(fullPage.messages.count, 3)
+        let recentPage = try await store.pageRecentMessages(
+            ownerUserID: "alice",
+            roomID: room.id,
+            beforeMessageID: nil,
+            limit: 2
+        )
+        XCTAssertEqual(recentPage.messages, Array(fullPage.messages.suffix(2)))
+        XCTAssertTrue(recentPage.hasMore)
+        let olderPage = try await store.pageRecentMessages(
+            ownerUserID: "alice",
+            roomID: room.id,
+            beforeMessageID: try XCTUnwrap(recentPage.nextCursorMessageID),
+            limit: 2
+        )
+        XCTAssertEqual(olderPage.messages, Array(fullPage.messages.prefix(1)))
+        XCTAssertFalse(olderPage.hasMore)
         let firstUnread = try await store.listUnreadMessages(
             ownerUserID: "alice",
             roomID: room.id,
@@ -1166,6 +1182,19 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         let reopened = try SQLiteAgentGroupChatStore(databaseURL: url)
         let loaded = try await reopened.run(ownerUserID: "alice", deliveryID: claimed.id)
         XCTAssertEqual(loaded, run)
+        let listedForAgent = try await reopened.listAgentRuns(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            limit: 10
+        )
+        XCTAssertEqual(listedForAgent, [run])
+        let otherAgent = try await makeAgent(reopened, name: "其他成员")
+        let listedForOtherAgent = try await reopened.listAgentRuns(
+            ownerUserID: "alice",
+            agentID: otherAgent.id,
+            limit: 10
+        )
+        XCTAssertTrue(listedForOtherAgent.isEmpty)
 
         let otherContext = try LocalAgentChatRunContext(
             ownerUserID: "alice",

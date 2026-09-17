@@ -16,7 +16,9 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
         let body: [String: JSONValue] = [
             "tenant_id": .string(scope.tenantID), "source_id": .string(scope.sourceID),
             "subject_id": .string(scope.subjectID), "thread_type": .string("client_agent"),
-            "external_thread_id": .string(scope.runID.uuidString),
+            // Local chat Agents intentionally reuse one Memory thread across every wake-up.
+            // Keep the external identity stable as well; runID only namespaces immutable records.
+            "external_thread_id": .string(scope.threadID),
             "labels": .array([.string("client_agent"), .string("memory_mapping:client_agent.v1")]),
         ]
         let result: MemoryThreadDTO = try await request(threadPath, method: "PUT", body: body)

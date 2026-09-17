@@ -33,6 +33,10 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             ownerUserID: "alice",
             draft: .init(name: "客户端", rolePrompt: "实现客户端。", modelConfigID: "model")
         )
+        let third = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "测试员", rolePrompt: "验证结果。", modelConfigID: "model")
+        )
         let room = try await store.createRoom(
             ownerUserID: "alice",
             projectID: "project-1",
@@ -103,10 +107,22 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             .init(id: "call-bootstrap", name: "relay_bootstrap", arguments: "{}")
         )
         XCTAssertFalse(bootstrap.content.contains("project-1"))
-        XCTAssertTrue(bootstrap.content.contains(first.id))
-        XCTAssertTrue(bootstrap.content.contains(second.id))
-        XCTAssertTrue(bootstrap.content.contains(incoming.message.id))
+        XCTAssertFalse(bootstrap.content.contains(first.id))
+        XCTAssertFalse(bootstrap.content.contains(second.id))
+        XCTAssertFalse(bootstrap.content.contains(incoming.message.id))
         XCTAssertTrue(bootstrap.content.contains("unread"))
+        let bootstrapJSON = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(bootstrap.content.utf8))
+                as? [String: Any]
+        )
+        let bootstrapMembers = try XCTUnwrap(bootstrapJSON["members"] as? [[String: Any]])
+        let secondReference = try XCTUnwrap(
+            bootstrapMembers.first(where: { $0["name"] as? String == "客户端" })?["agent_ref"]
+                as? String
+        )
+        let unreadJSON = try XCTUnwrap(bootstrapJSON["unread"] as? [String: Any])
+        let unreadMessages = try XCTUnwrap(unreadJSON["messages"] as? [[String: Any]])
+        let incomingReference = try XCTUnwrap(unreadMessages.first?["message_ref"] as? String)
         let workspace = try await provider.execute(
             .init(
                 id: "call-workspace",
@@ -121,10 +137,28 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertFalse(workspace.content.contains(room.id))
         XCTAssertFalse(workspace.content.contains(first.id))
         XCTAssertFalse(workspace.content.contains(second.id))
+        XCTAssertFalse(workspace.content.contains(third.id))
+        let workspaceJSON = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(workspace.content.utf8))
+                as? [String: Any]
+        )
+        let workspaceAgents = try XCTUnwrap(workspaceJSON["agents"] as? [[String: Any]])
+        let thirdReference = try XCTUnwrap(
+            workspaceAgents.first(where: { $0["name"] as? String == "测试员" })?["agent_ref"]
+                as? String
+        )
+        let openedDirect = try await provider.execute(.init(
+            id: "call-open-direct",
+            name: LocalAgentChatToolProvider.openDirectToolName,
+            arguments: #"{"target_agent_ref":"\#(thirdReference)"}"#
+        ))
+        XCTAssertTrue(openedDirect.content.contains("conversation_ref"))
+        XCTAssertFalse(openedDirect.content.contains(third.id))
         let trigger = try await provider.execute(
             .init(id: "call-trigger", name: "chat_get_trigger", arguments: "{}")
         )
-        XCTAssertTrue(trigger.content.contains(incoming.message.id))
+        XCTAssertFalse(trigger.content.contains(incoming.message.id))
+        XCTAssertTrue(trigger.content.contains("message_ref"))
         XCTAssertTrue(trigger.content.contains("请设计一下"))
         let members = try await provider.execute(
             .init(id: "call-members", name: "chat_list_members", arguments: "{}")
@@ -134,12 +168,18 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let unread = try await provider.execute(
             .init(id: "call-unread", name: "chat_read_unread", arguments: #"{"limit":20}"#)
         )
-        XCTAssertTrue(unread.content.contains(incoming.message.id))
+        XCTAssertFalse(unread.content.contains(incoming.message.id))
+        XCTAssertTrue(unread.content.contains(incomingReference))
+        let history = try await provider.execute(
+            .init(id: "call-history", name: "chat_read_messages", arguments: #"{"limit":20}"#)
+        )
+        XCTAssertTrue(history.content.contains(incomingReference))
+        XCTAssertFalse(history.content.contains(incoming.message.id))
         let marked = try await provider.execute(
             .init(
                 id: "call-mark-read",
                 name: "chat_mark_read",
-                arguments: #"{"through_message_id":"\#(incoming.message.id)"}"#
+                arguments: #"{"through_message_ref":"\#(incomingReference)"}"#
             )
         )
         XCTAssertTrue(marked.content.contains(#""has_unread":false"#))
@@ -150,7 +190,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                     "role": "测试工程师",
                     "responsibility": "验证实现",
                     "role_prompt": "只验证当前项目的实现。",
-                    "model_config_id": "default",
+                    "model_config_id": "inherit-current",
                     "profession_key": "qa_engineer",
                     "rationale": "团队缺少测试角色",
                 ], options: [.sortedKeys]),
@@ -175,12 +215,18 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(pendingProposals.first?.proposerAgentID, first.id)
         XCTAssertEqual(pendingProposals.first?.draft.modelConfigID, first.draft.modelConfigID)
         XCTAssertEqual(pendingProposals.first?.draft.thinkingLevel, "medium")
+        let proposalDefinitions = try await provider.definitions()
+        let proposalDefinition = try XCTUnwrap(proposalDefinitions.first(where: {
+            $0.name == LocalAgentChatToolProvider.proposeMemberToolName
+        }))
+        let proposalSchema = String(decoding: proposalDefinition.schema, as: UTF8.self)
+        XCTAssertFalse(proposalSchema.contains("model_config_id"))
 
         let sendArguments = try XCTUnwrap(
             String(
                 data: JSONSerialization.data(withJSONObject: [
                     "content": "方案完成，@客户端 请开始实现。",
-                    "mention_agent_ids": [second.id],
+                    "mention_agent_refs": [secondReference],
                 ], options: [.sortedKeys]),
                 encoding: .utf8
             )
@@ -192,7 +238,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 arguments: sendArguments
             )
         )
-        XCTAssertTrue(sent.content.contains("spawned_delivery_ids"))
+        XCTAssertTrue(sent.content.contains(#""spawned_delivery_count":1"#))
+        XCTAssertFalse(sent.content.contains(claimed.id))
         let completed = try await store.delivery(ownerUserID: "alice", deliveryID: claimed.id)
         XCTAssertEqual(completed?.status, .completed)
         let next = try await store.claimNextDelivery(

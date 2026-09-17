@@ -2031,6 +2031,52 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         )
     }
 
+    public func pageRecentMessages(
+        ownerUserID: String,
+        roomID: String,
+        beforeMessageID: String? = nil,
+        limit: Int = 100
+    ) throws -> ProjectAgentMessagePage {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
+            throw AgentGroupChatError.notFound
+        }
+        var predicate = "owner_user_id = ? AND room_id = ? AND NOT (sender_kind = 'system' AND causation_id IN ('heartbeat', 'todo', 'todo_status'))"
+        var values: [Value] = [.text(ownerUserID), .text(roomID)]
+        if let beforeMessageID {
+            try AgentGroupChatValidation.identifier(beforeMessageID, field: "beforeMessageID")
+            guard let cursor = try readMessage(ownerUserID: ownerUserID, messageID: beforeMessageID),
+                  cursor.roomID == roomID else {
+                throw AgentGroupChatError.notFound
+            }
+            predicate += " AND (created_at_unix_ms < ? OR (created_at_unix_ms = ? AND id < ?))"
+            values.append(contentsOf: [
+                .integer(cursor.createdAtUnixMs), .integer(cursor.createdAtUnixMs),
+                .text(cursor.id),
+            ])
+        }
+        values.append(.integer(Int64(limit + 1)))
+        let loaded = try query(
+            """
+            SELECT \(Self.messageColumns) FROM project_agent_messages
+            WHERE \(predicate) ORDER BY created_at_unix_ms DESC, id DESC LIMIT ?
+            """,
+            values,
+            row: readMessage
+        )
+        let newestFirst = Array(loaded.prefix(limit))
+        let messages = Array(newestFirst.reversed())
+        return .init(
+            messages: messages,
+            nextCursorMessageID: messages.first?.id,
+            hasMore: loaded.count > limit
+        )
+    }
+
     public func listUnreadMessages(
         ownerUserID: String,
         roomID: String,
@@ -3401,6 +3447,29 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             ORDER BY updated_at_unix_ms DESC, id DESC LIMIT ?
             """,
             [.text(ownerUserID), .text(projectID), .integer(Int64(limit))]
+        ) { Self.string($0, 0) }
+        return try values.map(Self.decodeRun)
+    }
+
+    /// Trigger Runs belong to an Agent, independent of whether their source is a private chat,
+    /// team message, heartbeat, Todo, or Todo status change.
+    public func listAgentRuns(
+        ownerUserID: String,
+        agentID: String,
+        limit: Int
+    ) throws -> [LocalAgentGroupChatRun] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        let values: [String] = try query(
+            """
+            SELECT run_json FROM local_agent_group_chat_runs
+            WHERE owner_user_id = ? AND agent_id = ?
+            ORDER BY updated_at_unix_ms DESC, id DESC LIMIT ?
+            """,
+            [.text(ownerUserID), .text(agentID), .integer(Int64(limit))]
         ) { Self.string($0, 0) }
         return try values.map(Self.decodeRun)
     }

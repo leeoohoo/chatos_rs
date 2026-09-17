@@ -278,7 +278,7 @@ public struct LocalAgentBuilderService: Sendable {
     ) async throws -> LocalAgentDraft {
         let requestedModelConfigID = proposal.draft.modelConfigID
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard requestedModelConfigID.caseInsensitiveCompare("default") == .orderedSame else {
+        guard Self.usesProposerModel(requestedModelConfigID) else {
             return proposal.draft
         }
         let profiles = try await store.listAgents(
@@ -298,6 +298,13 @@ public struct LocalAgentBuilderService: Sendable {
             professionKey: proposal.draft.professionKey,
             rationale: proposal.draft.rationale
         )
+    }
+
+    static func usesProposerModel(_ modelConfigID: String) -> Bool {
+        let normalized = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ["default", "inherit", "inherit-current"].contains {
+            normalized.caseInsensitiveCompare($0) == .orderedSame
+        }
     }
 
     private func validate(

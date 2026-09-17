@@ -2,6 +2,28 @@ import ChatOSConnector
 import ChatOSCore
 import SwiftUI
 
+private enum AgentDirectTimelineItem: Identifiable {
+    case message(ProjectAgentMessage)
+    case agentProposal(LocalAgentCreationProposal)
+    case teamProposal(LocalAgentTeamCreationProposal)
+
+    var id: String {
+        switch self {
+        case let .message(value): "message:\(value.id)"
+        case let .agentProposal(value): "agent-proposal:\(value.id)"
+        case let .teamProposal(value): "team-proposal:\(value.id)"
+        }
+    }
+
+    var createdAtUnixMs: Int64 {
+        switch self {
+        case let .message(value): value.createdAtUnixMs
+        case let .agentProposal(value): value.createdAtUnixMs
+        case let .teamProposal(value): value.createdAtUnixMs
+        }
+    }
+}
+
 @MainActor
 private final class AgentDirectChatViewModel: ObservableObject {
     @Published private(set) var conversation: ProjectAgentRoom?
@@ -52,6 +74,15 @@ private final class AgentDirectChatViewModel: ObservableObject {
     var title: String { conversation?.draft.name ?? "私聊" }
 
     var isHumanDirect: Bool { conversation?.conversationKind == .humanAgentDirect }
+
+    var timelineItems: [AgentDirectTimelineItem] {
+        let items = messages.map(AgentDirectTimelineItem.message)
+            + pendingAgentProposals.map(AgentDirectTimelineItem.agentProposal)
+            + pendingTeamProposals.map(AgentDirectTimelineItem.teamProposal)
+        return items.sorted {
+            ($0.createdAtUnixMs, $0.id) < ($1.createdAtUnixMs, $1.id)
+        }
+    }
 
     func displayName(for message: ProjectAgentMessage) -> String {
         switch message.senderKind {
@@ -374,20 +405,24 @@ struct AgentDirectChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 14) {
-                    ForEach(viewModel.pendingAgentProposals) { proposal in
-                        agentProposalCard(proposal)
-                    }
-                    ForEach(viewModel.pendingTeamProposals) { proposal in
-                        proposalCard(proposal)
-                    }
-                    if viewModel.messages.isEmpty {
+                    if viewModel.timelineItems.isEmpty {
                         ContentUnavailableView {
                             Label("开始对话", systemImage: "bubble.left")
                         }
                         .padding(.top, 80)
                     } else {
-                        ForEach(viewModel.messages) { message in
-                            messageRow(message).id(message.id)
+                        ForEach(viewModel.timelineItems) { item in
+                            Group {
+                                switch item {
+                                case let .message(message):
+                                    messageRow(message)
+                                case let .agentProposal(proposal):
+                                    agentProposalCard(proposal)
+                                case let .teamProposal(proposal):
+                                    proposalCard(proposal)
+                                }
+                            }
+                            .id(item.id)
                         }
                     }
                 }
@@ -395,7 +430,7 @@ struct AgentDirectChatView: View {
             }
             .onChange(of: viewModel.messages.count) {
                 if let id = viewModel.messages.last?.id {
-                    withAnimation { proxy.scrollTo(id, anchor: .bottom) }
+                    withAnimation { proxy.scrollTo("message:\(id)", anchor: .bottom) }
                 }
             }
         }

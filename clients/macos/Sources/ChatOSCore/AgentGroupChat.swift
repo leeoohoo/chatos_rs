@@ -1906,6 +1906,14 @@ public protocol AgentGroupChatStore: Sendable {
         afterMessageID: String?,
         limit: Int
     ) async throws -> ProjectAgentMessagePage
+    /// Reads the newest page first and then walks backwards with a stable message cursor.
+    /// Returned messages are always chronological inside each page.
+    func pageRecentMessages(
+        ownerUserID: String,
+        roomID: String,
+        beforeMessageID: String?,
+        limit: Int
+    ) async throws -> ProjectAgentMessagePage
     func listUnreadMessages(
         ownerUserID: String,
         roomID: String,

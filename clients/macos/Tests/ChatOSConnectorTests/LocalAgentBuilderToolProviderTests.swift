@@ -5,6 +5,14 @@ import Foundation
 import XCTest
 
 final class LocalAgentBuilderToolProviderTests: XCTestCase {
+    func testLegacyProposalMarkersResolveToTheProposerModel() {
+        XCTAssertTrue(LocalAgentBuilderService.usesProposerModel("default"))
+        XCTAssertTrue(LocalAgentBuilderService.usesProposerModel(" inherit "))
+        XCTAssertTrue(LocalAgentBuilderService.usesProposerModel("INHERIT-CURRENT"))
+        XCTAssertFalse(LocalAgentBuilderService.usesProposerModel("model-1"))
+        XCTAssertFalse(LocalAgentBuilderService.usesProposerModel(""))
+    }
+
     func testBuilderProducesAgentWithoutPreselectingPlugins() async throws {
         let provider = try LocalAgentBuilderToolProvider(
             project: .init(

@@ -120,7 +120,6 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                 nowUnixMs: now()
             )
         return try outcome(ProposalResponse(
-            proposalID: proposal.id,
             status: proposal.status.rawValue,
             projectLabel: selected.label,
             createsNewProject: selected.projectID == nil
@@ -143,7 +142,6 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
     }
 
     private struct ProposalResponse: Encodable {
-        let proposalID: String
         let status: String
         let projectLabel: String
         let createsNewProject: Bool

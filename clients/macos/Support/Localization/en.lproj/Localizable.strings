@@ -516,3 +516,9 @@
 "项目经理独占团队任务板的创建、分配、优先级和依赖管理权限。" = "The project manager exclusively manages task creation, assignment, priority, and dependencies for the team board.";
 "请先在 Agent 管理中创建一个职业为“项目经理”的 Agent。" = "First create an Agent with the Project Manager profession in Agent Management.";
 "项目经理负责创建、分配和维护团队任务与前置依赖。" = "The project manager creates, assigns, and maintains team tasks and prerequisites.";
+"由私聊、群聊、心跳和 Todo 触发的 Agent 运行记录" = "Agent runs triggered by direct messages, team messages, check-ins, and todos";
+"还没有 Trigger Run" = "No Trigger Runs yet";
+"消息、心跳或 Todo 唤醒这个 Agent 后，运行会显示在这里。" = "Runs appear here after a message, check-in, or todo wakes this Agent.";
+"选择一个 Agent" = "Select an Agent";
+"点击上方 Agent 卡片查看它的 Trigger Runs。" = "Select an Agent card above to view its Trigger Runs.";
+"运行会标记为失败并释放 Agent 队列；检查点和事件记录仍会保留。" = "The run will be marked failed and release the Agent queue; checkpoints and events will be retained.";
