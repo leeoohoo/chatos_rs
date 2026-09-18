@@ -522,3 +522,6 @@
 "选择一个 Agent" = "Select an Agent";
 "点击上方 Agent 卡片查看它的 Trigger Runs。" = "Select an Agent card above to view its Trigger Runs.";
 "运行会标记为失败并释放 Agent 队列；检查点和事件记录仍会保留。" = "The run will be marked failed and release the Agent queue; checkpoints and events will be retained.";
+"邀请现有 Agent" = "Invite Existing Agent";
+"确认加入团队" = "Confirm Team Membership";
+"确认后只新增这个团队的成员关系；Agent 的其他团队、私聊和独立 Memory 不受影响。" = "Confirmation only adds membership in this team. The Agent's other teams, direct messages, and independent Memory remain unchanged.";

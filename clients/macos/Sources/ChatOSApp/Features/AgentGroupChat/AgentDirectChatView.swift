@@ -6,12 +6,14 @@ private enum AgentDirectTimelineItem: Identifiable {
     case message(ProjectAgentMessage)
     case agentProposal(LocalAgentCreationProposal)
     case teamProposal(LocalAgentTeamCreationProposal)
+    case membershipProposal(LocalAgentMembershipProposal)
 
     var id: String {
         switch self {
         case let .message(value): "message:\(value.id)"
         case let .agentProposal(value): "agent-proposal:\(value.id)"
         case let .teamProposal(value): "team-proposal:\(value.id)"
+        case let .membershipProposal(value): "membership-proposal:\(value.id)"
         }
     }
 
@@ -20,6 +22,7 @@ private enum AgentDirectTimelineItem: Identifiable {
         case let .message(value): value.createdAtUnixMs
         case let .agentProposal(value): value.createdAtUnixMs
         case let .teamProposal(value): value.createdAtUnixMs
+        case let .membershipProposal(value): value.createdAtUnixMs
         }
     }
 }
@@ -32,6 +35,8 @@ private final class AgentDirectChatViewModel: ObservableObject {
     @Published private(set) var messages: [ProjectAgentMessage] = []
     @Published private(set) var pendingAgentProposals: [LocalAgentCreationProposal] = []
     @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = []
+    @Published private(set) var pendingMembershipProposals: [LocalAgentMembershipProposal] = []
+    @Published private(set) var teams: [ProjectAgentRoom] = []
     @Published var draftMessage = ""
     @Published var attachments: [ConversationAttachmentDraft] = []
     @Published var attachmentError: String?
@@ -71,6 +76,10 @@ private final class AgentDirectChatViewModel: ObservableObject {
         Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
     }
 
+    var teamsByID: [String: ProjectAgentRoom] {
+        Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+    }
+
     var title: String { conversation?.draft.name ?? "私聊" }
 
     var isHumanDirect: Bool { conversation?.conversationKind == .humanAgentDirect }
@@ -79,6 +88,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
         let items = messages.map(AgentDirectTimelineItem.message)
             + pendingAgentProposals.map(AgentDirectTimelineItem.agentProposal)
             + pendingTeamProposals.map(AgentDirectTimelineItem.teamProposal)
+            + pendingMembershipProposals.map(AgentDirectTimelineItem.membershipProposal)
         return items.sorted {
             ($0.createdAtUnixMs, $0.id) < ($1.createdAtUnixMs, $1.id)
         }
@@ -133,6 +143,15 @@ private final class AgentDirectChatViewModel: ObservableObject {
                 roomID: conversationID,
                 status: .pending
             )
+            async let loadedMembershipProposals = store.listMembershipProposals(
+                ownerUserID: ownerUserID,
+                sourceRoomID: conversationID,
+                status: .pending
+            )
+            async let loadedTeams = store.listRooms(
+                ownerUserID: ownerUserID,
+                includeArchived: false
+            )
             self.conversation = conversation
             agents = try await loadedAgents
             members = try await loadedMembers
@@ -144,6 +163,8 @@ private final class AgentDirectChatViewModel: ObservableObject {
             )
             pendingTeamProposals = try await loadedProposals
             pendingAgentProposals = try await loadedAgentProposals
+            pendingMembershipProposals = try await loadedMembershipProposals
+            teams = try await loadedTeams
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -267,6 +288,41 @@ private final class AgentDirectChatViewModel: ObservableObject {
         do {
             let store = try await resolveStore()
             _ = try await store.rejectTeamProposal(
+                ownerUserID: ownerUserID,
+                sourceRoomID: conversationID,
+                proposalID: proposal.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func approveMembershipProposal(_ proposal: LocalAgentMembershipProposal) async {
+        guard proposalActionIDs.insert(proposal.id).inserted else { return }
+        defer { proposalActionIDs.remove(proposal.id) }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.approveMembershipProposal(
+                ownerUserID: ownerUserID,
+                sourceRoomID: conversationID,
+                proposalID: proposal.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func rejectMembershipProposal(_ proposal: LocalAgentMembershipProposal) async {
+        guard proposalActionIDs.insert(proposal.id).inserted else { return }
+        defer { proposalActionIDs.remove(proposal.id) }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.rejectMembershipProposal(
                 ownerUserID: ownerUserID,
                 sourceRoomID: conversationID,
                 proposalID: proposal.id,
@@ -420,6 +476,8 @@ struct AgentDirectChatView: View {
                                     agentProposalCard(proposal)
                                 case let .teamProposal(proposal):
                                     proposalCard(proposal)
+                                case let .membershipProposal(proposal):
+                                    membershipProposalCard(proposal)
                                 }
                             }
                             .id(item.id)
@@ -491,6 +549,41 @@ struct AgentDirectChatView: View {
                             model.registerCreatedProject(project)
                         }
                     }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .disabled(viewModel.proposalActionIDs.contains(proposal.id))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func membershipProposalCard(
+        _ proposal: LocalAgentMembershipProposal
+    ) -> some View {
+        let agentName = viewModel.profilesByID[proposal.draft.targetAgentID]?.draft.name
+            ?? "Agent"
+        let teamName = viewModel.teamsByID[proposal.draft.targetTeamRoomID]?.draft.name
+            ?? "项目团队"
+        return VStack(alignment: .leading, spacing: 8) {
+            Label("邀请现有 Agent", systemImage: "person.crop.circle.badge.plus")
+                .font(.headline)
+            Text("\(agentName) → \(teamName)")
+            Text("职责：\(proposal.draft.role)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !proposal.draft.responsibility.isEmpty {
+                Text(proposal.draft.responsibility)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("拒绝", role: .destructive) {
+                    Task { await viewModel.rejectMembershipProposal(proposal) }
+                }
+                Button("确认加入团队") {
+                    Task { await viewModel.approveMembershipProposal(proposal) }
                 }
                 .buttonStyle(.borderedProminent)
             }

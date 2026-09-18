@@ -271,6 +271,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let openDirectToolName = "chat_direct_open"
     public static let sendDirectToolName = "chat_direct_send"
     public static let proposeMemberToolName = "agent_propose_member"
+    public static let proposeExistingMemberToolName = "agent_propose_existing_member"
     public static let proposeMemberRemovalToolName = "agent_propose_member_removal"
     public static let sendMessageToolName = "chat_send_message"
     public static let completeHeartbeatToolName = "chat_heartbeat_complete"
@@ -346,6 +347,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         if !(try await canManageStaff()) {
             definitions = definitions.filter {
                 $0.name != Self.proposeMemberToolName
+                    && $0.name != Self.proposeExistingMemberToolName
                     && $0.name != Self.proposeMemberRemovalToolName
             }
         } else {
@@ -399,6 +401,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await sendDirect(call)
         case Self.proposeMemberToolName:
             return try await proposeMember(call)
+        case Self.proposeExistingMemberToolName:
+            return try await proposeExistingMember(call)
         case Self.proposeMemberRemovalToolName:
             return try await proposeMemberRemoval(call)
         case Self.sendMessageToolName:
@@ -2091,6 +2095,71 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ))
     }
 
+    private func proposeExistingMember(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        guard try await canManageStaff() else { throw AgentGroupChatError.permissionDenied }
+        let arguments = try Self.arguments(call)
+        let teamReference = try Self.requiredString(arguments, key: "team_ref")
+        guard let targetTeamRoomID = await references.teamID(reference: teamReference) else {
+            return Self.structuredFailure(
+                code: "invalid_team_ref",
+                field: "team_ref",
+                message: "团队引用无效或已经过期，请重新读取工作区快照。",
+                retryable: true,
+                nextTool: Self.workspaceSnapshotToolName
+            )
+        }
+        let agentReference = try Self.requiredString(arguments, key: "target_agent_ref")
+        guard let targetAgentID = await references.agentID(reference: agentReference) else {
+            return Self.structuredFailure(
+                code: "invalid_agent_ref",
+                field: "target_agent_ref",
+                message: "Agent 引用无效或已经过期，请重新读取工作区快照。",
+                retryable: true,
+                nextTool: Self.workspaceSnapshotToolName
+            )
+        }
+        do {
+            let proposal = try await store.createMembershipProposal(
+                ownerUserID: context.ownerUserID,
+                sourceRoomID: context.roomID,
+                proposerAgentID: context.agentID,
+                sourceDeliveryID: context.deliveryID,
+                requestKey: call.id,
+                draft: .init(
+                    targetTeamRoomID: targetTeamRoomID,
+                    targetAgentID: targetAgentID,
+                    role: try Self.requiredString(arguments, key: "role"),
+                    responsibility: try Self.optionalString(
+                        arguments,
+                        key: "responsibility"
+                    ) ?? ""
+                ),
+                nowUnixMs: now()
+            )
+            return try Self.outcome(ProposalAcknowledgement(
+                type: "existing_agent_membership",
+                status: proposal.status.rawValue,
+                subject: "现有 Agent 入队提案"
+            ))
+        } catch let error as AgentGroupChatError {
+            let message = switch error {
+            case .conflict: "该 Agent 已经是目标团队成员，或相同提案已被处理。"
+            case .notFound: "目标团队或 Agent 已不存在，请重新读取工作区快照。"
+            case .permissionDenied: "当前 Agent 没有人员管理权限，或本次运行身份已失效。"
+            case .invalidField(let field): "邀请参数不符合要求：\(field)。"
+            case .storage: "本地成员提案暂时无法保存。"
+            case .notMember: "当前 Agent 已不在发起会话中。"
+            }
+            return Self.structuredFailure(
+                code: Self.errorCode(error),
+                field: Self.errorField(error),
+                message: message,
+                retryable: error == .notFound,
+                nextTool: error == .notFound ? Self.workspaceSnapshotToolName : nil
+            )
+        }
+    }
+
     private func canManageStaff() async throws -> Bool {
         let profiles = try await store.listAgents(
             ownerUserID: context.ownerUserID,
@@ -2744,6 +2813,12 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             name: Self.proposeMemberToolName,
             description: "使用已授予的人员管理权限，向 Human 提交一个新 Agent 草案。该工具只持久化待确认提案，绝不会直接创建 Agent；私聊中确认后只创建独立 Agent，团队会话中确认后才加入当前团队。模型配置由客户端继承并透传，AI 不填写模型 ID；thinking_level 省略时继承当前 Agent。",
             schema: Data(#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000},"role_prompt":{"type":"string","minLength":1,"maxLength":32000},"thinking_level":{"type":"string","enum":["auto","none","minimal","low","medium","high","xhigh","max"]},"rationale":{"type":"string","maxLength":4000}},"required":["name","role","role_prompt"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: proposeExistingMemberToolName,
+            description: "使用人员管理权限，把账户中已有 Agent 邀请进指定项目团队。先调用 agent_workspace_snapshot，使用其中同一轮返回的 team_ref 和 agent_ref；真实 ID 由客户端解析，不得猜测。该工具只生成待确认提案，Human 确认后才建立成员关系；一个 Agent 可以加入多个团队。",
+            schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"target_agent_ref":{"type":"string","minLength":1,"maxLength":600},"role":{"type":"string","minLength":1,"maxLength":160},"responsibility":{"type":"string","maxLength":8000}},"required":["team_ref","target_agent_ref","role"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(

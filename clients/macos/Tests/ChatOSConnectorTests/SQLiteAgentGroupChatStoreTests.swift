@@ -806,6 +806,106 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertEqual(restored.status, .active)
     }
 
+    func testExistingAgentMembershipProposalFromDirectChatSupportsMultipleTeamsAndAssignsManager() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let proposer = try await makeAgent(store, name: "管家", canManageStaff: true)
+        let projectManager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "玄德",
+                rolePrompt: "负责项目管理。",
+                modelConfigID: "model-1",
+                professionKey: "project_manager"
+            )
+        )
+        let targetTeam = try await makeRoom(store, projectID: "project-target")
+        let otherTeam = try await makeRoom(store, projectID: "project-other")
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: otherTeam.id,
+            agentID: projectManager.id,
+            draft: .init(role: "项目经理")
+        )
+        let direct = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: proposer.id
+        )
+        let incoming = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: direct.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "把玄德加入目标团队"
+            ),
+            limits: .init()
+        )
+        let claimedDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: proposer.id,
+            nowUnixMs: incoming.message.createdAtUnixMs + 1
+        )
+        let claimed = try XCTUnwrap(claimedDelivery)
+        let draft = LocalAgentMembershipProposalDraft(
+            targetTeamRoomID: targetTeam.id,
+            targetAgentID: projectManager.id,
+            role: "项目经理",
+            responsibility: "负责排期、依赖和交付"
+        )
+        let proposal = try await store.createMembershipProposal(
+            ownerUserID: "alice",
+            sourceRoomID: direct.id,
+            proposerAgentID: proposer.id,
+            sourceDeliveryID: claimed.id,
+            requestKey: "invite-existing",
+            draft: draft,
+            nowUnixMs: incoming.message.createdAtUnixMs + 2
+        )
+        let replay = try await store.createMembershipProposal(
+            ownerUserID: "alice",
+            sourceRoomID: direct.id,
+            proposerAgentID: proposer.id,
+            sourceDeliveryID: claimed.id,
+            requestKey: "invite-existing",
+            draft: draft,
+            nowUnixMs: incoming.message.createdAtUnixMs + 3
+        )
+        XCTAssertEqual(replay.id, proposal.id)
+
+        let approval = try await store.approveMembershipProposal(
+            ownerUserID: "alice",
+            sourceRoomID: direct.id,
+            proposalID: proposal.id,
+            nowUnixMs: incoming.message.createdAtUnixMs + 4
+        )
+        XCTAssertEqual(approval.proposal.status, .approved)
+        XCTAssertEqual(approval.member.agentID, projectManager.id)
+        XCTAssertEqual(approval.room.projectManagerAgentID, projectManager.id)
+        let targetMembers = try await store.listMembers(
+            ownerUserID: "alice",
+            roomID: targetTeam.id
+        )
+        let otherMembers = try await store.listMembers(
+            ownerUserID: "alice",
+            roomID: otherTeam.id
+        )
+        XCTAssertTrue(targetMembers.contains { $0.agentID == projectManager.id })
+        XCTAssertTrue(otherMembers.contains { $0.agentID == projectManager.id })
+        do {
+            _ = try await store.approveMembershipProposal(
+                ownerUserID: "alice",
+                sourceRoomID: direct.id,
+                proposalID: proposal.id,
+                nowUnixMs: incoming.message.createdAtUnixMs + 5
+            )
+            XCTFail("An approved membership proposal was processed twice")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
+    }
+
     func testEveryTeamAgentCanSubmitIdempotentProjectProposalForHumanResolution() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

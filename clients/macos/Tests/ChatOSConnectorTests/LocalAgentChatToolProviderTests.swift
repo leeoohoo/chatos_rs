@@ -96,7 +96,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "relay_bootstrap", "agent_workspace_snapshot", "chat_get_trigger",
                 "chat_list_members", "chat_read_unread",
                 "chat_read_messages", "chat_read_attachment", "chat_mark_read", "agent_propose_member",
-                "agent_propose_member_removal",
+                "agent_propose_existing_member", "agent_propose_member_removal",
                 "chat_direct_open", "chat_direct_send", "chat_send_message",
                 "chat_read_all_unread", "chat_inbox_send",
                 "todo_list", "todo_execution_options", "todo_add", "todo_update",
@@ -143,6 +143,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 as? [String: Any]
         )
         let workspaceAgents = try XCTUnwrap(workspaceJSON["agents"] as? [[String: Any]])
+        let workspaceTeams = try XCTUnwrap(workspaceJSON["teams"] as? [[String: Any]])
+        let teamReference = try XCTUnwrap(workspaceTeams.first?["team_ref"] as? String)
         let thirdReference = try XCTUnwrap(
             workspaceAgents.first(where: { $0["name"] as? String == "测试员" })?["agent_ref"]
                 as? String
@@ -215,6 +217,33 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(pendingProposals.first?.proposerAgentID, first.id)
         XCTAssertEqual(pendingProposals.first?.draft.modelConfigID, first.draft.modelConfigID)
         XCTAssertEqual(pendingProposals.first?.draft.thinkingLevel, "medium")
+        let membershipArguments = try XCTUnwrap(
+            String(
+                data: JSONSerialization.data(withJSONObject: [
+                    "team_ref": teamReference,
+                    "target_agent_ref": thirdReference,
+                    "role": "测试工程师",
+                    "responsibility": "负责质量验证",
+                ], options: [.sortedKeys]),
+                encoding: .utf8
+            )
+        )
+        let membershipOutcome = try await provider.execute(.init(
+            id: "call-propose-existing-member",
+            name: LocalAgentChatToolProvider.proposeExistingMemberToolName,
+            arguments: membershipArguments
+        ))
+        XCTAssertTrue(membershipOutcome.content.contains(#""status":"pending""#))
+        XCTAssertFalse(membershipOutcome.content.contains(room.id))
+        XCTAssertFalse(membershipOutcome.content.contains(third.id))
+        let membershipProposals = try await store.listMembershipProposals(
+            ownerUserID: "alice",
+            sourceRoomID: room.id,
+            status: .pending
+        )
+        XCTAssertEqual(membershipProposals.count, 1)
+        XCTAssertEqual(membershipProposals.first?.draft.targetTeamRoomID, room.id)
+        XCTAssertEqual(membershipProposals.first?.draft.targetAgentID, third.id)
         let proposalDefinitions = try await provider.definitions()
         let proposalDefinition = try XCTUnwrap(proposalDefinitions.first(where: {
             $0.name == LocalAgentChatToolProvider.proposeMemberToolName
@@ -784,6 +813,9 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertFalse(workerTools.contains(LocalAgentChatToolProvider.todoAddToolName))
         XCTAssertFalse(workerTools.contains(LocalAgentChatToolProvider.todoUpdateToolName))
         XCTAssertFalse(workerTools.contains(LocalAgentChatToolProvider.todoReorderToolName))
+        XCTAssertFalse(workerTools.contains(
+            LocalAgentChatToolProvider.proposeExistingMemberToolName
+        ))
         let workerInbox = try await workerProvider.execute(.init(
             id: "worker-read-inbox",
             name: LocalAgentChatToolProvider.readAllUnreadToolName,

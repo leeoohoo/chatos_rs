@@ -405,6 +405,111 @@ public struct LocalAgentRemovalProposal: Codable, Sendable, Equatable, Identifia
     }
 }
 
+public enum LocalAgentMembershipProposalStatus: String, Codable, Sendable {
+    case pending, approved, rejected
+}
+
+/// A Human-approved request to attach an existing reusable Agent to a project team. Durable
+/// identifiers are resolved from run-scoped opaque references inside the client and never need
+/// to be supplied by the model.
+public struct LocalAgentMembershipProposalDraft: Codable, Sendable, Equatable {
+    public let targetTeamRoomID: String
+    public let targetAgentID: String
+    public let role: String
+    public let responsibility: String
+
+    public init(
+        targetTeamRoomID: String,
+        targetAgentID: String,
+        role: String,
+        responsibility: String = ""
+    ) {
+        self.targetTeamRoomID = targetTeamRoomID
+        self.targetAgentID = targetAgentID
+        self.role = role
+        self.responsibility = responsibility
+    }
+
+    public func validate() throws {
+        try AgentGroupChatValidation.identifier(targetTeamRoomID, field: "targetTeamRoomID")
+        try AgentGroupChatValidation.identifier(targetAgentID, field: "targetAgentID")
+        try AgentGroupChatValidation.text(role, field: "role", maximumLength: 160)
+        try AgentGroupChatValidation.optionalText(
+            responsibility,
+            field: "responsibility",
+            maximumLength: 8_000
+        )
+    }
+}
+
+public struct LocalAgentMembershipProposal: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let ownerUserID: String
+    public let sourceRoomID: String
+    public let proposerAgentID: String
+    public let sourceDeliveryID: String
+    public let requestKey: String
+    public let draft: LocalAgentMembershipProposalDraft
+    public let status: LocalAgentMembershipProposalStatus
+    public let createdAtUnixMs: Int64
+    public let resolvedAtUnixMs: Int64?
+
+    public init(
+        id: String,
+        ownerUserID: String,
+        sourceRoomID: String,
+        proposerAgentID: String,
+        sourceDeliveryID: String,
+        requestKey: String,
+        draft: LocalAgentMembershipProposalDraft,
+        status: LocalAgentMembershipProposalStatus = .pending,
+        createdAtUnixMs: Int64,
+        resolvedAtUnixMs: Int64? = nil
+    ) {
+        self.id = id
+        self.ownerUserID = ownerUserID
+        self.sourceRoomID = sourceRoomID
+        self.proposerAgentID = proposerAgentID
+        self.sourceDeliveryID = sourceDeliveryID
+        self.requestKey = requestKey
+        self.draft = draft
+        self.status = status
+        self.createdAtUnixMs = createdAtUnixMs
+        self.resolvedAtUnixMs = resolvedAtUnixMs
+    }
+
+    public func validate() throws {
+        for (value, field) in [
+            (id, "id"), (ownerUserID, "ownerUserID"), (sourceRoomID, "sourceRoomID"),
+            (proposerAgentID, "proposerAgentID"), (sourceDeliveryID, "sourceDeliveryID"),
+            (requestKey, "requestKey"),
+        ] {
+            try AgentGroupChatValidation.identifier(value, field: field)
+        }
+        try draft.validate()
+        guard createdAtUnixMs >= 0,
+              resolvedAtUnixMs == nil || resolvedAtUnixMs! >= createdAtUnixMs else {
+            throw AgentGroupChatError.invalidField("membershipProposalTimestamps")
+        }
+    }
+}
+
+public struct LocalAgentMembershipProposalApproval: Codable, Sendable, Equatable {
+    public let proposal: LocalAgentMembershipProposal
+    public let member: ProjectAgentRoomMember
+    public let room: ProjectAgentRoom
+
+    public init(
+        proposal: LocalAgentMembershipProposal,
+        member: ProjectAgentRoomMember,
+        room: ProjectAgentRoom
+    ) {
+        self.proposal = proposal
+        self.member = member
+        self.room = room
+    }
+}
+
 public enum LocalAgentTeamCreationProposalStatus: String, Codable, Sendable {
     case pending, approved, rejected
 }
@@ -1788,6 +1893,32 @@ public protocol AgentGroupChatStore: Sendable {
         proposalID: String,
         nowUnixMs: Int64
     ) async throws -> LocalAgentRemovalProposal
+    func createMembershipProposal(
+        ownerUserID: String,
+        sourceRoomID: String,
+        proposerAgentID: String,
+        sourceDeliveryID: String,
+        requestKey: String,
+        draft: LocalAgentMembershipProposalDraft,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentMembershipProposal
+    func listMembershipProposals(
+        ownerUserID: String,
+        sourceRoomID: String,
+        status: LocalAgentMembershipProposalStatus?
+    ) async throws -> [LocalAgentMembershipProposal]
+    func approveMembershipProposal(
+        ownerUserID: String,
+        sourceRoomID: String,
+        proposalID: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentMembershipProposalApproval
+    func rejectMembershipProposal(
+        ownerUserID: String,
+        sourceRoomID: String,
+        proposalID: String,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentMembershipProposal
     func createTeamProposal(
         ownerUserID: String,
         sourceRoomID: String,

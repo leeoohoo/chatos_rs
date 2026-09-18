@@ -100,7 +100,8 @@ struct ProjectAgentGroupChatView: View {
                 roomHeader
                 if !viewModel.pendingProposals.isEmpty
                     || !viewModel.pendingRemovalProposals.isEmpty
-                    || !viewModel.pendingTeamProposals.isEmpty {
+                    || !viewModel.pendingTeamProposals.isEmpty
+                    || !viewModel.pendingMembershipProposals.isEmpty {
                     Divider()
                     pendingProposals
                 }
@@ -192,6 +193,50 @@ struct ProjectAgentGroupChatView: View {
                         .controlSize(.small)
                         Button("确认移出", role: .destructive) {
                             Task { await viewModel.approveRemovalProposal(proposal) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+                .padding(10)
+                .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+            }
+            ForEach(viewModel.pendingMembershipProposals) { proposal in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        let agentName = viewModel.profilesByID[
+                            proposal.draft.targetAgentID
+                        ]?.draft.name ?? "Agent"
+                        let teamName = viewModel.teamsByID[
+                            proposal.draft.targetTeamRoomID
+                        ]?.draft.name ?? "项目团队"
+                        Text("邀请现有 Agent · \(agentName)")
+                            .appFont(.body)
+                            .fontWeight(.medium)
+                        Text("加入 \(teamName)，职责：\(proposal.draft.role)")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                        if !proposal.draft.responsibility.isEmpty {
+                            Text(proposal.draft.responsibility)
+                                .appFont(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        Text("确认后只新增这个团队的成员关系；Agent 的其他团队、私聊和独立 Memory 不受影响。")
+                            .appFont(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if viewModel.membershipProposalActionIDs.contains(proposal.id) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("拒绝", role: .destructive) {
+                            Task { await viewModel.rejectMembershipProposal(proposal) }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        Button("确认加入团队") {
+                            Task { await viewModel.approveMembershipProposal(proposal) }
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)

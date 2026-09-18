@@ -41,6 +41,8 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var pendingProposals: [LocalAgentCreationProposal] = []
     @Published private(set) var pendingRemovalProposals: [LocalAgentRemovalProposal] = []
     @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = []
+    @Published private(set) var pendingMembershipProposals: [LocalAgentMembershipProposal] = []
+    @Published private(set) var teams: [ProjectAgentRoom] = []
     @Published var draftMessage = ""
     @Published var attachments: [ConversationAttachmentDraft] = []
     @Published var attachmentError: String?
@@ -55,6 +57,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var proposalActionIDs: Set<String> = []
     @Published private(set) var removalProposalActionIDs: Set<String> = []
     @Published private(set) var teamProposalActionIDs: Set<String> = []
+    @Published private(set) var membershipProposalActionIDs: Set<String> = []
     @Published var errorMessage: String?
 
     private let service: NativeAgentGroupChatService
@@ -90,6 +93,10 @@ final class AgentGroupChatViewModel: ObservableObject {
         return members.map { MemberPresentation(member: $0, profile: profiles[$0.agentID]) }
     }
 
+    var teamsByID: [String: ProjectAgentRoom] {
+        Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
+    }
+
     func displayName(senderID: String, kind: ProjectAgentMessageSenderKind) -> String {
         switch kind {
         case .human: "你"
@@ -105,6 +112,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         do {
             let store = try await resolveStore()
             let agents = try await store.listAgents(ownerUserID: ownerUserID, includeArchived: false)
+            let teams = try await store.listRooms(ownerUserID: ownerUserID, includeArchived: false)
             let room = try await store.activeRoom(ownerUserID: ownerUserID, projectID: projectID)
             let members: [ProjectAgentRoomMember]
             let messages: [ProjectAgentMessage]
@@ -112,6 +120,7 @@ final class AgentGroupChatViewModel: ObservableObject {
             let pendingProposals: [LocalAgentCreationProposal]
             let pendingRemovalProposals: [LocalAgentRemovalProposal]
             let pendingTeamProposals: [LocalAgentTeamCreationProposal]
+            let pendingMembershipProposals: [LocalAgentMembershipProposal]
             if let room {
                 members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
                 messages = try await store.listMessages(
@@ -154,6 +163,11 @@ final class AgentGroupChatViewModel: ObservableObject {
                     sourceRoomID: room.id,
                     status: .pending
                 )
+                pendingMembershipProposals = try await store.listMembershipProposals(
+                    ownerUserID: ownerUserID,
+                    sourceRoomID: room.id,
+                    status: .pending
+                )
             } else {
                 members = []
                 messages = []
@@ -161,6 +175,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                 pendingProposals = []
                 pendingRemovalProposals = []
                 pendingTeamProposals = []
+                pendingMembershipProposals = []
             }
             self.agents = agents
             self.room = room
@@ -179,6 +194,8 @@ final class AgentGroupChatViewModel: ObservableObject {
             self.pendingProposals = pendingProposals
             self.pendingRemovalProposals = pendingRemovalProposals
             self.pendingTeamProposals = pendingTeamProposals
+            self.pendingMembershipProposals = pendingMembershipProposals
+            self.teams = teams
             let builderResources = try? await builderService.loadResources(
                 ownerUserID: ownerUserID
             )
@@ -554,6 +571,41 @@ final class AgentGroupChatViewModel: ObservableObject {
         do {
             let store = try await resolveStore()
             _ = try await store.rejectTeamProposal(
+                ownerUserID: ownerUserID,
+                sourceRoomID: proposal.sourceRoomID,
+                proposalID: proposal.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func approveMembershipProposal(_ proposal: LocalAgentMembershipProposal) async {
+        guard membershipProposalActionIDs.insert(proposal.id).inserted else { return }
+        defer { membershipProposalActionIDs.remove(proposal.id) }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.approveMembershipProposal(
+                ownerUserID: ownerUserID,
+                sourceRoomID: proposal.sourceRoomID,
+                proposalID: proposal.id,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await load()
+            NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func rejectMembershipProposal(_ proposal: LocalAgentMembershipProposal) async {
+        guard membershipProposalActionIDs.insert(proposal.id).inserted else { return }
+        defer { membershipProposalActionIDs.remove(proposal.id) }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.rejectMembershipProposal(
                 ownerUserID: ownerUserID,
                 sourceRoomID: proposal.sourceRoomID,
                 proposalID: proposal.id,
