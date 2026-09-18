@@ -11,6 +11,12 @@ public struct AgentCommunicationPolicy: Codable, Sendable, Equatable {
     public let maximumDocumentBytes: Int
     public let maximumDocumentBytesPerRun: Int
 
+    /// Lower edge of the product's recommended 300–800 character range. Keeping this derived
+    /// property here prevents observability buckets from owning a second threshold source.
+    public var conciseMessageCharacters: Int {
+        min(300, recommendedMessageCharacters)
+    }
+
     public static let standard = AgentCommunicationPolicy(
         recommendedMessageCharacters: 800,
         maximumMessageCharacters: 2_000,

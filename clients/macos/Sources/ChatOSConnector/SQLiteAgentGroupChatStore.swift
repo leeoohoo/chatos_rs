@@ -2679,12 +2679,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         rejected: Bool,
         nowUnixMs: Int64
     ) throws {
+        let policy = AgentCommunicationPolicy.standard
         let dimension: String
         switch characterCount {
-        case ...300: dimension = "0000_0300"
-        case ...800: dimension = "0301_0800"
-        case ...2_000: dimension = "0801_2000"
-        default: dimension = "2001_plus"
+        case ...policy.conciseMessageCharacters: dimension = "concise"
+        case ...policy.recommendedMessageCharacters: dimension = "recommended"
+        case ...policy.maximumMessageCharacters: dimension = "extended"
+        default: dimension = "over_limit"
         }
         try recordAgentCommunicationMetric(
             ownerUserID: ownerUserID,

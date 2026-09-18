@@ -1,4 +1,5 @@
 import ChatOSConnector
+import ChatOSCore
 import Foundation
 import SQLite3
 import XCTest
@@ -80,32 +81,42 @@ final class AgentCommunicationMetricsTests: XCTestCase {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let policy = AgentCommunicationPolicy.standard
+        let concise = policy.conciseMessageCharacters
+        let recommended = policy.recommendedMessageCharacters
+        let maximum = policy.maximumMessageCharacters
 
-        for (index, length) in [300, 301, 800, 801, 2_000, 2_001, 500].enumerated() {
+        for (index, length) in [
+            concise, concise + 1, recommended, recommended + 1, maximum, maximum + 1, 500,
+        ].enumerated() {
             try await store.recordAgentMessageAttempt(
                 ownerUserID: "owner-a",
                 characterCount: length,
-                rejected: length > 2_000,
+                rejected: length > maximum,
                 nowUnixMs: Int64(index + 1)
             )
         }
 
         let snapshot = try await store.agentCommunicationMetricSnapshot(ownerUserID: "owner-a")
-        let short = try metric(snapshot, name: "message_length", dimension: "0000_0300")
-        let recommended = try metric(snapshot, name: "message_length", dimension: "0301_0800")
-        let long = try metric(snapshot, name: "message_length", dimension: "0801_2000")
-        let rejected = try metric(snapshot, name: "message_length", dimension: "2001_plus")
+        let short = try metric(snapshot, name: "message_length", dimension: "concise")
+        let recommendedBucket = try metric(
+            snapshot,
+            name: "message_length",
+            dimension: "recommended"
+        )
+        let long = try metric(snapshot, name: "message_length", dimension: "extended")
+        let rejected = try metric(snapshot, name: "message_length", dimension: "over_limit")
 
         XCTAssertEqual(short.count, 1)
-        XCTAssertEqual(short.totalValue, 300)
-        XCTAssertEqual(recommended.count, 3)
-        XCTAssertEqual(recommended.totalValue, 1_601)
-        XCTAssertEqual(recommended.maximumValue, 800)
+        XCTAssertEqual(short.totalValue, Int64(concise))
+        XCTAssertEqual(recommendedBucket.count, 3)
+        XCTAssertEqual(recommendedBucket.totalValue, Int64(concise + 1 + recommended + 500))
+        XCTAssertEqual(recommendedBucket.maximumValue, Int64(recommended))
         XCTAssertEqual(long.count, 2)
-        XCTAssertEqual(long.totalValue, 2_801)
-        XCTAssertEqual(long.maximumValue, 2_000)
+        XCTAssertEqual(long.totalValue, Int64(recommended + 1 + maximum))
+        XCTAssertEqual(long.maximumValue, Int64(maximum))
         XCTAssertEqual(rejected.count, 1)
-        XCTAssertEqual(rejected.totalValue, 2_001)
+        XCTAssertEqual(rejected.totalValue, Int64(maximum + 1))
         XCTAssertEqual(
             try metric(snapshot, name: "tool_rejection", dimension: "message_too_long").count,
             1
