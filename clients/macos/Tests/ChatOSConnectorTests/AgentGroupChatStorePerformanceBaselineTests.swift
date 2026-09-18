@@ -35,6 +35,7 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         let workspaceSnapshotPreparedStatements: [Int]
         let recentMessagesPreparedStatements: [Int]
         let imageAttachmentReadPreparedStatements: [Int]
+        let publish500RunChangesMilliseconds: [Double]
     }
 
     private func databaseURL() -> URL {
@@ -203,6 +204,7 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         var workspaceSnapshotPreparedStatements: [Int] = []
         var recentMessagesPreparedStatements: [Int] = []
         var imageAttachmentReadPreparedStatements: [Int] = []
+        var publish500RunChangesMilliseconds: [Double] = []
 
         for _ in 0..<repetitions {
             let (store, openDuration) = try await elapsedMilliseconds {
@@ -271,6 +273,28 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             imageAttachmentReadPreparedStatements.append(
                 await store.preparedStatementCountForTesting() - attachmentCountBefore
             )
+
+            let changeService = NativeAgentGroupChatService(databaseURL: fixture.databaseURL)
+            let changes = await changeService.changes(
+                ownerUserID: Self.ownerUserID,
+                roomID: fixture.primaryRoomID
+            )
+            let firstRunID = UUID()
+            let lastRunID = UUID()
+            let (_, publishDuration) = await elapsedMilliseconds {
+                for index in 0..<500 {
+                    await changeService.publishChange(.init(
+                        ownerUserID: Self.ownerUserID,
+                        roomID: fixture.primaryRoomID,
+                        runID: index == 499 ? lastRunID : firstRunID,
+                        kind: .runUpdated
+                    ))
+                }
+            }
+            publish500RunChangesMilliseconds.append(publishDuration)
+            var iterator = changes.makeAsyncIterator()
+            let coalescedChange = await iterator.next()
+            XCTAssertEqual(coalescedChange?.runID, lastRunID)
         }
 
         // These assertions intentionally freeze the current N+1 baseline. Lower counts are welcome,
@@ -292,7 +316,8 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             imageAttachmentReadMilliseconds: imageAttachmentReadMilliseconds,
             workspaceSnapshotPreparedStatements: workspaceSnapshotPreparedStatements,
             recentMessagesPreparedStatements: recentMessagesPreparedStatements,
-            imageAttachmentReadPreparedStatements: imageAttachmentReadPreparedStatements
+            imageAttachmentReadPreparedStatements: imageAttachmentReadPreparedStatements,
+            publish500RunChangesMilliseconds: publish500RunChangesMilliseconds
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
