@@ -347,6 +347,40 @@ restart_selected_release_with_retries() {
   return 1
 }
 
+wait_for_http_probe() {
+  local label="$1"
+  local acceptance="$2"
+  shift 2
+  local attempt status
+  for ((attempt = 1; attempt <= 12; attempt++)); do
+    status="$(
+      curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+        --max-time 30 "$@" || true
+    )"
+    case "$acceptance:$status" in
+      success:2??|success:3??)
+        echo "[OK] deployment probe $label returned HTTP $status"
+        return 0
+        ;;
+      route:???)
+        case "$status" in
+          000|502|503|504) ;;
+          *)
+            echo "[OK] deployment probe $label returned HTTP $status"
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+    if (( attempt < 12 )); then
+      echo "[WARN] deployment probe $label returned HTTP ${status:-000}; retrying ($attempt/12)" >&2
+      sleep 5
+    fi
+  done
+  echo "[ERROR] deployment probe $label remained unavailable: HTTP ${status:-000}" >&2
+  return 1
+}
+
 rollback() {
   local exit_code=$?
   trap - EXIT
@@ -583,12 +617,12 @@ while true; do
   sleep 5
 done
 
-curl --fail --silent --show-error --max-time 20 \
-  http://127.0.0.1:9080/api/chatos/health >/dev/null
+wait_for_http_probe local-chatos-health success \
+  http://127.0.0.1:9080/api/chatos/health
 
-curl --fail --silent --show-error --max-time 20 \
+wait_for_http_probe local-admin-user-service-health success \
   --header "Host: admin.jgoool.com" \
-  http://127.0.0.1:9080/api/admin/user-service/health >/dev/null
+  http://127.0.0.1:9080/api/admin/user-service/health
 
 frontend_hosts=(
   admin.jgoool.com
@@ -600,22 +634,14 @@ frontend_hosts=(
   official.jgoool.com
 )
 for host in "${frontend_hosts[@]}"; do
-  curl --fail --silent --show-error --max-time 20 \
+  wait_for_http_probe "local-frontend-$host" success \
     --header "Host: $host" \
-    http://127.0.0.1:9080/ >/dev/null
+    http://127.0.0.1:9080/
 done
 
-connector_status="$(
-  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-    --max-time 20 --header 'Host: connector.jgoool.com' \
-    http://127.0.0.1:9080/health
-)"
-case "$connector_status" in
-  000|502|503|504)
-    echo "[ERROR] connector gateway route is unavailable: HTTP $connector_status" >&2
-    exit 1
-    ;;
-esac
+wait_for_http_probe local-connector-route route \
+  --header 'Host: connector.jgoool.com' \
+  http://127.0.0.1:9080/health
 
 for url in \
   https://gateway.jgoool.com/api/chatos/health \
@@ -626,7 +652,7 @@ for url in \
   https://plugin.jgoool.com \
   https://official.jgoool.com
 do
-  curl --fail --silent --show-error --max-time 30 "$url" >/dev/null
+  wait_for_http_probe "public-$url" success "$url"
 done
 
 echo "[OK] production release is healthy: $release_tag"

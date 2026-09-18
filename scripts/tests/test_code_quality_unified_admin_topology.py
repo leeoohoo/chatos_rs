@@ -94,6 +94,16 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn('exec tail -n 200 -F "$log_file"', online)
         self.assertIn("the server deployment will continue", online)
 
+    def test_cloud_deploy_retries_labeled_http_probes(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        self.assertIn("wait_for_http_probe()", deploy)
+        self.assertIn("attempt <= 12", deploy)
+        self.assertIn("deployment probe $label returned HTTP", deploy)
+        self.assertIn("deployment probe $label remained unavailable", deploy)
+        self.assertIn("wait_for_http_probe local-chatos-health success", deploy)
+        self.assertIn("wait_for_http_probe local-connector-route route", deploy)
+        self.assertIn('wait_for_http_probe "public-$url" success', deploy)
+
 
 if __name__ == "__main__":
     unittest.main()
